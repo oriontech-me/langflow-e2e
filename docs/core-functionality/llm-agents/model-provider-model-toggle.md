@@ -1,6 +1,6 @@
 # Model Provider Model Toggle
 
-**Last validated:** Langflow 1.12.x (measured on `1.12.0.dev30`)
+**Last validated:** Langflow 1.12.x (measured on `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -31,7 +31,7 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 ### Test 1 — toggle changes immediately and persists across reopen
 
 1. `SimpleAgentTemplatePage.load({ provider })` — configures the provider's API key globally and enables all its models (the known baseline). `MODEL_NOT_AVAILABLE` is caught and turned into a skip.
-2. Navigate to **Settings → Model Providers**, expand the provider (`provider-item-...`), and wait for `model-provider-selection` and `llm-models-section`.
+2. Navigate to **Settings → Model Providers**, expand the provider through `waitForProviderRow()` (see *Waiting for the provider list* below — never a bare `provider-item-...` wait), and wait for `model-provider-selection` and `llm-models-section`.
 3. Read the first visible `llm-toggle-<model>` to derive a model name, filter the list to it via `model-search-input`, and assert it is enabled (`aria-checked="true"`).
 4. Disable it: click the toggle, assert `aria-checked="false"` immediately (optimistic), and wait for the `POST .../enabled_models` response (debounced persistence flush).
 5. Reload the app, reopen Model Providers, re-expand the provider, search for the same model and assert its toggle is still `aria-checked="false"` (persisted).
@@ -52,7 +52,8 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
    (#1461). **The dropdown mixes models from every configured provider** (#597 — with
    Google configured by sibling specs it listed `gemini-3.5-flash` first while the
    test's provider was OpenAI), so the options alone cannot pick the target.
-3. In **Settings → Model Providers**, open the test's provider and read its
+3. In **Settings → Model Providers**, open the test's provider through
+   `waitForProviderRow()` and read its
    `llm-toggle-<model>` ids via `enumerateEnabledModels()` — every toggle the panel
    renders, in the **bare** ids the picker's testid does not use. (The helper's name
    is narrower than its behavior: it returns all of them regardless of
@@ -87,6 +88,56 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 
 ---
 
+## Waiting for the provider list *(required)*
+
+Both tests reach the provider row through `waitForProviderRow()`
+(`tests/helpers/provider-setup/provider-list-state.ts`), never through a bare
+`page.getByTestId("provider-item-<Name>")` wait. The reason is attribution, not
+timing, and the budgets are deliberately **unchanged** — raising them would hide
+the state this wait exists to name.
+
+The list is one component (`provider-list-loading` appears exactly once in the
+1.12.0.dev44 bundle) shared by the Settings page and the Agent node's **Model
+providers** modal, and it renders four mutually exclusive states, each with its
+own testid:
+
+| testid | state |
+|---|---|
+| `provider-list-loading` | still fetching (`GET /api/v1/models?purpose=configure`), or React Query `paused` |
+| `provider-list-error` | the fetch failed |
+| `provider-list-empty` | the search box filtered every provider out |
+| `provider-list` | settled, holding the `provider-item-*` rows |
+
+Waiting only for the row discards all four, and the resulting
+`TimeoutError: locator.click … waiting for getByTestId('provider-item-OpenAI')`
+cannot distinguish an unresponsive instance from a provider Langflow stopped
+shipping. Measured on #1648: **20 attempts across 8 of 25 dailies**
+(2026-08-04 → 2026-08-31), 12 spec files, three providers (Google 9, OpenAI 8,
+Anthropic 3) — and in **0 of 20** did the call log get past `waiting for
+<locator>`. The failure-time screenshot of daily `33410643882` shows
+**`Loading providers...`** on screen while the aria snapshot captured moments
+later shows all nine rows, which is why the same artifacts read as a product
+defect at triage and as an environment stall on review. None of the five
+patterns in `scripts/lib/infra-signature-patterns.json` match a locator timeout,
+so `infra_signature` came back `null` for every one of them (#1589), and
+`reports/daily-history.jsonl` stores only the normalized first error line, so a
+search for `provider-item` across all 21 August dailies returns **zero**
+(#1626). The helper is what makes those 20 occurrences say what they are.
+
+`providerRowVerdict()` is a **pure** function over the snapshot, unit-tested in
+`provider-list-state.test.ts`, because the branches that matter are otherwise
+reachable only from an instance that is misbehaving on purpose. Its verdicts:
+
+| kind | when | reads as |
+|---|---|---|
+| `stalled` | `provider-list-loading` still on screen | an INSTANCE stall — the backend has not answered |
+| `errored` | `provider-list-error` | the fetch failed; a backend verdict, not a missing provider |
+| `filtered` | `provider-list-empty`, or a non-empty search box | a SUITE defect — a previous step left the filter set |
+| `absent` | `provider-list` rendered, the row is not among its rows | a PRODUCT finding — it names the providers that DID render |
+| `unreached` | none of the four states present | the page or the modal never opened (`openProviderPanel` returns `"opened"` without verifying) |
+
+---
+
 ## Validation criterion *(required)*
 
 - Toggling a model flips `aria-checked` immediately (optimistic update).
@@ -95,6 +146,11 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 - Every dropdown verdict is reached from the option's **identity**, never its text, and a
   negative verdict is only accepted from a picker that is populated and still parsable —
   so "the model is gone" can fail, and cannot be satisfied by an empty or renamed list.
+- A provider row that never appears fails with the product state named — `stalled`,
+  `errored`, `filtered`, `absent` or `unreached` — never as a bare locator timeout.
+  Force-failable in both directions: hold `GET /api/v1/models?purpose=configure` past
+  the budget and the failure must say `PROVIDER_LIST_STALLED`; render the list without
+  the target provider and it must say `PROVIDER_ABSENT` and list the ones that rendered.
 - The baseline is restored at the end of each test (model left enabled) so sibling specs are unaffected.
 
 ---
@@ -140,6 +196,10 @@ flow count grows.
 - `src/frontend/src/hooks/use-refresh-model-inputs.ts` — refreshes component model dropdowns when toggles change (the propagation behavior in Test 2).
 - `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/` — renders the Agent's `model_model` trigger, `value-dropdown-model_model` value span, and the `-option` dropdown entries. `components/ModelList.tsx` owns `getModelOptionTestId(provider, modelName)` = `${provider}-${modelName}-option` and the cmdk `value` = `${provider}::${modelName}` that surfaces as `data-value` — the two attributes this spec resolves a model by.
 - `tests/helpers/provider-setup/model-option.ts` — the shared identity reader (#1463): `enumerateModelOptions()`, `enumerateEnabledModels()`, `ModelOption`, plus `censusForTarget()` / `hasOptionIdentity()` (#1464). Test 2 matches options exclusively through it; the classification is pure and unit-tested in `model-option.test.ts`, because the branch that must not regress ("a `target: 0` verdict counts only with `total > 0` and `providerOthers > 0`") is otherwise reachable only from a live run.
+- `tests/helpers/provider-setup/provider-list-state.ts` — `waitForProviderRow()` and the pure `providerRowVerdict()` (#1648). Reads the four provider-list states listed above; `provider-list-state.test.ts` covers the classification.
+- `src/frontend/src/modals/modelProviderModal/components/ProviderList.tsx` — owns all four state testids (`provider-list-loading` line 82, `provider-list-error` 94, `provider-list-empty` 105, `provider-list` 119 on `release-1.12.0`). Renaming any of them turns the verdict into `unreached`, which is a loud failure rather than a silent one.
+- `src/frontend/src/modals/modelProviderModal/components/ProviderListItem.tsx` — the row itself, whose testid is built as `provider-item-` plus the provider's display name. Single source of the name this suite waits on.
+- `src/frontend/src/modals/modelProviderModal/components/ModelProvidersContent.tsx` — hosts `provider-search-input`, read by the `filtered` verdict so a filter a previous step left set is reported as a SUITE defect and not as a missing provider.
 - `tests/helpers/provider-setup/provider-config.ts` — `langflowProviderName()` supplies the provider as Langflow spells it (`OpenAI`, `Google Generative AI`), which is what the picker groups options by and what the restore payload sends.
 - `tests/helpers/provider-setup/` and `data/models.json` — provider setup and model source of truth (populated by `collect-models`).
 

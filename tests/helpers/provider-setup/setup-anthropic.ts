@@ -7,6 +7,7 @@ import {
   selectPinnedModelOption,
 } from "./model-option";
 import { openProviderPanel } from "./provider-panel-entry";
+import { waitForProviderRow } from "./provider-list-state";
 
 export async function setupAnthropic(
   page: Page,
@@ -18,8 +19,10 @@ export async function setupAnthropic(
   // addressable by role+name — see provider-panel-entry.ts (#1465).
   if ((await openProviderPanel(page, "Anthropic")) === "no-agent") return;
 
-  // Step 3: Select the Anthropic provider
-  await page.getByTestId("provider-item-Anthropic").click();
+  // Step 3: Select the Anthropic provider.
+  // Through waitForProviderRow (#1648) — same reason as the OpenAI and Google
+  // helpers; Anthropic carries 3 of the 20 measured occurrences. Budget unchanged.
+  await (await waitForProviderRow(page, "provider-item-Anthropic", 20000)).click();
 
   // Step 4: Configure the API key — but only if the provider is not already set up.
   // A configured provider shows a "Disconnect" button with the key field masked;

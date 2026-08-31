@@ -1,6 +1,6 @@
 # Provider Management — modal, provider count, components, add/remove API key
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev17`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev17`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -143,9 +143,16 @@ configured providers show a **"N models"** suffix in their list item and a
    renders).
 
 **`model-provider-api-key.spec.ts`**
-1. *OpenAI listed* — `provider-item-OpenAI` visible (exact testid, no
-   text-match fallback).
-2. *Anthropic listed* — `provider-item-Anthropic` visible.
+
+All three tests reach the row through `waitForProviderRow()`
+(`tests/helpers/provider-setup/provider-list-state.ts`) rather than asserting
+`provider-item-<Name>` directly — see *Waiting for the provider list* below. The
+assertion is unchanged and the budget is unchanged; what changes is that a row
+that never arrives says **which** of the list's four states was on screen.
+
+1. *OpenAI listed* — the OpenAI row resolves from a settled provider list (exact
+   testid, no text-match fallback).
+2. *Anthropic listed* — the Anthropic row resolves the same way.
 3. *Configured provider exposes the key edit surface* (skip with a reason if
    the instance has no stored `OPENAI_API_KEY`) — the OpenAI item shows the
    `N models` badge, `provider-variable-input-OPENAI_API_KEY` is visible, and
@@ -291,6 +298,38 @@ sidebar entry to the canonical **Language Model** component:
 
 ---
 
+## Waiting for the provider list *(required)*
+
+The provider list is one component shared by the Settings page and the Agent
+node's **Model providers** modal, and it renders four mutually exclusive states,
+each with a testid: `provider-list-loading` (fetching
+`GET /api/v1/models?purpose=configure`, or React Query `paused`),
+`provider-list-error`, `provider-list-empty` (the search box filtered everything
+out) and `provider-list` (settled, holding the rows).
+
+Every spec and helper in this area waits through
+`waitForProviderRow()` instead of a bare `provider-item-<Name>` locator, so a row
+that does not arrive is reported as `stalled` / `errored` / `filtered` / `absent`
+/ `unreached` rather than as an anonymous timeout. Budgets are deliberately
+**unchanged**: raising them would mask the instance stall this exists to name.
+
+Why it was worth a helper (#1648): a bare wait produced **20 attempts across 8 of
+25 dailies** (2026-08-04 → 2026-08-31) over 12 spec files and three providers
+(Google 9, OpenAI 8, Anthropic 3), and in **0 of 20** did the call log get past
+`waiting for <locator>`. The failure-time screenshot of daily `33410643882` shows
+`Loading providers...` while the aria snapshot taken moments later shows all nine
+rows — the same artifacts read as a product defect at triage and as an
+environment stall on review. No pattern in
+`scripts/lib/infra-signature-patterns.json` matches a locator timeout, so
+`infra_signature` was `null` for all of them (#1589), and since
+`reports/daily-history.jsonl` records only the normalized first error line, a
+search for `provider-item` across all 21 August dailies returns zero (#1626).
+
+The classification lives in the pure `providerRowVerdict()` and is unit-tested in
+`provider-list-state.test.ts`; the async wrapper only reads the DOM.
+
+---
+
 ## Validation criterion *(required)*
 
 Every test asserts a **specific, live-scouted observable** (testid visibility,
@@ -328,7 +367,35 @@ accepted / fake rejected), remove key — are each pinned by at least one test.
 
 ---
 
+## Flow cleanup *(required)*
+
+`model-provider-api-key.spec.ts` looks like it creates nothing — all three tests
+only open Settings — and it created two flows per run. `awaitBootstrapTest` calls
+`addFlowToTestOnEmptyLangflow` whenever the current project renders
+`new_project_btn_empty_page`, which a fresh instance does, so the file's FIRST
+test left `New Flow` + `Basic Prompting` behind while the two later ones added
+none. Measured on `1.12.0.dev44` (#1648).
+
+It now tracks every `POST /api/v1/flows` → 201 id fired from `openModelProviders`
+and deletes them by id in `test.afterEach` — **id-scoped**, never by name and
+never delete-all, because the seeded starter projects carry both of those exact
+names and a name-based cleanup here would be a cross-worker wiper (#553/#520).
+
+Verified in both directions: 26 flows before and 26 after, over three consecutive
+runs AND over a deliberately failed one — a teardown that only fires on the happy
+path is the leak it was written to close.
+
+Behavioral force-fail contract: no-op the `afterEach` and the flow count grows by
+2 on the first run against an empty project.
+
+---
+
 ## External dependencies *(required)*
+
+- `tests/helpers/provider-setup/provider-list-state.ts` — `waitForProviderRow()` + the pure `providerRowVerdict()` (#1648), used by every spec and setup helper in this area.
+- `src/frontend/src/modals/modelProviderModal/components/ProviderList.tsx` — owns the four state testids (`provider-list-loading`, `provider-list-error`, `provider-list-empty`, `provider-list`).
+- `src/frontend/src/modals/modelProviderModal/components/ProviderListItem.tsx` — the row, whose testid is `provider-item-` plus the provider's display name.
+- `src/frontend/src/modals/modelProviderModal/components/ModelProvidersContent.tsx` — hosts `provider-search-input`, read by the `filtered` verdict.
 
 - `src/frontend/src/pages/SettingsPage/` — Model Providers page
   (`provider-list`, `provider-item-*`, `provider-variable-input-*`,

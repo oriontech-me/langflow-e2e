@@ -7,6 +7,7 @@ import {
   selectPinnedModelOption,
 } from "./model-option";
 import { openProviderPanel } from "./provider-panel-entry";
+import { waitForProviderRow } from "./provider-list-state";
 
 export async function setupOpenAI(
   page: Page,
@@ -27,8 +28,13 @@ export async function setupOpenAI(
   // addressable by role+name — see provider-panel-entry.ts (#1465).
   if ((await openProviderPanel(page, "OpenAI")) === "no-agent") return;
 
-  // Step 3: Select the OpenAI provider
-  await page.getByTestId("provider-item-OpenAI").click();
+  // Step 3: Select the OpenAI provider.
+  // Waited through waitForProviderRow so a row that never arrives names the
+  // provider list's own state instead of timing out anonymously (#1648): the
+  // 20 s budget below is `actionTimeout`, unchanged — what changes is that a
+  // wedged instance says PROVIDER_LIST_STALLED rather than
+  // "waiting for getByTestId('provider-item-OpenAI')".
+  await (await waitForProviderRow(page, "provider-item-OpenAI", 20000)).click();
 
   // Step 4: Save the API key if the config panel is visible.
   // The config panel animates in (300ms) and requires a backend fetch after the provider

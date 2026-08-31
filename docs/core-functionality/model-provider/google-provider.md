@@ -1,6 +1,6 @@
 # Google Provider — configure key, select Gemini
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (provider-row wait + Test 1 flow cleanup measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -182,13 +182,23 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   completion. Tool execution stays covered by `agent-component-regression.spec.ts`.
   The Playground builds the *persisted* flow, so the deletion is followed by
   `waitForFlowSaveSettled`.
-- **Flow cleanup (id-scoped, issue #605):** Test 2 creates a flow via
-  `SimpleAgentTemplatePage.load()`, which does NO cleanup (post-#553 contract).
-  The spec tracks every `POST /api/v1/flows` → 201 id fired during load and
-  deletes them by id in `test.afterEach` (transient ids 404 harmlessly —
+- **Flow cleanup (id-scoped, issue #605; extended in #1648):** Test 2 creates a
+  flow via `SimpleAgentTemplatePage.load()`, which does NO cleanup (post-#553
+  contract). The spec tracks every `POST /api/v1/flows` → 201 id fired during
+  load and deletes them by id in `test.afterEach` (transient ids 404 harmlessly —
   `deleteFlow` treats 404 as done). Never a name-based or delete-all cleanup
   (cross-worker wiper class, #553/#520). Same pattern as
   `anthropic-provider.spec.ts`.
+
+  **Test 1 registers the same tracker, and until #1648 it did not.** It never
+  calls `loadAgent`, so the listener that `loadAgent` installs was never armed
+  for it — while the test still created flows: `awaitBootstrapTest` calls
+  `addFlowToTestOnEmptyLangflow` whenever the current project renders
+  `new_project_btn_empty_page`, which a fresh instance does. Measured on
+  `1.12.0.dev44`: from an empty default project this file left `New Flow` +
+  `Basic Prompting` behind, **2 flows per run**, and 0 after the fix — verified
+  on three consecutive runs and on a deliberately failed one, since a teardown
+  that only runs on the happy path is the leak it was meant to close.
 - **Per-run sentinel** proves *this* execution produced the output.
 - **Shared global key:** the Google key is global and persists across runs. Test 1
   is idempotent — it re-saves and asserts the request outcomes, not a fresh start.
