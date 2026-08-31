@@ -1375,7 +1375,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 534 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 528 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1485,13 +1485,11 @@
 - [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
-- [x] a stale node-update response does not revert the action edits → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
 - [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
-- [x] a stale refresh response does not revert a committed User Action → `human-input-node-config.spec.ts`
 - [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
@@ -1629,9 +1627,7 @@
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
-- [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
-- [x] mirrored context-scoped retrievals return only their own context's messages → `agent-context-id-isolation.spec.ts`
 - [x] switching the agent's context_id re-tags new turns without touching previous ones → `agent-context-id-isolation.spec.ts`
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
@@ -1846,7 +1842,6 @@
 - [x] every language the selector offers loads a translation bundle → `language-selection.spec.ts`
 - [x] the application boots into a shipped language for every unsupported or regional preference → `locale-resilience.spec.ts`
 - [x] the application boots in English and never adopts the browser locale as a preference → `locale-resilience.spec.ts`
-- [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
@@ -1909,7 +1904,6 @@
 - [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] zoom in and zoom out step the canvas scale and clamp at the React Flow bounds → `canvas-zoom-navigation.spec.ts`
 - [x] Fit View centers every node inside the canvas viewport → `canvas-zoom-navigation.spec.ts`
-- [x] Fit View is reachable from the canvas controls toolbar → `canvas-zoom-navigation.spec.ts`
 - [x] wheel scroll navigates the canvas anchored at the pointer → `canvas-zoom-navigation.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
