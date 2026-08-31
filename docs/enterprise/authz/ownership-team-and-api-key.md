@@ -63,6 +63,16 @@ a matrix subject. The start script now derives a valid key deterministically, so
 stable across restarts — the property the original literal was chosen for — without being a
 magic value nobody can regenerate.
 
+## Note — the owner override (#1635)
+
+Since the 2026-08-27 Enterprise build, `flow:create` is allowed by an **owner override** when
+the destination project belongs to the caller, and a bare `POST /api/v1/flows/` canonicalises
+to exactly that project. Any probe here that means "this subject is refused" therefore names a
+destination the subject does **not** own, via `attemptFlowCreate(…, folderId)`.
+
+The full reasoning, and the test that pins the override as a scoped rule rather than a hole,
+live in `rbac-instance-baseline.md`.
+
 ## Tags *(required)*
 
 `@enterprise` `@api` `@regression` `@authz`

@@ -12,6 +12,7 @@ import {
   requireRbacInstance,
   shareWithTeam,
   type RbacUser,
+  getProjectOwnedBy,
 } from "../../../../helpers/enterprise/rbac";
 
 /**
@@ -271,6 +272,8 @@ test.describe("Enterprise — ownership, team membership and API keys", () => {
           expect(read.status()).toBe(200);
         });
 
+        const foreignProjectId = await getProjectOwnedBy(request, auth);
+
         await test.step("and nothing its owner cannot reach", async () => {
           // The escalation this test exists for: a key that answered otherwise
           // would be a path around the whole authorization model, mintable by
@@ -280,11 +283,18 @@ test.describe("Enterprise — ownership, team membership and API keys", () => {
             (await request.get(`/api/v1/flows/${foreignId}`, { headers: viaKey }))
               .status(),
           ).toBe(404);
+          // Into a project the owner does not own: a bare create would land in
+          // their own, where the owner override allows it and this assertion
+          // would be measuring the override rather than the key's ceiling
+          // (#1635).
           expect(
             (
               await request.post("/api/v1/flows/", {
                 headers: viaKey,
-                data: scratchFlow(`key-denied-${Date.now()}`),
+                data: {
+                  ...scratchFlow(`key-denied-${Date.now()}`),
+                  folder_id: foreignProjectId,
+                },
               })
             ).status(),
           ).toBe(403);

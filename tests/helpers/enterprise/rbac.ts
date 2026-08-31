@@ -710,6 +710,15 @@ export interface AuditEntry {
   action?: string;
   result?: string;
   resource_type?: string;
+  /**
+   * The decision's context. `domain` names the scope the verdict was reached
+   * in — `project:<id>` for a flow write — and it is what lets a caller tell
+   * two decisions by the same actor on the same action apart. Without it an
+   * assertion over `action === "flow:create"` is satisfied by any sibling
+   * test's event, which is how the first version of the owner-override
+   * assertion passed against a mutation that inverted its claim.
+   */
+  details?: { domain?: string; [key: string]: unknown };
 }
 
 /** The audit log's newest page. The envelope is `{items, page, pages, size, total}`. */
@@ -990,6 +999,99 @@ function writeCachedSubject(subject: RbacUser): void {
  * silently, so trusting the file without probing would turn a fresh container
  * into a wall of 401s attributed to the specs.
  */
+/**
+ * A project owned by whoever `ownerAuth` identifies.
+ *
+ * Callers use it to build the write that a given subject must NOT be allowed:
+ * pass the SUPERUSER's auth to get a target foreign to the shared subject, and
+ * pass the SUBJECT's auth to get one foreign to the superuser. Which direction
+ * is needed is the caller's question, and getting it backwards is not
+ * hypothetical — the first version of this helper returned only the superuser's
+ * project and the superuser's own probe then measured the override on itself.
+ *
+ * Since the 2026-08-27 Enterprise build, `flow:create` carries an OWNER
+ * OVERRIDE: creating a flow in a project you own is allowed regardless of role,
+ * and the audit log records the verdict as `owner_override` rather than `allow`.
+ * A bare `POST /api/v1/flows/` therefore no longer probes the resource guard at
+ * all — an omitted `folder_id` canonicalises to the caller's own project, so the
+ * override always applies and the call answers `201` for anybody.
+ *
+ * Every spec in this directory that used that call as its "is this subject
+ * refused?" probe was silently measuring the override instead (#1635). Pointing
+ * the same write at a project owned by the SUPERUSER restores the question:
+ * measured, a role-less subject writing there is refused `403 Permission
+ * denied` and the attempt is audited as `deny`.
+ *
+ * Found by a stable NAME rather than by position in the listing — the superuser
+ * accumulates several `Starter Project` rows and taking `[0]` would make the
+ * probe depend on their order. `GET /api/v1/projects/` is already scoped to the
+ * caller, so each owner gets their own row under the same name. Created once and
+ * left behind on purpose, exactly like the shared subject: it is inert, it is
+ * reused by every spec here, and deleting it per run would cost a create per
+ * spec on an instance that is recreated wholesale anyway.
+ */
+export const SCOPE_PROBE_PROJECT_NAME = "authz-foreign-scope";
+
+export async function getProjectOwnedBy(
+  request: APIRequestContext,
+  ownerAuth: string,
+): Promise<string> {
+  const headers = { Authorization: ownerAuth };
+
+  const listed = await request.get("/api/v1/projects/", { headers });
+  expect(listed.status(), await listed.text()).toBe(200);
+  const body = (await listed.json()) as
+    | { id: string; name: string }[]
+    | { projects: { id: string; name: string }[] };
+  const projects = Array.isArray(body) ? body : body.projects;
+  const existing = projects.find((project) => project.name === SCOPE_PROBE_PROJECT_NAME);
+  if (existing) return existing.id;
+
+  const created = await request.post("/api/v1/projects/", {
+    headers,
+    data: { name: SCOPE_PROBE_PROJECT_NAME },
+  });
+  if (created.ok()) return ((await created.json()) as { id: string }).id;
+
+  // A ROLE-LESS owner cannot create one, and that is not a failure of this
+  // helper — `project:create` is still enforced for them, which is the control
+  // that shows authorization is on at all. They do own exactly one project
+  // regardless: Langflow seeds a Starter Project for every account. Fall back to
+  // it, and refuse to guess when the count is not one, because "somebody's
+  // project" chosen by list position is precisely the non-determinism the name
+  // lookup above exists to avoid.
+  if (created.status() !== 403) {
+    throw new Error(
+      `Could not obtain a project for this owner: POST /api/v1/projects/ ` +
+        `answered ${created.status()} — ${(await created.text()).slice(0, 160)}`,
+    );
+  }
+  if (projects.length === 1) return projects[0].id;
+  throw new Error(
+    `This owner cannot create a project (403) and owns ${projects.length} of them, ` +
+      `so none can be chosen deterministically. Grant it a role, or seed a ` +
+      `'${SCOPE_PROBE_PROJECT_NAME}' project for it explicitly.`,
+  );
+}
+
+/**
+ * The write that asks whether the resource guard refuses this subject.
+ *
+ * `folderId` is REQUIRED rather than optional, so a caller cannot accidentally
+ * fall back to the override path the way every pre-#1635 call site did.
+ */
+export function attemptFlowCreate(
+  request: APIRequestContext,
+  auth: string,
+  name: string,
+  folderId: string,
+) {
+  return request.post("/api/v1/flows/", {
+    headers: { Authorization: auth },
+    data: { name, description: "", data: { nodes: [], edges: [] }, folder_id: folderId },
+  });
+}
+
 export async function getSharedRbacSubject(
   request: APIRequestContext,
   auth: string,

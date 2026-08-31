@@ -7,6 +7,8 @@ import {
   getSharedRbacSubject,
   readAuditLog,
   requireRbacInstance,
+  attemptFlowCreate,
+  getProjectOwnedBy,
 } from "../../../../helpers/enterprise/rbac";
 
 /**
@@ -76,6 +78,7 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
       await requireRbacInstance(request, auth);
 
       const user = await getSharedRbacSubject(request, auth);
+      const foreignProjectId = await getProjectOwnedBy(request, auth);
       const roles = await builtinRoleIds(request, auth);
       const deniedName = `rbac-denied-${Date.now()}`;
       const allowedName = `rbac-allowed-${Date.now()}`;
@@ -84,10 +87,17 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
 
       try {
         await test.step("with no role, the write is refused", async () => {
-          const attempt = await request.post("/api/v1/flows/", {
-            headers: { Authorization: user.auth },
-            data: scratchFlow(deniedName),
-          });
+          // Into a project the subject does not own. Since the 2026-08-27 build
+          // a bare create lands in the caller's OWN project, where the owner
+          // override allows it for anybody — so the bare call stopped asking
+          // this question at all (#1635). The override itself is asserted by the
+          // sibling test below; this one is about the guard.
+          const attempt = await attemptFlowCreate(
+            request,
+            user.auth,
+            deniedName,
+            foreignProjectId,
+          );
           expect(attempt.status()).toBe(403);
         });
 
@@ -116,10 +126,16 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
             await assignRole(request, auth, user.id, roles.developer),
           );
 
-          const after = await request.post("/api/v1/flows/", {
-            headers: { Authorization: user.auth },
-            data: scratchFlow(allowedName),
-          });
+          // The IDENTICAL call — same target project, not merely the same verb.
+          // Repeating it against the subject's own project instead would be
+          // answered by the owner override, which grants without consulting the
+          // role, and the pair would no longer be about the role at all.
+          const after = await attemptFlowCreate(
+            request,
+            user.auth,
+            allowedName,
+            foreignProjectId,
+          );
           expect(after.status(), await after.text()).toBe(201);
           flowId = ((await after.json()) as { id: string }).id;
         });
@@ -149,6 +165,93 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
         // cached between runs, so deleting it would cost a fresh login on the
         // next one — the cost sharing it exists to avoid.
         await resetSubjectGrants(request, auth, { assignments, shares: [] });
+      }
+    },
+  );
+
+  test(
+    "the owner override is scoped: it covers a project you own and nothing else",
+    { tag: ["@enterprise", "@api", "@regression", "@authz"] },
+    async ({ request }) => {
+      const auth = await getEnterpriseAuthToken(request);
+      await requireRbacInstance(request, auth);
+
+      const user = await getSharedRbacSubject(request, auth);
+      await resetSubjectGrants(request, auth, { assignments: [], shares: [] });
+
+      const foreignProjectId = await getProjectOwnedBy(request, auth);
+      const ownProjectId = await getProjectOwnedBy(request, user.auth);
+      const ownName = `override-own-${Date.now()}`;
+      const foreignName = `override-foreign-${Date.now()}`;
+      let created: string | undefined;
+
+      try {
+        await test.step("into a project it owns, a role-less subject is allowed", async () => {
+          // Since the 2026-08-27 build, `flow:create` carries an owner override:
+          // owning the destination grants the write without a role. Asserted
+          // because it is the behaviour, not because it is desirable — before
+          // this test the override was reachable by every spec here and named by
+          // none of them, so a build that widened it would have looked like a
+          // suite that had always passed (#1635).
+          const response = await attemptFlowCreate(
+            request,
+            user.auth,
+            ownName,
+            ownProjectId,
+          );
+          expect(response.status(), await response.text()).toBe(201);
+          created = ((await response.json()) as { id: string }).id;
+        });
+
+        await test.step("into a project it does not own, the same subject is refused", async () => {
+          // THE assertion. Without it "role-less can create flows" is
+          // indistinguishable from "authorization is off", and the override
+          // would be a hole rather than a rule.
+          const response = await attemptFlowCreate(
+            request,
+            user.auth,
+            foreignName,
+            foreignProjectId,
+          );
+          expect(response.status()).toBe(403);
+          expect(((await response.json()) as { detail: string }).detail).toBe(
+            "Permission denied",
+          );
+        });
+
+        await test.step("and the log distinguishes the two by verdict, not by status", async () => {
+          // `owner_override` is a THIRD verdict, not a flavour of `allow`. An
+          // operator reviewing who may write where needs to see which rule
+          // answered; folding it into `allow` would hide the override entirely,
+          // and folding it into `deny` would misreport a permitted write.
+          // Keyed on the DESTINATION, not merely on the actor and the action.
+          // The looser version passed against a mutation that swapped
+          // `owner_override` for `allow`, because a sibling test in this file
+          // produces an `allow` for the same actor and `arrayContaining` found
+          // it. Scoping each verdict to the project it was reached in is both
+          // immune to that and a stronger statement: the same subject, the same
+          // action, two destinations, two verdicts.
+          const mine = (await readAuditLog(request, auth)).filter(
+            (entry) => entry.actor_id === user.id && entry.action === "flow:create",
+          );
+          const verdictFor = (projectId: string) =>
+            mine.find((entry) => entry.details?.domain === `project:${projectId}`)?.result;
+
+          expect(
+            verdictFor(ownProjectId),
+            "no audit entry for the write into the subject's own project",
+          ).toBe("owner_override");
+          expect(
+            verdictFor(foreignProjectId),
+            "no audit entry for the write into the project it does not own",
+          ).toBe("deny");
+        });
+      } finally {
+        if (created) {
+          await request
+            .delete(`/api/v1/flows/${created}`, { headers: { Authorization: auth } })
+            .catch(() => undefined);
+        }
       }
     },
   );

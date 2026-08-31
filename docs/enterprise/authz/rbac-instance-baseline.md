@@ -63,6 +63,39 @@ not fail for a reason belonging to a different question:
   admin-route guard), and `Superuser required to administer roles.` — that last one means
   role administration is gated on *superuser*, not on the admin role.
 
+## The owner override, and why every probe here names its destination
+
+**Measured on the 2026-08-27 Enterprise build (#1635).** `flow:create` carries an **owner
+override**: creating a flow in a project you own is allowed regardless of role, and the audit
+log records the verdict as **`owner_override`** — a third value alongside `allow` and `deny`,
+which the admin console's audit filter has always offered.
+
+The consequence for this suite is larger than it sounds. Every spec in this directory probed
+the resource guard with a bare `POST /api/v1/flows/`, and an omitted `folder_id`
+**canonicalises to the caller's own project**. So on this build that call is answered by the
+override for anybody, and four specs that read as "is this subject refused?" were measuring
+something else entirely. They did not fail quietly — they failed loudly, which is the only
+reason this was found.
+
+Two corrections came out of it, and both make the coverage stronger than it was:
+
+- **The probe names a destination.** `attemptFlowCreate` takes `folderId` as a **required**
+  argument precisely so a caller cannot fall back to the override path by omission, the way
+  every pre-#1635 call site did. Which project is "foreign" depends on who is being probed:
+  the shared subject is probed against a project owned by the **superuser**, and the superuser
+  against one owned by the **subject**. Getting that backwards is not hypothetical — the first
+  version of the helper returned only the superuser's project, and the superuser's own probe
+  then measured the override on itself.
+- **The override is now asserted, not merely avoided.** A new test pins it as a *scoped rule*:
+  the same subject, the same action, two destinations, two verdicts. Without that boundary,
+  "a role-less user can create flows" is indistinguishable from "authorization is off", and a
+  build that widened the override would look like a suite that had always passed.
+
+The audit half of that test keys each verdict on `details.domain` — the project the decision
+was reached in — rather than collecting results for the actor. The looser version **passed a
+mutation that swapped `owner_override` for `allow`**, because a sibling test in the same file
+produces an `allow` for the same actor and `arrayContaining` found it.
+
 ## Tags *(required)*
 
 `@enterprise` `@api` `@regression` `@authz`

@@ -75,7 +75,10 @@ async function attemptDeploy(
 ) {
   return request.post("/api/v1/control-plane/deployments", {
     headers: { Authorization: auth },
-    data: { project_id: projectId, environment: "production" },
+    // `slug` became required on the 2026-08-27 build. Without it FastAPI answers
+    // `422` before authorization runs — for the superuser too — so the request
+    // never reached the verdict this helper exists to observe (#1635).
+    data: { project_id: projectId, environment: "production", slug: `authz-probe-${Date.now()}` },
   });
 }
 
