@@ -1,5 +1,6 @@
 import { type Locator, type Page, expect } from "@playwright/test";
 import { enumerateModelOptions } from "./model-option";
+import { waitForProviderRow } from "./provider-list-state";
 
 // Cheap, fast chat models in priority order. `gpt-4o-mini` is kept first so older
 // Langflow builds still match; the `gpt-5.x` entries cover newer builds (1.11.0+)
@@ -144,8 +145,10 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
     // Setup Provider button and intercepts the click (issue #580). dispatchEvent
     // targets the button directly and bypasses that interception.
     await page.getByRole("button", { name: "Setup Provider" }).dispatchEvent("click");
-    await page.waitForSelector('[data-testid="provider-item-OpenAI"]', { timeout: 10000 });
-    await page.getByTestId("provider-item-OpenAI").click();
+    // Through waitForProviderRow (#1648) so a list that never settles reports
+    // PROVIDER_LIST_STALLED instead of an anonymous locator timeout. Budget
+    // unchanged at the 10 s this call site already used.
+    await (await waitForProviderRow(page, "provider-item-OpenAI", 10000)).click();
 
     const apiKeyInput = page.getByPlaceholder("sk-...");
     // Wait for the form panel to animate in before checking visibility
@@ -280,9 +283,11 @@ async function configureOpenAIProviderFromDropdown(page: Page): Promise<void> {
   }
 
   await page.getByTestId("manage-model-providers").click();
-  // The provider list is fetched when the modal mounts (`provider-list-loading`).
-  await page.waitForSelector('[data-testid="provider-item-OpenAI"]', { timeout: 15000 });
-  await page.getByTestId("provider-item-OpenAI").click();
+  // The provider list is fetched when the modal mounts (`provider-list-loading`)
+  // — waitForProviderRow reads that state and names it when the row does not
+  // arrive, rather than leaving the reader with a bare locator timeout (#1648).
+  // Budget unchanged at the 15 s this call site already used.
+  await (await waitForProviderRow(page, "provider-item-OpenAI", 15000)).click();
 
   const apiKeyInput = page.getByPlaceholder("sk-...");
   await apiKeyInput.waitFor({ state: "visible", timeout: 10000 });

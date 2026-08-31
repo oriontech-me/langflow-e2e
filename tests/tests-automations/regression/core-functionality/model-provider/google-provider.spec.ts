@@ -12,6 +12,7 @@ import {
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 
 /**
@@ -42,7 +43,14 @@ const PROVIDER = "google";
 // creates (POST /api/v1/flows → 201) and delete those ids in afterEach (#605).
 const createdFlowIds: string[] = [];
 
-async function loadAgent(page: Page, model?: string): Promise<void> {
+// Registered by BOTH entry points, not just `loadAgent` (#1648). Test 1 never
+// loads the Agent template — it only opens Settings — so it used to leave the
+// tracker unregistered while still creating flows: `awaitBootstrapTest` calls
+// `addFlowToTestOnEmptyLangflow` whenever the current project renders
+// `new_project_btn_empty_page`, which it does on a fresh instance. Measured on
+// 1.12.0.dev44: running this file against an empty default project left
+// `New Flow` + `Basic Prompting` behind, 2 flows per run.
+function trackCreatedFlows(page: Page): void {
   page.on("response", (resp) => {
     if (
       resp.url().includes("/api/v1/flows") &&
@@ -57,6 +65,10 @@ async function loadAgent(page: Page, model?: string): Promise<void> {
         .catch(() => {}); // non-JSON / batch payloads
     }
   });
+}
+
+async function loadAgent(page: Page, model?: string): Promise<void> {
+  trackCreatedFlows(page);
   try {
     await new SimpleAgentTemplatePage(page).load({ provider: PROVIDER, model });
   } catch (e: any) {
@@ -106,6 +118,7 @@ test.describe("Google Provider", () => {
       // {valid: true} and this test still passes. Gating it would trade real
       // coverage of the Settings save path for nothing on exactly the days the
       // account is down. Test 2, which does call the model, IS gated.
+      trackCreatedFlows(page);
       await awaitBootstrapTest(page, { skipModal: true });
 
       await test.step("open Settings → Model Providers → Google Generative AI", async () => {
@@ -115,7 +128,12 @@ test.describe("Google Provider", () => {
           "Model Providers",
           { timeout: 10000 },
         );
-        await page.getByTestId("provider-item-Google Generative AI").click();
+        // Through waitForProviderRow (#1648): this call site recorded 1 of the
+        // 20 provider-row timeouts measured across the 2026-08 dailies. Budget
+        // unchanged (20 s `actionTimeout`).
+        await (
+          await waitForProviderRow(page, "provider-item-Google Generative AI", 20000)
+        ).click();
       });
 
       await test.step("enter the key and save — assert the save requests succeed", async () => {

@@ -7,6 +7,7 @@ import {
   selectPinnedModelOption,
 } from "./model-option";
 import { openProviderPanel } from "./provider-panel-entry";
+import { waitForProviderRow } from "./provider-list-state";
 import { providerAlreadyConfigured } from "./provider-config-state";
 
 export async function setupGoogle(
@@ -19,8 +20,13 @@ export async function setupGoogle(
   // addressable by role+name — see provider-panel-entry.ts (#1465).
   if ((await openProviderPanel(page, "Google Generative AI")) === "no-agent") return;
 
-  // Step 3: Select the Google Generative AI provider
-  await page.getByTestId("provider-item-Google Generative AI").click();
+  // Step 3: Select the Google Generative AI provider.
+  // Through waitForProviderRow (#1648): this exact call site is 8 of the 20
+  // provider-row timeouts measured across the 2026-08 dailies, and every one of
+  // them reported only "waiting for getByTestId(...)". Budget unchanged.
+  await (
+    await waitForProviderRow(page, "provider-item-Google Generative AI", 20000)
+  ).click();
 
   // Step 4: Configure the API key — but only if the provider is not already set up.
   // A configured provider shows a "Disconnect" button with the key field masked;
