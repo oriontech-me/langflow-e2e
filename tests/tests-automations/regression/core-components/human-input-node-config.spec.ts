@@ -274,8 +274,10 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
     },
   );
 
-  test("a stale refresh response does not revert a committed User Action",
-    { tag: ["@stable", "@regression", "@components", "@ui-ux"] },
+  // QUARANTINED for #1644 — the stale-response park never engages, so this guard asserts on an unmeasured run
+  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
+  test.fixme("a stale refresh response does not revert a committed User Action",
+    { tag: ["@regression", "@components", "@ui-ux"] },
     async ({ page }) => {
       let openGate: () => void = () => {};
       const gate = new Promise<void>((resolve) => {

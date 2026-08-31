@@ -496,8 +496,10 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       });
     });
 
-  test("Fit View is reachable from the canvas controls toolbar",
-    { tag: ["@stable", "@workspace", "@ui-ux"] },
+  // QUARANTINED for #1645 — the displaced entry viewport reads as already contained
+  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
+  test.fixme("Fit View is reachable from the canvas controls toolbar",
+    { tag: ["@workspace", "@ui-ux"] },
     async ({ page }) => {
       const controlTestIds = ["fit_view", "zoom_in", "zoom_out", "reset_zoom"];
 

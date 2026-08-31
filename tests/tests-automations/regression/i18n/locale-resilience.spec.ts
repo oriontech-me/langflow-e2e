@@ -238,9 +238,11 @@ test.describe("i18n — a key the active bundle does not carry", () => {
     await deleteFlow(request, flowId, { headers: { Authorization: token } });
   });
 
-  test(
+  // QUARANTINED for #1646 — the English-fallback probe key no longer falls back
+  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
+  test.fixme(
     "a missing key falls back to English beside siblings the bundle translates",
-    { tag: ["@stable", "@regression", "@ui-ux", "@workspace"] },
+    { tag: ["@regression", "@ui-ux", "@workspace"] },
     async ({ page }) => {
       // On 1.12.0.dev33 all six non-English bundles are missing the same five
       // keys `en` carries (2387 vs 2382). Two of them render unconditionally in
