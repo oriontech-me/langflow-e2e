@@ -38,7 +38,9 @@ Start a Langflow instance before running tests:
 ./scripts/start-langflow-docker.sh 1.5.1     # Docker — a released version (langflowai/langflow)
 LANGFLOW_IMAGE=langflowai/langflow:latest ./scripts/start-langflow-docker.sh   # any exact image
 ./scripts/start-langflow-pip.sh              # Via pip (local dev)
+./scripts/start-langflow-source.sh           # From a local source clone (the only option where containers are unavailable)
 ./scripts/stop-langflow-docker.sh            # Stop Docker instance
+LANGFLOW_PORT=7861 ./scripts/stop-langflow-source.sh   # Stop a source instance, by port
 ```
 
 ## Test Commands

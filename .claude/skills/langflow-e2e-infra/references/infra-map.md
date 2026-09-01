@@ -41,6 +41,7 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 |---|---|
 | `start-langflow-docker.sh` / `stop-langflow-docker.sh` | Bring a Langflow instance up/down via Docker. No arg → `langflowai/langflow-nightly:latest` (refreshed before start); a version arg → the released repo; `LANGFLOW_IMAGE` → an exact reference (`#1076`) |
 | `start-langflow-pip.sh` / `stop-langflow-pip.sh` | Same via pip (local dev). Caps to 1 worker to avoid OOM (`#888`) |
+| `start-langflow-source.sh` / `stop-langflow-source.sh` | Same from a LOCAL SOURCE CLONE — the only substrate on the QA VMs, where Docker and Podman cannot be installed. Keys PID file, database and config dir on the port so shards run side by side; never moves the clone unless `LANGFLOW_SRC_REF` is set |
 | `coverage-summary.ts` | Regenerates the QA-CHECKLIST Coverage Summary table (bullet markers → table) |
 | `stable-tests.ts` | Regenerates the `Phase 0 — Validated` block from `@stable` `test()` calls |
 | `check-checklist-guard.mjs` | PR guard: fails a PR that edits a generated QA-CHECKLIST block (`#741`) |
