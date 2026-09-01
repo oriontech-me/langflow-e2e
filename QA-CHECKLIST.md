@@ -1378,7 +1378,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 530 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 532 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1488,11 +1488,13 @@
 - [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
+- [x] a stale node-update response does not revert the action edits → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
 - [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
+- [x] a stale refresh response does not revert a committed User Action → `human-input-node-config.spec.ts`
 - [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
