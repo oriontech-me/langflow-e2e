@@ -34,13 +34,13 @@
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",
-    "@types/node": "^26.2.0",
-    "eslint": "^10.8.1",
+    "@types/node": "^26.4.0",
+    "eslint": "^10.9.1",
     "eslint-plugin-playwright": "^2.11.0",
     "playwright": "1.58.2",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.12",
     "typescript": "^5.4.5",
-    "typescript-eslint": "^8.67.0"
+    "typescript-eslint": "^8.68.0"
   }
 }
