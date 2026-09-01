@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-31
+> **Last updated:** 2026-09-01
 
 ---
 
@@ -1378,7 +1378,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 528 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 529 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1845,6 +1845,7 @@
 - [x] every language the selector offers loads a translation bundle → `language-selection.spec.ts`
 - [x] the application boots into a shipped language for every unsupported or regional preference → `locale-resilience.spec.ts`
 - [x] the application boots in English and never adopts the browser locale as a preference → `locale-resilience.spec.ts`
+- [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
