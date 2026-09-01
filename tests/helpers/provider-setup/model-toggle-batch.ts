@@ -102,8 +102,9 @@ export function flushVerdict(
       `${clicked} toggle(s) clicked, ${postsStarted} write(s) started, ` +
       `${postsFinished} finished. Closing the panel now takes the flush path that ` +
       `does NOT refresh the model picker, so the picker may still show the ` +
-      `pre-toggle set. Not failing here: the picker read that follows is the real ` +
-      `gate and names the disagreement itself (#1649).`,
+      `pre-toggle set. Not failing here: the read that follows is the real gate, and ` +
+      `it attributes the failure to THIS write — MODEL_TOGGLE_WRITE_STALLED — rather ` +
+      `than to the picker (#1649).`,
   });
 
   if (lastClickAt !== null && now - lastClickAt < options.quietMs) {
@@ -141,7 +142,90 @@ export type ToggleBatchResult = {
   checked: number;
   /** How the flush ended — `gave-up` is logged, never thrown. */
   verdict: FlushVerdict["kind"];
+  /** `POST /models/enabled_models` requests seen starting during the pass. */
+  writesStarted: number;
+  /** …and answering. `started > finished` on a give-up is THE stall signature. */
+  writesFinished: number;
 };
+
+/**
+ * The subset a caller must carry forward so a later failure can name this batch.
+ *
+ * Deliberately narrow: `visible`/`checked` describe the panel, and the panel is
+ * the source that LIES under a stall (`aria-checked` is the optimistic cache).
+ */
+export type ToggleBatchOutcome = Pick<
+  ToggleBatchResult,
+  "clicked" | "verdict" | "writesStarted" | "writesFinished"
+>;
+
+/**
+ * Prefixed `MODEL_` like its four siblings in `model-option.ts`, and deliberately
+ * NOT `MODEL_NOT_AVAILABLE`: every caller turns that prefix into a `test.skip`,
+ * and an instance that cannot accept a write must never be reported as a model
+ * the product does not have.
+ */
+export const MODEL_TOGGLE_WRITE_STALLED = "MODEL_TOGGLE_WRITE_STALLED";
+
+/**
+ * Why a later failure is this batch's fault rather than the picker's — or `null`
+ * when this batch cannot explain anything.
+ *
+ * PURE, for the same reason `flushVerdict` is. It exists because #1651's gate
+ * already OBSERVED the cause and printed it, and then dropped it: 90 s later the
+ * picker read failed naming two hypotheses nobody had measured ("the picker did
+ * not refresh, or the option list is filtered"), while the measured cause — the
+ * write was issued and never answered — sat in a log line no failure message, no
+ * `error_signature` and no triage dataset correlates. That is why #1649 was
+ * verdicted twice and reopened.
+ *
+ * Three properties are load-bearing, each pinned by a unit test:
+ *
+ *   - an UNOBSERVED batch (`undefined`) yields `null` — a source nobody read must
+ *     never be reported as a negative one (#1012);
+ *   - a SETTLED batch yields `null`, which is what keeps `MODEL_PICKER_DEFECT`
+ *     alive for the genuine, unexplained disagreement #1461 wrote it for;
+ *   - a panel nobody changed yields `null`, so a healthy run can never print an
+ *     instance-stall verdict.
+ */
+export function writeStallReason(batch?: ToggleBatchOutcome): string | null {
+  if (!batch) return null;
+  if (batch.verdict !== "gave-up") return null;
+  if (batch.clicked === 0) return null;
+  return (
+    `the enable write never answered — ${batch.clicked} toggle(s) clicked, ` +
+    `${batch.writesStarted} write(s) started, ${batch.writesFinished} finished before the ` +
+    `flush budget expired, so POST /api/v1/models/enabled_models did not land`
+  );
+}
+
+/**
+ * The message for a `model_model` trigger that never became usable after the
+ * panel closed on a stalled batch — or `null` when the batch cannot explain it.
+ *
+ * Two of #1649's six occurrences were exactly this, 60 s each
+ * (`locator.waitFor: Timeout 60000ms exceeded ... getByTestId('model_model')`),
+ * with nothing in the message naming a cause. The post-close refresh runs in the
+ * batch's own `onSettled`, which never fired — so a trigger that never returns is
+ * the same instance stall, not a trigger or testid defect. `original` is kept
+ * verbatim: a re-labelled failure that discards Playwright's own call log is
+ * harder to triage, not easier.
+ */
+export function modelTriggerStallMessage(
+  batch: ToggleBatchOutcome | undefined,
+  context: { providerLabel: string; original: string },
+): string | null {
+  const reason = writeStallReason(batch);
+  if (reason === null) return null;
+  return (
+    `${MODEL_TOGGLE_WRITE_STALLED}: the model picker's trigger never became usable after ` +
+    `the provider panel closed for ${context.providerLabel} — ${reason}. The panel's ` +
+    `post-close refresh runs in that write's own onSettled, which never fired, so this is ` +
+    `an INSTANCE stall — not a picker defect, not a missing testid and not a model that is ` +
+    `gone. Do not raise this budget to make it pass (#1649). Original error: ` +
+    `${context.original}`
+  );
+}
 
 /**
  * Enables every visible model toggle in the OPEN provider panel, then waits for
@@ -219,7 +303,16 @@ export async function enableAndSettleModelToggles(
     const checked = await page
       .locator('[data-testid^="llm-toggle"]:visible[aria-checked="true"]')
       .count();
-    return { visible, clicked: observation.clicked, checked, verdict: verdict.kind };
+    return {
+      visible,
+      clicked: observation.clicked,
+      checked,
+      verdict: verdict.kind,
+      // Returned, not merely printed: the give-up message already carried these
+      // and the caller could not read them, which is the whole of #1649's reopen.
+      writesStarted: observation.postsStarted,
+      writesFinished: observation.postsFinished,
+    };
   } finally {
     page.off("request", onRequest);
     page.off("requestfinished", onFinished);

@@ -366,3 +366,104 @@ test("with only listedModels observed the message says so instead of claiming EN
   assert.match(verdict.message, /listed by the provider panel/);
   assert.ok(!/is ENABLED in the provider panel/.test(verdict.message));
 });
+
+// --- #1649 (reopened): a stalled write is not a picker defect ---
+//
+// The loud "is ENABLED in the provider panel" verdict reads `aria-checked`, which is
+// `useModelToggleQueue`'s OPTIMISTIC cache: it flips at click time, before any
+// request. So when the batched write never answers, the panel claims the model is on
+// while the server still has only its `MIN_DEFAULT_MODELS` five — and the picker,
+// rendering the server's truth, is the honest source. On the 2026-09-01 daily that
+// state produced four `MODEL_PICKER_DEFECT` failures naming two hypotheses nobody
+// had measured, while the gate had printed the actual cause 90 s earlier.
+//
+// The stall verdict is consulted INSIDE the checked-includes-requested branch, after
+// `empty`/`match`/`unmatchable`: a picker that DID offer the model is never a stall,
+// and a stall must not rewrite a verdict about one.
+
+const STALLED = {
+  clicked: 30,
+  verdict: "gave-up" as const,
+  writesStarted: 1,
+  writesFinished: 0,
+};
+
+test("a picker miss after a STALLED write blames the write, not the picker", () => {
+  const verdict = resolveModelOption("gemini-3.5-flash", [option("OpenAI", "gpt-4o-mini")], {
+    listedModels: ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+    checkedModels: ["gemini-3.5-flash"],
+    providerLabel: "Google Generative AI",
+    toggleWrite: STALLED,
+  });
+  assert.equal(verdict.kind, "write-stalled");
+  // Loud, and never a skip: the whole point of #1461's assertion survives.
+  assert.ok(!verdict.message.startsWith("MODEL_NOT_AVAILABLE"));
+  assert.match(verdict.message, /^MODEL_TOGGLE_WRITE_STALLED:/);
+  // It must NOT keep asserting the panel's claim as a fact about the server.
+  assert.ok(!/is ENABLED in the provider panel/.test(verdict.message));
+  assert.match(verdict.message, /OPTIMISTIC/);
+  assert.match(verdict.message, /1 write\(s\) started, 0 finished/);
+  // The picker's own counts stay in the message: they are what shows the server had
+  // the five defaults, which is the reading that makes the picker correct.
+  assert.match(verdict.message, /1 option\(s\)/);
+  assert.match(verdict.message, /MIN_DEFAULT_MODELS/);
+  assert.match(verdict.message, /INSTANCE stall/);
+});
+
+test("a picker miss after a SETTLED write is still MODEL_PICKER_DEFECT", () => {
+  // The load-bearing negative. If the stall branch widened to every give-up-shaped
+  // context, the genuine picker/panel disagreement #1461 exists to catch would be
+  // relabelled as an environment problem and stop being investigated.
+  const verdict = resolveModelOption("gemini-3.5-flash", [option("OpenAI", "gpt-4o-mini")], {
+    listedModels: ["gemini-3.5-flash"],
+    checkedModels: ["gemini-3.5-flash"],
+    providerLabel: "Google Generative AI",
+    toggleWrite: { clicked: 30, verdict: "settled", writesStarted: 1, writesFinished: 1 },
+  });
+  assert.equal(verdict.kind, "unmatchable");
+  assert.match(verdict.message, /^MODEL_PICKER_DEFECT:/);
+  assert.match(verdict.message, /is ENABLED in the provider panel/);
+});
+
+test("an unobserved batch leaves every existing verdict byte-identical", () => {
+  // Callers that never ran the gate (and every caller before this change) pass no
+  // `toggleWrite`. An unobserved source must not be read as a negative one (#1012),
+  // so the message they get is the one they got before.
+  const withoutContext = resolveModelOption(
+    "gemini-3.5-flash",
+    [option("OpenAI", "gpt-4o-mini")],
+    {
+      listedModels: ["gemini-3.5-flash"],
+      checkedModels: ["gemini-3.5-flash"],
+      providerLabel: "Google Generative AI",
+    },
+  );
+  assert.equal(withoutContext.kind, "unmatchable");
+  assert.match(withoutContext.message, /^MODEL_PICKER_DEFECT:/);
+});
+
+test("a stall never rewrites a verdict about a picker that DOES offer the model", () => {
+  // `match` and `unmatchable`-by-identity are decided before the panel sources are
+  // consulted at all. A stalled write says nothing about a model the picker is
+  // offering, and reporting an instance stall there would hide the #1459 class of
+  // suite defect (identity no longer resolving).
+  const matched = resolveModelOption("gpt-4o-mini", [option("OpenAI", "gpt-4o-mini")], {
+    checkedModels: ["gpt-4o-mini"],
+    providerLabel: "OpenAI",
+    toggleWrite: STALLED,
+  });
+  assert.equal(matched.kind, "match");
+});
+
+test("a listed model with its toggle OFF stays a setup failure even under a stall", () => {
+  // The optimistic cache is what makes a stall look enabled; a toggle reading OFF is
+  // therefore NOT the stall's signature, and `MODEL_NOT_ENABLED` — which already
+  // names the debounce cause — remains the right verdict.
+  const verdict = resolveModelOption("gemini-3.5-flash", [option("OpenAI", "gpt-4o-mini")], {
+    listedModels: ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+    checkedModels: ["gemini-3.1-flash-lite"],
+    providerLabel: "Google Generative AI",
+    toggleWrite: STALLED,
+  });
+  assert.equal(verdict.kind, "not-enabled");
+});

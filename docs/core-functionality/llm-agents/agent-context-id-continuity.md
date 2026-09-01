@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev44`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev45`)
 
 ---
 
@@ -72,8 +72,13 @@ surface; `@components` — Message History node drives the retrieval assert.
   unflushed batch leaves the model picker on the pre-toggle set — the
   `MODEL_PICKER_DEFECT` this spec reported five times on 2026-08-31 (#1649). The
   wait and its ~30 s refresh budget live in `tests/helpers/provider-setup/`; the
-  measurement is in the agent-area `CLAUDE.md` § 5. **This does not change what
-  this test validates** — it is a precondition of reaching the assertions at all.
+  measurement is in the agent-area `CLAUDE.md` § 5. When the enable write is
+  issued and never answers inside that wait's budget — the 2026-09-01 shape, and
+  what this spec hit again on run 33511210195 — the failure is
+  `MODEL_TOGGLE_WRITE_STALLED` instead: an INSTANCE stall naming the write, not a
+  picker defect, because the picker is then correctly showing the five models the
+  server actually has (agent-area `CLAUDE.md` § 5.1). **Neither changes what this
+  test validates** — both are preconditions of reaching the assertions at all.
 
 ---
 

@@ -1,4 +1,10 @@
 import type { Locator, Page } from "@playwright/test";
+import {
+  MODEL_TOGGLE_WRITE_STALLED,
+  modelTriggerStallMessage,
+  writeStallReason,
+  type ToggleBatchOutcome,
+} from "./model-toggle-batch";
 
 /**
  * One entry of the unified ModelInput picker, read straight from the DOM.
@@ -52,6 +58,7 @@ export type ModelOptionVerdict =
   | { kind: "unmatchable"; message: string; evidence: string[] }
   | { kind: "empty"; message: string }
   | { kind: "not-enabled"; message: string }
+  | { kind: "write-stalled"; message: string }
   | { kind: "absent"; message: string };
 
 export type ResolveContext = {
@@ -80,6 +87,19 @@ export type ResolveContext = {
   checkedModels?: string[];
   /** Provider the caller is configuring, for the message only. */
   providerLabel?: string;
+  /**
+   * What the panel's own toggle batch did before the panel was closed —
+   * `enableAndSettleModelToggles`' return value.
+   *
+   * It is the THIRD source, and the only one that can tell a picker/panel
+   * disagreement with a known cause from one without: `checkedModels` reads
+   * `aria-checked`, which is `useModelToggleQueue`'s OPTIMISTIC cache and flips at
+   * click time before any request. So when the batched write never answers, the
+   * panel claims the model is on while the server still holds its
+   * `MIN_DEFAULT_MODELS` five, and the picker — rendering the server — is the
+   * honest one. `undefined` means "not observed" and changes no verdict (#1012).
+   */
+  toggleWrite?: ToggleBatchOutcome;
 };
 
 const MODEL_NOT_AVAILABLE = "MODEL_NOT_AVAILABLE";
@@ -223,6 +243,27 @@ export function resolveModelOption(
   const checked = context.checkedModels;
 
   if (checked?.includes(requested)) {
+    // The panel says ON — but `aria-checked` is the optimistic cache, so before
+    // that claim may be turned into a picker defect, ask whether the write behind
+    // it ever landed. Consulted HERE and not earlier on purpose: `empty`, `match`
+    // and `unmatchable`-by-identity are already decided above, and a stalled write
+    // says nothing about a model the picker IS offering — reporting a stall there
+    // would hide the #1459 class of defect (identity no longer resolving).
+    const stalled = writeStallReason(context.toggleWrite);
+    if (stalled !== null) {
+      return {
+        kind: "write-stalled",
+        message:
+          `${MODEL_TOGGLE_WRITE_STALLED}: "${requested}" reads as enabled in the provider ` +
+          `panel (llm-toggle-${requested})${provider}, but that is the OPTIMISTIC client ` +
+          `cache — ${stalled}. The model was therefore never enabled server-side, and the ` +
+          `picker is CORRECT to offer ${options.length} option(s) ` +
+          `(${providerCounts(options)}): a freshly configured provider's ` +
+          `${"`"}MIN_DEFAULT_MODELS${"`"} default. This is an INSTANCE stall — not a picker ` +
+          `defect and not a missing model. Do not raise the flush budget to make it pass ` +
+          `(#1649).`,
+      };
+    }
     return {
       kind: "unmatchable",
       evidence: [`llm-toggle-${requested} in the provider panel`],
@@ -448,6 +489,49 @@ export async function clickModelOption(page: Page, option: ModelOption): Promise
   await locator.first().click();
 }
 
+/**
+ * Opens the model picker after the provider panel was closed, attributing a
+ * failure to the toggle batch when the batch is what explains it.
+ *
+ * Shared by the three provider setups because the block was copy-pasted three
+ * times and had already drifted: #1651 landed the same 60 s budgets in each with
+ * three differently-worded comments, and this is the second change to touch all
+ * three. Both budgets stay 60 s and are NOT a retry: taking the correct flush path
+ * means the product genuinely re-fetches, measured at 30 020 ms and 29 640 ms
+ * against the 4 327 ms the broken path returned in. The click carries its own
+ * budget because it otherwise falls back to the 20 s `actionTimeout` while the
+ * trigger re-enters `ModelInputLoadingButton` between "visible" and the click.
+ *
+ * What is new is the catch. On a batch that never settled, the post-close refresh
+ * runs in a write's `onSettled` that never fired, so the trigger can stay
+ * unusable for the whole budget — measured twice on the 2026-09-01 daily as a bare
+ * `locator.waitFor: Timeout 60000ms exceeded ... getByTestId('model_model')` with
+ * nothing naming a cause. The batch's own observation is re-thrown instead, and
+ * Playwright's original message is kept inside it.
+ */
+export async function openModelPickerAfterPanelClose(
+  page: Page,
+  context: { providerLabel: string; toggleWrite?: ToggleBatchOutcome },
+): Promise<void> {
+  const trigger = page.getByTestId("model_model");
+  try {
+    await trigger.waitFor({ state: "visible", timeout: 60000 });
+    // The locator is re-resolved on every actionability retry, so this survives the
+    // element being replaced, and nothing about the assertion that follows is
+    // weakened.
+    await trigger.click({ timeout: 60000 });
+  } catch (error) {
+    const attributed = modelTriggerStallMessage(context.toggleWrite, {
+      providerLabel: context.providerLabel,
+      original: (error as Error).message,
+    });
+    if (attributed !== null) throw new Error(attributed);
+    // No stall to blame: a trigger that never returns on a healthy flush is a real
+    // defect and must keep surfacing as Playwright's own error, call log included.
+    throw error;
+  }
+}
+
 export type PinnedSelection =
   | { status: "selected"; model: string }
   | { status: "absent"; message: string };
@@ -468,6 +552,13 @@ export async function selectPinnedModelOption(
     listedModels?: string[];
     checkedModels?: string[];
     providerLabel?: string;
+    /**
+     * `enableAndSettleModelToggles`' result. `write-stalled` is deliberately NOT
+     * returnable through `absentBehavior: "return"`: that hatch exists for a stale
+     * pin from `models.json` (#606), and degrading on an instance that could not
+     * accept the write would hide exactly the state #1649 was reopened for.
+     */
+    toggleWrite?: ToggleBatchOutcome;
     absentBehavior?: "throw" | "return";
     timeout?: number;
   },
@@ -477,6 +568,7 @@ export async function selectPinnedModelOption(
     listedModels: opts.listedModels,
     checkedModels: opts.checkedModels,
     providerLabel: opts.providerLabel,
+    toggleWrite: opts.toggleWrite,
   });
 
   if (verdict.kind === "match") {
