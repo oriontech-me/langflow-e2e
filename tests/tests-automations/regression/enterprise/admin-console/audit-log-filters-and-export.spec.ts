@@ -1,14 +1,20 @@
-import type { Page, Response as PwResponse } from "@playwright/test";
+import type {
+  APIRequestContext,
+  Page,
+  Response as PwResponse,
+} from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import {
   getEnterpriseAuthToken,
   seedEnterpriseUiSession,
 } from "../../../../helpers/enterprise/enterprise-auth";
+import type { RbacUser } from "../../../../helpers/enterprise/rbac";
 import {
   attemptFlowCreate,
   cleanupRbacUser,
   createRbacUser,
   getProjectOwnedBy,
+  getSharedRbacSubject,
   requireRbacInstance,
 } from "../../../../helpers/enterprise/rbac";
 
@@ -134,6 +140,73 @@ async function chooseOption(page: Page, combobox: string, option: RegExp) {
   await page.getByRole("option", { name: option }).first().click();
 }
 
+/**
+ * Create a subject unique to this run and have it refused a write, so the audit
+ * log holds a denial THIS RUN produced.
+ *
+ * Two things it must be, and each was learned by a test passing when it should
+ * not have:
+ *
+ *  - **In-run**, because a filter assertion over rows the instance happened to
+ *    carry passes for reasons unrelated to the filter — and on a fresh instance
+ *    has nothing to assert over at all. The export test learned this the hard
+ *    way: it filtered to `Deny` without seeding one and failed deterministically
+ *    the first time it met a clean database, with `Export CSV` correctly
+ *    `disabled` over an empty set (#1663).
+ *  - **Identifiable**, because the directory's shared subject carries denials
+ *    from every previous run, so "every visible row is a deny" was satisfied
+ *    regardless. A username that cannot pre-exist fixes that; it costs the one
+ *    login this file spends.
+ *
+ * The refusal has to name a project the subject does NOT own. Since the
+ * 2026-08-27 build a bare `POST /api/v1/flows/` is allowed by the owner override
+ * and audited `owner_override`, not `deny` (#1635).
+ */
+async function seedDenial(
+  request: APIRequestContext,
+  auth: string,
+  prefix: string,
+): Promise<RbacUser> {
+  const foreignProjectId = await getProjectOwnedBy(request, auth);
+  const subject = await createRbacUser(request, auth, prefix);
+  const refused = await attemptFlowCreate(
+    request,
+    subject.auth,
+    `${prefix}-deny-${Date.now()}`,
+    foreignProjectId,
+  );
+  expect(refused.status(), await refused.text()).toBe(403);
+  return subject;
+}
+
+/**
+ * The same denial, seeded as the directory's SHARED subject — no new login.
+ *
+ * Used where the assertion needs the filtered set to be non-empty but does not
+ * need to recognise which row it seeded. That distinction is the whole reason
+ * both variants exist, and getting it wrong cost a run: making both tests create
+ * a unique subject doubled this file's login cost, and EE allows five per minute
+ * for the whole machine — so the fix for a data dependency (#1663) arrived as a
+ * `429`, which is flaky by construction rather than merely on a clean database.
+ *
+ * The shared subject is cached across processes and validated before reuse, so
+ * after the first run this costs nothing. On a fresh instance it costs one.
+ */
+async function seedDenialAsSharedSubject(
+  request: APIRequestContext,
+  auth: string,
+): Promise<void> {
+  const foreignProjectId = await getProjectOwnedBy(request, auth);
+  const subject = await getSharedRbacSubject(request, auth);
+  const refused = await attemptFlowCreate(
+    request,
+    subject.auth,
+    `audit-export-deny-${Date.now()}`,
+    foreignProjectId,
+  );
+  expect(refused.status(), await refused.text()).toBe(403);
+}
+
 test.describe("Enterprise — the audit-log screen sends the filter it displays", () => {
   test.beforeEach(async ({ page, request }) => {
     const auth = await getEnterpriseAuthToken(request);
@@ -186,34 +259,7 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
     async ({ page, request }) => {
       const auth = await getEnterpriseAuthToken(request);
-      const foreignProjectId = await getProjectOwnedBy(request, auth);
-      // A subject unique to this run, NOT the directory's shared one, and the
-      // one login this file spends. It is what makes the seeded denial
-      // IDENTIFIABLE: the shared subject has denials on this container from
-      // every previous run, so "every visible row is a deny" was satisfied by
-      // rows the instance already carried — measured, by a mutation that seeded
-      // into the subject's OWN project (an `owner_override`, not a deny) and
-      // still passed. The seed was decorative. Keyed on a username that cannot
-      // pre-exist, it is not.
-      const subject = await createRbacUser(request, auth, "audit-screen");
-
-      await test.step("seed a denial in THIS run", async () => {
-        // Produced here rather than found in the container: a filter assertion
-        // over rows the instance happened to carry passes for reasons unrelated
-        // to the filter, and on a fresh instance has nothing to assert over.
-        //
-        // It has to be a write the subject is REFUSED, which since the
-        // 2026-08-27 build means naming a project it does not own — a bare
-        // create is allowed by the owner override and audited `owner_override`,
-        // not `deny` (#1635).
-        const refused = await attemptFlowCreate(
-          request,
-          subject.auth,
-          `audit-screen-deny-${Date.now()}`,
-          foreignProjectId,
-        );
-        expect(refused.status()).toBe(403);
-      });
+      const subject = await seedDenial(request, auth, "audit-screen");
 
       try {
         const queries = await openAuditScreen(page);
@@ -292,37 +338,66 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
   test(
     "Export CSV asks for the filtered set rather than the visible page",
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
-    async ({ page }) => {
-      const queries = await openAuditScreen(page);
+    async ({ page, request }) => {
+      const auth = await getEnterpriseAuthToken(request);
+      // Seeded for the same reason the Result test seeds: the filter below must
+      // select something. Without it, on an instance with no denials in the
+      // default window, `Export CSV` is correctly DISABLED over an empty set and
+      // the click times out — exactly how this test failed the first time it met
+      // a fresh database (#1663).
+      //
+      // As the SHARED subject, not a fresh one: this test never has to recognise
+      // the row it seeded, and a second unique subject would double the file's
+      // login cost against a five-per-minute budget.
+      await seedDenialAsSharedSubject(request, auth);
 
-      let before = queries.length;
-      await chooseOption(page, "Result", /^Deny$/i);
-      await nextQuery(queries, before);
+      {
+        const queries = await openAuditScreen(page);
 
-      await settleDedupeWindow(page);
+        // Denials are authorization decisions, which the default view excludes.
+        // Without this the Deny filter selects nothing however well it is seeded.
+        let before = queries.length;
+        await panel(page).getByRole("checkbox").check();
+        await nextQuery(queries, before);
 
-      before = queries.length;
-      await panel(page).getByRole("button", { name: "Export CSV" }).click();
-      const query = await nextQuery(queries, before);
+        before = queries.length;
+        await chooseOption(page, "Result", /^Deny$/i);
+        await nextQuery(queries, before);
 
-      await test.step("the export carries the active filter", async () => {
-        // Asserted on the REQUEST, never on the file. Measured on this build:
-        // the export answers 200 and produces no download, 0 of 12 attempts,
-        // each logging `Duplicate request: /api/v1/authz/audit` (#1639).
-        // Asserting the file would pin that defect; asserting it loosely enough
-        // to pass would pin nothing. Both properties worth protecting live here.
-        expect(query).toContain("result=deny");
-      });
+        // The set is non-empty BECAUSE this run made it so, not because the
+        // container was dirty. Asserted before exporting, so a disabled control
+        // reports the real cause rather than a click timeout.
+        await expect(
+          panel(page).getByRole("button", { name: "Export CSV" }),
+          "nothing matched the filter, so there is nothing to export",
+        ).toBeEnabled();
 
-      await test.step("and asks beyond the visible page", async () => {
-        // An export limited to the page would hand an operator 50 rows while
-        // they believe they exported the filtered set. Measured: the screen
-        // reads `size=50`, the export `size=200`.
-        const size = Number(new URLSearchParams(query).get("size"));
-        expect(size, `the export requested size=${size}`).toBeGreaterThan(
-          PAGE_SIZE,
-        );
-      });
+        await settleDedupeWindow(page);
+
+        before = queries.length;
+        await panel(page).getByRole("button", { name: "Export CSV" }).click();
+        const query = await nextQuery(queries, before);
+
+        await test.step("the export carries the active filter", async () => {
+          // Asserted on the REQUEST, never on the file. Measured on this build:
+          // the export answers 200 and produces no download, 0 of 12 attempts,
+          // each logging `Duplicate request: /api/v1/authz/audit` (#1639).
+          // Asserting the file would pin that defect; asserting it loosely
+          // enough to pass would pin nothing. Both properties worth protecting
+          // live here.
+          expect(query).toContain("result=deny");
+        });
+
+        await test.step("and asks beyond the visible page", async () => {
+          // An export limited to the page would hand an operator 50 rows while
+          // they believe they exported the filtered set. Measured: the screen
+          // reads `size=50`, the export `size=200`.
+          const size = Number(new URLSearchParams(query).get("size"));
+          expect(size, `the export requested size=${size}`).toBeGreaterThan(
+            PAGE_SIZE,
+          );
+        });
+      }
     },
   );
 });

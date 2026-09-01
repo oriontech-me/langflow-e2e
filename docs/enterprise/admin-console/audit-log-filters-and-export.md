@@ -100,11 +100,36 @@ requests the visible page instead of the filtered set.
 - A Langflow **Enterprise** instance on the RBAC variant:
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`.
 - A browser.
-- No LLM provider, no network egress, no licence. **One** unit of the per-IP login budget, spent
-  by the Result-filter test: it creates a subject unique to this run rather than reusing the
-  directory's shared one. That cost buys correctness — see below.
+- No LLM provider, no network egress, no licence. **One** unit of the per-IP login budget on a warm
+  instance, two on a cold one. The Result-filter test creates a subject unique to this run, which is
+  what buys it correctness (see below); the export test seeds through the directory's **shared**
+  subject, which is cached across processes and costs nothing after the first run.
+
+  That split is not an optimisation, it is the fix for a second flake. Making **both** tests create
+  a unique subject doubled the file's login cost, and EE allows five per minute for the whole
+  machine — so the repair for the data dependency below arrived as a `429`, which is flaky by
+  construction rather than merely on a clean database. The export test never has to recognise the
+  row it seeded, so it does not need a unique username; the Result test does, and pays for one.
 - No Langflow **source** paths: the Enterprise frontend is not in `langflow-ai/langflow`, so there
   is none to name. Every sibling under `docs/enterprise/` is in the same position.
+
+## Both filter tests have to seed, and that took two attempts to get right
+
+**The export test did not, and it failed the first time it met a clean database** (#1663). It
+filtered `Result = Deny` and clicked `Export CSV` while the default view still carried
+`exclude_event=authorization_decision` — and denials **are** authorization decisions. Measured on a
+fresh instance: 4 denials present, all excluded by the default, so the filtered set was empty,
+`Export CSV` was correctly `disabled`, and the click timed out. It had been passing only on
+containers dirtied by previous runs.
+
+A spec that only passes on a dirty instance is not passing. The fix gives the export test the same
+footing as its sibling — seed a denial, tick *Include permission checks* so it is visible, then
+filter — plus one guard the sibling does not need: it asserts `Export CSV` is **enabled** before
+clicking. Measured, that guard is worth its line: without it the same failure arrives as a 37.7 s
+click timeout instead of a 22.8 s *"nothing matched the filter, so there is nothing to export"*.
+
+Validated in the condition that exposed the bug rather than the one that hid it: a container
+recreated with a fresh Postgres, both caches cold — **5 passed, zero `429`**.
 
 ## The seed has to be identifiable, not merely present
 
