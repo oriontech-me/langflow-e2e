@@ -4,6 +4,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { loadFixtureFlow } from "../../../../helpers/flows/load-fixture-flow";
+import { runNodeAndWait } from "../../../../helpers/flows/run-node-and-wait";
 import {
   assertEmbeddingCredentialConfigured,
   createKnowledgeBase,
@@ -171,12 +172,23 @@ async function dismissUpdateBannerIfPresent(page: Page): Promise<void> {
   }
 }
 
-/** Runs a Knowledge node (scoped by id) and waits for its success-build badge. */
+/**
+ * Runs a Knowledge node (scoped by id) and waits for a VERDICT, not for a badge.
+ *
+ * `node_duration_knowledge` only renders on a SUCCESSFUL build, so waiting on it
+ * alone cannot observe a failed run — it burns the whole budget and reports
+ * `element(s) not found`, naming the badge instead of the cause. This spec
+ * shares that surface, that provider and that failure mode with
+ * `rag-pipeline.spec.ts`, whose ingest step spent four dailies on an
+ * unattributable 90s timeout while a Google 429 RESOURCE_EXHAUSTED sat on screen
+ * within ~1s; the two run back to back on the same shard against the same
+ * project-wide per-minute embedding quota, so they are fixed together (#1667).
+ */
 async function runKnowledgeNode(page: Page, nodeId: string): Promise<void> {
-  const node = page.locator(`[data-id="${nodeId}"]`);
-  await node.getByTestId("button_run_knowledge").click({ timeout: 15000 });
-  await expect(node.getByTestId("node_duration_knowledge")).toBeVisible({
-    timeout: 90000,
+  await runNodeAndWait(page, {
+    nodeId,
+    runButtonTestId: "button_run_knowledge",
+    durationTestId: "node_duration_knowledge",
   });
 }
 

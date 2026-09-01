@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
-**Last validated:** Langflow 1.12.0.dev31
+**Last validated:** Langflow 1.12.0.dev44
 
 ---
 
@@ -96,6 +96,56 @@ provider `inactive` in `providers.json`. The gate is `providerSkipGate("google")
 elsewhere in the suite: gating on the env var alone let a drained key through, and
 the resulting hung call killed the shard's Langflow worker (#1029).
 
+### Node-run wait strategy — race the badge against the failure signal (#1667)
+
+`node_duration_*` is an observable of a **successful** build, not of the run
+having finished. The frontend renders it inside a ternary — success yields
+`node_duration_<node>`, and every other build status falls through to
+`node_status_icon_<node>_<status>`, which for an errored Knowledge ingest is
+`node_status_icon_knowledge_undefined` and is **not visible at all**. So a wait
+that gates on the badge alone cannot observe a failed run: it burns its whole
+budget and reports `element(s) not found`, naming the badge instead of the cause.
+
+That is what made this test's ingest step fail on four dailies (2026-07-16,
+2026-07-22, 2026-08-18, 2026-09-01) with an unattributable 90 s timeout, while
+the reason was on screen within ~1 s and in the run stream within ~16 s: the
+account's Google Vertex project-wide per-minute quota
+(`global_embed_content_requests_per_minute_per_base_model`, base model
+`gemini-embedding`) rejected the embedding call with **429 RESOURCE_EXHAUSTED**.
+Nothing failed the test on it, because the run is `POST /api/v2/workflows`, whose
+flow-error verdict is ADVISORY by design (#1162 staging).
+
+Each node run therefore:
+
+1. Waits for the success badge **or** the page-level `Flow build failed` signal,
+   whichever comes first. Measured on 1.12.0.dev44: the badge appears in **2–4 s**
+   over 26 clean runs; the failure signal appears in **~1 s**, and is confirmed
+   absent before the click in 20 of 20 runs, so it is a live signal and not stale
+   state left over from an earlier run.
+2. On the failure signal, slices the reason out of the page text — the reason
+   renders *next to* the signal, not inside it — and classifies it.
+3. Retries the node run, bounded, only for a **provider rate-limit/quota** reason
+   (`429`, `RESOURCE_EXHAUSTED`, `quota`, `rate limit`), waiting out the
+   per-minute window. Anything else throws immediately: a hard build error is not
+   transient, and re-running it only delays the same verdict.
+4. Throws with the on-screen reason when the retry budget is exhausted, so a
+   sustained provider outage is still a red — never a silent skip and never a
+   pass.
+
+This strengthens the test rather than loosening it: **no assertion changes** —
+the `chunks === 5` precondition and the verbatim `ZEPHYR-42` grounding assert are
+untouched — and a genuinely broken ingest now fails in seconds, by name, where it
+previously timed out anonymously. The retry is scoped to the *provisioning*
+attempt, never to an assertion.
+
+**Budget: 45 s**, matching the sibling `api-component-regression.spec.ts` from
+which this shape is taken. That is still more than 10× the measured p100 with
+headroom for a slower CI runner. The prior 90 s was inherited, not calibrated —
+~30× the measured time — and, more to the point, the budget is no longer what
+detects a failure: the signal is.
+
+---
+
 ## Validation criterion (concrete, distinctive)
 
 Fixture flow as above. The ingested document is the #674 5-sentence document with
@@ -110,7 +160,8 @@ teardown.
 
 **Single test — full pipeline (§5.2.4):**
 1. Run the **Knowledge (Ingest)** node; its success-build badge
-   `node_duration_knowledge` becomes visible, and `GET
+   `node_duration_knowledge` becomes visible (raced against the
+   `Flow build failed` signal — see *Node-run wait strategy*), and `GET
    /api/v1/knowledge_bases/{name}` reports **exactly 5 chunks** — a precondition
    proof that the document is embedded + indexed (so a later answer failure is
    unambiguously an answer-side failure, not a broken ingest).
@@ -169,7 +220,10 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
 
 **Test — full RAG pipeline:**
 1. Run Ingest: click `button_run_knowledge` scoped to `[data-id="Knowledge-ingest"]`;
-   assert its `node_duration_knowledge` badge is visible.
+   wait for its `node_duration_knowledge` badge **or** the page-level
+   `Flow build failed` signal, whichever lands first (45 s). A quota/rate-limit
+   reason retries the node run within a bounded budget; any other reason throws
+   at once, quoting the on-screen text (see *Node-run wait strategy*).
 2. Assert `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
 3. Run the answer path: click the Chat Output run button
    (`button_run_chat output`) scoped to `[data-id="ChatOutput-answer"]`; wait for
@@ -208,7 +262,13 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
   `ChatOutput-answer`; `button_run_knowledge`, `node_duration_knowledge` (scoped by
   Knowledge node `data-id`); `button_run_chat output`,
   `output-inspection-output message-chatoutput` (scoped by `ChatOutput-answer`);
-  the answer text is the `textarea` inside the Component Output dialog.
+  the answer text is the `textarea` inside the Component Output dialog. The
+  build-failure signal is the page-level `Flow build failed` text (i18n key
+  `flowBuild.buildFailed`), the same signal
+  `observability-monitoring/flow-error-message.spec.ts` and
+  `api/flows/api-component-regression.spec.ts` gate on; the reason renders
+  adjacent to it, so it is read out of the page text rather than out of a
+  container.
 
 ---
 

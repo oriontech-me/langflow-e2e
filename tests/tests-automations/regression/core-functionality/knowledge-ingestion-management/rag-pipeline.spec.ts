@@ -4,6 +4,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { loadFixtureFlow } from "../../../../helpers/flows/load-fixture-flow";
+import { runNodeAndWait } from "../../../../helpers/flows/run-node-and-wait";
 import {
   assertEmbeddingCredentialConfigured,
   createKnowledgeBase,
@@ -92,8 +93,11 @@ async function openRagFlow(page: Page): Promise<void> {
 
   // The embedding provider key must be a Langflow global variable (not just an
   // env var) or the KB ingest fails with a misleading "embedding model no longer
-  // recognized" error surfacing as a 90s node_duration timeout — fail fast and
-  // actionably instead. The same GOOGLE_API_KEY also backs the answer model.
+  // recognized" error — fail fast and actionably instead. (Since #1667 that
+  // error would at least be quoted rather than surfacing as a bare timeout, but
+  // a missing credential is a setup fault, not a run verdict, so it is still
+  // caught here before any node runs.) The same GOOGLE_API_KEY backs the answer
+  // model.
   await assertEmbeddingCredentialConfigured(page.request, "GOOGLE_API_KEY", {
     headers,
   });
@@ -231,17 +235,24 @@ async function dismissUpdateBannerIfPresent(page: Page): Promise<void> {
   }
 }
 
-/** Runs a node (scoped by id) via its run button and waits for the success badge. */
+/**
+ * Runs a node (scoped by id) and waits for a VERDICT, not for a badge.
+ *
+ * `node_duration` only renders on a SUCCESSFUL build, so waiting on it alone
+ * cannot observe a failed run — it burns the whole budget and reports
+ * `element(s) not found`, naming the badge instead of the cause. That is how
+ * this test's ingest step spent four dailies reporting an unattributable 90s
+ * timeout while a Google 429 RESOURCE_EXHAUSTED sat on screen within ~1s
+ * (#1667). The shared helper races the badge against the build-failure signal,
+ * retries only a provider rate-limit/quota reason, and throws quoting the
+ * on-screen text otherwise.
+ */
 async function runNode(
   page: Page,
   nodeId: string,
   runButtonTestId: string,
 ): Promise<void> {
-  const node = page.locator(`[data-id="${nodeId}"]`);
-  await node.getByTestId(runButtonTestId).click({ timeout: 15000 });
-  await expect(node.locator('[data-testid^="node_duration"]')).toBeVisible({
-    timeout: 90000,
-  });
+  await runNodeAndWait(page, { nodeId, runButtonTestId });
 }
 
 test.afterEach(async ({ page }) => {
@@ -276,20 +287,9 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-// Quarantined at triage (daily #1665): recurrent flake — the Knowledge (Ingest)
-// node never renders a duration badge, so the ingest run never reports
-// completing. The call log reads "element(s) not found" for
-// `[data-id="Knowledge-ingest"] [data-testid^="node_duration"]` over the whole
-// 90 s budget, so the failure is upstream of every model assertion in this spec.
-// Same test, same signature on the 2026-08-18 and 2026-09-01 dailies (4× since
-// 2026-07-16, every one recovering on retry). On 09-01 it failed on shard 3 in a
-// window the in-run liveness recorder measured at 1 of 91 probes down — the only
-// failing attempt of that run on a healthy backend, on a day whose verdict is
-// otherwise environmental. Lifting the quarantine (remove test.fixme + restore
-// @stable) is a deliverable of #1667.
-test.fixme(
+test(
   "Full RAG pipeline grounds the model answer on the retrieved chunk",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
       await openRagFlow(page);
