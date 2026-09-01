@@ -31,7 +31,9 @@
 // `gh`-only script would therefore have degraded to "body on disk, exit 0" on
 // every red daily — the silent loss #1012 exists to prevent. So a token, when one
 // is present, creates the issue over the REST API and `gh` is the fallback for a
-// VM where a human is logged in. Which path ran is always printed.
+// VM where a human is logged in. `gh` is tried even when a token was present and
+// FAILED: a stale variable in a VM's environment must not consume the only attempt.
+// Which path ran is always printed, and a failure that tried both reports both.
 //
 // ## Why the issue lands on this repo by default
 //
@@ -65,11 +67,10 @@
 // fails to open is how a red day ends up with no triage attached to it. The
 // workflow sets ISSUE_STRICT=1; the VM leaves it unset.
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { realpathSync } from "node:fs";
 
 // Who gets pinged. Configurable rather than hardcoded: the handles are a team
 // roster, which changes independently of this file, and a run that must NOT ping
@@ -225,6 +226,7 @@ export async function createIssue({ title, body, repo, host = "github.com", toke
 
   // Token first: it is the deterministic path and the only one available inside
   // the daily's Playwright container, which ships no `gh`.
+  let apiReason = "";
   if (token) {
     try {
       const res = await fetch(apiUrlFor(host, repo), {
@@ -239,19 +241,26 @@ export async function createIssue({ title, body, repo, host = "github.com", toke
         body: JSON.stringify({ title, body, labels: LABELS }),
       });
       const text = await res.text();
-      if (!res.ok) {
-        return { ok: false, url: "", how: "api", reason: `HTTP ${res.status}: ${text.slice(0, 300)}` };
+      if (res.ok) {
+        let url = "";
+        try {
+          url = JSON.parse(text).html_url || "";
+        } catch {
+          /* a 2xx with an unparseable body still created the issue */
+        }
+        return { ok: true, url, how: "api", reason: "" };
       }
-      let url = "";
-      try {
-        url = JSON.parse(text).html_url || "";
-      } catch {
-        /* a 2xx with an unparseable body still created the issue */
-      }
-      return { ok: true, url, how: "api", reason: "" };
+      apiReason = `HTTP ${res.status}: ${text.slice(0, 300)}`;
     } catch (e) {
-      return { ok: false, url: "", how: "api", reason: e.message };
+      apiReason = e.message;
     }
+    // A token that is PRESENT is not a token that WORKS. On a VM where a human is
+    // logged into `gh`, a stale or wrongly-scoped GITHUB_TOKEN in the environment
+    // would otherwise take the only shot at creating the issue and lose it — the
+    // umbrella missing because of a variable nobody set on purpose. Inside the
+    // daily's container there is no `gh`, so this costs a `gh not runnable` line
+    // and the API reason is still what gets reported.
+    console.error(`[issue] the API path failed (${apiReason}) — trying \`gh\`.`);
   }
 
   const gh = spawnSync(
@@ -260,9 +269,14 @@ export async function createIssue({ title, body, repo, host = "github.com", toke
      ...LABELS.flatMap((l) => ["--label", l])],
     { env: { ...process.env, GH_HOST: host }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
-  if (gh.error) return { ok: false, url: "", how: "gh", reason: `gh not runnable (${gh.error.message})` };
+  // When the API was tried first, its reason is the one that explains the failure —
+  // "gh not runnable" alone would point triage at a missing CLI on a lane that never
+  // wanted one.
+  const withApi = (reason) => (apiReason ? `api: ${apiReason}; gh: ${reason}` : reason);
+  const how = apiReason ? "api+gh" : "gh";
+  if (gh.error) return { ok: false, url: "", how, reason: withApi(`gh not runnable (${gh.error.message})`) };
   if (gh.status !== 0) {
-    return { ok: false, url: "", how: "gh", reason: `gh issue create failed (exit ${gh.status}): ${(gh.stderr || "").slice(0, 300)}` };
+    return { ok: false, url: "", how, reason: withApi(`gh issue create failed (exit ${gh.status}): ${(gh.stderr || "").slice(0, 300)}`) };
   }
   return { ok: true, url: (gh.stdout || "").trim(), how: "gh", reason: "" };
 }

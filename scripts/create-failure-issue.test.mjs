@@ -151,13 +151,33 @@ test("a dry run creates nothing and says so", async () => {
 test("createIssue reports a transport failure instead of throwing", async () => {
   // The caller decides whether this is fatal (ISSUE_STRICT), so it must always get
   // a verdict back — a throw here would take out the body-on-disk fallback too.
-  const r = await createIssue({
-    title: "t", body: "b", repo: "o/r",
-    host: "127.0.0.1:1", token: "not-a-real-token",
-  });
+  //
+  // PATH is emptied for the duration so the `gh` fallback resolves to nothing: the
+  // test must be offline and deterministic, and must never reach a real `gh` that
+  // could create a real issue — which is how this script got reviewed into opening
+  // one (#1616).
+  const path = process.env.PATH;
+  process.env.PATH = "";
+  let r;
+  try {
+    r = await createIssue({
+      title: "t", body: "b", repo: "o/r",
+      host: "127.0.0.1:1", token: "not-a-real-token",
+    });
+  } finally {
+    process.env.PATH = path;
+  }
   assert.equal(r.ok, false);
-  assert.equal(r.how, "api");
   assert.ok(r.reason, "the reason must name what went wrong");
+
+  // A token that is PRESENT is not a token that WORKS. On a VM where a human is
+  // logged into `gh`, a stale GITHUB_TOKEN in the environment must not consume the
+  // only attempt at creating the issue — so a failed API call still tries `gh`.
+  assert.equal(r.how, "api+gh", "a failed token path must still fall through to gh");
+  // And the report must carry BOTH causes: "gh not runnable" alone points triage at
+  // a missing CLI on a lane (the daily's container) that never wanted one.
+  assert.match(r.reason, /^api: /, "the API failure is the one that explains the lane");
+  assert.match(r.reason, /gh: /, "and the fallback's own failure is named too");
 });
 
 test("daily-stable.yml calls the script and no longer carries its own copy", () => {
