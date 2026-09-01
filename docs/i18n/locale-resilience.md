@@ -1,6 +1,6 @@
 # i18n — Locale resilience
 
-**Last validated:** Langflow 1.12.x (measured on nightly `1.12.0.dev33`)
+**Last validated:** Langflow 1.12.x (measured on nightly `1.12.0.dev44`)
 
 ---
 
@@ -25,12 +25,14 @@ individual keys.
    reads `en`, and `localStorage.languagePreference` is **unset** — the browser
    locale never becomes a language preference.
 3. **should fall back to English for a key the active bundle lacks, next to
-   siblings it translates** — with the interface in Portuguese, the flow
-   editor's Create Memory modal renders `Criar Memória`, `Nome` and
-   `Tamanho do lote` in Portuguese while the `Vector Database` label and its
-   description — two keys the Portuguese bundle does not carry — render their
-   English text. No raw i18n key (`memory.dbProviderLabel`) appears anywhere in
-   the dialog.
+   siblings it translates** — with the interface in Portuguese, and with
+   `memory.dbProviderLabel` and `memory.dbProviderDescription` **removed from the
+   `pt` chunk the browser is served**, the flow editor's Create Memory modal
+   renders `Criar Memória`, `Nome` and `Tamanho do lote` in Portuguese while
+   those two keys render their English text (`Vector Database` and its
+   description). No raw i18n key (`memory.dbProviderLabel`) appears anywhere in
+   the dialog. The gap is **created by the test**, not borrowed from whatever the
+   shipped bundle happens to be missing that week — see **Validation criterion**.
 
 ---
 
@@ -83,9 +85,11 @@ id-scoped.
   becomes a boot risk again and test 1's table becomes reachable from the
   browser. It uses `withLocale()` — the sanctioned opt-in — never a bare
   `test.use({ locale })`.
-- **Test 3's vehicle is chosen, not convenient — and one obvious candidate is a
-  decoy.** On `1.12.0.dev33` all six non-English bundles are missing the **same
-  five** keys that `en` carries: `shortcuts.modifierOnly`, `memory.backendLabel`,
+- **Test 3's vehicle is chosen, not convenient, and one obvious candidate is a
+  decoy.** This still governs which key the test may REMOVE: a key whose call
+  site supplies its own English default proves nothing about `fallbackLng`,
+  whether the gap is the bundle's or the test's. On `1.12.0.dev33` all six
+  non-English bundles were missing the **same five** keys that `en` carries: `shortcuts.modifierOnly`, `memory.backendLabel`,
   `memory.dbProviderLabel`, `memory.dbProviderDescription` and
   `memory.dbProviderNotConfigured`. `shortcuts.modifierOnly` **must not be
   used**: its call site passes an inline
@@ -105,12 +109,31 @@ id-scoped.
   render the key itself: the dialog's text must not contain
   `memory.dbProviderLabel`. Two different broken states — key echoed, or empty
   string — are excluded by the pair of assertions.
-- **This test has a known expiry and says so in its own failure.** If upstream
-  translates those keys, the English assertion goes red on a healthy product.
-  The assertion therefore carries a message naming that possibility and pointing
-  at how to re-measure (diff the `en` translation object in
-  `assets/index-*.js` against `assets/pt-*.js`), so the next reader is not left
-  diagnosing a phantom i18n regression.
+- **The gap is CREATED, not borrowed — this is what #1646 changed.** The first
+  version of this test asserted English on keys the shipped `pt` bundle happened
+  not to carry, and said so in its own failure message together with the
+  procedure to re-measure. That procedure worked exactly as written and the
+  answer was that the probe had expired: on `1.12.0.dev44`
+  `memory.dbProviderLabel` reads `Vector Database` in `en` and **`Banco de dados
+  vetorial`** in `pt`, and its description is likewise translated. The key is now
+  present in all six non-English bundles. The measured lifetime of that design
+  was **10 days** — the spec landed 2026-08-21 (PR #1541), was green on 7
+  dailies, and failed 3/3 on 2026-08-31 (run 33410643882). Re-measured 5/5
+  failing on `1.12.0.dev44` before the fix.
+- **So the test now removes the keys itself.** It intercepts the separately
+  served `pt-*.js` chunk (measured: `HTTP 200`, 146 373 bytes) and deletes the
+  two `"key":"value"` pairs from the body before the browser parses it. What is
+  asserted is unchanged — same dialog, same English strings, same Portuguese
+  siblings, same raw-key check — but the precondition is now under the test's
+  control, so it cannot expire and needs no dated re-measurement. It also tests
+  `fallbackLng` more directly than the old form did: a gap that upstream might
+  fill at any moment was never the contract, the fallback behaviour is.
+- **The interception must be PROVEN to have happened, or the test is vacuous.**
+  If upstream removes those keys from `pt` again, the strip matches nothing while
+  the dialog still shows English, and the test would pass without ever exercising
+  its own mechanism — the silent-pass shape #1012 exists to stop. The test
+  therefore asserts that exactly **two** pairs were stripped from a chunk it
+  actually intercepted, and fails naming that count when it is not two.
 
 ---
 
@@ -130,9 +153,11 @@ id-scoped.
 - `src/frontend/src/i18n.ts` — the normaliser ladder test 1 transcribes, the
   `fallbackLng: "en"` configuration test 3 exercises, and the absence of a
   language-detector plugin that test 2 pins.
-- `src/frontend/src/locales/pt.json` — the bundle whose five-key gap against
-  `en` is test 3's subject; if upstream fills it, the test says how to
-  re-measure (see Validation criterion).
+- `src/frontend/src/locales/pt.json` — the bundle test 3 intercepts and removes
+  two keys from. It depends on the two keys still being PRESENT there (they are,
+  since upstream translated them — measured on `1.12.0.dev44`), not on them being
+  absent, which is the inversion #1646 introduced. A build that drops them again
+  is caught by the strip-count assertion rather than passing silently.
 
 ---
 
