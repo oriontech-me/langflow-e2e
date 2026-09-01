@@ -157,26 +157,6 @@ updates:
         versions:
           - ">=6"
 
-      # There is deliberately NO entry for @flakiness/playwright. 2.0.0 dropped Node
-      # 20 (`engines` went to `>=22.9.0`) while every lane here pins "20" — but 2.0.1,
-      # `latest` since 2026-07-30, restored `^20.17.0 || >=22.9.0`. An ignore written
-      # against 2.0.0 would have blocked a release that was already compatible, and a
-      # guard tying its removal to the Node pins would have failed the PR that removed
-      # it. v2 arrives as its own PR, which is where its two real breaking changes can
-      # be checked against what this repo does — and it did (2.0.1 merged in PR #1389).
-      # Both were confirmed inert against the installed package, not read off the
-      # changelog: the dropped `flakiness-playwright-shard` bin is unused (sharding is
-      # scripts/partition-shards.mjs, and only `flakiness-playwright-timings` remains in
-      # its `bin`), and `preprocess()` — the hook needing Playwright 1.62+ against the
-      # 1.58.2 pin — RETURNS IMMEDIATELY unless `shardBalancing` is configured, as does
-      # the "requires 1.62+" warning, so the version gap is unreachable. `flakinessProject`
-      # and the `FK_ENV_*` vars daily-stable.yml relies on both survive. Smoke-tested on
-      # node 20.20.2 + Playwright 1.58.2: the reporter loads, runs and writes a report,
-      # exit 0, no warning. Not covered by that, and unavoidable here: the OIDC UPLOAD
-      # path, which has no local credential and which the PR lane never exercises —
-      # a manifest-only change resolves to zero impacted specs (see this file's header),
-      # so the first real exercise of it is the next daily.
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
