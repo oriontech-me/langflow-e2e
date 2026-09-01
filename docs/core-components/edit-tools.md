@@ -2,7 +2,8 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/edit-tools.spec.ts`
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev39`)
+**Last validated:** Langflow 1.12.x (`1.12.0.dev39`; §2.2.2 re-validated on
+`1.12.0.dev44` after #1644 — see *Notes*)
 
 **Status:** active, `@stable`. The quarantine from the triage of daily #1517 was
 lifted in #1536 (wait design rebuilt on an observable); the product race behind
@@ -170,11 +171,16 @@ fail; with the upstream fix both hold.
   on `dev38` and earlier it fails, which is the intended signal.
 - **Step by step:**
   1. Create a blank flow via the API; open it; add the URL component.
-  2. Install a route handler on `POST /api/v1/custom_component/update` that
-     **claims the pre-edit `tools_metadata` refresh** — discriminated on the
-     request payload (`field === "tools_metadata"` and the action still carrying
-     the default slug), never on arrival order — fetches its response
-     immediately, and parks the fulfilment behind a gate.
+  2. Install a route handler on `POST /api/v1/custom_component/update`,
+     matching on the request's **pathname**
+     (`url => new URL(url).pathname === UPDATE_PATH`) and **never** on a URL
+     glob: a glob has to match the WHOLE URL, and this endpoint carries a
+     `?flow_id=<uuid>` query string it did not carry when this test was written
+     (#1644 — see *External dependencies*). The handler **claims the pre-edit
+     `tools_metadata` refresh** — discriminated on the request payload
+     (`field === "tools_metadata"` and the action still carrying the default
+     slug), never on arrival order — fetches its response immediately, and parks
+     the fulfilment behind a gate.
   3. Switch the node to Tool Mode; open the actions editor; confirm the held
      response is parked before editing (an unparked run would measure nothing).
   4. Edit slug + description — and **not** *Requires Approval*: LE-2272 reverts
@@ -255,6 +261,11 @@ mechanism under test.
   `auth/get-auth-token.ts`.
 - The core **URL** component (non-bundle); no model-provider credentials (no run
   — edits are asserted on the node/editor, not by executing the tool).
+- `POST /api/v1/custom_component/update` — the node round trip both the §2.2.1
+  barrier and the §2.2.2 hold key on. **It carries a `?flow_id=<uuid>` query
+  string**, added upstream in a nightly built between 2026-08-28 and 2026-08-31,
+  so anything matching this endpoint must match on the **pathname**, never with
+  a URL glob spelled as the bare path (#1644).
 - `GET /api/v1/flows/<id>` — read back the persisted `tools_metadata` (the
   `approval_actions` observable). No new helper is needed if an existing
   flow-read helper covers it; otherwise it is a planned task, not an inline
@@ -308,6 +319,19 @@ Field testids confirmed live on `langflow-nightly 1.11.0.dev45` during authoring
 
 ## Notes
 
+- **§2.2.2 was quarantined for #1644 and is not any more, and the cause was neither the
+  product nor the wait strategy.** On the 2026-08-31 daily (run 33410643882) it failed 3
+  of 3 attempts on its own precondition — `expect.poll(() => parked).toBe(true)` false for
+  the full 20 s — so it asserted nothing at all. Upstream had added a `?flow_id=<uuid>`
+  query string to `POST /api/v1/custom_component/update` in a nightly built between the
+  2026-08-28 daily (green) and that one, and a Playwright URL glob must match the
+  **entire** URL, so the handler's `**/api/v1/custom_component/update` stopped matching
+  and the park never engaged. Measured on `1.12.0.dev44`: the pre-edit refresh still
+  fires, still carrying `field: "tools_metadata"` with `name: "fetch_content"` and
+  `approval_actions: []`. Baseline before the fix: 5 of 5 failures at
+  `--retries=0 --workers=1`. The fix matches on the **pathname** rather than adding a
+  trailing wildcard, which is what this file's own `waitForComponentUpdateSettled` already
+  did — and why §2.2.1, which shares the endpoint, stayed green through the change.
 - **Force-fail probes (executed during validation):** §2.2.1 —
   `APPROVAL_DECISION` changed to a value Langflow never writes, so the
   persisted-flow poll can never match (failed, reverted). §2.2.2 — three: the

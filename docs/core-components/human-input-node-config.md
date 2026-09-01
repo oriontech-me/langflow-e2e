@@ -3,7 +3,8 @@
 **Test file:** `tests/tests-automations/regression/core-components/human-input-node-config.spec.ts`
 
 **Last validated:** Langflow 1.12.x (scouted on `1.12.0.dev10`; the live-rebuild test
-re-validated on `1.12.0.dev39`, the first nightly carrying the LE-2278 fix)
+re-validated on `1.12.0.dev39`, the first nightly carrying the LE-2278 fix; the
+stale-refresh test re-validated on `1.12.0.dev44` after #1644 — see *Notes*)
 
 ---
 
@@ -152,10 +153,14 @@ for it.
    the output-handle count back at `3`.
 
 **Test 4 — a stale refresh response does not revert a committed choice (LE-2278)**
-1. Install a `page.route` on `**/api/v1/custom_component/update` **before** the node is
-   added. It claims the **first** request whose body has `field: "decisions"` and a
-   `field_value` of length `2` — the on-mount refresh, measured on `1.12.0.dev39` as
-   firing ~230 ms after the node lands, carrying `["Approve", "Reject"]`. Every other
+1. Install a `page.route` on the refresh endpoint **before** the node is added, matching
+   on the request's **pathname** (`url => new URL(url).pathname === COMPONENT_REFRESH_PATH`)
+   and **never** on a URL glob. A glob has to match the WHOLE URL, and this endpoint
+   carries a query string (`?flow_id=<uuid>`) that it did not carry when this test was
+   written — see *External dependencies*. The handler claims the **first** request whose
+   body has `field: "decisions"` and a `field_value` of length `2` — the on-mount
+   refresh, measured on `1.12.0.dev39` as firing ~230 ms after the node lands, carrying
+   `["Approve", "Reject"]`. Every other
    request on that route, including the commit's own `["Approve", "Reject", "Request
    Changes"]`, passes straight through with `route.continue()`.
 2. For the claimed request: `route.fetch()` to obtain the real response, flag it **parked**,
@@ -217,7 +222,10 @@ for it.
   on every Human Input output is what makes each branch render its **own** handle instead
   of the single selectable output most components show (`NodeOutputParameter/NodeOutputs.tsx`).
 - **`POST /api/v1/custom_component/update`** — the round trip behind the live rebuild
-  (`real_time_refresh` on `decisions`). Not asserted directly: the DOM assertion is the
+  (`real_time_refresh` on `decisions`). **It carries a `?flow_id=<uuid>` query string**,
+  added upstream in a nightly built between 2026-08-28 and 2026-08-31, so anything
+  matching this endpoint must match on the **pathname**, never with a URL glob spelled as
+  the bare path (#1644). Not asserted directly: the DOM assertion is the
   user-visible outcome, and pinning the endpoint would couple the spec to a refresh
   mechanism upstream may change. It **is** used as a timing signal for the LE-2278 guard —
   the spec waits for it to go quiet before re-reading the chip — which is a weaker
@@ -262,6 +270,22 @@ for it.
 
 ## Notes
 
+- **The stale-refresh test was quarantined for #1644 and is not any more, and the cause
+  was neither the product nor the wait strategy.** On the 2026-08-31 daily
+  (run 33410643882) it failed 3 of 3 attempts on its own precondition —
+  `expect.poll(() => parked).toBe(true)` false for the full 20 s — so it asserted nothing
+  at all. Upstream had added a `?flow_id=<uuid>` query string to
+  `POST /api/v1/custom_component/update` in a nightly built between the 2026-08-28 daily
+  (green) and that one, and a Playwright URL glob must match the **entire** URL, so the
+  handler's `**/api/v1/custom_component/update` stopped matching and the park never
+  engaged. Measured on `1.12.0.dev44`: the request still fires ~820 ms after the node
+  lands, still carrying `field: "decisions"` with `["Approve", "Reject"]`, and a
+  four-pattern A/B over that same traffic had the bare glob matching **0** calls while
+  `**…/update**`, `**/custom_component/**` and `**/api/**` matched every one. Baseline
+  before the fix: 5 of 5 failures at `--retries=0 --workers=1`. The fix matches on the
+  **pathname** rather than adding a trailing wildcard, which is what
+  `helpers/ui/watch-node-refresh.ts` already did — and why every other test in this file
+  stayed green through the change.
 - Everything above was scouted against the running nightly (`1.12.0.dev10`) before the
   spec was written: the node's testids were harvested from the live DOM, and the
   persisted shape (`decisions: ["Approve","Reject","Request Changes"]` →
