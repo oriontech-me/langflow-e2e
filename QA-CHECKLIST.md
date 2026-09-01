@@ -1284,7 +1284,13 @@
 - [-] **Dismissing the reminder is not revocation** — it issues no write, the approval stands, and the provider stays listed under *Available Providers*. Both directions matter: silent revocation would surprise an operator into an outage, and dropping the row would hide an approved provider from the only screen listing it → `enterprise/admin-console/provider-approval-terms.spec.ts`
 - [ ] The provider screen's `Add provider` modal and the `Configure` credential flow — both need a real credential, which is what keeps the approval spec keyless and runnable on any Enterprise instance
 - [ ] `expected_revision` as optimistic concurrency over the policy bundle: a stale revision is refused. An API property rather than a screen one
-- [ ] Remaining per-tab operator behaviour — the model blocklist round trip, role assignment. One follow-up each, all gated on the shell above
+- [-] With no provider approved, the models screen **names what is missing and links the fix** — *No model providers available* plus a link to `/admin-ee/providers`. The state a fresh instance is in, and the only guidance an operator gets → `enterprise/admin-console/model-availability-terms.spec.ts`
+- [-] **Approving a provider populates the model catalog with no credential** — the assumption that this screen needed one is why it was scheduled last, and it is wrong → `enterprise/admin-console/model-availability-terms.spec.ts`
+- [-] **Approved is not available, and the row agrees with the policy** — `Pending` and `Hidden` while `enabled_model_keys` is empty. A row reading `Visible` over an empty policy, or the reverse, would tell an operator the platform offers models it cannot call, and neither surface alone catches it → `enterprise/admin-console/model-availability-terms.spec.ts`
+- [-] The expanded row **states the governance terms it inherited from the approval** — *All workspaces* / *All environments* — and lists every model `Disabled`. Two screens describing one decision; a drift between them is invisible from either alone → `enterprise/admin-console/model-availability-terms.spec.ts`
+- [!] `Edit Models` is an enabled button that opens nothing and collapses the row instead (#1659) — deliberately unasserted in either direction: asserting an editor opens would pin a defect, asserting the collapse would pin a behaviour nobody has called intended
+- [ ] `Edit provider access` and the `Configure` credential flow on both the providers and models screens — they need a real credential, which is what keeps these two specs keyless and runnable on any Enterprise instance
+- [ ] Role assignment as a per-tab flow — the last of the console follow-ups, gated on the shell above
 
 ---
 
