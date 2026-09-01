@@ -276,9 +276,20 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-test(
+// Quarantined at triage (daily #1665): recurrent flake — the Knowledge (Ingest)
+// node never renders a duration badge, so the ingest run never reports
+// completing. The call log reads "element(s) not found" for
+// `[data-id="Knowledge-ingest"] [data-testid^="node_duration"]` over the whole
+// 90 s budget, so the failure is upstream of every model assertion in this spec.
+// Same test, same signature on the 2026-08-18 and 2026-09-01 dailies (4× since
+// 2026-07-16, every one recovering on retry). On 09-01 it failed on shard 3 in a
+// window the in-run liveness recorder measured at 1 of 91 probes down — the only
+// failing attempt of that run on a healthy backend, on a day whose verdict is
+// otherwise environmental. Lifting the quarantine (remove test.fixme + restore
+// @stable) is a deliverable of #1667.
+test.fixme(
   "Full RAG pipeline grounds the model answer on the retrieved chunk",
-  { tag: ["@stable", "@release", "@components", "@files"] },
+  { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
       await openRagFlow(page);
