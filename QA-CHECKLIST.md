@@ -1378,7 +1378,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 529 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 530 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1908,6 +1908,7 @@
 - [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] zoom in and zoom out step the canvas scale and clamp at the React Flow bounds → `canvas-zoom-navigation.spec.ts`
 - [x] Fit View centers every node inside the canvas viewport → `canvas-zoom-navigation.spec.ts`
+- [x] Fit View is reachable from the canvas controls toolbar → `canvas-zoom-navigation.spec.ts`
 - [x] wheel scroll navigates the canvas anchored at the pointer → `canvas-zoom-navigation.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
