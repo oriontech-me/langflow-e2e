@@ -1279,7 +1279,12 @@
 - [-] An **Event type label sends the API's value, not its own text** — *Connections & sign-in* → `resource_type=sso_connection`. A screen that sent the label would filter nothing and still look filtered → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
 - [-] **Export CSV asks for the filtered set, not the visible page** — its request carries the active filter and a `size` above the page size. Asserted on the request and deliberately not on the file: the download silently fails when the export's fetch is deduplicated against the screen's own query (#1639) → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
 - [ ] The audit screen's `User` combobox and pagination — neither is where the screen can mislead an operator about what the log contains
-- [ ] Remaining per-tab operator behaviour — provider add/deactivate, the model blocklist round trip, role assignment. One follow-up each, all gated on the shell above
+- [-] **Approving a provider writes the terms its card displayed** — the governance record is keyed on the `Credential alias` shown, scoped `workspaces: ["all"]` as its *All workspaces* promised, `status: "active"` and attributed to the approver, and `approved_provider_ids` gains exactly that provider. The displayed terms are the INPUT to the operator's decision, so a screen that shows one scope and writes another is wrong in a way no API test can see → `enterprise/admin-console/provider-approval-terms.spec.ts`
+- [-] An approved provider is reported **pending credentials, not ready** — under *Needs attention* naming what is missing, and `Pending` in *Available Providers*. Approval is a policy act and makes no model callable; a screen reporting *ready* would tell an operator their platform can use a provider nothing can authenticate to → `enterprise/admin-console/provider-approval-terms.spec.ts`
+- [-] **Dismissing the reminder is not revocation** — it issues no write, the approval stands, and the provider stays listed under *Available Providers*. Both directions matter: silent revocation would surprise an operator into an outage, and dropping the row would hide an approved provider from the only screen listing it → `enterprise/admin-console/provider-approval-terms.spec.ts`
+- [ ] The provider screen's `Add provider` modal and the `Configure` credential flow — both need a real credential, which is what keeps the approval spec keyless and runnable on any Enterprise instance
+- [ ] `expected_revision` as optimistic concurrency over the policy bundle: a stale revision is refused. An API property rather than a screen one
+- [ ] Remaining per-tab operator behaviour — the model blocklist round trip, role assignment. One follow-up each, all gated on the shell above
 
 ---
 
