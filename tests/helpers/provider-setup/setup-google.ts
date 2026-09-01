@@ -5,6 +5,7 @@ import {
   enumerateCheckedModels,
   enumerateEnabledModels,
   enumerateModelOptions,
+  openModelPickerAfterPanelClose,
   selectPinnedModelOption,
 } from "./model-option";
 import { enableAndSettleModelToggles } from "./model-toggle-batch";
@@ -99,7 +100,10 @@ export async function setupGoogle(
   // refreshes the model picker (#1649). The helper clicks and then waits for the
   // product's own write to go quiet, so Step 6 below cannot close on top of it.
   // Costs nothing when nothing was clicked, which is the normal CI path.
-  await enableAndSettleModelToggles(page);
+  // The result is CAPTURED, not discarded: when this batch does not settle it is
+  // the only source that can explain the picker read below, and #1651 printed it
+  // to a log nothing correlates instead of carrying it forward (#1649).
+  const toggleWrite = await enableAndSettleModelToggles(page);
 
   // Read the panel's toggles BEFORE closing it: they are the second, independent
   // source the picker can be contradicted by, and a picker miss that they
@@ -114,20 +118,17 @@ export async function setupGoogle(
 
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await hideInspectorPanel(page);
-  // Closing the panel (Step 6) puts the model dropdown into a post-close refresh
-  // state where the `model_model` trigger is briefly replaced by a (testid-less)
-  // "Loading models…" button while providers and enabled models refetch. Both
-  // budgets below are 60 s, and NOT to make a stall pass: taking the correct
-  // flush path in Step 5 means the product genuinely re-fetches, measured at
-  // 30 020 ms and 29 640 ms against the 4 327 ms the broken path returned in.
-  // The click carries its own budget because it otherwise falls back to the 20 s
-  // `actionTimeout` and the trigger can re-enter the loading state between
-  // "visible" and the click — measured failing exactly there
-  // (`locator.click: Timeout 20000ms exceeded ... getByTestId('model_model')`)
-  // on the cold path with the provider on its MIN_DEFAULT_MODELS default (#1649).
-  const modelTrigger = page.getByTestId("model_model");
-  await modelTrigger.waitFor({ state: "visible", timeout: 60000 });
-  await modelTrigger.click({ timeout: 60000 });
+  // Opening the picker is shared with the other two provider setups: closing the
+  // panel (Step 6) puts the dropdown into a post-close refresh state where
+  // `model_model` is briefly replaced by a (testid-less) "Loading models…" button —
+  // and when the batch above never settled, that refresh never runs at all, so the
+  // trigger can stay unusable for the whole budget. Both 60 s budgets, their
+  // measurements, and the attribution of that case live in
+  // `openModelPickerAfterPanelClose` (#1649).
+  await openModelPickerAfterPanelClose(page, {
+    providerLabel: "Google Generative AI",
+    toggleWrite,
+  });
   if (modelTestId) {
     // Resolved by option IDENTITY (data-value / data-testid), never by the option's
     // text: 1.12.0.dev26 renders a `sr-only` "N of M" counter inside each option, so
@@ -139,6 +140,10 @@ export async function setupGoogle(
       listedModels,
       checkedModels,
       providerLabel: "Google Generative AI",
+      // The third source: `checkedModels` reads the OPTIMISTIC cache, so a picker
+      // miss it contradicts is only a picker defect when the write behind it landed
+      // (#1649).
+      toggleWrite,
     });
   } else {
     const options = await enumerateModelOptions(page);

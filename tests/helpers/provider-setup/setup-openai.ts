@@ -5,6 +5,7 @@ import {
   enumerateCheckedModels,
   enumerateEnabledModels,
   enumerateModelOptions,
+  openModelPickerAfterPanelClose,
   selectPinnedModelOption,
 } from "./model-option";
 import { enableAndSettleModelToggles } from "./model-toggle-batch";
@@ -73,7 +74,10 @@ export async function setupOpenAI(
   // refreshes the model picker (#1649). The helper clicks and then waits for the
   // product's own write to go quiet, so Step 6 below cannot close on top of it.
   // Costs nothing when nothing was clicked, which is the normal CI path.
-  await enableAndSettleModelToggles(page);
+  // The result is CAPTURED, not discarded: when this batch does not settle it is
+  // the only source that can explain the picker read below, and #1651 printed it
+  // to a log nothing correlates instead of carrying it forward (#1649).
+  const toggleWrite = await enableAndSettleModelToggles(page);
 
   // Read the panel's toggles BEFORE closing it: they are the second, independent
   // source the picker can be contradicted by, and a picker miss that they
@@ -87,29 +91,16 @@ export async function setupOpenAI(
   await page.getByRole("button", { name: "Close" }).click();
 
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available.
-  // Closing the management panel (Step 6) puts the model dropdown into a
-  // post-close refresh state where the `model_model` trigger is briefly
-  // replaced by a (testid-less) "Loading models…" button while providers and
-  // enabled models refetch. Wait for the trigger to be VISIBLE — not merely
-  // attached — so the click does not race that loading swap.
+  // Opening the picker is shared with the other two provider setups: closing the
+  // management panel (Step 6) puts the dropdown into a post-close refresh state
+  // where `model_model` is briefly replaced by a (testid-less) "Loading models…"
+  // button — and when the batch above never settled, that refresh never runs at
+  // all, so the trigger can stay unusable for the whole budget. Both 60 s budgets,
+  // their measurements, and the attribution of that case live in
+  // `openModelPickerAfterPanelClose` (#1649).
   await hideInspectorPanel(page);
   const modelTrigger = page.getByTestId("model_model");
-  // 60 s, not the 15 s this used to allow, and NOT to make a stall pass: taking the
-  // correct flush path above means the product genuinely re-fetches, measured at
-  // 30 020 ms and 29 640 ms against the 4 327 ms the broken path returned in
-  // (#1649). The old budget would turn the fix into a model_model timeout.
-  await modelTrigger.waitFor({ state: "visible", timeout: 60000 });
-  // The click carries its own 60 s budget for the same measured reason as the
-  // waitFor above, and NOT as a retry bolted on to make a red pass: `click()`
-  // otherwise falls back to the 20 s `actionTimeout`, and the trigger re-enters the
-  // loading state between "visible" and the click while the refresh this helper
-  // correctly triggered is still running. Measured failing exactly there —
-  // `locator.click: Timeout 20000ms exceeded ... waiting for
-  // getByTestId('model_model')` — on the cold path with the provider on its
-  // MIN_DEFAULT_MODELS default (#1649). The locator is re-resolved on every
-  // actionability retry, so this survives the element being replaced, and nothing
-  // about the assertion that follows is weakened.
-  await modelTrigger.click({ timeout: 60000 });
+  await openModelPickerAfterPanelClose(page, { providerLabel: "OpenAI", toggleWrite });
   let pickByRanking = !modelTestId;
   if (modelTestId) {
     // Resolved by option IDENTITY (data-value / data-testid), never by the option's
@@ -125,6 +116,10 @@ export async function setupOpenAI(
       listedModels,
       checkedModels,
       providerLabel: "OpenAI",
+      // The third source: `checkedModels` reads the OPTIMISTIC cache, so a picker
+      // miss it contradicts is only a picker defect when the write behind it landed
+      // (#1649). `write-stalled` throws through `absentBehavior` on purpose.
+      toggleWrite,
       absentBehavior: opts?.fallbackToRanking ? "return" : "throw",
     });
     if (selection.status === "absent") {

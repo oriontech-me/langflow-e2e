@@ -17,7 +17,12 @@
 // reason `resolveModelOption` and `censusForTarget` are.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { flushVerdict, type ToggleBatchObservation } from "./model-toggle-batch";
+import {
+  flushVerdict,
+  modelTriggerStallMessage,
+  writeStallReason,
+  type ToggleBatchObservation,
+} from "./model-toggle-batch";
 
 const OPTS = { quietMs: 1500, deadlineAt: 100_000 };
 
@@ -105,4 +110,98 @@ test("the deadline never overrides nothing-to-flush", () => {
     OPTS,
   );
   assert.equal(v.kind, "nothing-to-flush");
+});
+
+// --- #1649 (reopened): a give-up is an OBSERVED cause, and it must be carried ---
+//
+// The gate above already prints what it saw. What it did NOT do was hand that
+// observation to the picker read that follows, so 90 s later the failure named a
+// cause nobody had measured ("the picker did not refresh, or the option list is
+// filtered") while the real one — the write never answered — sat in a log line no
+// failure message, no `error_signature` and no triage dataset correlates. All eight
+// give-ups on the 2026-09-01 daily read `1 write(s) started, 0 finished`.
+//
+// `writeStallReason` is the carrier, and it is pure for the same reason
+// `flushVerdict` is. Three properties ride on it: an UNOBSERVED batch is not a
+// negative one (#1012), a SETTLED batch must leave the existing verdict alone, and
+// an unchanged panel is never a stall.
+
+test("a gave-up batch yields a reason naming the write that never answered", () => {
+  const reason = writeStallReason({
+    clicked: 30,
+    verdict: "gave-up",
+    writesStarted: 1,
+    writesFinished: 0,
+  });
+  assert.ok(reason !== null);
+  assert.match(reason!, /30 toggle\(s\) clicked/);
+  assert.match(reason!, /1 write\(s\) started/);
+  assert.match(reason!, /0 finished/);
+  // The endpoint is named, because "the write" is not actionable on its own.
+  assert.match(reason!, /enabled_models/);
+});
+
+test("an UNOBSERVED batch is not a stalled one", () => {
+  // The three provider helpers pass what they measured; anything else (a caller
+  // that never ran the gate) must produce no claim at all rather than a negative.
+  assert.equal(writeStallReason(undefined), null);
+});
+
+test("a settled batch is never a stall, whatever the counts say", () => {
+  // This is the branch that keeps MODEL_PICKER_DEFECT alive: a picker that
+  // disagrees AFTER a clean flush is the genuine, unexplained disagreement #1461
+  // wrote its assertion for, and re-labelling it as an instance stall would blind
+  // the suite to it.
+  assert.equal(
+    writeStallReason({ clicked: 36, verdict: "settled", writesStarted: 1, writesFinished: 1 }),
+    null,
+  );
+  assert.equal(
+    writeStallReason({ clicked: 0, verdict: "nothing-to-flush", writesStarted: 0, writesFinished: 0 }),
+    null,
+  );
+});
+
+test("a panel nobody changed is never a stall, even past the deadline", () => {
+  // `flushVerdict` cannot return gave-up with clicked === 0 today, but the guard is
+  // cheap and the alternative is a scary instance-stall verdict on a healthy run
+  // the moment that ordering changes.
+  assert.equal(
+    writeStallReason({ clicked: 0, verdict: "gave-up", writesStarted: 0, writesFinished: 0 }),
+    null,
+  );
+});
+
+test("the model_model message blames the instance, keeps the original error, and cannot skip", () => {
+  const message = modelTriggerStallMessage(
+    { clicked: 30, verdict: "gave-up", writesStarted: 1, writesFinished: 0 },
+    {
+      providerLabel: "Google Generative AI",
+      original: "locator.waitFor: Timeout 60000ms exceeded.",
+    },
+  );
+  assert.ok(message !== null);
+  // Two of #1649's six occurrences were this timeout, 60 s each, with nothing in
+  // the message naming a cause. The prefix must NOT be the skip prefix.
+  assert.ok(!message!.startsWith("MODEL_NOT_AVAILABLE"));
+  assert.match(message!, /^MODEL_TOGGLE_WRITE_STALLED:/);
+  assert.match(message!, /Google Generative AI/);
+  assert.match(message!, /1 write\(s\) started, 0 finished/);
+  assert.match(message!, /locator\.waitFor: Timeout 60000ms exceeded\./);
+  // The refresh runs in the batch's own onSettled — saying so is what separates
+  // this from a trigger/testid defect.
+  assert.match(message!, /onSettled/);
+  assert.match(message!, /#1649/);
+});
+
+test("with no stall the model_model failure is left exactly as it was", () => {
+  // A trigger that never appears on a HEALTHY flush is a real defect and must keep
+  // surfacing as Playwright's own locator error, not be re-labelled.
+  assert.equal(
+    modelTriggerStallMessage(
+      { clicked: 36, verdict: "settled", writesStarted: 1, writesFinished: 1 },
+      { providerLabel: "OpenAI", original: "locator.click: Timeout 60000ms exceeded." },
+    ),
+    null,
+  );
 });

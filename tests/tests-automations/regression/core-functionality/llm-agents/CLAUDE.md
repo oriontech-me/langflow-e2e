@@ -106,7 +106,9 @@ So closing the panel **within** the debounce window takes the path that never
 refreshes the picker, and the picker then renders the **pre-toggle** enabled set
 — which on a freshly configured provider is the `MIN_DEFAULT_MODELS = 5` default
 (`lfx/base/models/model_utils.py`). That is a genuine picker/panel disagreement,
-so `MODEL_PICKER_DEFECT` fires, correctly (§4) — and the cause is ours.
+so `MODEL_PICKER_DEFECT` fires, correctly (§4) — and the cause is ours. That
+verdict holds when the batch **settled**; when it never did, the disagreement has
+a different and already-observed cause, and § 5.1 below is the one that applies.
 
 Measured on `1.12.0.dev44`, one clean container, three runs of the identical
 sequence differing **only** in the pause between the last toggle click and Close,
@@ -135,6 +137,54 @@ times out while the write has in fact landed — and polling `GET enabled_models
 
 This is handled for you inside `tests/helpers/provider-setup/` — do not
 re-implement the toggle loop in a spec.
+
+#### 5.1 …and the write it waits for can fail to answer at all
+
+Waiting for the batch is necessary but not sufficient, because the write the wait
+is watching can simply never come back. On the 2026-09-01 daily
+([33511210195](https://github.com/oriontech-me/langflow-e2e/actions/runs/33511210195))
+the gate gave up **eight** times across three shards, every one reading the same
+shape:
+
+```
+⚠️  provider panel: the model-toggle batch did not settle in time —
+    30 toggle(s) clicked, 1 write(s) started, 0 finished.
+```
+
+`POST /api/v1/models/enabled_models` was issued and had not answered 90 s later.
+The listener counts `requestfailed` too, so that is a hang, not a network error.
+The gate then closes the panel anyway — by design: it warns, it does not throw —
+so the close-path flush runs and the picker keeps the pre-toggle set.
+
+**The picker is RIGHT there, and the panel is what lies.** `aria-checked` is
+`useModelToggleQueue`'s optimistic cache: it flips at click time, before any
+request, and it is the source the loud message calls ENABLED. Corroborated on the
+same run by `collect-models`' own server-side read — `0 of 30/36/8` enable writes
+confirmed, on all four shards — and by `5` being `MIN_DEFAULT_MODELS`
+(`lfx/base/models/model_utils.py`), i.e. the set the server genuinely had.
+
+So the outcome is split by **what the batch did**, not by what the picker shows:
+
+| Batch verdict | Picker omits the pinned model ⇒ |
+|---|---|
+| `settled` / `nothing-to-flush` | `MODEL_PICKER_DEFECT` — a real, unexplained disagreement |
+| `gave-up` | `MODEL_TOGGLE_WRITE_STALLED` — the write never answered; an INSTANCE stall |
+
+and the `model_model` wait that follows a give-up raises the same named stall
+instead of an anonymous `locator.waitFor` timeout (two of #1649's six occurrences
+were exactly that timeout, 60 s each, with nothing in the message naming a cause).
+
+Reproduced causally rather than by re-running (re-running cannot falsify a
+timing defect): on a healthy `1.12.0.dev45` container a scout held that POST for
+120 s with `page.route`, everything else unchanged, and produced the daily's
+evidence byte for byte — `36 toggle(s) clicked, 1 write(s) started, 0 finished`
+followed by `MODEL_PICKER_DEFECT … 5 option(s) enumerated (OpenAI: 5)`.
+
+Neither budget was raised and nothing became a skip: on such a day the specs
+still fail — they name the instance instead of accusing the picker. The
+**run-level** cause that puts a spec on this path at all (`collect-models`
+confirming 0 of 74 enable writes, so every provider sits on its five defaults)
+is #1666, not this.
 
 ### 6. Run with --workers=1
 
