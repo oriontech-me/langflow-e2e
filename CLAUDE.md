@@ -43,6 +43,16 @@ LANGFLOW_IMAGE=langflowai/langflow:latest ./scripts/start-langflow-docker.sh   #
 LANGFLOW_PORT=7861 ./scripts/stop-langflow-source.sh   # Stop a source instance, by port
 ```
 
+The source starter needs `uv` and a **frontend build in the clone** — `make -C <clone>
+install_frontend build_frontend`, once. `src/backend/base/langflow/frontend/` is
+gitignored upstream, so a fresh clone has none, and without it the backend still
+answers `/health_check` with 200 while serving no UI at all: the start looks perfect
+and every browser spec dies at page load. The starter refuses instead of building,
+because the build writes into a clone it has promised not to touch. It also binds
+**loopback** by default (unlike the pip starter's `0.0.0.0`): the target is a shared
+VM, where these flags otherwise publish an auto-login instance with a known superuser
+to anything that can route there. `LANGFLOW_BIND_HOST` opts out.
+
 ## Test Commands
 
 ```bash
