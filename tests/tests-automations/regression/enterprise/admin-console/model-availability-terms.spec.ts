@@ -19,7 +19,11 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
  * is empty. A build where any one of those drifted would tell an operator the
  * platform is offering models it cannot call.
  *
- * `Edit Models` is deliberately NOT asserted here — see #1659 and the spec doc.
+ * The write half — entering edit mode, enabling a model, saving — was excluded on
+ * the strength of #1659, which reported `Edit models` as a control that opened
+ * nothing. That report was three measurement errors and is closed invalid: it is
+ * a TOGGLE, and each of the 44 rows swaps its state text for a
+ * `role="switch"` named after the model. #1669 covers the round trip.
  */
 
 const PROVIDER = { label: "OpenAI", alias: "openai" } as const;
@@ -90,6 +94,25 @@ async function approveThroughUi(page: Page, label: string): Promise<void> {
   expect((await written).status()).toBe(201);
 }
 
+/** Open a provider's row and turn on the inline model editor. */
+async function enterEditMode(page: Page, label: string): Promise<void> {
+  await providerRow(page, label)
+    .getByRole("button", { name: /Review/i })
+    .click();
+  const toggle = modelsPanel(page).getByRole("button", { name: /^Edit models$/i });
+  await toggle.click();
+  // `aria-pressed`, not a dialog: the control is a toggle, and reading it any
+  // other way is what made #1659 look like a defect.
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+}
+
+/** The model a per-model switch is about, from its accessible name. */
+function modelNameFrom(accessibleName: string | null): string {
+  const match = /^Show (.+) in model pickers$/.exec(accessibleName ?? "");
+  expect(match, `unexpected switch name: ${accessibleName}`).not.toBeNull();
+  return match![1];
+}
+
 async function openModelsScreen(page: Page) {
   await page.goto("/admin-ee/models");
   await expect(modelsPanel(page)).toBeVisible({ timeout: 30_000 });
@@ -158,6 +181,134 @@ test.describe("Enterprise — the models screen reports availability the policy 
         // The pairing. A row reading `Visible` over an empty policy — or the
         // reverse — would tell an operator the platform offers models it cannot
         // call, and neither surface alone can catch it.
+        expect(await enabledModelKeys(request, auth)).toEqual([]);
+      });
+    },
+  );
+
+  test(
+    "entering edit mode offers one control per model and writes nothing yet",
+    { tag: ["@enterprise", "@regression", "@ui-ux"] },
+    async ({ page, request }) => {
+      await approveThroughUi(page, PROVIDER.label);
+      await openModelsScreen(page);
+      await enterEditMode(page, PROVIDER.label);
+
+      const switches = modelsPanel(page).getByRole("switch");
+
+      await test.step("one switch per model, each naming its model", async () => {
+        // Named, not positional: the switch's accessible name is what lets the
+        // next test assert on the model it chose rather than on an index.
+        const count = await switches.count();
+        expect(count, "edit mode revealed no per-model control").toBeGreaterThan(0);
+        await expect(switches.first()).toHaveAccessibleName(/in model pickers$/);
+      });
+
+      await test.step("and the policy is untouched", async () => {
+        // A screen that wrote on ENTERING an edit mode would be surprising in
+        // the worst way, and nothing else here would notice.
+        expect(await enabledModelKeys(request, auth)).toEqual([]);
+      });
+    },
+  );
+
+  test(
+    "enabling a model and saving lands exactly that model in the policy",
+    { tag: ["@enterprise", "@regression", "@ui-ux"] },
+    async ({ page, request }) => {
+      await approveThroughUi(page, PROVIDER.label);
+      await openModelsScreen(page);
+      await enterEditMode(page, PROVIDER.label);
+
+      const target = modelsPanel(page).getByRole("switch").first();
+      const model = modelNameFrom(await target.getAttribute("aria-label"));
+
+      const writes: string[] = [];
+      page.on("request", (issued) => {
+        const { pathname } = new URL(issued.url());
+        if (pathname === AVAILABILITY && issued.method() !== "GET") writes.push(pathname);
+      });
+
+      await target.click();
+
+      await test.step("flipping the switch stages the change without writing", async () => {
+        // Measured: the toggle issues nothing. The save bar is what commits, and
+        // asserting on the request is the only way to tell staged from written
+        // without racing the write.
+        expect(writes).toEqual([]);
+      });
+
+      await test.step("saving writes it, keyed on the model the switch named", async () => {
+        const written = page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === AVAILABILITY &&
+            response.request().method() === "PUT",
+          { timeout: 30_000 },
+        );
+        await modelsPanel(page)
+          .getByRole("button", { name: /^Save models$/i })
+          .click();
+        expect((await written).status()).toBe(200);
+
+        await expect
+          .poll(() => enabledModelKeys(request, auth), { timeout: 15_000 })
+          .toEqual([expect.stringContaining(model)]);
+      });
+    },
+  );
+
+  test(
+    "enabling a model does not make it visible while the provider has no credentials",
+    { tag: ["@enterprise", "@regression", "@ui-ux"] },
+    async ({ page, request }) => {
+      await approveThroughUi(page, PROVIDER.label);
+      await openModelsScreen(page);
+      await enterEditMode(page, PROVIDER.label);
+
+      await modelsPanel(page).getByRole("switch").first().click();
+      await modelsPanel(page)
+        .getByRole("button", { name: /^Save models$/i })
+        .click();
+      await expect
+        .poll(() => enabledModelKeys(request, auth), { timeout: 15_000 })
+        .not.toEqual([]);
+
+      // Availability and builder visibility are DIFFERENT AXES, and the screen
+      // does not conflate them: one enabled model on a provider that still has
+      // no credentials is not something a builder can pick. A row flipping to
+      // `Visible` here would tell an operator their builders can choose a model
+      // nothing can authenticate to — which is the same lie #1660's read tests
+      // exist to catch, arriving from the other direction.
+      await expect(providerRow(page, PROVIDER.label)).toContainText(/Hidden/i);
+      await expect(providerRow(page, PROVIDER.label)).toContainText(/Pending/i);
+    },
+  );
+
+  test(
+    "cancelling an edit discards it",
+    { tag: ["@enterprise", "@regression", "@ui-ux"] },
+    async ({ page, request }) => {
+      await approveThroughUi(page, PROVIDER.label);
+      await openModelsScreen(page);
+      await enterEditMode(page, PROVIDER.label);
+
+      const writes: string[] = [];
+      page.on("request", (issued) => {
+        const { pathname } = new URL(issued.url());
+        if (pathname === AVAILABILITY && issued.method() !== "GET") writes.push(pathname);
+      });
+
+      await modelsPanel(page).getByRole("switch").first().click();
+      await modelsPanel(page).getByRole("button", { name: /^Cancel$/i }).click();
+
+      await test.step("no write leaves the browser", async () => {
+        // Asserted on the request rather than by reading the policy afterwards:
+        // a state read taken immediately after races the write it is meant to
+        // detect, which this suite has already had to correct twice.
+        expect(writes, "cancelling an edit issued a write").toEqual([]);
+      });
+
+      await test.step("and the policy is as it was", async () => {
         expect(await enabledModelKeys(request, auth)).toEqual([]);
       });
     },

@@ -43,20 +43,55 @@ With nothing approved the screen is not blank — it names the cause and links t
 with the link pointing at `/admin-ee/providers`. That is the only guidance an operator gets on a
 fresh instance, so it is asserted rather than assumed.
 
-## What is deliberately not asserted
+## The write half, and the report that wrongly excluded it
 
-**`Edit Models`, filed as #1659.** It is an enabled `<button>` that opens nothing: no dialog, no
-menu, no navigation, and the panel text shrinks from 1645 to 1295 characters — it collapses the
-expanded row instead.
+`Edit models` **works.** It is a **toggle** — `aria-pressed` goes `false` → `true` — and each of
+the 44 rows swaps its state text for a control:
 
-Left unasserted in **either** direction on purpose. Asserting that it opens an editor would pin a
-defect; asserting that it collapses the row would pin a behaviour nobody has said is intended. The
-provider is `Pending`, so an unavailable editor is a defensible product state — but then the
-control should say so, which is exactly what its neighbours on this screen do. That distinction
-needs a credential to settle, and this spec is keyless by design.
+```
+view mode:   - text: Disabled
+edit mode:   - switch "Show gpt-5.6-sol in model pickers"
+```
 
-`Edit provider access` and the `Configure` credential flow are out for the same reason the
-provider spec left them out: keeping this runnable on any Enterprise instance is worth more than
+with `Enable all models`, `Hide all models`, `Cancel` and `Save models` appearing alongside.
+
+This was filed as a defect (#1659, closed invalid) on **three measurement errors**, recorded here
+because the same three would catch anyone probing this screen:
+
+1. **Looking for a dialog.** `role=dialog`, `role=menu`, a URL change — all correctly zero, because
+   none of them is how the control works.
+2. **Reading the shrinking panel as a collapse.** 1645 → 1295 characters is not the list
+   disappearing: the item count is **44 in both states**. It is 44 rows each losing the word
+   `Disabled` to a switch.
+3. **Counting the wrong role, twice** — `role=switch` *before* entering edit mode (0, correctly),
+   then `role=button` with the toggle's name where the control is a `role=switch`.
+
+That is the third time in this area a **partial read of a screen produced a confident wrong
+conclusion**, after the delete button's `aria-label` — an attribute read where the accessible name
+is computed — and the provider card that "vanished" while sitting in the next region of the same
+screen. The fix each time: take the accessibility snapshot of the whole surface, in both states,
+before believing the first half.
+
+### What the round trip is, measured
+
+| Step | Result |
+|---|---|
+| flip a switch | **no request** — the change is staged |
+| `Save models` | `PUT /api/v1/model-availability-policy` → `200` |
+| the policy | `enabled_model_keys: ["openai::llm::gpt-5.6-sol"]` |
+| the provider row | **still `Pending` / `Hidden`** |
+
+That last line corrected a test before it was written. The natural assertion — *"the row stops
+reading Hidden"* — is **false**, and asserting it would have manufactured a defect. Builder
+visibility follows the provider's **credentials**, not the availability policy: one enabled model on
+a provider that is still `Pending` is not something a builder can pick. The two are different axes
+and the screen does not conflate them, which is the assertion that replaced it — the same lie
+#1660's read tests catch, arriving from the other direction.
+
+### Still out of scope
+
+`Edit provider access` and the `Configure` credential flow, for the reason the provider spec left
+them out: they need a real credential, and keeping this pair of specs keyless is worth more than
 the coverage they would add.
 
 ## Tags *(required)*
@@ -85,6 +120,9 @@ No `@stable`: there is no scheduled Enterprise lane (#1010).
    `enabled_model_keys` is empty.
 6. **The expansion.** `Review` the row and assert the governance terms it inherited from the
    approval — *All workspaces*, *All environments* — and that models are listed `Disabled`.
+7. **The write.** Enter edit mode and assert one switch per model with nothing written yet; enable
+   one and save, and assert the policy holds exactly that model's key; assert the row still reads
+   `Pending` / `Hidden`; and assert `Cancel` issues no write at all.
 7. Restore: `DELETE /api/v1/model-provider-governance/{provider_id}` carrying
    `{"expected_revision": <revision from GET /api/v1/policy-bundle>}` → `204`.
 
