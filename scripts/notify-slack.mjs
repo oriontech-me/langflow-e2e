@@ -18,6 +18,11 @@
 // It deliberately mirrors the three shapes of the GitHub issue: the Slack message
 // and the issue are two views of one verdict, and they must never disagree.
 //
+// A FOURTH shape exists here and has no counterpart in the issue, because the two
+// scripts stand in different places: the issue is rendered from inputs the caller
+// hands it, while this one READS the run's numbers off disk and can therefore fail
+// to. That is `unknown` — announced, never rendered as zero.
+//
 // ## Why it reads payload.json and not results.json
 //
 // `build-run-payload.mjs` already parses the merged report into totals + failures.
@@ -124,7 +129,8 @@ const runId = run.run_id || env.RUN_ID || "local";
 const host = env.VM_HOSTNAME || env.HOSTNAME || "the QA VM";
 
 // ---------------------------------------------------------------------------
-// The three shapes — same order and same reasoning as create-failure-issue.mjs
+// The shapes — the three of create-failure-issue.mjs, in its order and for its
+// reasons, plus `unknown` for a payload this script could not read.
 // ---------------------------------------------------------------------------
 
 // A fourth outcome, and it is NOT one of the three: the run's own numbers could
