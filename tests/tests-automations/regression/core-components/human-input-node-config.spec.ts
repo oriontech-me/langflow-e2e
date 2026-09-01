@@ -63,6 +63,27 @@ const CUSTOM_HANDLE = "handle-humaninput-shownode-request changes-right";
 // Output names the persisted flow must carry once the custom choice is added.
 const PERSISTED_OUTPUTS = ["branch_approve", "branch_reject", CUSTOM_CHOICE_OUTPUT];
 
+/**
+ * Matches the refresh endpoint by PATHNAME — never as a URL glob.
+ *
+ * A Playwright glob has to match the WHOLE url, and this endpoint carries a
+ * `?flow_id=<uuid>` query string that upstream added in a nightly built between
+ * 2026-08-28 and 2026-08-31. The bare-path glob this used to be matched every
+ * call before that and none after, so the park below silently stopped engaging
+ * and the guard failed on its own precondition for 20 s while measuring nothing
+ * (#1644 — 3 of 3 attempts on the 2026-08-31 daily, 5 of 5 locally). A trailing
+ * wildcard would fix today's url and still match a future `/update/batch`; the
+ * pathname is what this test actually means, and it is what
+ * `helpers/ui/watch-node-refresh.ts` already compares — which is why every
+ * other test in this file went through the change green.
+ *
+ * Hoisted to a module constant because `page.unroute()` needs the SAME function
+ * reference the route was installed with; two structurally-equal arrows do not
+ * unroute each other.
+ */
+const matchesRefreshPath = (url: URL): boolean =>
+  url.pathname === COMPONENT_REFRESH_PATH;
+
 /** The Human Input node on the canvas. */
 const humanInputNode = (page: Page): Locator =>
   page.locator('.react-flow__node:has([data-testid="title-Human Input"])');
@@ -274,10 +295,8 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
     },
   );
 
-  // QUARANTINED for #1644 — the stale-response park never engages, so this guard asserts on an unmeasured run
-  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
-  test.fixme("a stale refresh response does not revert a committed User Action",
-    { tag: ["@regression", "@components", "@ui-ux"] },
+  test("a stale refresh response does not revert a committed User Action",
+    { tag: ["@stable", "@regression", "@components", "@ui-ux"] },
     async ({ page }) => {
       let openGate: () => void = () => {};
       const gate = new Promise<void>((resolve) => {
@@ -299,7 +318,7 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
           // the window has already closed, which degrades this test into the
           // aborted-response control where the add always sticks (measured —
           // the first version of this released nothing and still passed).
-          await page.route(`**${COMPONENT_REFRESH_PATH}`, async (route: Route) => {
+          await page.route(matchesRefreshPath, async (route: Route) => {
             const body = route.request().postDataJSON();
             const isOnMount =
               !claimed &&
@@ -353,7 +372,7 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
         // the unroute keeps a refresh fired during the cleanup navigation from
         // being held by it.
         openGate();
-        await page.unroute(`**${COMPONENT_REFRESH_PATH}`);
+        await page.unroute(matchesRefreshPath);
       }
     },
   );
