@@ -1,6 +1,6 @@
 # Agent Input Sources — direct field vs ChatInput handle
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
