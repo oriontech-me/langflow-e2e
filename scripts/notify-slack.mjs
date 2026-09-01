@@ -54,6 +54,7 @@
 //   SLACK_WEBHOOK_URL   Incoming Webhook OR Workflow Builder trigger URL.
 //                       ABSENT = skip, quietly and cleanly.
 //   SLACK_MODE          "blockkit" | "workflow". Default: derived from the URL.
+//                       An unrecognised value warns and keeps the derived mode.
 //   SLACK_TIMEOUT_MS    per-request deadline (default 15000)
 //   PAYLOAD_JSON        path to the run payload (default: payload.json)
 //   RUN_EMPTY / RUN_PARTIAL / RUN_UNREADABLE / RUN_ERRORS / RUN_TESTS / RUN_FIRST_ERROR
@@ -92,9 +93,14 @@ const truncate = (s, n) => {
 
 const payloadPath = env.PAYLOAD_JSON || "payload.json";
 let run = {};
+// Whether the run's own numbers were READ, as opposed to defaulted. Everything
+// downstream of `totals` is unknown when this is false, and "unknown" and "zero"
+// must not render as the same sentence — see the headline below.
+let payloadRead = false;
 if (existsSync(payloadPath)) {
   try {
     run = JSON.parse(readFileSync(payloadPath, "utf8"));
+    payloadRead = true;
   } catch (e) {
     console.error(`[slack] ${payloadPath} is unreadable (${e.message}) — reporting what the guards saw instead.`);
   }
@@ -121,7 +127,14 @@ const host = env.VM_HOSTNAME || env.HOSTNAME || "the QA VM";
 // The three shapes — same order and same reasoning as create-failure-issue.mjs
 // ---------------------------------------------------------------------------
 
-const shape = empty ? "empty" : partial ? "partial" : "failures";
+// A fourth outcome, and it is NOT one of the three: the run's own numbers could
+// not be read at all. Kept separate because "unknown" and "zero" are different
+// sentences — see the headline below.
+const failedCount = totals.failed;
+const countKnown = failedCount !== undefined && failedCount !== null;
+const verdictUnknown = !countKnown && failures.length === 0;
+
+const shape = empty ? "empty" : partial ? "partial" : verdictUnknown ? "unknown" : "failures";
 
 // A GREEN day is not one of the three shapes, and this script has to say so
 // itself. Its header claims it "fires on the SAME condition as the triage issue",
@@ -133,12 +146,12 @@ const shape = empty ? "empty" : partial ? "partial" : "failures";
 // that forgets it is a caller, and there will be more than one.
 //
 // Deliberately narrow: it fires only when EVERY signal agrees the day was clean —
-// not empty, not partial, a failed count of exactly zero, and an empty failure
-// list. An absent or unreadable payload leaves `totals.failed` undefined, which is
-// UNKNOWN rather than zero, and an unknown verdict must still be announced (#1012
-// again). SLACK_FORCE=1 posts anyway, which is how the webhook wiring gets tested
+// not empty, not partial, a failed count that was actually READ and is exactly
+// zero, and an empty failure list. An absent or unreadable payload leaves
+// `totals.failed` undefined, which is UNKNOWN rather than zero: it takes the
+// `unknown` shape above, is still announced (#1012 again), and never reaches this
+// gate. SLACK_FORCE=1 posts anyway, which is how the webhook wiring gets tested
 // against a green run without editing this file.
-const failedCount = totals.failed;
 const nothingFailed =
   shape === "failures" &&
   (failedCount === 0 || failedCount === "0") &&
@@ -155,6 +168,10 @@ if (nothingFailed && env.SLACK_FORCE !== "1") {
 const headline = {
   empty: `⚠️ Daily @stable executed ZERO tests — ${date}`,
   partial: `⚠️ Daily @stable was PARTIAL — a shard never ran — ${date}`,
+  // Never "failed — 0 test(s)". That sentence is read as "zero tests failed", i.e.
+  // as a clean day, on a run where nobody could tell — the same false verdict as
+  // announcing failures on an empty report, pointed the other way (#1012).
+  unknown: `⚠️ Daily @stable — verdict UNKNOWN, the run's report could not be read — ${date}`,
   failures: `🔴 Daily @stable failed — ${totals.failed ?? failures.length} test(s) — ${date}`,
 }[shape];
 
@@ -170,6 +187,13 @@ const diagnosis = {
     `*${testsTotal} test result(s) but ${reportErrors} top-level report error(s).*`,
     "A shard aborted before running the tests assigned to it, so the totals are *UNDER-COUNTED* — the dead shard's specs are neither passed nor failed, they never ran.",
     "`@stable` auto-removal and the duration refresh were both skipped. *Triage the abort first* — a large drop against the last green run is the abort, not a fix.",
+  ].join("\n"),
+  unknown: [
+    payloadRead
+      ? `*The run payload carried no totals* (\`${truncate(payloadPath, 120)}\`) — it parsed, but the numbers this message reports are not in it.`
+      : `*The run payload was missing or unreadable* (\`${truncate(payloadPath, 120)}\`) — the numbers this message reports were never produced.`,
+    "The guards reported neither the empty nor the partial verdict, so *nothing can be said about what passed or failed* — this is not a clean day, it is an unread one.",
+    "*Start from the run directory and the merge step*: find out why the payload is not there, then re-read the verdict from the report itself.",
   ].join("\n"),
   failures: null,
 }[shape];
@@ -189,19 +213,47 @@ const outageNote = wedged
     "Specs that failed inside those windows are *collateral, not per-test failures*. Read the outage first."
   : "";
 
-const failureList = () => {
+const elisionNotice = (n) => `\n_… and ${n} more not listed here — see the report._`;
+
+/**
+ * The failure list, built to FIT — `budget` is what Slack's section cap leaves
+ * after everything that cannot be dropped has taken its share.
+ *
+ * NAME what was elided rather than silently cutting: a list that stops at 10 reads
+ * as "10 failures" when it was 40. That was already true of the 10-item cap, but
+ * not of the character cap underneath it: the notice is the LAST line, so a body
+ * truncated at SECTION_MAX cut the notice off first and the message ended mid-entry
+ * with an ellipsis — the same silent cut, one layer down. Measured before the fix:
+ * 22 failures with realistic titles and signatures rendered a 2900-char body ending
+ * inside the 9th entry, with no count. It had not fired yet — the worst day in
+ * `reports/daily-history.jsonl` (2026-07-22, 22 failures) renders ~2140 — so this is
+ * a floor under a margin of roughly three long entries, not a fix for a live defect.
+ *
+ * So the notice is BUDGETED, not appended: each entry is admitted only if it still
+ * leaves room for the notice that stopping after it would require. At least one
+ * entry is always kept — an empty list under a tight budget says even less than a
+ * short one, and the final truncate() is still there as a backstop.
+ */
+const failureList = (budget) => {
   if (!failures.length) return "";
-  const shown = failures.slice(0, MAX_FAILURES_LISTED);
-  const lines = shown.map((f) => {
+  const rendered = failures.slice(0, MAX_FAILURES_LISTED).map((f) => {
     const file = String(f.file || "").split("/").pop() || f.file || "?";
     return `• \`${file}\` — ${truncate(f.test || "?", 120)}\n   _${truncate(f.error_signature || "unknown", SIGNATURE_MAX)}_`;
   });
-  // NAME what was elided rather than silently cutting: a list that stops at 10
-  // reads as "10 failures" when it was 40.
-  if (failures.length > shown.length) {
-    lines.push(`\n_… and ${failures.length - shown.length} more not listed here — see the report._`);
+
+  const kept = [];
+  let used = 0;
+  for (const entry of rendered) {
+    const cost = (kept.length ? 1 : 0) + entry.length; // 1 = the "\n" join
+    const leftIfStopHere = failures.length - (kept.length + 1);
+    const reserve = leftIfStopHere > 0 ? 1 + elisionNotice(leftIfStopHere).length : 0;
+    if (kept.length && used + cost + reserve > budget) break;
+    kept.push(entry);
+    used += cost;
   }
-  return lines.join("\n");
+
+  const left = failures.length - kept.length;
+  return (left > 0 ? [...kept, elisionNotice(left)] : kept).join("\n");
 };
 
 const totalsLine =
@@ -218,15 +270,21 @@ const totalsLine =
 const ERROR_MAX = 600;
 const errorBlock = firstError ? "```\n" + truncate(firstError, ERROR_MAX) + "\n```" : "";
 
-const body = [
+// Everything that cannot be dropped, in order. The failure list is the only part
+// that gets to shrink, so it is the only part that has to know what is left.
+const fixedText = [
   `*Langflow* \`${truncate(version || image, 200)}\`  ·  *Run* \`${truncate(runId, 200)}\` on ${host}`,
   totalsLine,
   outageNote,
   diagnosis || "",
-  diagnosis ? errorBlock : failureList(),
+  diagnosis ? errorBlock : "",
 ]
   .filter(Boolean)
   .join("\n\n");
+
+const tail = diagnosis ? "" : failureList(SECTION_MAX - fixedText.length - 2);
+
+const body = [fixedText, tail].filter(Boolean).join("\n\n");
 
 const links = [];
 if (env.ISSUE_URL) links.push(`<${env.ISSUE_URL}|Triage issue>`);
@@ -249,8 +307,26 @@ const linksText = links.join("  ·  ");
 // actually distinguishes the two, and requiring `hooks.slack.com` as well makes the
 // detection fail silently behind a proxy or a relay — falling back to Block Kit,
 // which a Workflow Builder trigger accepts with a 200 and renders as nothing.
-const mode =
-  env.SLACK_MODE || (/\/triggers\//.test(webhook) ? "workflow" : "blockkit");
+const derivedMode = /\/triggers\//.test(webhook) ? "workflow" : "blockkit";
+
+// The override is CHECKED, not trusted. `mode === "workflow" ? … : blockkit` reads
+// every value that is not exactly "workflow" as Block Kit, so `SLACK_MODE=workflows`
+// or `SLACK_MODE=Workflow` silently posted Block Kit to a trigger — accepted with a
+// 200, rendered as nothing, which is the one failure this whole derivation exists to
+// avoid. An unrecognised value falls back to what the URL says and SAYS SO; it does
+// not fail the run, because the fail-soft contract above outranks it.
+const MODES = ["blockkit", "workflow"];
+let mode = derivedMode;
+if (env.SLACK_MODE) {
+  if (MODES.includes(env.SLACK_MODE)) {
+    mode = env.SLACK_MODE;
+  } else {
+    console.error(
+      `[slack] ::warning:: SLACK_MODE="${env.SLACK_MODE}" is not one of ${MODES.join("|")} — ` +
+        `using "${derivedMode}", derived from the webhook URL.`,
+    );
+  }
+}
 
 const requestBody =
   mode === "workflow"

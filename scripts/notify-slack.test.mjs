@@ -224,14 +224,25 @@ test("a green run is not announced as a red one", () => {
   assert.match(forced.body.headline, /Daily @stable failed/);
 });
 
-test("the gate is narrow: an UNKNOWN verdict is still announced", () => {
+test("the gate is narrow: an UNKNOWN verdict is still announced, and named as unknown", () => {
   const url = "https://hooks.slack.com/triggers/E1/2/abc";
 
   // No payload at all: `totals.failed` is undefined, which is unknown, not zero.
   // Staying silent there is #1012 from the other side — a run whose verdict nobody
-  // could read must not pass for a clean one.
+  // could read must not pass for a clean one. But announcing it as
+  // "🔴 Daily @stable failed — 0 test(s)" is the SAME false verdict from the third
+  // side: that sentence is read as "zero tests failed", i.e. as a clean day. So the
+  // unknown case is its own shape, and it has to say the word.
   const noPayload = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: join(dir, "does-not-exist.json") });
-  assert.match(noPayload.body.headline, /Daily @stable failed/);
+  assert.match(noPayload.body.headline, /verdict UNKNOWN/);
+  assert.doesNotMatch(noPayload.body.headline, /failed — 0 test\(s\)/, "unknown is not zero");
+  assert.match(noPayload.body.body, /not a clean day, it is an unread one/);
+
+  // A payload that parses but carries no totals is the same verdict by another
+  // route, and must not be reported as a clean day either.
+  const noTotals = join(dir, "payload-no-totals.json");
+  writeFileSync(noTotals, JSON.stringify({ version: 1, date: "2026-08-25", failures: [] }), "utf8");
+  assert.match(render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: noTotals }).body.headline, /verdict UNKNOWN/);
 
   // Zero failures but an EMPTY or PARTIAL verdict is the whole point of those two
   // shapes: nothing failed precisely because nothing ran.
@@ -255,4 +266,48 @@ test("a long quoted cause is truncated inside its fence, not across it", () => {
   assert.equal(fences % 2, 0, "the code fence must be closed");
   assert.equal(fences, 2);
   assert.ok(body.body.length <= 2900, "and the body still fits Slack's section cap");
+});
+
+test("the elision notice survives the section cap — the list is budgeted, not appended", () => {
+  // The 10-item cap already NAMED what it left out. The character cap underneath it
+  // did not: the notice is the last line, so a body truncated at SECTION_MAX cut the
+  // notice off first and the message ended mid-entry with a bare ellipsis — the same
+  // silent cut, one layer down. Measured before the fix: this payload rendered a
+  // 2900-char body ending inside the 9th entry, with no count anywhere in it.
+  const long = join(dir, "payload-long-entries.json");
+  writeFileSync(
+    long,
+    JSON.stringify({
+      ...PAYLOAD,
+      totals: { passed: 300, failed: 22, flaky: 1, skipped: 20 },
+      failures: Array.from({ length: 22 }, (_, i) => ({
+        test: "very long descriptive test title ".repeat(6) + i,
+        file: `tests/tests-automations/regression/core-functionality/llm-agents/some-quite-long-agent-spec-name-${i + 1}.spec.ts`,
+        error_signature: "Error: timeout exceeded waiting for a locator that never appeared ".repeat(4) + i,
+      })),
+    }),
+    "utf8",
+  );
+
+  const { body } = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc", PAYLOAD_JSON: long });
+  assert.ok(body.body.length <= 2900, "the body still fits Slack's section cap");
+  const notice = /and (\d+) more not listed here/.exec(body.body);
+  assert.ok(notice, "the count of what was elided must survive the cap, not be cut by it");
+  // And it must be the TRUTH: shown + elided is every failure there was.
+  const shown = (body.body.match(/^• `/gm) || []).length;
+  assert.equal(shown + Number(notice[1]), 22, "shown + elided must account for every failure");
+});
+
+test("an unrecognised SLACK_MODE keeps the derived mode and says so", () => {
+  // `mode === "workflow" ? … : blockkit` reads every other value as Block Kit, so a
+  // typo silently posted Block Kit to a trigger — accepted with a 200, rendered as
+  // nothing. That is the exact failure the URL derivation exists to avoid.
+  const { stdout, stderr, status } = run({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    SLACK_MODE: "workflows",
+    SLACK_DRY_RUN: "1",
+  });
+  assert.equal(status, 0, "a bad knob must not fail the run — the fail-soft contract outranks it");
+  assert.match(stderr, /SLACK_MODE="workflows" is not one of/);
+  assert.match(stdout, /mode=workflow\b/, "it falls back to what the URL says, not to blockkit");
 });
