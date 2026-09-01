@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 
-**Last validated:** Langflow 1.12.0.dev31
+**Last validated:** Langflow 1.12.0.dev44
 
 ---
 
@@ -69,6 +69,41 @@ provider `inactive` in `providers.json`. The gate is `providerSkipGate("google")
 (`helpers/provider-setup/provider-health.ts`), matching the provider-health skips
 elsewhere in the suite: gating on the env var alone let a drained key through, and
 the resulting hung call killed the shard's Langflow worker (#1029).
+
+### Node-run wait strategy — race the badge against the failure signal (#1667)
+
+`node_duration_knowledge` is an observable of a **successful** build, not of the
+run having finished. The frontend renders it inside a ternary — success yields
+`node_duration_<node>`, and every other build status falls through to
+`node_status_icon_<node>_<status>`, which for an errored Knowledge run is
+`node_status_icon_knowledge_undefined` and is **not visible at all**. A wait that
+gates on the badge alone therefore cannot observe a failed run: it burns its whole
+budget and reports `element(s) not found`, naming the badge instead of the cause.
+
+This spec shares that surface, that provider and that failure mode with
+`rag-pipeline.spec.ts`, whose ingest step failed on four dailies with an
+unattributable 90 s timeout while the real reason — a Google Vertex project-wide
+per-minute quota rejecting the embedding call with **429 RESOURCE_EXHAUSTED** on
+`gemini-embedding` — was on screen within ~1 s. The two specs run on the same
+shard, back to back, against the same quota, so they are fixed together (#1667).
+
+Both Knowledge node runs go through the shared
+`helpers/flows/run-node-and-wait.ts`, which:
+
+1. Waits for the success badge **or** the page-level `Flow build failed` signal,
+   whichever comes first (**45 s**; measured on 1.12.0.dev44 the badge appears in
+   2–4 s and the failure signal in ~1 s).
+2. On the failure signal, slices the reason out of the page text — it renders
+   *next to* the signal, not inside it.
+3. Retries the node run, bounded, only for a **provider rate-limit/quota** reason;
+   anything else throws immediately, since a hard build error is not transient.
+4. Throws with the on-screen reason once the retry budget is exhausted, so a
+   sustained provider outage is still a red — never a silent skip, never a pass.
+
+No assertion changes: the `chunks === 5` proof and the top-1 `embedding vector`
+sentinel are untouched. The retry is scoped to the *provisioning* attempt only.
+
+---
 
 ## Validation criterion (concrete, distinctive)
 
@@ -145,8 +180,11 @@ local `providers.json`.
 **Test 1 — Indexing in Vector Store:**
 1. Run Ingest: click `button_run_knowledge` scoped to the `Knowledge-ingest`
    node (`[data-id="Knowledge-ingest"]`).
-2. Assert the build badge `node_duration_knowledge` (scoped to that node) is
-   visible.
+2. Wait for the build badge `node_duration_knowledge` (scoped to that node) **or**
+   the page-level `Flow build failed` signal, whichever lands first (45 s). A
+   quota/rate-limit reason retries the node run within a bounded budget; any other
+   reason throws at once, quoting the on-screen text (see *Node-run wait
+   strategy*).
 3. Assert `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
 
 **Test 2 — Vector Store query returns the relevant chunk:**
@@ -183,7 +221,11 @@ local `providers.json`.
 - Component/UI testids (scouted live on 1.11.0.dev38): node ids `Knowledge-ingest`
   / `Knowledge-retrieve`; `button_run_knowledge`, `node_duration_knowledge`,
   `output-inspection-results-knowledge` (all scoped by node `data-id`); grid rows
-  via `.ag-center-cols-container [row-index]`.
+  via `.ag-center-cols-container [row-index]`. The build-failure signal is the
+  page-level `Flow build failed` text (i18n key `flowBuild.buildFailed`), the same
+  signal `api/flows/api-component-regression.spec.ts` gates on; the reason renders
+  adjacent to it, so it is read out of the page text rather than out of a
+  container.
 
 ---
 
