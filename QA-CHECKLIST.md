@@ -1009,9 +1009,12 @@
       → i18n/locale-resilience.spec.ts
 - [x] A locale bundle missing individual keys falls back to English for those keys instead of
       failing the render — asserted in the Create Memory modal under `pt`, on the two
-      `memory.dbProvider*` keys only `en` carries (`shortcuts.modifierOnly` is a decoy: its
-      call site passes an inline `defaultValue`, so it renders English even with the
-      fallback broken)
+      `memory.dbProvider*` keys the test itself strips from the served `pt` chunk. The gap is
+      created rather than borrowed since #1646: upstream translated those keys 10 days after
+      the spec landed, so a probe chosen from the shipped bundle's gaps expires on upstream's
+      schedule (`shortcuts.modifierOnly` remains a decoy and must not be the key removed — its
+      call site passes an inline `defaultValue`, so it renders English even with the fallback
+      broken)
       → i18n/locale-resilience.spec.ts
 
 ---

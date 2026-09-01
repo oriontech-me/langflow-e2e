@@ -203,9 +203,52 @@ test.describe("i18n — an unshipped browser locale", () => {
   );
 });
 
+/**
+ * The keys test 3 removes from the `pt` chunk to create the gap it asserts on.
+ *
+ * Both are real `memory.*` keys whose call sites pass NO `defaultValue`, so the
+ * English text the dialog shows for them can only come from `fallbackLng: "en"`.
+ * They are also currently PRESENT in `pt` — upstream translated them, which is
+ * what retired the previous design (#1646) — and that presence is the thing
+ * `stripPtKeys` asserts, not something it assumes.
+ */
+const STRIPPED_KEYS = ["memory.dbProviderLabel", "memory.dbProviderDescription"] as const;
+
+/**
+ * Removes `STRIPPED_KEYS` from the `pt` locale chunk on its way to the browser.
+ *
+ * The chunk is a separately served asset (measured on 1.12.0.dev44: `HTTP 200`,
+ * 146 373 bytes), so it can be rewritten before i18next ever parses it. The
+ * returned counter is the load-bearing half: if a future build drops these keys
+ * from `pt` again, the strip matches nothing while the dialog still renders
+ * English, and the test would pass without ever exercising its own mechanism —
+ * an unevaluated test is unknown, not clean (#1012). The caller asserts the
+ * count, so that state fails and says why.
+ */
+async function stripPtKeys(page: Page): Promise<{ stripped: () => number }> {
+  let stripped = 0;
+  await page.route("**/assets/pt-*.js", async (route) => {
+    const response = await route.fetch();
+    const body = await response.text();
+    let patched = body;
+    for (const key of STRIPPED_KEYS) {
+      // The whole `"key":"value"` pair, trailing comma included — an emptied
+      // value is not a missing key and i18next would render "" instead of
+      // falling back, which is the state this test must not silently produce.
+      const pair = new RegExp(`"${key.replace(".", "\\.")}":"(?:[^"\\\\]|\\\\.)*",?`, "g");
+      const next = patched.replace(pair, "");
+      if (next !== patched) stripped++;
+      patched = next;
+    }
+    await route.fulfill({ response, body: patched });
+  });
+  return { stripped: () => stripped };
+}
+
 test.describe("i18n — a key the active bundle does not carry", () => {
   let token: string;
   let flowId: string;
+  let ptChunk: { stripped: () => number };
 
   test.beforeEach(async ({ page, request }) => {
     token = await getAuthToken(request);
@@ -225,6 +268,9 @@ test.describe("i18n — a key the active bundle does not carry", () => {
     await page.addInitScript(() =>
       localStorage.setItem("languagePreference", "pt"),
     );
+    // Installed BEFORE that navigation too — the chunk is requested during it,
+    // and a route registered afterwards would miss it entirely (#1646).
+    ptChunk = await stripPtKeys(page);
     await openFlowById(page, flowId);
     await expect(page.locator("html")).toHaveAttribute("lang", "pt", {
       timeout: 30000,
@@ -238,28 +284,51 @@ test.describe("i18n — a key the active bundle does not carry", () => {
     await deleteFlow(request, flowId, { headers: { Authorization: token } });
   });
 
-  // QUARANTINED for #1646 — the English-fallback probe key no longer falls back
-  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
-  test.fixme(
+  test(
     "a missing key falls back to English beside siblings the bundle translates",
-    { tag: ["@regression", "@ui-ux", "@workspace"] },
+    { tag: ["@stable", "@regression", "@ui-ux", "@workspace"] },
     async ({ page }) => {
-      // On 1.12.0.dev33 all six non-English bundles are missing the same five
-      // keys `en` carries (2387 vs 2382). Two of them render unconditionally in
-      // this modal, on an instance with nothing configured.
+      // The gap this test needs is CREATED here, not borrowed from whatever the
+      // shipped `pt` bundle happens to be missing this week (#1646). The first
+      // version asserted English on keys upstream had not translated yet, and
+      // carried its own expiry hint telling the reader to re-measure the bundle
+      // diff. That hint worked exactly as written and the answer was that the
+      // probe had expired: on 1.12.0.dev44 `memory.dbProviderLabel` reads
+      // "Vector Database" in `en` and "Banco de dados vetorial" in `pt`, and its
+      // description is translated too. The design lasted 10 days — landed
+      // 2026-08-21 (#1541), green on 7 dailies, 3/3 red on 2026-08-31 (run
+      // 33410643882), re-measured 5/5 red on dev44 before this change.
       //
-      // A third, `shortcuts.modifierOnly`, is a DECOY and must not be used: its
-      // call site passes an inline `defaultValue`, so it renders English whether
-      // or not `fallbackLng` works. These two are called with no defaultValue at
-      // all, so English here can only come from the fallback.
+      // So the keys are stripped from the `pt` chunk on its way to the browser.
+      // What is asserted below is unchanged; only the precondition moved under
+      // this test's control, and `fallbackLng` is exercised more directly than a
+      // bundle gap upstream may close at any moment ever exercised it.
+      //
+      // The DECOY rule still governs WHICH key may be removed: `shortcuts.
+      // modifierOnly` passes an inline `defaultValue` at its call site, so it
+      // renders English whether or not `fallbackLng` works. These two are called
+      // with no defaultValue at all, so English here can only come from the
+      // fallback.
       const FALLBACK_LABEL = "Vector Database";
       const FALLBACK_DESCRIPTION =
         "Where this memory base stores vectors. Configured providers come from DB Providers settings.";
       const FALLBACK_KEY = "memory.dbProviderLabel";
-      const EXPIRY_HINT =
-        `if upstream has translated ${FALLBACK_KEY}, re-measure by diffing the en translation ` +
-        `object in the container's langflow/frontend/assets/index-*.js against assets/pt-*.js and ` +
-        `pick another key present only in en`;
+      const DESCRIPTION_KEY = "memory.dbProviderDescription";
+      const STRIP_HINT =
+        `the ${STRIPPED_KEYS.length} key(s) this test removes from the served pt chunk are what ` +
+        `create the gap — check the strip count reported above before suspecting i18next`;
+
+      // Before anything is read from the dialog: prove the gap is the one this
+      // test created. A pass on an un-intercepted chunk would be measuring
+      // upstream's bundle again, which is exactly what #1646 retired.
+      expect(
+        ptChunk.stripped(),
+        `the pt chunk was not patched as expected — ${ptChunk.stripped()} of ` +
+          `${STRIPPED_KEYS.length} key(s) removed. Either the route did not match the ` +
+          `served asset, or upstream dropped ${STRIPPED_KEYS.join(" / ")} from pt again, ` +
+          `in which case the dialog would render English for a reason this test did not ` +
+          `create and the assertions below would prove nothing (#1646/#1012)`,
+      ).toBe(STRIPPED_KEYS.length);
 
       await page.getByTestId("sidebar-nav-memories").click();
       // `/^Mem/` covers the English and Portuguese headings alike, so the
@@ -287,11 +356,11 @@ test.describe("i18n — a key the active bundle does not carry", () => {
       await test.step("the two keys the bundle lacks render their English text", async () => {
         await expect(
           dialog.getByText(FALLBACK_LABEL, { exact: false }).first(),
-          `${FALLBACK_LABEL} did not fall back to English — ${EXPIRY_HINT}`,
+          `${FALLBACK_LABEL} did not fall back to English — ${STRIP_HINT}`,
         ).toBeVisible({ timeout: 15000 });
         await expect(
           dialog.getByText(FALLBACK_DESCRIPTION, { exact: false }),
-          `the description did not fall back to English — ${EXPIRY_HINT}`,
+          `the description did not fall back to English — ${STRIP_HINT}`,
         ).toBeVisible();
       });
 
@@ -302,6 +371,10 @@ test.describe("i18n — a key the active bundle does not carry", () => {
           await dialog.innerText(),
           `the dialog rendered the raw key instead of a string — fallbackLng is not doing its job`,
         ).not.toContain(FALLBACK_KEY);
+        expect(
+          await dialog.innerText(),
+          `the dialog rendered the raw ${DESCRIPTION_KEY} instead of a string`,
+        ).not.toContain(DESCRIPTION_KEY);
       });
 
       // Nothing is created: the modal is only read, then dismissed.
