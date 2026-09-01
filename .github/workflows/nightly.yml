@@ -138,10 +138,9 @@ jobs:
       # optional grep filter above selected nothing destructive.
       #
       # `--reporter=github` replaces the whole configured reporter list, so this
-      # step writes no HTML and cannot clobber the main run's `playwright-report/`
-      # — at the cost of the lane not reaching Flakiness.io. `--output` keeps its
-      # traces/screenshots out of the main run's `test-results/` too. The GitHub
-      # annotations are the lane's signal.
+      # step writes no HTML and cannot clobber the main run's `playwright-report/`.
+      # `--output` keeps its traces/screenshots out of the main run's
+      # `test-results/` too. The GitHub annotations are the lane's signal.
       - name: Run destructive lane
         if: always()
         run: |

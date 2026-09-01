@@ -16,15 +16,31 @@ is the only observable that proves the canvas actually moved: a control that
 renders, is enabled and is clickable but no longer wired to the viewport passes a
 "button is visible" check and fails these.
 
-**Entry-state note (measured live, 1.12.0.dev6).** The editor does **not** open on
-the flow's persisted viewport: it opens clamped at the maximum zoom
-(`scale(2)`, `zoom_in` already `disabled`, the graph overflowing the pane),
-reproducibly across reloads, while `GET /api/v1/flows/{id}` still reports
-`viewport.zoom = 0.896`. That is why every test that measures *relative* zoom
-first normalizes the viewport with one `fit_view` click (`normalizeViewport`) —
-on a clamped viewport "zoom in raises the scale" is untestable. The tests assert
-the behavior of the controls, not this entry state; test 3 is the one that uses
-it, as a free "displaced viewport" to prove Fit View acts.
+**Entry-state note — the entry viewport is a product decision no test may depend
+on (#1645).** It has already changed once under this spec. On `1.12.0.dev6` the
+editor did **not** open on the flow's persisted viewport: it opened clamped at
+the maximum zoom (`scale(2)`, `zoom_in` already `disabled`, the graph
+overflowing the pane), reproducibly across reloads, while
+`GET /api/v1/flows/{id}` reported `viewport.zoom = 0.896`. On `1.12.0.dev44` it
+opens **fitted** instead — measured 3 runs of 3, byte-identical:
+`translate(-588.052px, -476.054px) scale(0.880331)`, every node contained in the
+pane, and all four controls enabled including `zoom_in`. That is the same
+transform one `fit_view` click produces, so the editor now applies the fit on
+hydration.
+
+The change is an improvement, not a regression: the old clamp was the anomaly and
+Fit View itself still refits correctly (measured below). What it broke was a test
+that consumed the entry state as a free "displaced viewport" — test 3's
+precondition `contained === false` read `true` and the toolbar Fit View path it
+guards went unexercised, silently, which is the failure #1645 was filed for.
+
+Two consequences encoded here. Every test that measures *relative* zoom still
+normalizes with one `fit_view` click (`normalizeViewport`) — its wait is on
+containment, the fit's real postcondition, so it survived the entry change
+untouched. And **every test that needs a displaced viewport now displaces it
+itself**, by clicking `zoom_in` to the `2` clamp: the precondition is then the
+test's own doing rather than a product quirk it borrowed. Tests 2 and 3 both do
+this.
 
 **Wait strategy — why a plain "the transform stopped changing" poll is not enough
 (#1094).** React Flow commits a viewport change in one frame (measured: the
@@ -84,15 +100,22 @@ Four independent tests:
 3. **Fit View button in toolbar** — the toolbar surface contract:
    `main_canvas_controls` is visible on flow entry while `fit_view`, `zoom_in`,
    `zoom_out` and `reset_zoom` are **absent** from the DOM; clicking
-   `canvas_controls_dropdown` renders all four visible (`fit_view` and
-   `reset_zoom` enabled — `zoom_in` is legitimately disabled at the entry clamp);
-   clicking `fit_view` from the toolbar on that displaced entry viewport changes
-   the transform, brings every node inside the pane and re-enables both zoom
-   buttons — proving the toolbar entry is wired, not decorative. Collapsing the
-   dropdown removes all four from the DOM again and it can be re-expanded. The
-   collapse click is `force: true`: while open, the Radix popover overlay covers
-   the trigger and a normal click fails Playwright's hit-test (the same forced
-   click `closeCanvasControls` issues in `helpers/ui/canvas-controls.ts`).
+   `canvas_controls_dropdown` renders all four visible, with `fit_view` and
+   `reset_zoom` enabled. The test then **displaces the viewport itself** through
+   the toolbar it is testing — `zoom_in` clicked to the `2` clamp, asserted as
+   landing at least one click — and only then asserts the precondition that the
+   graph overflows the pane. Clicking `fit_view` from the toolbar changes the
+   transform, brings every node inside the pane and re-enables both zoom buttons
+   — proving the toolbar entry is wired, not decorative. Collapsing the dropdown
+   removes all four from the DOM again and it can be re-expanded. The collapse
+   click is `force: true`: while open, the Radix popover overlay covers the
+   trigger and a normal click fails Playwright's hit-test (the same forced click
+   `closeCanvasControls` issues in `helpers/ui/canvas-controls.ts`).
+
+   No assertion is made on the enabled state of `zoom_in` / `zoom_out` at entry.
+   That is deliberate: it is exactly the entry-state dependency that broke this
+   test once, and the post-fit assertion below is the one that carries meaning,
+   because the test *knows* it just left the zoom bound.
 4. **Scroll to navigate canvas** — a mouse wheel over the pane navigates the
    canvas by zooming **anchored at the pointer**: `deltaY > 0` strictly decreases
    the scale, `deltaY < 0` restores it, and in both directions the flow-space
@@ -123,8 +146,9 @@ part of test 3's enabled-controls assertion), and the minimap.
 | Fit View centering | union box inside the pane rect (1 px tolerance) AND \|union center − pane center\| ≤ 4 px on both axes AND both node titles visible |
 | Fit View idempotence | second `fit_view` click leaves the `transform` string byte-identical — conditional on no node being **selected** between the clicks, since the handler's right padding jumps to `340px` when the inspection panel is open with a selection; this spec never selects a node |
 | Toolbar collapsed | `main_canvas_controls` visible; `fit_view`/`zoom_in`/`zoom_out`/`reset_zoom` `count() === 0` |
-| Toolbar expanded | all four controls visible after clicking `canvas_controls_dropdown`; `fit_view` and `reset_zoom` enabled |
-| Toolbar Fit View wired | nodes NOT contained before the click; after it the transform differs, every node is inside the pane, and `zoom_in`/`zoom_out` are both enabled |
+| Toolbar expanded | all four controls visible after clicking `canvas_controls_dropdown`; `fit_view` and `reset_zoom` enabled. Nothing is asserted about `zoom_in`/`zoom_out` here — the entry viewport is a product decision (#1645) |
+| Toolbar displacement | clicking the toolbar's own `zoom_in` to exhaustion lands ≥ 1 click, ends at scale `2`, and leaves the nodes' union box NOT contained in the pane |
+| Toolbar Fit View wired | nodes NOT contained before the click (from the displacement above, never from the entry state); after it the transform differs, every node is inside the pane, and `zoom_in`/`zoom_out` are both enabled |
 | Toolbar re-collapse | `count() === 0` for all four after a forced trigger click; all four visible again after re-expanding |
 | Scroll out | after `wheel(0, +300)` scale is strictly smaller AND the flow-space point under the cursor is unchanged (≤ 2 px) |
 | Scroll in | after `wheel(0, −300)` scale is strictly larger, back to the pre-scroll value (± 0.001), anchor preserved (≤ 2 px) |
@@ -202,21 +226,26 @@ the editor's event poll.
 - **Objective:** prove the canvas-controls toolbar exposes Fit View (and its
   sibling zoom controls) behind the collapsible dropdown, and that the exposed
   Fit View acts on the viewport.
-- **Precondition:** as above; controls NOT yet expanded and the viewport NOT
-  normalized (this test uses the displaced entry viewport on purpose).
+- **Precondition:** as above; controls NOT yet expanded. The test makes **no**
+  assumption about the entry viewport — it creates its own displacement (#1645).
 - **Step by step:**
   1. Assert `main_canvas_controls` is visible and each of `fit_view`, `zoom_in`,
      `zoom_out`, `reset_zoom` has `count() === 0`.
   2. Click `canvas_controls_dropdown`; assert the four controls are visible and
      that `fit_view` / `reset_zoom` are enabled.
-  3. Record the transform, assert the nodes are not contained, click `fit_view`.
-  4. Read the transform and the node/pane geometry; read both zoom buttons'
+  3. Click the toolbar's `zoom_in` until it reports `disabled` (bounded loop);
+     assert at least one click landed and that the settled scale is `2`.
+  4. Measure the union box of `.react-flow__node` against `.react-flow__pane` —
+     assert it overflows (the precondition, now the test's own doing).
+  5. Record the transform and click `fit_view`.
+  6. Read the transform and the node/pane geometry; read both zoom buttons'
      enabled state.
-  5. Click `canvas_controls_dropdown` (forced) and assert `count() === 0` for all
+  7. Click `canvas_controls_dropdown` (forced) and assert `count() === 0` for all
      four; click it once more and assert all four are visible again.
-- **Validation:** the step-4 transform differs from the step-3 one, every node is
-  inside the pane rect, `zoom_in` and `zoom_out` are both enabled, and the
-  collapse/expand transitions hold exactly as asserted in steps 1, 2 and 5.
+- **Validation:** step 3 ends at scale `2` after ≥ 1 click, step 4 reports the
+  nodes NOT contained, the step-6 transform differs from the step-5 one, every
+  node is inside the pane rect, `zoom_in` and `zoom_out` are both enabled, and
+  the collapse/expand transitions hold exactly as asserted in steps 1, 2 and 7.
 
 ### 15.5.4 Wheel scroll navigates the canvas anchored at the pointer [-]
 
@@ -242,4 +271,5 @@ the editor's event poll.
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev9`; originally authored against `1.12.0.dev6`)
+1.12.x (nightly `1.12.0.dev44` for the #1645 entry-viewport change; previously
+`1.12.0.dev9`, originally authored against `1.12.0.dev6`)

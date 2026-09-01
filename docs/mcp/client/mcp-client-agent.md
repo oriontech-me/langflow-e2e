@@ -123,5 +123,5 @@ caller that reaches the Playground in between runs the wrong provider's model.
   | Before | `MCP Client – Agent using MCPTools [model:gpt-4o-mini]` |
   | After | `MCP Client – Agent using MCPTools [openai / gpt-4o-mini]` |
 
-  The new title is the better one — it names the provider, which the old one hid — but it is a **change of test identity**, and identity is the key for `results.json`, `spec-durations.json` and the Flakiness.io history. So this test's history on the pinned lanes starts fresh: `pr-validation.yml` pins today (#1169), and `daily-stable.yml` will once #1185 lands. Recorded here rather than discovered later from a duration outlier or a reset flake rate.
+  The new title is the better one — it names the provider, which the old one hid — but it is a **change of test identity**, and identity is the key for `results.json` and `spec-durations.json`. So this test's history on the pinned lanes starts fresh: `pr-validation.yml` pins today (#1169), and `daily-stable.yml` will once #1185 lands. Recorded here rather than discovered later from a duration outlier or a reset flake rate.
 - Handle testids for the connection step: `handle-mcp-shownode-toolset-right` (MCPTools output — normalized to `mcp`, not `mcp tools`) and `handle-agent-shownode-tools-left` (Agent tools input).

@@ -6,6 +6,8 @@ import {
   reconcileEntities,
   requireRbacInstance,
   type RbacUser,
+  attemptFlowCreate,
+  getProjectOwnedBy,
 } from "../../../../helpers/enterprise/rbac";
 
 /**
@@ -105,14 +107,18 @@ test.describe("Enterprise — operator surfaces: scoped reconcile, audit filters
     async ({ request }) => {
       // Produce an auditable event in THIS run, so the assertion does not depend
       // on what the container happens to carry.
-      const denied = await request.post("/api/v1/flows/", {
-        headers: { Authorization: subject.auth },
-        data: {
-          name: `audit-filter-${Date.now()}`,
-          description: "",
-          data: { nodes: [], edges: [] },
-        },
-      });
+      // Seeded into a project the subject does not own. A bare create is
+      // allowed by the owner override and audited as `owner_override`, not
+      // `deny` — so since the 2026-08-27 build the old seed produced nothing for
+      // `?result=deny` to find, and this test failed for want of a denial rather
+      // than for a filtering fault (#1635).
+      const foreignProjectId = await getProjectOwnedBy(request, superuserAuth);
+      const denied = await attemptFlowCreate(
+        request,
+        subject.auth,
+        `audit-filter-${Date.now()}`,
+        foreignProjectId,
+      );
       expect(denied.status()).toBe(403);
 
       const denies = await request.get("/api/v1/authz/audit?result=deny&size=25", {

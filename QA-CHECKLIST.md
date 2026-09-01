@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-26
+> **Last updated:** 2026-09-01
 
 ---
 
@@ -1009,9 +1009,12 @@
       → i18n/locale-resilience.spec.ts
 - [x] A locale bundle missing individual keys falls back to English for those keys instead of
       failing the render — asserted in the Create Memory modal under `pt`, on the two
-      `memory.dbProvider*` keys only `en` carries (`shortcuts.modifierOnly` is a decoy: its
-      call site passes an inline `defaultValue`, so it renders English even with the
-      fallback broken)
+      `memory.dbProvider*` keys the test itself strips from the served `pt` chunk. The gap is
+      created rather than borrowed since #1646: upstream translated those keys 10 days after
+      the spec landed, so a probe chosen from the shipped bundle's gaps expires on upstream's
+      schedule (`shortcuts.modifierOnly` remains a decoy and must not be the key removed — its
+      call site passes an inline `defaultValue`, so it renders English even with the fallback
+      broken)
       → i18n/locale-resilience.spec.ts
 
 ---
@@ -1209,6 +1212,7 @@
 - [-] A role-less user is denied a write **and the refusal leaves nothing behind** — a `403` that still created the resource is not an authorization control, and the caller sees the same status either way → `enterprise/authz/rbac-instance-baseline.spec.ts`
 - [-] Granting `developer` flips the identical call to allowed — the load-bearing pair, since a lone `403` is equally consistent with "authorization works" and "this instance is broken" → `enterprise/authz/rbac-instance-baseline.spec.ts`
 - [-] The audit log carries both the deny and the allow, attributed to the actor → `enterprise/authz/rbac-instance-baseline.spec.ts`
+- [-] The **owner override is a scoped rule, not a hole**: since the 2026-08-27 build `flow:create` is allowed when the destination project belongs to the caller — audited as a third verdict, `owner_override` — and the *same* subject making the *same* call into a project it does not own is still refused `403`, audited `deny`. Without the boundary, "a role-less user can create flows" is indistinguishable from "authorization is off", and a build that widened the override would read as a suite that had always passed. The verdicts are keyed on the decision's `details.domain`, because collecting results for the actor is satisfied by a sibling test's `allow` (#1635) → `enterprise/authz/rbac-instance-baseline.spec.ts`
 - [-] The deny matrix over one subject walked through states — no role / viewer / developer / admin / direct share / revoked — asserting the per-resource verdict rather than only creation, which is where `viewer` and `developer` finally differ (`403` against `200` on modifying an existing flow; on creation both are refused) → `enterprise/authz/deny-matrix-and-decision-api.spec.ts`
 - [-] A forbidden resource is **indistinguishable from an absent one** — both `404`. A `403` here would confirm the resource exists to somebody who may not know it, an existence leak that costs nothing to introduce and nothing to notice → `enterprise/authz/deny-matrix-and-decision-api.spec.ts`
 - [-] Revocation is real in both flavours: removing the role assignments and deleting the share each return the subject to the no-access row. A grant that cannot be taken back is not a grant → `enterprise/authz/deny-matrix-and-decision-api.spec.ts`
@@ -1246,6 +1250,36 @@
 - [-] **Assigning at project scope through the dialog creates a project-scoped assignment** — `domain_type: "project"` with `domain_id` equal to the id of a project the test created, asserted at the API rather than from the row's text. Scope is the axis the deny matrix turns on, and a picker submitting `global` regardless would hand instance-wide access to an operator who asked for one project. The test owns its project because two stock projects are both named `Starter Project`, told apart in the picker only by a ` — <owner>` suffix → `enterprise/authz/access-control-ui.spec.ts`
 - [-] **Revoking on the screen removes the assignment at the API** — the confirm dialog names the role and the user losing it, and the state is read from the admin listing afterwards rather than from the row disappearing. Both buttons are named exactly `Revoke`, so the row's and the dialog's are addressed separately → `enterprise/authz/access-control-ui.spec.ts`
 - [ ] Cross-replica convergence — needs Redis and a second replica: without one `invalidation.listener_connected` is `false` while the policy still resolves `active`, so a single-container assertion would measure nothing. **Recipe measured out; blocked only on machine memory** (a second Langflow replica costs ~1.1 GiB against an 8 GiB local Docker VM already holding six): the variable is `LANGFLOW_AUTHZ_REDIS_URL` (`src/authz/policy_invalidation.py`), so it takes a `redis:7-alpine` on `langflow-ee-net`, the RBAC container recreated with `LANGFLOW_AUTHZ_REDIS_URL=redis://redis-ee:6379/0`, and a second replica on another port sharing the same `LANGFLOW_DATABASE_URL`. The assertions are then `listener_connected: true` on both, and a grant written through replica A flipping replica B's enforcement with no restart, `seen_revision` / `observed_revision` converging
+
+#### 22.7 Admin Console Shell (`/admin-ee`)
+
+> The console is the surface § 21 names as Enterprise-owned; its seven screens are governed
+> from here and nowhere else. This subsection is the **shell** contract only — that each
+> screen resolves, is the one its tab claims, and loaded its own data. What each screen lets
+> an operator *do* is a follow-up per tab, and every one of those depends on this: an
+> assertion about a filter or a dialog passes vacuously against a screen that never rendered.
+> Needs the RBAC variant (§ 22.6) — `access-control` and `audit-logs` read `/authz/*` and
+> have nothing to load without it. The seven-tab strip is what the build under test serves:
+> `access-control-ui.spec.ts` records `/admin-ee/access-control` redirecting away and no such
+> tab existing, and on this build the redirect runs the other way — `/settings/access-control`
+> lands on `/admin-ee/access-control`. That spec still passes, because it asserts on the
+> tables rather than the route; its header is what went stale.
+
+- [-] Each of the seven screens deep-links to itself: the URL does not redirect to a default tab, `enterprise-admin-tab-<route>` marks it selected, its own subtitle renders — the screen's header copy, because four of the seven candidate testids describe an instance *state* and a fifth is shared with a neighbouring tab — **and the one API read no other tab performs answered 2xx** — all seven paint the same chrome, so an assertion on chrome would pass against any of them → `enterprise/admin-console/console-tab-contract.spec.ts`
+- [-] The tab strip opens the screen each label names, asserted over all seven rather than assumed from the label — `Components` is `/admin-ee/catalog`, so the mapping is already not derivable from the text → `enterprise/admin-console/console-tab-contract.spec.ts`
+- [-] No screen in the console renders an unresolved i18n key, failing with every offending screen and string named. The guard of #1563, where `users-groups` shipped 17 raw `admin.*` keys; fixed on the 2026-08-27 image and unwitnessed until now. Matching is unanchored and covers `aria-label`/`title`, because the serious one — the delete-account button's accessible name — reaches the DOM composed (`admin.deleteTitle — langflow`) and an anchored pattern finds only the harmless column headers. Measured against the build that shipped the defect: 9 keys; against the current one: 0 → `enterprise/admin-console/console-tab-contract.spec.ts`
+- [-] The break-glass account is inoperable on the screen **and** refused by the API as **two distinct guards** — `PATCH is_active:false` answers `403` *you can't deactivate your own user account* while demotion and deletion answer `409` naming the break-glass account, matching the two different reasons the screen shows. A disabled control over a permissive API is a screen that only looks protective, and the disabled state is what stops anyone finding out by hand → `enterprise/admin-console/users-groups-account-lifecycle.spec.ts`
+- [-] Cancelling the delete dialog issues **no write** for that account and leaves it listed — asserted on the request, not only on the listing, because reading the state right after the click races the deletion it is meant to detect: the force-fail that swapped `Cancel` for `Delete` passed against the state-read version → `enterprise/admin-console/users-groups-account-lifecycle.spec.ts`
+- [-] Confirming the dialog removes the account **at the API**, not merely from the table — a row disappearing is a render, the listing is the state → `enterprise/admin-console/users-groups-account-lifecycle.spec.ts`
+- [-] Both toggles change the **account**, read back from the API rather than from the control that was clicked, each through its own **Edit** confirmation — a toggle that flips its own state and sends nothing is invisible to any assertion made on the toggle → `enterprise/admin-console/users-groups-account-lifecycle.spec.ts`
+- [ ] The delete dialog does not name the account it is about (*this user*) while the edit dialog on the same screen does — the pattern exists and is applied to the reversible action, omitted from the irreversible one. Recorded in #1633 for a product decision; asserting it today would assert an opinion
+- [-] The audit screen's **default view narrows twice and says so on both controls** — the first read carries `exclude_event=authorization_decision` and a `since`, while `Time range` reads *Last 7 days* and the checkbox is unticked. Denials live in the excluded class, so an operator asking "was X denied?" sees nothing until they tick it; a build that changed what the default hides without changing what the controls say would be invisible → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
+- [-] Ticking **Include permission checks** drops `exclude_event` from the query — the control changes what is fetched, not only itself → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
+- [-] The **Result filter narrows server-side and every visible row matches**, over a denial this run seeded under a username that cannot pre-exist. Both halves are needed: "every row is a deny" alone was satisfied by denials the container already held, measured by a mutation that removed the seed and stayed green → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
+- [-] An **Event type label sends the API's value, not its own text** — *Connections & sign-in* → `resource_type=sso_connection`. A screen that sent the label would filter nothing and still look filtered → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
+- [-] **Export CSV asks for the filtered set, not the visible page** — its request carries the active filter and a `size` above the page size. Asserted on the request and deliberately not on the file: the download silently fails when the export's fetch is deduplicated against the screen's own query (#1639) → `enterprise/admin-console/audit-log-filters-and-export.spec.ts`
+- [ ] The audit screen's `User` combobox and pagination — neither is where the screen can mislead an operator about what the log contains
+- [ ] Remaining per-tab operator behaviour — provider add/deactivate, the model blocklist round trip, role assignment. One follow-up each, all gated on the shell above
 
 ---
 
@@ -1326,7 +1360,7 @@
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
-| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 72 | 0 | 57 | 8 | 7 |
+| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 88 | 0 | 70 | 8 | 10 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | **TOTAL (OSS — excludes `enterprise/`)** | **591** | **453 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
 
@@ -1344,7 +1378,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 534 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 532 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1598,9 +1632,7 @@
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
-- [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
-- [x] mirrored context-scoped retrievals return only their own context's messages → `agent-context-id-isolation.spec.ts`
 - [x] switching the agent's context_id re-tags new turns without touching previous ones → `agent-context-id-isolation.spec.ts`
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
@@ -1623,7 +1655,6 @@
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
-- [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
@@ -1839,6 +1870,7 @@
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
+- [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`

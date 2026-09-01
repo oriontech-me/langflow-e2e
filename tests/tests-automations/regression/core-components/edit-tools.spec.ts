@@ -72,6 +72,26 @@ const APPROVAL_DECISION = "approve";
 // (§2.2.2) key on it.
 const UPDATE_PATH = "/api/v1/custom_component/update";
 
+/**
+ * Matches that endpoint by PATHNAME — never as a URL glob.
+ *
+ * A Playwright glob has to match the WHOLE url, and this endpoint carries a
+ * `?flow_id=<uuid>` query string that upstream added in a nightly built between
+ * 2026-08-28 and 2026-08-31. The bare-path glob the hold below used to install
+ * matched every call before that and none after, so the park silently stopped
+ * engaging and the LE-2272 guard failed on its own precondition for 20 s while
+ * measuring nothing (#1644 — 3 of 3 attempts on the 2026-08-31 daily, 5 of 5
+ * locally). A trailing wildcard would fix today's url and still match a future
+ * `/update/batch`; the pathname is what this spec actually means, and it is
+ * what `waitForComponentUpdateSettled` below already compares — which is why
+ * the barrier test went through the change green while the hold did not.
+ *
+ * Hoisted to a module constant because `page.unroute()` needs the SAME function
+ * reference the route was installed with; two structurally-equal arrows do not
+ * unroute each other.
+ */
+const matchesUpdatePath = (url: URL): boolean => url.pathname === UPDATE_PATH;
+
 // The Requires Approval switch renders instantly but writes onto the grid row
 // ~200 ms after the click, deliberately, so the ag-Grid cell does not remount
 // mid-animation (upstream #14741 records this as a separate, smaller defect,
@@ -471,7 +491,7 @@ test.describe("Edit tools (Tool Mode)", () => {
           // fetching at release time makes the response arrive after the window
           // has already closed, which degrades this test into the
           // aborted-response control where the edits always survive.
-          await page.route(`**${UPDATE_PATH}`, async (route: Route) => {
+          await page.route(matchesUpdatePath, async (route: Route) => {
             const body = route.request().postDataJSON();
             const action = body?.field_value?.[0];
             const isPreEdit =
@@ -551,7 +571,7 @@ test.describe("Edit tools (Tool Mode)", () => {
         // from leaving a route handler awaiting a promise nobody resolves, and
         // the unroute keeps a refresh fired during cleanup from being held.
         openGate();
-        await page.unroute(`**${UPDATE_PATH}`);
+        await page.unroute(matchesUpdatePath);
       }
     },
   );

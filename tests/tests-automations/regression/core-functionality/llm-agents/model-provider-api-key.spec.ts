@@ -1,7 +1,10 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
 
 // Provider API key management (QA-CHECKLIST §7.5 "Add new provider via
 // modal"). Hardened for @stable (issue #505): text-match fallbacks replaced by
@@ -19,7 +22,46 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 //  - the configured-provider edit surface (masked key + the `Replace`-labelled
 //    submit arming only once a value is typed) is proven here with zero writes.
 
-async function openModelProviders(page: any): Promise<void> {
+// Flows this file's own navigation creates, tracked by id and deleted in
+// `afterEach` (#605 pattern, the same one `model-provider-model-toggle.spec.ts`
+// carries). This file looks like it creates nothing — every test only opens
+// Settings — but `awaitBootstrapTest` calls `addFlowToTestOnEmptyLangflow`
+// whenever the current project renders `new_project_btn_empty_page`, and on a
+// fresh instance it does: measured on 1.12.0.dev44, the first test of this file
+// left `New Flow` + `Basic Prompting` behind, 2 flows per run, with the two
+// later tests adding none (#1648). Id-scoped on purpose — never by name and
+// never delete-all: the seeded starter projects share both of those names.
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(
+      () => {},
+    );
+  }
+});
+
+async function openModelProviders(page: Page): Promise<void> {
+  trackCreatedFlows(page);
   await awaitBootstrapTest(page, { skipModal: true });
   await navigateSettingsPages(page, "Settings", "Model Providers");
   await expect(page.getByTestId("settings_menu_header").last()).toContainText(
@@ -34,9 +76,14 @@ test.describe("Model Provider API Key Management", () => {
     { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
-      await expect(page.getByTestId("provider-item-OpenAI")).toBeVisible({
-        timeout: 10000,
-      });
+      // Asserted through waitForProviderRow, not a bare toBeVisible (#1648).
+      // The assertion and the 10 s budget are unchanged; what changes is that a
+      // row that does not arrive says WHICH of the provider list's four states
+      // was on screen. This call site recorded 2 of the 20 timeouts measured
+      // across the 2026-08 dailies, every one of them as `element(s) not found`
+      // — a string that cannot distinguish "the instance never answered" from
+      // "Langflow stopped shipping OpenAI".
+      await waitForProviderRow(page, "provider-item-OpenAI", 10000);
     },
   );
 
@@ -45,9 +92,9 @@ test.describe("Model Provider API Key Management", () => {
     { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
-      await expect(page.getByTestId("provider-item-Anthropic")).toBeVisible({
-        timeout: 10000,
-      });
+      // Same wait as the OpenAI case above (#1648). This call site carries 3 of
+      // the 20 measured occurrences — the single largest in any spec file.
+      await waitForProviderRow(page, "provider-item-Anthropic", 10000);
     },
   );
 
@@ -78,7 +125,7 @@ test.describe("Model Provider API Key Management", () => {
       );
 
       await openModelProviders(page);
-      await page.getByTestId("provider-item-OpenAI").click();
+      await (await waitForProviderRow(page, "provider-item-OpenAI", 10000)).click();
 
       // There is no distinct "Replace" button (#1431). The panel has ONE submit
       // control, `provider-save-button`, whose label is picked at render time:

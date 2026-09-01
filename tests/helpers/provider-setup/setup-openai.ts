@@ -2,11 +2,14 @@ import type { Page } from "@playwright/test";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
 import {
   clickModelOption,
+  enumerateCheckedModels,
   enumerateEnabledModels,
   enumerateModelOptions,
   selectPinnedModelOption,
 } from "./model-option";
+import { enableAndSettleModelToggles } from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
+import { waitForProviderRow } from "./provider-list-state";
 
 export async function setupOpenAI(
   page: Page,
@@ -27,8 +30,13 @@ export async function setupOpenAI(
   // addressable by role+name — see provider-panel-entry.ts (#1465).
   if ((await openProviderPanel(page, "OpenAI")) === "no-agent") return;
 
-  // Step 3: Select the OpenAI provider
-  await page.getByTestId("provider-item-OpenAI").click();
+  // Step 3: Select the OpenAI provider.
+  // Waited through waitForProviderRow so a row that never arrives names the
+  // provider list's own state instead of timing out anonymously (#1648): the
+  // 20 s budget below is `actionTimeout`, unchanged — what changes is that a
+  // wedged instance says PROVIDER_LIST_STALLED rather than
+  // "waiting for getByTestId('provider-item-OpenAI')".
+  await (await waitForProviderRow(page, "provider-item-OpenAI", 20000)).click();
 
   // Step 4: Save the API key if the config panel is visible.
   // The config panel animates in (300ms) and requires a backend fetch after the provider
@@ -59,27 +67,21 @@ export async function setupOpenAI(
     }
   }
 
-  // Step 5: Enable all available OpenAI models.
-  // The `:visible` filter excludes toggles inside the collapsed "deprecated
-  // models" section, which are mounted in the DOM but not displayed until the
-  // section's "Show N deprecated models" button is clicked. Without the
-  // filter, `.click()` on a hidden toggle retry-loops to a timeout.
-  const toggles = page.locator('[data-testid^="llm-toggle"]:visible');
-  await toggles.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-  const toggleCount = await toggles.count();
-
-  for (let i = 0; i < toggleCount; i++) {
-    const toggle = toggles.nth(i);
-    const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
-    if (!isChecked) {
-      await toggle.click();
-    }
-  }
+  // Step 5: Enable all available models — and let the write settle.
+  // Enabling is a TRANSACTION: the toggles are batched behind a 1000 ms debounce,
+  // and closing the panel inside that window takes the flush path that never
+  // refreshes the model picker (#1649). The helper clicks and then waits for the
+  // product's own write to go quiet, so Step 6 below cannot close on top of it.
+  // Costs nothing when nothing was clicked, which is the normal CI path.
+  await enableAndSettleModelToggles(page);
 
   // Read the panel's toggles BEFORE closing it: they are the second, independent
-  // source for "this model exists and is enabled", and a picker miss that this
-  // list contradicts is not an absence (#1461).
-  const enabledModels = await enumerateEnabledModels(page);
+  // source the picker can be contradicted by, and a picker miss that they
+  // contradict is not an absence (#1461). BOTH are read, because "the panel lists
+  // it" and "its toggle is on" are different facts and only the second one may be
+  // reported as ENABLED (#1649).
+  const listedModels = await enumerateEnabledModels(page);
+  const checkedModels = await enumerateCheckedModels(page);
 
   // Step 6: Close the provider management panel
   await page.getByRole("button", { name: "Close" }).click();
@@ -92,8 +94,22 @@ export async function setupOpenAI(
   // attached — so the click does not race that loading swap.
   await hideInspectorPanel(page);
   const modelTrigger = page.getByTestId("model_model");
-  await modelTrigger.waitFor({ state: "visible", timeout: 15000 });
-  await modelTrigger.click();
+  // 60 s, not the 15 s this used to allow, and NOT to make a stall pass: taking the
+  // correct flush path above means the product genuinely re-fetches, measured at
+  // 30 020 ms and 29 640 ms against the 4 327 ms the broken path returned in
+  // (#1649). The old budget would turn the fix into a model_model timeout.
+  await modelTrigger.waitFor({ state: "visible", timeout: 60000 });
+  // The click carries its own 60 s budget for the same measured reason as the
+  // waitFor above, and NOT as a retry bolted on to make a red pass: `click()`
+  // otherwise falls back to the 20 s `actionTimeout`, and the trigger re-enters the
+  // loading state between "visible" and the click while the refresh this helper
+  // correctly triggered is still running. Measured failing exactly there —
+  // `locator.click: Timeout 20000ms exceeded ... waiting for
+  // getByTestId('model_model')` — on the cold path with the provider on its
+  // MIN_DEFAULT_MODELS default (#1649). The locator is re-resolved on every
+  // actionability retry, so this survives the element being replaced, and nothing
+  // about the assertion that follows is weakened.
+  await modelTrigger.click({ timeout: 60000 });
   let pickByRanking = !modelTestId;
   if (modelTestId) {
     // Resolved by option IDENTITY (data-value / data-testid), never by the option's
@@ -106,7 +122,8 @@ export async function setupOpenAI(
     // degrading there would hide a suite defect behind a healthy-looking run (#1461).
     const selection = await selectPinnedModelOption(page, {
       requested: modelTestId,
-      enabledModels,
+      listedModels,
+      checkedModels,
       providerLabel: "OpenAI",
       absentBehavior: opts?.fallbackToRanking ? "return" : "throw",
     });
@@ -118,8 +135,8 @@ export async function setupOpenAI(
       pickByRanking = true;
       // The Escape that reported the absence closed the dropdown; reopen it for the
       // ranking pass below.
-      await modelTrigger.waitFor({ state: "visible", timeout: 15000 });
-      await modelTrigger.click();
+      await modelTrigger.waitFor({ state: "visible", timeout: 60000 });
+      await modelTrigger.click({ timeout: 60000 });
     }
   }
   if (pickByRanking) {

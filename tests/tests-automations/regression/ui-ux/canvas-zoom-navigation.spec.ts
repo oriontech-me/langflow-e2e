@@ -173,17 +173,25 @@ async function openCanvasControls(page: Page): Promise<void> {
 /**
  * Brings the viewport to the canonical fitted state and collapses the controls.
  *
- * Needed because the editor does NOT open on the flow's persisted viewport: on
- * 1.12.0.dev6 it opens clamped at the maximum zoom (`scale(2)`, `zoom_in`
- * already disabled — reproducible across reloads). Without normalizing, "zoom in
- * raises the scale" is untestable, so each test that measures relative zoom
- * starts from the deterministic Fit View state instead.
+ * Needed because the entry viewport is a product decision, and it has already
+ * changed once under this spec (#1645). On 1.12.0.dev6 the editor did NOT open on
+ * the flow's persisted viewport: it opened clamped at the maximum zoom
+ * (`scale(2)`, `zoom_in` already disabled — reproducible across reloads). On
+ * 1.12.0.dev44 it opens FITTED instead — measured 3 runs of 3, byte-identical:
+ * `translate(-588.052px, -476.054px) scale(0.880331)`, every node contained, all
+ * four controls enabled. That is the transform one `fit_view` click produces, so
+ * the editor now applies the fit on hydration. Either way, "zoom in raises the
+ * scale" needs a known baseline, so each test that measures relative zoom starts
+ * from the deterministic Fit View state instead of from whatever the editor
+ * happens to open on.
  *
  * The wait is on containment rather than on "the transform changed" (#1094): the
  * baseline this returns is the divisor of every relative zoom assertion, so it
  * must be the fitted viewport and not whatever the transform happened to hold on
  * the first read. Containment is the postcondition regardless of the entry state,
- * so this keeps working if the editor ever stops opening clamped.
+ * which is why this helper survived the dev44 change untouched — and why the
+ * toolbar test below now creates its own displacement rather than borrowing the
+ * editor's.
  */
 async function normalizeViewport(page: Page): Promise<Viewport> {
   await openCanvasControls(page);
@@ -514,16 +522,49 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         for (const testId of controlTestIds) {
           await expect(page.getByTestId(testId)).toBeVisible({ timeout: 15000 });
         }
-        // Only these two are asserted enabled here: the editor opens clamped at
-        // the maximum zoom, so `zoom_in` is legitimately disabled until the
-        // viewport moves (asserted below, right after Fit View).
+        // Only these two are asserted enabled here, and the omission is the point
+        // (#1645): whether `zoom_in` / `zoom_out` are live on entry follows from
+        // the entry viewport, which is a product decision this test must not
+        // depend on — it read `disabled` on 1.12.0.dev6 (max-zoom clamp) and
+        // `enabled` on 1.12.0.dev44 (fitted on hydration). Their state IS
+        // asserted below, right after Fit View, where the test knows it just
+        // left the zoom bound because it put the viewport there itself.
         await expect(page.getByTestId("fit_view")).toBeEnabled();
         await expect(page.getByTestId("reset_zoom")).toBeEnabled();
       });
 
-      await test.step("the toolbar Fit View acts on the displaced entry viewport", async () => {
+      await test.step("the toolbar zoom controls displace the viewport off the fit", async () => {
+        // The displacement is the test's OWN doing (#1645). This step used to be
+        // absent: the test asserted `contained === false` straight off the entry
+        // viewport, which on 1.12.0.dev6 opened clamped at `scale(2)` with the
+        // graph overflowing the pane. On 1.12.0.dev44 the editor opens fitted, so
+        // that precondition read `true`, failed as the setup it is, and the
+        // toolbar Fit View path it guards went unexercised — silently, three
+        // attempts in a row (daily 2026-08-31, run 33410643882).
+        //
+        // Zooming to the clamp through the toolbar under test keeps the whole
+        // step inside this spec's subject, and makes the post-fit "both zoom
+        // buttons are enabled again" assertion below mean something: the test
+        // knows it parked the viewport ON the bound.
+        const before = await readTransform(page);
+        const clicks = await zoomUntilClamped(page, "zoom_in");
+        // Zero clicks would mean `zoom_in` was already disabled, which the
+        // `movedFrom` wait can only report as an opaque 15s timeout (#1099).
+        expect(clicks).toBeGreaterThan(0);
+        expect(clicks).toBeLessThan(MAX_ZOOM_CLICKS);
+        const clamped = await waitForViewportSettled(page, movedFrom(before));
+        expect(clamped.scale).toBeCloseTo(MAX_ZOOM, 4);
+      });
+
+      await test.step("the toolbar Fit View acts on the displaced viewport", async () => {
+        // Precondition with teeth, and now guaranteed to be the test's own state
+        // rather than the editor's: without it, an already-fitted canvas would
+        // let every assertion below pass on a dead Fit View button.
+        const overflowing = await measureGeometry(page);
+        expect(overflowing.nodeCount).toBeGreaterThan(0);
+        expect(overflowing.contained).toBe(false);
+
         const displacedTransform = await readTransform(page);
-        expect((await measureGeometry(page)).contained).toBe(false);
 
         await page.getByTestId("fit_view").click();
         await waitForViewportSettled(page, movedFrom(displacedTransform));

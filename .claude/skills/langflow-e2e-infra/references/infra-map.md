@@ -67,7 +67,7 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 | `workers` | 2 in CI, unset locally | 2-worker contention was the `#817` locus; `ISSUE-833` §workers-per-shard |
 | `retries` | 2 in CI, 3 locally | trace captured on first retry |
 | `timeout` | 5 min/test | |
-| `reporter` | HTML + Flakiness.io in CI, HTML locally | Flakiness.io reporter lives here, NOT the `--reporter` CLI flag (`#874/#875`) |
+| `reporter` | `blob` when sharded, html+github+json in CI, html locally | `blob` lives here, NOT on the `--reporter` CLI flag: the merge step can only read blobs. Flakiness.io removed 2026-08-25 (Actions-OIDC only; the daily runs on a VM) |
 | `projects` | see file | Chromium only, clipboard perms |
 
 ## Run history & reporting (`reports/`)
@@ -75,4 +75,3 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 - `reports/README.md` — schema (version 1), expansion criteria, `jq` query examples. **Read before extending.**
 - `reports/daily-history.jsonl` — active, one line per `daily-stable.yml` run (machine-written, human-read only; never hand-edit).
 - `reports/weekly-history.jsonl` — frozen history from the disabled weekly workflow.
-- `flakiness-report/report.json` — latest Flakiness.io reporter output.

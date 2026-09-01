@@ -97,11 +97,11 @@ credentials & flags) before the suite; assert embedding credential before KB ing
 ## 6. Run-history / reporting integrity
 
 **Symptom:** history JSONL frozen / missing lines; push races on `main`;
-`error_signature` not recorded; Flakiness.io not tagged with the Langflow version;
-coverage-summary push collides between concurrent PRs.
+`error_signature` not recorded; the run recorded without the resolved Langflow
+version; coverage-summary push collides between concurrent PRs.
 
 **Levers:** rebase/regenerate-retry the history push · backfill lost lines · record
-`error_signature` · tag Flakiness.io uploads with the resolved version · never
+`error_signature` · resolve the real version behind a moving tag · never
 commit `coverage:summary` output in a PR (guard `#741`).
 
 **Docs:** `reports/README.md`.

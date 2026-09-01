@@ -12,6 +12,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
 import {
   censusForTarget,
   enumerateEnabledModels,
@@ -177,8 +178,12 @@ async function openProviderModelList(page: Page): Promise<void> {
     "Model Providers",
     { timeout: 10000 },
   );
-  const providerItem = page.getByTestId(providerItemTestId);
-  await providerItem.waitFor({ state: "visible", timeout: 10000 });
+  // Through waitForProviderRow (#1648). The 10 s budget is unchanged and
+  // deliberately NOT raised: on the 2026-08-31 daily this line failed twice with
+  // `waiting for getByTestId('provider-item-OpenAI') to be visible` while the
+  // page was showing "Loading providers..." — an instance stall the run had no
+  // way to say. Raising the budget would hide it; naming it is the fix.
+  const providerItem = await waitForProviderRow(page, providerItemTestId, 10000);
   await providerItem.click();
   await page
     .getByTestId("model-provider-selection")

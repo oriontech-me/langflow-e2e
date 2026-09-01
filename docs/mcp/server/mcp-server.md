@@ -1,6 +1,7 @@
 # MCP Server — add-server modal: stdio / HTTP registration, field persistence & tool refresh
 
-**Last validated:** Langflow 1.12.x (tests 1–7 on nightly `1.12.0.dev9`; tests 8–9 on `1.12.0.dev20`)
+**Last validated:** Langflow 1.12.x (tests 1–7 on nightly `1.12.0.dev9`; tests 8–9 on
+`1.12.0.dev20`; tests 1 and 6 re-validated on `1.12.0.dev39` under #1266)
 
 ---
 
@@ -61,6 +62,10 @@ read-back/update tests)
 - `@regression` — on the contract test only: it guards an intentional upstream
   security change (see *External dependencies*), so a silent removal of that
   validation must fail the suite.
+- `@stable` on test 1 was **removed as a quarantine** at the 2026-08-04 triage
+  (#1258) and restored in the #1266 fix PR, re-validated per `CONTRIBUTING.md` on
+  nightly `1.12.0.dev39`. The quarantine was `test.fixme` + tag removal, so the
+  test ran in no lane at all while it stood.
 - `@workspace`/`@components` — drives the flow canvas, sidebar and MCPTools
   node; `@mcp` — MCP server area; `@release` — happy-path MCP registration.
 
@@ -99,8 +104,11 @@ read-back/update tests)
 3. Open the Add MCP Server modal → **stdio** tab; register
    `command: npx`, `args[0]: @modelcontextprotocol/server-everything` under a
    per-run random name.
-4. Poll `GET /api/v2/mcp/servers?action_count=true` until the server's
-   `toolsCount` is non-null; open `dropdown_str_tool` and pick `echo-0-option`.
+4. Wait for the server to report a tool count via
+   `waitForMcpToolsCount` — a probe of
+   `GET /api/v2/mcp/servers?action_count=true` that treats its OWN failure as
+   "not ready yet" and only gives up when the whole budget is spent (#1266; see
+   *Notes*). Then open `dropdown_str_tool` and pick `echo-0-option`.
 5. Assert the `echo` tool's `message` input renders on the node.
 6. Settings → MCP Servers → Edit the server: assert the JSON and HTTP tabs are
    disabled, stdio is enabled, and **both** `stdio-command-input` (`npx`) and
@@ -186,8 +194,8 @@ failure unattributed. See the note below.
 Unchanged by #1091 (no stdio surface). Derives the project's own
 `/api/v1/mcp/project/{id}/streamable` URL, registers it via the HTTP tab **with an
 `x-api-key` header** (`http-headers-key-0` / `popover-anchor-http-headers-value-0`),
-polls `toolsCount`, and asserts ≥1 tool option; cleans up the server and the key via
-the API.
+waits for `toolsCount` through the same `waitForMcpToolsCount` probe as test 1
+(#1266), and asserts ≥1 tool option; cleans up the server and the key via the API.
 
 The header is what makes the poll meaningful rather than a wait on a value that can
 never arrive: Langflow connects out to that URL itself, so with no credential stored
@@ -387,7 +395,8 @@ and nothing is fetched from the npm registry.
   `helpers/ui/zoom-out.ts`, `helpers/flows/delete-flow.ts`,
   `helpers/flows/add-component-from-sidebar.ts`
   (`addComponentFromSidebarWithoutSearch`),
-  `helpers/mcp/wait-for-mcp-tool-option.ts` (`waitForMcpToolOption`).
+  `helpers/mcp/wait-for-mcp-tool-option.ts` (`waitForMcpToolOption`),
+  `helpers/mcp/wait-for-mcp-tools-count.ts` (`waitForMcpToolsCount`).
 
 ---
 
@@ -408,6 +417,10 @@ and nothing is fetched from the npm registry.
 - If Langflow starts re-querying a failed MCP tool list on its own: the bounded
   refresh loop would then be redundant, and the spec should say so rather than
   keep paying for it.
+- If `GET /api/v2/mcp/servers?action_count=true` starts caching its per-server
+  connection, capping concurrency, or answering from stored counts: the probe
+  budgets in `waitForMcpToolsCount` are sized for the measured behaviour above
+  and should be re-measured, not assumed (#1266).
 - If `MCPServerConfig` gains or drops a field, or the single read starts
   returning a wrapper (a `name`, a transport label) instead of the bare config —
   test 8's deep equality is the assertion that will say so.
@@ -417,6 +430,61 @@ and nothing is fetched from the npm registry.
 ---
 
 ## Notes *(optional)*
+
+- **#1266 — the readiness poll could not survive the slowness it existed to wait
+  out, and the test paid for load it was itself creating.** Tests 1 and 6 waited
+  for `toolsCount` with a bare `expect.poll` whose poller called
+  `page.request.get("/api/v2/mcp/servers?action_count=true")` with no explicit
+  timeout. Two facts make that shape indefensible. **`expect.poll` propagates a
+  throw from the poller** instead of treating it as "not ready", so the first
+  probe to exceed the suite's 20 s `actionTimeout` aborted the test — the 120 s
+  budget was unreachable. The recorded signature proves the propagation: a
+  swallowed failure would read `expect.poll … timed out after 120000ms`, and
+  what three dailies recorded (2026-07-30, 2026-08-03, 2026-08-04) was
+  `TimeoutError: apiRequestContext.get: Timeout 20000ms exceeded.`
+  **And the endpoint really is that slow under concurrency.** Measured on
+  `1.12.0.dev39` (4 CPU, `LANGFLOW_WORKERS=1`), `action_count=true` starts EVERY
+  registered server on EVERY call — `langflow/api/v2/mcp.py` builds a fresh
+  `MCPStdioClient` per server inside `check_server` and disconnects it in
+  `finally`, so a stdio server costs one `npx` subprocess per request, with no
+  cache and no concurrency cap:
+
+  | Registered servers | c=1 | c=2 | c=3 | c=4 | c=6 |
+  |---|---|---|---|---|---|
+  | 2 (1 stdio) | 1.25 s | 1.33–1.44 s | 1.73–1.92 s | 1.60–1.97 s | — |
+  | 4 (3 stdio) | 1.25 s | 1.74–1.78 s | 3.03–4.09 s | 4.16–6.52 s | **137.9 s, all six** |
+
+  Cold first call: 2.98 s at one server, 5.30 s at two. Sequentially by server
+  count the same instance degrades past the budget on its own at nine servers
+  (9.3 / 14.0 / 20.6 s). This is **not a regression** — `1.12.0.dev37` measures
+  the same, and on that 47-hour-old instance the cliff arrived earlier still
+  (18.1 s and 75.1 s at four servers / three callers).
+
+  The load hypothesis `CONTRIBUTING.md` → *Infra-signature exemption* predicts is
+  therefore **confirmed**, and the spec was a contributor on three counts: it
+  polled the expensive variant itself every 3 s; the page it had open polls the
+  same endpoint independently (`useGetMCPServers` issues both
+  `?action_count=false` and `?action_count=true` — read from the
+  `1.12.0.dev39` bundle), so two concurrent callers were structural; and the
+  daily runs `workers: 2` per shard over ten `@stable` MCP files sharing one
+  Langflow, four of which drive `action_count`.
+
+  The fix is the one the family sibling already shipped —
+  `mcp-client-agent-gemini-tool-regression.spec.ts` carries this exact remedy,
+  and is the *other* spec that showed a transport-level signature on 2026-07-30.
+  It was never replicated here. `waitForMcpToolsCount` now owns it for the area:
+  an explicit per-request timeout so the probe cannot inherit `actionTimeout`, a
+  failed probe recorded and returned as "not ready yet", and the last probe
+  failure printed when the budget does run out (#1012) — the difference between
+  "the server never started" and "every probe timed out" is the whole diagnosis.
+  **The assertion is unchanged**: a server that never reports a tool count still
+  fails the test, now naming why.
+
+  What this does NOT claim to fix is the endpoint. A page that keeps a slow
+  `action_count=true` in flight is Langflow's own behaviour, and at six
+  concurrent callers the run above left `lf-starter_project` answering
+  `Error loading server: Connection closed` and never recovering. That belongs
+  upstream, not in a wait strategy.
 
 - **#1422 — the 120 s tool-list budget was hanging on a control that is ready in
   140 ms, and the failure blamed the UI for a dead subprocess.** Test 5 waited

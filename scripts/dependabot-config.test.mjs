@@ -18,8 +18,10 @@
 // time it was written (2.0.1, `latest` since 2026-07-30, restored
 // `^20.17.0 || >=22.9.0`). A guard enforcing a condition that is not the real one is
 // worse than no guard: it would have failed every PR that removed the entry, which
-// was the correct change. The entry and its guard are both gone; the lesson kept is
-// that a guard must encode the reason, not a proxy for it.
+// was the correct change. The entry and its guard are both gone — and since
+// 2026-08-25 so is the package itself (the reporter authenticated by Actions OIDC,
+// which the VM daily has no way to mint; see playwright.config.ts). The lesson kept
+// is that a guard must encode the reason, not a proxy for it.
 //
 // So the two things pinned here are the two whose failure is SILENT:
 //

@@ -17,6 +17,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { waitForMcpToolOption } from "../../../../helpers/mcp/wait-for-mcp-tool-option";
+import { waitForMcpToolsCount } from "../../../../helpers/mcp/wait-for-mcp-tools-count";
 
 /**
  * Add-MCP-Server modal: stdio / HTTP registration, field persistence and tool
@@ -187,16 +188,8 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Quarantined for #1266 — recurrent flake on a TRANSPORT-level signature:
-// `apiRequestContext.get: Timeout 20000ms exceeded.` on GET
-// /api/v2/mcp/servers?action_count=true, same signature on the 2026-07-30,
-// 2026-08-03 and 2026-08-04 dailies. Filed as load/reachability about this
-// spec, not about changing tool mode (CONTRIBUTING.md -> Infra-signature
-// exemption: a spec that keeps appearing as collateral while others do not).
-// Lifting the quarantine (remove test.fixme + restore @stable) is a
-// deliverable of #1266.
-test.fixme("user must be able to change mode of MCP tools without any issues",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+test("user must be able to change mode of MCP tools without any issues",
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await page.waitForTimeout(5000);
@@ -251,20 +244,12 @@ test.fixme("user must be able to change mode of MCP tools without any issues",
 
     await page.getByTestId("add-mcp-server-button").click();
 
-    // Poll API until server tools are loaded before interacting with dropdown
-    await expect
-      .poll(
-        async () => {
-          const resp = await page.request.get(
-            "/api/v2/mcp/servers?action_count=true",
-          );
-          const servers: Array<{ name: string; toolsCount: number | null }> =
-            await resp.json();
-          return servers.find((s) => s.name === testName)?.toolsCount ?? null;
-        },
-        { timeout: TOOL_LIST_TIMEOUT, intervals: [3000] },
-      )
-      .not.toBeNull();
+    // Wait for the server's tools to be loaded before touching the dropdown.
+    // The budget is the one this site always carried; what changed is that a
+    // slow probe no longer ENDS the wait (#1266) — see the helper's docstring
+    // for the endpoint's measured cost and for why the poll this replaced could
+    // not spend its own 120 s.
+    await waitForMcpToolsCount(page, testName, { timeout: TOOL_LIST_TIMEOUT });
 
     await expect(page.getByTestId("dropdown_str_tool")).toBeVisible({
       timeout: 30000,
@@ -1287,20 +1272,9 @@ test("Streamable HTTP MCP server with server-everything should load tools correc
     await zoomOut(page, 3);
 
     // The Langflow MCP endpoint exposes project flows as tools
-    // Poll API until toolsCount is available
-    await expect
-      .poll(
-        async () => {
-          const resp = await page.request.get(
-            "/api/v2/mcp/servers?action_count=true",
-          );
-          const servers: Array<{ name: string; toolsCount: number | null }> =
-            await resp.json();
-          return servers.find((s) => s.name === testName)?.toolsCount ?? null;
-        },
-        { timeout: 60000, intervals: [3000] },
-      )
-      .not.toBeNull();
+    // Same wait, same budget as this site always used — tolerant of a slow
+    // probe rather than ended by one (#1266).
+    await waitForMcpToolsCount(page, testName, { timeout: 60_000 });
 
     await page.evaluate(() => {
       (
