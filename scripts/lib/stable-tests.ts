@@ -244,3 +244,82 @@ export function collectStableTests(): CollectResult {
   });
   return { tests: all, warnings };
 }
+
+// ─── Declared suite size, OSS only ───────────────────────────────────────────
+
+/**
+ * `@enterprise` is a LANE selector, not a severity: `tests/fixtures/lane.ts`
+ * grep-inverts it out of every run that does not set `PW_ENTERPRISE`, and the
+ * tag is deliberately never combined with `@stable` because no scheduled
+ * Enterprise lane exists (#1010). So an `@enterprise` test cannot be reached by
+ * the nightly, by construction.
+ */
+export const ENTERPRISE_TAG = "@enterprise";
+
+export interface DeclaredCounts {
+  /** Every plain `test()` call under `regression/`, whatever it is tagged. */
+  total: number;
+  /** Those carrying `@enterprise`, directly or inherited from a `test.describe`. */
+  enterprise: number;
+  /** `total - enterprise` — the OSS suite a nightly can actually reach. */
+  oss: number;
+}
+
+/**
+ * Count the declared tests in one spec's SOURCE TEXT, split OSS / Enterprise.
+ * The unit-testable seam under `collectDeclaredCounts()`.
+ *
+ * Unlike the `@stable` parser above, a `test.describe` tag is INHERITED rather
+ * than warned about. The two want different things from the same situation:
+ * Phase 0 lists individual tests, so a tag it cannot attribute to a `test()` is
+ * a defect to report; a count only needs the total, and Playwright really does
+ * apply a suite tag to every test inside it. Ignoring that here would count an
+ * Enterprise suite as OSS and re-inflate the very number this exists to fix.
+ */
+export function parseDeclaredCounts(text: string): DeclaredCounts {
+  const source = ts.createSourceFile(
+    "declared.spec.ts",
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
+
+  let total = 0;
+  let enterprise = 0;
+
+  function visit(node: ts.Node, inheritedEnterprise: boolean): void {
+    let childrenInherit = inheritedEnterprise;
+
+    if (ts.isCallExpression(node)) {
+      if (isDescribeCall(node) && node.arguments.length >= 2) {
+        const { tags } = readTagsArray(node.arguments[1]);
+        if (tags?.includes(ENTERPRISE_TAG)) childrenInherit = true;
+      } else if (isPlainTestCall(node)) {
+        total++;
+        let isEnterprise = inheritedEnterprise;
+        if (!isEnterprise && node.arguments.length >= 2) {
+          const { tags } = readTagsArray(node.arguments[1]);
+          if (tags?.includes(ENTERPRISE_TAG)) isEnterprise = true;
+        }
+        if (isEnterprise) enterprise++;
+      }
+    }
+
+    ts.forEachChild(node, (child) => visit(child, childrenInherit));
+  }
+
+  visit(source, false);
+  return { total, enterprise, oss: total - enterprise };
+}
+
+/** The same split across every spec under `regression/`. */
+export function collectDeclaredCounts(): DeclaredCounts {
+  const acc: DeclaredCounts = { total: 0, enterprise: 0, oss: 0 };
+  for (const file of walkSpecs(REGRESSION_ROOT)) {
+    const c = parseDeclaredCounts(fs.readFileSync(file, "utf-8"));
+    acc.total += c.total;
+    acc.enterprise += c.enterprise;
+    acc.oss += c.oss;
+  }
+  return acc;
+}

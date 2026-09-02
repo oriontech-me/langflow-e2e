@@ -24,6 +24,7 @@ import * as path from "path";
 import {
   REPO_ROOT,
   type StableTest,
+  collectDeclaredCounts,
   collectStableTests,
 } from "./lib/stable-tests";
 
@@ -165,6 +166,21 @@ function main(): void {
   // count always matches the Phase 0 regeneration.
   if (process.argv.includes("--count")) {
     console.log(collectStableTests().tests.length);
+    process.exit(0);
+  }
+
+  // `--count-oss` mode: the size of the DECLARED suite the nightly can reach —
+  // every `test()` under regression/ minus the `@enterprise` ones. Feeds
+  // TOTAL_COUNT in daily-stable.yml / weekly-stable.yml, which is the
+  // denominator of the dashboard's coverage band.
+  //
+  // This used to be `grep -rE '^\s*test\s*\('` in the workflow. Two problems:
+  // it counted the Enterprise lane, which no nightly can execute (#1010), and
+  // it made the coverage band read one number off a regex while the numerator
+  // beside it came from the AST parser above — the "sources that are supposed
+  // to agree but don't" split #985 merged away for `@stable`.
+  if (process.argv.includes("--count-oss")) {
+    console.log(collectDeclaredCounts().oss);
     process.exit(0);
   }
 

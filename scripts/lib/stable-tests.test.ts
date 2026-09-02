@@ -17,6 +17,7 @@ import * as path from "path";
 import {
   REGRESSION_ROOT,
   collectStableTests,
+  parseDeclaredCounts,
   parseStableTests,
 } from "./stable-tests";
 
@@ -182,4 +183,88 @@ test("the real suite walk finds @stable tests", () => {
   // and make this lane's verdict depend on the state of the whole suite.
   const { tests } = collectStableTests();
   assert.ok(tests.length > 0, "no @stable tests found under regression/");
+});
+
+// ─── Declared suite size, OSS only ───────────────────────────────────────────
+//
+// This counter is the denominator of the dashboard's coverage band, so the two
+// ways it can lie are the mirror of the ones above: counting an @enterprise
+// test as OSS inflates the denominator with tests no nightly can execute, and
+// counting an OSS test as Enterprise hides real declared surface.
+
+test("an untagged test() counts as OSS", () => {
+  const c = parseDeclaredCounts(`
+    test("does a thing", { tag: ["@components"] }, async ({ page }) => {});
+    test("does another", async ({ page }) => {});
+  `);
+  assert.deepEqual(c, { total: 2, enterprise: 0, oss: 2 });
+});
+
+test("an @enterprise test() is counted out of OSS", () => {
+  const c = parseDeclaredCounts(`
+    test("rbac baseline", { tag: ["@enterprise", "@authz"] }, async ({ page }) => {});
+    test("plain one", { tag: ["@api"] }, async ({ page }) => {});
+  `);
+  assert.deepEqual(c, { total: 2, enterprise: 1, oss: 1 });
+});
+
+test("@enterprise on a test.describe is inherited by the tests inside", () => {
+  // Playwright applies a suite tag to every test in it, so the lane grep-invert
+  // removes them all. Counting them as OSS would put unreachable tests back in
+  // the denominator — the exact bug this counter exists to fix.
+  const c = parseDeclaredCounts(`
+    test.describe("admin console", { tag: ["@enterprise"] }, () => {
+      test("lists users", async ({ page }) => {});
+      test("exports the audit log", { tag: ["@api"] }, async ({ page }) => {});
+    });
+  `);
+  assert.deepEqual(c, { total: 2, enterprise: 2, oss: 0 });
+});
+
+test("an @enterprise describe does not leak into a sibling test after it", () => {
+  // Guards the inheritance against being implemented as a latch: once the flag
+  // is set by a describe, it must fall back off when the walk leaves that
+  // subtree. A latch passes the test above and silently zeroes OSS from the
+  // first Enterprise suite in the file onward.
+  const c = parseDeclaredCounts(`
+    test.describe("admin console", { tag: ["@enterprise"] }, () => {
+      test("lists users", async ({ page }) => {});
+    });
+    test("an OSS test declared afterwards", { tag: ["@api"] }, async ({ page }) => {});
+  `);
+  assert.deepEqual(c, { total: 2, enterprise: 1, oss: 1 });
+});
+
+test("a nested describe inside an @enterprise one stays Enterprise", () => {
+  const c = parseDeclaredCounts(`
+    test.describe("enterprise surface", { tag: ["@enterprise"] }, () => {
+      test.describe("nested", { tag: ["@authz"] }, () => {
+        test("deep test", async ({ page }) => {});
+      });
+    });
+  `);
+  assert.deepEqual(c, { total: 1, enterprise: 1, oss: 0 });
+});
+
+test("@enterprise in prose or a commented-out tag is not counted", () => {
+  // The textual `grep` this replaced could not tell these apart.
+  const c = parseDeclaredCounts(`
+    /**
+     * Was promoted out of @enterprise when the surface shipped to OSS.
+     */
+    test("an OSS test", { tag: ["@api"] }, async ({ page }) => {});
+    // test("retired", { tag: ["@enterprise"] }, async ({ page }) => {});
+    const note = "@enterprise";
+  `);
+  assert.deepEqual(c, { total: 1, enterprise: 0, oss: 1 });
+});
+
+test("test.describe and test.skip are not counted as declared tests", () => {
+  const c = parseDeclaredCounts(`
+    test.describe("a suite", { tag: ["@api"] }, () => {
+      test.skip("skipped", async ({ page }) => {});
+      test("the only real one", async ({ page }) => {});
+    });
+  `);
+  assert.deepEqual(c, { total: 1, enterprise: 0, oss: 1 });
 });
