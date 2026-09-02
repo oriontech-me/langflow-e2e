@@ -74,6 +74,8 @@ function waitFor(predicate, timeoutMs = 5000) {
  * `portBusy: true` makes the PRE-START probe succeed instead, which is a port already
  * answering. The two are separate because the script calls curl for both, and the
  * stub tells them apart by call order.
+ * `ignoresTerm: true` makes the launched process ignore SIGTERM — the shape the
+ * timeout path has to survive, since `kill` returning 0 only proves delivery.
  * `serverExits: true` makes the launched process exit immediately, as a failed bind
  * does. `frontendBuilt: false` removes the served asset directory.
  */
@@ -84,6 +86,7 @@ function runScript({
   repoExists = true,
   frontendBuilt = true,
   serverExits = false,
+  ignoresTerm = false,
   withUv = true,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "start-langflow-source-test-"));
@@ -118,7 +121,7 @@ function runScript({
 echo "$*" >> "${uvLog}"
 if [ "$1" = "run" ]; then
   env | grep -E '^LANGFLOW_' | sort >> "${envLog}"
-  ${serverExits ? "exit 1" : `exec sleep ${SERVER_MARKER}`}
+  ${serverExits ? "exit 1" : `${ignoresTerm ? "trap '' TERM\n" : ""}exec sleep ${SERVER_MARKER}`}
 fi
 exit 0
 `,
@@ -374,6 +377,27 @@ test("a process that exits during startup fails immediately, not at the deadline
   const r = runScript({ serverExits: true, healthy: false });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /exited .* without answering/);
+  assert.equal(r.pidFileExists, false);
+  r.cleanup();
+});
+
+test("a process that ignores SIGTERM is escalated, not left as an orphan", () => {
+  // The timeout path used to send SIGTERM and remove the PID file in the next line.
+  // `kill` returning 0 only means the signal was DELIVERED, so a backend that ignores
+  // it — or is wedged, which on this one is a documented state (#922/#927: process
+  // alive, port bound, event loop blocked) — survived with its only handle deleted.
+  // The next start could not see it either: /health_check cannot answer from a port
+  // that is BOUND but silent, which is the very state the timeout was reached in.
+  const r = runScript({ healthy: false, ignoresTerm: true, env: { LANGFLOW_STOP_TIMEOUT_S: "2" } });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /ignored SIGTERM/);
+  assert.doesNotMatch(
+    processTable(),
+    serverPattern(),
+    "the process that ignored SIGTERM survived the starter's failure path",
+  );
+  // Gone for real, so the handle is no longer needed — and the next start must not be
+  // refused over a process that does not exist.
   assert.equal(r.pidFileExists, false);
   r.cleanup();
 });

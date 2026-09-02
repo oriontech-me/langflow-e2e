@@ -73,6 +73,9 @@ POLL_INTERVAL_S="${ECHO_POLL_INTERVAL_S:-1}"
 # go-httpbin's own default, restated because /delay/5 sits under it and a spec asserts
 # that route. Lowering it below 5s turns that spec red for a reason no one will find.
 MAX_DURATION="${ECHO_MAX_DURATION:-10s}"
+# How long a graceful exit may take on the failure path below. Same variable the
+# stop script reads, so the two cannot disagree about what "gave it a chance" means.
+STOP_TIMEOUT_S="${ECHO_STOP_TIMEOUT_S:-10}"
 
 # Checked in two steps rather than one `-lt`, for the reason the Langflow starter
 # documents: a non-numeric value makes `[ -lt ]` exit 2, which inside `if` is
@@ -329,6 +332,28 @@ done
 
 echo "ERROR: the echo endpoint did not answer in ${START_TIMEOUT_S}s. Last log lines:" >&2
 tail -n 20 "${LOG_FILE}" >&2 || true
+# Confirm the process is gone before dropping the PID file. `kill` returning 0 only
+# means the signal was DELIVERED: if it is ignored, or the process is wedged, removing
+# the file discards the only reliable handle to stop it — and the next start's probe
+# cannot see a port that is BOUND but not answering, which is exactly the state this
+# timeout was reached in. So the collision would come back as a failed bind on every
+# later run, against an orphan nothing can name. The stop script already reasons this
+# way; a starter that contradicts its own stopper is worse than either rule alone.
 kill "${SERVER_PID}" 2>/dev/null || true
-rm -f "${PID_FILE}"
+WAITED=0
+while [ "${WAITED}" -lt "${STOP_TIMEOUT_S}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+if kill -0 "${SERVER_PID}" 2>/dev/null; then
+  echo "PID ${SERVER_PID} ignored SIGTERM after ${STOP_TIMEOUT_S}s; sending SIGKILL." >&2
+  kill -9 "${SERVER_PID}" 2>/dev/null || true
+  sleep 1
+fi
+if kill -0 "${SERVER_PID}" 2>/dev/null; then
+  echo "ERROR: PID ${SERVER_PID} survived SIGKILL; port ${PORT} may still be bound." >&2
+  echo "Leaving ${PID_FILE} in place so the next start refuses instead of colliding." >&2
+else
+  rm -f "${PID_FILE}"
+fi
 exit 1

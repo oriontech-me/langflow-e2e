@@ -83,6 +83,8 @@ function waitFor(predicate, timeoutMs = 5000) {
  * `portBusy: true` makes the PRE-START probe answer, which is a port already taken.
  * `healthy: false` makes the readiness probe refuse, reaching the timeout branch.
  * `serverExits: true` makes the launched binary exit at once, as a failed bind does.
+ * `ignoresTerm: true` makes the launched process ignore SIGTERM — the shape the
+ * timeout path has to survive, since `kill` returning 0 only proves delivery.
  * `binaryPresent` / `binaryVersion` cover the provisioning branches: absent means
  * download, present-and-wrong-version means refuse.
  * `addresses` is what the stubbed `ip` reports, in order.
@@ -94,6 +96,7 @@ function runScript({
   healthy = true,
   portBusy = false,
   serverExits = false,
+  ignoresTerm = false,
   binaryPresent = true,
   binaryVersion = null,
   addresses = ["203.0.113.10", "10.0.0.5"],
@@ -122,7 +125,7 @@ if [ "$1" = "-version" ]; then
   echo "go-httpbin version ${binaryVersion ?? version}"
   exit 0
 fi
-${serverExits ? "exit 1" : `exec sleep ${marker}`}
+${serverExits ? "exit 1" : `${ignoresTerm ? "trap '' TERM\n" : ""}exec sleep ${marker}`}
 `;
 
   // A real tarball, hashed for real. `checksums.txt` carries the decoy `.sbom.json`
@@ -333,6 +336,26 @@ test("a binary that exits during startup is reported as that, not as a timeout",
   assert.equal(r.status, 1);
   assert.match(r.stderr, /exited after/);
   // The PID file has to go, or the next start refuses over a process that is gone.
+  assert.ok(!existsSync(join(r.stateRoot, "echo-source-8080", "echo.pid")));
+  r.cleanup();
+});
+
+test("a process that ignores SIGTERM is escalated, not left as an orphan", () => {
+  // `kill` returning 0 only means the signal was DELIVERED. The timeout path used to
+  // remove the PID file straight after sending it, which discards the only handle to
+  // a process that ignored it — and the next start's /get probe cannot see a port
+  // that is BOUND but not answering, which is the exact state this timeout is reached
+  // in. Asserted by killing for real and reading the process table, not by reading
+  // the script.
+  const r = runScript({ healthy: false, ignoresTerm: true, env: { ECHO_BIND_HOST: "10.0.0.5", ECHO_STOP_TIMEOUT_S: "2" } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /ignored SIGTERM/);
+  assert.ok(
+    waitFor(() => !serverPattern(r.marker).test(processTable())),
+    "the process that ignored SIGTERM survived the starter's failure path",
+  );
+  // Gone for real, so the handle is no longer needed and the next start must not be
+  // refused over a process that does not exist.
   assert.ok(!existsSync(join(r.stateRoot, "echo-source-8080", "echo.pid")));
   r.cleanup();
 });
