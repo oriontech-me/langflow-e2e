@@ -43,14 +43,17 @@ import {
   planIdleWait,
   planSaveWait,
   sweepSaveBudgetMs,
+  enableTargetsTimeoutMs,
+  targetEnablementVerdict,
+  ensureTargetModelsEnabled,
   rankCandidates,
   resolveRequiredProviders,
   validateProviderWithFallback,
   waitForButtonIdle,
-  waitForToggleChecked,
   type ProviderRecord,
   confirmEnabledOnServer,
 } from "./collect-models";
+import { keyedProviders } from "./provider-config";
 
 // ─── Verbatim provider errors ────────────────────────────────────────────────
 
@@ -739,56 +742,13 @@ test("#1355: a zero timeout still OBSERVES once instead of reporting a state it 
   assert.equal(verdict.ariaBusy, "true");
 });
 
-// ─── waitForToggleChecked (#1355, second half) ────────────────────────────────
-//
-// The measured cause behind the busy Save: enabling a model is a WRITE, and the
-// collector enables every model of every provider. With a funded OpenAI key the
-// panel exposes 41 visible models where a drained key exposed none worth
-// toggling, so one provider went from ~0 writes to 41 against a backend the
-// lanes run with LANGFLOW_WORKERS=1 — and the NEXT provider's Save queued behind
-// them and never settled. Confirming each toggle is what serialises them.
-
-/** A toggle whose `aria-checked` readings are scripted per poll. */
-function fakeToggle(readings: Array<string | null>) {
-  let i = -1;
-  return {
-    getAttribute: async () => {
-      i += 1;
-      return readings[Math.min(i, readings.length - 1)] ?? null;
-    },
-  };
-}
-
-test("#1355: a toggle already checked confirms on the first poll, without sleeping", async () => {
-  const clock = fakeClock();
-  const result = await waitForToggleChecked(fakeToggle(["true"]), { ...clock, timeoutMs: 5_000 });
-  assert.equal(result.checked, true);
-  assert.equal(result.polls, 1);
-  assert.equal(result.waitedMs, 0, "the healthy path must not add wall clock per model");
-});
-
-test("#1355: a toggle that lands a moment later is waited out, serialising the write", async () => {
-  const clock = fakeClock();
-  const result = await waitForToggleChecked(fakeToggle(["false", "false", "true"]), {
-    ...clock,
-    timeoutMs: 5_000,
-    pollMs: 100,
-  });
-  assert.equal(result.checked, true);
-  assert.equal(result.polls, 3);
-  assert.equal(result.waitedMs, 200);
-});
-
-test("#1355: a toggle that never confirms gives up at its own timeout and says so", async () => {
-  const clock = fakeClock();
-  const result = await waitForToggleChecked(fakeToggle(["false"]), {
-    ...clock,
-    timeoutMs: 500,
-    pollMs: 100,
-  });
-  assert.equal(result.checked, false);
-  assert.ok(result.waitedMs >= 500, "must not return before its own deadline");
-});
+// `waitForToggleChecked` is GONE (#1666). It polled `aria-checked`, which
+// `useModelToggleQueue` flips synchronously at click time — before any request
+// leaves the browser — so it could only ever confirm the OPTIMISTIC client cache.
+// #1651 recorded that in a comment; #1666 measured the consequence: 74 toggles
+// "confirmed" by it produced ZERO `POST /models/enabled_models`. The sweep no
+// longer clicks those toggles at all, so there is nothing left for it to wait on.
+// What replaced it is `confirmEnabledOnServer` over the run's TARGET models, below.
 
 // ─── classifyWaitFailure (#1370) ─────────────────────────────────────────────
 //
@@ -1150,9 +1110,17 @@ test("#1385: the sweep budget fits inside the pre-flight's own test timeout", ()
   // navigation, toggle sweeps, key probes and file writes.
   const PREFLIGHT_TIMEOUT_MS = 12 * 60 * 1000;
   const NON_WAIT_RESERVE_MS = 90_000;
+  // The target-model step (#1666) is the reserve's only UNBOUNDED-BY-BUDGET part:
+  // its ceiling is PER CALL, and the worst case is one write per keyed provider plus
+  // the single confirmation read. Counted explicitly rather than assumed to fit
+  // inside the 90 s, because a per-call constant can be raised without anyone
+  // noticing it broke this invariant — which is exactly what happened at 60 s
+  // (450 + 90 + 240 = 780 > 720) while this assertion still passed.
+  const ENABLE_TARGETS_WORST_CASE_MS = enableTargetsTimeoutMs * (keyedProviders.length + 1);
   assert.ok(
-    sweepSaveBudgetMs + NON_WAIT_RESERVE_MS < PREFLIGHT_TIMEOUT_MS,
-    `${sweepSaveBudgetMs}ms of waits plus ${NON_WAIT_RESERVE_MS}ms of everything else must fit in ` +
+    sweepSaveBudgetMs + NON_WAIT_RESERVE_MS + ENABLE_TARGETS_WORST_CASE_MS < PREFLIGHT_TIMEOUT_MS,
+    `${sweepSaveBudgetMs}ms of waits plus ${NON_WAIT_RESERVE_MS}ms of everything else plus ` +
+      `${ENABLE_TARGETS_WORST_CASE_MS}ms of target-model enablement must fit in ` +
       `${PREFLIGHT_TIMEOUT_MS}ms, or the budget is decorative and the test timeout is the real bound`,
   );
 
@@ -1263,75 +1231,336 @@ test("#1370: separators and case do not change the selection", () => {
   ]);
 });
 
-test("#1355: waitedMs is what lets the caller bound the SUM, not just each write", async () => {
-  // The per-item timeout never sees the total. 41 toggles each taking 5s would
-  // spend 205s and blow the spec's own 5-minute budget, so the caller subtracts
-  // `waitedMs` from an aggregate budget — this asserts the field it needs to do
-  // that is real, and measured, not a constant.
-  const clock = fakeClock();
-  const slow = await waitForToggleChecked(fakeToggle(["false", "false", "true"]), {
-    ...clock,
-    timeoutMs: 5_000,
-    pollMs: 250,
-  });
-  const fast = await waitForToggleChecked(fakeToggle(["true"]), { ...fakeClock(), timeoutMs: 5_000 });
-  assert.equal(slow.waitedMs, 500);
-  assert.equal(fast.waitedMs, 0);
-  assert.ok(slow.waitedMs > fast.waitedMs, "a slow confirmation must cost the budget more than a fast one");
-});
-
-// --- #1649: the toggle confirmation was reading the OPTIMISTIC client cache ---
+// --- #1649/#1666: enablement is confirmed against the SERVER, never the panel ---
 //
-// `waitForToggleChecked` polls `aria-checked`, and `useModelToggleQueue` flips that
-// synchronously at click time via `queryClient.setQueryData` — before any request
-// leaves the browser. Measured on 1.12.0.dev44: all 36 clicks reported "confirmed"
-// while the POST only went out at t=8132 ms. So a write that never reaches the
-// server is indistinguishable from one that lands, the #1355 shortfall warning
-// cannot fire, and the next spec inherits a provider it believes is fully enabled.
-// The server is the only source that settles it, and it is read ONCE after the
-// batch has flushed — polling it during the write was measured stalling a
-// single-worker backend (`apiRequestContext.get: Timeout 20000ms exceeded`).
-test("a server that answered confirms every model the loop expected", () => {
-  const v = confirmEnabledOnServer({ "gpt-4o": true, "gpt-4o-mini": true }, ["gpt-4o", "gpt-4o-mini"]);
+// `aria-checked` is flipped synchronously at click time via
+// `queryClient.setQueryData` — before any request leaves the browser. Measured on
+// 1.12.0.dev44: all 36 clicks reported "confirmed" while the POST only went out at
+// t=8132 ms; measured again on a clean 1.12.0.dev45 in #1666: 74 clicks produced
+// ZERO writes at all, because the queue cancels + discards its batch when the panel
+// navigates away. So the server is the only source that settles it, and it is read
+// ONCE — polling it during the write was measured stalling a single-worker backend
+// (`apiRequestContext.get: Timeout 20000ms exceeded`).
+//
+// The subject is now the run's TARGET models (the settled model per provider), which
+// is what `ensureTargetModelsEnabled` writes and what every spec actually picks.
+test("a server that answered confirms every target model", () => {
+  const v = confirmEnabledOnServer({ "gpt-4o": true, "gpt-4o-mini": true }, ["gpt-4o", "gpt-4o-mini"], true);
   assert.equal(v.kind, "confirmed");
   if (v.kind === "confirmed") assert.equal(v.expected, 2);
 });
 
-test("a write that never landed is a SHORTFALL naming the models, not a pass", () => {
-  const v = confirmEnabledOnServer({ "gpt-4o": true, "gpt-4o-mini": false }, [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4.1",
-  ]);
+test("a target the provider LISTS but reports false is OFF — the enable did not take effect", () => {
+  const v = confirmEnabledOnServer({ "gpt-4o": true, "gpt-4o-mini": false }, ["gpt-4o", "gpt-4o-mini"], true);
   assert.equal(v.kind, "shortfall");
   if (v.kind === "shortfall") {
-    assert.deepEqual(v.missing, ["gpt-4o-mini", "gpt-4.1"]);
+    assert.deepEqual(v.off, ["gpt-4o-mini"]);
+    assert.deepEqual(v.absent, [], "a listed model is not an absent one");
     assert.equal(v.enabled, 1);
-    assert.equal(v.expected, 3);
-    assert.match(v.message, /1 of 3/);
-    assert.match(v.message, /gpt-4o-mini/);
-    assert.match(v.message, /#1649/);
+    assert.equal(v.expected, 2);
+    assert.match(v.message, /1 of 2/);
+    assert.match(v.message, /did not take effect/i);
+    assert.match(v.message, /COLD PATH/);
   }
 });
 
-test("a model missing from the response entirely counts as NOT enabled", () => {
-  // Absence is not `true`. The endpoint lists every model of a configured
-  // provider, so a key the loop expected and the response does not carry means
-  // the write did not land — the exact state the optimistic read hid.
-  const v = confirmEnabledOnServer({ "gpt-4o": true }, ["gpt-4o", "gpt-4o-mini"]);
+test("a target the provider does not LIST is ABSENT — a name mismatch, not a failed enable", () => {
+  // The distinction #1666 had to spend an investigation establishing: `0 of 36
+  // missing` reads identically whether the writes were dropped or whether the names
+  // are not the keys the endpoint uses, and the two demand opposite fixes. Absence
+  // is still NOT `true` — the endpoint lists every model of a configured provider.
+  const v = confirmEnabledOnServer({ "gpt-4o": true }, ["gpt-4o", "gpt-4o-mini"], true);
   assert.equal(v.kind, "shortfall");
-  if (v.kind === "shortfall") assert.deepEqual(v.missing, ["gpt-4o-mini"]);
+  if (v.kind === "shortfall") {
+    assert.deepEqual(v.absent, ["gpt-4o-mini"]);
+    assert.deepEqual(v.off, []);
+    assert.match(v.message, /NOT an enable that failed/i);
+    assert.doesNotMatch(v.message, /did not take effect/i, "must not claim an enable failed");
+  }
+});
+
+test("off and absent are reported TOGETHER, each named as what it is", () => {
+  const v = confirmEnabledOnServer(
+    { "gpt-4o": true, "gpt-4o-mini": false },
+    ["gpt-4o", "gpt-4o-mini", "gpt-4.1"],
+    true,
+  );
+  assert.equal(v.kind, "shortfall");
+  if (v.kind === "shortfall") {
+    assert.deepEqual(v.off, ["gpt-4o-mini"]);
+    assert.deepEqual(v.absent, ["gpt-4.1"]);
+    assert.equal(v.enabled, 1);
+    assert.match(v.message, /gpt-4o-mini/);
+    assert.match(v.message, /gpt-4\.1/);
+  }
+});
+
+test("an ANSWERED read that does not list the provider is a definite negative, not UNKNOWN", () => {
+  // The only path where a definite negative used to pass the gate. `undefined` for a
+  // provider means two unrelated things — the read failed, or the read answered and
+  // the provider is unconfigured / hidden by a model-provider policy — and reporting
+  // the second as "the read did not answer" is both false and the softer verdict.
+  const v = confirmEnabledOnServer(undefined, ["gpt-4o"], true);
+  assert.equal(v.kind, "shortfall");
+  if (v.kind === "shortfall") {
+    assert.deepEqual(v.absent, ["gpt-4o"]);
+    assert.equal(v.enabled, 0);
+    assert.match(v.message, /ANSWERED and does not list this provider/);
+    assert.doesNotMatch(v.message, /read did not answer/);
+  }
+});
+
+test("expecting nothing is confirmed even when the read failed — there was nothing to enable", () => {
+  assert.equal(confirmEnabledOnServer(undefined, [], false).kind, "confirmed");
+});
+
+// ─── targetEnablementVerdict: the WRITE outranks a negative read (#1666) ──────
+//
+// The precedence that keeps this gate off `pr-validation.yml`'s hard-gate lane for a
+// transient. Two states leave a model reading "not enabled" and only one is a defect.
+
+const OK: { ok: boolean; detail: string | null } = { ok: true, detail: null };
+
+test("a confirmed read is enabled, whatever the write said", () => {
+  const v = targetEnablementVerdict(OK, { kind: "confirmed", expected: 1 });
+  assert.equal(v.state, "enabled");
+  assert.equal(v.detail, "");
+});
+
+test("a 2xx write plus a model reading OFF is a real negative the gate must fail on", () => {
+  const v = targetEnablementVerdict(OK, {
+    kind: "shortfall",
+    expected: 1,
+    enabled: 0,
+    off: ["gpt-4o-mini"],
+    absent: [],
+    message: "listed but off",
+  });
+  assert.equal(v.state, "off");
+  assert.equal(v.detail, "listed but off");
+});
+
+test("a 2xx write plus a model the server does not list at all is ABSENT, not off", () => {
+  const v = targetEnablementVerdict(OK, {
+    kind: "shortfall",
+    expected: 1,
+    enabled: 0,
+    off: [],
+    absent: ["gpt-4o-mini"],
+    message: "not listed",
+  });
+  assert.equal(v.state, "absent");
+});
+
+test("a write that never answered makes a negative read UNKNOWN, never a lost enable", () => {
+  // The 2026-09-01 shape: 19 outages and four WORKER TIMEOUT -> SIGKILL cycles, so a
+  // dropped POST is the likely shape of a bad day. The read then describes the state
+  // BEFORE an enable that never happened, and failing on it would redden a whole
+  // E2E job for a transient.
+  const v = targetEnablementVerdict(
+    { ok: false, detail: "no HTTP status (apiRequestContext.post: Timeout 30000ms exceeded)" },
+    {
+      kind: "shortfall",
+      expected: 1,
+      enabled: 0,
+      off: ["gpt-4o-mini"],
+      absent: [],
+      message: "listed but off",
+    },
+  );
+  assert.equal(v.state, "unknown", "a dropped write must not be reported as a lost enable");
+  assert.match(v.detail, /did not answer 2xx/);
+  assert.match(v.detail, /Timeout 30000ms/, "the transport's own words must survive");
+  assert.match(v.detail, /listed but off/, "and so must the read it is qualifying");
+});
+
+test("a REFUSED enable is UNKNOWN carrying the server's words, not 'the enable did not take effect'", () => {
+  // `HTTP 400 Cannot enable not supported model: o3` is a definite answer that the
+  // model can never be enabled — reachable whenever the key axis settles on one of
+  // OpenAI's `not_supported` entries, which do render in the panel and do reach
+  // models.json. The cause is the CANDIDATE CHOICE, so reporting it as `off` would
+  // print "the enable did not take effect" about a server that refused on purpose.
+  const v = targetEnablementVerdict(
+    { ok: false, detail: "HTTP 400 Cannot enable not supported model: o3" },
+    { kind: "shortfall", expected: 1, enabled: 0, off: ["o3"], absent: [], message: "listed but off" },
+  );
+  assert.equal(v.state, "unknown");
+  assert.match(v.detail, /not supported model: o3/);
+});
+
+test("an unavailable read is UNKNOWN even when the write answered 2xx", () => {
+  const v = targetEnablementVerdict(OK, { kind: "unavailable", message: "the read did not answer" });
+  assert.equal(v.state, "unknown");
+  assert.match(v.detail, /did not answer/);
+});
+
+// ─── ensureTargetModelsEnabled (#1666) ────────────────────────────────────────
+
+/** A duck-typed APIRequestContext that records what it was asked, like the sibling probes do. */
+function fakeRequest(options: {
+  postStatus?: number | ((n: number) => number);
+  postThrows?: boolean;
+  getBody?: unknown;
+  getStatus?: number;
+  getThrows?: boolean;
+} = {}) {
+  const posts: Array<{ url: string; data: unknown; timeout?: number }> = [];
+  const gets: Array<{ url: string }> = [];
+  let n = 0;
+  return {
+    posts,
+    gets,
+    request: {
+      async post(url: string, init?: { data?: unknown; timeout?: number }) {
+        posts.push({ url, data: init?.data, timeout: init?.timeout });
+        if (options.postThrows) throw new Error("apiRequestContext.post: Timeout 30000ms exceeded");
+        n += 1;
+        const status =
+          typeof options.postStatus === "function"
+            ? options.postStatus(n)
+            : (options.postStatus ?? 200);
+        return {
+          ok: () => status >= 200 && status < 300,
+          status: () => status,
+          text: async () => `body for ${status}`,
+        };
+      },
+      async get(url: string) {
+        gets.push({ url });
+        if (options.getThrows) throw new Error("apiRequestContext.get: Timeout 30000ms exceeded");
+        const status = options.getStatus ?? 200;
+        return {
+          ok: () => status >= 200 && status < 300,
+          status: () => status,
+          json: async () => options.getBody,
+        };
+      },
+    },
+  };
+}
+
+const TWO_TARGETS = [
+  { providerDisplayName: "OpenAI", model: "gpt-4o-mini" },
+  { providerDisplayName: "Google Generative AI", model: "gemini-2.5-flash" },
+];
+
+test("no target means no request at all — the sweep must not pay for an empty enable", async () => {
+  const f = fakeRequest();
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, []);
+  assert.equal(verdicts.size, 0);
+  assert.equal(f.posts.length, 0);
+  assert.equal(f.gets.length, 0, "not even the confirmation read");
+});
+
+test("ONE write per provider, never one batch for all of them", async () => {
+  // The isolation argument the change reasons hardest about: the endpoint validates
+  // per model and raises on the FIRST update it rejects, BEFORE persisting any — so
+  // a single batch lets one provider's rejected model cost every other provider its
+  // enable. Collapsing the loop into one request passes every other test here.
+  const f = fakeRequest({
+    getBody: {
+      enabled_models_by_type: {
+        OpenAI: { llm: { "gpt-4o-mini": true } },
+        "Google Generative AI": { llm: { "gemini-2.5-flash": true } },
+      },
+    },
+  });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, TWO_TARGETS);
+  assert.equal(f.posts.length, 2, "one write per provider");
+  assert.equal(f.gets.length, 1, "and exactly one confirmation read");
+  for (const post of f.posts) {
+    const data = post.data as Array<{ provider: string }>;
+    assert.equal(data.length, 1, "a provider's write must not carry another provider's models");
+  }
+  assert.equal(verdicts.get("OpenAI")?.state, "enabled");
+  assert.equal(verdicts.get("Google Generative AI")?.state, "enabled");
+});
+
+test("the write is the shape the endpoint accepts, and the read is scoped to configure", async () => {
+  // Measured on 1.12.0.dev45: an `{updates: [...]}` envelope answers 422 — the body
+  // is a BARE array — and the enable needs `model_type` for the typed identity.
+  const f = fakeRequest({ getBody: { enabled_models: { OpenAI: { "gpt-4o-mini": true } } } });
+  await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0]]);
+  assert.equal(f.posts[0].url, "/api/v1/models/enabled_models");
+  assert.deepEqual(f.posts[0].data, [
+    { provider: "OpenAI", model_id: "gpt-4o-mini", model_type: "llm", enabled: true },
+  ]);
+  assert.equal(f.posts[0].timeout, enableTargetsTimeoutMs);
+  assert.match(f.gets[0].url, /\?purpose=configure$/);
+});
+
+test("the same model asked for twice is written once", async () => {
+  const f = fakeRequest({ getBody: { enabled_models: { OpenAI: { "gpt-4o-mini": true } } } });
+  await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0], TWO_TARGETS[0]]);
+  assert.equal(f.posts.length, 1);
+  assert.deepEqual((f.posts[0].data as unknown[]).length, 1);
+});
+
+test("the TYPED map wins over the flat one, which ORs across model types", async () => {
+  // The backend says so about its own shapes: "Per-type map is exact; flat map ORs
+  // rows that share provider/name". So a name enabled only as `embeddings` reads
+  // `true` in the flat map while the llm picker offers nothing — a false negative on
+  // the cold path, which is what this gate exists to detect. The product's own
+  // `isModelEnabled` prefers the typed map for the same reason.
+  const f = fakeRequest({
+    getBody: {
+      enabled_models: { OpenAI: { "gpt-4o-mini": true } },
+      enabled_models_by_type: { OpenAI: { llm: { "gpt-4o-mini": false } } },
+    },
+  });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0]]);
+  assert.equal(verdicts.get("OpenAI")?.state, "off");
+});
+
+test("one provider's refused write does not change another provider's verdict", async () => {
+  const f = fakeRequest({
+    postStatus: (n) => (n === 1 ? 400 : 200),
+    getBody: {
+      enabled_models_by_type: {
+        OpenAI: { llm: { "gpt-4o-mini": false } },
+        "Google Generative AI": { llm: { "gemini-2.5-flash": true } },
+      },
+    },
+  });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, TWO_TARGETS);
+  assert.equal(verdicts.get("OpenAI")?.state, "unknown", "a refused write is not a lost enable");
+  assert.equal(verdicts.get("Google Generative AI")?.state, "enabled");
+});
+
+test("a write that THROWS is reported, never rethrown out of a report-only helper", async () => {
+  const f = fakeRequest({
+    postThrows: true,
+    getBody: { enabled_models_by_type: { OpenAI: { llm: { "gpt-4o-mini": false } } } },
+  });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0]]);
+  assert.equal(verdicts.get("OpenAI")?.state, "unknown");
+  assert.match(verdicts.get("OpenAI")?.detail ?? "", /Timeout 30000ms/);
+});
+
+test("a read that THROWS is UNKNOWN, never rethrown and never a silent confirmation", async () => {
+  const f = fakeRequest({ getThrows: true });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0]]);
+  assert.equal(verdicts.get("OpenAI")?.state, "unknown");
+  assert.match(verdicts.get("OpenAI")?.detail ?? "", /could not be confirmed/i);
+});
+
+test("a non-2xx read is UNKNOWN, not an answered response that lists nothing", async () => {
+  const f = fakeRequest({ getStatus: 503 });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0]]);
+  assert.equal(verdicts.get("OpenAI")?.state, "unknown");
+  assert.match(verdicts.get("OpenAI")?.detail ?? "", /read did not answer/);
+});
+
+test("a 2xx read that omits the provider is a definite negative, not UNKNOWN", async () => {
+  const f = fakeRequest({ getBody: { enabled_models: { Anthropic: {} } } });
+  const verdicts = await ensureTargetModelsEnabled(f.request as never, [TWO_TARGETS[0]]);
+  assert.equal(verdicts.get("OpenAI")?.state, "absent");
 });
 
 test("a server that did not answer is UNAVAILABLE, never a silent confirmation", () => {
   // #1012: an unevaluated check is unknown, not clean. Reporting `confirmed` here
   // would be the same false green the optimistic read produced.
-  const v = confirmEnabledOnServer(undefined, ["gpt-4o"]);
+  const v = confirmEnabledOnServer(undefined, ["gpt-4o"], false);
   assert.equal(v.kind, "unavailable");
   if (v.kind === "unavailable") assert.match(v.message, /could not be confirmed/i);
-});
-
-test("expecting nothing is confirmed, not unavailable — there was nothing to write", () => {
-  const v = confirmEnabledOnServer(undefined, []);
-  assert.equal(v.kind, "confirmed");
 });

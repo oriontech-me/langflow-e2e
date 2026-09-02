@@ -1,6 +1,6 @@
 # Collect Models
 
-**Last validated:** Langflow 1.12.x (1.12.0.dev19)
+**Last validated:** Langflow 1.12.x (1.12.0.dev45)
 
 ---
 
@@ -9,7 +9,7 @@
 This is a utility spec — not a regression assertion test. It exists to populate two local data files used by LLM agent and model-provider specs as preconditions:
 
 - `tests/helpers/provider-setup/data/models.json` — list of models available per provider (collected from Settings → Model Providers UI)
-- `tests/helpers/provider-setup/data/providers.json` — provider status (`active` / `inactive`), validated on two independent axes: the raw API key works, **and** the running Langflow build can actually instantiate that provider's component
+- `tests/helpers/provider-setup/data/providers.json` — provider status (`active` / `inactive`), validated on two independent axes: the raw API key works, **and** the running Langflow build can actually instantiate that provider's component. Each record also carries `targetEnablement` — whether the model this run will TARGET is enabled on the instance (#1666)
 
 If this spec is not run before the LLM agent specs, those specs fall back to a hardcoded model and may skip or fail due to missing provider configuration.
 
@@ -70,8 +70,9 @@ surface (the #505 lesson).
    c. Wait for the credential **write** to answer and for the panel to reach the
       configured state, both **against a sweep-wide deadline** rather than a
       per-provider clock — see *A stalling provider must not cost the sweep* below
-   d. Wait for model toggles to load; enable any that are unchecked
-   e. Record each model name paired with the provider
+   d. Wait for model toggles to load and **read** each model name paired with the
+      provider. The sweep does **not** click those toggles — see *Enabling the
+      target model, not every model* below
 4. Write the collected model list to `data/models.json`
 5. **Probe the KEY axis:** for each provider, call its API directly to confirm the
    key is active. The probe walks the collected catalog in preference order rather
@@ -79,10 +80,14 @@ surface (the #505 lesson).
    whole provider (#570). It stops early on the first model that validates — or, when
    the SAME error repeats 3× in a row, on the conclusion that the error does not
    depend on the model at all (#1011; see Validation criterion).
-6. Write the provider status records to `data/providers.json`, merging both axes:
+6. **Enable the run's TARGET models** — one `POST /api/v1/models/enabled_models`
+   per ACTIVE provider, for the model the key axis settled on — then read
+   `GET /api/v1/models/enabled_models?purpose=configure` **once** to confirm what
+   actually landed. See *Enabling the target model, not every model* (#1666)
+7. Write the provider status records to `data/providers.json`, merging both axes:
    a build-axis failure records `inactive` with a reason that names the missing
    **layer** (distribution vs. runtime package) and, when Langflow reports it, the
-   exact module
+   exact module, plus each provider's `targetEnablement`
 
 ---
 
@@ -103,7 +108,10 @@ contract; the SPEC now verifies the outcome):
   non-empty `error` (the probe's reason is visible, never silently dropped);
 - a provider the **collector** never managed to configure is reported as that,
   and never as a key/account/config failure — see *A stalling provider must not
-  cost the sweep* (#1370).
+  cost the sweep* (#1370);
+- every provider recorded `active` has its **target model enabled** on the
+  instance, confirmed against the server — see *Enabling the target model, not
+  every model* (#1666).
 
 A provider with a key that genuinely fails its probe (e.g. a model the
 account cannot access) is a legitimate `inactive` — recorded, logged, not a
@@ -265,6 +273,155 @@ exists to prevent. Two consequences, both load-bearing:
   early exit uses: a model-scoped message names its model and so occurs once,
   while an account-scoped one occurs for every candidate.
 
+### Enabling the target model, not every model (#1666)
+
+`MIN_DEFAULT_MODELS` leaves **five** models enabled per provider, and the model the
+key axis settles on is routinely not one of them — measured on a clean
+`1.12.0.dev45` container, openai settled `gpt-4o-mini` and google `gemini-2.5-flash`,
+neither a default. A run whose target model is not enabled takes the **cold path**:
+every parametrized spec has to enable the model through the provider panel itself,
+which is the fragile path #1649 documents and which cost the 2026-09-01 daily four
+attempts across three specs.
+
+The sweep used to click every unchecked toggle in the panel. Every toggle feeds
+`useModelToggleQueue`, which batches the write behind a 1000 ms debounce and cancels +
+**discards** the pending batch on both paths the sweep takes — its unmount cleanup
+(*"an explicit close already consumes its batch through `flushPendingChanges` before
+unmount"*) and its identity effect, which fires the moment the selected provider
+changes. The loop clicks faster than the debounce, so the timer never fired mid-loop,
+and the sweep then navigated straight to the next provider.
+
+Measured with every `enabled_models` call logged: **74 toggles across three providers
+produced ZERO `POST /models/enabled_models` for the whole duration of the sweep** —
+including past the confirmation read at the end of it. Only the **last** provider's
+batch left at all, ~5 s after the sweep had moved on, so openai's 36 and anthropic's 9
+were discarded outright while google's 30 landed too late for any verdict. That is why
+#1651's own server read reported `0 of 30` for a google whose 30 models were enabled
+seconds later, and why the `0 of 74` had to be established rather than assumed: one of
+its three readings was a race, the other two were real.
+
+Making those 74 writes land was tried and **rejected on measured cost**, not on
+difficulty. `POST /api/v1/models/enabled_models` calls `validate_model_provider_key`
+once **per model** being enabled, synchronously, inside the request — and the lanes
+run `LANGFLOW_WORKERS=1`. Measured on an **idle** `1.12.0.dev45` container:
+
+| Operation | Cost |
+|---|---|
+| enable 1 model | 0.42–1.01 s |
+| enable 30 models | **103 s** |
+| **disable** the same 30 models | **0.02 s** (that path does no validation) |
+
+So the full sweep would cost ~250 s of a blocked backend, twice per shard — the
+`Collect models` wedge the lanes already carry a health gate for (#922/#927/#1045).
+A prototype that waited for the batches confirmed it: the sweep grew from 40 s to
+120 s+, google's write did not answer inside 45 s, and the confirmation read itself
+then timed out.
+
+What the run actually needs is the **settled model per provider**, so that is what is
+written: one request per provider (never one batch for all — the endpoint raises on
+the first update it rejects, before persisting any, so a batch lets one provider's
+rejection cost every other provider its enable), followed by **one** confirmation
+read. Measured cost of the whole step: ~2 s, and the sweep is faster than before
+(27 s against 40 s) because it no longer clicks 74 toggles for nothing.
+
+#### The four states, and why the write outranks the read
+
+`providers.json` records `targetEnablement` per provider — not a boolean, because two
+of the states send a reader to different places and collapsing them is the ambiguity
+this issue had to spend an investigation resolving:
+
+| State | Meaning | Gate |
+|---|---|---|
+| `enabled` | the server confirms the target model as enabled | pass |
+| `off` | the server **lists** the model for that provider and reports it disabled | **fail** |
+| `absent` | the answered response does not list the model for that provider at all — a name/catalog mismatch, or a policy-hidden provider, not a failed enable | **fail** |
+| `unknown` | this run has no verdict | warn |
+| `null` | there was no target to enable (an inactive provider) | — |
+
+`targetEnablementVerdict` gives the **write** precedence over a negative read, and
+getting that backwards is a false positive on the one lane where this pre-flight is a
+hard gate. Two states leave a model reading "not enabled" and only one is a defect:
+
+- the write answered 2xx and the model still reads off/absent — a real negative, the
+  run **is** on the cold path;
+- the write never answered 2xx — the read is then describing the state *before* an
+  enable that never happened. On 2026-09-01 the daily measured 19 outages and four
+  `WORKER TIMEOUT` → SIGKILL cycles, so a dropped write is the likely shape of a bad
+  day, not an exotic one.
+
+A **refused** write is in the second branch on purpose. `HTTP 400 Cannot enable not
+supported model: o3` is a definite answer that the model can never be enabled —
+reachable whenever the key axis settles on one of OpenAI's `not_supported` entries,
+which do render in the panel and do reach `models.json` — but the cause is the
+*candidate choice*, not a lost enable, and calling it `off` would print "the enable did
+not take effect" about a server that refused on purpose. It is `unknown` carrying the
+server's own words. Making `rankCandidates` avoid `not_supported` models is a separate
+improvement.
+
+#### Why this one FAILS the pre-flight
+
+`Collect models` normally warns rather than fails, because failing re-couples the run
+to provider and backend health — the #915/#910/#911 cost, and the trade #980 records.
+This check is the exception, and three things keep the trade narrow:
+
+- an **inactive** provider has no settled model and never reaches the check, so a
+  drained key still cannot redden it;
+- `unknown` is **not a failure** — it covers both a wedged backend and a refused
+  enable, is warned about loudly, and never reads as clean (#1012);
+- it is **scoped** to the providers the lane cannot run without, through the same
+  `COLLECT_REQUIRED_PROVIDERS` mechanism the collector-stall step uses.
+  `pr-validation.yml` pins its run to one provider (#1169), so an enable failure on a
+  provider that lane will never target must not kill an E2E job where this pre-flight
+  is a hard gate. Unset — the daily, `manual.yml`, every local run — still requires
+  every env-keyed provider, and a non-required provider's cold state is still
+  **reported**, since it costs every spec parametrized on it wherever this
+  `providers.json` is consumed.
+
+What is left to fail on is a definite server answer, for a provider this lane will
+use, that the model it targets is off — a state in which the run measures the wrong
+thing, and which used to be one warning line in a job log nobody reads (the
+`mode=count` lesson, #1252).
+
+The enablement state is printed on **every** run, green included, and recorded per
+provider — so whoever triages the next daily can tell from the report whether the run's
+specs ran with the sweep's enables in effect, instead of inferring it from a warning's
+absence.
+
+#### Two consequences worth knowing
+
+**Both data files are written BEFORE this step**, and `providers.json` is then patched
+with the verdict. The step spends up to one write per keyed provider plus a read
+against a single-worker backend, at the very end of a sweep that has already spent
+minutes — so a `test.setTimeout` abort inside it would otherwise discard the entire
+sweep output, and `resolveTestTargets()` with no `models.json` resolves one
+`(fallback)` target while every parametrized spec skips green (the #570/#1012 trap).
+Written first, an abort costs the verdict, not the catalog. The per-call ceiling is
+also counted explicitly against the pre-flight's own timeout in
+`collect-models.test.ts`, because a per-call constant can be raised without anyone
+noticing it broke the #1385 sizing invariant.
+
+**The three `setup-*.ts` helpers now pay for google too, and that is a real cost this
+change introduces.** They mass-enable through the panel via
+`enableAndSettleModelToggles` (#1651), and the measurement above is *why* they give up:
+their 90 s deadline is under the ~103 s the write takes. That give-up is the same
+`30 toggle(s) clicked, 1 write(s) started, 0 finished` #1672 saw eight times on the
+2026-09-01 daily and taught the picker read to name instead of blaming
+`MODEL_PICKER_DEFECT` — the per-model synchronous validation above is the mechanism
+behind those eight. Google is the last keyed provider, so under the old behaviour its
+~30 models were left enabled by the escaping batch and `setupGoogle` clicked nothing;
+now it clicks ~24 and spends the give-up budget — observed live at the identical
+`29 toggle(s) clicked, 1 write(s) started, 0 finished`.
+
+The cost is bounded, and measured: the write **does** land, just after the give-up, so
+it is paid **once per instance per provider**, not once per spec. Two consecutive runs
+of `agent-current-date-tool.spec.ts` against the same container measured 3.3 min then
+**1.1 min**, and the server ended at openai 41 / google 35 enabled — the second run
+clicked nothing. With the target model already enabled by this sweep, none of it costs
+a spec its model any more; what it does is move wall clock (and a blocking write) out
+of the pre-flight, which has a post-sweep health gate on all four lanes, and into the
+first spec that configures that provider, which has none. Pointing those helpers at
+the target model too is the follow-up; it is #1651's surface, not this one's.
+
 ### A stalling provider must not cost the sweep (#1370)
 
 One provider's credential write can stay in flight far longer than the others' —
@@ -424,6 +581,24 @@ the default.
     **long-poll**: it blocks until the build finishes and then returns the whole
     event list at once. There is no incremental read to lean on, which is why the
     budget is enforced per component and paired with `cancel`
+- `GET|POST /api/v1/models/enabled_models` — model-level enablement, the surface the
+  target-model step writes and confirms. Three properties, all measured on
+  `1.12.0.dev45` rather than assumed: the POST body is a **bare array** of
+  `{provider, model_id, model_type, enabled}` (an `{updates: [...]}` envelope answers
+  422); the GET keys its `enabled_models` map by provider **display** name
+  (`Google Generative AI`) and then by `model_name`, which is the same string the
+  panel renders in the toggle's row; and the **enable** path calls
+  `validate_model_provider_key` once per model, synchronously, so its cost is per
+  model (0.42–1.01 s for one, 103 s for thirty) while the disable path does no
+  validation at all (0.02 s for the same thirty)
+- `src/backend/base/langflow/api/v1/models.py` — `update_enabled_models` (the
+  per-model validation above) and `_get_enabled_models_result` (the map shape). A
+  change to either invalidates the target-model step's cost model or its key shape
+- `src/frontend/src/modals/modelProviderModal/hooks/useModelToggleQueue.ts` — the
+  1000 ms debounce plus the unmount/identity effects that cancel and **discard** a
+  pending batch. This is why the sweep does not enable through the panel at all
+  (#1666); if the queue ever flushes on navigation, the toggle sweep becomes viable
+  again — at the cost measured above
 - The component keys themselves — `ext:openai:OpenAIModelComponent@official`,
   `ext:openai:OpenAIEmbeddingsComponent@official`,
   `ext:anthropic:AnthropicModelComponent@official`,
