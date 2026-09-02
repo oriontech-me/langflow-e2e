@@ -19,7 +19,12 @@
 //   - the update banner reads "Flow needs review / 1 component needs updates" and
 //     offers "Dismiss" + "Update All", and never leaves on its own — a click under
 //     it burns the full `locator.click` budget with "subtree intercepts pointer
-//     events".
+//     events";
+//   - that Dismiss is PLURAL-CONDITIONAL: one outdated component renders
+//     "Dismiss", several render "Dismiss All" (re-measured on 1.13.0.dev0 across
+//     three fixtures reporting 1, 3 and 6 — #1675). Both labels are modelled below
+//     because an exact-name matcher passes against one and no-ops against the
+//     other, which is the hole the two hand-rolled copies carried.
 import type { Page } from "@playwright/test";
 
 export interface Occupant {
@@ -32,6 +37,12 @@ export interface Occupant {
    * times out somewhere else.
    */
   ignoresDismiss?: boolean;
+  /**
+   * The button's visible label. Defaults to the singular "Dismiss"; the update
+   * banner renders "Dismiss All" as soon as more than one component is outdated,
+   * and the helper's matcher has to cover both (#1675).
+   */
+  dismissLabel?: string;
 }
 
 export const BUILD_BAR: Occupant = {
@@ -52,6 +63,17 @@ export const BUILD_FAILED_BAR: Occupant = {
 export const UPDATE_BANNER: Occupant = {
   text: "Flow needs review\n1 component needs updates\nDismiss\nUpdate All",
   dismissible: true,
+};
+
+/**
+ * The same banner with MORE than one outdated component, which is the shape every
+ * multi-node fixture raises — and the shape whose label an exact `"Dismiss All"`
+ * matcher gets right while missing `UPDATE_BANNER` entirely, and vice versa.
+ */
+export const UPDATE_BANNER_PLURAL: Occupant = {
+  text: "Flow needs review\n6 components need updates\nDismiss All\nUpdate All",
+  dismissible: true,
+  dismissLabel: "Dismiss All",
 };
 
 export interface FakeOptions {
@@ -114,7 +136,11 @@ export function fakeOverlay({
     // would let the helper find a Dismiss on the build bar, which is precisely
     // the distinction the helper's predicate rests on.
     getByRole: (role: string, options?: { name?: RegExp }) => {
-      if (role !== "button" || !options?.name?.test("Dismiss")) {
+      // Matched against the occupant's OWN label, so a matcher that only covers
+      // the singular "Dismiss" (or only the plural "Dismiss All") fails here
+      // instead of passing on a hardcoded string neither banner renders.
+      const label = current()?.dismissLabel ?? "Dismiss";
+      if (role !== "button" || !options?.name?.test(label)) {
         return { count: async () => 0, first: () => ({ click: async () => {} }) };
       }
       return dismissLocator();

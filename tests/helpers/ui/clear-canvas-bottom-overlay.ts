@@ -52,6 +52,34 @@ import type { Page } from "@playwright/test";
  * harmless for one that asserts on the persisted graph, counts flow writes, or
  * cares about the `edited` flag. Check that before adding a call site.
  *
+ * **Two call-site shapes, and they differ in what an empty slot means.**
+ *
+ * - *Post-build* (#1643's own callers): called between the run and a click that
+ *   lands under the slot, right after `waitForSelector("text=built successfully")`.
+ *   The build bar is on screen by construction, so an empty slot is a LOST
+ *   SELECTOR and the default `allowAlreadyClear: false` is correct.
+ * - *At flow open* (`rag-pipeline`, `vector-store-index-query`): called once after
+ *   the flow's nodes render, to clear the update banner up front so it can never
+ *   overlay any of the several node-output clicks that follow. There is no build
+ *   bar yet and a refreshed fixture would legitimately raise no banner at all, so
+ *   these pass `allowAlreadyClear: true`. Measured on nightly 1.13.0.dev0, the
+ *   banner is in the slot within **1-3 ms** of the first node title becoming
+ *   visible — three fixtures, three reads — so the quiet window below (800 ms)
+ *   clears the mount by more than two orders of magnitude. That margin is what
+ *   makes `allowAlreadyClear` safe HERE, and it only holds if the caller gates on
+ *   a rendered node first; called before the canvas paints, the helper would read
+ *   an empty slot the banner has not reached yet.
+ *
+ * **The Dismiss button's label is plural-conditional, and matching it exactly is
+ * how a private copy of this silently stops working.** Measured on 1.13.0.dev0:
+ * one outdated component renders `"Dismiss"`, several render `"Dismiss All"`
+ * (`split-text-chunking`'s fixture reports 1, `vector-store-index-query`'s 3,
+ * `rag-pipeline`'s 6). The two hand-rolled copies this helper replaced searched
+ * the whole page for the exact name `"Dismiss All"`, so they would have no-opped
+ * on any flow down to its last outdated component — silently, since they treated
+ * "not found" as "nothing to do". The prefix match below covers both, and is
+ * pinned by a unit test rather than by this comment.
+ *
  * A single empty read is deliberately NOT enough (see `EMPTY_CONFIRMATIONS`), and
  * a slot that is empty for the helper's whole life is treated as a LOST SELECTOR
  * rather than as success — see `allowAlreadyClear`.
@@ -105,7 +133,7 @@ export interface ClearCanvasBottomOverlayOptions {
   /**
    * Accept a slot that was empty for this helper's entire life.
    *
-   * Defaults to FALSE, and that is a fail-closed choice. Every current caller
+   * Defaults to FALSE, and that is a fail-closed choice. A post-build caller
    * reaches this immediately after `waitForSelector("text=built successfully")`,
    * which proves the build bar is on screen — so "nothing ever matched" cannot mean
    * "the slot is free", it means the selector no longer matches the container
@@ -113,7 +141,9 @@ export interface ClearCanvasBottomOverlayOptions {
    * `bottom-20`). Returning success there would report the overlay handled while it
    * is fully present, and #1643 would come back as the unattributed 20 s
    * `locator.click` timeout — with a helper call in the trace implying otherwise.
-   * Set true only for a caller that genuinely may find the slot already free.
+   * Set true only for a caller that genuinely may find the slot already free —
+   * today, the at-flow-open callers described above, whose banner is raised by an
+   * outdated fixture and would simply not exist once that fixture is refreshed.
    */
   allowAlreadyClear?: boolean;
 }
