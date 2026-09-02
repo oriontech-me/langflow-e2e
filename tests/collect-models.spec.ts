@@ -97,6 +97,96 @@ test(
       }
     });
 
+    await test.step("every ACTIVE provider's target model is ENABLED on this instance", async () => {
+      // The #1666 gate. `MIN_DEFAULT_MODELS` leaves five models enabled per
+      // provider and the model the key axis SETTLES on is routinely not one of
+      // them (measured on 1.12.0.dev45: openai settled `gpt-4o-mini`, google
+      // `gemini-2.5-flash`, neither among the defaults). A run whose target model
+      // is not enabled takes the COLD PATH — every parametrized spec has to enable
+      // it through the provider panel itself, which is the fragile path #1649
+      // documents and which cost the 2026-09-01 daily four attempts.
+      //
+      // FAIL rather than warn, and the trade is narrower than it looks (#980).
+      // Three things keep it off the provider-health coupling `Collect models`
+      // spent #915/#910/#911 learning to avoid:
+      //
+      //   - an INACTIVE provider has no settled model and never reaches the check,
+      //     so a drained key still cannot redden it;
+      //   - `unknown` is not a failure. It covers a wedged backend AND an enable
+      //     the server refused, both of which leave this run without a verdict —
+      //     `targetEnablementVerdict` gives the WRITE precedence over a negative
+      //     read precisely so a dropped POST is not reported as a lost enable
+      //     (#1012: reported loudly, never as clean);
+      //   - it is SCOPED to the providers this lane cannot run without, the same
+      //     `COLLECT_REQUIRED_PROVIDERS` mechanism the collector-stall step below
+      //     uses. `pr-validation.yml` pins its run to one provider (#1169), so an
+      //     enable failure on a provider that lane will never target must not kill
+      //     an E2E job where this pre-flight is a hard gate. Unset (the daily,
+      //     manual.yml, every local run) still requires every env-keyed provider.
+      //
+      // What is left to fail on is a definite server answer, for a provider this
+      // lane will use, that the model it targets is off — a state in which the run
+      // measures the wrong thing, and which used to be one warning line in a job
+      // log nobody reads (the `mode=count` lesson, #1252).
+      const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
+      const targets = providers.filter((p) => p.status === "active" && p.model);
+
+      // Printed on EVERY run, green included: whoever triages the next daily has to
+      // be able to tell from the report whether the run's specs ran with the
+      // sweep's enables in effect, without re-deriving it from a warning's absence.
+      console.log(
+        `   collect-models: target-model enablement — ` +
+          (targets.length === 0
+            ? "no ACTIVE provider settled a model, so no target was written"
+            : targets
+                .map((p) => `${p.provider}/${p.model}: ${p.targetEnablement ?? "unknown"}`)
+                .join(", ")),
+      );
+
+      for (const p of targets.filter((r) => (r.targetEnablement ?? "unknown") === "unknown")) {
+        console.warn(
+          `⚠️  collect-models: whether provider "${p.provider}"'s target model "${p.model}" is enabled ` +
+            `on this instance is UNKNOWN — its specs may run on the cold path, and this is unknown, ` +
+            `not clean (#1012/#1666): ${p.targetEnablementDetail ?? "no detail recorded"}`,
+        );
+      }
+
+      const keyed = providers
+        .filter((p) => {
+          const envKeys = providerConfigMap[p.provider as Provider]?.envKeys ?? [];
+          return envKeys.some((k: string) => !!process.env[k]);
+        })
+        .map((p) => p.provider);
+      const { required } = resolveRequiredProviders(process.env.COLLECT_REQUIRED_PROVIDERS, keyed);
+
+      // Reported whether or not it is fatal on THIS lane, for the same reason the
+      // collector-stall step reports its own: a cold provider still costs every
+      // spec parametrized on it, wherever this providers.json is consumed.
+      const cold = targets.filter(
+        (p) => p.targetEnablement === "off" || p.targetEnablement === "absent",
+      );
+      for (const p of cold.filter((r) => !required.includes(r.provider))) {
+        console.warn(
+          `⚠️  collect-models: provider "${p.provider}"'s target model "${p.model}" is NOT enabled ` +
+            `(${p.targetEnablement}) — its specs run the cold path wherever this providers.json is ` +
+            `used. Not fatal on this lane, which does not require it: ${p.targetEnablementDetail}`,
+        );
+      }
+
+      const fatal = cold.filter((p) => required.includes(p.provider));
+      expect(
+        fatal.map((p) => `${p.provider}/${p.model} (${p.targetEnablement})`),
+        `the model this run will TARGET is not enabled on this instance, so every spec parametrized ` +
+          `on it runs the cold path — it finds the provider on its MIN_DEFAULT_MODELS default and has ` +
+          `to enable the model itself through the provider panel (#1649/#1666). "off" means the ` +
+          `server listed it and reports it disabled; "absent" means the server does not list it for ` +
+          `that provider at all, which is a name/catalog mismatch rather than a failed enable. ` +
+          `Neither is a provider-health verdict — an inactive provider never reaches this check, and ` +
+          `an enable that did not answer is reported UNKNOWN, not here: ` +
+          fatal.map((p) => `${p.provider} — ${p.targetEnablementDetail}`).join(" | "),
+      ).toEqual([]);
+    });
+
     await test.step("an env-keyed provider that probed inactive carries the probe error", async () => {
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
       for (const p of providers.filter((r) => r.status === "inactive")) {

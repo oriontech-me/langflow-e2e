@@ -1,9 +1,14 @@
 // Test spec that runs this helper: tests/collect-models.spec.ts
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
-import { keyedProviders, keyedProviderNames, type Provider } from "./provider-config";
+import {
+  keyedProviders,
+  keyedProviderNames,
+  langflowProviderName,
+  type Provider,
+} from "./provider-config";
 import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
 
 const DATA_DIR = path.join(__dirname, "data");
@@ -18,6 +23,24 @@ export interface ProviderRecord {
   status: "active" | "inactive";
   error: string | null;
   checkedAt: string;
+  /**
+   * Whether `model` is ENABLED on this instance — the difference between a run
+   * whose specs find their target model in the picker and one that takes the cold
+   * path and has to enable it itself (#1666).
+   *
+   * Four states, not a boolean, because `off` and `absent` send a reader to
+   * different places and collapsing them is the ambiguity #1666 had to spend an
+   * investigation resolving. `unknown` is never "fine" and never a failure: the
+   * provider was never probed, the enable did not answer, or the confirmation read
+   * did not (#1012). `null` means there was no target to enable at all.
+   *
+   * Written by `ensureTargetModelsEnabled` via `targetEnablementVerdict` and read by
+   * `collect-models.spec.ts`, which is what makes the cold path a recorded fact of
+   * the run rather than one warning line in a job log.
+   */
+  targetEnablement?: TargetEnablementState | null;
+  /** What was observed, for a state that is not `enabled`. */
+  targetEnablementDetail?: string | null;
 }
 
 interface ModelRecord {
@@ -392,23 +415,22 @@ const SAVE_IDLE_TIMEOUT_MS = 60_000;
 const SAVE_IDLE_POLL_MS = 250;
 
 /**
- * Per-toggle and whole-provider ceilings for confirming a model was enabled (#1355).
+ * Ceiling for EACH `enabled_models` call that makes the run's target models usable
+ * (#1666).
  *
- * Two bounds, not one, for the reason the token-attribution sidecar gives (#1197
- * §4.4): the per-item timeout bounds ONE write and never sees the sum, so 41
- * slow-but-succeeding confirmations would spend 41 x TIMEOUT and blow the spec's
- * own 5-minute budget. The aggregate bounds that sum. Against a healthy panel a
- * confirmation costs tens of milliseconds, so neither fires.
+ * Generous against the measurement, not against a hang: `POST
+ * /api/v1/models/enabled_models` calls `validate_model_provider_key` once PER MODEL
+ * being enabled, synchronously, inside the request — measured on an idle
+ * 1.12.0.dev45 container, 0.42–1.01 s for one model against 103 s for thirty, and
+ * 0.02 s to DISABLE the same thirty (no validation on that path). One target model
+ * per provider is what keeps this affordable; see `ensureTargetModelsEnabled`.
+ *
+ * It is PER CALL, so the worst case is one write per keyed provider plus the single
+ * confirmation read. That total is part of the pre-flight's non-wait reserve and is
+ * asserted against the spec's own timeout in `collect-models.test.ts` — the sizing
+ * invariant #1385 pinned, which a per-call ceiling can silently break.
  */
-const TOGGLE_CONFIRM_TIMEOUT_MS = 5_000;
-const TOGGLE_CONFIRM_BUDGET_MS = 60_000;
-/**
- * Quiet period allowed for the toggle queue's 1000 ms debounce to flush before the
- * server is asked what actually landed. Same constant the provider-setup helpers
- * wait on (`model-toggle-batch.ts`), for the same product reason (#1649).
- */
-const TOGGLE_FLUSH_QUIET_MS = 1500;
-const TOGGLE_CONFIRM_POLL_MS = 100;
+const ENABLE_TARGETS_TIMEOUT_MS = 30_000;
 
 /**
  * Ceiling for the credential write a `Save` click issues (#1355, resized #1385).
@@ -683,6 +705,8 @@ export function planConfiguredWait(remainingMs: number, providersLeftAfterThis: 
 
 /** The sweep's starting budget, exported so a test asserts the live value. */
 export const sweepSaveBudgetMs = SWEEP_SAVE_BUDGET_MS;
+/** Exposed for the sizing invariant in `collect-models.test.ts` (#1385/#1666). */
+export const enableTargetsTimeoutMs = ENABLE_TARGETS_TIMEOUT_MS;
 
 /**
  * Marks a provider the COLLECTOR never managed to configure — as opposed to one
@@ -738,35 +762,67 @@ export interface ButtonStateLocator {
   isEnabled(): Promise<boolean>;
 }
 
-/** What the server said about the models this sweep tried to enable (#1649). */
+/** What the server said about the models the run is going to target (#1649/#1666). */
 export type ServerConfirmation =
   | { kind: "confirmed"; expected: number }
-  | { kind: "shortfall"; expected: number; enabled: number; missing: string[]; message: string }
+  | {
+      kind: "shortfall";
+      expected: number;
+      enabled: number;
+      /** Present in the provider's map, reported `false`. */
+      off: string[];
+      /** Not a key of the provider's map at all — a name/visibility mismatch. */
+      absent: string[];
+      message: string;
+    }
   | { kind: "unavailable"; message: string };
 
 /**
- * Confirms the toggle batch against the SERVER, which is the only source that can.
+ * Confirms enablement against the SERVER, which is the only source that can.
  *
- * `waitForToggleChecked` below reads `aria-checked`, and the provider modal flips
- * that synchronously at click time (`useModelToggleQueue` applies an optimistic
- * `setQueryData` before any request leaves the browser). Measured on 1.12.0.dev44:
- * all 36 clicks were "confirmed" while the POST only went out at t=8132 ms. So the
- * client read cannot distinguish a write that landed from one that never did — and
- * a sweep that silently enabled nothing hands the next spec a provider still on its
- * `MIN_DEFAULT_MODELS` default, which is what turned #1649's latent defect into five
- * red attempts in one daily.
+ * The panel's `aria-checked` cannot: `useModelToggleQueue` applies an optimistic
+ * `setQueryData` before any request leaves the browser, so a write that never
+ * landed is indistinguishable from one that did (#1649, measured on 1.12.0.dev44 —
+ * all 36 clicks "confirmed" while the POST only went out at t=8132 ms).
  *
- * Pure, and read ONCE by the caller after the batch has flushed — never polled:
- * polling this endpoint while the write is in flight was measured stalling a
- * single-worker backend at 20 s.
+ * `off` and `absent` are separated because they have different causes and the first
+ * version of this check could not tell them apart. #1666 spent an investigation on
+ * exactly that ambiguity: `0 of 36 missing` reads identically whether the write was
+ * lost or whether the names the sweep collected are not the keys the endpoint uses.
+ * Neither counts as enabled — the endpoint lists every model of a configured,
+ * policy-visible provider, so a key it does not carry is one no spec can pick — but
+ * they send a reader to different places.
+ *
+ * `readAnswered` is a separate argument rather than inferred from `serverEnabled`
+ * being undefined, because those are two different states with opposite severity: a
+ * read that never answered is UNKNOWN, while an answered read that does not list the
+ * provider is a DEFINITE negative (the provider is not configured, or a model
+ * provider policy hides it — `provider_policy.allows()` in `api/v1/models.py`).
+ * Collapsing them reported the second as "the read did not answer", which is false
+ * and is the only path where a definite negative used to pass the gate.
+ *
+ * It is a REQUIRED argument, with no default: whichever way a default fell it would
+ * make an omission silently pick a severity, and one of the two is the harsher
+ * verdict on a state the caller may not have observed.
+ *
+ * Pure, and read ONCE by the caller — never polled: polling this endpoint while a
+ * write is in flight was measured stalling a single-worker backend at 20 s.
  */
 export function confirmEnabledOnServer(
   serverEnabled: Record<string, boolean> | undefined,
   expected: string[],
+  readAnswered: boolean,
 ): ServerConfirmation {
   if (expected.length === 0) return { kind: "confirmed", expected: 0 };
 
-  if (serverEnabled === undefined) {
+  const list = (models: string[]): string =>
+    `${models.slice(0, 10).join(", ")}${models.length > 10 ? ` (+${models.length - 10} more)` : ""}`;
+  const coldPath =
+    ` Every spec that targets one of these runs on the COLD PATH — it finds the provider on its ` +
+    `MIN_DEFAULT_MODELS default and has to enable the model itself, which is the fragile path ` +
+    `#1649 documents.`;
+
+  if (!readAnswered) {
     return {
       kind: "unavailable",
       message:
@@ -776,67 +832,247 @@ export function confirmEnabledOnServer(
     };
   }
 
-  // Absence is not `true`: the endpoint lists every model of a configured
-  // provider, so a key it does not carry is one the write never created.
-  const missing = expected.filter((model) => serverEnabled[model] !== true);
-  if (missing.length === 0) return { kind: "confirmed", expected: expected.length };
+  if (serverEnabled === undefined) {
+    return {
+      kind: "shortfall",
+      expected: expected.length,
+      enabled: 0,
+      off: [],
+      absent: [...expected],
+      message:
+        `collect-models: the server ANSWERED and does not list this provider at all, so none of its ` +
+        `${expected.length} target model(s) can be enabled: ${list(expected)}. This is not a failed ` +
+        `read — the provider is either unconfigured on this instance or hidden by a model-provider ` +
+        `policy (\`provider_policy.allows()\`).` + coldPath,
+    };
+  }
 
-  const enabled = expected.length - missing.length;
+  const off = expected.filter((model) => model in serverEnabled && serverEnabled[model] !== true);
+  const absent = expected.filter((model) => !(model in serverEnabled));
+  if (off.length === 0 && absent.length === 0) {
+    return { kind: "confirmed", expected: expected.length };
+  }
+
+  const enabled = expected.length - off.length - absent.length;
   return {
     kind: "shortfall",
     expected: expected.length,
     enabled,
-    missing,
+    off,
+    absent,
     message:
-      `collect-models: the server confirms only ${enabled} of ${expected.length} model(s) this ` +
-      `sweep tried to enable. Missing: ${missing.slice(0, 10).join(", ")}` +
-      `${missing.length > 10 ? ` (+${missing.length - 10} more)` : ""}. ` +
-      `The panel's own toggles report the OPTIMISTIC client state and cannot see this, so a ` +
-      `sweep that wrote nothing used to look identical to one that wrote everything. Specs on ` +
-      `this instance will find the provider on its MIN_DEFAULT_MODELS default and have to ` +
-      `enable it themselves (#1649/#1355).`,
+      `collect-models: the server confirms only ${enabled} of ${expected.length} target model(s) as ` +
+      `enabled.` +
+      (off.length > 0 ? ` Listed but OFF (the enable did not take effect): ${list(off)}.` : "") +
+      (absent.length > 0
+        ? ` Not listed for this provider at all (a model-name/provider-key mismatch, or a model the ` +
+          `catalog no longer exposes — NOT an enable that failed): ${list(absent)}.`
+        : "") +
+      coldPath,
+  };
+}
+
+/** How the write went, as `targetEnablementVerdict` needs to weigh it. */
+export interface EnableWriteOutcome {
+  /** The POST answered 2xx. */
+  ok: boolean;
+  /** Why it did not, verbatim from the server or the transport. `null` when ok. */
+  detail: string | null;
+}
+
+/**
+ * One provider's target-model state, as `providers.json` records it and the
+ * pre-flight gate reads it (#1666).
+ *
+ * `unknown` is deliberately NOT a synonym for "not enabled": it is the state in
+ * which this run has no verdict, and the gate must not fail on it (#1012 —
+ * reported loudly, never as clean).
+ */
+export type TargetEnablementState = "enabled" | "off" | "absent" | "unknown";
+
+export interface TargetEnablement {
+  state: TargetEnablementState;
+  /** What was observed. Empty only for `enabled`. */
+  detail: string;
+}
+
+/**
+ * Combines the write's outcome with the confirmation read into ONE verdict, with
+ * the WRITE taking precedence over a negative read.
+ *
+ * That precedence is the whole point, and getting it backwards is a false positive
+ * on the lane where `Collect models` is a hard gate. Two states produce a model the
+ * server reports as not enabled, and only one of them is a defect:
+ *
+ *   - the write answered 2xx and the model still reads off/absent — a real negative,
+ *     the run IS on the cold path, and the gate should fail;
+ *   - the write never answered 2xx (dropped into a wedged backend, or refused) — the
+ *     read is then describing the state BEFORE an enable that never happened. On
+ *     2026-09-01 the daily measured 19 outages and four `WORKER TIMEOUT` -> SIGKILL
+ *     cycles, so a dropped write is the likely shape of a bad day, not an exotic
+ *     one; failing on it would redden `pr-validation.yml`'s whole E2E job for a
+ *     transient (#980/#1012).
+ *
+ * The refusal case is included in the second branch on purpose. `HTTP 400 Cannot
+ * enable not supported model: o3` is a definite answer that the model can never be
+ * enabled — reachable whenever the key axis settles on one of OpenAI's
+ * `not_supported` entries, which render in the panel and reach `models.json` — but
+ * the cause is the CANDIDATE CHOICE, not a lost enable, and reporting it as `off`
+ * would print "the enable did not take effect" about a server that refused on
+ * purpose. It is `unknown` carrying the server's own words, which is what a reader
+ * needs, and it is warned about rather than silently tolerated.
+ *
+ * PURE, so both branches of the precedence are reachable from a unit test.
+ */
+export function targetEnablementVerdict(
+  write: EnableWriteOutcome,
+  confirmation: ServerConfirmation,
+): TargetEnablement {
+  if (confirmation.kind === "confirmed") return { state: "enabled", detail: "" };
+
+  if (confirmation.kind === "unavailable") {
+    return { state: "unknown", detail: confirmation.message };
+  }
+
+  if (!write.ok) {
+    return {
+      state: "unknown",
+      detail:
+        `the enable itself did not answer 2xx (${write.detail ?? "no detail"}), so the read below ` +
+        `describes the state BEFORE it: ${confirmation.message}`,
+    };
+  }
+
+  return {
+    state: confirmation.off.length > 0 ? "off" : "absent",
+    detail: confirmation.message,
   };
 }
 
 /**
- * Wait for a model toggle to report itself enabled after a click (#1355).
+ * Makes the models this run will actually TARGET enabled, and confirms it (#1666).
  *
- * This is the serialiser. Enabling a model is a write, and the collector enables
- * every model of every provider; firing those as fast as the clicks land is what
- * queues up behind the next provider's Save. Waiting for `aria-checked="true"`
- * makes each write land before the next is issued.
+ * ## Why the sweep no longer enables every model through the panel
  *
- * Reports rather than throws, for the same reason {@link waitForButtonIdle}
- * does: an unconfirmed toggle is worth counting, not worth failing the whole
- * pre-flight over — the model may well be enabled anyway, and the run is more
- * useful finishing.
+ * `collectModelsForProvider` used to click every unchecked toggle. Those writes did
+ * not reach the server while the sweep was running. Every toggle feeds
+ * `useModelToggleQueue`, which batches behind a 1000 ms debounce and CANCELS +
+ * DISCARDS the pending batch both on its unmount cleanup ("an explicit close already
+ * consumes its batch through flushPendingChanges before unmount") and on its
+ * identity effect, which fires the moment the selected provider changes. The loop
+ * clicks faster than the debounce, so the timer never fired mid-loop, and the sweep
+ * then navigated straight to the next provider.
+ *
+ * Measured on a clean 1.12.0.dev45 container with every `enabled_models` call
+ * logged: **74 toggles across three providers produced ZERO
+ * `POST /models/enabled_models` for the whole duration of the sweep** — including
+ * past the confirmation read at the end of it, which is why #1651's server read
+ * reported `0 of 30` for google. Only the LAST provider's batch left at all, ~5 s
+ * after the sweep had moved on, so openai's 36 and anthropic's 9 were discarded
+ * outright while google's 30 landed too late for any verdict.
+ *
+ * Waiting for those batches to leave was tried and REJECTED on cost, not on
+ * difficulty. `POST /api/v1/models/enabled_models` calls
+ * `validate_model_provider_key` once per model being enabled, synchronously, inside
+ * the request — and the lanes run `LANGFLOW_WORKERS=1`. Measured on an idle
+ * 1.12.0.dev45 container: 30 models enabled in **103 s**, the same 30 DISABLED in
+ * **0.02 s** (that path does no validation), one model in 0.42–1.01 s. Making all
+ * 74 land therefore costs ~250 s of a blocked backend per sweep, twice per shard —
+ * the `Collect models` wedge the lanes already carry a health gate for
+ * (#922/#927/#1045). The prototype confirmed it: the sweep went from 40 s to 120 s+,
+ * google's write did not answer inside 45 s, and the confirmation read then timed
+ * out as well. The panel enables its five defaults on its own, and the suite only
+ * ever picks the SETTLED model per provider out of `models.json`, so one write per
+ * provider buys everything the run needs for ~1 s each.
+ *
+ * Never throws: like every other verdict in this file it reports, and the caller
+ * decides (`collect-models.spec.ts` fails the pre-flight on a definite negative).
  */
-export async function waitForToggleChecked(
-  toggle: Pick<ButtonStateLocator, "getAttribute">,
-  options: {
-    timeoutMs?: number;
-    pollMs?: number;
-    now?: () => number;
-    sleep?: (ms: number) => Promise<void>;
-  } = {},
-): Promise<{ checked: boolean; waitedMs: number; polls: number }> {
-  const timeoutMs = options.timeoutMs ?? TOGGLE_CONFIRM_TIMEOUT_MS;
-  const pollMs = options.pollMs ?? TOGGLE_CONFIRM_POLL_MS;
-  const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+export async function ensureTargetModelsEnabled(
+  request: Pick<APIRequestContext, "get" | "post">,
+  targets: Array<{ providerDisplayName: string; model: string }>,
+): Promise<Map<string, TargetEnablement>> {
+  const byProvider = new Map<string, string[]>();
+  for (const { providerDisplayName, model } of targets) {
+    const models = byProvider.get(providerDisplayName) ?? [];
+    if (!models.includes(model)) models.push(model);
+    byProvider.set(providerDisplayName, models);
+  }
 
-  const startedAt = now();
-  let polls = 0;
-  do {
-    polls += 1;
-    if ((await toggle.getAttribute("aria-checked")) === "true") {
-      return { checked: true, waitedMs: now() - startedAt, polls };
+  const verdicts = new Map<string, TargetEnablement>();
+  if (byProvider.size === 0) return verdicts;
+
+  // ONE request per provider, not one for every target. The endpoint validates
+  // per model and raises on the FIRST update it rejects, before persisting any of
+  // them — so a single batch lets one provider's rejected model cost every other
+  // provider its enable. Round trips are milliseconds against a write measured at
+  // ~1 s, which makes the isolation free (#980: coverage first).
+  const writes = new Map<string, EnableWriteOutcome>();
+  for (const [provider, models] of byProvider) {
+    const write: EnableWriteOutcome = await request
+      .post("/api/v1/models/enabled_models", {
+        data: models.map((model) => ({
+          provider,
+          model_id: model,
+          model_type: "llm" as const,
+          enabled: true,
+        })),
+        timeout: ENABLE_TARGETS_TIMEOUT_MS,
+      })
+      .then(async (r) => ({
+        ok: r.ok(),
+        detail: r.ok() ? null : `HTTP ${r.status()} ${(await r.text()).slice(0, 300)}`,
+      }))
+      .catch((error: unknown) => ({
+        ok: false,
+        detail: `no HTTP status (${error instanceof Error ? error.message : String(error)})`,
+      }));
+    writes.set(provider, write);
+
+    if (!write.ok) {
+      // Reported, not thrown: the model may already be enabled from an earlier
+      // sweep against the same instance, and the read below is what decides.
+      console.warn(
+        `⚠️  collect-models: enabling [${provider}] ${models.join(", ")} answered ${write.detail}. ` +
+          `The confirmation read below is what says whether the run is on the cold path (#1666).`,
+      );
     }
-    if (now() - startedAt >= timeoutMs) break;
-    await sleep(pollMs);
-  } while (now() - startedAt < timeoutMs);
+  }
 
-  return { checked: false, waitedMs: now() - startedAt, polls };
+  // `readAnswered` is tracked separately from the payload so an answered response
+  // that omits a provider is not reported as a failed read (see
+  // `confirmEnabledOnServer`). The per-type map is preferred over the flat one for
+  // the reason the backend states about its own shapes: "Per-type map is exact; flat
+  // map ORs rows that share provider/name", so the flat map can read `true` for an
+  // `llm` target whose only enabled row is `embeddings` — which is also why the
+  // product's own `isModelEnabled` prefers the typed map.
+  const read = await request
+    .get("/api/v1/models/enabled_models?purpose=configure", { timeout: ENABLE_TARGETS_TIMEOUT_MS })
+    .then(async (r) => ({ answered: r.ok(), body: r.ok() ? await r.json() : null }))
+    .catch(() => ({ answered: false, body: null }));
+  const flat = read.body?.enabled_models as Record<string, Record<string, boolean>> | undefined;
+  const typed = read.body?.enabled_models_by_type as
+    | Record<string, Record<string, Record<string, boolean>>>
+    | undefined;
+  const mapFor = (provider: string): Record<string, boolean> | undefined =>
+    typed?.[provider]?.llm ?? flat?.[provider];
+
+  for (const [provider, models] of byProvider) {
+    const confirmation = confirmEnabledOnServer(mapFor(provider), models, read.answered);
+    const verdict = targetEnablementVerdict(
+      writes.get(provider) ?? { ok: false, detail: "no write was issued" },
+      confirmation,
+    );
+    verdicts.set(provider, verdict);
+    if (verdict.state === "enabled") {
+      console.log(
+        `   collect-models: [${provider}] ${models.join(", ")} confirmed enabled on the server.`,
+      );
+    } else {
+      console.warn(`⚠️  [${provider}] ${verdict.detail}`);
+    }
+  }
+  return verdicts;
 }
 
 export interface ButtonIdleVerdict {
@@ -1075,14 +1311,6 @@ function chargeBudget(budget: SweepBudget, provider: string, ms: number): void {
 interface ProviderCollection {
   models: ModelRecord[];
   stall: string | null;
-  /**
-   * Models this sweep CLICKED to enable, so the caller can confirm them against
-   * the server once the whole sweep is idle (#1649). Never confirmed here: the
-   * read has to happen while the backend is not busy with the very write it is
-   * being asked about — measured timing out at 20 s when issued inside the loop
-   * on a `LANGFLOW_WORKERS=1` instance.
-   */
-  attempted: string[];
 }
 
 async function collectModelsForProvider(
@@ -1344,64 +1572,31 @@ async function collectModelsForProvider(
     .catch(() => {});
 
   // Scope to visible toggles only — the providers panel renders deprecated models
-  // in DOM but collapses them under a "Show N deprecated models" button. Iterating
-  // the hidden toggles makes `.click()` retry-loop until timeout (see PR #330).
+  // in DOM but collapses them under a "Show N deprecated models" button, and a
+  // hidden row's model name is not one this catalog should carry (see PR #330).
   const toggles = page.locator('[data-testid^="llm-toggle"]:visible');
   const toggleCount = await toggles.count();
   const models: ModelRecord[] = [];
 
-  // Each enable is a WRITE, and this loop used to fire them as fast as the clicks
-  // land. Confirming each one before moving on serialises them.
+  // READ ONLY. This loop used to click every unchecked toggle as well, and #1666
+  // measured that none of those writes ever landed: `useModelToggleQueue` batches
+  // them behind a 1000 ms debounce and cancels + DISCARDS the batch when the panel
+  // unmounts or the selected provider changes, which is exactly what this function
+  // does next. 74 clicks across three providers produced ZERO
+  // `POST /models/enabled_models` on a clean 1.12.0.dev45 container.
   //
-  // Honest about what this is worth: it was added believing these 41 writes were
-  // what wedged the next provider's Save, and the very next CI run REFUTED that —
-  // the failure was byte-identical with the serialisation in place. The measured
-  // cause is the credential write above, which stays in flight past 60s. This is
-  // kept because a burst of 41 unconfirmed writes against a backend the lanes run
-  // with `LANGFLOW_WORKERS=1` is worth avoiding on its own and costs nothing
-  // measurable (23.9s against 24.9s locally) — not because it fixed anything.
-  //
-  // The pair of bounds mirrors the token-attribution sidecar (#1197 §4.4): a
-  // per-toggle timeout bounds ONE write, and an aggregate budget bounds the sum —
-  // a per-item timeout alone would let 41 slow-but-succeeding writes spend
-  // 41 x TIMEOUT and blow the spec's own 5-minute budget.
-  //
-  // Past the budget the clicks CONTINUE unconfirmed: enabling a model is still
-  // worth attempting, and the count of unconfirmed ones is reported below rather
-  // than silently dropped (#1012).
-  let unconfirmed = 0;
-  let confirmBudgetLeft = TOGGLE_CONFIRM_BUDGET_MS;
-  // Every model this loop CLICKED, so the server read below can answer the one
-  // question `aria-checked` cannot: did the write actually land (#1649)?
-  const attempted: string[] = [];
+  // Making them land was rejected on measured COST, not difficulty: the endpoint
+  // validates the provider key once per model, synchronously, so those 74 writes
+  // cost ~250 s of a `LANGFLOW_WORKERS=1` backend per sweep (103 s for 30 models
+  // against 0.02 s to disable the same 30). The panel enables its five defaults on
+  // its own and the suite only ever picks the SETTLED model per provider, so
+  // `ensureTargetModelsEnabled` writes those — one per provider, ~1 s each — after
+  // the key axis has settled them. See its docstring for the full measurement.
   for (let i = 0; i < toggleCount; i++) {
-    const toggle = toggles.nth(i);
-    const modelName = await toggle.locator("..").locator("span.text-sm").textContent();
+    const modelName = await toggles.nth(i).locator("..").locator("span.text-sm").textContent();
     if (modelName?.trim()) {
       models.push({ provider: providerName, model: modelName.trim() });
     }
-    const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
-    if (!isChecked) {
-      if (modelName?.trim()) attempted.push(modelName.trim());
-      await toggle.click();
-      if (confirmBudgetLeft > 0) {
-        const confirm = await waitForToggleChecked(toggle, {
-          timeoutMs: Math.min(TOGGLE_CONFIRM_TIMEOUT_MS, confirmBudgetLeft),
-        });
-        confirmBudgetLeft -= confirm.waitedMs;
-        if (!confirm.checked) unconfirmed += 1;
-      } else {
-        unconfirmed += 1;
-      }
-    }
-  }
-
-  if (unconfirmed > 0) {
-    console.warn(
-      `⚠️  collect-models: ${unconfirmed} of ${toggleCount} model toggle(s) for provider ` +
-        `"${providerName}" were clicked but never confirmed enabled within the budget. The panel ` +
-        `is slow or wedged, and the NEXT provider's Save is what pays for it (#1355).`,
-    );
   }
 
   console.log(`Models found (${providerName}):`, models.map((m) => m.model));
@@ -1423,7 +1618,7 @@ async function collectModelsForProvider(
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
-  return { models, stall, attempted };
+  return { models, stall };
 }
 
 async function collectModels(page: Page): Promise<{
@@ -1436,8 +1631,6 @@ async function collectModels(page: Page): Promise<{
 
   const allModels: ModelRecord[] = [];
   const stalls = new Map<string, string>();
-  /** Provider DISPLAY name -> the models this sweep clicked to enable (#1649). */
-  const attempted = new Map<string, string[]>();
 
   // One budget for the whole sweep, spent down as each provider's post-Save
   // waits actually run (#1370), with a per-provider ledger so a collateral stall
@@ -1460,36 +1653,6 @@ async function collectModels(page: Page): Promise<{
     );
     allModels.push(...collection.models);
     if (collection.stall) stalls.set(provider, collection.stall);
-    if (collection.attempted.length > 0) {
-      // Keyed by the DISPLAY name, which is how `enabled_models` keys its map
-      // ("OpenAI", not "openai") — derived from the testid rather than restated,
-      // so a new provider needs no second table (the `displayNameOf` shape
-      // `preconfigure-routed-provider.ts` already uses).
-      attempted.set(config.providerTestId.replace(/^provider-item-/, ""), collection.attempted);
-    }
-  }
-
-  // Confirm the toggle writes against the SERVER, once, now that the sweep is
-  // idle (#1649). The panel's own `aria-checked` confirmation is the OPTIMISTIC
-  // client state — `useModelToggleQueue` flips it synchronously at click time,
-  // before any request leaves the browser — so a write that never landed is
-  // indistinguishable from one that did, and the #1355 shortfall warning cannot
-  // fire. This read has to be LAST: issued inside the provider loop it competes
-  // with the very write it asks about and was measured timing out at 20 s on a
-  // `LANGFLOW_WORKERS=1` instance, turning an honest check into a warning on
-  // every sweep. Reporting only — never fails the sweep (#980).
-  if (attempted.size > 0) {
-    const enabledByProvider = await page
-      .request.get("/api/v1/models/enabled_models?purpose=configure", { timeout: 30000 })
-      .then((r) => (r.ok() ? r.json() : null))
-      .then((body) => body?.enabled_models as Record<string, Record<string, boolean>> | undefined)
-      .catch(() => undefined);
-    for (const [provider, models] of attempted) {
-      const confirmation = confirmEnabledOnServer(enabledByProvider?.[provider], models);
-      if (confirmation.kind !== "confirmed") {
-        console.warn(`⚠️  [${provider}] ${confirmation.message}`);
-      }
-    }
   }
 
   // Printed on EVERY sweep, not only a failing one (#1385). The budget is the
@@ -1555,13 +1718,68 @@ export async function collectAll(page: Page): Promise<void> {
 
   // Step 3: Validate the key axis and merge both verdicts
   const providers = await collectProviders(models, buildAxis, stalls);
+
+  // BOTH data files are written BEFORE the target-model step, and providers.json is
+  // then patched with its verdict. Order matters more than it looks: step 3b spends
+  // up to one write per keyed provider plus a read against a single-worker backend,
+  // and it sits at the very end of a sweep that has already spent minutes — so a
+  // `test.setTimeout` abort inside it used to discard the ENTIRE sweep output.
+  // `resolveTestTargets()` with no models.json resolves one `(fallback)` target and
+  // every parametrized spec skips green, which is the #570/#1012 trap this file
+  // works hard elsewhere to prevent. Written first, an abort costs the verdict, not
+  // the catalog.
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
   console.log(`providers.json saved with ${providers.length} providers.`);
 
-  // Step 3: Persist models with each provider's settled model first, so
-  // "one model per provider" spec parametrization targets the model that
-  // actually validated.
+  // Persist models with each provider's settled model first, so "one model per
+  // provider" spec parametrization targets the model that actually validated.
   const ordered = promoteSettledModels(models, providers);
   fs.writeFileSync(MODELS_PATH, JSON.stringify(ordered, null, 2), "utf-8");
   console.log(`models.json saved with ${ordered.length} models.`);
+
+  // Step 3b: make the models this run will TARGET actually usable (#1666).
+  //
+  // Deliberately after step 3, not inside the UI sweep: the target model is
+  // whatever the key axis SETTLED on, which is not known until here, and
+  // `promoteSettledModels` above is what puts it in front of every consumer. Only
+  // ACTIVE providers get a write — an inactive one has no settled model, and
+  // enabling into a dead key answers 400 (the endpoint validates per model).
+  //
+  // The display name is looked up through `keyedProviders` rather than cast from
+  // `record.provider`, so a record naming a provider this map does not know falls
+  // through with no verdict instead of reaching `langflowProviderName`. That
+  // function still throws by contract if a `providerTestId` loses its prefix, which
+  // is the loud failure it is for — and now costs only the verdict, since both data
+  // files are already on disk.
+  const displayNames = new Map(
+    keyedProviders.map(([provider]) => [provider as string, langflowProviderName(provider)]),
+  );
+  const enablement = await ensureTargetModelsEnabled(
+    page.request,
+    providers.flatMap((record) => {
+      const providerDisplayName = displayNames.get(record.provider);
+      return record.status === "active" && record.model && providerDisplayName
+        ? [{ providerDisplayName, model: record.model }]
+        : [];
+    }),
+  );
+  for (const record of providers) {
+    const providerDisplayName = displayNames.get(record.provider);
+    const verdict = providerDisplayName ? enablement.get(providerDisplayName) : undefined;
+    if (record.status !== "active" || !record.model) {
+      // No target to enable at all, which is not the same claim as "unknown".
+      record.targetEnablement = null;
+      record.targetEnablementDetail = null;
+      continue;
+    }
+    record.targetEnablement = verdict?.state ?? "unknown";
+    record.targetEnablementDetail =
+      verdict === undefined
+        ? `no target-model verdict was produced for provider "${record.provider}" — it is not in ` +
+          `providerConfigMap, or the enable step did not reach it`
+        : verdict.detail || null;
+  }
+  // Rewritten with the verdict attached. The first write above is what survives an
+  // abort; this one is what the pre-flight gate reads.
+  fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
 }
