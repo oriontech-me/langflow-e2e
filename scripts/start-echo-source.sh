@@ -128,6 +128,17 @@ discover_addresses() {
 }
 
 if [ -z "${BIND_HOST}" ]; then
+  # Asked BEFORE the discovery, because with neither tool present the discovery
+  # prints nothing and "this machine has no private address" and "I could not look"
+  # become the same empty string — the shape #1092 was raised about. The first
+  # message sends the reader to the network; only the second is true.
+  if ! command -v ip > /dev/null 2>&1 && ! command -v ifconfig > /dev/null 2>&1; then
+    echo "ERROR: cannot enumerate this machine's addresses — neither \`ip\` nor \`ifconfig\` is on PATH." >&2
+    echo "This is NOT the same as having no RFC-1918 address, and reporting it as that" >&2
+    echo "would send you to the network instead of to the PATH." >&2
+    echo "Pass the address explicitly with ECHO_BIND_HOST." >&2
+    exit 2
+  fi
   ADDRESSES="$(discover_addresses || true)"
   for addr in ${ADDRESSES}; do
     if is_rfc1918 "${addr}"; then BIND_HOST="${addr}"; break; fi

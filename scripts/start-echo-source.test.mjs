@@ -37,6 +37,12 @@ import { createHash } from "node:crypto";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
+// Resolved once, and used as an ABSOLUTE path below: one case runs the script with
+// the stub directory as its whole PATH, and a bare "bash" would then be looked up in
+// that same PATH and fail to spawn at all (status null, which reads as a crash).
+const BASH = execFileSync("/usr/bin/env", ["bash", "-c", "command -v bash"], {
+  encoding: "utf8",
+}).trim();
 const START = join(HERE, "start-echo-source.sh");
 const STOP = join(HERE, "stop-echo-source.sh");
 
@@ -92,6 +98,7 @@ function runScript({
   binaryVersion = null,
   addresses = ["203.0.113.10", "10.0.0.5"],
   corruptDownload = false,
+  discoveryTools = true,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "start-echo-source-test-"));
   const bin = join(dir, "bin");
@@ -178,20 +185,26 @@ ${healthy && !serverExits ? "exit 0" : "exit 22"}
     { mode: 0o755 },
   );
 
-  writeFileSync(
-    join(bin, "ip"),
-    `#!/usr/bin/env bash
+  if (discoveryTools) {
+    writeFileSync(
+      join(bin, "ip"),
+      `#!/usr/bin/env bash
 ${addresses.map((a, i) => `echo "${i + 2}: eth${i}    inet ${a}/21 brd 10.0.0.255 scope global eth${i}"`).join("\n")}
 exit 0
 `,
-    { mode: 0o755 },
-  );
+      { mode: 0o755 },
+    );
+  }
 
-  const result = spawnSync("bash", [START], {
+  const result = spawnSync(BASH, [START], {
     encoding: "utf8",
     env: {
       ...process.env,
-      PATH: `${bin}:${process.env.PATH}`,
+      // With the discovery tools removed the stub directory is the WHOLE path. That
+      // is sufficient on purpose: the guard under test runs on builtins alone, ahead
+      // of the first external the script needs, so nothing else has to be stubbed —
+      // and a PATH that still carried /sbin would find the real `ifconfig`.
+      PATH: discoveryTools ? `${bin}:${process.env.PATH}` : bin,
       HOME: dir,
       ECHO_BIN_DIR: binDir,
       ECHO_STATE_ROOT: stateRoot,
@@ -424,6 +437,19 @@ test("a rejected start deadline names itself instead of reporting a timeout", ()
     assert.doesNotMatch(r.stderr, /did not answer/, "it reached the loop and reported a timeout");
     r.cleanup();
   }
+});
+
+test("no way to enumerate addresses is reported as that, not as no private address", () => {
+  // `ip`/`ifconfig` absent makes the discovery print nothing, so "this machine has
+  // no RFC-1918 address" and "I could not look" arrive as the same empty string —
+  // the #1092 shape. The first message sends the reader to the network; only the
+  // second is true, and ECHO_BIND_HOST is the way out of it.
+  const r = runScript({ discoveryTools: false });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /neither `ip` nor `ifconfig` is on PATH/);
+  assert.match(r.stderr, /NOT the same as having no RFC-1918 address/);
+  assert.match(r.stderr, /ECHO_BIND_HOST/);
+  r.cleanup();
 });
 
 test("stopping a port with no PID file is a no-op, not an error", () => {
