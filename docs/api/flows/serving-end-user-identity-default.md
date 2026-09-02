@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/flows/serving-end-user-identity-default.spec.ts`
 
-**Last validated:** Langflow 1.12.0.dev38 (`langflowai/langflow-nightly:latest`, `package: "Langflow Nightly"`)
+**Last validated:** Langflow 1.13.0.dev0 (`langflowai/langflow-nightly:latest`, `package: "Langflow Nightly"`)
 
 ---
 
@@ -65,9 +65,10 @@ because it pins an upstream security property rather than exploring a feature.
 opt-in lane and it would then never run on the default instance — which is the only instance
 it has anything to say about. The inert half belongs on the stock lane by construction.
 
-**No `@stable` yet**, per the repo rule that the tag is added only after team validation.
-It is a genuine candidate — keyless, no model, no external network, ~4 s — and promoting it
-is a one-line follow-up once the team has run it.
+**`@stable` since the validation cycle.** It shipped without the tag, per the repo rule that
+the tag is added only after team validation; the run that satisfied that rule is recorded under
+*Validation criterion* below. It was always the easy candidate — keyless, no model, no external
+network, ~2.5 s — so nothing about the spec changed to earn the tag.
 
 ---
 
@@ -118,6 +119,22 @@ unconfigured.
 must redden exactly one test. The behavioural mutation that matters is the one that mimics
 the vector — asserting `alice::S` holds 2 instead of 0 — because that is the reading a
 trusting instance produces.
+
+**Promotion run** (2 Sep 2026). Recorded here because `@stable` is what puts this file in front of
+`daily-stable.yml` every weekday, and the tag is only worth the alarm it raises if the run behind
+it is stated rather than remembered.
+
+| | |
+|---|---|
+| Instance | `1.12.0.dev45` · `package: "Langflow Nightly"` · `LANGFLOW_WORKERS=1` |
+| Repeats | 4 consecutive runs, `--workers=1 --retries=0` |
+| Result | 16 of 16 `expected`, 0 unexpected, 0 flaky, 0 skipped |
+| Duration | 2–3 s per run |
+| Backend errors | 0 occurrences of `🚨 Backend Error` across every run |
+| Re-measured | `nightly:latest` moved to `1.13.0.dev0` mid-promotion, and that is the line `daily-stable.yml` now runs — so the burst was repeated there on a **freshly created container**: 21 of 21 `expected` over 3 runs of the two promoted files together, 21–23 s for both files together, 0 backend errors |
+| Flow cleanup | `GET /api/v1/flows/?remove_example_flows=true&header_flows=true` reads **0 before and 0 after** the three 1.13 runs — the file leaks nothing |
+| Force-fail | `expect(countMessages(…, `session_id=${BOB}::${session}`)).toBe(0)` → `toBe(99)` reddens exactly one test (3 expected / 1 unexpected); reverted |
+
 
 ---
 

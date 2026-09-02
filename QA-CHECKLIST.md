@@ -138,10 +138,10 @@
 
 > Langflow 1.12's serving-plane end-user identity (`langflow-ai/langflow` #14443, #14550) scopes per-user chat memory behind a **trusted gateway** header, `X-End-User-Id`. It is **off by default** and turned on only by instance-global environment variables, so this subsection asserts the *off* half — the configuration every deployment is in today. The *on* half needs a different container and lives under § 23. Spec doc: `docs/api/flows/serving-end-user-identity-default.md`.
 
-- [-] Premise guard: the instance under test genuinely has no identity header configured, probed by running the flow because `GET /api/v1/config` exposes no serving setting at all (35 keys, none matching `serving`/`end_user`/`trust`) — it **fails** rather than skipping, since a skip here would read green on all four configurations → `api/flows/serving-end-user-identity-default.spec.ts`
-- [-] `POST /api/v2/workflows` twice on one `session_id` as `alice` then `bob`: both report the session **verbatim** and all 4 messages land in it, with `alice::<S>` and `bob::<S>` holding 0 — the scoped counts are the load-bearing half, since an instance could report the plain session while persisting to the scoped one → `api/flows/serving-end-user-identity-default.spec.ts`
-- [-] `POST /api/v1/run/{id}` behaves identically (4 / 0 / 0) — asserted because #14550's phase 1 extends the v2-only scoping to *all* serving APIs, making v1 the surface a partial rollout would honour first, and the one deployed integrations actually call → `api/flows/serving-end-user-identity-default.spec.ts`
-- [-] Non-vacuity control: one identity-less run on a **different** `session_id` persists its 2 messages there. Without it, "the header did nothing" and "chat memory is broken outright" give identical readings — both leave the scoped sessions empty → `api/flows/serving-end-user-identity-default.spec.ts`
+- [x] Premise guard: the instance under test genuinely has no identity header configured, probed by running the flow because `GET /api/v1/config` exposes no serving setting at all (35 keys, none matching `serving`/`end_user`/`trust`) — it **fails** rather than skipping, since a skip here would read green on all four configurations → `api/flows/serving-end-user-identity-default.spec.ts`
+- [x] `POST /api/v2/workflows` twice on one `session_id` as `alice` then `bob`: both report the session **verbatim** and all 4 messages land in it, with `alice::<S>` and `bob::<S>` holding 0 — the scoped counts are the load-bearing half, since an instance could report the plain session while persisting to the scoped one → `api/flows/serving-end-user-identity-default.spec.ts`
+- [x] `POST /api/v1/run/{id}` behaves identically (4 / 0 / 0) — asserted because #14550's phase 1 extends the v2-only scoping to *all* serving APIs, making v1 the surface a partial rollout would honour first, and the one deployed integrations actually call → `api/flows/serving-end-user-identity-default.spec.ts`
+- [x] Non-vacuity control: one identity-less run on a **different** `session_id` persists its 2 messages there. Without it, "the header did nothing" and "chat memory is broken outright" give identical readings — both leave the scoped sessions empty → `api/flows/serving-end-user-identity-default.spec.ts`
 
 ---
 
@@ -893,17 +893,17 @@
 
 #### 17.2 Code Execution Endpoints
 
-- [-] `POST /api/v1/validate/code` rejects a payload crafted to execute on validation
+- [x] `POST /api/v1/validate/code` rejects a payload crafted to execute on validation
       (**recurring upstream defect — reported in 2023 as #696 and again in 2026 as #13336,
       three years apart on the same endpoint**, which is the strongest recurrence signal in
       the whole bug corpus). "Rejects" means *refuses to execute*: a fixed instance answers
       `200` with empty error lists, so the assertion is the absence of the side effect, never
       a status code → security/code-execution-endpoints.spec.ts
-- [-] The custom-component endpoint rejects the same class of payload
+- [x] The custom-component endpoint rejects the same class of payload
       (`langflow-ai/langflow#7900` — the boundary restored there is authentication; the
       authenticated build still executes posted code by design)
       → security/code-execution-endpoints.spec.ts
-- [-] A rejected payload leaves no partial component created
+- [x] A rejected payload leaves no partial component created
       → security/code-execution-endpoints.spec.ts
 
 #### 17.3 Secret Exposure

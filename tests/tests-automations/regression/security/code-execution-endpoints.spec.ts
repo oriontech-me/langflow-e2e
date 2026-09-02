@@ -201,7 +201,7 @@ async function openBlankFlow(
 test.describe("Code execution endpoints", () => {
   test(
     "validating a crafted default-argument payload does not execute it",
-    { tag: ["@api", "@regression", "@components"] },
+    { tag: ["@stable", "@api", "@regression", "@components"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       const sentinel = uniqueSentinel();
@@ -294,7 +294,7 @@ test.describe("Code execution endpoints", () => {
 
   test(
     "the build endpoint refuses the same payload and leaves no partial component",
-    { tag: ["@api", "@regression", "@components"] },
+    { tag: ["@stable", "@api", "@regression", "@components"] },
     async ({ page, request }) => {
       // The build POST is driven into a 400 on purpose — declare it so the
       // fixture's advisory HTTP log stays trustworthy for every other spec
@@ -400,7 +400,7 @@ test.describe("Code execution endpoints", () => {
 
   test(
     "both endpoints refuse an unauthenticated caller before executing anything",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // Pure API through the `request` fixture: these calls never go through the
       // page, so they are outside the fixture's HTTP monitor and need no
