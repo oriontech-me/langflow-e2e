@@ -1,6 +1,6 @@
 # Agent context_id — switching isolates history between contexts
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev39`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev0`)
 
 ---
 
@@ -61,11 +61,12 @@ context tagging + scoped-retrieval isolation wiring; `@agents` — Agent memory
 surface; `@components` — Message History node drives the read-side assert;
 `@playground` — test 2 switches contexts across live playground turns.
 
-
 `@stable` was removed and `test.fixme` added at the 2026-08-31 triage (#1643, PR
 #1647) while the canvas bottom-overlay intercepted the retrieval click. Both are
 restored here: root cause named and fixed (see the overlay note under *Step by
-step*), re-validated with clean `--retries=0` runs on nightly `1.12.0.dev39`.
+step*), re-validated with clean `--retries=0` runs on nightly `1.13.0.dev0` — the
+image `daily-stable.yml` pulls as `:latest` — as well as on `1.12.0.dev39`, where
+the geometry above was measured.
 
 ---
 
@@ -133,7 +134,6 @@ step*), re-validated with clean `--retries=0` runs on nightly `1.12.0.dev39`.
 > editor wins three times in a row the test fails as an explicit **setup**
 > error naming the reverted write — never as a fake isolation defect.
 
-
 > **Canvas bottom-overlay note (#1643).** Langflow renders two different
 > components into ONE fixed container over the canvas —
 > `absolute bottom-16 left-1/2 z-50 w-[530px] -translate-x-1/2`: the
@@ -159,7 +159,14 @@ step*), re-validated with clean `--retries=0` runs on nightly `1.12.0.dev39`.
 > above frees the slot (`clearCanvasBottomOverlay`, waits the transient occupant
 > out and dismisses the persistent one) instead of clicking into it. Both files
 > are `mode: "serial"`, so this failure also skipped each file's sibling; with
-> it fixed the siblings run again.
+> it fixed the siblings run again. The serial mode itself stays — it is the
+> agent-area rule for a file that loads the Simple Agent template — and the
+> coupling is already mitigated the way this file can mitigate it: the model-free
+> describe is declared BEFORE the parametrized loop on purpose, so a weak-model or
+> missing-provider failure there cannot skip the half that needs no provider. What
+> that ordering cannot protect against is a failure in the FIRST describe, which is
+> what happened here; the answer is to stop that failure, not to unpick the
+> execution mode.
 
 ---
 
@@ -248,3 +255,13 @@ persisted/rendered data — no model judgment anywhere.
 - `tests/helpers/provider-setup/data/models.json` + `providers.json`
   (collect-models) — test 2.
 - No external network for test 1 (API passthrough + local retrieval).
+- **Upstream frontend sources the retrieval step now depends on (#1643).** The
+  slot-clearing step reads Langflow's own canvas bottom-centre overlay, so a rename
+  of either component is a silent break — the selector would match nothing and the
+  click would go back to being intercepted. Declared here so
+  `watch-upstream-areas.mjs --mode=check-docs` fails the PR that moves them:
+  `src/frontend/src/pages/FlowPage/components/flowBuildingComponent/index.tsx` and
+  `src/frontend/src/pages/FlowPage/components/UpdateAllComponents/index.tsx`. A
+  class-only edit (`w-[530px]`, `bottom-16`) is not caught by that guard, which is
+  why `clearCanvasBottomOverlay` additionally fails closed when its selector matches
+  nothing at all.
