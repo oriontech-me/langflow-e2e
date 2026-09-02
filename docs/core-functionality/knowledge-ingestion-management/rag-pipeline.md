@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
-**Last validated:** Langflow 1.12.0.dev44
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -217,6 +217,14 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
 3. Create the flow via `POST /api/v1/flows/` (`createFlow`, unique name), record
    its id, navigate to `/flow/{id}`, wait for a Knowledge node title, then adjust
    the canvas view so the target node run controls are rendered and clickable.
+4. Clear the canvas bottom-centre overlay slot once, up front
+   (`clearCanvasBottomOverlay(page, { allowAlreadyClear: true })`), so the
+   "Flow needs review" banner this fixture raises (6 outdated components on
+   1.13.0.dev0) can never overlay any of the node-output clicks that follow. It
+   runs after the node title is on screen, which is what makes an empty slot
+   readable as "no banner" rather than as "not mounted yet" — measured mount is
+   1-3 ms after that gate. `allowAlreadyClear` is set because a refreshed fixture
+   would legitimately raise no banner at all.
 
 **Test — full RAG pipeline:**
 1. Run Ingest: click `button_run_knowledge` scoped to `[data-id="Knowledge-ingest"]`;
@@ -257,6 +265,19 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).
 - Flows API: `POST /api/v1/flows/` (fixture create), `DELETE /api/v1/flows/{id}`
   (scoped cleanup).
+- `tests/helpers/ui/clear-canvas-bottom-overlay.ts` — frees the canvas
+  bottom-centre overlay slot at flow open (`allowAlreadyClear: true`), which
+  Langflow shares between the build-status bar and the "Flow needs review / N
+  components need updates" banner (#1643/#1675). The banner is raised because this
+  fixture's nodes are behind the running image, it never leaves on its own, and a
+  click under it is refused for the full `locator.click` budget. It replaces a
+  private `dismissUpdateBannerIfPresent` that searched the whole page for the exact
+  label `"Dismiss All"` — a label the banner only renders while more than one
+  component is outdated.
+- `src/frontend/src/pages/FlowPage/components/flowBuildingComponent/index.tsx` and
+  `src/frontend/src/pages/FlowPage/components/UpdateAllComponents/index.tsx` — the
+  two components that share that slot. Declared so
+  `watch-upstream-areas.mjs --mode=check-docs` fails the PR that renames them.
 - Component/UI testids (scouted live on 1.11.0.dev38): node ids `Knowledge-ingest`,
   `Knowledge-retrieve`, `Parser-answer`, `Prompt-answer`, `LanguageModel-answer`,
   `ChatOutput-answer`; `button_run_knowledge`, `node_duration_knowledge` (scoped by

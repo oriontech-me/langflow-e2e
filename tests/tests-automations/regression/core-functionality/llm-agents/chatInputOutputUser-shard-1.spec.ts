@@ -7,6 +7,31 @@ import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
+// Why this file does NOT call `clearCanvasBottomOverlay` (#1675, measured on
+// 1.13.0.dev0 rather than assumed).
+//
+// Both tests here click an `output-inspection-*` button shortly after a build,
+// which is the shape that cost #1643 two specs — but the occupant that made that
+// shape dangerous cannot arise here. `UpdateAllComponents` ("Flow needs review /
+// N components need updates") only mounts for a node the running image reports
+// outdated, and neither test loads a stored fixture: the first builds from the
+// live **Basic Prompting** template and the second drags **URL** + two **Chat
+// Output** components onto a blank flow, so every node is created by the image
+// under test and none can be behind it. Probed end to end on the second test's
+// flow, the slot is empty before the run, holds the transient build bar at the
+// spec's own +600 ms wait (y 598.0-656.0), and is empty again by +2.6 s and at
+// +6.6 s — the banner never appears.
+//
+// What remains is the build bar, which leaves on its own 2 s after "built
+// successfully", and it clears the inspect button's bottom edge (y 551.5) by
+// 46.5 px — an order of magnitude more than the ~5 px that decided #1643, and
+// nine times `agent-n-messages-limit`'s ~37 px. Calling the helper here would
+// also be wrong in one direction the other call sites are not: after the bar
+// auto-dismisses the slot stays EMPTY for good, so the default
+// `allowAlreadyClear: false` would report a lost selector on a healthy page.
+//
+// Revisit if either test starts seeding a stored flow fixture — that is the one
+// change that puts `UpdateAllComponents` back on this canvas.
 test(
   "user must be able to see output inspection",
   { tag: ["@release", "@components", "@agents"] },

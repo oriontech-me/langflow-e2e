@@ -5,6 +5,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 
 // §5.2.1 — the *processing* step of RAG ingestion: a document (delivered by
 // Chat Input) is split into chunks by Split Text. Embedding the chunks requires
@@ -108,6 +109,18 @@ test(
     });
 
     await test.step("the Chunks output holds exactly the expected chunks", async () => {
+      // Free the canvas bottom-centre overlay slot before reaching for the
+      // inspector. Langflow shares that slot between the transient build-status
+      // bar and the "Flow needs review" banner, which this fixture raises
+      // (`lf_version: 1.6.0`, one component reported outdated) and which never
+      // leaves on its own — a click under it is refused for the full
+      // `locator.click` budget (#1643). Measured on 1.13.0.dev0 the click is NOT
+      // intercepted here: the banner's top edge (y 586.0) clears the button's
+      // bottom edge (y 572.8) by 13.2 px. That margin is node height, which is
+      // exactly what upstream moves — the context-id specs of #1643 had ~5 px and
+      // burned three attempts a run, `agent-n-messages-limit` had ~37 px and was
+      // hardened anyway. This call costs ~3 s and removes the dependence (#1675).
+      await clearCanvasBottomOverlay(page);
       await page.getByTestId("output-inspection-chunks-splittext").click();
       // The Chunks DataFrame renders as an ag-Grid; each chunk is one data row
       // (carrying a `row-index`) inside the grid's center-columns viewport.
