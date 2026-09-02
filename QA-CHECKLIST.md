@@ -1355,7 +1355,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 37 | 28 | 8 | 1 | 0 |
+| `api/flows/` — REST API | 37 | 32 | 4 | 1 | 0 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1372,13 +1372,13 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 29 | 20 | 3 | 1 | 5 |
+| `security/` — Validation, SSRF, Secrets | 29 | 23 | 0 | 1 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **591** | **453 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **591** | **460 (78%)** | **52 (9%)** | **16 (3%)** | **63 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1394,7 +1394,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 533 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 540 `test()` calls carrying the `@stable` tag, distributed across 207 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1453,6 +1453,10 @@
 - [x] GET /api/v1/version response has correct content-type → `api-version.spec.ts`
 - [x] GET /api/v1/version responds within 5 seconds → `api-version.spec.ts`
 - [x] POST /api/v1/version returns 405 Method Not Allowed → `api-version.spec.ts`
+- [x] the instance under test has no serving identity header configured → `serving-end-user-identity-default.spec.ts`
+- [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
+- [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
+- [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
 
 #### core-components/
 - [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
@@ -1898,6 +1902,9 @@
 - [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`
 
 #### security/
+- [x] validating a crafted default-argument payload does not execute it → `code-execution-endpoints.spec.ts`
+- [x] the build endpoint refuses the same payload and leaves no partial component → `code-execution-endpoints.spec.ts`
+- [x] both endpoints refuse an unauthenticated caller before executing anything → `code-execution-endpoints.spec.ts`
 - [x] the edge delivers the real secret, not the mask → `credential-secret-across-edges.spec.ts`
 - [x] the upstream's own display copy is masked on that same run → `credential-secret-across-edges.spec.ts`
 - [x] a downstream that re-emits the secret is masked too → `credential-secret-across-edges.spec.ts`
@@ -1975,7 +1982,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 8 | 0 |
+| `api/flows/` — REST API | 4 | 0 |
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
