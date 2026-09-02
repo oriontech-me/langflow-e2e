@@ -14,6 +14,7 @@ import {
   BUILD_BAR,
   BUILD_FAILED_BAR,
   UPDATE_BANNER,
+  UPDATE_BANNER_PLURAL,
   fakeOverlay,
 } from "./clear-canvas-bottom-overlay.fake";
 import {
@@ -58,6 +59,28 @@ test("the persistent update banner is dismissed", async () => {
   await clearCanvasBottomOverlay(overlay.page, { timeout: 5000 });
 
   assert.equal(overlay.dismissClicks, 1);
+});
+
+test("both the singular and the plural Dismiss labels are matched", async () => {
+  // The banner renders "Dismiss" for one outdated component and "Dismiss All" for
+  // several — measured on 1.13.0.dev0 across the three fixtures this helper serves
+  // (1, 3 and 6 components). The two private copies folded in by #1675 searched for
+  // the exact name "Dismiss All" and treated "not found" as "nothing to do", so
+  // they would have silently no-opped on any flow down to its last outdated
+  // component, leaving the banner to intercept the click they exist to protect.
+  for (const banner of [UPDATE_BANNER, UPDATE_BANNER_PLURAL]) {
+    const overlay = fakeOverlay({ timeline: [banner] });
+
+    await clearCanvasBottomOverlay(overlay.page, { timeout: 5000 });
+
+    assert.equal(
+      overlay.dismissClicks,
+      1,
+      `the banner labelled ${JSON.stringify(
+        banner.dismissLabel ?? "Dismiss",
+      )} was never dismissed — the matcher does not cover both labels`,
+    );
+  }
 });
 
 test("the bar to banner handover gap is not read as clear", async () => {

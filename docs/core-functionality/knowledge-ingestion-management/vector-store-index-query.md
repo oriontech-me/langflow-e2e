@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 
-**Last validated:** Langflow 1.12.0.dev44
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -176,6 +176,14 @@ local `providers.json`.
    record its id, navigate to `/flow/{id}`, wait for a Knowledge node title,
    then `adjustScreenView` so the node run controls are not occluded by the
    bottom react-flow toolbar panel.
+4. Clear the canvas bottom-centre overlay slot once, up front
+   (`clearCanvasBottomOverlay(page, { allowAlreadyClear: true })`), so the
+   "Flow needs review" banner this fixture raises (3 outdated components on
+   1.13.0.dev0) can never overlay any of the node-output clicks that follow. It
+   runs after the node title is on screen, which is what makes an empty slot
+   readable as "no banner" rather than as "not mounted yet" — measured mount is
+   1-3 ms after that gate. `allowAlreadyClear` is set because a refreshed fixture
+   would legitimately raise no banner at all.
 
 **Test 1 — Indexing in Vector Store:**
 1. Run Ingest: click `button_run_knowledge` scoped to the `Knowledge-ingest`
@@ -218,6 +226,19 @@ local `providers.json`.
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).
 - Flows API: `POST /api/v1/flows/` (fixture create), `DELETE /api/v1/flows/{id}`
   (scoped cleanup).
+- `tests/helpers/ui/clear-canvas-bottom-overlay.ts` — frees the canvas
+  bottom-centre overlay slot at flow open (`allowAlreadyClear: true`), which
+  Langflow shares between the build-status bar and the "Flow needs review / N
+  components need updates" banner (#1643/#1675). The banner is raised because this
+  fixture's nodes are behind the running image, it never leaves on its own, and a
+  click under it is refused for the full `locator.click` budget. It replaces a
+  private `dismissUpdateBannerIfPresent` that searched the whole page for the exact
+  label `"Dismiss All"` — a label the banner only renders while more than one
+  component is outdated.
+- `src/frontend/src/pages/FlowPage/components/flowBuildingComponent/index.tsx` and
+  `src/frontend/src/pages/FlowPage/components/UpdateAllComponents/index.tsx` — the
+  two components that share that slot. Declared so
+  `watch-upstream-areas.mjs --mode=check-docs` fails the PR that renames them.
 - Component/UI testids (scouted live on 1.11.0.dev38): node ids `Knowledge-ingest`
   / `Knowledge-retrieve`; `button_run_knowledge`, `node_duration_knowledge`,
   `output-inspection-results-knowledge` (all scoped by node `data-id`); grid rows

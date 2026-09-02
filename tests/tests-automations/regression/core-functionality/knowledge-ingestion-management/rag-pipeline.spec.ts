@@ -12,6 +12,7 @@ import {
   getKnowledgeBase,
 } from "../../../../helpers/knowledge/knowledge-base";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 
 // §5.2.4 — the *complete RAG pipeline* end-to-end. Builds on #673 (Split Text
 // chunking) and #674 (vector-store index + query) and adds the final "answer"
@@ -211,28 +212,24 @@ async function openRagFlow(page: Page): Promise<void> {
       .getByTestId("button_run_chat output"),
   ).toBeVisible({ timeout: 30000 });
 
-  // Dismiss the outdated-update banner up front (present on load, persists once
-  // dismissed) so it never overlays a later node-output click.
-  await dismissUpdateBannerIfPresent(page);
-}
-
-// The fixture was captured on an older nightly, so on a newer build its
-// components resolve to outdated updates and a bottom-centered "N components need
-// updates" banner overlays the node output controls, intercepting the
-// output-inspection click. It is noise for this spec (outdated notifications are
-// covered by outdated-component-notification.spec.ts), so dismiss it before
-// reading a node's output.
-async function dismissUpdateBannerIfPresent(page: Page): Promise<void> {
-  // The outdated diff resolves asynchronously after the flow loads, so the banner
-  // can appear a beat late; wait briefly for it (the fixture is deliberately
-  // behind the nightly, so it always appears within this window) before
-  // dismissing. If a future fixture refresh removes the outdated state, this
-  // just times out and no-ops — the test still runs in full, never skips.
-  const dismissAll = page.getByRole("button", { name: "Dismiss All" });
-  if (await dismissAll.isVisible({ timeout: 6000 }).catch(() => false)) {
-    await dismissAll.click();
-    await expect(dismissAll).toBeHidden({ timeout: 5000 });
-  }
+  // Free the canvas bottom-centre overlay slot once, up front: this fixture is
+  // behind the running image, so Langflow raises the "Flow needs review" banner
+  // into the slot it shares with the build-status bar, the banner never leaves on
+  // its own, and a click under it is refused for the full `locator.click` budget
+  // (#1643). Clearing it here covers every node-output click that follows.
+  // `allowAlreadyClear` because a refreshed fixture would raise no banner at all —
+  // safe only because this runs AFTER a node title is on screen, the gate the
+  // banner mounts within 1-3 ms of (measured on 1.13.0.dev0, #1675). The cost is
+  // real and deliberate: it also opts this call site out of the helper's
+  // lost-selector guard, so an upstream Tailwind rename of the slot container is
+  // SILENT here (verified — mutating the selector leaves both tests green). The
+  // guard is not lost to the suite, it is held where the alternative is worse:
+  // `split-text-chunking` and the three #1643 specs call the helper post-build,
+  // where the build bar is on screen by construction and an empty slot can only
+  // mean a broken selector. Making this call site fail closed instead would tie
+  // two @stable specs to the fixture STAYING outdated, so the maintenance action
+  // that fixes the root cause would be the one that reddens them.
+  await clearCanvasBottomOverlay(page, { allowAlreadyClear: true });
 }
 
 /**

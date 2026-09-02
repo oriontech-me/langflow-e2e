@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -82,8 +82,16 @@ so the node run control is not occluded by the bottom react-flow toolbar panel.
 1. Run Split Text: click `button_run_split text`.
 2. Assert the successful build badge `node_duration_split text` is visible
    (Chat Input builds as its upstream dependency).
-3. Open the Chunks output inspector `output-inspection-chunks-splittext`.
-4. Assert the ag-Grid shows **exactly 5 rows** (`locator('[row-index]')` count
+3. Free the canvas bottom-centre overlay slot (`clearCanvasBottomOverlay`) before
+   reaching for the inspector. The fixture is `lf_version: 1.6.0`, so the running
+   image reports one of its components outdated and raises the "Flow needs review"
+   banner into that slot; the banner never leaves on its own and its top edge sits
+   **13.2 px** below the inspect button's bottom edge (measured on 1.13.0.dev0:
+   button y 555.2-572.8, slot y 586.0-656.0). The click is therefore not
+   intercepted *today*, and this step is what stops that from being the whole
+   defence — the same 5 px of node height decided #1643 in the other direction.
+4. Open the Chunks output inspector `output-inspection-chunks-splittext`.
+5. Assert the ag-Grid shows **exactly 5 rows** (`locator('[row-index]')` count
    === 5) and that **exactly one** row contains the sentinel phrase.
 
 ---
@@ -100,6 +108,16 @@ so the node run control is not occluded by the bottom react-flow toolbar panel.
 - Flows API: `POST /api/v1/flows/` (fixture create), `DELETE /api/v1/flows/{id}`
   (scoped cleanup).
 - No model provider credentials required (pure text split, no LLM/embeddings).
+- `tests/helpers/ui/clear-canvas-bottom-overlay.ts` — frees the canvas
+  bottom-centre overlay slot, which Langflow shares between the build-status bar
+  and the "Flow needs review / N components need updates" banner (#1643/#1675).
+  The banner is raised because this fixture's nodes are behind the running image,
+  it never leaves on its own, and a click under it is refused for the full
+  `locator.click` budget.
+- `src/frontend/src/pages/FlowPage/components/flowBuildingComponent/index.tsx` and
+  `src/frontend/src/pages/FlowPage/components/UpdateAllComponents/index.tsx` — the
+  two components that share that slot. Declared so
+  `watch-upstream-areas.mjs --mode=check-docs` fails the PR that renames them.
 
 ---
 
