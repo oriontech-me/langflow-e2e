@@ -1,6 +1,6 @@
 # Code Execution Endpoints — crafted payloads are validated, never executed
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.0.dev0
 
 ---
 
@@ -117,6 +117,12 @@ before being watched by `daily-stable.yml`; the checklist bullets ship as `[-]` 
 validation) and the promotion is a follow-up, not a spec-doc change. It is **not** `@destructive`:
 every test creates its own flow via the API and deletes it id-scoped in `afterEach`.
 
+**That validation cycle has since run and the tag is now present** — recorded under *Validation
+criterion* below. The flake risk the paragraph above names did not materialise: measured on
+`1.12.0.dev45` the file is 19–21 s, not the ~90 s the first delivery budgeted for, and the two
+sidebar adds landed in 4 consecutive runs out of 4. The reasoning is kept rather than deleted
+because it is what a future reader needs if the spec starts dropping clicks again.
+
 ---
 
 ## Step by step *(required)*
@@ -214,6 +220,22 @@ go through the page, so they are outside the fixture's HTTP monitor and need no
 - Teardown leaves no flow behind:
   `GET /api/v1/flows/?remove_example_flows=true&header_flows=true` returns the same count before
   and after the file runs.
+
+**Promotion run** (2 Sep 2026). Recorded here because `@stable` is what puts this file in front of
+`daily-stable.yml` every weekday, and the tag is only worth the alarm it raises if the run behind
+it is stated rather than remembered.
+
+| | |
+|---|---|
+| Instance | `1.12.0.dev45` · `package: "Langflow Nightly"` · `LANGFLOW_WORKERS=1` |
+| Repeats | 4 consecutive runs, `--workers=1 --retries=0` |
+| Result | 12 of 12 `expected`, 0 unexpected, 0 flaky, 0 skipped |
+| Duration | 19–21 s per run, against the ~90 s the first delivery budgeted |
+| Backend errors | 0 occurrences of `🚨 Backend Error` across every run |
+| Re-measured | `nightly:latest` moved to `1.13.0.dev0` mid-promotion, and that is the line `daily-stable.yml` now runs — so the burst was repeated there on a **freshly created container**: 21 of 21 `expected` over 3 runs of the two promoted files together, 21–23 s for both files together, 0 backend errors |
+| Flow cleanup | `GET /api/v1/flows/?remove_example_flows=true&header_flows=true` reads **0 before and 0 after** the three 1.13 runs — the file leaks nothing |
+| Force-fail | Test 2's `expect(buildStatus).toBe(400)` → `toBe(418)` reddens exactly one test (2 expected / 1 unexpected); reverted |
+
 
 ---
 

@@ -86,7 +86,7 @@ test.describe("Serving end-user identity is inert on a default instance", () => 
 
   test(
     "the instance under test has no serving identity header configured",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // The premise, asserted rather than assumed. A serving-configured instance
       // must not pass this file silently: every assertion below would then be
@@ -100,7 +100,7 @@ test.describe("Serving end-user identity is inert on a default instance", () => 
 
   test(
     "two identities on one session share it on POST /api/v2/workflows",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const session = uniqueSession("v2");
 
@@ -143,7 +143,7 @@ test.describe("Serving end-user identity is inert on a default instance", () => 
 
   test(
     "two identities on one session share it on POST /api/v1/run/{id}",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // Both surfaces, because #14550's phase 1 extends the v2-only scoping to
       // all serving APIs — v1 is where a partial rollout would first honour the
@@ -180,7 +180,7 @@ test.describe("Serving end-user identity is inert on a default instance", () => 
 
   test(
     "a different session persists separately, so the counts above are not vacuous",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // Without this, "the header did nothing" and "chat memory does not work at
       // all" produce identical readings — both leave the scoped sessions empty.
