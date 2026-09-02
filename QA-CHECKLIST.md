@@ -1394,7 +1394,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 540 `test()` calls carrying the `@stable` tag, distributed across 207 spec
+> 542 `test()` calls carrying the `@stable` tag, distributed across 207 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1652,7 +1652,9 @@
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
+- [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
+- [x] mirrored context-scoped retrievals return only their own context's messages → `agent-context-id-isolation.spec.ts`
 - [x] switching the agent's context_id re-tags new turns without touching previous ones → `agent-context-id-isolation.spec.ts`
 - [x] toggle ON (default): agent's date tool returns today's date → `agent-current-date-tool.spec.ts`
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
