@@ -825,7 +825,7 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
 
   test(
     "a discovered model runs a flow through the OpenAI Compatible provider",
-    { tag: ["@stable", "@model-provider", "@components", "@playground"] },
+    { tag: ["@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
       const probe = await probeEndpoint(request);
       test.skip(!probe.usable, `OpenAI-compatible endpoint not usable: ${probe.reason}`);
