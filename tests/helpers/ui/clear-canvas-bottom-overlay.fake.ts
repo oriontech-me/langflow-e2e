@@ -8,14 +8,14 @@
 // Why simulate: the behaviour that matters is a HANDOVER between two components
 // that own the same fixed container — the build-status bar unmounts, and the
 // "Flow needs review" banner mounts into the slot it just left. A live spec cannot
-// dwell on the one render tick where the slot is empty, and cannot reproduce a
-// build that stops honouring Dismiss at all. The timeline below makes both states
-// addressable.
+// dwell on the gap between the two (~89 ms measured, and upstream-controlled — see
+// `BANNER_UNHIDE_DELAY_MS`), and cannot reproduce a build that stops honouring
+// Dismiss at all. The timeline below makes both states addressable.
 //
 // The simulated contract was verified live against nightly 1.12.0.dev39 (#1643):
 //   - both components render into `absolute bottom-16 left-1/2 z-50 w-[530px]`;
-//   - the build bar auto-dismisses ~2.5 s after "Flow built successfully" and
-//     offers no Dismiss in that state;
+//   - the build bar auto-dismisses 2 s after "Flow built successfully" and offers
+//     no Dismiss in that state — only Stop, and Retry + Dismiss when it errored;
 //   - the update banner reads "Flow needs review / 1 component needs updates" and
 //     offers "Dismiss" + "Update All", and never leaves on its own — a click under
 //     it burns the full `locator.click` budget with "subtree intercepts pointer
@@ -37,6 +37,16 @@ export interface Occupant {
 export const BUILD_BAR: Occupant = {
   text: "Flow built successfully\n0.2s",
   dismissible: false,
+};
+
+/**
+ * The build bar's ERROR state: Retry + Dismiss, and no timer. It satisfies the
+ * helper's "offers a Dismiss" predicate, which is why the helper has to refuse it
+ * by name — dismissing it erases the only UI evidence of a failed run.
+ */
+export const BUILD_FAILED_BAR: Occupant = {
+  text: "Flow build failed\nRetry\nDismiss",
+  dismissible: true,
 };
 
 export const UPDATE_BANNER: Occupant = {
