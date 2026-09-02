@@ -105,81 +105,145 @@ export function isIpv4(host) {
  * mean one code path whose severity depends on a flag. Here each topology states its
  * own consequence, and neither can drift into the other's.
  */
-function resolveNativeEndpoint({ hostIps, servicePort, mode }) {
-  const candidates = hostIps.filter((ip) => ip && ip.length > 0);
+/**
+ * Whether Langflow's SSRF guard blocks this address BY DEFAULT — the set an
+ * allow-list entry is needed to reach at all.
+ *
+ * Wider than `isPrivateIpv4`, which answers a different question ("may the lane's
+ * allow-list admit it?"). Needed on one path only: the native `warn` degradation
+ * below, to keep it from resolving an address that answers 400 on every echo spec
+ * instead of trading away the single assertion it means to trade away.
+ *
+ * The canonical statement of this set is
+ * `tests/helpers/other/private-echo-endpoint.ts::isBlockedRangeIpv4`; this is a COPY,
+ * kept because this script has to stay dependency-free `.mjs`. Measured: a `.test.ts`
+ * cannot `import()` a `.mjs` under this repo's `module: commonjs` ts-node config — it
+ * does not compile — so no single test can hold the two side by side. The drift
+ * direction is what makes the copy acceptable: if upstream adds a blocked range and
+ * only the helper learns it, this resolves an address Langflow refuses and every echo
+ * spec answers 400, loudly. The helper's own drift is a SILENT skip, which is why it
+ * is the canonical one and this is the copy.
+ */
+export function isBlockedByDefaultIpv4(host) {
+  if (!isIpv4(host)) return false;
+  const [a, b] = host.split(".").map(Number);
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) || // link-local / cloud metadata
+    (a === 100 && b >= 64 && b <= 127) // CGNAT
+  );
+}
 
+/**
+ * Why no offered address is one the lane's allow-list admits.
+ *
+ * One cause, two renderings, because the severity is decided elsewhere: a lane blocked
+ * by a message naming the wrong reason costs the same hour as no message, and a lane
+ * that carries on needs the same sentence as a warning.
+ */
+function unusableCause(candidates) {
   if (candidates.length === 0) {
     const detail = "no host address was supplied for the native echo endpoint";
-    if (mode === "warn") {
-      return {
-        ok: false,
-        langflowUrl: null,
-        probeUrl: null,
-        strategy: null,
-        warnings: [
-          `${detail}. ECHO_BASE_URL left unset, so the specs fall back to their PUBLIC default — this lane is now exposed to a third-party outage (#1128).`,
-        ],
-        error: null,
-      };
-    }
     return {
-      ok: false,
-      langflowUrl: null,
-      probeUrl: null,
-      strategy: null,
-      warnings: [],
+      warning: `${detail}.`,
       error: `${detail}. Failing rather than falling back to public httpbin.org: start it with scripts/start-echo-source.sh, which prints ECHO_HOST_IP on success.`,
     };
   }
+  if (candidates.some((ip) => isLoopback(ip))) {
+    const detail = `the only addresses offered were loopback (${candidates.join(", ")})`;
+    return {
+      warning: `${detail}.`,
+      error: `${detail}. Langflow's SSRF layer blocks loopback outright — it ignores LANGFLOW_SSRF_ALLOWED_HOSTS for those addresses — so no echo spec can pass against it. Bind the echo to an RFC-1918 address instead.`,
+    };
+  }
+  if (!candidates.every((ip) => isIpv4(ip))) {
+    const detail = `resolved "${candidates.join(", ")}", which is not an IPv4 address`;
+    return {
+      warning: `${detail}.`,
+      error: `${detail}. Langflow's API Request component runs validators.url() and rejects a single-label host, so ECHO_BASE_URL must be a raw IP (#462).`,
+    };
+  }
+  const detail = `every address offered (${candidates.join(", ")}) is outside the RFC-1918 ranges in LANGFLOW_SSRF_ALLOWED_HOSTS`;
+  return {
+    warning: `${detail}.`,
+    error: `${detail}. Refused for what the allow-list says, not for reachability — and the two ways it goes wrong differ: a PUBLIC address is reachable and looks fine while privateEchoEndpoint() SKIPS the admitted-case assertion (its host is not one Langflow blocks by default), whereas a CGNAT or link-local one IS blocked by default and is not admitted either, so Langflow answers 400. Bind the echo to an RFC-1918 address.`,
+  };
+}
+
+function resolveNativeEndpoint({ hostIps, servicePort, mode }) {
+  const candidates = hostIps.filter((ip) => ip && ip.length > 0);
 
   // First private address wins, so the choice is a function of the order the host
   // reported its interfaces — deterministic, and re-derivable from the log.
   const chosen = candidates.find((ip) => isPrivateIpv4(ip));
 
-  if (!chosen) {
-    // Same refusal in all three shapes, but each gets its own cause: a lane blocked
-    // by a message that names the wrong reason costs the same hour as no message.
-    if (candidates.some((ip) => isLoopback(ip))) {
-      return {
-        ok: false,
-        langflowUrl: null,
-        probeUrl: null,
-        strategy: null,
-        warnings: [],
-        error: `the only addresses offered were loopback (${candidates.join(", ")}). Langflow's SSRF layer blocks loopback outright — it ignores LANGFLOW_SSRF_ALLOWED_HOSTS for those addresses — so no echo spec can pass against it. Bind the echo to an RFC-1918 address instead.`,
-      };
-    }
-    if (!candidates.every((ip) => isIpv4(ip))) {
-      return {
-        ok: false,
-        langflowUrl: null,
-        probeUrl: null,
-        strategy: null,
-        warnings: [],
-        error: `resolved "${candidates.join(", ")}", which is not an IPv4 address. Langflow's API Request component runs validators.url() and rejects a single-label host, so ECHO_BASE_URL must be a raw IP (#462).`,
-      };
-    }
+  if (chosen) {
+    const langflowUrl = `http://${chosen}:${servicePort}`;
+    return {
+      ok: true,
+      langflowUrl,
+      // The same address, on purpose. There is no port mapping to probe around here,
+      // and probing loopback instead would confirm only that the process is up — not
+      // that the address the specs depend on is reachable, which is the half that
+      // breaks when a bind lands on the wrong interface.
+      probeUrl: langflowUrl,
+      strategy: "host address reported by the echo starter (native, no container)",
+      warnings: [],
+      error: null,
+    };
+  }
+
+  // Nothing the allow-list admits. The CAUSE is a property of the addresses; the
+  // SEVERITY belongs to the lane, and `mode` is what carries it — so the two are
+  // decided separately. Deciding severity by TOPOLOGY instead is what left `warn`
+  // tolerating a fallback to public httpbin.org in one branch while refusing a local
+  // public address in another: the same lost assertion, opposite verdicts.
+  const cause = unusableCause(candidates);
+
+  if (mode !== "warn") {
     return {
       ok: false,
       langflowUrl: null,
       probeUrl: null,
       strategy: null,
       warnings: [],
-      error: `every address offered (${candidates.join(", ")}) is outside the RFC-1918 ranges in LANGFLOW_SSRF_ALLOWED_HOSTS. Refused for what the allow-list says, not for reachability — and the two ways it goes wrong differ: a PUBLIC address is reachable and looks fine while privateEchoEndpoint() SKIPS the admitted-case assertion (its host is not one Langflow blocks by default), whereas a CGNAT or link-local one IS blocked by default and is not admitted either, so Langflow answers 400. Bind the echo to an RFC-1918 address.`,
+      error: cause.error,
     };
   }
 
-  const langflowUrl = `http://${chosen}:${servicePort}`;
+  // `warn` asked for the best available, not for strictness — and a LOCAL public
+  // address is strictly better than what leaving ECHO_BASE_URL unset produces: the
+  // echo specs run against THIS machine instead of the public internet (#1128), and
+  // the only thing lost is the admitted-case assertion, which is named. An address
+  // Langflow blocks by default is NOT better: it is refused before it is reached, so
+  // every echo spec answers 400 rather than one of them skipping.
+  const reachable = candidates.find((ip) => isIpv4(ip) && !isBlockedByDefaultIpv4(ip));
+
+  if (reachable) {
+    const langflowUrl = `http://${reachable}:${servicePort}`;
+    return {
+      ok: true,
+      langflowUrl,
+      probeUrl: langflowUrl,
+      strategy: "public host address reported by the echo starter (native, no container, mode=warn)",
+      warnings: [
+        `${cause.warning} Resolved ${langflowUrl} anyway under mode=warn, because it keeps the echo specs on THIS machine rather than on public httpbin.org (#1128). What that costs is named: privateEchoEndpoint() will SKIP the admitted-case assertion in security/ssrf-url-validation.spec.ts and the non-vacuity control in security/model-provider-base-url-ssrf.spec.ts, so this lane asserts one thing fewer. Pass --mode fail to refuse instead.`,
+      ],
+      error: null,
+    };
+  }
+
   return {
-    ok: true,
-    langflowUrl,
-    // The same address, on purpose. There is no port mapping to probe around here,
-    // and probing loopback instead would confirm only that the process is up — not
-    // that the address the specs depend on is reachable, which is the half that
-    // breaks when a bind lands on the wrong interface.
-    probeUrl: langflowUrl,
-    strategy: "host address reported by the echo starter (native, no container)",
-    warnings: [],
+    ok: false,
+    langflowUrl: null,
+    probeUrl: null,
+    strategy: null,
+    warnings: [
+      `${cause.warning} ECHO_BASE_URL left unset, so the specs fall back to their PUBLIC default — this lane is now exposed to a third-party outage (#1128). Not resolved to any offered address: Langflow blocks all of them by default, so the echo specs would answer 400 rather than run.`,
+    ],
     error: null,
   };
 }

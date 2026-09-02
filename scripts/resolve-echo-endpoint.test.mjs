@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  isBlockedByDefaultIpv4,
   resolveEchoEndpoint,
   isPrivateIpv4,
   isLoopback,
@@ -283,6 +284,72 @@ test("native: mode=warn keeps the lane alive and names the public fallback", () 
   assert.equal(r.ok, false);
   assert.equal(r.error, null);
   assert.match(r.warnings[0], /PUBLIC/);
+});
+
+test("native mode=warn resolves the LOCAL public address rather than falling back", () => {
+  // The severity belongs to the LANE, not to the topology: `warn` asked for the best
+  // available. Leaving ECHO_BASE_URL unset loses the same admitted-case assertion AND
+  // puts every other echo spec on public httpbin.org (#1128) — so resolving the local
+  // public address is strictly better, provided the cost is named rather than implied.
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10"],
+    servicePort: 8080,
+    mode: "warn",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://203.0.113.10:8080");
+  assert.equal(r.error, null);
+  assert.match(r.warnings[0], /SKIP/);
+  assert.match(r.warnings[0], /ssrf-url-validation\.spec\.ts/);
+  assert.match(r.warnings[0], /--mode fail/);
+});
+
+test("native mode=warn refuses an address Langflow blocks by DEFAULT", () => {
+  // The one case where resolving is worse than not resolving: CGNAT and link-local are
+  // blocked before they are reached and are not in the allow-list either, so every echo
+  // spec answers 400 — a red lane, where the trade `warn` is making is ONE skip.
+  for (const blocked of ["100.100.4.7", "169.254.10.1", "127.0.0.1"]) {
+    const r = resolveEchoEndpoint({
+      topology: "native",
+      hostIps: [blocked],
+      servicePort: 8080,
+      mode: "warn",
+    });
+
+    assert.equal(r.ok, false, blocked);
+    assert.equal(r.langflowUrl, null, blocked);
+    assert.equal(r.error, null, `${blocked} must WARN under mode=warn, not error`);
+    assert.match(r.warnings[0], /400/, blocked);
+  }
+});
+
+test("native mode=fail is unchanged by the warn degradation", () => {
+  // The tightening this file exists for: on the lane where a human is waiting, a public
+  // address is still a refusal, not a resolved URL with a warning nobody reads.
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.langflowUrl, null);
+  assert.match(r.error, /SKIPS/);
+});
+
+test("isBlockedByDefaultIpv4 covers every range the SSRF guard blocks without an allow-list", () => {
+  // Wider than isPrivateIpv4 on purpose, and a COPY of the canonical list in
+  // tests/helpers/other/private-echo-endpoint.ts — no test can hold the two side by
+  // side, since a .test.ts cannot import a .mjs under this repo's ts-node config.
+  for (const blocked of ["10.0.0.5", "127.0.0.1", "172.16.0.2", "192.168.1.9", "169.254.169.254", "100.64.0.1", "100.127.255.254"]) {
+    assert.equal(isBlockedByDefaultIpv4(blocked), true, blocked);
+  }
+  for (const reachable of ["203.0.113.10", "8.8.8.8", "100.63.255.255", "100.128.0.1", "172.32.0.1", "echo-host"]) {
+    assert.equal(isBlockedByDefaultIpv4(reachable), false, reachable);
+  }
 });
 
 test("the CLI accepts --host-ips separated by commas OR whitespace", () => {
