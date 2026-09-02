@@ -1,6 +1,6 @@
 # n_messages — limits the number of retained messages
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev0`)
 
 ---
 
@@ -95,10 +95,30 @@ Shared setup per test (all data is per-run unique):
    save to settle.
 7. Run the node (`button_run_message history`, mode tab *Retrieve* is the
    default), wait for **built successfully**.
-8. Open the output inspector (`output-inspection-messages-memory`) and read the
-   retrieved text from its `textarea`. The default template renders one line
-   per message (`{sender_name}: {text}`), so occurrences of the sentinel
-   prefix count the retrieved messages exactly.
+8. **Free the canvas bottom-overlay slot** (see the note below), then open the
+   output inspector (`output-inspection-messages-memory`) and read the retrieved
+   text from its `textarea`. The default template renders one line per message
+   (`{sender_name}: {text}`), so occurrences of the sentinel prefix count the
+   retrieved messages exactly.
+
+> **Canvas bottom-overlay note (#1643) — hardening, not a fix of a live defect
+> here.** Langflow renders two components into ONE fixed container over the canvas
+> (`absolute bottom-16 left-1/2 z-50 w-[530px] -translate-x-1/2`): the transient
+> build-status bar and the "Flow needs review" banner, which is hidden while the bar
+> is up, retakes the slot when the bar dismisses, and then stays. On the two
+> `agent-context-id-*` specs that combination refused the inspect click for the full
+> 20 s `locator.click` budget on the 2026-08-31 daily. This spec seeds from the same
+> `chat-io-ok-trace-fixture.json`, adds the same node the same way, and reaches the
+> same testid with the same five lines — and the banner IS present here too,
+> **measured** on nightly `1.13.0.dev0` at y 586-656. What differs is the margin:
+> this node exposes two advanced fields where the context-id specs expose three, so
+> it is ~14 px shorter and its inspect button sits at y 541.0-556.9 — **~37 px clear
+> of the banner**, against ~5 px there. Forcing the failing condition (dwelling 4 s
+> so the banner owns the slot) does NOT reproduce an interception here, which was
+> checked rather than assumed. The step is added anyway because ~37 px of clearance
+> is a coincidence of node height, and node height is precisely what upstream moves
+> — `dev46` already changed how these fields are exposed. It costs ~2 s per
+> retrieval and removes the dependence.
 
 ---
 
@@ -170,6 +190,11 @@ Shared setup per test (all data is per-run unique):
   and field inputs.
 - `src/frontend/src/modals/` — the component output inspector
   (`output-inspection-*`, `textarea`).
+- `src/frontend/src/pages/FlowPage/components/flowBuildingComponent/index.tsx` and
+  `src/frontend/src/pages/FlowPage/components/UpdateAllComponents/index.tsx` — the
+  two components that share the canvas bottom-centre overlay slot the retrieval
+  step now clears (#1643). Declared so `watch-upstream-areas.mjs --mode=check-docs`
+  fails the PR that renames them.
 
 ---
 

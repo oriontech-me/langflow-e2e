@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import {
@@ -152,6 +153,13 @@ async function retrieveViaMessageHistory(
 
   await page.getByTestId("button_run_message history").click();
   await page.waitForSelector("text=built successfully", { timeout: 30000 });
+
+  // The canvas' bottom-centre slot is shared by the build-status bar and the
+  // "Flow needs review" banner, and the banner takes the slot back the moment the
+  // bar auto-dismisses. This node's inspect button sits ~5 px from that slot, so
+  // the click is refused for as long as the taller banner owns it — #1643. Free
+  // the slot instead of retrying under it.
+  await clearCanvasBottomOverlay(page);
 
   // The inspector button stays disabled until the selected output has
   // non-empty data — it becoming enabled already signals a non-empty retrieval.
