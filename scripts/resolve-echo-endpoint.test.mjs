@@ -301,6 +301,23 @@ test("the CLI accepts --host-ips separated by commas OR whitespace", () => {
   }
 });
 
+test("native: the refusal separates the public case from the CGNAT one", () => {
+  // Both are outside the allow-list, and they fail DIFFERENTLY: a public host is not
+  // blocked by default, so privateEchoEndpoint() skips; a CGNAT/link-local one IS
+  // blocked by default and is not admitted either, so Langflow answers 400. Naming
+  // only the skip sent the reader looking for a green lane one test short.
+  const cgnat = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["100.100.4.7"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(cgnat.ok, false);
+  assert.match(cgnat.error, /400/);
+  assert.match(cgnat.error, /SKIPS/);
+});
+
 test("native: a container-only flag is REFUSED, not ignored", () => {
   // `--mapped-port` is the trap, and it is not hypothetical: the starter prints
   // `ECHO_PORT=<n>` and that flag is the one with "port" in its name, so a caller

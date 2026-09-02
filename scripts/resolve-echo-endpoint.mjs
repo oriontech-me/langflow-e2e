@@ -165,7 +165,7 @@ function resolveNativeEndpoint({ hostIps, servicePort, mode }) {
       probeUrl: null,
       strategy: null,
       warnings: [],
-      error: `every address offered (${candidates.join(", ")}) is outside the RFC-1918 ranges in LANGFLOW_SSRF_ALLOWED_HOSTS. A public address is reachable, so this would look like it worked — but privateEchoEndpoint() SKIPS an admitted-case assertion whose host Langflow does not block by default, so the SSRF spec would silently stop asserting anything. Refused for that reason, not for reachability.`,
+      error: `every address offered (${candidates.join(", ")}) is outside the RFC-1918 ranges in LANGFLOW_SSRF_ALLOWED_HOSTS. Refused for what the allow-list says, not for reachability — and the two ways it goes wrong differ: a PUBLIC address is reachable and looks fine while privateEchoEndpoint() SKIPS the admitted-case assertion (its host is not one Langflow blocks by default), whereas a CGNAT or link-local one IS blocked by default and is not admitted either, so Langflow answers 400. Bind the echo to an RFC-1918 address.`,
     };
   }
 
