@@ -178,8 +178,11 @@ jobs:
         id: cov
         continue-on-error: true
         run: |
+          # `total` is the OSS suite only: @enterprise is a lane no nightly can
+          # run (#1010), so counting it put ~88 unreachable tests in the
+          # denominator of the dashboard's coverage band.
           echo "stable=$(npx ts-node scripts/stable-tests.ts --count)" >> "$GITHUB_OUTPUT"
-          echo "total=$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "total=$(npx ts-node scripts/stable-tests.ts --count-oss)" >> "$GITHUB_OUTPUT"
 
       - name: Build run payload
         if: always()
