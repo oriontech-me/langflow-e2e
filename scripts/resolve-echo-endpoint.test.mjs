@@ -12,6 +12,7 @@
 // `github_network_*` bridges hand out.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +23,9 @@ import {
   isIpv4,
 } from "./resolve-echo-endpoint.mjs";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(HERE, "..");
+const SCRIPT = path.join(HERE, "resolve-echo-endpoint.mjs");
 
 test("host-based job: Langflow gets the container IP, the job probes the published port", () => {
   // pr-validation / nightly / manual: no `container:`, so `getent` cannot resolve
@@ -170,6 +173,140 @@ test("isLoopback covers every shape the SSRF error message named", () => {
     assert.equal(isLoopback(h), true, h);
   }
   assert.equal(isLoopback("172.18.0.2"), false);
+});
+
+// ── The native topology: a process on a VM, no container anywhere ────────────
+//
+// What these protect is the one rule that differs from the container topology, and
+// it is the kind that cannot be caught by running the lane: a PUBLIC address makes
+// the SSRF spec SKIP rather than fail, so the lane goes green having asserted one
+// thing fewer. A host carrying a public address alongside the private one puts the
+// wrong pick one interface-ordering away.
+
+test("native: the RFC-1918 address wins over the public one the VM also carries", () => {
+  // The shape that matters: a host carrying a routable public address alongside
+  // the private one, with the public one listed first by `ip -4 -o addr`.
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10", "10.0.0.5"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://10.0.0.5:8080");
+  // Same address, deliberately: there is no port mapping here, and probing loopback
+  // would prove the process is up without proving the specs can reach it.
+  assert.equal(r.probeUrl, "http://10.0.0.5:8080");
+  assert.match(r.strategy, /native/);
+  assert.deepEqual(r.warnings, []);
+});
+
+test("native: a public-only host is REFUSED, and the reason is the silent skip", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.langflowUrl, null);
+  // The message has to name the skip. "Unreachable" would send whoever reads it to
+  // the firewall, and the address is perfectly reachable — that is the trap.
+  assert.match(r.error, /SKIP/);
+  assert.match(r.error, /privateEchoEndpoint/);
+});
+
+test("container topology still only WARNS on the same public address", () => {
+  // The asymmetry is the point of the two topologies existing, so it is asserted
+  // rather than left to be inferred: under a container a public IP risks a 400 that
+  // names itself; natively it subtracts an assertion from a green lane.
+  const r = resolveEchoEndpoint({
+    getentIp: "",
+    dockerIp: "203.0.113.10",
+    inContainer: false,
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.error, null);
+  assert.match(r.warnings[0], /LANGFLOW_SSRF_ALLOWED_HOSTS/);
+});
+
+test("native: loopback is refused with the loopback cause, not the public one", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["127.0.0.1"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /loopback/);
+  assert.match(r.error, /ignores LANGFLOW_SSRF_ALLOWED_HOSTS/);
+});
+
+test("native: a single-label host is refused for the validators.url() reason", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["echo-host"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /validators\.url\(\)/);
+});
+
+test("native: no address at all fails the lane, and points at the starter", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: [],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /start-echo-source\.sh/);
+});
+
+test("native: mode=warn keeps the lane alive and names the public fallback", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: [],
+    servicePort: 8080,
+    mode: "warn",
+  });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.error, null);
+  assert.match(r.warnings[0], /PUBLIC/);
+});
+
+test("the CLI accepts --host-ips separated by commas OR whitespace", () => {
+  // Both shapes occur for real: the starter prints one address per line, and a
+  // caller capturing that with $(...) hands over a space-separated string, while a
+  // human types commas. Accepting one and not the other resolves to zero candidates
+  // and reads as "the echo is not running".
+  const forms = ["203.0.113.10,10.0.0.5", "203.0.113.10 10.0.0.5", "203.0.113.10\n10.0.0.5"];
+  for (const form of forms) {
+    const out = execFileSync(
+      process.execPath,
+      [SCRIPT, "--topology", "native", "--service-port", "8080", "--host-ips", form],
+      { encoding: "utf8" },
+    );
+    assert.equal(JSON.parse(out).langflowUrl, "http://10.0.0.5:8080", form);
+  }
+});
+
+test("the CLI refuses an unknown --topology instead of defaulting to container", () => {
+  // Defaulting would answer the native lane's question under the container's rules,
+  // and the difference between them is exactly a warning where an error belongs.
+  const r = spawnSync(process.execPath, [SCRIPT, "--topology", "vm"], { encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--topology must be/);
 });
 
 // ── Portability guard: nothing the containerized lane runs may need `jq` ─────
