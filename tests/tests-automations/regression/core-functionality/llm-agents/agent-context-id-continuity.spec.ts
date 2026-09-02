@@ -380,11 +380,9 @@ test.describe.configure({ mode: "serial" });
 // one, which needs no provider at all. Ordering it first makes the model-free
 // coverage independent of whatever the routed target does.
 test.describe("Context ID continuity — retrieval layer (model-free)", () => {
-  // QUARANTINED for #1643 — an overlay at the canvas bottom intercepts the output-inspection-messages-memory click
-  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
-  test.fixme(
+  test(
     "context-scoped retrieval returns all turns of the context and not the untagged control",
-    { tag: ["@regression", "@agents", "@components"] },
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedContextSession(request);
       try {
