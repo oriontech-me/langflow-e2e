@@ -412,6 +412,20 @@ test("a rejected poll interval names itself instead of failing inside sleep", ()
   }
 });
 
+test("a rejected start deadline names itself instead of reporting a timeout", () => {
+  // The nastier half of the same class as the interval: `[ 0 -lt abc ]` exits 2, a
+  // `while` reads that as false, so the readiness loop runs ZERO times — the script
+  // killed the server it had just launched and printed "did not answer in abcs", a
+  // timeout message for a typo, on a run that never probed anything.
+  for (const value of ["0", "abc", "-1"]) {
+    const r = runScript({ env: { ECHO_START_TIMEOUT_S: value, ECHO_BIND_HOST: "10.0.0.5" } });
+    assert.equal(r.status, 2, `deadline ${JSON.stringify(value)}`);
+    assert.match(r.stderr, /ECHO_START_TIMEOUT_S must be a positive integer/);
+    assert.doesNotMatch(r.stderr, /did not answer/, "it reached the loop and reported a timeout");
+    r.cleanup();
+  }
+});
+
 test("stopping a port with no PID file is a no-op, not an error", () => {
   const dir = mkdtempSync(join(tmpdir(), "stop-echo-source-test-"));
   const r = spawnSync("bash", [STOP], {

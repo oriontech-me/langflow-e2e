@@ -78,15 +78,26 @@ MAX_DURATION="${ECHO_MAX_DURATION:-10s}"
 # documents: a non-numeric value makes `[ -lt ]` exit 2, which inside `if` is
 # indistinguishable from "false", so the bad value would reach `sleep` and abort with
 # bash's message instead of this one.
-poll_interval_invalid() {
-  echo "ERROR: ECHO_POLL_INTERVAL_S must be a positive integer (got '${POLL_INTERVAL_S}')." >&2
-  echo "Zero never advances the deadline, so the wait below would never end." >&2
+#
+# BOTH numbers go through it, and the deadline is the one that hides best. With
+# ECHO_START_TIMEOUT_S=abc the readiness loop's `[ "${ELAPSED}" -lt "${START_TIMEOUT_S}" ]`
+# exits 2, a `while` reads that as false, so the loop never runs ONCE: the script kills
+# the server it just launched and reports "did not answer in abcs" — a timeout message
+# for a typo, on a run that never probed anything.
+require_positive_int() {
+  # $1 = variable name, $2 = value, $3 = why a bad value matters here
+  case "$2" in
+    '' | *[!0-9]*) ;;
+    *) if [ "$2" -ge 1 ]; then return 0; fi ;;
+  esac
+  echo "ERROR: $1 must be a positive integer (got '$2')." >&2
+  echo "$3" >&2
   exit 2
 }
-case "${POLL_INTERVAL_S}" in
-  '' | *[!0-9]*) poll_interval_invalid ;;
-esac
-if [ "${POLL_INTERVAL_S}" -lt 1 ]; then poll_interval_invalid; fi
+require_positive_int ECHO_POLL_INTERVAL_S "${POLL_INTERVAL_S}" \
+  "Zero never advances the deadline, so the wait below would never end."
+require_positive_int ECHO_START_TIMEOUT_S "${START_TIMEOUT_S}" \
+  "A non-numeric deadline makes the readiness loop skip every iteration, which reports a timeout for a run that never probed."
 
 # --- The address Langflow has to be able to call --------------------------------
 # RFC-1918 only, and the reason is not tidiness. `LANGFLOW_SSRF_ALLOWED_HOSTS` carries
