@@ -11,6 +11,7 @@ import {
 } from "../../../../helpers/ui/open-advanced-options";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
@@ -325,6 +326,13 @@ async function retrieveViaMessageHistory(
   await page.getByTestId("button_run_message history").click();
   await page.waitForSelector("text=built successfully", { timeout: 30000 });
 
+  // The canvas' bottom-centre slot is shared by the build-status bar and the
+  // "Flow needs review" banner, and the banner takes the slot back the moment the
+  // bar auto-dismisses. This node's inspect button sits ~5 px from that slot, so
+  // the click is refused for as long as the taller banner owns it — #1643. Free
+  // the slot instead of retrying under it.
+  await clearCanvasBottomOverlay(page);
+
   const inspectButton = page.getByTestId("output-inspection-messages-memory");
   await expect(inspectButton).toBeEnabled({ timeout: 20000 });
   await inspectButton.click();
@@ -372,11 +380,9 @@ test.describe.configure({ mode: "serial" });
 // one, which needs no provider at all. Ordering it first makes the model-free
 // coverage independent of whatever the routed target does.
 test.describe("Context ID continuity — retrieval layer (model-free)", () => {
-  // QUARANTINED for #1643 — an overlay at the canvas bottom intercepts the output-inspection-messages-memory click
-  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
-  test.fixme(
+  test(
     "context-scoped retrieval returns all turns of the context and not the untagged control",
-    { tag: ["@regression", "@agents", "@components"] },
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedContextSession(request);
       try {

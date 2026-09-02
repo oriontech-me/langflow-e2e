@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev45`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev0`)
 
 ---
 
@@ -53,6 +53,13 @@ tag or don't accumulate history — the agent memory layering contract dies.
 (1.11.0.dev36; issue #487's "Done when" includes `@stable`). `@regression` — guards
 the context tagging + scoped-retrieval wiring; `@agents` — Agent memory
 surface; `@components` — Message History node drives the retrieval assert.
+
+`@stable` was removed and `test.fixme` added at the 2026-08-31 triage (#1643, PR
+#1647) while the canvas bottom-overlay intercepted the retrieval click. Both are
+restored here: root cause named and fixed (see the overlay note under *Step by
+step*), re-validated with clean `--retries=0` runs on nightly `1.13.0.dev0` — the
+image `daily-stable.yml` pulls as `:latest` — as well as on `1.12.0.dev39`, where
+the geometry above was measured.
 
 ---
 
@@ -108,11 +115,46 @@ surface; `@components` — Message History node drives the retrieval assert.
    context back to empty for one extra run, sentinel `S-CTRL`).
 4. On the flow canvas, add a Message History node (Retrieve), expose and set
    `session_id` = the custom session, `context_id = CTX`, `n_messages=100`;
-   run the node (`button_run`), open the output inspector.
+   run the node (`button_run`), **free the canvas bottom-overlay slot** (see
+   the note below), open the output inspector.
 5. **Assert:** the rendered retrieval contains `S-1`, `S-2` AND `S-3`
    (continuity across all turns of the context) and does NOT contain
    `S-CTRL` (the retrieval is genuinely context-filtered — the negative that
    makes the positive falsifiable).
+
+> **Canvas bottom-overlay note (#1643).** Langflow renders two different
+> components into ONE fixed container over the canvas —
+> `absolute bottom-16 left-1/2 z-50 w-[530px] -translate-x-1/2`: the
+> build-status bar (`flowBuildingComponent`, transient — it auto-dismisses 2 s
+> after "Flow built successfully" plus a 500 ms exit) and the "Flow needs
+> review / N components need updates" banner (`UpdateAllComponents`), which is
+> **hidden while the bar is up and takes the slot back the moment it
+> dismisses**, then stays indefinitely. Measured on nightly `1.12.0.dev39` at
+> the default 1280x720 viewport, the Message History node's
+> `output-inspection-messages-memory` button sits at y 585.6-601.0 (centre
+> 593.3) while the bar's top edge is y 598 — the click clears it by ~5 px — and
+> the banner is 12 px taller, top edge y ~586, i.e. **above** the centre. So the
+> identical click passed or was refused purely on which component owned the
+> slot, and once the banner owned it no retry could help: on the 2026-08-31
+> daily both context-id specs burned the full 20 s `locator.click` budget on all
+> three attempts against `<div class="flex items-center justify-between gap-6
+> rounded-lg border bg-background px-4 py-3 text-sm shadow-md">`, the banner's
+> inner element. The banner is present because the seeded flow comes from
+> `tests/assets/flows/chat-io-ok-trace-fixture.json`, whose nodes carry
+> `lf_version: 1.7.0` and one of which the 1.12 nightly reports as outdated.
+> Refreshing that fixture would silence it only until the next upstream template
+> bump — and would leave the build bar's ~5 px margin untouched — so the step
+> above frees the slot (`clearCanvasBottomOverlay`, waits the transient occupant
+> out and dismisses the persistent one) instead of clicking into it. Both files
+> are `mode: "serial"`, so this failure also skipped each file's sibling; with
+> it fixed the siblings run again. The serial mode itself stays — it is the
+> agent-area rule for a file that loads the Simple Agent template — and the
+> coupling is already mitigated the way this file can mitigate it: the model-free
+> describe is declared BEFORE the parametrized loop on purpose, so a weak-model or
+> missing-provider failure there cannot skip the half that needs no provider. What
+> that ordering cannot protect against is a failure in the FIRST describe, which is
+> what happened here; the answer is to stop that failure, not to unpick the
+> execution mode.
 
 ---
 
@@ -195,3 +237,13 @@ string checks on persisted/rendered data — no model judgment anywhere.
     for why (a UI-driven first configure races across workers).
 - No external network for the "retrieval layer (model-free)" test (API passthrough +
   local retrieval), and no provider either — it is outside the parametrization.
+- **Upstream frontend sources the retrieval step now depends on (#1643).** The
+  slot-clearing step reads Langflow's own canvas bottom-centre overlay, so a rename
+  of either component is a silent break — the selector would match nothing and the
+  click would go back to being intercepted. Declared here so
+  `watch-upstream-areas.mjs --mode=check-docs` fails the PR that moves them:
+  `src/frontend/src/pages/FlowPage/components/flowBuildingComponent/index.tsx` and
+  `src/frontend/src/pages/FlowPage/components/UpdateAllComponents/index.tsx`. A
+  class-only edit (`w-[530px]`, `bottom-16`) is not caught by that guard, which is
+  why `clearCanvasBottomOverlay` additionally fails closed when its selector matches
+  nothing at all.

@@ -11,6 +11,7 @@ import {
 } from "../../../../helpers/ui/open-advanced-options";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
@@ -469,6 +470,13 @@ async function runRetrievalScopedTo(page: Page, contextId: string): Promise<stri
   await page.getByTestId("button_run_message history").click();
   await page.waitForSelector("text=built successfully", { timeout: 30000 });
 
+  // The canvas' bottom-centre slot is shared by the build-status bar and the
+  // "Flow needs review" banner, and the banner takes the slot back the moment the
+  // bar auto-dismisses. This node's inspect button sits ~5 px from that slot, so
+  // the click is refused for as long as the taller banner owns it — #1643. Free
+  // the slot instead of retrying under it.
+  await clearCanvasBottomOverlay(page);
+
   const inspectButton = page.getByTestId("output-inspection-messages-memory");
   await expect(inspectButton).toBeEnabled({ timeout: 20000 });
   await inspectButton.click();
@@ -509,11 +517,9 @@ const targets = resolveTestTargets({ tier: "any-completion" });
 test.describe.configure({ mode: "serial" });
 
 test.describe("Context ID isolation — retrieval layer (model-free)", () => {
-  // QUARANTINED for #1643 — an overlay at the canvas bottom intercepts the output-inspection-messages-memory click
-  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
-  test.fixme(
+  test(
     "mirrored context-scoped retrievals return only their own context's messages",
-    { tag: ["@regression", "@agents", "@components"] },
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedTwoContextSession(request);
       try {
