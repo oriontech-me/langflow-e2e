@@ -301,6 +301,30 @@ test("the CLI accepts --host-ips separated by commas OR whitespace", () => {
   }
 });
 
+test("native: a container-only flag is REFUSED, not ignored", () => {
+  // `--mapped-port` is the trap, and it is not hypothetical: the starter prints
+  // `ECHO_PORT=<n>` and that flag is the one with "port" in its name, so a caller
+  // wiring the two together resolved `http://10.0.0.5:8080` — the DEFAULT port —
+  // with ok:true. A wrong URL that reports success is found minutes later by a probe
+  // and attributed to the endpoint being down.
+  const r = spawnSync(
+    process.execPath,
+    [SCRIPT, "--topology", "native", "--mapped-port", "8081", "--host-ips", "10.0.0.5"],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--mapped-port/);
+  assert.match(r.stderr, /IGNORED under --topology native/);
+  // And the flag that DOES carry the port there still works.
+  const ok = execFileSync(
+    process.execPath,
+    [SCRIPT, "--topology", "native", "--service-port", "8081", "--host-ips", "10.0.0.5"],
+    { encoding: "utf8" },
+  );
+  assert.equal(JSON.parse(ok).langflowUrl, "http://10.0.0.5:8081");
+});
+
 test("the CLI refuses an unknown --topology instead of defaulting to container", () => {
   // Defaulting would answer the native lane's question under the container's rules,
   // and the difference between them is exactly a warning where an error belongs.

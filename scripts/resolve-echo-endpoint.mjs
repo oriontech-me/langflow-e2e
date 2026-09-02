@@ -304,8 +304,14 @@ export function resolveEchoEndpoint({
 
 function parseArgs(argv) {
   const args = {};
+  // Which flags were PASSED, as opposed to which have values — `--mapped-port`
+  // defaults from `--service-port` below, so by the time the decision runs the two
+  // are indistinguishable. The native topology needs to tell them apart to refuse
+  // an input it cannot honour rather than ignore it.
+  const seen = new Set();
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
+    if (a.startsWith("-")) seen.add(a);
     if (a === "--getent-ip") args.getentIp = argv[++i] ?? "";
     else if (a === "--docker-ip") args.dockerIp = argv[++i] ?? "";
     else if (a === "--service-port") args.servicePort = Number(argv[++i]);
@@ -329,8 +335,20 @@ function parseArgs(argv) {
   if (args.mappedPort === undefined && args.servicePort !== undefined) {
     args.mappedPort = args.servicePort;
   }
+  args.seenFlags = seen;
   return args;
 }
+
+/**
+ * Flags the container topology reads and the native one cannot honour.
+ *
+ * Ignoring them silently is the failure this refuses: the starter prints
+ * `ECHO_PORT=<n>`, and a caller handing that to the flag with "port" in its name —
+ * `--mapped-port`, which the container invocation does pass — resolved to the
+ * DEFAULT 8080 with `ok: true`. A wrong URL that reports success is the shape a
+ * probe finds minutes later and attributes to the endpoint being down.
+ */
+const CONTAINER_ONLY_FLAGS = ["--mapped-port", "--getent-ip", "--docker-ip", "--in-container"];
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   let args;
@@ -358,6 +376,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `::error::resolve-echo-endpoint: --topology must be "container" or "native", got "${args.topology}"\n`,
     );
     process.exit(2);
+  }
+
+  if (args.topology === "native") {
+    const ignored = CONTAINER_ONLY_FLAGS.filter((f) => args.seenFlags?.has(f));
+    if (ignored.length > 0) {
+      process.stderr.write(
+        `::error::resolve-echo-endpoint: ${ignored.join(", ")} ${ignored.length === 1 ? "is" : "are"} container-topology only and would be IGNORED under --topology native. The port comes from --service-port; pass that instead of --mapped-port, or a wrong URL resolves with ok:true.\n`,
+      );
+      process.exit(2);
+    }
   }
 
   const result = resolveEchoEndpoint(args);
