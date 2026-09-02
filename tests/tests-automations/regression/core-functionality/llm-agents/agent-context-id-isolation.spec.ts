@@ -11,6 +11,7 @@ import {
 } from "../../../../helpers/ui/open-advanced-options";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
@@ -468,6 +469,13 @@ async function runRetrievalScopedTo(page: Page, contextId: string): Promise<stri
   await page.waitForSelector("text=built successfully", { state: "hidden", timeout: 15000 });
   await page.getByTestId("button_run_message history").click();
   await page.waitForSelector("text=built successfully", { timeout: 30000 });
+
+  // The canvas' bottom-centre slot is shared by the build-status bar and the
+  // "Flow needs review" banner, and the banner takes the slot back the moment the
+  // bar auto-dismisses. This node's inspect button sits ~5 px from that slot, so
+  // the click is refused for as long as the taller banner owns it — #1643. Free
+  // the slot instead of retrying under it.
+  await clearCanvasBottomOverlay(page);
 
   const inspectButton = page.getByTestId("output-inspection-messages-memory");
   await expect(inspectButton).toBeEnabled({ timeout: 20000 });
