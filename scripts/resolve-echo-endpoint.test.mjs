@@ -352,6 +352,37 @@ test("isBlockedByDefaultIpv4 covers every range the SSRF guard blocks without an
   }
 });
 
+test("native mode=warn NEVER returns an error, whatever the addresses are", () => {
+  // The property that makes this resolver's verdict caller-proof. The only shell in
+  // the repo that consumes it (.github/actions/resolve-echo-endpoint) turns ANY not-ok
+  // decision into `exit 0` under mode: warn without reading `error` — and the native
+  // caller has to be hand-written, since a composite action only runs inside Actions
+  // and the VMs have no runner, so that idiom is exactly what gets copied.
+  //
+  // It cannot swallow anything as long as an error implies mode=fail. A later branch
+  // returning an error under warn would re-open that silently, which is why this is a
+  // property over every input shape rather than a case.
+  const shapes = [
+    [],
+    ["10.0.0.5"],
+    ["203.0.113.10"],
+    ["203.0.113.10", "10.0.0.5"],
+    ["127.0.0.1"],
+    ["::1"],
+    ["echo-host"],
+    ["100.100.4.7"],
+    ["169.254.10.1", "echo-host"],
+  ];
+
+  for (const hostIps of shapes) {
+    const r = resolveEchoEndpoint({ topology: "native", hostIps, servicePort: 8080, mode: "warn" });
+    assert.equal(r.error, null, `mode=warn returned an error for ${JSON.stringify(hostIps)}`);
+    // And it always says something: a decision that neither resolves nor warns is the
+    // unevaluated-verdict shape (#1012), which reads as clean and is not.
+    assert.ok(r.ok || r.warnings.length > 0, `silent not-ok decision for ${JSON.stringify(hostIps)}`);
+  }
+});
+
 test("the CLI accepts --host-ips separated by commas OR whitespace", () => {
   // Both shapes occur for real: the starter prints one address per line, and a
   // caller capturing that with $(...) hands over a space-separated string, while a

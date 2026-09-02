@@ -40,8 +40,25 @@
  *
  * Hence the one deliberate difference between the topologies: a non-private
  * address is a WARNING under a container, where it merely risks a 400 that names
- * itself, and an ERROR natively, where it subtracts a test from a lane that then
- * reports success.
+ * itself, and an ERROR natively **on a lane that asked to fail** — where it
+ * subtracts a test from a lane that then reports success.
+ *
+ * ## Why the native verdict survives its caller
+ *
+ * The severity is `mode`'s to decide, never the topology's, and that is not only
+ * tidiness: the one shell in this repo that consumes this script
+ * (`.github/actions/resolve-echo-endpoint`) short-circuits ANY not-ok decision to
+ * `exit 0` when `mode: warn`, without reading `error` at all. A native caller
+ * copying that idiom — and the native caller has to be written by hand, since a
+ * composite action only runs inside Actions and the VMs have no runner — would
+ * swallow a refusal whole.
+ *
+ * It cannot, and the reason is structural rather than documentary: under
+ * `--mode warn` the native path never returns an `error` at all. Every cause
+ * degrades to a warning, and either resolves the best address available or leaves
+ * ECHO_BASE_URL unset. So an `error` from this path implies `--mode fail`, which is
+ * exactly the mode that gate does not swallow. Pinned by a test, because a later
+ * branch returning an error under `warn` would re-open it silently.
  *
  * Pure by design: it takes discovered facts as flags and returns a decision. It
  * never shells out, resolves DNS, or calls the network — the bash in
