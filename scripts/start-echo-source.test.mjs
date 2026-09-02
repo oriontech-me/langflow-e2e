@@ -452,6 +452,19 @@ test("no way to enumerate addresses is reported as that, not as no private addre
   r.cleanup();
 });
 
+test("the pre-start port probe carries a deadline, like the readiness poll", () => {
+  // A filtered port does not refuse, it hangs, and curl's default connect timeout is
+  // ~300s — spent before the script has done anything at all.
+  const r = runScript({ env: { ECHO_BIND_HOST: "10.0.0.5" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(
+    r.curl.split("\n").filter((line) => line.includes("/get") && !line.includes("--max-time")).length,
+    0,
+    "a /get probe went out with no --max-time",
+  );
+  r.cleanup();
+});
+
 test("stopping a port with no PID file is a no-op, not an error", () => {
   const dir = mkdtempSync(join(tmpdir(), "stop-echo-source-test-"));
   const r = spawnSync("bash", [STOP], {

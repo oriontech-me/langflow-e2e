@@ -184,7 +184,10 @@ if [ -f "${PID_FILE}" ] && kill -0 "$(cat "${PID_FILE}")" 2>/dev/null; then
   echo "Stop it first: ECHO_PORT=${PORT} ./scripts/stop-echo-source.sh" >&2
   exit 2
 fi
-if curl -sf "http://${HEALTH_HOST}:${PORT}/get" > /dev/null 2>&1; then
+# `--max-time` for the same reason the readiness poll carries one: a port that is
+# filtered rather than closed does not refuse, it hangs, and curl's default connect
+# timeout is ~300s — spent here, before the script has done anything at all.
+if curl -sf --max-time 5 "http://${HEALTH_HOST}:${PORT}/get" > /dev/null 2>&1; then
   echo "ERROR: something already answers /get on ${HEALTH_HOST}:${PORT}." >&2
   echo "Refusing to start: this script cannot tell that endpoint from the one it would" >&2
   echo "launch, so a failed bind would be reported as a healthy start and the specs would" >&2
