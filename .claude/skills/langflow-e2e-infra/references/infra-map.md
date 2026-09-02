@@ -31,7 +31,7 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 | `setup-playwright` | Node + deps + browser install for a lane | — |
 | `run-e2e` | Runs a suite and uploads the report | used by `manual.yml` |
 | `wait-for-backend` | Post-collect-models health gate: waits out the wedge, else fails naming the state | `scripts/wait-for-backend.mjs`; `#1011/#1019/#1044/#1045` — adopted by daily/pr/manual/weekly |
-| `resolve-echo-endpoint` | Points `ECHO_BASE_URL` at the lane's `go-httpbin` service | `scripts/resolve-echo-endpoint.mjs`; `#1128` |
+| `resolve-echo-endpoint` | Points `ECHO_BASE_URL` at the lane's `go-httpbin` service (`--topology native` decides it for the VMs' container-less endpoint instead) | `scripts/resolve-echo-endpoint.mjs`; `#1128` |
 | `guard-dedicated-issue` | Validates a `daily-failure` issue against the dedicated-issue contract | `#1035/#1037` |
 | `auto-remove-stable` | Auto-removes `@stable` from hard failures | `scripts/remove-stable-from-failures.ts`, `#476` |
 
@@ -42,6 +42,7 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 | `start-langflow-docker.sh` / `stop-langflow-docker.sh` | Bring a Langflow instance up/down via Docker. No arg → `langflowai/langflow-nightly:latest` (refreshed before start); a version arg → the released repo; `LANGFLOW_IMAGE` → an exact reference (`#1076`) |
 | `start-langflow-pip.sh` / `stop-langflow-pip.sh` | Same via pip (local dev). Caps to 1 worker to avoid OOM (`#888`) |
 | `start-langflow-source.sh` / `stop-langflow-source.sh` | Same from a LOCAL SOURCE CLONE — the only substrate on the QA VMs, where Docker and Podman cannot be installed. Keys PID file, database and config dir on the port so shards run side by side; never moves the clone unless `LANGFLOW_SRC_REF` is set. Requires `uv` (the clone's deps resolve through `[tool.uv.sources] workspace = true`, which pip does not read — it would install PUBLISHED versions instead) and a frontend build in the clone (`make install_frontend build_frontend`; the served directory is gitignored upstream, and without it `/health_check` answers 200 with no UI). Refuses to start on an occupied port and fails the moment the process it launched exits — every one of those checks exists because its absence produces a GREEN run against the wrong instance |
+| `start-echo-source.sh` / `stop-echo-source.sh` | The echo endpoint WITHOUT a container, for the same VMs. Runs the pinned `go-httpbin` binary (same version the lanes' service container uses — a unit test reads the tag out of the workflows so the two cannot drift), verified against the release's `checksums.txt`. Refuses loopback (Langflow's SSRF layer blocks it whatever the allowlist says) and refuses a PUBLIC address, which is the dangerous one: it is reachable, so it looks fine, but `privateEchoEndpoint()` SKIPS an admitted-case assertion whose host is not blocked by default, and the lane goes green one test short. Prints `ECHO_HOST_IP` for the caller to hand to `resolve-echo-endpoint.mjs --topology native` |
 | `coverage-summary.ts` | Regenerates the QA-CHECKLIST Coverage Summary table (bullet markers → table) |
 | `stable-tests.ts` | Regenerates the `Phase 0 — Validated` block from `@stable` `test()` calls |
 | `check-checklist-guard.mjs` | PR guard: fails a PR that edits a generated QA-CHECKLIST block (`#741`) |

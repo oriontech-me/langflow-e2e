@@ -84,6 +84,9 @@ START_TIMEOUT_S="${LANGFLOW_START_TIMEOUT_S:-300}"
 # through it; five seconds is the interval every sibling script polls at.
 POLL_INTERVAL_S="${LANGFLOW_POLL_INTERVAL_S:-5}"
 KEEP_STATE="${LANGFLOW_SRC_KEEP_STATE:-0}"
+# How long a graceful exit may take on the failure path below. Same variable the
+# stop script reads, so the two cannot disagree about what "gave it a chance" means.
+STOP_TIMEOUT_S="${LANGFLOW_STOP_TIMEOUT_S:-15}"
 
 # Checked in two steps rather than one `-lt`: a non-numeric value makes `[ -lt ]`
 # return 2, which inside `if` is indistinguishable from "false", so the bad value
@@ -263,6 +266,28 @@ done
 
 echo "ERROR: Langflow did not become ready in ${START_TIMEOUT_S}s. Last log lines:" >&2
 tail -n 20 "${LOG_FILE}" >&2 || true
+# Confirm the process is gone before dropping the PID file. `kill` returning 0 only
+# means the signal was DELIVERED: if it is ignored, or the process is wedged, removing
+# the file discards the only reliable handle to stop it — and the next start's probe
+# cannot see a port that is BOUND but not answering, which is exactly the state this
+# timeout was reached in. So the collision would come back as a failed bind on every
+# later run, against an orphan nothing can name. The stop script already reasons this
+# way; a starter that contradicts its own stopper is worse than either rule alone.
 kill "${SERVER_PID}" 2>/dev/null || true
-rm -f "${PID_FILE}"
+WAITED=0
+while [ "${WAITED}" -lt "${STOP_TIMEOUT_S}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+if kill -0 "${SERVER_PID}" 2>/dev/null; then
+  echo "PID ${SERVER_PID} ignored SIGTERM after ${STOP_TIMEOUT_S}s; sending SIGKILL." >&2
+  kill -9 "${SERVER_PID}" 2>/dev/null || true
+  sleep 1
+fi
+if kill -0 "${SERVER_PID}" 2>/dev/null; then
+  echo "ERROR: PID ${SERVER_PID} survived SIGKILL; port ${PORT} may still be bound." >&2
+  echo "Leaving ${PID_FILE} in place so the next start refuses instead of colliding." >&2
+else
+  rm -f "${PID_FILE}"
+fi
 exit 1

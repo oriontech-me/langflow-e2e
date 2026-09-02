@@ -25,25 +25,65 @@
  * container. That is decision logic, and inline bash makes it unprovable until a
  * real lane breaks. Here it is covered by `npm run test:scripts` on every PR.
  *
+ * ## The second topology: no container at all (`--topology native`)
+ *
+ * The QA VMs have neither Docker nor Podman, so there is no service container and
+ * no container IP to discover — `scripts/start-echo-source.sh` runs the pinned
+ * go-httpbin binary on the host and reports the address it bound. The decision
+ * left is which of the machine's addresses may become `ECHO_BASE_URL`, and there
+ * the two constraints above stop being equivalent: a PUBLIC address satisfies both
+ * (it is neither a single-label host nor loopback) and still ruins the lane,
+ * because `privateEchoEndpoint()` in `tests/helpers/other/private-echo-endpoint.ts`
+ * **skips** an admitted-case assertion whose host is not blocked by default — and a
+ * host carrying a public address alongside the private one makes that a coin flip on
+ * interface ordering rather than a hypothetical.
+ *
+ * Hence the one deliberate difference between the topologies: a non-private
+ * address is a WARNING under a container, where it merely risks a 400 that names
+ * itself, and an ERROR natively **on a lane that asked to fail** — where it
+ * subtracts a test from a lane that then reports success.
+ *
+ * ## Why the native verdict survives its caller
+ *
+ * The severity is `mode`'s to decide, never the topology's, and that is not only
+ * tidiness: the one shell in this repo that consumes this script
+ * (`.github/actions/resolve-echo-endpoint`) short-circuits ANY not-ok decision to
+ * `exit 0` when `mode: warn`, without reading `error` at all. A native caller
+ * copying that idiom — and the native caller has to be written by hand, since a
+ * composite action only runs inside Actions and the VMs have no runner — would
+ * swallow a refusal whole.
+ *
+ * It cannot, and the reason is structural rather than documentary: under
+ * `--mode warn` the native path never returns an `error` at all. Every cause
+ * degrades to a warning, and either resolves the best address available or leaves
+ * ECHO_BASE_URL unset. So an `error` from this path implies `--mode fail`, which is
+ * exactly the mode that gate does not swallow. Pinned by a test, because a later
+ * branch returning an error under `warn` would re-open it silently.
+ *
  * Pure by design: it takes discovered facts as flags and returns a decision. It
  * never shells out, resolves DNS, or calls the network — the bash in
- * `.github/actions/resolve-echo-endpoint` does that and passes the results in.
+ * `.github/actions/resolve-echo-endpoint`, or the VM's run script, does that and
+ * passes the results in.
  *
  * Run:
  *   node scripts/resolve-echo-endpoint.mjs \
  *     --service-port 8080 --mapped-port 8080 \
  *     --getent-ip "" --docker-ip 172.18.0.3 --in-container false --mode fail
+ *   node scripts/resolve-echo-endpoint.mjs \
+ *     --topology native --service-port 8080 --host-ips 203.0.113.10,10.0.0.5
  *
  * Output (stdout, JSON): { ok, langflowUrl, probeUrl, strategy, warnings, error }
  */
 
 const HELP = `usage: resolve-echo-endpoint.mjs [options]
 
+  --topology T        container (default) | native — see the header comment
   --service-port N    port the echo listens on inside its container (default 8080)
   --mapped-port N     host port the service is published on (default = service-port)
   --getent-ip IP      result of \`getent hosts <service>\` (empty when it failed)
   --docker-ip IP      result of \`docker inspect\` on the service (empty when it failed)
   --in-container BOOL whether the JOB itself runs inside a container
+  --host-ips A,B      native only: the addresses the echo host reported
   --mode fail|warn    what an unavailable service means for this lane
 `;
 
@@ -74,21 +114,181 @@ export function isIpv4(host) {
 }
 
 /**
+ * The native topology: the echo is a process on a host, and the only question is
+ * which of that host's addresses the specs can actually assert against.
+ *
+ * Kept separate from the container decision rather than folded into it, because the
+ * two disagree about exactly one input — a public address — and folding them would
+ * mean one code path whose severity depends on a flag. Here each topology states its
+ * own consequence, and neither can drift into the other's.
+ */
+/**
+ * Whether Langflow's SSRF guard blocks this address BY DEFAULT — the set an
+ * allow-list entry is needed to reach at all.
+ *
+ * Wider than `isPrivateIpv4`, which answers a different question ("may the lane's
+ * allow-list admit it?"). Needed on one path only: the native `warn` degradation
+ * below, to keep it from resolving an address that answers 400 on every echo spec
+ * instead of trading away the single assertion it means to trade away.
+ *
+ * The canonical statement of this set is
+ * `tests/helpers/other/private-echo-endpoint.ts::isBlockedRangeIpv4`; this is a COPY,
+ * kept because this script has to stay dependency-free `.mjs`. Measured: a `.test.ts`
+ * cannot `import()` a `.mjs` under this repo's `module: commonjs` ts-node config — it
+ * does not compile — so no single test can hold the two side by side. The drift
+ * direction is what makes the copy acceptable: if upstream adds a blocked range and
+ * only the helper learns it, this resolves an address Langflow refuses and every echo
+ * spec answers 400, loudly. The helper's own drift is a SILENT skip, which is why it
+ * is the canonical one and this is the copy.
+ */
+export function isBlockedByDefaultIpv4(host) {
+  if (!isIpv4(host)) return false;
+  const [a, b] = host.split(".").map(Number);
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) || // link-local / cloud metadata
+    (a === 100 && b >= 64 && b <= 127) // CGNAT
+  );
+}
+
+/**
+ * Why no offered address is one the lane's allow-list admits.
+ *
+ * One cause, two renderings, because the severity is decided elsewhere: a lane blocked
+ * by a message naming the wrong reason costs the same hour as no message, and a lane
+ * that carries on needs the same sentence as a warning.
+ */
+function unusableCause(candidates) {
+  if (candidates.length === 0) {
+    const detail = "no host address was supplied for the native echo endpoint";
+    return {
+      warning: `${detail}.`,
+      error: `${detail}. Failing rather than falling back to public httpbin.org: start it with scripts/start-echo-source.sh, which prints ECHO_HOST_IP on success.`,
+    };
+  }
+  if (candidates.some((ip) => isLoopback(ip))) {
+    const detail = `the only addresses offered were loopback (${candidates.join(", ")})`;
+    return {
+      warning: `${detail}.`,
+      error: `${detail}. Langflow's SSRF layer blocks loopback outright — it ignores LANGFLOW_SSRF_ALLOWED_HOSTS for those addresses — so no echo spec can pass against it. Bind the echo to an RFC-1918 address instead.`,
+    };
+  }
+  if (!candidates.every((ip) => isIpv4(ip))) {
+    const detail = `resolved "${candidates.join(", ")}", which is not an IPv4 address`;
+    return {
+      warning: `${detail}.`,
+      error: `${detail}. Langflow's API Request component runs validators.url() and rejects a single-label host, so ECHO_BASE_URL must be a raw IP (#462).`,
+    };
+  }
+  const detail = `every address offered (${candidates.join(", ")}) is outside the RFC-1918 ranges in LANGFLOW_SSRF_ALLOWED_HOSTS`;
+  return {
+    warning: `${detail}.`,
+    error: `${detail}. Refused for what the allow-list says, not for reachability — and the two ways it goes wrong differ: a PUBLIC address is reachable and looks fine while privateEchoEndpoint() SKIPS the admitted-case assertion (its host is not one Langflow blocks by default), whereas a CGNAT or link-local one IS blocked by default and is not admitted either, so Langflow answers 400. Bind the echo to an RFC-1918 address.`,
+  };
+}
+
+function resolveNativeEndpoint({ hostIps, servicePort, mode }) {
+  const candidates = hostIps.filter((ip) => ip && ip.length > 0);
+
+  // First private address wins, so the choice is a function of the order the host
+  // reported its interfaces — deterministic, and re-derivable from the log.
+  const chosen = candidates.find((ip) => isPrivateIpv4(ip));
+
+  if (chosen) {
+    const langflowUrl = `http://${chosen}:${servicePort}`;
+    return {
+      ok: true,
+      langflowUrl,
+      // The same address, on purpose. There is no port mapping to probe around here,
+      // and probing loopback instead would confirm only that the process is up — not
+      // that the address the specs depend on is reachable, which is the half that
+      // breaks when a bind lands on the wrong interface.
+      probeUrl: langflowUrl,
+      strategy: "host address reported by the echo starter (native, no container)",
+      warnings: [],
+      error: null,
+    };
+  }
+
+  // Nothing the allow-list admits. The CAUSE is a property of the addresses; the
+  // SEVERITY belongs to the lane, and `mode` is what carries it — so the two are
+  // decided separately. Deciding severity by TOPOLOGY instead is what left `warn`
+  // tolerating a fallback to public httpbin.org in one branch while refusing a local
+  // public address in another: the same lost assertion, opposite verdicts.
+  const cause = unusableCause(candidates);
+
+  if (mode !== "warn") {
+    return {
+      ok: false,
+      langflowUrl: null,
+      probeUrl: null,
+      strategy: null,
+      warnings: [],
+      error: cause.error,
+    };
+  }
+
+  // `warn` asked for the best available, not for strictness — and a LOCAL public
+  // address is strictly better than what leaving ECHO_BASE_URL unset produces: the
+  // echo specs run against THIS machine instead of the public internet (#1128), and
+  // the only thing lost is the admitted-case assertion, which is named. An address
+  // Langflow blocks by default is NOT better: it is refused before it is reached, so
+  // every echo spec answers 400 rather than one of them skipping.
+  const reachable = candidates.find((ip) => isIpv4(ip) && !isBlockedByDefaultIpv4(ip));
+
+  if (reachable) {
+    const langflowUrl = `http://${reachable}:${servicePort}`;
+    return {
+      ok: true,
+      langflowUrl,
+      probeUrl: langflowUrl,
+      strategy: "public host address reported by the echo starter (native, no container, mode=warn)",
+      warnings: [
+        `${cause.warning} Resolved ${langflowUrl} anyway under mode=warn, because it keeps the echo specs on THIS machine rather than on public httpbin.org (#1128). What that costs is named: privateEchoEndpoint() will SKIP the admitted-case assertion in security/ssrf-url-validation.spec.ts and the non-vacuity control in security/model-provider-base-url-ssrf.spec.ts, so this lane asserts one thing fewer. Pass --mode fail to refuse instead.`,
+      ],
+      error: null,
+    };
+  }
+
+  return {
+    ok: false,
+    langflowUrl: null,
+    probeUrl: null,
+    strategy: null,
+    warnings: [
+      `${cause.warning} ECHO_BASE_URL left unset, so the specs fall back to their PUBLIC default — this lane is now exposed to a third-party outage (#1128). Not resolved to any offered address: Langflow blocks all of them by default, so the echo specs would answer 400 rather than run.`,
+    ],
+    error: null,
+  };
+}
+
+/**
+ * @param facts.topology    "container" (default) | "native"
  * @param facts.getentIp    container IP from inside the job's network, or ""
  * @param facts.dockerIp    container IP seen from the runner host, or ""
  * @param facts.inContainer does the JOB run inside a container?
+ * @param facts.hostIps     native only: addresses the echo host reported
  * @param facts.servicePort port inside the container
  * @param facts.mappedPort  port published on the host
  * @param facts.mode        "fail" (block the lane) | "warn" (carry on)
  */
 export function resolveEchoEndpoint({
+  topology = "container",
   getentIp = "",
   dockerIp = "",
   inContainer = false,
+  hostIps = [],
   servicePort = 8080,
   mappedPort = servicePort,
   mode = "fail",
 } = {}) {
+  if (topology === "native") {
+    return resolveNativeEndpoint({ hostIps, servicePort, mode });
+  }
+
   const warnings = [];
 
   // The address LANGFLOW must call. Both topologies put the echo on the same
@@ -185,13 +385,30 @@ export function resolveEchoEndpoint({
 
 function parseArgs(argv) {
   const args = {};
+  // Which flags were PASSED, as opposed to which have values — `--mapped-port`
+  // defaults from `--service-port` below, so by the time the decision runs the two
+  // are indistinguishable. The native topology needs to tell them apart to refuse
+  // an input it cannot honour rather than ignore it.
+  const seen = new Set();
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
+    if (a.startsWith("-")) seen.add(a);
     if (a === "--getent-ip") args.getentIp = argv[++i] ?? "";
     else if (a === "--docker-ip") args.dockerIp = argv[++i] ?? "";
     else if (a === "--service-port") args.servicePort = Number(argv[++i]);
     else if (a === "--mapped-port") args.mappedPort = Number(argv[++i]);
     else if (a === "--in-container") args.inContainer = argv[++i] === "true";
+    else if (a === "--topology") args.topology = argv[++i];
+    // Split on both separators: the starter prints one address per line and a shell
+    // capturing it with $(...) hands over whitespace, while a human types commas.
+    // Accepting only one of the two makes the other silently resolve to zero
+    // candidates — which reads as "the echo is not running".
+    else if (a === "--host-ips") {
+      args.hostIps = (argv[++i] ?? "")
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
     else if (a === "--mode") args.mode = argv[++i];
     else if (a === "--help" || a === "-h") args.help = true;
     else throw new Error(`resolve-echo-endpoint: unknown argument ${a}`);
@@ -199,8 +416,20 @@ function parseArgs(argv) {
   if (args.mappedPort === undefined && args.servicePort !== undefined) {
     args.mappedPort = args.servicePort;
   }
+  args.seenFlags = seen;
   return args;
 }
+
+/**
+ * Flags the container topology reads and the native one cannot honour.
+ *
+ * Ignoring them silently is the failure this refuses: the starter prints
+ * `ECHO_PORT=<n>`, and a caller handing that to the flag with "port" in its name —
+ * `--mapped-port`, which the container invocation does pass — resolved to the
+ * DEFAULT 8080 with `ok: true`. A wrong URL that reports success is the shape a
+ * probe finds minutes later and attributes to the endpoint being down.
+ */
+const CONTAINER_ONLY_FLAGS = ["--mapped-port", "--getent-ip", "--docker-ip", "--in-container"];
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   let args;
@@ -219,6 +448,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `::error::resolve-echo-endpoint: --mode must be "fail" or "warn", got "${args.mode}"\n`,
     );
     process.exit(2);
+  }
+  // Rejected rather than defaulted. A typo silently falling back to the container
+  // topology would answer the native lane's question with the container's rules —
+  // and the difference between them is precisely a warning where an error belongs.
+  if (args.topology && args.topology !== "container" && args.topology !== "native") {
+    process.stderr.write(
+      `::error::resolve-echo-endpoint: --topology must be "container" or "native", got "${args.topology}"\n`,
+    );
+    process.exit(2);
+  }
+
+  if (args.topology === "native") {
+    const ignored = CONTAINER_ONLY_FLAGS.filter((f) => args.seenFlags?.has(f));
+    if (ignored.length > 0) {
+      process.stderr.write(
+        `::error::resolve-echo-endpoint: ${ignored.join(", ")} ${ignored.length === 1 ? "is" : "are"} container-topology only and would be IGNORED under --topology native. The port comes from --service-port; pass that instead of --mapped-port, or a wrong URL resolves with ok:true.\n`,
+      );
+      process.exit(2);
+    }
   }
 
   const result = resolveEchoEndpoint(args);

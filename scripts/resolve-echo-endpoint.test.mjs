@@ -12,17 +12,21 @@
 // `github_network_*` bridges hand out.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  isBlockedByDefaultIpv4,
   resolveEchoEndpoint,
   isPrivateIpv4,
   isLoopback,
   isIpv4,
 } from "./resolve-echo-endpoint.mjs";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(HERE, "..");
+const SCRIPT = path.join(HERE, "resolve-echo-endpoint.mjs");
 
 test("host-based job: Langflow gets the container IP, the job probes the published port", () => {
   // pr-validation / nightly / manual: no `container:`, so `getent` cannot resolve
@@ -170,6 +174,278 @@ test("isLoopback covers every shape the SSRF error message named", () => {
     assert.equal(isLoopback(h), true, h);
   }
   assert.equal(isLoopback("172.18.0.2"), false);
+});
+
+// ── The native topology: a process on a VM, no container anywhere ────────────
+//
+// What these protect is the one rule that differs from the container topology, and
+// it is the kind that cannot be caught by running the lane: a PUBLIC address makes
+// the SSRF spec SKIP rather than fail, so the lane goes green having asserted one
+// thing fewer. A host carrying a public address alongside the private one puts the
+// wrong pick one interface-ordering away.
+
+test("native: the RFC-1918 address wins over the public one the VM also carries", () => {
+  // The shape that matters: a host carrying a routable public address alongside
+  // the private one, with the public one listed first by `ip -4 -o addr`.
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10", "10.0.0.5"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://10.0.0.5:8080");
+  // Same address, deliberately: there is no port mapping here, and probing loopback
+  // would prove the process is up without proving the specs can reach it.
+  assert.equal(r.probeUrl, "http://10.0.0.5:8080");
+  assert.match(r.strategy, /native/);
+  assert.deepEqual(r.warnings, []);
+});
+
+test("native: a public-only host is REFUSED, and the reason is the silent skip", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.langflowUrl, null);
+  // The message has to name the skip. "Unreachable" would send whoever reads it to
+  // the firewall, and the address is perfectly reachable — that is the trap.
+  assert.match(r.error, /SKIP/);
+  assert.match(r.error, /privateEchoEndpoint/);
+});
+
+test("container topology still only WARNS on the same public address", () => {
+  // The asymmetry is the point of the two topologies existing, so it is asserted
+  // rather than left to be inferred: under a container a public IP risks a 400 that
+  // names itself; natively it subtracts an assertion from a green lane.
+  const r = resolveEchoEndpoint({
+    getentIp: "",
+    dockerIp: "203.0.113.10",
+    inContainer: false,
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.error, null);
+  assert.match(r.warnings[0], /LANGFLOW_SSRF_ALLOWED_HOSTS/);
+});
+
+test("native: loopback is refused with the loopback cause, not the public one", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["127.0.0.1"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /loopback/);
+  assert.match(r.error, /ignores LANGFLOW_SSRF_ALLOWED_HOSTS/);
+});
+
+test("native: a single-label host is refused for the validators.url() reason", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["echo-host"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /validators\.url\(\)/);
+});
+
+test("native: no address at all fails the lane, and points at the starter", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: [],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /start-echo-source\.sh/);
+});
+
+test("native: mode=warn keeps the lane alive and names the public fallback", () => {
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: [],
+    servicePort: 8080,
+    mode: "warn",
+  });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.error, null);
+  assert.match(r.warnings[0], /PUBLIC/);
+});
+
+test("native mode=warn resolves the LOCAL public address rather than falling back", () => {
+  // The severity belongs to the LANE, not to the topology: `warn` asked for the best
+  // available. Leaving ECHO_BASE_URL unset loses the same admitted-case assertion AND
+  // puts every other echo spec on public httpbin.org (#1128) — so resolving the local
+  // public address is strictly better, provided the cost is named rather than implied.
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10"],
+    servicePort: 8080,
+    mode: "warn",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://203.0.113.10:8080");
+  assert.equal(r.error, null);
+  assert.match(r.warnings[0], /SKIP/);
+  assert.match(r.warnings[0], /ssrf-url-validation\.spec\.ts/);
+  assert.match(r.warnings[0], /--mode fail/);
+});
+
+test("native mode=warn refuses an address Langflow blocks by DEFAULT", () => {
+  // The one case where resolving is worse than not resolving: CGNAT and link-local are
+  // blocked before they are reached and are not in the allow-list either, so every echo
+  // spec answers 400 — a red lane, where the trade `warn` is making is ONE skip.
+  for (const blocked of ["100.100.4.7", "169.254.10.1", "127.0.0.1"]) {
+    const r = resolveEchoEndpoint({
+      topology: "native",
+      hostIps: [blocked],
+      servicePort: 8080,
+      mode: "warn",
+    });
+
+    assert.equal(r.ok, false, blocked);
+    assert.equal(r.langflowUrl, null, blocked);
+    assert.equal(r.error, null, `${blocked} must WARN under mode=warn, not error`);
+    assert.match(r.warnings[0], /400/, blocked);
+  }
+});
+
+test("native mode=fail is unchanged by the warn degradation", () => {
+  // The tightening this file exists for: on the lane where a human is waiting, a public
+  // address is still a refusal, not a resolved URL with a warning nobody reads.
+  const r = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["203.0.113.10"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.langflowUrl, null);
+  assert.match(r.error, /SKIPS/);
+});
+
+test("isBlockedByDefaultIpv4 covers every range the SSRF guard blocks without an allow-list", () => {
+  // Wider than isPrivateIpv4 on purpose, and a COPY of the canonical list in
+  // tests/helpers/other/private-echo-endpoint.ts — no test can hold the two side by
+  // side, since a .test.ts cannot import a .mjs under this repo's ts-node config.
+  for (const blocked of ["10.0.0.5", "127.0.0.1", "172.16.0.2", "192.168.1.9", "169.254.169.254", "100.64.0.1", "100.127.255.254"]) {
+    assert.equal(isBlockedByDefaultIpv4(blocked), true, blocked);
+  }
+  for (const reachable of ["203.0.113.10", "8.8.8.8", "100.63.255.255", "100.128.0.1", "172.32.0.1", "echo-host"]) {
+    assert.equal(isBlockedByDefaultIpv4(reachable), false, reachable);
+  }
+});
+
+test("native mode=warn NEVER returns an error, whatever the addresses are", () => {
+  // The property that makes this resolver's verdict caller-proof. The only shell in
+  // the repo that consumes it (.github/actions/resolve-echo-endpoint) turns ANY not-ok
+  // decision into `exit 0` under mode: warn without reading `error` — and the native
+  // caller has to be hand-written, since a composite action only runs inside Actions
+  // and the VMs have no runner, so that idiom is exactly what gets copied.
+  //
+  // It cannot swallow anything as long as an error implies mode=fail. A later branch
+  // returning an error under warn would re-open that silently, which is why this is a
+  // property over every input shape rather than a case.
+  const shapes = [
+    [],
+    ["10.0.0.5"],
+    ["203.0.113.10"],
+    ["203.0.113.10", "10.0.0.5"],
+    ["127.0.0.1"],
+    ["::1"],
+    ["echo-host"],
+    ["100.100.4.7"],
+    ["169.254.10.1", "echo-host"],
+  ];
+
+  for (const hostIps of shapes) {
+    const r = resolveEchoEndpoint({ topology: "native", hostIps, servicePort: 8080, mode: "warn" });
+    assert.equal(r.error, null, `mode=warn returned an error for ${JSON.stringify(hostIps)}`);
+    // And it always says something: a decision that neither resolves nor warns is the
+    // unevaluated-verdict shape (#1012), which reads as clean and is not.
+    assert.ok(r.ok || r.warnings.length > 0, `silent not-ok decision for ${JSON.stringify(hostIps)}`);
+  }
+});
+
+test("the CLI accepts --host-ips separated by commas OR whitespace", () => {
+  // Both shapes occur for real: the starter prints one address per line, and a
+  // caller capturing that with $(...) hands over a space-separated string, while a
+  // human types commas. Accepting one and not the other resolves to zero candidates
+  // and reads as "the echo is not running".
+  const forms = ["203.0.113.10,10.0.0.5", "203.0.113.10 10.0.0.5", "203.0.113.10\n10.0.0.5"];
+  for (const form of forms) {
+    const out = execFileSync(
+      process.execPath,
+      [SCRIPT, "--topology", "native", "--service-port", "8080", "--host-ips", form],
+      { encoding: "utf8" },
+    );
+    assert.equal(JSON.parse(out).langflowUrl, "http://10.0.0.5:8080", form);
+  }
+});
+
+test("native: the refusal separates the public case from the CGNAT one", () => {
+  // Both are outside the allow-list, and they fail DIFFERENTLY: a public host is not
+  // blocked by default, so privateEchoEndpoint() skips; a CGNAT/link-local one IS
+  // blocked by default and is not admitted either, so Langflow answers 400. Naming
+  // only the skip sent the reader looking for a green lane one test short.
+  const cgnat = resolveEchoEndpoint({
+    topology: "native",
+    hostIps: ["100.100.4.7"],
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(cgnat.ok, false);
+  assert.match(cgnat.error, /400/);
+  assert.match(cgnat.error, /SKIPS/);
+});
+
+test("native: a container-only flag is REFUSED, not ignored", () => {
+  // `--mapped-port` is the trap, and it is not hypothetical: the starter prints
+  // `ECHO_PORT=<n>` and that flag is the one with "port" in its name, so a caller
+  // wiring the two together resolved `http://10.0.0.5:8080` — the DEFAULT port —
+  // with ok:true. A wrong URL that reports success is found minutes later by a probe
+  // and attributed to the endpoint being down.
+  const r = spawnSync(
+    process.execPath,
+    [SCRIPT, "--topology", "native", "--mapped-port", "8081", "--host-ips", "10.0.0.5"],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--mapped-port/);
+  assert.match(r.stderr, /IGNORED under --topology native/);
+  // And the flag that DOES carry the port there still works.
+  const ok = execFileSync(
+    process.execPath,
+    [SCRIPT, "--topology", "native", "--service-port", "8081", "--host-ips", "10.0.0.5"],
+    { encoding: "utf8" },
+  );
+  assert.equal(JSON.parse(ok).langflowUrl, "http://10.0.0.5:8081");
+});
+
+test("the CLI refuses an unknown --topology instead of defaulting to container", () => {
+  // Defaulting would answer the native lane's question under the container's rules,
+  // and the difference between them is exactly a warning where an error belongs.
+  const r = spawnSync(process.execPath, [SCRIPT, "--topology", "vm"], { encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--topology must be/);
 });
 
 // ── Portability guard: nothing the containerized lane runs may need `jq` ─────
