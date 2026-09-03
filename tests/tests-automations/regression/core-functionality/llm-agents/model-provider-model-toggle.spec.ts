@@ -253,10 +253,19 @@ async function readPickerCensus(
 test.describe.configure({ mode: "serial" });
 
 test.describe("Model Provider Model Toggle", () => {
-  test(
+  // Quarantined at the triage of daily #1694 (run 33756085604, 2026-09-03).
+  // This test failed on 6 of the last 30 dailies under 4 distinct signatures,
+  // each stalling at a different step of the same short path (open Model
+  // Providers -> pick the provider -> toggle a model -> await the write). On
+  // 2026-09-03 it timed out on `getByText('Model Providers')` with only 1 of
+  // 21 liveness probes failing in its window, so it is not wedge collateral.
+  // Being `fixme` (a skip, not a failure) keeps the serial sibling below
+  // running. Lifting the quarantine (remove test.fixme + restore @stable) is
+  // a deliverable of #1696.
+  test.fixme(
     "model toggle changes immediately and persists across reopen",
     {
-      tag: ["@stable", "@regression", "@components", "@model-provider"],
+      tag: ["@regression", "@components", "@model-provider"],
     },
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
