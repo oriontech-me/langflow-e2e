@@ -42,6 +42,12 @@ export interface RunStreamFacts {
 export type FlowErrorVerdict =
   /** A run failed: fail the test (unless allowed) and quote this. */
   | { failed: true; message: string; shape: string }
+  /**
+   * A run failed, but for a reason outside the system under test: the provider
+   * refused or throttled the call. Reported as UNEVALUATED — never as a failure,
+   * and never as clean. See `PROVIDER_OUTAGE_PATTERNS`.
+   */
+  | { failed: false; providerOutage: string; message: string; shape: string }
   /** Nothing in this body says a run failed. */
   | { failed: false };
 
@@ -53,30 +59,35 @@ export type FlowErrorVerdict =
  *         test, as it did before — but see "what v1 gained" below: "unchanged"
  *         would be inaccurate, and this gate exists to stop that kind of claim.
  *   "v2"  `POST /api/v2/workflows`, the current playground/agent/node run path.
- *         New coverage, so a verdict here is ADVISORY for now — see the staging
- *         note below.
+ *         A verdict here fails the test too, since #1165.
  *   null  not a run stream.
  *
- * ## Why v2 is advisory
+ * ## v2 was staged, and what it cost to un-stage it
  *
- * Turning on a gate that has been dead for a whole endpoint is not a no-op. 88
- * specs trigger a run (playground *or* node), 75 of them without
- * `page.allowFlowErrors()`, and some provoke an execution error deliberately —
- * `core-components/validate-raise-errors-components.spec.ts` raises a
- * `ValueError` from a custom component and asserts the error UI, is
- * `@stable @release`, and has no hatch because until now it never needed one.
- * Failing on the v2 path immediately would turn that spec (and an unmeasured
- * number of others) red for doing exactly what it is written to do.
+ * Turning on a gate that has been dead for a whole endpoint is not a no-op, so
+ * #1162 shipped the v2 verdict as ADVISORY — computed and logged, never failing —
+ * and #1165 flipped it after an audit. The audit is worth keeping here, because
+ * the framing it started from was wrong in a way that would have made the flip
+ * look far more dangerous than it was.
  *
- * So this lands in two steps, the same way #1084 handled the HTTP half — fix the
- * classification first, decide about failing second:
+ * The count that justified staging was "88 specs trigger a run, 75 without
+ * `page.allowFlowErrors()`". That is how many specs COULD be affected. Measured
+ * across five consecutive scheduled dailies, the advisory log named **ten**
+ * distinct causes, and eight of them were specs provoking an error on purpose
+ * that already carried the hatch — plus `flow-error-gate.spec.ts` itself, the
+ * largest single emitter, which mocks a `RUN_ERROR` deliberately.
  *
- *   step 1 (here) the verdict is computed and LOGGED with its cause, which is
- *                 all #1059 needed: the reason a run failed is in the output
- *                 instead of being inferred from a downstream timeout.
- *   step 2        flip v2 to failing, after auditing which of those 75 specs
- *                 provoke an error on purpose and hatching them. Step 1's own
- *                 log is what makes that audit cheap.
+ * The other two were the finding, and they are why `PROVIDER_OUTAGE_PATTERNS`
+ * exists above: a Google embedding quota and a drained Anthropic key, delivered
+ * inside the run stream on specs with no hatch. Failing on those would have
+ * turned an empty account into stripped `@stable` tags.
+ *
+ * The instrument mattered as much as the result. #1165 asked for a full-suite
+ * `manual.yml` dispatch, which #1174 makes impossible inside its 90-minute
+ * timeout; the daily prints the same advisory block every weekday, its job logs
+ * outlive the 7-day artifact retention, and it is sharded — so a cause narrows to
+ * one shard's 52 specs before any content matching. That last part is what
+ * settled the rows the July inventory had to leave as "strong, not proof".
  *
  * ## What v1 gained (it is NOT unchanged)
  *
@@ -182,6 +193,98 @@ const EXCEPTION_PATTERNS = [
   /An error occured .+/,
 ];
 
+/**
+ * Errors that reach the run stream because the PROVIDER refused the call, not
+ * because the flow is wrong (#1165).
+ *
+ * Why these cannot be an ordinary flow error. The harvest of five consecutive
+ * scheduled dailies found ten distinct advisory causes; eight are specs
+ * provoking an error on purpose, and the other two are these — a Google
+ * embedding quota (`RESOURCE_EXHAUSTED`) on `rag-pipeline`, and a drained
+ * Anthropic key (`credit balance is too low`) on
+ * `openai-compatible-provider-setup`, both on specs with no
+ * `page.allowFlowErrors()`. Neither says anything about Langflow.
+ *
+ * The cost of getting this wrong is not one red test, it is a tag. A failure the
+ * fixture raises carries the text `Flow execution error detected during test`,
+ * which matches nothing in `scripts/lib/infra-signature-patterns.json` — that
+ * list is transport-level only (`apiRequestContext.*: Timeout`, `ECONNREFUSED`,
+ * `ECONNRESET`, DNS). So `remove-stable-from-failures.ts` would score a drained
+ * key as ATTRIBUTABLE and strip `@stable` in an unreviewed commit. This repo has
+ * three recorded account drains (#772 openai, #1029 google, #1169 anthropic) and
+ * the third is dated inside the harvest that found this.
+ *
+ * Narrow in SCOPE, not in wording. The alternative fixes were rejected: hatching
+ * the two specs would silence genuine flow errors on them forever, and widening
+ * the infra-signature list would change how flakes are filed across the whole
+ * suite (`CONTRIBUTING.md` calls that "a deliberate change, not a convenience").
+ *
+ * But within that scope the patterns err WIDE, because the two errors do not
+ * cost the same. A pattern that is too wide downgrades one run to UNEVALUATED —
+ * counted, printed, never clean. A pattern that is too narrow fails a test on a
+ * drained key, and that failure's text matches nothing in
+ * `infra-signature-patterns.json`, so it is scored ATTRIBUTABLE and takes a tag.
+ * The first version enumerated one token per provider and, measured on the real
+ * payloads, missed three of the strings this repo already recognises elsewhere
+ * (`no credits remaining`, `billing_not_active`, a bare 402).
+ *
+ * A match downgrades the verdict to UNEVALUATED, never to clean — the same rule
+ * the fixture already applies to a stream it could not read (#1012).
+ */
+const PROVIDER_OUTAGE_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
+  // Google, measured 2026-09-01: "Error embedding content (RESOURCE_EXHAUSTED):
+  // 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, …}}"
+  { id: "quota-exhausted", pattern: /\bRESOURCE_EXHAUSTED\b/ },
+  // Anthropic, measured 2026-09-02: "Error code: 400 - {'type': 'error',
+  // 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance
+  // is too low to access the Anthropic API. …'}}"
+  { id: "credit-exhausted", pattern: /credit balance is too low/i },
+  // OpenAI's equivalent. Not measured in the harvest — included because it is
+  // the same account state under the third provider this suite runs, and the
+  // one whose drain (#772) cost three specs their tag.
+  //
+  // Matched on the bare word, NOT on `insufficient_quota`, for two reasons the
+  // review of this PR measured. (a) The provider says it twice in one payload —
+  // `'message': 'You exceeded your current quota…'` at ~offset 50 and
+  // `'type': 'insufficient_quota'` at ~offset 276 — and `providerOutage()` runs
+  // on the message AFTER `summarize()` has cut it to 3 lines / 400 chars, so the
+  // token that arrives last is the one a slightly longer component name drops.
+  // The prose sits at the front and survives. (b) `run-node-and-wait.ts`
+  // classifies the SAME run message with `/\bquota\b/i`; two lists disagreeing
+  // about the same string is what produced this gap.
+  { id: "quota-exhausted", pattern: /\bquota\b/i },
+  // The drained-account wording of the OpenAI-COMPATIBLE endpoints, which is a
+  // different string from either of the two above. Not a guess about a provider
+  // we do not run: `openai-compatible-provider-setup.spec.ts:1029` already skips
+  // on exactly these two tokens, and that spec is one of the two measured cases
+  // this carve-out was built for — so leaving them out covered the harvest's
+  // Anthropic half of that spec and not its OpenAI-compatible half.
+  { id: "credit-exhausted", pattern: /no credits remaining|billing_not_active/i },
+  // The billing refusal as a bare status, which is how an endpoint that returns
+  // no JSON body words it. `\b402\b` is safe where a bare `429` is not: 429 is
+  // the rate-limit status AND a plausible request id or token count, while 402
+  // appears in neither — the suite has no other source of that number.
+  { id: "payment-required", pattern: /\b402\b|payment required/i },
+  // The rate-limit status as the provider words it inside the stream. Anchored
+  // on the provider's own phrasing rather than a bare "429", which appears in
+  // request ids and token counts.
+  { id: "rate-limited", pattern: /\b(rate[ _-]?limit(ed|_error|s)?|too many requests)\b/i },
+];
+
+/**
+ * Whether an error message is a provider outage rather than a flow failure, and
+ * which kind. Matched against the message the shape carried, not the whole body:
+ * a body-wide match would fire on an agent that merely *mentions* a rate limit,
+ * which is the same false-positive engine the raw-traceback patterns are fenced
+ * off from below.
+ */
+export function providerOutage(message: string): string | null {
+  for (const { id, pattern } of PROVIDER_OUTAGE_PATTERNS) {
+    if (pattern.test(message)) return id;
+  }
+  return null;
+}
+
 const asRecord = (value: unknown): Record<string, any> | null =>
   value && typeof value === "object" ? (value as Record<string, any>) : null;
 
@@ -224,6 +327,22 @@ const summarize = (text: unknown, limit = 400): string =>
  * the signal there, not the flag.
  */
 export function classifyFlowError(body: string): FlowErrorVerdict {
+  /**
+   * The single exit for "this body says a run failed".
+   *
+   * Every shape returns through here so the provider-outage downgrade cannot be
+   * added to one shape and forgotten on the next: the two measured cases arrived
+   * as `event_type=error`, but the same provider message reaches `RUN_ERROR` and
+   * `node status=error` on other runs, and a per-shape check would have covered
+   * the ones that happened to be sampled.
+   */
+  const fail = (message: string, shape: string): FlowErrorVerdict => {
+    const outage = providerOutage(message);
+    return outage
+      ? { failed: false, providerOutage: outage, message, shape }
+      : { failed: true, message, shape };
+  };
+
   const events = parseStreamEvents(body);
   for (const event of events) {
     const e = asRecord(event);
@@ -231,7 +350,7 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
 
     // v2 — the terminal verdict of the run. Most direct, so checked first.
     if (e.type === "RUN_ERROR" && e.message) {
-      return { failed: true, message: summarize(e.message), shape: "RUN_ERROR" };
+      return fail(summarize(e.message), "RUN_ERROR");
     }
 
     // v2 — the error message pushed into the chat. The payload shape varies by
@@ -247,11 +366,10 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
         data?.error ??
         data?.text ??
         (typeof value.data === "string" ? value.data : undefined);
-      return {
-        failed: true,
-        message: summarize(text) || "flow emitted an error event with no readable text",
-        shape: "event_type=error",
-      };
+      return fail(
+        summarize(text) || "flow emitted an error event with no readable text",
+        "event_type=error",
+      );
     }
 
     // v1 — the event envelope is `{"event": "<type>", "data": …}`
@@ -259,11 +377,10 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
     // `error: false`, so the `data.error === true` check below never saw it.
     if (e.event === "error") {
       const data = asRecord(e.data);
-      return {
-        failed: true,
-        message: summarize(data?.text ?? data?.error_message ?? e.data) || "flow emitted an error event",
-        shape: "event=error",
-      };
+      return fail(
+        summarize(data?.text ?? data?.error_message ?? e.data) || "flow emitted an error event",
+        "event=error",
+      );
     }
 
     // v2 — a node that ended in error, which carries the component context.
@@ -274,31 +391,25 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
       for (const output of Object.values(outputs)) {
         const message = asRecord(asRecord(output)?.message);
         if (message?.errorMessage) {
-          return {
-            failed: true,
-            message: summarize(message.errorMessage),
-            shape: "node status=error",
-          };
+          return fail(summarize(message.errorMessage), "node status=error");
         }
       }
-      return {
-        failed: true,
-        message: `node ${asRecord(patch)?.path ?? "(unknown)"} ended with status=error`,
-        shape: "node status=error",
-      };
+      return fail(
+        `node ${asRecord(patch)?.path ?? "(unknown)"} ended with status=error`,
+        "node status=error",
+      );
     }
 
     // v1 — kept verbatim from the inline detector.
     const data = asRecord(e.data);
     if (typeof data?.build_data?.params === "string" && data.build_data.params.startsWith("Error")) {
-      return { failed: true, message: summarize(data.build_data.params), shape: "build_data.params" };
+      return fail(summarize(data.build_data.params), "build_data.params");
     }
     if (data?.error === true || e.error === true) {
-      return {
-        failed: true,
-        message: summarize(data?.error_message ?? e.error_message) || "Unknown error",
-        shape: "error=true",
-      };
+      return fail(
+        summarize(data?.error_message ?? e.error_message) || "Unknown error",
+        "error=true",
+      );
     }
   }
 
@@ -311,7 +422,7 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
   if (events.length === 0) {
     for (const pattern of EXCEPTION_PATTERNS) {
       const match = String(body ?? "").match(pattern);
-      if (match) return { failed: true, message: match[0].slice(0, 400), shape: "python exception" };
+      if (match) return fail(match[0].slice(0, 400), "python exception");
     }
   }
 
