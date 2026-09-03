@@ -1,0 +1,1317 @@
+{
+  "version": "1.13.0.dev0",
+  "exclusions": [
+    {
+      "prefix": "/api/v1/authz/",
+      "reason": "OSS authorization is pass-through — enforce() returns True and logs that it did, so an assertion here would assert nothing. The @enterprise lane drives these paths against an instance that enforces."
+    },
+    {
+      "prefix": "/api/v1/store/",
+      "reason": "The Langflow Store is an external service, unreachable in CI and already a documented exemption in tests/fixtures/http-error-policy.ts. Covering it would mean asserting a mock."
+    },
+    {
+      "prefix": "/api/v1/agentic/",
+      "reason": "AI-assist needs a live provider plus its own flag, and every assertion would depend on the model electing to act — the opposite of the any-completion tier (#1187)."
+    },
+    {
+      "prefix": "/api/v1/predict/",
+      "reason": "Deprecation stub kept for backwards compatibility; the family answers 400 telling the caller to use /run instead."
+    },
+    {
+      "prefix": "/api/v1/process/",
+      "reason": "Deprecation stub kept for backwards compatibility; the family answers 400 telling the caller to use /run instead."
+    },
+    {
+      "prefix": "/api/v1/task/",
+      "reason": "Deprecation stub: GET /api/v1/task/x answers 400 'The /task endpoint is deprecated and will be removed in a future version. Please use /run instead.'"
+    },
+    {
+      "prefix": "/api/v1/upload/",
+      "reason": "Deprecation stub superseded by /api/v1/files/upload/{flow_id} and POST /api/v2/files, both of which are covered."
+    },
+    {
+      "prefix": "/api/v1/voice/",
+      "reason": "A WebSocket / ElevenLabs surface: no HTTP contract to assert, and it needs a third-party credential the suite does not hold."
+    },
+    {
+      "prefix": "/api/v1/extensions/",
+      "reason": "A plugin SSE channel and a bundle-reload hook: both need an installed extension, which the OSS nightly does not ship."
+    }
+  ],
+  "operations": [
+    {
+      "method": "DELETE",
+      "path": "/api/v1/agentic/mcp",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/api_key/{api_key_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/authz/role-assignments/{assignment_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/authz/roles/{role_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/authz/shares/{share_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/authz/teams/{team_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/authz/teams/{team_id}/members/{user_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/files/delete/{flow_id}/{file_name}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/flows/",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/flows/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/flows/{flow_id}/versions/{version_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/folders/{folder_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/knowledge_bases",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/knowledge_bases/{kb_name}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/mcp/project/{project_id}/streamable",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/mcp/streamable",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/memories/{memory_base_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/models/default_model",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/builds",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/messages",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/messages/session/{session_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/messages/sessions",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/messages/shared/session/{session_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/traces",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/monitor/traces/{trace_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/projects/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/{user_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/variables/{variable_id}",
+      "inSchema": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/files",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/files/batch/",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/files/{file_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/mcp/servers/{server_name}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/a2a/agents",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/a2a/{flow_id}/.well-known/agent-card.json",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agentic/check-config",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agentic/files",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agentic/mcp",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/all",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/api_key/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/audit",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/capabilities",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/role-assignments",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/roles",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/roles/{role_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/shares",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/shares/{share_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/teams",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/teams/{team_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/authz/teams/{team_id}/members",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auto_login",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/build/{flow_id}/{vertex_id}/stream",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/build/{job_id}/events",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/build_public_tmp/{job_id}/events",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/catalog-policy/components",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/catalog-policy/templates",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/catalog-policy/usage",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/catalog-policy/usage/flows",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/config",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/extensions/events",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/files/download/{flow_id}/{file_name}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/files/images/{flow_id}/{file_name}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/files/list/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/files/profile_pictures/list",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/files/profile_pictures/{folder_name}/{file_name}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/basic_examples/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/public_flow/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/{flow_id}/events",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/{flow_id}/note_translations",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/{flow_id}/versions/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/flows/{flow_id}/versions/{version_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/folders/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/folders/download/{folder_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/folders/{folder_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases/connectors",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases/{kb_name}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases/{kb_name}/chunks",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases/{kb_name}/metadata/keys",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases/{kb_name}/runs",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge_bases/{kb_name}/runs/{run_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/project/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/project/{project_id}/composer-url",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/project/{project_id}/installed",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/project/{project_id}/sse",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/project/{project_id}/streamable",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/sse",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mcp/streamable",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/memories",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/memories/{memory_base_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/memories/{memory_base_id}/messages",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/memories/{memory_base_id}/mismatch",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/memories/{memory_base_id}/sessions",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/model-provider-policy",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/model_options/embedding",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/model_options/language",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models/default_model",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models/enabled_models",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models/enabled_providers",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models/provider-descriptors",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models/provider-variable-mapping",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/models/providers",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/builds",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/job_queue",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/messages",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/messages/sessions",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/messages/shared",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/messages/shared/sessions",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/traces",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/traces/{trace_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/monitor/transactions",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/policy-bundle",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/policy-bundle/history",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/download/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/session",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/starter-projects/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/store/check/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/store/check/api_key",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/store/components/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/store/components/{component_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/store/tags",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/store/users/likes",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/task/{_task_id}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/whoami",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/{user_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/variables/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice/elevenlabs/voice_ids",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/webhook-events/{flow_id_or_name}",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/files",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/files/{file_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/mcp/servers",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/mcp/servers/{server_name}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/registration/",
+      "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/workflows",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/workflows/pending",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/workflows/{job_id}/events",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/health_check",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/logs",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/logs-stream",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/authz/roles/{role_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/authz/shares/{share_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/authz/teams/{team_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/flows/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/folders/{folder_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/mcp/project/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/memories/{memory_base_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/monitor/messages/session/{old_session_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/monitor/messages/shared/session/{old_session_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/projects/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/store/components/{component_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/users/{user_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/users/{user_id}/reset-password",
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/variables/{variable_id}",
+      "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/mcp/servers/{server_name}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/a2a/{flow_id}/jsonrpc",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agentic/assist",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agentic/assist/run",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agentic/assist/stream",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agentic/execute/{flow_name}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agentic/mcp",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agentic/sessions/reset",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/api_key/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/api_key/store",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/authz/me/permissions",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/authz/role-assignments",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/authz/roles",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/authz/shares",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/authz/teams",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/authz/teams/{team_id}/members",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/build/{flow_id}/flow",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/build/{flow_id}/vertices",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/build/{flow_id}/vertices/{vertex_id}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/build/{job_id}/cancel",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/build_public_tmp/{flow_id}/flow",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/build_public_tmp/{job_id}/cancel",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/custom_component",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/custom_component/update",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/extensions/{extension_id}/bundles/{bundle_name}/reload",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/files/upload/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/batch/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/download/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/expand/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/upload/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/{flow_id}/events",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/{flow_id}/versions/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/flows/{flow_id}/versions/{version_id}/activate",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/folders/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/folders/upload/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases/preview-chunks",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases/test-connection",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases/{kb_name}/cancel",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases/{kb_name}/ingest",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases/{kb_name}/ingest/connector",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge_bases/{kb_name}/ingest/folder",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/login",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/logout",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp/project/{project_id}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp/project/{project_id}/install",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp/project/{project_id}/streamable",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp/streamable",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/memories",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/memories/{memory_base_id}/flush",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/memories/{memory_base_id}/regenerate",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/model-provider-policy",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/models/default_model",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/models/enabled_models",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/models/validate-provider",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/policy-bundle/rollback/{revision}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/predict/{_flow_id}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/process/{_flow_id}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/projects/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/projects/upload/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/refresh",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/responses",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/run/advanced/{flow_id_or_name}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/run/session/{flow_id_or_name}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/run/{flow_id_or_name}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/store/components/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/store/users/likes/{component_id}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/{flow_id}",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/validate/code",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/validate/prompt",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/variables/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/variables/detections",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/webhook/{flow_id_or_name}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/files",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/files/batch/",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/mcp/servers/{server_name}",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/registration/",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/workflows",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/workflows/public",
+      "inSchema": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/workflows/stop",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/workflows/{job_id}/resume",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/catalog-policy/components",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/catalog-policy/templates",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/flows/{flow_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/model-provider-policy",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/monitor/messages/shared/{message_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/monitor/messages/{message_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/policy-bundle",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/projects/{project_id}",
+      "inSchema": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/files/{file_id}",
+      "inSchema": true
+    }
+  ],
+  "liveness": {
+    "probed": 55,
+    "dead": []
+  }
+}
