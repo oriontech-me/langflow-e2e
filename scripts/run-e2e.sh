@@ -128,6 +128,11 @@ WORKFLOW_ID="${WORKFLOW_ID:-daily-stable-vm}"
 # change, and until it lands a mismatch has to be visible rather than fatal, or a
 # whole day of comparison data is lost to a version difference nobody can fix at 08:00.
 UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}"
+# The PUBLISHED image is what the CI lane pulls, and therefore what this lane has to
+# match. Asking the registry rather than the git tags is not a detail: upstream tags
+# before it builds and only ships if the tests pass, so a tag can exist for an image
+# that never shipped.
+NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100}"
 CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
 REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
 
@@ -292,18 +297,36 @@ phase_preflight() {
   # What the CI will be testing today, resolved by upstream's own rule. Informational
   # here and compared after the run: asking now means the operator sees the gap before
   # spending an hour producing a comparison that a version difference already spoiled.
-  TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_RESOLUTION=""
+  TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
   if [ "$CHECK_TARGET_VERSION" = "1" ]; then
-    if git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$RUN_DIR/logs/target-version.log"; then
+    local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
+    # The registry listing is optional and its absence is survivable — the resolver
+    # falls back to the refs and says so — so a failure here warns and continues.
+    curl -sfS --max-time 20 "$NIGHTLY_TAGS_URL" -o "$RUN_DIR/nightly-tags.json" 2>> "$vlog" \
+      || warn "could not read the published nightly image listing; the expected version will come from the git refs, which can run ahead of what actually shipped."
+    if git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$vlog"; then
       local decision
-      decision="$(node scripts/resolve-target-version.mjs --refs-file "$RUN_DIR/upstream-refs.txt" 2>> "$RUN_DIR/logs/target-version.log" || true)"
+      decision="$(node scripts/resolve-target-version.mjs \
+        --refs-file "$RUN_DIR/upstream-refs.txt" \
+        --image-tags-file "$RUN_DIR/nightly-tags.json" 2> "$verr" || true)"
+      # The resolver's warnings are the difference between "same commit" and "same
+      # cycle". Shown, not just filed: a run that silently downgraded its own claim
+      # is how a comparison starts meaning less than the reader thinks.
+      if [ -s "$verr" ]; then cat "$verr" >&2; cat "$verr" >> "$vlog"; fi
       if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
         TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
         TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
+        TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
         TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
-        info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, by $TARGET_RESOLUTION)"
+        info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
       else
-        warn "could not resolve which Langflow this lane should test — the comparison will not know whether both sides ran the same product."
+        # Quote the resolver rather than inventing a reason: it distinguishes "no
+        # release branch in the listing" from "the file could not be read", and the
+        # two send the reader to different places.
+        local why
+        why="$(node -p "try{JSON.parse(process.argv[1]).error||''}catch{''}" "${decision:-}" 2>/dev/null || true)"
+        warn "could not resolve which Langflow this lane should test${why:+ — $why}"
+        warn "The comparison will not know whether both sides ran the same product."
       fi
     else
       warn "could not reach $UPSTREAM_REPO_URL to resolve the expected Langflow version."
@@ -736,6 +759,8 @@ phase_merge() {
     langflow_version "${LANGFLOW_VERSION:-}" \
     langflow_expected_version "${TARGET_EXPECTED_VERSION:-}" \
     langflow_expected_ref "${TARGET_EXPECTED_REF:-}" \
+    langflow_expected_sha "${TARGET_EXPECTED_SHA:-}" \
+    langflow_version_resolution "${TARGET_RESOLUTION:-}" \
     langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
@@ -868,11 +893,27 @@ phase_verdict() {
     err "at least one shard had a failing test."
     failed=1
   fi
-  if [ "$REQUIRE_TARGET_VERSION" = "1" ] && [ "${TARGET_VERSION_MATCH:-unchecked}" = "no" ]; then
-    err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
-    err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
-    err "products describes the changelog, not the environments."
-    failed=1
+  if [ "$REQUIRE_TARGET_VERSION" = "1" ]; then
+    case "${TARGET_VERSION_MATCH:-unchecked}" in
+      no)
+        err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
+        err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
+        err "products describes the changelog, not the environments."
+        failed=1
+        ;;
+      yes | cycle) ;;
+      *)
+        # "Require" has to require. Every way the check itself can fail — the registry
+        # or github unreachable, the resolver erroring, the target reporting no version
+        # — lands here, and passing green on those is passing green precisely when
+        # nobody can tell whether the two lanes ran the same product.
+        err "the version check could not be performed (${TARGET_VERSION_MATCH:-unchecked}${TARGET_VERSION_REASON:+: $TARGET_VERSION_REASON})."
+        err "REQUIRE_TARGET_VERSION=1 asks for a guarantee, and an unperformed check is"
+        err "not a weaker guarantee — it is none. Set CHECK_TARGET_VERSION=1 and make the"
+        err "resolution work, or drop REQUIRE_TARGET_VERSION."
+        failed=1
+        ;;
+    esac
   fi
   [ "$failed" = "0" ] && log "Green run." || true
   return $failed

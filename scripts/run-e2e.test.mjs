@@ -162,13 +162,41 @@ test("REQUIRE_TARGET_VERSION=1 makes the mismatch fatal, naming what it costs", 
   assert.match(r.stderr, /describes the changelog, not the environments/);
 });
 
-test("a matching version never fails, whatever REQUIRE says", () => {
-  for (const match of ["yes", "cycle", "unknown", "unchecked"]) {
+test("a matching version passes under REQUIRE, exactly or by cycle", () => {
+  for (const match of ["yes", "cycle"]) {
     const r = sourced(
       `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
         `TARGET_VERSION_MATCH=${match}\n` +
         `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
       { REQUIRE_TARGET_VERSION: "1" },
+    );
+    assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
+  }
+});
+
+test("under REQUIRE, a check that could not RUN fails too", () => {
+  // The gap that makes "require" not require: the registry unreachable, github
+  // unreachable, the resolver erroring, or the target reporting no version all land
+  // on unknown/unchecked. Passing green there is passing green in exactly the cases
+  // where nobody can tell whether both lanes ran the same product.
+  for (const match of ["unknown", "unchecked"]) {
+    const r = sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+        `TARGET_VERSION_MATCH=${match}\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "1" },
+    );
+    assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1, match);
+    assert.match(r.stderr, /an unperformed check is/);
+  }
+});
+
+test("without REQUIRE, none of the version states fail the run", () => {
+  for (const match of ["yes", "cycle", "unknown", "unchecked", "no"]) {
+    const r = sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+        `TARGET_VERSION_MATCH=${match}\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
     );
     assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
   }
