@@ -86,6 +86,15 @@ if (!webhook && !dryRun) {
 // Slack's own limits, not guesses: a section's text caps at 3000 characters and a
 // header's at 150, and a payload that breaks either is rejected whole — so the
 // message would be lost precisely on the noisiest day.
+//
+// Those are BLOCK KIT's documented limits. A Workflow Builder trigger publishes no
+// per-variable limit, so the same cap is applied there — conservative rather than
+// derived, which is worth saying because a variable over the real limit would fail
+// the way everything fails on that transport: HTTP 200 and an empty channel.
+// Checked against a live trigger on 2026-09-03 with 40 failures: the budget listed
+// 9 and elided 31, the body rendered at 2718 characters, and the channel showed all
+// of it including the closing notice. So 2900 is safe on both at this order of
+// magnitude — measured, not assumed, and re-measure before raising it.
 const HEADER_MAX = 150;
 const SECTION_MAX = 2900;
 const MAX_FAILURES_LISTED = 10;
