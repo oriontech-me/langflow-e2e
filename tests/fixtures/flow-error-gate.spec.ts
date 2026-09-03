@@ -9,9 +9,13 @@
 //      swallowed. That regression shipped invisibly because nothing executed the
 //      gate;
 //   2. `page.allowFlowErrors()` still suppresses it;
-//   3. the v2 run path is ADVISORY for now — it logs the cause and does NOT fail,
-//      because 75 of the 88 run-driving specs have no hatch and some provoke an
-//      execution error on purpose (see `flow-error-policy.ts`, step 2).
+//   3. the v2 run path FAILS too, since #1165 — it is no longer advisory, so the
+//      hatch below is what keeps that test green. This file is itself the largest
+//      emitter in the daily's advisory log (12 of 40 across five dailies),
+//      precisely because it mocks a RUN_ERROR on purpose: flipping the surface
+//      without flipping this spec would have reddened the gate's own guard;
+//   4. a PROVIDER outage in a v2 run is NOT a flow error (#1165) — it is reported
+//      as unevaluated, and it must leave a test green with no hatch at all.
 //
 // A tiny local server stands in for Langflow: no container, no provider key, no
 // LLM. The fixture only cares about the URL shape, the content type and the body.
@@ -49,6 +53,16 @@ const V2_ERROR_BODY = [
   "",
 ].join("\n");
 
+const V2_PROVIDER_OUTAGE_BODY = [
+  'data: {"type":"RUN_STARTED"}',
+  `data: ${JSON.stringify({
+    type: "RUN_ERROR",
+    message:
+      "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API.'}}",
+  })}`,
+  "",
+].join("\n");
+
 let server: http.Server;
 let origin: string;
 /** Responses left deliberately open by `?mode=hang`, ended in `afterAll`. */
@@ -64,6 +78,13 @@ test.beforeAll(async () => {
     }
     if (path === "/api/v2/workflows") {
       res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+      if (query.includes("mode=outage")) {
+        // A drained provider key, verbatim from the 2026-09-02 daily. The SAME
+        // wire shape as the error above — only the message differs, which is the
+        // whole point: the downgrade is decided by the message, not the shape.
+        res.end(V2_PROVIDER_OUTAGE_BODY);
+        return;
+      }
       if (query.includes("mode=hang")) {
         // The case the capture exists for: the error is on the wire, and the
         // stream never closes. Asking for this body afterwards is what always
@@ -124,9 +145,14 @@ test.describe("fixture flow-error gate", () => {
   );
 
   test(
-    "a v2 run error is advisory: logged, and it does not fail the test",
+    "a v2 run error is reported as a failure, and the hatch is what keeps this green",
     { tag: ["@stable", "@regression"] },
     async ({ page }) => {
+      // The hatch is load bearing HERE, and was not before #1165: this test mocks
+      // a RUN_ERROR, so the moment v2 stopped being advisory the gate's own guard
+      // became something the gate would fail.
+      (page as any).allowFlowErrors();
+
       const logged: string[] = [];
       const originalLog = console.log;
       console.log = (...args: unknown[]) => {
@@ -146,8 +172,59 @@ test.describe("fixture flow-error gate", () => {
         verdict,
         "the v2 run stream carried a RUN_ERROR and the fixture logged nothing — the miss #1162 is about",
       ).toBeTruthy();
-      expect(verdict).toContain("ADVISORY");
+      // The flip, asserted on the one thing visible from inside the test: the
+      // marker is gone. While v2 was staged this line read `(ADVISORY)` and the
+      // teardown printed "these do NOT fail the test yet".
+      expect(
+        verdict,
+        "the verdict is still marked ADVISORY — the v2 surface was not flipped (#1165)",
+      ).not.toContain("ADVISORY");
       expect(logged.join("\n")).toContain("provider said no");
+      expect(
+        logged.join("\n"),
+        "the advisory teardown block outlived the flip",
+      ).not.toContain("do NOT fail the test yet");
+
+      // What this CANNOT assert, said out loud so its silence is not read as
+      // coverage: that removing `allowFlowErrors()` above would fail the test.
+      // The fixture raises that in teardown, after this body and its `afterEach`
+      // have run, so no assertion in here could observe it. Pinning it needs the
+      // nested-run harness #1165 records as its own item.
+    },
+  );
+
+  test(
+    "a provider outage in a v2 run is NOT a flow error (#1165)",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // No `allowFlowErrors()` here, on purpose: a drained provider key must
+      // leave this test green WITHOUT a hatch. If the downgrade regresses, the
+      // fixture pushes a flow error and the teardown fails this test — so the
+      // absence of the hatch IS half the assertion.
+      const logged: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        logged.push(args.map(String).join(" "));
+        originalLog(...args);
+      };
+      try {
+        await page.goto(`${origin}/`);
+        await page.evaluate(runRequest("/api/v2/workflows?mode=outage"));
+        await page.waitForTimeout(3000);
+      } finally {
+        console.log = originalLog;
+      }
+
+      const joined = logged.join("\n");
+      expect(
+        joined,
+        "the outage was not reported at all — unevaluated must never be silent (#1012)",
+      ).toContain("Provider outage in run stream");
+      expect(joined).toContain("credit-exhausted");
+      expect(
+        joined,
+        "a drained provider key was reported as a flow error — it would strip @stable (#1165)",
+      ).not.toContain("Flow Error Detected");
     },
   );
 
@@ -161,6 +238,13 @@ test.describe("fixture flow-error gate", () => {
       // `afterEach` have run, so no assertion inside the test could ever see it.
       // Attaching a second capture measures the one property that matters and
       // can be checked in place.
+      // Hatched since #1165, and it is the flip demonstrating itself: this test
+      // puts a RUN_ERROR on the wire on purpose, so the moment a v2 verdict
+      // started failing tests, the guard for #1168 failed on the very error it
+      // exists to prove is readable. Measured, not anticipated — the run went
+      // 3 passed / 1 failed before this line was added.
+      (page as any).allowFlowErrors();
+
       const finished: CapturedStream[] = [];
       const capture = await attachRunStreamCapture(page, (s) =>
         finished.push(s),

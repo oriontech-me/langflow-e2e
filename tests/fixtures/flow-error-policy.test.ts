@@ -18,8 +18,28 @@ import {
   runStreamSurface,
 } from "./flow-error-policy";
 
+// The payload the shape tests below run on. It USED to be the drained-account
+// message now held in `ANTHROPIC_CREDIT_DRAINED`, and that is worth recording
+// rather than quietly swapping: the capture #1162 built the whole v2 detector
+// from was itself a provider outage, so every shape test was demonstrating
+// detection on the one class of message #1165 has to classify differently.
+// Once the message carries a second axis, a shape test must not sit on a payload
+// that trips it — otherwise the two axes cannot be told apart, and the four
+// tests below would have been asserting the opposite of the policy.
+//
+// Same wire shape, same provider, a message that IS the flow's fault.
 const ANTHROPIC_400 =
-  "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API.'}}";
+  "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'messages: at least one message is required'}}";
+
+// ---------- provider outages (#1165), measured on the daily ----------
+
+/** 2026-09-02, run 33630411848 shard 3, `openai-compatible-provider-setup`. */
+const ANTHROPIC_CREDIT_DRAINED =
+  "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011Ceee5xzgsKA7fuXzosWUx'}";
+
+/** 2026-09-01, run 33511210195 shard 3, `rag-pipeline`. */
+const GOOGLE_QUOTA_EXHAUSTED =
+  "Error embedding content (RESOURCE_EXHAUSTED): 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Resource has been exhausted (e.g. check quota).', 'status': 'RESOURCE_EXHAUSTED'}}";
 
 // ---------- URL scope ----------
 
@@ -111,7 +131,7 @@ test("RUN_ERROR is detected and quoted", () => {
   assert.equal(verdict.failed, true);
   assert.equal(verdict.shape, "RUN_ERROR");
   assert.match(verdict.message, /Error code: 400/);
-  assert.match(verdict.message, /credit balance is too low/);
+  assert.match(verdict.message, /at least one message is required/);
 });
 
 test("an error event is detected DESPITE carrying error:false — the trap that hid #1162", () => {
@@ -129,7 +149,7 @@ test("an error event is detected DESPITE carrying error:false — the trap that 
   const verdict = classifyFlowError(body);
   assert.equal(verdict.failed, true);
   assert.equal(verdict.shape, "event_type=error");
-  assert.match(verdict.message, /credit balance is too low/);
+  assert.match(verdict.message, /at least one message is required/);
 });
 
 test("a node that ends in error is detected with its component context", () => {
@@ -286,7 +306,7 @@ test("the node shape keeps the provider message, not just its prefix", () => {
   assert.equal(verdict.failed, true);
   if (!verdict.failed) return;
   assert.match(verdict.message, /Error building Component Agent/);
-  assert.match(verdict.message, /credit balance is too low/);
+  assert.match(verdict.message, /at least one message is required/);
 });
 
 test("a chat message merely CONTAINING the word error is not a verdict", () => {
@@ -343,12 +363,24 @@ test("fixtures.ts consumes the policy instead of an inline filter", () => {
   assert.doesNotMatch(fixture, /url\.includes\("\/build\/"\)/);
   assert.doesNotMatch(fixture, /streamingContentHints/);
   assert.match(fixture, /isUnreadableStream\(contentType\)/);
-  // Advisories must NOT land in `errors`: its length is the `📋 Found N backend
-  // error(s)` line, and that line is the human gate (#1084). Padding it with
-  // entries that explicitly do not fail anything is the same log-noise problem
-  // that gate was written to remove.
-  assert.match(fixture, /advisoryFlowErrors\.push\(/);
+  // The advisory machinery is GONE (#1165): a v2 verdict now lands in `errors`
+  // like a v1 one, and the teardown fails on it. Pinned as an absence because
+  // the flip is easy to half-revert — leaving the ADVISORY branch in place while
+  // the docs say otherwise is precisely the "docs claim a gate the code does not
+  // have" state #1084 was raised about.
+  assert.doesNotMatch(fixture, /advisoryFlowErrors/);
+  assert.doesNotMatch(fixture, /do NOT fail the test yet/);
   assert.doesNotMatch(fixture, /flow_error_advisory/);
+
+  // A provider outage must be reported before the `failed` test, on BOTH
+  // surfaces (#1165). It is a `failed: false` verdict, so an early return on
+  // `!verdict.failed` would drop it in silence — on the surface that does fail
+  // tests. Two call sites, one per surface.
+  assert.equal(
+    (fixture.match(/reportProviderOutage\(/g) ?? []).length,
+    2,
+    "expected exactly one call per run-stream surface (v1 and v2)",
+  );
 });
 
 test("the capture never buffers the stream on the page's behalf", () => {
@@ -375,4 +407,126 @@ test("the capture never buffers the stream on the page's behalf", () => {
   assert.match(capture, /Buffer\.concat\(/);
   // A cancelled stream must still yield its bytes — that is the whole point.
   assert.match(capture, /complete: false/);
+});
+
+// ---------- provider outages are UNEVALUATED, never a flow error (#1165) ----------
+
+test("a drained provider key is not a flow error — it is unevaluated", () => {
+  // Measured on the 2026-09-02 daily. Without this the fixture fails the spec,
+  // the failure text matches nothing in `infra-signature-patterns.json` (that
+  // list is transport-level only), and `remove-stable-from-failures.ts` strips
+  // `@stable` in an unreviewed commit. Three account drains are on record here.
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({ type: "RUN_ERROR", message: ANTHROPIC_CREDIT_DRAINED })}`,
+  );
+  assert.equal(verdict.failed, false);
+  assert.ok("providerOutage" in verdict);
+  assert.equal((verdict as any).providerOutage, "credit-exhausted");
+});
+
+test("an exhausted embedding quota is not a flow error either", () => {
+  // Measured on the 2026-09-01 daily, `rag-pipeline`, via the event shape.
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({
+      type: "CUSTOM",
+      name: "langflow.event",
+      value: { event_type: "error", data: { error: GOOGLE_QUOTA_EXHAUSTED } },
+    })}`,
+  );
+  assert.equal(verdict.failed, false);
+  assert.equal((verdict as any).providerOutage, "quota-exhausted");
+});
+
+test("the downgrade is not clean — it keeps the message and the shape", () => {
+  // #1012's rule: an unevaluated run is unknown, not healthy. A verdict that
+  // dropped the text would make the outage indistinguishable from a run that
+  // simply never errored, which is the failure this whole file exists about.
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({ type: "RUN_ERROR", message: ANTHROPIC_CREDIT_DRAINED })}`,
+  ) as any;
+  assert.equal(verdict.shape, "RUN_ERROR");
+  assert.match(verdict.message, /credit balance is too low/);
+});
+
+test("every shape downgrades, not only the two that were sampled", () => {
+  // The measured cases arrived as RUN_ERROR and event_type=error. A per-shape
+  // check would have covered exactly those and silently failed a test the day
+  // the same provider message arrived on a node or a v1 envelope.
+  const bodies: Record<string, string> = {
+    RUN_ERROR: JSON.stringify({ type: "RUN_ERROR", message: ANTHROPIC_CREDIT_DRAINED }),
+    "event_type=error": JSON.stringify({
+      type: "CUSTOM",
+      value: { event_type: "error", data: { error: ANTHROPIC_CREDIT_DRAINED } },
+    }),
+    "event=error": JSON.stringify({
+      event: "error",
+      data: { text: ANTHROPIC_CREDIT_DRAINED },
+    }),
+    "node status=error": JSON.stringify({
+      type: "STATE_DELTA",
+      delta: [
+        {
+          path: "/nodes/Agent-x",
+          value: {
+            status: "error",
+            output: {
+              outputs: { response: { message: { errorMessage: ANTHROPIC_CREDIT_DRAINED } } },
+            },
+          },
+        },
+      ],
+    }),
+    "error=true": JSON.stringify({
+      data: { error: true, error_message: ANTHROPIC_CREDIT_DRAINED },
+    }),
+  };
+  for (const [shape, body] of Object.entries(bodies)) {
+    const verdict = classifyFlowError(`data: ${body}`) as any;
+    assert.equal(verdict.failed, false, shape);
+    assert.equal(verdict.shape, shape, shape);
+  }
+});
+
+test("a rate limit the provider names is downgraded; a bare 429 in prose is not", () => {
+  const limited = classifyFlowError(
+    `data: ${JSON.stringify({
+      type: "RUN_ERROR",
+      message: "Error code: 429 - Rate limit reached for gpt-4o-mini",
+    })}`,
+  ) as any;
+  assert.equal(limited.failed, false);
+  assert.equal(limited.providerOutage, "rate-limited");
+
+  // "429" alone appears in request ids and token counts, so it is deliberately
+  // not a pattern on its own.
+  const notLimited = classifyFlowError(
+    `data: ${JSON.stringify({
+      type: "RUN_ERROR",
+      message: "Error building Component Agent: request 429 of 500 failed",
+    })}`,
+  );
+  assert.equal(notLimited.failed, true);
+});
+
+test("an agent MENTIONING a quota in prose is still a healthy run", () => {
+  // The message is matched, never the whole body — the same fencing the raw
+  // traceback patterns get. An agent explaining RESOURCE_EXHAUSTED to a user
+  // must not read as its own provider dying.
+  const body = `data: ${JSON.stringify({
+    type: "CUSTOM",
+    value: {
+      event_type: "message",
+      data: { text: "RESOURCE_EXHAUSTED means the API quota ran out; try again later." },
+    },
+  })}`;
+  const verdict = classifyFlowError(body);
+  assert.equal(verdict.failed, false);
+  assert.equal("providerOutage" in verdict, false, "a healthy run is clean, not unevaluated");
+});
+
+test("an ordinary flow error is untouched by the downgrade", () => {
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({ type: "RUN_ERROR", message: "THIS IS A TEST ERROR MESSAGE" })}`,
+  );
+  assert.equal(verdict.failed, true);
 });

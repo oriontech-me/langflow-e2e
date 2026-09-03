@@ -104,18 +104,6 @@ export const test = base.extend({
       responseBody?: string;
       type?: string;
     }> = [];
-    /**
-     * v2 flow errors, kept OUT of `errors` on purpose (#1162).
-     *
-     * `errors.length` feeds the `📋 Found N backend error(s)` line, and that line
-     * is the human gate — checklist step 4, `CONTRIBUTING.md` step 5. Counting
-     * advisories there would inflate the one number a reviewer scans with entries
-     * that are explicitly not the thing it asks about, which works against the
-     * same log trustworthiness #1084 was written to restore. They get their own
-     * line instead.
-     */
-    const advisoryFlowErrors: Array<{ url: string; message: string }> = [];
-
     // Flag to allow flow errors (for tests that expect errors)
     let allowFlowErrors = false;
     // Same, for backend HTTP errors the test provokes deliberately.
@@ -159,20 +147,10 @@ export const test = base.extend({
     const reportFlowError = (
       url: string,
       verdict: Extract<FlowErrorVerdict, { failed: true }>,
-      advisory: boolean,
     ) => {
-      console.log(
-        `🚨 Flow Error Detected in Event Stream - ${url}${advisory ? " (ADVISORY)" : ""}`,
-      );
+      console.log(`🚨 Flow Error Detected in Event Stream - ${url}`);
       console.log(`   Shape: ${verdict.shape}`);
       console.log(`   Error: ${verdict.message}`);
-      if (advisory) {
-        console.log(
-          `   ADVISORY: this does NOT fail the test yet — the v2 run path is newly covered and 80 of the 89 run-driving specs have no page.allowFlowErrors() (#1165).`,
-        );
-        advisoryFlowErrors.push({ url, message: verdict.message });
-        return;
-      }
       errors.push({
         url,
         status: 200,
@@ -180,6 +158,31 @@ export const test = base.extend({
         responseBody: verdict.message,
         type: "flow_error",
       });
+    };
+
+    /**
+     * A run the PROVIDER refused — a drained key, an exhausted quota, a rate
+     * limit — reported as unevaluated rather than as a flow error (#1165).
+     *
+     * Returns true when it handled the verdict, so both callers can stop there.
+     *
+     * It is counted alongside "read timed out" and "stream cancelled" because it
+     * is the same kind of fact: the run produced no verdict about Langflow. What
+     * it must never be is silent — an outage that vanishes from the log reads as
+     * a clean run, and this is the one shape a lane hits precisely when its
+     * account is dry, i.e. when the rest of the run is least trustworthy.
+     */
+    const reportProviderOutage = (url: string, verdict: FlowErrorVerdict): boolean => {
+      if (!("providerOutage" in verdict)) return false;
+      console.log(`⚠️  Provider outage in run stream (${verdict.providerOutage}) - ${url}`);
+      console.log(`   Shape: ${verdict.shape}`);
+      console.log(`   Error: ${verdict.message}`);
+      console.log(
+        `   NOT a flow error: the provider refused the call, so this run says nothing about Langflow.` +
+          ` Counted as unevaluated (#1165).`,
+      );
+      countUnevaluated(`provider outage (${verdict.providerOutage})`);
+      return true;
     };
 
     /** A v2 stream the capture handed over — complete or cut short. */
@@ -191,7 +194,20 @@ export const test = base.extend({
         return;
       }
       const verdict = classifyFlowError(stream.body);
-      if (verdict.failed) reportFlowError(stream.url, verdict, true);
+      if (reportProviderOutage(stream.url, verdict)) return;
+      // Step 2 of #1162: a v2 verdict now FAILS the test, like v1 (#1165).
+      //
+      // It fails through the teardown check rather than by throwing from here,
+      // and that is deliberate. `onStream` runs inside `track(async () => …)` in
+      // `run-stream-capture.ts`, whose promise is `void`ed after `.finally()`, so
+      // a throw would leave the worker with an unhandled rejection whose
+      // attribution depends on whether teardown happened to await the same
+      // promise first. The v1 path can throw because it runs in a `page.on`
+      // listener Playwright already attributes to the test in flight; this one
+      // has no such guarantee, and a gate that fails the WRONG test is worse than
+      // one that fails 10 s later. Pinning the interrupt directly needs the
+      // nested-run harness #1165 records as its own item.
+      if (verdict.failed) reportFlowError(stream.url, verdict);
     };
 
     // Add helper method to page context
@@ -371,8 +387,12 @@ export const test = base.extend({
             }
 
             const verdict = classifyFlowError(bodyResult as string);
+            // Before the `failed` test, not after: a provider outage is a
+            // `failed: false` verdict, so an early return on `!verdict.failed`
+            // would drop it without a word — on the surface that DOES fail tests.
+            if (reportProviderOutage(url, verdict)) return;
             if (!verdict.failed) return;
-            reportFlowError(url, verdict, false);
+            reportFlowError(url, verdict);
 
             // Fail the running test, not just its teardown. The throw escapes
             // this async listener as an unhandled rejection, which Playwright
@@ -433,15 +453,6 @@ export const test = base.extend({
         .join("\n");
       console.log(
         `\n🔎 HTTP responses ignored by policy (tests/fixtures/http-error-policy.ts):\n${breakdown}`,
-      );
-    }
-
-    // New coverage on the v2 run path (#1162). Logged, never failing, until the
-    // hatch audit — step 2 in `flow-error-policy.ts`. Printed on its own rather
-    // than folded into the count below, which is the human gate for HTTP errors.
-    if (advisoryFlowErrors.length > 0) {
-      console.log(
-        `\n   ⚠️  ${advisoryFlowErrors.length} flow execution error(s) on the v2 run path — ADVISORY: these do NOT fail the test yet. Review them before trusting this run.`,
       );
     }
 
