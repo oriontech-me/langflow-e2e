@@ -357,6 +357,84 @@ test("a hostile LIVENESS_DIR loses the block, never the history line", () => {
     return { LIVENESS_DIR: live, SHARD_TOTAL: "4" };
   });
   assert.equal(entry.totals.passed, 1, "the run history is written regardless");
+  assert.equal("backend" in entry, false, "…and nothing was invented from garbage");
+});
+
+test("a stray JSON beside a real summary does not become a phantom shard", () => {
+  // The case the assertion above cannot reach: this file PARSES, is an object,
+  // and `readSummaries` therefore accepts it. Left in, it records a
+  // `{shard: "?"}` record and `shards_reported: 2` — filling the very gap
+  // between `shards_reported` and `shard_total` that a dead shard is supposed
+  // to show.
+  const entry = append((dir) => {
+    const live = join(dir, "all-liveness");
+    mkdirSync(join(live, "liveness-1"), { recursive: true });
+    writeFileSync(
+      join(live, "liveness-1", "backend-liveness.json"),
+      JSON.stringify(summary("1", ["a.spec.ts"])),
+    );
+    writeFileSync(join(live, "liveness-1", "manifest.json"), JSON.stringify({ note: "not a summary" }));
+    return { LIVENESS_DIR: live, SHARD_TOTAL: "4" };
+  });
+  assert.equal(entry.backend.shards_reported, 1, "one shard uploaded; three are missing and must stay missing");
+  assert.equal(entry.backend.shards.length, 1);
+  assert.deepEqual(entry.backend.shards[0].totals, { passed: 1, failed: 0, flaky: 0, skipped: 0 });
+});
+
+test("a file two shards both list is counted once and named", () => {
+  // `unassigned` catches only the UNDER-count. Without this the per-shard totals
+  // over-count against the line's own `totals`, in the direction nothing checks
+  // — while the schema documents the sum as an invariant.
+  const block = buildBackendBlock(
+    [summary(1, ["a.spec.ts"]), summary(2, ["a.spec.ts", "c.spec.ts"])],
+    report([
+      { file: "a.spec.ts", status: "expected" },
+      { file: "c.spec.ts", status: "expected" },
+    ]),
+    2,
+  );
+  const summed = block.shards.reduce((acc, s) => acc + s.totals.passed, 0);
+  assert.equal(summed, 2, "the run has 2 passing tests, and the shards may not report 3");
+  assert.deepEqual(block.double_claimed, ["a.spec.ts"], "the partition anomaly is named, not absorbed");
+  assert.equal(block.unassigned, undefined);
+});
+
+test("double_claimed is omitted on a healthy partition", () => {
+  const block = buildBackendBlock(
+    [summary(1, ["a.spec.ts"]), summary(2, ["c.spec.ts"])],
+    report([
+      { file: "a.spec.ts", status: "expected" },
+      { file: "c.spec.ts", status: "expected" },
+    ]),
+    2,
+  );
+  assert.equal("double_claimed" in block, false);
+});
+
+test("the block's per-shard totals reconcile with the line's own totals", () => {
+  // The claim the schema makes, asserted end to end through the appender rather
+  // than against hand-written per-shard expectations — which cannot notice the
+  // two halves drifting apart together.
+  const entry = append((dir) => {
+    const live = join(dir, "all-liveness");
+    for (const [shard, files] of [["1", ["a.spec.ts"]], ["2", []]]) {
+      mkdirSync(join(live, `liveness-${shard}`), { recursive: true });
+      writeFileSync(
+        join(live, `liveness-${shard}`, "backend-liveness.json"),
+        JSON.stringify(summary(shard, files)),
+      );
+    }
+    return { LIVENESS_DIR: live, SHARD_TOTAL: "2" };
+  });
+  const keys = ["passed", "failed", "flaky", "skipped"];
+  const summed = Object.fromEntries(
+    keys.map((k) => [
+      k,
+      entry.backend.shards.reduce((acc, s) => acc + s.totals[k], 0) +
+        (entry.backend.unassigned?.[k] ?? 0),
+    ]),
+  );
+  assert.deepEqual(summed, entry.totals);
 });
 
 // --- the one thing no behavioural test can reach -----------------------------
@@ -370,15 +448,28 @@ test("the appender does not statically import the liveness block builder", () =>
   // Measured before the import was made dynamic: a module-scope throw gave
   // exit=1 and no history file at all. No behavioural test can reach this
   // without poisoning the real module on disk.
-  const appender = readFileSync(APPENDER, "utf8");
-  assert.equal(
-    /^\s*import\s[^\n]*backend-history\.mjs/m.test(appender),
-    false,
-    "the block builder must be imported inside the try that guards it",
-  );
+  // Whitespace-normalised, and covering BOTH modules of the chain. The first
+  // version matched `/^\s*import\s[^\n]*backend-history\.mjs/m`, which passed
+  // against `import{x}from"./lib/backend-history.mjs"`, against a Prettier-shaped
+  // multi-line import, and — the realistic regression — against an unrelated
+  // static import of `report-backend-outages.mjs`, which `backend-history.mjs`
+  // pulls in and whose module body is just as fatal. Measured with that last
+  // one plus a module-scope throw: guard green, appender `exit=1`, no history
+  // file at all. #1226's lesson is that a guard pinning a spelling passes the
+  // mutation it exists to catch; this pins an absence over a normalised string.
+  const appender = readFileSync(APPENDER, "utf8").replace(/\s+/g, " ");
+  for (const module of ["backend-history.mjs", "report-backend-outages.mjs"]) {
+    assert.equal(
+      new RegExp(`(^|;|\\}) ?import ?[^;]*from ?["'][^"']*${module.replace(".", "\\.")}["']`).test(
+        ` ${appender}`,
+      ),
+      false,
+      `${module} must not be statically imported — its module body would run before any line is written`,
+    );
+  }
   assert.ok(
-    /await import\(["'\.\/]*lib\/backend-history\.mjs["']\)/.test(appender),
-    "…and it must still be imported at all",
+    /await import\( *["'][^"']*lib\/backend-history\.mjs["'] *\)/.test(appender),
+    "…and the block builder must still be imported at all",
   );
 });
 

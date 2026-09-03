@@ -81,6 +81,16 @@ function setup(runs, lines) {
   return { artifacts, history };
 }
 
+/**
+ * A line NOT produced by `JSON.stringify` — extra spacing and a key order the
+ * writer would not emit. Without it, "untouched lines pass through as their
+ * original bytes" is unfalsifiable: a fixture written by `JSON.stringify` reads
+ * identically whether it was passed through or re-serialised.
+ */
+function nonCanonicalLine(runId) {
+  return `{ "run_id": "${runId}",  "version": 1, "totals": {"passed": 1, "failed": 0, "flaky": 0, "skipped": 0} }`;
+}
+
 function run({ artifacts, history }, extra = []) {
   try {
     const stdout = execFileSync(
@@ -98,7 +108,7 @@ const readRows = (history) =>
   readFileSync(history, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 
 test("only the named run's line changes, and only by an appended block", () => {
-  const untouched = historyLine("999");
+  const untouched = nonCanonicalLine("999");
   const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"])] } }, [untouched, historyLine("111")]);
   assert.equal(run(env, ["--shard-total", "1"]).code, 0);
   const [first, second] = readFileSync(env.history, "utf8").trim().split("\n");
@@ -174,4 +184,83 @@ test("an empty artifacts directory fails instead of reporting a successful no-op
   const out = run(env, ["--shard-total", "1"]);
   assert.equal(out.code, 2);
   assert.match(out.stderr, /No run directories/);
+});
+
+test("an untouched line keeps its original bytes, not a re-serialisation", () => {
+  // `CLAUDE.md` forbids hand-editing this file; the script's promise is that a
+  // rerun rewrites only what it was asked for. A fixture written by
+  // `JSON.stringify` cannot tell passthrough from re-serialisation, so this one
+  // deliberately is not.
+  const untouched = nonCanonicalLine("999");
+  const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"])] } }, [untouched, historyLine("111")]);
+  assert.equal(run(env, ["--shard-total", "1"]).code, 0);
+  assert.equal(readFileSync(env.history, "utf8").split("\n")[0], untouched);
+});
+
+test("a run with liveness but no usable summary is refused, naming the artifact", () => {
+  // Without this branch the run falls through carrying a null block and dies
+  // later with "No history line for run(s)" — pointing the operator at the
+  // history file when the cause is a missing download.
+  const dir = mkdtempSync(join(tmpdir(), "backfill-"));
+  const artifacts = join(dir, "artifacts");
+  mkdirSync(join(artifacts, "111"), { recursive: true });
+  writeFileSync(join(artifacts, "111", "results.json"), JSON.stringify(report()));
+  const history = join(dir, "history.jsonl");
+  writeFileSync(history, historyLine("111") + "\n");
+  const out = run({ artifacts, history }, ["--shard-total", "1"]);
+  assert.equal(out.code, 1);
+  assert.match(out.stderr, /no liveness summary found/);
+});
+
+test("--artifacts is required", () => {
+  const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"])] } }, [historyLine("111")]);
+  try {
+    execFileSync(process.execPath, [SCRIPT, "--history", env.history, "--shard-total", "1"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.fail("must not run without an artifacts directory");
+  } catch (err) {
+    assert.equal(err.status, 2);
+    assert.match(String(err.stderr), /--artifacts <dir> is required/);
+  }
+});
+
+test("--shard-total is required, and a guess is not offered as a default", () => {
+  // It used to default to 4. A 2-shard repro backfilled under that default
+  // records `shard_total: 4` against 2 summaries, which reads as "two shards
+  // died" forever — and the shards_reported > shard_total refusal cannot see
+  // it, because it only catches the excess.
+  const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"])] } }, [historyLine("111")]);
+  const out = run(env, []);
+  assert.equal(out.code, 2);
+  assert.match(out.stderr, /--shard-total <n> is required/);
+});
+
+for (const bad of ["abc", "4x", "0", "-1", "2.5"]) {
+  test(`--shard-total ${bad} is refused rather than read as unknown`, () => {
+    // `Number(x) || null` turned every one of these into `shard_total: null`,
+    // which short-circuits the refusal below AND records the one state the code
+    // calls undetectable.
+    const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"])] } }, [historyLine("111")]);
+    const out = run(env, ["--shard-total", bad]);
+    assert.equal(out.code, 2);
+    assert.match(out.stderr, /must be a positive integer/);
+  });
+}
+
+test("--shard-total=N is honoured, not silently ignored", () => {
+  // The `=` form used to fall through to the default, so the refusal could name
+  // a number the caller never typed.
+  const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"]), summary(2, [])] } }, [historyLine("111")]);
+  const out = run(env, ["--shard-total=1"]);
+  assert.equal(out.code, 1);
+  assert.match(out.stderr, /2 shard summaries but --shard-total 1/);
+});
+
+test("a --history path that does not exist is named, not a node:fs stack", () => {
+  const env = setup({ "111": { shards: [summary(1, ["a.spec.ts"])] } }, [historyLine("111")]);
+  const out = run({ artifacts: env.artifacts, history: join(env.history, "nope.jsonl") }, ["--shard-total", "1"]);
+  assert.equal(out.code, 2);
+  assert.match(out.stderr, /History file not found/);
 });
