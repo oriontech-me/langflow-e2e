@@ -79,6 +79,10 @@ function run(env = {}) {
   return { stdout: r.stdout || "", stderr: r.stderr || "", status: r.status };
 }
 
+/** The body text, whichever transport carried it. The two differ in DECORATION
+ *  only, so a property about length or budgeting is asserted through this. */
+const bodyText = (b) => (b.body !== undefined ? b.body : b.blocks[1].text.text);
+
 /** Dry-run and parse the rendered request body. */
 function render(env = {}) {
   const { stdout } = run({ SLACK_DRY_RUN: "1", ...env });
@@ -102,6 +106,82 @@ test("the transport is derived from the URL's path segment", () => {
 
   const forced = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc", SLACK_MODE: "blockkit" });
   assert.equal(forced.mode, "blockkit", "SLACK_MODE must override the derivation");
+});
+
+test("a Workflow Builder message carries no markup, because the step will not render it", () => {
+  // Verified against a real trigger on 2026-09-03: the POST returned 200 and the
+  // channel showed `*bold*` as asterisks, backticks as backticks and `<url|label>`
+  // as itself. That is the same class of silent wrongness the derivation above
+  // exists to prevent — accepted, 200, useless — one layer further in.
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    ISSUE_URL: "https://example.invalid/issue/1",
+    REPORT_URL: "https://example.invalid/report",
+  });
+  const all = [body.headline, body.body, body.links].join("\n");
+  assert.doesNotMatch(all, /\*/, "no bold markers");
+  assert.doesNotMatch(all, /`/, "no code spans and no fences");
+  assert.doesNotMatch(all, /<https?:[^|>]*\|/, "no mrkdwn links");
+  // The destination survives — Slack auto-links a bare URL — and only the label's
+  // placement changes. A link whose text renders as `<url|label>` is worse than a
+  // bare URL: it looks broken and it is not clickable as the label.
+  assert.match(body.links, /Triage issue: https:\/\/example\.invalid\/issue\/1/);
+  assert.match(body.links, /Playwright report: https:\/\/example\.invalid\/report/);
+});
+
+test("Block Kit keeps the markup, so the transports differ in decoration and not in words", () => {
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T1/B2/xyz",
+    REPORT_URL: "https://example.invalid/report",
+  });
+  assert.match(bodyText(body), /\*Langflow\*/);
+  assert.match(bodyText(body), /\*3 failed\*/);
+  assert.match(JSON.stringify(body), /<https:\/\/example\.invalid\/report\|Playwright report>/);
+});
+
+test("the elision notice is plain in a Workflow Builder message too", () => {
+  // The one span the mode-aware pass missed, and the reason it needs its own test:
+  // the check above bans `*` and backticks, but it CANNOT ban underscores, because
+  // underscores are legitimate content here — the spec names carry them. So the
+  // notice's own shape is what has to be asserted.
+  const wf = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc" });
+  assert.match(wf.body.body, /… and \d+ more not listed here — see the report\./);
+  assert.doesNotMatch(wf.body.body, /_… and/, "no italic markers around the notice");
+
+  const bk = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T1/B2/xyz" });
+  assert.match(bodyText(bk.body), /_… and \d+ more not listed here — see the report\._/);
+});
+
+test("a spec name carrying underscores survives both transports intact", () => {
+  // The property that rules out stripping the markup after the fact. These names are
+  // real — `model_provider_base_url_ssrf.spec.ts` is in the suite — and a regex
+  // hunting `_` to undo italics would eat half of them, in the one section where the
+  // reader needs the name exact enough to grep for it.
+  const underscored = join(dir, "payload-underscores.json");
+  const testName = "model_provider_base_url_ssrf › refuses a private address";
+  writeFileSync(
+    underscored,
+    JSON.stringify({
+      ...PAYLOAD,
+      totals: { passed: 10, failed: 1, flaky: 0, skipped: 0 },
+      failures: [
+        {
+          test: testName,
+          file: "tests/tests-automations/regression/security/model_provider_base_url_ssrf.spec.ts",
+          error_signature: "Error: expected _all_ resolved addresses to be named",
+        },
+      ],
+    }),
+    "utf8",
+  );
+
+  for (const url of ["https://hooks.slack.com/triggers/E1/2/abc", "https://hooks.slack.com/services/T1/B2/xyz"]) {
+    const { body } = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: underscored });
+    const text = bodyText(body);
+    assert.match(text, /model_provider_base_url_ssrf\.spec\.ts/, url);
+    assert.ok(text.includes(testName), `the test name survives intact — ${url}`);
+    assert.match(text, /expected _all_ resolved addresses to be named/, url);
+  }
 });
 
 test("a Workflow Builder post always carries all three declared variables", () => {
@@ -258,14 +338,22 @@ test("a long quoted cause is truncated inside its fence, not across it", () => {
   // fence leaves it unclosed and elides the diagnosis silently — the one thing this
   // script refuses to do for the failure list.
   const huge = "Error: worker process exited unexpectedly\n    at a stack frame that is long\n".repeat(60);
-  const { body } = render({
-    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
-    RUN_PARTIAL: "true", RUN_TESTS: "180", RUN_ERRORS: "2", RUN_FIRST_ERROR: huge,
-  });
-  const fences = (body.body.match(/```/g) || []).length;
+  const bad = { RUN_PARTIAL: "true", RUN_TESTS: "180", RUN_ERRORS: "2", RUN_FIRST_ERROR: huge };
+
+  // Asserted on Block Kit, because a fence is Block Kit's: a Workflow Builder step
+  // inserts variables as plain text, so there the fence would be three literal
+  // backticks in the channel rather than a quoted block.
+  const bk = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T1/B2/xyz", ...bad });
+  const fences = (bodyText(bk.body).match(/```/g) || []).length;
   assert.equal(fences % 2, 0, "the code fence must be closed");
   assert.equal(fences, 2);
-  assert.ok(body.body.length <= 2900, "and the body still fits Slack's section cap");
+  assert.ok(bodyText(bk.body).length <= 2900, "and the body still fits Slack's section cap");
+
+  // The cap is the transport-independent half, and the plain form must carry no
+  // fence at all — an unclosed fence cannot be the failure if there is no fence.
+  const wf = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc", ...bad });
+  assert.ok(bodyText(wf.body).length <= 2900);
+  assert.doesNotMatch(bodyText(wf.body), /```/);
 });
 
 test("the elision notice survives the section cap — the list is budgeted, not appended", () => {
@@ -294,7 +382,7 @@ test("the elision notice survives the section cap — the list is budgeted, not 
   const notice = /and (\d+) more not listed here/.exec(body.body);
   assert.ok(notice, "the count of what was elided must survive the cap, not be cut by it");
   // And it must be the TRUTH: shown + elided is every failure there was.
-  const shown = (body.body.match(/^• `/gm) || []).length;
+  const shown = (body.body.match(/^• /gm) || []).length;
   assert.equal(shown + Number(notice[1]), 22, "shown + elided must account for every failure");
 });
 
