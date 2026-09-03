@@ -478,14 +478,25 @@ test("a server that never answers is killed, and the PID file goes with it", () 
   r.cleanup();
 });
 
-test("a start that cannot kill what it launched KEEPS the PID file", () => {
-  // Dropping it would discard the only handle on a process that still holds the
-  // port — and the next start's probe cannot see a port that is bound but silent.
-  const r = runScript({ healthy: false, ignoresTerm: true });
+test("a start whose server ignores SIGTERM escalates, and says so", () => {
+  // Asserted unconditionally, and that is the point of this shape. The first version
+  // of this test guarded everything behind `if (survived)` — a branch that cannot be
+  // taken, because the stub server is a plain `sleep` and SIGKILL always reaps it. It
+  // passed while asserting nothing.
+  //
+  // What IS reachable is the escalation itself, and it is worth pinning: the timeout
+  // path must send SIGTERM, wait the stated window, then escalate — and only then
+  // drop the PID file, because it has established that the process is gone.
+  //
+  // The other half — KEEPING the file when even SIGKILL fails — needs a process that
+  // survives SIGKILL (uninterruptible sleep), which is not reproducible portably, so
+  // it stays reviewed rather than tested. The short timeout is deliberate: at the
+  // 10s default this single case cost more than a third of the file's runtime.
+  const r = runScript({ healthy: false, ignoresTerm: true, env: { OLLAMA_STOP_TIMEOUT_S: "2" } });
   assert.equal(r.status, 1);
-  const pidFile = join(r.stateRoot, "ollama-source-11434", "ollama.pid");
-  const survived = serverPattern(r.marker).test(processTable());
-  if (survived) assert.ok(existsSync(pidFile), "PID file dropped while the process was alive");
+  assert.match(r.stderr, /ignored SIGTERM after 2s; sending SIGKILL/);
+  assert.ok(waitFor(() => !serverPattern(r.marker).test(processTable())), "the launched server was left running");
+  assert.ok(!existsSync(join(r.stateRoot, "ollama-source-11434", "ollama.pid")));
   r.cleanup();
 });
 
