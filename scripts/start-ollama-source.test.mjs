@@ -110,7 +110,9 @@ function pinnedModel() {
  * `serverExits: true` makes the launched binary exit at once, as a failed bind does.
  * `ignoresTerm: true` makes it ignore SIGTERM — the shape every stop path has to
  * survive, since `kill` returning 0 only proves delivery.
- * `binaryPresent` / `binaryVersion` cover the provisioning branches.
+ * `binaryPresent` / `binaryVersion` cover the provisioning branches; `versionExitCode`
+ * makes the binary print its version and still exit non-zero, which the real client
+ * does when it cannot reach a server.
  * `modelPresent: false` starts an instance without the model; `pullWorks` then says
  * whether the pull this script runs fixes that.
  * `addresses` is what the stubbed `ip` reports, in order.
@@ -125,6 +127,7 @@ function runScript({
   ignoresTerm = false,
   binaryPresent = true,
   binaryVersion = null,
+  versionExitCode = 0,
   modelPresent = true,
   pullWorks = true,
   addresses = ["203.0.113.10", "10.0.0.5"],
@@ -156,7 +159,7 @@ case "$1" in
   --version)
     echo "Warning: could not connect to a running Ollama instance"
     echo "Warning: client version is ${binaryVersion ?? version}"
-    exit 0
+    exit ${versionExitCode}
     ;;
   list)
     echo "NAME    ID    SIZE    MODIFIED"
@@ -392,6 +395,17 @@ test("an occupied port is refused, naming what a silent collision would serve", 
   // The specific harm is not "two servers": it is that the spec would read the OTHER
   // server's model list and either skip or assert against weights nobody pinned.
   assert.match(r.stderr, /model list/);
+  r.cleanup();
+});
+
+test("a version that is printed by a binary exiting non-zero is still read", () => {
+  // The real client exits non-zero when it cannot reach a server, and the parse is a
+  // pipeline under `pipefail` whose awk closes the pipe early. Reading the version
+  // with `|| echo unknown` inside the substitution APPENDS the fallback to the good
+  // value, and the script then refuses the binary it had just read correctly.
+  const r = runScript({ binaryPresent: true, versionExitCode: 1 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /reports version/);
   r.cleanup();
 });
 

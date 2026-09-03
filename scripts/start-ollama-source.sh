@@ -200,8 +200,20 @@ binary_version() {
   "$1" --version 2>&1 | awk '/version is/ {print $NF; exit}'
 }
 
+# Read in two steps, never as `$(binary_version ... || echo unknown)`. That shape
+# APPENDS instead of replacing: this is a pipeline under `set -o pipefail`, and awk's
+# `exit` closes the pipe under the writer, so the substitution can capture a perfectly
+# good version AND the fallback — `0.32.5` followed by `unknown` — which then compares
+# unequal to the pin and makes the script refuse the binary it just read correctly.
+# Emptiness, not exit status, is what "could not read it" actually looks like here.
+read_binary_version() {
+  version_output="$(binary_version "$1" || true)"
+  [ -n "${version_output}" ] || version_output=unknown
+  printf '%s\n' "${version_output}"
+}
+
 if [ -x "${BIN}" ]; then
-  HAVE="$(binary_version "${BIN}" || echo unknown)"
+  HAVE="$(read_binary_version "${BIN}")"
   if [ "${HAVE}" != "${VERSION}" ]; then
     echo "ERROR: ${BIN} reports version '${HAVE}', not the pinned ${VERSION}." >&2
     echo "Refusing to run it: the pin exists so this server behaves exactly like the" >&2
@@ -278,7 +290,7 @@ else
   mkdir -p "$(dirname "${PREFIX}")"
   mv "${TMP_DIR}/unpack" "${PREFIX}"
   chmod +x "${BIN}"
-  HAVE="$(binary_version "${BIN}" || echo unknown)"
+  HAVE="$(read_binary_version "${BIN}")"
   if [ "${HAVE}" != "${VERSION}" ]; then
     echo "ERROR: the downloaded binary reports version '${HAVE}', not ${VERSION}." >&2
     rm -rf "${PREFIX}"
