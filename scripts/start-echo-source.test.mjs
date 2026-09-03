@@ -332,7 +332,13 @@ test("a port that already answers is refused, not started on top of", () => {
 });
 
 test("a binary that exits during startup is reported as that, not as a timeout", () => {
-  const r = runScript({ serverExits: true, env: { ECHO_BIND_HOST: "10.0.0.5" } });
+  // The deadline is raised for this case alone, and it is not padding: the readiness
+  // loop checks liveness FIRST and probes second, so telling "exited" from "timed out"
+  // needs one iteration to land after the stub has died. At the 2s default that window
+  // is a single scheduling slot, and under the parallel lane it is occasionally missed
+  // — the run then reports the timeout, which is the message this test rules out. Its
+  // sibling in start-ollama-source.test.mjs carries the same note for the same reason.
+  const r = runScript({ serverExits: true, env: { ECHO_BIND_HOST: "10.0.0.5", ECHO_START_TIMEOUT_S: "8" } });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /exited after/);
   // The PID file has to go, or the next start refuses over a process that is gone.

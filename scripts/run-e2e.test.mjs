@@ -131,6 +131,115 @@ test("the publish switches are OFF by default, all four of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0 0");
 });
 
+test("the version check is on by default, and enforcing it is not — yet", () => {
+  // Detection before correction. While the clone is moved by hand, failing the run on
+  // a version gap would throw away a day of otherwise usable comparison data; the gap
+  // still has to be impossible to miss. REQUIRE flips once the run moves the clone.
+  const r = sourced(`echo "$CHECK_TARGET_VERSION $REQUIRE_TARGET_VERSION"`);
+  assert.equal(r.stdout.trim(), "1 0");
+});
+
+test("a version mismatch does not fail the run on its own", () => {
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0);
+});
+
+test("REQUIRE_TARGET_VERSION=1 makes an AUTHORITATIVE mismatch fatal, naming what it costs", () => {
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=published-image TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "1" },
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(r.stderr, /wrong Langflow/);
+  // The reason a reader needs: not "versions differ" but what a comparison between
+  // different products actually produces.
+  assert.match(r.stderr, /describes the changelog, not the environments/);
+});
+
+test("a mismatch the REGISTRY did not establish still fails, but claims less", () => {
+  // Chain the two failure modes: a registry blip drops the resolution to the git refs,
+  // those legitimately run ahead of the published image, and the comparison then
+  // reports a difference that may not exist between the lanes. It still fails under
+  // REQUIRE — an expectation that cannot be trusted is not a guarantee — but asserting
+  // "the target served the wrong Langflow" would assert what the source cannot support.
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=nightly-tag TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.13.0.dev0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "1" },
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(r.stderr, /could not be established authoritatively/);
+  assert.match(r.stderr, /runs ahead of what shipped/);
+  assert.doesNotMatch(r.stderr, /served the wrong Langflow/);
+});
+
+test("a matching version passes under REQUIRE, exactly or by cycle", () => {
+  for (const match of ["yes", "cycle"]) {
+    const r = sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+        `TARGET_VERSION_MATCH=${match}\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "1" },
+    );
+    assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
+  }
+});
+
+test("under REQUIRE, a check that could not RUN fails too", () => {
+  // The gap that makes "require" not require: the registry unreachable, github
+  // unreachable, the resolver erroring, or the target reporting no version all land
+  // on unknown/unchecked. Passing green there is passing green in exactly the cases
+  // where nobody can tell whether both lanes ran the same product.
+  for (const match of ["unknown", "unchecked"]) {
+    const r = sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+        `TARGET_VERSION_MATCH=${match}\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "1" },
+    );
+    assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1, match);
+    assert.match(r.stderr, /an unperformed check is/);
+  }
+});
+
+test("without REQUIRE, none of the version states fail the run", () => {
+  for (const match of ["yes", "cycle", "unknown", "unchecked", "no"]) {
+    const r = sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+        `TARGET_VERSION_MATCH=${match}\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    );
+    assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
+  }
+});
+
+test("the tunnel probe leaves the shell's stderr alone", () => {
+  // The bug this pins cost a whole run's diagnostics: the probe used to close its
+  // descriptor with `exec 3>&- 2>/dev/null`, and `exec` with no command applies its
+  // redirections to THE SHELL — so stderr went to /dev/null for the rest of the run.
+  // Every warn and err after preflight disappeared, including the verdict explaining
+  // why it failed. The exit code stayed correct and the reason stopped existing, which
+  // is the shape of failure this lane exists to catch, turned on the lane itself.
+  const r = sourced(
+    // Port 9 (discard) is closed on these machines; any closed port exercises the
+    // failure path, which is the one that used to do the damage.
+    `ports_without_listener 9 > /dev/null; warn "STILL SPEAKING"`,
+  );
+  assert.match(r.stderr, /STILL SPEAKING/, "stderr was redirected away by the probe");
+});
+
+test("the tunnel probe reports the ports that have no listener", () => {
+  const r = sourced(`ports_without_listener 9 65000 | tr '\\n' ' '`);
+  assert.equal(r.stdout.trim(), "9 65000");
+});
+
 test("the tunnel is the default, and refusing it is opt-in", () => {
   const r = sourced(`echo "$LANGFLOW_TUNNEL $ALLOW_NO_TUNNEL"`);
   assert.equal(r.stdout.trim(), "1 0");

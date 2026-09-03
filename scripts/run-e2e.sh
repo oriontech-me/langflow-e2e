@@ -122,6 +122,30 @@ REPORT_URL="$RUN_URL_BASE/$RUN_ID/playwright-report/index.html"
 EVENT_NAME="${EVENT_NAME:-schedule}"
 WORKFLOW_ID="${WORKFLOW_ID:-daily-stable-vm}"
 
+# Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
+# `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
+# it. Here the run only REPORTS the gap: moving and rebuilding the clone is a second
+# change, and until it lands a mismatch has to be visible rather than fatal, or a
+# whole day of comparison data is lost to a version difference nobody can fix at 08:00.
+UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}"
+# The PUBLISHED image is what the CI lane pulls, and therefore what this lane has to
+# match. Asking the registry rather than the git tags is not a detail: upstream tags
+# before it builds and only ships if the tests pass, so a tag can exist for an image
+# that never shipped.
+# `ordering=last_updated` is not decoration: the repository carries ~2700 tags and one
+# page is fetched, so an unspecified order can leave `latest` and the version tag
+# pushed in the same run on different pages — and the resolution then falls back to
+# the git refs, quietly, for a reason that has nothing to do with the registry.
+#
+# The repository named here has to be the one the ACTIONS lane pulls. daily-stable.yml
+# takes `langflow_image` / `langflow_image_tag` inputs on manual dispatch, so a run
+# against `langflowai/langflow:1.12.0` would be compared with an expectation resolved
+# from `langflow-nightly:latest` — a comparison of a different pair of lanes than the
+# one it claims. Override this together with those inputs, never one alone.
+NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100&ordering=last_updated}"
+CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
+REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
+
 MIN_FREE_GB="${MIN_FREE_GB:-20}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_BACKENDS="${KEEP_BACKENDS:-0}"
@@ -178,6 +202,25 @@ gh_out() {
 }
 
 HELD_SESSIONS=()
+
+# Which of the given ports have no local listener. `ssh -L` opens its listener as soon
+# as it connects, so this is answerable before anything else starts.
+#
+# The probe runs in a SUBSHELL, and that is the whole point: the descriptor it opens
+# dies with the subshell, so the caller needs no `exec 3>&-` to clean up. The version
+# that did have one carried `2>/dev/null` with it — and `exec` with no command applies
+# its redirections to THE SHELL, which sent stderr to /dev/null for the rest of the
+# run. Every warn and every err after preflight vanished, including the verdict's own
+# explanation of why it failed: the exit code stayed right and the reason stopped
+# existing. A smoke run found it; two reviews had not.
+ports_without_listener() {
+  local port
+  for port in "$@"; do
+    if ! (exec 3<> "/dev/tcp/127.0.0.1/${port}") 2> /dev/null; then
+      printf '%s\n' "$port"
+    fi
+  done
+}
 
 cleanup() {
   local code=$?
@@ -280,6 +323,51 @@ phase_preflight() {
   behind="$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)"
   info "suite: $branch @ ${sha:0:10}${behind:+ ($behind commit(s) behind origin)}"
 
+  # What the CI will be testing today, resolved by upstream's own rule. Informational
+  # here and compared after the run: asking now means the operator sees the gap before
+  # spending an hour producing a comparison that a version difference already spoiled.
+  TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
+  if [ "$CHECK_TARGET_VERSION" = "1" ]; then
+    local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
+    # The registry listing is optional and its absence is survivable — the resolver
+    # falls back to the refs and says so — so a failure here warns and continues.
+    curl -sfS --max-time 20 "$NIGHTLY_TAGS_URL" -o "$RUN_DIR/nightly-tags.json" 2>> "$vlog" \
+      || warn "could not read the published nightly image listing; the expected version will come from the git refs, which can run ahead of what actually shipped."
+    # Both inputs are best-effort, and NEITHER gates the other. The registry answers
+    # the question — which version — and the refs only add which commit that version
+    # was built from. Gating the whole resolution on the git fetch (as this did) hands
+    # github.com a veto over an answer it does not provide: github unreachable at
+    # 08:00, registry fine, and the run would report an unperformed check — fatal
+    # under REQUIRE_TARGET_VERSION. github is also the flakier of the two here, since
+    # the suite's own origin is the internal mirror and this is the only reach out.
+    : > "$RUN_DIR/upstream-refs.txt"
+    git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$vlog" \
+      || warn "could not reach $UPSTREAM_REPO_URL for the ref listing; the expected VERSION can still come from the registry, but the commit behind it will be unknown."
+    local decision
+    decision="$(node scripts/resolve-target-version.mjs \
+        --refs-file "$RUN_DIR/upstream-refs.txt" \
+        --image-tags-file "$RUN_DIR/nightly-tags.json" 2> "$verr" || true)"
+    # The resolver's warnings are the difference between "same commit" and "same
+    # cycle". Shown, not just filed: a run that silently downgraded its own claim
+    # is how a comparison starts meaning less than the reader thinks.
+    if [ -s "$verr" ]; then cat "$verr" >&2; cat "$verr" >> "$vlog"; fi
+    if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
+      TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
+      TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
+      TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
+      TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
+      info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
+    else
+      # Quote the resolver rather than inventing a reason: it distinguishes "no
+      # release branch in the listing" from "the file could not be read", and the
+      # two send the reader to different places.
+      local why
+      why="$(node -p "try{JSON.parse(process.argv[1]).error||''}catch{''}" "${decision:-}" 2>/dev/null || true)"
+      warn "could not resolve which Langflow this lane should test${why:+ — $why}"
+      warn "The comparison will not know whether both sides ran the same product."
+    fi
+  fi
+
   log "Installing dependencies (npm ci)"
   npm ci
 
@@ -300,14 +388,11 @@ phase_preflight() {
   # as soon as it connects, so this is answerable now — and answering it later, from a
   # failed health probe, cannot tell "no tunnel" from "backend did not start".
   if [ "$LANGFLOW_TUNNEL" = "1" ]; then
-    local i port missing=()
-    for i in $(seq 1 "$SHARDS"); do
-      port=$((BASE_PORT + i - 1))
-      if ! (exec 3<> "/dev/tcp/127.0.0.1/$port") 2>/dev/null; then missing+=("$port"); fi
-      exec 3>&- 2>/dev/null || true
-    done
-    if [ "${#missing[@]}" -gt 0 ]; then
-      err "no local listener on port(s): ${missing[*]}"
+    local missing
+    missing="$(ports_without_listener $(seq "$BASE_PORT" $((BASE_PORT + SHARDS - 1))) | tr '\n' ' ')"
+    missing="${missing% }"
+    if [ -n "$missing" ]; then
+      err "no local listener on port(s): ${missing}"
       err "The tunnel to the target is what makes the backend answer on localhost, and"
       err "Chromium treats ONLY localhost as a secure context: without it the ten"
       err "clipboard specs fail deterministically and this run's verdict differs from"
@@ -669,6 +754,28 @@ phase_merge() {
     [ -n "$LANGFLOW_VERSION" ] && break
   done
 
+  # The comparison this step exists for. A mismatch is reported, not fatal: while the
+  # clone is moved by hand, failing here would throw away a day of otherwise usable
+  # data. REQUIRE_TARGET_VERSION=1 flips that once the run moves the clone itself.
+  TARGET_VERSION_MATCH="unchecked"; TARGET_VERSION_REASON=""
+  if [ "$CHECK_TARGET_VERSION" = "1" ] && [ -n "$TARGET_EXPECTED_VERSION" ]; then
+    local compared
+    compared="$(node scripts/resolve-target-version.mjs --compare "$TARGET_EXPECTED_VERSION" "${LANGFLOW_VERSION:-}" "$TARGET_RESOLUTION" 2>/dev/null || true)"
+    TARGET_VERSION_MATCH="${compared%%	*}"
+    TARGET_VERSION_REASON="${compared#*	}"
+    case "$TARGET_VERSION_MATCH" in
+      yes | cycle) info "target version: $TARGET_VERSION_MATCH — $TARGET_VERSION_REASON" ;;
+      no)
+        warn "TARGET VERSION MISMATCH (by $TARGET_RESOLUTION) — $TARGET_VERSION_REASON"
+        warn "Every product difference between those two lands in this run's verdict, and"
+        warn "the comparison with the Actions daily will read it as an environment"
+        warn "divergence. Move the clone to $TARGET_EXPECTED_REF and rebuild before"
+        warn "treating today's differences as findings."
+        ;;
+      *) warn "target version: could not be compared — $TARGET_VERSION_REASON" ;;
+    esac
+  fi
+
   # Both versions in one place, because the whole point of this lane is comparing a
   # verdict with the CI's and neither number is guessable afterwards.
   node -e '
@@ -682,6 +789,11 @@ phase_merge() {
     suite_sha "$(git rev-parse HEAD)" \
     suite_branch "$(git rev-parse --abbrev-ref HEAD)" \
     langflow_version "${LANGFLOW_VERSION:-}" \
+    langflow_expected_version "${TARGET_EXPECTED_VERSION:-}" \
+    langflow_expected_ref "${TARGET_EXPECTED_REF:-}" \
+    langflow_expected_sha "${TARGET_EXPECTED_SHA:-}" \
+    langflow_version_resolution "${TARGET_RESOLUTION:-}" \
+    langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}"
@@ -812,6 +924,40 @@ phase_verdict() {
   if [ "${TEST_JOB_FAILED:-0}" = "1" ]; then
     err "at least one shard had a failing test."
     failed=1
+  fi
+  if [ "$REQUIRE_TARGET_VERSION" = "1" ]; then
+    case "${TARGET_VERSION_MATCH:-unchecked}" in
+      no)
+        if [ "${TARGET_RESOLUTION:-}" = "published-image" ]; then
+          err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
+          err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
+          err "products describes the changelog, not the environments."
+        else
+          # The expectation came from the git refs, which run AHEAD of what shipped —
+          # upstream tags before it builds. So this may not be a real mismatch, and
+          # asserting one would be asserting something the source cannot support. It
+          # still fails under REQUIRE, because an expectation that cannot be trusted is
+          # not a guarantee either; what changes is the claim.
+          err "the version check could not be established authoritatively: the expectation"
+          err "came from ${TARGET_RESOLUTION:-an unknown resolution}, not from the published image, and that"
+          err "source runs ahead of what shipped. Reported difference: ${TARGET_VERSION_REASON:-none recorded}."
+          err "REQUIRE_TARGET_VERSION=1 asks for a guarantee the registry was silent about."
+        fi
+        failed=1
+        ;;
+      yes | cycle) ;;
+      *)
+        # "Require" has to require. Every way the check itself can fail — the registry
+        # or github unreachable, the resolver erroring, the target reporting no version
+        # — lands here, and passing green on those is passing green precisely when
+        # nobody can tell whether the two lanes ran the same product.
+        err "the version check could not be performed (${TARGET_VERSION_MATCH:-unchecked}${TARGET_VERSION_REASON:+: $TARGET_VERSION_REASON})."
+        err "REQUIRE_TARGET_VERSION=1 asks for a guarantee, and an unperformed check is"
+        err "not a weaker guarantee — it is none. Set CHECK_TARGET_VERSION=1 and make the"
+        err "resolution work, or drop REQUIRE_TARGET_VERSION."
+        failed=1
+        ;;
+    esac
   fi
   [ "$failed" = "0" ] && log "Green run." || true
   return $failed
