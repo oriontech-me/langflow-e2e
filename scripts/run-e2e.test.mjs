@@ -172,19 +172,71 @@ test("the stamp is demanded only when this run is what wrote it", () => {
   assert.equal(sourced(`echo "$STAMP_REQUIRED"`, { PREPARE_TARGET_SKIP_BUILD: "1" }).stdout.trim(), "0");
 });
 
+// The decision that says whether this run places the clone. Behavioural rather than a
+// regex over the file: phase_preflight around it fetches, curls and runs `npm ci`, so
+// a spelling guard was the only reachable alternative and #1226 established that such
+// a guard passes the mutations it exists to catch.
+const plan = (env) => sourced(`echo "$(target_preparation_plan)"`, env).stdout.trim();
+
+test("a resolved commit is what makes this run place the clone", () => {
+  assert.equal(plan({ TARGET_EXPECTED_SHA: "a".repeat(40), TARGET_EXPECTED_VERSION: "1.13.0.dev1" }), "prepare");
+  assert.equal(plan({ PREPARE_TARGET: "0", TARGET_EXPECTED_SHA: "a".repeat(40) }), "off");
+  // Placement obeys a resolution. Turning the resolution off turns placement off with
+  // it, and says so as configuration rather than warning about an absent answer nobody
+  // asked for.
+  assert.equal(plan({ CHECK_TARGET_VERSION: "0" }), "off");
+});
+
+test("a resolved VERSION with no commit does not place the clone, and does not kill the run", () => {
+  // The regression this guards. resolve-target-version.mjs returns ok:true with an
+  // EMPTY sha in two routine states — the github ref listing unreachable or partial,
+  // and the nightly tag deleted and not yet recreated, which upstream does routinely —
+  // while still reporting `ref: v1.13.0.dev1`. Gating on `sha || ref` passed on the
+  // ref, handed the preparer a tag name the resolver had just failed to find, and the
+  // preparer correctly refused: `die "target preparation failed"` in phase_preflight,
+  // upstream of phase_publish, so zero tests AND no report. The version gate at the end
+  // produces the same red with the evidence attached, which is why this must skip.
+  assert.equal(plan({ TARGET_EXPECTED_VERSION: "1.13.0.dev1", TARGET_EXPECTED_REF: "v1.13.0.dev1", TARGET_EXPECTED_SHA: "" }), "skip-no-commit");
+  // And "nothing resolved at all" stays a distinct answer: it sends the reader to the
+  // resolver rather than to the ref listing.
+  assert.equal(plan({}), "skip-unresolved");
+});
+
+test("the stamp is demanded only by a run that actually wrote one", () => {
+  // Derived from what preparation DID, not from the configuration. The two diverge on
+  // the skip paths, and demanding the stamp there fails the START with "no build stamp"
+  // over a cause that belonged to the resolver — sending the operator to the wrong
+  // machine, on a day the run could still have produced its comparison.
+  const demand = (arg, env = {}) => sourced(`stamp_demand_for_plan ${arg}`, env).stdout.trim();
+  assert.equal(demand("prepare"), "1");
+  assert.equal(demand("prepare", { PREPARE_TARGET_SKIP_BUILD: "1" }), "0");
+  for (const p of ["skip-no-commit", "skip-unresolved", "off"]) assert.equal(demand(p), "0", p);
+});
+
 test("preparation is driven by the resolved COMMIT, and its failure stops the run", () => {
   const text = readFileSync(SCRIPT, "utf8");
   // The commit, not the branch or the tag name: upstream recreates nightly tag names,
-  // so only the sha the registry digest matched cannot drift.
+  // so the tag-name lookup that produces the sha can point somewhere new — and when it
+  // finds nothing the resolver reports an empty sha rather than a wrong one.
   assert.match(text, /TARGET_SHA=\$\{TARGET_EXPECTED_SHA\}/);
   assert.match(text, /prepare-target-source\.sh/);
   assert.match(text, /LANGFLOW_REQUIRE_BUILD_STAMP=\$STAMP_REQUIRED/);
+  // A stray untracked file on a shared VM must not cost the placement its only escape
+  // hatch being PREPARE_TARGET=0, which switches the whole thing off.
+  assert.match(text, /PREPARE_ALLOW_DIRTY=\$\{PREPARE_TARGET_ALLOW_DIRTY\}/);
 
   const block = text.match(/# --- Obey the resolution[\s\S]*?\n  log "Installing dependencies/)?.[0];
   assert.ok(block, "the preparation block is not where this test expects it");
-  // A run that could not be placed must not continue: its verdict would be about a
-  // different product, and that is worth less than no verdict.
+  // A placement that was ATTEMPTED and failed must not continue: its verdict would be
+  // about a different product, and that is worth less than no verdict.
   assert.match(block, /die "target preparation failed"/);
+  // The preparer's own summary is filed before that die, so the log the operator is
+  // pointed at has no path on which it is silently short (Copilot, PR #1701).
+  const failurePath = block.indexOf('die "target preparation failed"');
+  assert.ok(
+    block.lastIndexOf('>> "$prep_log"', failurePath) > block.indexOf("prep_out=\"$(target_ssh"),
+    "prep_out must be appended to the log before the failure path exits",
+  );
   assert.doesNotMatch(block, /\|\| true/, "the preparation must not be allowed to fail silently");
 
   // And what it did is recorded, because nobody recovers it afterwards.

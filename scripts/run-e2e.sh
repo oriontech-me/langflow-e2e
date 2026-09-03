@@ -164,9 +164,19 @@ PREPARE_TARGET="${PREPARE_TARGET:-1}"
 # measure what a rebuild would cost, and to move a clone whose build is being done
 # by hand elsewhere.
 PREPARE_TARGET_SKIP_BUILD="${PREPARE_TARGET_SKIP_BUILD:-0}"
+# Forwarded to the preparer, which refuses a clone carrying somebody's uncommitted
+# work. Exposed here because without it the only way past one stray file on a shared
+# VM is PREPARE_TARGET=0, which switches the whole placement off to get past it.
+PREPARE_TARGET_ALLOW_DIRTY="${PREPARE_TARGET_ALLOW_DIRTY:-0}"
 # The stamp is only demanded when this run is the thing that wrote it. A clone
 # prepared by hand carries no stamp, and refusing it there would break the one
 # workflow that has to keep working while this is being adopted.
+#
+# This is the INTENT. What is actually demanded is decided in phase_preflight from
+# what the preparation step really DID — see stamp_demand_for_plan(). The two differ
+# whenever the resolution could not name a commit: demanding the stamp there fails
+# the start with "no build stamp" over a cause that belonged to the resolver, which
+# sends the operator to the wrong machine.
 STAMP_REQUIRED="$([ "${PREPARE_TARGET}" = "1" ] && [ "${PREPARE_TARGET_SKIP_BUILD}" != "1" ] && echo 1 || echo 0)"
 
 MIN_FREE_GB="${MIN_FREE_GB:-20}"
@@ -196,6 +206,55 @@ die()  { err "$*"; exit 1; }
 
 # shellcheck disable=SC2086
 target_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"; }
+
+# Should this run place the target's clone, and if not, why not?
+#
+# Split out of phase_preflight so the decision is testable without ssh — the phase
+# around it fetches, curls and runs `npm ci`, so the only reachable alternative was a
+# regex over this file, and a guard that pins a spelling does not pin a behaviour.
+#
+# The answer turns on a resolved COMMIT and never on the ref, which is the whole point.
+# scripts/resolve-target-version.mjs returns `ok: true` with an EMPTY sha in two states
+# it can neither help nor hide: the github ref listing unreachable or partial (the
+# registry alone answers the version, not the commit), and the nightly tag deleted and
+# not yet recreated — which upstream does routinely. In both it still reports a ref,
+# `v1.13.0.dev1`. Handing that name to the preparer as a checkout target asks it for a
+# tag the resolver has just said it could not find, so it refuses and the run dies at
+# preflight — before phase_publish, so with no report at all. That is strictly worse
+# than the red-with-a-report the version gate produces on its own, and it hands
+# github.com the veto the resolution deliberately took away from it.
+target_preparation_plan() {
+  if [ "${PREPARE_TARGET:-1}" != "1" ]; then
+    echo "off"
+  elif [ "${CHECK_TARGET_VERSION:-1}" != "1" ]; then
+    # Placement obeys a resolution, so switching the resolution off switches placement
+    # off with it. Distinguished from "unresolved" so the operator who asked for this
+    # is not warned about a failure that is their own configuration.
+    echo "off"
+  elif [ -n "${TARGET_EXPECTED_SHA:-}" ]; then
+    echo "prepare"
+  elif [ -n "${TARGET_EXPECTED_VERSION:-}" ]; then
+    # The version is known and authoritative; only its commit is not. Distinguished
+    # from the unresolved case because it sends the reader somewhere else entirely.
+    echo "skip-no-commit"
+  else
+    echo "skip-unresolved"
+  fi
+  return 0
+}
+
+# Whether the starter must REFUSE an unstamped build, given what preparation actually
+# did. Only a run that placed and rebuilt the clone wrote a stamp, so only that run is
+# entitled to demand one; anywhere else the demand fails the start over a missing file
+# this run never undertook to create.
+stamp_demand_for_plan() {
+  if [ "${1:-}" = "prepare" ] && [ "${PREPARE_TARGET_SKIP_BUILD:-0}" != "1" ]; then
+    echo 1
+  else
+    echo 0
+  fi
+  return 0
+}
 
 # Reads one key out of a $GITHUB_OUTPUT-formatted file, including the heredoc form
 # (`key<<DELIM ... DELIM`) that report-backend-outages.mjs uses for multi-line values.
@@ -396,28 +455,46 @@ phase_preflight() {
   fi
 
   # --- Obey the resolution: put the target ON that commit -------------------------
-  # Failing here is the point. A run against the clone's old position still produces
-  # a verdict, and that verdict goes into the divergence list as "a real failure only
-  # Actions saw" — product changelog wearing an environment's clothes. A lane whose
-  # output would be misleading is worth less than no output.
+  # Failing an ATTEMPTED placement is the point. A run against the clone's old position
+  # still produces a verdict, and that verdict goes into the divergence list as "a real
+  # failure only Actions saw" — product changelog wearing an environment's clothes. A
+  # lane whose output would be misleading is worth less than no output.
+  #
+  # Not placing at all is a different case and must not share that fate. When the
+  # resolution names no commit, dying here costs the whole run — this is upstream of
+  # phase_publish, so there is no report either — where the version gate at the end
+  # produces the same red WITH the evidence. target_preparation_plan() draws that line.
   TARGET_PREPARED_SHA=""; TARGET_REBUILT=""; TARGET_REBUILD_REASON=""; TARGET_PREPARE_S=""
-  if [ "$PREPARE_TARGET" = "1" ] && [ -n "${TARGET_EXPECTED_SHA}${TARGET_EXPECTED_REF}" ]; then
+  local plan; plan="$(target_preparation_plan)"
+  # What is demanded of the starter follows what preparation DID, not what was asked
+  # for. The configured value above is the intent; this is the outcome.
+  STAMP_REQUIRED="$(stamp_demand_for_plan "$plan")"
+  if [ "$plan" = "prepare" ]; then
     log "Preparing the target's clone"
-    local prep_out prep_log="$RUN_DIR/logs/prepare-target.log"
+    local prep_out prep_rc=0 prep_log="$RUN_DIR/logs/prepare-target.log"
     # stderr is streamed AND filed: a rebuild is the longest thing this run does, and
     # a phase that prints nothing for half an hour is indistinguishable from a hang.
-    if ! prep_out="$(target_ssh \
+    #
+    # The status is captured rather than branched on directly, so the summary is filed
+    # on BOTH paths. On a failure the preparer has usually printed nothing to stdout —
+    # it emits its key=value block only after everything succeeded, and every refusal
+    # goes to stderr, which is tee'd — so this is insurance against a partial or
+    # polluted capture, not a lost summary. A log the operator is pointed at should
+    # not have a path on which it is silently short.
+    prep_out="$(target_ssh \
         "TARGET_SHA=${TARGET_EXPECTED_SHA} TARGET_REF=${TARGET_EXPECTED_REF} TARGET_BRANCH=${TARGET_EXPECTED_BRANCH} \
          LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} \
+         PREPARE_ALLOW_DIRTY=${PREPARE_TARGET_ALLOW_DIRTY} \
          PREPARE_SKIP_BUILD=${PREPARE_TARGET_SKIP_BUILD} bash -s" \
-        < scripts/prepare-target-source.sh 2> >(tee -a "$prep_log" >&2))"; then
+        < scripts/prepare-target-source.sh 2> >(tee -a "$prep_log" >&2))" || prep_rc=$?
+    printf '%s\n' "$prep_out" >> "$prep_log"
+    if [ "$prep_rc" != "0" ]; then
       err "could not put the target on ${TARGET_EXPECTED_REF:-${TARGET_EXPECTED_SHA}}."
       err "Refusing to run. The comparison this lane exists to produce is only about"
       err "the environment if both sides run the same product; against the clone's old"
       err "position it describes the product's changelog instead. See $prep_log."
       die "target preparation failed"
     fi
-    printf '%s\n' "$prep_out" >> "$prep_log"
     TARGET_PREPARED_SHA="$(printf '%s\n' "$prep_out" | sed -n 's/^prepared_sha=//p')"
     TARGET_REBUILT="$(printf '%s\n' "$prep_out" | sed -n 's/^rebuilt=//p')"
     TARGET_REBUILD_REASON="$(printf '%s\n' "$prep_out" | sed -n 's/^rebuild_reason=//p')"
@@ -430,9 +507,24 @@ phase_preflight() {
     fi
     info "target clone: ${TARGET_PREPARED_SHA:0:10} (rebuilt=${TARGET_REBUILT:-?}${TARGET_PREPARE_S:+, ${TARGET_PREPARE_S}s})"
     [ "${TARGET_REBUILT}" = "yes" ] && info "  rebuilt because: ${TARGET_REBUILD_REASON}"
-  elif [ "$PREPARE_TARGET" = "1" ]; then
-    warn "no target commit was resolved, so the clone was left where it is. The version"
-    warn "check below still runs, but nothing has been placed — treat a match as luck."
+  elif [ "$plan" = "skip-no-commit" ]; then
+    # The version is authoritative and the commit is not known — the registry decided
+    # the version string by digest, while the commit is looked up by TAG NAME in the
+    # git ref listing, and that lookup came back empty. Placing the clone on the tag
+    # name anyway would ask for the tag the resolver just failed to find; placing it on
+    # the branch head would build something nobody resolved and then fail the
+    # exact-match gate below for a difference this run invented. So: do less, say more.
+    warn "resolved ${TARGET_EXPECTED_VERSION} but not the commit behind it, so the clone was"
+    warn "left where it is. The registry names the version; the commit comes from the git"
+    warn "tag listing, which was empty for ${TARGET_EXPECTED_REF:-that version} — github"
+    warn "unreachable, or the nightly tag deleted and not yet recreated."
+    warn "The version check below still runs and will report the gap. To place it by hand:"
+    warn "  git -C <clone> checkout ${TARGET_EXPECTED_BRANCH:-release-<cycle>}  # cycle parity, not the commit"
+    warn "The build stamp is NOT demanded of the starter, because this run did not write one."
+  elif [ "$plan" = "skip-unresolved" ]; then
+    warn "no target version was resolved at all, so the clone was left where it is. The"
+    warn "version check below cannot run either — treat a green run as unverified, not as"
+    warn "evidence that both lanes tested the same product."
   fi
 
   log "Installing dependencies (npm ci)"
