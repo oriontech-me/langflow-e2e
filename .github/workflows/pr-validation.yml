@@ -408,7 +408,7 @@ jobs:
           # they are what keeps a shortened run from reading as a clean one even if the
           # step dies before it can render (#1012).
           if [ "$FULL_SUITE" = "true" ]; then
-            echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted. PR CI runs a bounded subset — dispatch manual.yml on this branch for the full suite before merging."
+            echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted and PR CI runs a bounded subset. Before merging, dispatch manual.yml on this branch with test_tag=@stable — the full suite does NOT fit that lane and never did (#1174). What @stable leaves out is named in the run summary and in CLAUDE.md -> 'What manual.yml can actually run'."
           fi
           if [ "$DROPPED" -gt 0 ]; then
             echo "::warning::Capped at $IMPACTED_SPEC_CAP of $TOTAL impacted specs — $DROPPED not run in this PR (listed in the step log)."

@@ -135,8 +135,18 @@ export function renderSummary({
   }
 
   if (impacted.fullSuite === true) {
+    // Name a selection the lane can FINISH, not "the full suite" — which it cannot,
+    // and never could (#1174). Measured across four dailies in this exact regime
+    // (2 workers, one backend, which is what a shard and this lane both are), the
+    // `@stable` selection alone sums to 55/57/64/140 min of test time. Everything
+    // outside it is either lane-gated (unreachable here under any dispatch) or still
+    // unvalidated — and an unvalidated spec retries twice against a 5-minute per-test
+    // timeout, which is what makes a full-suite bound unattainable rather than merely
+    // slow. The counts live in CLAUDE.md so they carry a measurement date; repeating
+    // them here would rot silently.
     lines.push(
-      "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Dispatch `manual.yml` on this branch for the full suite.",
+      "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Before merging, dispatch `manual.yml` on this branch with `test_tag=@stable` — the largest selection this lane finishes inside its timeout.",
+      "  It does NOT cover the lane-gated specs (`@destructive` / `@enterprise` / `@serving` — they need their own lanes and cannot run here at all) or the specs still outside `@stable`. See `CLAUDE.md` → **What `manual.yml` can actually run**.",
     );
   }
 

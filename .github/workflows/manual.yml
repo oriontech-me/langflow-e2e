@@ -20,9 +20,13 @@ on:
         default: "nightly"
       test_tag:
         description: |
-          Playwright tag to run. Empty = every test. Common tags:
+          Playwright tag to run. Common tags:
             @stable @release @regression @api @components @workspace
             @agents @mcp @playground @auth @model-provider @files @ui-ux
+          Verifying a suite-wide change? Use @stable — it is the largest selection
+          this lane finishes inside its timeout. Empty = every test, which is NOT
+          bounded: it pulls in the unvalidated specs, and those retry twice against
+          a 5-minute per-test timeout. See CLAUDE.md -> What manual.yml can actually run.
         required: false
         default: ""
       test_grep:
@@ -38,7 +42,7 @@ on:
             • openai / anthropic / google — pin to that provider's SETTLED model
             • all-models — every model in the catalog (deliberate, expensive sweep;
               NARROW it with test_tag/test_grep — ~30 parametrized agent tests over a
-              90-model catalog does not finish inside this job's 90-minute timeout)
+              90-model catalog does not finish inside this job's timeout)
           Docker targets only: the external-URL job rejects anything but "auto"
           (it runs no collect-models and receives no provider key).
         required: false
@@ -131,7 +135,34 @@ jobs:
     needs: detect-target
     if: needs.detect-target.outputs.use_docker == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 90 was inside the distribution this lane has to cover, not above it (#1174).
+    # This lane runs UNSHARDED at 2 workers against one backend, which is the same
+    # workers-per-backend ratio as a single daily shard, so a shard's measured test
+    # time is the closest estimate available. The `@stable` selection summed across
+    # the daily's four shards measured 55.4 / 56.9 / 64.2 / 140.3 min of test time on
+    # four recent runs (2026-09-01..03) — so 90 sits INSIDE that spread, and one of
+    # the four would have been killed partway, with no merged report at all. That is
+    # the failure this raise is about: not a slow run, but a dispatch that costs its
+    # full runtime and returns nothing.
+    #
+    # Read the transfer as a FLOOR, not an equivalence — it is optimistic on three
+    # axes, one of them the axis this repo documents as decisive:
+    #   - this is the ONLY E2E lane that does not pin `LANGFLOW_WORKERS: "1"` (nor
+    #     `LANGFLOW_WORKER_TIMEOUT`), so the backend runs gunicorn's (2*cpu)+1 —
+    #     the condition behind the four-shard wedge in run 30351107916 (#773/#1011),
+    #     and a wedge here costs the 300 s default rather than 120 s;
+    #   - the daily shards run inside the Playwright container; this lane pays
+    #     `setup-playwright`;
+    #   - the daily sets PW_SHARD_FILE_LEVEL=1 (fullyParallel: false); this lane
+    #     leaves fullyParallel: true.
+    # The 140.3 tail is itself the worst case of a BROKEN build — all four shards of
+    # that run were red, and with `retries: 2` a red run's duration is amplified. That
+    # is the right case to size for anyway: a reviewer verifying a suite-wide fixture
+    # change is dispatching precisely because something may be failing.
+    #
+    # 180 covers the observed tail with margin. It costs nothing on a run that does
+    # not need it: this lane is dispatch-only and bills what it uses.
+    timeout-minutes: 180
 
     services:
       langflow:
@@ -432,10 +463,13 @@ jobs:
           # TOKENS_TIMEOUT_MS and TOKENS_DETAIL_CAP are deliberately NOT here: they
           # are defined once at job level, because the attribution sidecar in the
           # test step reads them too and a step-level env: does not reach it.
-          # Below the job's timeout-minutes: 90 so this is a real backstop, not
-          # dead configuration reached only after the runner already killed the
-          # job. Same reasoning as the daily's TOKENS_MAX_SECONDS.
-          TOKENS_MAX_SECONDS: "5100"
+          # Below the job's timeout-minutes so this is a real backstop, not dead
+          # configuration reached only after the runner already killed the job. Same
+          # reasoning as the daily's TOKENS_MAX_SECONDS. It tracks that timeout and
+          # was raised with it (#1174): left at 5100 under a 180-minute job it would
+          # have stopped recording 85 minutes in, silently losing token attribution
+          # for exactly the long dispatches the raise exists to allow.
+          TOKENS_MAX_SECONDS: "10500"
 
       # Export TOKENS_ATTRIB for the specs' cleanup sidecar (#1183), same as
       # daily-stable.yml / pr-validation.yml — with it unset, the helper makes
@@ -544,7 +578,11 @@ jobs:
     needs: detect-target
     if: needs.detect-target.outputs.use_docker == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Same bound as the docker job above (#1174). This job skips every parametrized
+    # LLM spec for want of a key, so its tail is shorter — but it runs the same
+    # unsharded lane against one instance, and an asymmetric cap here would only be
+    # surprising the day a dispatch hits it.
+    timeout-minutes: 180
 
     # `retries` is a dispatch input, not a Docker-lane input, so it is honoured on
     # BOTH target kinds — set at job level for the same reason as in `e2e-docker`
