@@ -91,6 +91,14 @@ require_positive_int OLLAMA_START_TIMEOUT_S "${START_TIMEOUT_S}" \
   "A non-numeric deadline makes the readiness loop skip every iteration, which reports a timeout for a run that never probed."
 require_positive_int OLLAMA_PULL_TIMEOUT_S "${PULL_TIMEOUT_S}" \
   "The model pull would be cut off at once and the spec would skip for a missing model."
+# The one that hides best, because nothing aborts. Both uses are `while` conditions,
+# and a `while` is exempt from `set -e`: `[ -lt ]` exits 2, the loop reads that as
+# false and never runs, and control falls straight through to the SIGKILL escalation.
+# So a plausible misspelling — `30s`, the way `timeout` takes it — does not fail. It
+# silently deletes the graceful window and kills a live server mid-write to its model
+# store, while still reporting a clean stop.
+require_positive_int OLLAMA_STOP_TIMEOUT_S "${STOP_TIMEOUT_S}" \
+  "A bad value skips the graceful wait entirely and escalates straight to SIGKILL."
 
 # --- The address Langflow has to be able to call --------------------------------
 # Identical rule to the echo starter's, and for the same layer: Langflow validates the

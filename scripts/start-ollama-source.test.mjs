@@ -489,6 +489,18 @@ test("a start that cannot kill what it launched KEEPS the PID file", () => {
   r.cleanup();
 });
 
+test("a stop timeout that is not an integer is refused before anything is launched", () => {
+  // `30s` is the plausible spelling — it is how `timeout` takes it — and it is the
+  // one value in this script whose badness announces itself nowhere: both uses sit in
+  // `while` conditions, which `set -e` exempts, so the wait silently becomes zero and
+  // a live server is SIGKILLed while the script reports a clean stop.
+  const r = runScript({ env: { OLLAMA_STOP_TIMEOUT_S: "30s" } });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /OLLAMA_STOP_TIMEOUT_S must be a positive integer/);
+  assert.equal(r.serverArgs, "");
+  r.cleanup();
+});
+
 test("a non-numeric deadline is refused before anything is launched", () => {
   const r = runScript({ env: { OLLAMA_START_TIMEOUT_S: "abc" } });
   assert.equal(r.status, 2);
@@ -538,6 +550,18 @@ test("stop waits for the process to be GONE before reporting success", () => {
   // the script is that "stopped" already means gone.
   assert.ok(!serverPattern(r.marker).test(processTable()));
   assert.ok(!existsSync(join(r.stateRoot, "ollama-source-11434", "ollama.pid")));
+  r.cleanup();
+});
+
+test("stop refuses a non-integer timeout instead of skipping the graceful wait", () => {
+  const r = runScript({});
+  assert.equal(r.status, 0, r.stderr);
+  const stop = runStop({ OLLAMA_PORT: "11434", OLLAMA_STOP_TIMEOUT_S: "30s" }, r.stateRoot);
+  assert.equal(stop.status, 2);
+  assert.match(stop.stderr, /OLLAMA_STOP_TIMEOUT_S must be a positive integer/);
+  // The point of refusing: the server is still there to be stopped properly, rather
+  // than already SIGKILLed by a wait that never ran.
+  assert.ok(serverPattern(r.marker).test(processTable()), "the server was killed anyway");
   r.cleanup();
 });
 

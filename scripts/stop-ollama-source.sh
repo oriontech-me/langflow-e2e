@@ -22,6 +22,23 @@ STATE_DIR="${OLLAMA_STATE_DIR:-${STATE_ROOT}/ollama-source-${PORT}}"
 PID_FILE="${STATE_DIR}/ollama.pid"
 TERM_TIMEOUT_S="${OLLAMA_STOP_TIMEOUT_S:-10}"
 
+# Checked here rather than trusted, and the reason is that nothing would fail if it
+# were not: the value is only ever read in a `while` condition, which `set -e` exempts,
+# so `[ -lt ]` exiting 2 reads as false, the wait never runs, and the script goes
+# straight to SIGKILL — killing a live server mid-write to ~/.ollama and reporting a
+# clean stop. Two steps rather than one `-lt` for the same reason the starter
+# documents: a non-numeric value makes the comparison exit 2, which inside `if` is
+# indistinguishable from "false".
+case "${TERM_TIMEOUT_S}" in
+  '' | *[!0-9]*) TERM_TIMEOUT_OK=0 ;;
+  *) if [ "${TERM_TIMEOUT_S}" -ge 1 ]; then TERM_TIMEOUT_OK=1; else TERM_TIMEOUT_OK=0; fi ;;
+esac
+if [ "${TERM_TIMEOUT_OK}" != "1" ]; then
+  echo "ERROR: OLLAMA_STOP_TIMEOUT_S must be a positive integer of seconds (got '${TERM_TIMEOUT_S}')." >&2
+  echo "A bad value skips the graceful wait entirely and escalates straight to SIGKILL." >&2
+  exit 2
+fi
+
 if [ ! -f "${PID_FILE}" ]; then
   echo "No PID file for port ${PORT} (${PID_FILE})."
   exit 0
