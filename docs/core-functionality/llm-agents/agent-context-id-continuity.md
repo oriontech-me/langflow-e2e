@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev0`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev1`)
 
 ---
 
@@ -62,6 +62,18 @@ image `daily-stable.yml` pulls as `:latest` — as well as on `1.12.0.dev39`, wh
 the geometry above was measured.
 
 ---
+
+> **The parametrized test is `test.fail()` while #1689 is open.** The Agent's own
+> persisted message carries `context_id: null`, so the write half cannot pass:
+> `agent.py` threads `context_id` through the read path (`get_memory_data`) but
+> `_construct_agent_message` builds the stored Message without it, and
+> `lfx/base/agents/events.py` never mentions it. Reproduced 6/6 on `1.12.0.dev45`
+> and `1.13.0.dev1`, and **downstream** of the #1060 confirmed-write gate — which
+> passes, excluding a reverted write; the `User` message of the same session
+> carries the context correctly. The annotation keeps the test RUNNING so the
+> upstream fix reports "expected to fail, but passed"; it also absorbs any *other*
+> failure of this test, which is why lifting it is a deliverable of #1689 rather
+> than something to leave standing.
 
 ## Preconditions *(optional)*
 
