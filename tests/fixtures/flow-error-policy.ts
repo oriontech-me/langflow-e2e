@@ -83,8 +83,10 @@ export type FlowErrorVerdict =
  * turned an empty account into stripped `@stable` tags.
  *
  * The instrument mattered as much as the result. #1165 asked for a full-suite
- * `manual.yml` dispatch, which #1174 makes impossible inside its 90-minute
- * timeout; the daily prints the same advisory block every weekday, its job logs
+ * `manual.yml` dispatch, which that lane cannot finish at any cap (#1174: 32 of the
+ * 298 specs are lane-gated and unreachable there, and the unvalidated remainder
+ * retries twice against a 5-minute per-test timeout); the daily prints the same
+ * advisory block every weekday, its job logs
  * outlive the 7-day artifact retention, and it is sharded — so a cause narrows to
  * one shard's 52 specs before any content matching. That last part is what
  * settled the rows the July inventory had to leave as "strong, not proof".

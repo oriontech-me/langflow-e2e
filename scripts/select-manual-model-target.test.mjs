@@ -364,7 +364,15 @@ test("all-models announces the size of the sweep it is about to run", () => {
   // capability sweep a capability-filtered subset (CAPABILITY_EXCLUDES in
   // test-targets.ts), so a dispatcher multiplying this by the spec count mis-counts.
   assert.match(d.warnings[0], /requires/);
-  assert.match(d.warnings[0], /90-minute timeout/);
+  // Pin the CLAIM, never the number: the cap is a lane setting and it has already
+  // moved once (90 -> 180, #1174), which left this assertion green while the warning
+  // it guards told dispatchers something false.
+  assert.match(d.warnings[0], /well past the job's timeout/);
+  assert.doesNotMatch(
+    d.warnings[0],
+    /\d+-minute timeout/,
+    "the warning must not hardcode the cap — it drifts the day the lane is retuned",
+  );
 });
 
 test("all-models over an ABSENT catalog declines — a fallback target is not a sweep", () => {

@@ -531,7 +531,7 @@ export function selectManualModelTarget(selection, io = {}) {
           `capability-filtered SUBSET, so the run's test count is NOT this number times ` +
           `the spec count. It is still the most expensive shape this lane can run: ~30 ` +
           `parametrized agent test() declarations against a catalog this size is ` +
-          `thousands of multi-turn agent runs, well past the job's 90-minute timeout ` +
+          `thousands of multi-turn agent runs, well past the job's timeout ` +
           `unless test_tag/test_grep narrows it. Narrow the dispatch`,
       ],
     };

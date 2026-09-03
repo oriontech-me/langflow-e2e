@@ -42,7 +42,7 @@ on:
             • openai / anthropic / google — pin to that provider's SETTLED model
             • all-models — every model in the catalog (deliberate, expensive sweep;
               NARROW it with test_tag/test_grep — ~30 parametrized agent tests over a
-              90-model catalog does not finish inside this job's 90-minute timeout)
+              90-model catalog does not finish inside this job's timeout)
           Docker targets only: the external-URL job rejects anything but "auto"
           (it runs no collect-models and receives no provider key).
         required: false
@@ -136,13 +136,30 @@ jobs:
     if: needs.detect-target.outputs.use_docker == 'true'
     runs-on: ubuntu-latest
     # 90 was inside the distribution this lane has to cover, not above it (#1174).
-    # This lane runs UNSHARDED at 2 workers against one backend — the same regime as
-    # a single daily shard — so a shard's measured test time transfers directly. The
-    # `@stable` selection summed across the daily's four shards measured 55.4 / 56.9 /
-    # 64.2 / 140.3 min of test time on four recent runs (2026-09-01..03) — so 90 sits
-    # INSIDE that spread, and one of the four would have been killed partway, with no
-    # merged report at all. That is the failure this raise is about: not a slow run,
-    # but a dispatch that costs its full runtime and returns nothing.
+    # This lane runs UNSHARDED at 2 workers against one backend, which is the same
+    # workers-per-backend ratio as a single daily shard, so a shard's measured test
+    # time is the closest estimate available. The `@stable` selection summed across
+    # the daily's four shards measured 55.4 / 56.9 / 64.2 / 140.3 min of test time on
+    # four recent runs (2026-09-01..03) — so 90 sits INSIDE that spread, and one of
+    # the four would have been killed partway, with no merged report at all. That is
+    # the failure this raise is about: not a slow run, but a dispatch that costs its
+    # full runtime and returns nothing.
+    #
+    # Read the transfer as a FLOOR, not an equivalence — it is optimistic on three
+    # axes, one of them the axis this repo documents as decisive:
+    #   - this is the ONLY E2E lane that does not pin `LANGFLOW_WORKERS: "1"` (nor
+    #     `LANGFLOW_WORKER_TIMEOUT`), so the backend runs gunicorn's (2*cpu)+1 —
+    #     the condition behind the four-shard wedge in run 30351107916 (#773/#1011),
+    #     and a wedge here costs the 300 s default rather than 120 s;
+    #   - the daily shards run inside the Playwright container; this lane pays
+    #     `setup-playwright`;
+    #   - the daily sets PW_SHARD_FILE_LEVEL=1 (fullyParallel: false); this lane
+    #     leaves fullyParallel: true.
+    # The 140.3 tail is itself the worst case of a BROKEN build — all four shards of
+    # that run were red, and with `retries: 2` a red run's duration is amplified. That
+    # is the right case to size for anyway: a reviewer verifying a suite-wide fixture
+    # change is dispatching precisely because something may be failing.
+    #
     # 180 covers the observed tail with margin. It costs nothing on a run that does
     # not need it: this lane is dispatch-only and bills what it uses.
     timeout-minutes: 180

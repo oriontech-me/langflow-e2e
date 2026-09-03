@@ -144,8 +144,12 @@ test("the heading opens the summary and the counts follow it immediately", () =>
 // lane runs unsharded at 2 workers with one backend, and the `@stable` selection ALONE
 // measured 55/57/64/140 min of test time across four dailies in that same regime — so
 // the full suite was never inside its timeout, and the instruction could not be
-// followed as written. Nothing enforced it, so it simply went unfollowed: every
-// recorded manual dispatch is a narrow 5-27 min run.
+// followed as written. Nothing enforced it, so it simply went unfollowed: across all
+// 64 recorded manual dispatches (2.8-34.1 min wall clock, median 8) NOT ONE narrowed
+// nothing — nobody has ever asked this lane for the full suite. (An earlier version of
+// this note said "all 20 dispatches, 5-27 min". That was `gh run list`'s default
+// --limit 20 read as the whole history; the conclusion was unaffected, but the number
+// is recorded corrected rather than quietly replaced.)
 //
 // These assert on OUTPUT for the same reason the rest of this file does: the previous
 // version of this promise lived in the workflow text, where the only available guard
@@ -159,6 +163,10 @@ test("the suite-wide caveat names a selection the lane can finish", () => {
 
   assert.match(text, /suite-wide change/);
   assert.match(text, /test_tag=@stable/, "names the selection to dispatch");
+  // WHICH workflow is the load-bearing fact of this caveat, and nothing pinned it:
+  // swapping `manual.yml` for `nightly.yml` passed every assertion here. The sibling
+  // provider caveat below already pins `daily-stable.yml`, so this was an omission.
+  assert.match(text, /`manual\.yml`/, "names the workflow to dispatch");
   assert.doesNotMatch(
     text,
     /for the full suite/,
@@ -179,6 +187,14 @@ test("the suite-wide caveat says what the selection leaves out", () => {
   assert.match(text, /@enterprise/);
   assert.match(text, /@serving/);
   assert.match(text, /outside `@stable`/, "names the unvalidated remainder too");
+  // Presence is not enough: they have to be stated as EXCLUDED. Without this, an
+  // inverted residual ("It ALSO covers the lane-gated specs ... and every spec
+  // outside @stable") satisfied every assertion above.
+  assert.match(
+    text,
+    /does NOT cover[^\n]*@destructive/,
+    "the residual must read as an exclusion, not as coverage",
+  );
 });
 
 test("the suite-wide caveat is absent when the change is not suite-wide", () => {
