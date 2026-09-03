@@ -214,10 +214,19 @@ const EXCEPTION_PATTERNS = [
  * three recorded account drains (#772 openai, #1029 google, #1169 anthropic) and
  * the third is dated inside the harvest that found this.
  *
- * Deliberately literal and few. The alternative fixes were rejected: hatching
+ * Narrow in SCOPE, not in wording. The alternative fixes were rejected: hatching
  * the two specs would silence genuine flow errors on them forever, and widening
  * the infra-signature list would change how flakes are filed across the whole
  * suite (`CONTRIBUTING.md` calls that "a deliberate change, not a convenience").
+ *
+ * But within that scope the patterns err WIDE, because the two errors do not
+ * cost the same. A pattern that is too wide downgrades one run to UNEVALUATED —
+ * counted, printed, never clean. A pattern that is too narrow fails a test on a
+ * drained key, and that failure's text matches nothing in
+ * `infra-signature-patterns.json`, so it is scored ATTRIBUTABLE and takes a tag.
+ * The first version enumerated one token per provider and, measured on the real
+ * payloads, missed three of the strings this repo already recognises elsewhere
+ * (`no credits remaining`, `billing_not_active`, a bare 402).
  *
  * A match downgrades the verdict to UNEVALUATED, never to clean — the same rule
  * the fixture already applies to a stream it could not read (#1012).
@@ -233,7 +242,29 @@ const PROVIDER_OUTAGE_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
   // OpenAI's equivalent. Not measured in the harvest — included because it is
   // the same account state under the third provider this suite runs, and the
   // one whose drain (#772) cost three specs their tag.
-  { id: "quota-exhausted", pattern: /\binsufficient_quota\b/i },
+  //
+  // Matched on the bare word, NOT on `insufficient_quota`, for two reasons the
+  // review of this PR measured. (a) The provider says it twice in one payload —
+  // `'message': 'You exceeded your current quota…'` at ~offset 50 and
+  // `'type': 'insufficient_quota'` at ~offset 276 — and `providerOutage()` runs
+  // on the message AFTER `summarize()` has cut it to 3 lines / 400 chars, so the
+  // token that arrives last is the one a slightly longer component name drops.
+  // The prose sits at the front and survives. (b) `run-node-and-wait.ts`
+  // classifies the SAME run message with `/\bquota\b/i`; two lists disagreeing
+  // about the same string is what produced this gap.
+  { id: "quota-exhausted", pattern: /\bquota\b/i },
+  // The drained-account wording of the OpenAI-COMPATIBLE endpoints, which is a
+  // different string from either of the two above. Not a guess about a provider
+  // we do not run: `openai-compatible-provider-setup.spec.ts:1029` already skips
+  // on exactly these two tokens, and that spec is one of the two measured cases
+  // this carve-out was built for — so leaving them out covered the harvest's
+  // Anthropic half of that spec and not its OpenAI-compatible half.
+  { id: "credit-exhausted", pattern: /no credits remaining|billing_not_active/i },
+  // The billing refusal as a bare status, which is how an endpoint that returns
+  // no JSON body words it. `\b402\b` is safe where a bare `429` is not: 429 is
+  // the rate-limit status AND a plausible request id or token count, while 402
+  // appears in neither — the suite has no other source of that number.
+  { id: "payment-required", pattern: /\b402\b|payment required/i },
   // The rate-limit status as the provider words it inside the stream. Anchored
   // on the provider's own phrasing rather than a bare "429", which appears in
   // request ids and token counts.

@@ -524,6 +524,83 @@ test("an agent MENTIONING a quota in prose is still a healthy run", () => {
   assert.equal("providerOutage" in verdict, false, "a healthy run is clean, not unevaluated");
 });
 
+// The OpenAI 429 body verbatim, as the API returns it. Kept as one constant
+// because the two quota tokens sit at OPPOSITE ENDS of it, which is the whole
+// point of the tests below: the prose at ~offset 50, `'type':
+// 'insufficient_quota'` at ~offset 276.
+const OPENAI_QUOTA_429 =
+  "Error code: 429 - {'error': {'message': 'You exceeded your current quota, " +
+  "please check your plan and billing details. For more information on this " +
+  "error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.', " +
+  "'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}}";
+
+test("a drained OpenAI key is a provider outage, wrapped or bare", () => {
+  // Langflow prefixes a component failure with "Error building Component <n>",
+  // so the message the fixture sees is the wrapped form, not the API's own.
+  for (const message of [OPENAI_QUOTA_429, `Error building Component Agent: \n\n${OPENAI_QUOTA_429}`]) {
+    const verdict = classifyFlowError(
+      `data: ${JSON.stringify({ type: "RUN_ERROR", message })}`,
+    ) as any;
+    assert.equal(verdict.failed, false, message.slice(0, 40));
+    assert.equal(verdict.providerOutage, "quota-exhausted");
+  }
+});
+
+test("the quota verdict survives summarize() truncating the payload's tail", () => {
+  // `providerOutage()` runs on the message AFTER summarize() cuts it to 400
+  // chars, so a pattern anchored on the payload's LAST token is one long
+  // component name away from being unreachable. Reproduce that: pad the prefix
+  // until `insufficient_quota` is past the cut, and assert the verdict holds.
+  const padded = `Error building Component ${"A".repeat(120)}: \n\n${OPENAI_QUOTA_429}`;
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({ type: "RUN_ERROR", message: padded })}`,
+  ) as any;
+
+  assert.ok(
+    !/insufficient_quota/i.test(verdict.message),
+    "fixture is not exercising the truncation it claims to — the tail token still survives",
+  );
+  assert.equal(verdict.failed, false);
+  assert.equal(verdict.providerOutage, "quota-exhausted");
+});
+
+test("the OpenAI-compatible drained-account wordings are provider outages too", () => {
+  // These three are the strings `openai-compatible-provider-setup.spec.ts:1029`
+  // already treats as a drained account. Measured as FAILING the test before
+  // this list covered them.
+  const cases: Array<[string, string]> = [
+    [
+      "no credits remaining",
+      "Error code: 402 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API', 'code': 402}}",
+    ],
+    [
+      "billing_not_active",
+      "Error code: 403 - {'error': {'message': 'Your account is not active, please check your billing details.', 'code': 'billing_not_active'}}",
+    ],
+    ["bare status", "Error building Component Agent: 402 Payment Required"],
+  ];
+  for (const [label, message] of cases) {
+    const verdict = classifyFlowError(
+      `data: ${JSON.stringify({ type: "RUN_ERROR", message })}`,
+    ) as any;
+    assert.equal(verdict.failed, false, label);
+    assert.ok(
+      ["credit-exhausted", "payment-required"].includes(verdict.providerOutage),
+      `${label}: expected a billing id, got ${verdict.providerOutage}`,
+    );
+  }
+});
+
+test("a bare 429 stays a flow error while a bare 402 does not", () => {
+  // The asymmetry is deliberate and worth pinning: 429 doubles as a request id
+  // or a token count ("request 429 of 500"), 402 has no other source here. If a
+  // future pattern makes 429 bare, this test is where it should show up.
+  const notLimited = classifyFlowError(
+    `data: ${JSON.stringify({ type: "RUN_ERROR", message: "Error building Component Agent: request 429 of 500 failed" })}`,
+  );
+  assert.equal(notLimited.failed, true);
+});
+
 test("an ordinary flow error is untouched by the downgrade", () => {
   const verdict = classifyFlowError(
     `data: ${JSON.stringify({ type: "RUN_ERROR", message: "THIS IS A TEST ERROR MESSAGE" })}`,
