@@ -174,7 +174,38 @@ The series is **not continuous**. Document any missing weeks here rather than ba
   ],
   "run_errors": [                            // OPTIONAL: top-level report errors — see below.
     "Error: [preflight] Langflow backend at http://localhost:7860/ is not reachable after 120000ms"
-  ]
+  ],
+  "backend": {                               // OPTIONAL: in-run backend liveness — see below (#1077).
+    "shard_total": 4,                        // shard count the run declared; null when it declared none
+    "shards_reported": 4,                    // shards that uploaded a summary
+    "shards_measured": 4,                    // …of which actually recorded probes
+    "wedged": true,                          // any shard measured an outage
+    "outages_total": 12,                     // outage windows (≥2 consecutive failed probes)
+    "down_seconds_total": 864,               // measured unreachable seconds, summed
+    "blips_total": 25,                       // single-probe failures BELOW the window threshold
+    "collateral_attempts": 8,                // failing attempts overlapping an outage on their OWN shard
+    "shards": [
+      {
+        "shard": "1",
+        "measured": true,
+        "outages": 2,
+        "down_seconds": 196,
+        "span_seconds": 928.7,               // recorder's observed span, NOT the job duration
+        "down_pct": 21.1,
+        "failed_probes": 53,
+        "blips": 4,
+        "attempts": 139,                     // test ATTEMPTS on this shard (retries included)
+        "failing": 6,
+        "collateral": 2,
+        "totals": { "passed": 128, "failed": 0, "flaky": 4, "skipped": 2 }
+      }
+    ],
+    "unassigned": { "passed": 0, "failed": 2, "flaky": 0, "skipped": 0 }
+                                             // OPTIONAL: specs no shard claimed. Omitted when
+                                             // empty — which is the normal case, and is why the
+                                             // rest of this example is the real 2026-09-02 row
+                                             // while this one line is not.
+  }
 }
 ```
 
@@ -190,6 +221,14 @@ The series is **not continuous**. Document any missing weeks here rather than ba
 - `failures` are tests where Playwright's final `test.status === "unexpected"`. `flaky` are tests where final status is `"flaky"` (failed and then passed on retry). Both carry `error_signature`, so the 30-day same-signature flake-recurrence criterion in `CONTRIBUTING.md` applies mechanically to either array.
 - **A run where `totals` are ALL ZERO means no test executed at all** — an infra abort, *not* a clean day. The shards died before the first test (a failed `globalSetup`, a merge that produced nothing), so the line carries no per-test evidence and nothing in it should be read as a per-test signal. Distinguish it from "nothing failed", which always has `passed > 0`. `duration_ms` is a useful corroborating hint: an aborted run is far shorter than a real one (7.6 min vs the usual 14–22 on the daily). First occurrence: `run_id` `30351107916` (2026-07-28) — see #1007 for the incident and #1012 for the guard that now fails such a run loudly.
 - `run_errors` (optional, additive to schema v1) carries the **top-level** report errors — `globalSetup` / worker-level failures that stopped tests from running, as opposed to a test failing. Same normalisation as `error_signature` (first non-empty line, capped at 240 chars). One entry per shard that aborted, so a 4-shard daily aborting everywhere yields 4 near-identical signatures. **Omitted entirely when there are none**, which is the normal case — so its presence is itself the signal that something happened outside the tests. Absent from history written before #1012.
+- `backend` (optional, additive to schema v1, #1077) is the **in-run backend liveness measurement** for the run: the mid-run worker wedge (#1030/#1048), recorded per shard. Written by `scripts/lib/backend-history.mjs` from the same per-shard `backend-liveness.json` summaries the merge job's outage reporter renders into the umbrella issue, through that reporter's own readers — so a row here and that section describe the same run with the same numbers by construction, not by two parsers happening to agree.
+  - **Why it is on this line at all.** The measurement is uploaded as the `liveness-N` artifacts with `retention-days: 7`; a week later the run cannot be re-derived. #1077 has to compare a candidate lever against a **baseline** on four axes — outages per shard, `down_seconds_total`, per-shard wall clock, passed-spec count — and every measurement on that issue before this field existed is a table typed by hand into a comment from artifacts that have since expired.
+  - **Recording only.** No gate reads it. In particular it is **not** an input to the `@stable` auto-removal, which decides on the failure's own error signature (#1031): overlap with an outage window is a lead, never a verdict, and `report-backend-outages.mjs` carries the reasoning.
+  - **Absent ≠ zero, and `shards_measured: 0` ≠ healthy.** The block is **omitted entirely** by a lane that never measured (the weekly, any local run, anything that does not set `LIVENESS_DIR`). A run whose shards *did* report but recorded no probes carries the block with `shards_measured: 0` — that is UNKNOWN, and must never be read as a backend that stayed up (#1012). `shards_reported` below `shard_total` is a shard whose job died before writing a summary; `shard_total: null` means the run declared no count, which is the one state that makes such a shard undetectable.
+  - `blips_total` counts single-probe failures **below** the 2-probe window threshold, so they are excluded from `down_seconds_total`. A non-zero value means the down-share on that row is a **floor**, not a ceiling — the caveat that changed a triage conclusion on 2026-09-01 (#1665).
+  - `span_seconds` is the **recorder's** observed span (first probe → last probe), not the shard job's duration: the recorder starts after the post-`collect-models` health gate and is killed in teardown. It is the window the down-share is computed against, and the only wall clock the artifacts can support.
+  - `attempts` / `failing` / `collateral` count test **attempts** (retries included — the cost of a wedge is precisely that each collateral test burns its whole retry budget), while `shards[].totals` counts **tests**, in the same vocabulary as the line's run-level `totals`. The per-shard totals **sum to that run-level `totals`**; when they cannot, the difference is named in `unassigned` rather than silently lost.
+  - Absent from history written before #1077.
 - `param` (optional, additive to schema v1) is the parameterization label a model-parameterized spec carries on its `describe` title — e.g. `"google / gemini-2.5-flash"` or `"model:gpt-4o-mini"`. The triage dataset builder uses it to group failures by provider variant and surface **provider-wide** clusters (same provider failing across ≥2 spec files → likely an environment/package cause, not per-test rot; #899). Absent for non-parameterized specs and for history written before #899.
 
 ---
@@ -221,6 +260,20 @@ jq -r '"\(.date)  \(.langflow_image)  failed=\(.totals.failed)"' reports/weekly-
 jq -r 'select([.totals[]] | add == 0)
        | "\(.date)  run=\(.run_id)  \(.duration_ms/1000 | floor)s  \(.run_errors[0] // "no recorded reason")"' \
   reports/daily-history.jsonl
+
+# The mid-run wedge, as a series (#1077). Rows written before it lack `.backend`;
+# `select(.backend)` keeps them out rather than reading them as zero-outage days.
+jq -r 'select(.backend)
+       | "\(.date)  outages=\(.backend.outages_total)  down=\(.backend.down_seconds_total)s" +
+         "  shards=\(.backend.shards_measured)/\(.backend.shard_total // "?")" +
+         "  passed=\(.totals.passed)"' reports/daily-history.jsonl
+
+# Per-shard, every measured run. The asymmetry within a single day — one shard
+# 30%+ down while another measures 0% — is the load pattern #1077 is about; add
+# `select($row.run_id == "…")` to narrow it to one run.
+jq -r 'select(.backend) | . as $row | .backend.shards[]
+       | "\($row.date)  shard \(.shard)  \(.outages) outage(s)  \(.down_pct)% of \(.span_seconds)s" +
+         "  passed=\(.totals.passed)  collateral=\(.collateral)"' reports/daily-history.jsonl
 
 # Pull the full error_signature for a specific test, across history.
 # `. as $row` keeps the parent object reachable while iterating `.failures[]`,

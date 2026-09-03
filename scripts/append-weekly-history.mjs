@@ -10,6 +10,12 @@
 //   GITHUB_SERVER_URL         e.g. https://github.com (provided by Actions)
 //   GITHUB_REPOSITORY         e.g. owner/repo (provided by Actions)
 //   LANGFLOW_IMAGE            Full image ref including tag, e.g. langflowai/langflow-nightly:latest
+//   LIVENESS_DIR              Optional. Directory holding the per-shard
+//                             backend-liveness.json summaries. When set AND at
+//                             least one summary is found, the entry carries the
+//                             `backend` block (#1077); otherwise it is omitted.
+//   SHARD_TOTAL               Optional. The run's declared shard count, recorded
+//                             so a shard that uploaded nothing cannot vanish.
 //
 // Schema (version 1):
 // {
@@ -34,6 +40,13 @@
 //   credential guard being the usual wrapper). Rows written before #1310 lack
 //   the field, and the triage dataset falls back to classifying
 //   `error_signature` for those — a strictly weaker check.
+//   `backend` (optional, additive to schema v1, #1077) is the in-run backend
+//   liveness measurement for the run — outage count, unreachable seconds, and
+//   the per-shard breakdown of the same, alongside each shard's observed span
+//   and its passed/failed/flaky/skipped counts. It exists because the wedge is
+//   measured into `liveness-N` artifacts that expire after 7 days, so #1077's
+//   before/after had no durable series to compare against. Recording only; no
+//   gate reads it. See scripts/lib/backend-history.mjs.
 //   `param` (optional, additive to schema v1) is the parameterization label a
 //   model-parameterized spec carries on its describe title (e.g.
 //   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
@@ -223,6 +236,36 @@ const runUrl = repo ? `${serverUrl}/${repo}/actions/runs/${runId}` : null;
 // schema v1 readers are unaffected.
 const runErrors = (report?.errors || []).map((e) => errorSignature(e)).filter(Boolean);
 
+// In-run backend liveness (#1077). Built from the same per-shard summaries the
+// merge job's outage reporter renders into the umbrella issue, through that
+// script's own readers — a row here and that section describe the same run with
+// the same numbers by construction, not by two parsers agreeing.
+//
+// Wrapped, and imported DYNAMICALLY inside the wrap. This line is written on a
+// red day, and a diagnostic must never be the reason the run history goes
+// unrecorded — but a static import runs the module body before any of this file
+// executes, so a top-level throw in `backend-history.mjs` (or in
+// `report-backend-outages.mjs`, which it pulls in) would abort the appender
+// before a line existed, on EVERY lane including `weekly-stable.yml` and local
+// runs that set no LIVENESS_DIR at all. The imported reporter's own "a
+// diagnostic must never redden a step" guarantee lives in its entry point, not
+// in its module body. Here the blast radius is the block: a throw is reported
+// and the entry is written without it, which reads as "not measured" — never as
+// a healthy backend.
+let backend = null;
+if (process.env.LIVENESS_DIR) {
+  try {
+    const { backendBlockFromDir } = await import("./lib/backend-history.mjs");
+    backend = backendBlockFromDir(
+      process.env.LIVENESS_DIR,
+      report,
+      Number(process.env.SHARD_TOTAL) || null,
+    );
+  } catch (err) {
+    console.error(`[history] backend liveness block skipped: ${err?.message || err}`);
+  }
+}
+
 const entry = {
   version: SCHEMA_VERSION,
   date: new Date().toISOString().split("T")[0],
@@ -235,6 +278,7 @@ const entry = {
   failures,
   flaky,
   ...(runErrors.length ? { run_errors: runErrors } : {}),
+  ...(backend ? { backend } : {}),
 };
 
 mkdirSync(dirname(historyPath), { recursive: true });
@@ -244,5 +288,9 @@ const executed = totals.passed + totals.failed + totals.flaky + totals.skipped;
 const summary = `[history] ${entry.date} ${workflow} run=${runId} ` +
   `passed=${totals.passed} failed=${totals.failed} flaky=${totals.flaky} skipped=${totals.skipped}` +
   (runErrors.length ? ` run_errors=${runErrors.length}` : "") +
+  (backend
+    ? ` outages=${backend.outages_total} down=${backend.down_seconds_total}s` +
+      ` shards_measured=${backend.shards_measured}/${backend.shard_total ?? "?"}`
+    : "") +
   (executed === 0 ? " (ZERO tests executed — infra abort)" : "");
 console.log(summary);
