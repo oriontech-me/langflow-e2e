@@ -32,9 +32,20 @@
 #
 # TARGET_SHA is the preferred input because upstream's nightly DELETES AND RECREATES
 # its tag names, so `v1.13.0.dev1` can point somewhere new after the 1.13.0.dev1 image
-# shipped — the resolver says so in its own header. The sha it reports was matched by
-# image digest, and a sha cannot drift. TARGET_REF is carried for the log and used
-# only when no sha is available.
+# shipped — the resolver says so in its own header. TARGET_REF is carried for the log
+# and the stamp, and is used as a target only when no sha is available at all.
+#
+# What the registry digest does and does not settle, because the distinction decides
+# how much this placement is worth. The digest picks the VERSION STRING: the resolver
+# matches `latest`'s digest against the other published tags. The COMMIT is then looked
+# up by TAG NAME in the git ref listing — the very mapping that drifts. So a sha handed
+# to this script is commit parity only as far as that tag was trustworthy when it was
+# read, and when the tag cannot be found the resolver reports an EMPTY sha rather than
+# a wrong one. A caller must not turn that emptiness into a checkout of the tag name:
+# that asks for the ref the resolver has just said it could not find, and the refusal
+# below then costs a whole run. scripts/run-e2e.sh does not prepare without a sha for
+# exactly that reason (see target_preparation_plan there). Handed a ref by hand, this
+# script obeys it — the operator is the one making the claim then.
 #
 # `main` is refused outright. It is not what the nightly builds — upstream resolves
 # the newest `release-X.Y.Z` branch — so a clone on `main` tests something the CI
