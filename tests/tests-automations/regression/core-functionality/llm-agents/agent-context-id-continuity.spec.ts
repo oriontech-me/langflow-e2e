@@ -422,22 +422,6 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        // #1689 — CONFIRMED product defect, not a mute. The message the Agent
-        // persists for its own turn carries `context_id: null` while every other
-        // message of the same session carries the configured one: `agent.py`
-        // threads `context_id` through the READ path (`get_memory_data`) but
-        // `_construct_agent_message` builds the stored Message without it, and
-        // `lfx/base/agents/events.py` never mentions it. Reproduced 6/6 on
-        // 1.12.0.dev45 and 1.13.0.dev1, and DOWNSTREAM of the #1060
-        // confirmed-write gate, which passes — so a reverted write is excluded.
-        //
-        // `test.fail()` rather than `test.fixme`: the test keeps RUNNING, so the
-        // day the upstream fix lands it reports "expected to fail, but passed"
-        // and points back at #1689 — a quarantine would stay silent. The cost,
-        // stated because it is real: this absorbs ANY failure of this test, so an
-        // unrelated regression here is invisible until the annotation is lifted.
-        // Lift it (and re-validate `@stable`) as #1689's deliverable.
-        test.fail();
 
         const nonce = `probe-${Date.now()}`;
         const contextId = `ctx-${nonce}`;
