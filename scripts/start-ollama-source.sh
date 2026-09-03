@@ -220,6 +220,19 @@ read_binary_version() {
   printf '%s\n' "${version_output}"
 }
 
+# Checked before the download, not after it. Provisioning unpacks into PREFIX and can
+# only ever produce `${PREFIX}/bin/ollama`, so an OLLAMA_BIN pointing somewhere else
+# and not existing is a contradiction — and left to run, it is the one path in this
+# script that dies without an explanation of its own: ~1 GB downloaded and verified,
+# the prefix installed, and then `chmod` failing on the bogus path with libc's message.
+if [ -n "${OLLAMA_BIN:-}" ] && [ ! -x "${BIN}" ]; then
+  echo "ERROR: OLLAMA_BIN=${BIN} is not an executable file." >&2
+  echo "Provisioning installs into OLLAMA_PREFIX (${PREFIX}) and cannot place a binary" >&2
+  echo "outside it, so continuing would download the release and then fail on chmod." >&2
+  echo "Point OLLAMA_BIN at a binary that exists, or unset it to use the prefix." >&2
+  exit 2
+fi
+
 if [ -x "${BIN}" ]; then
   HAVE="$(read_binary_version "${BIN}")"
   if [ "${HAVE}" != "${VERSION}" ]; then

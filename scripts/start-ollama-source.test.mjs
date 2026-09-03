@@ -428,6 +428,17 @@ test("the download is verified against the whole checksum field, `./` and all", 
   r.cleanup();
 });
 
+test("an OLLAMA_BIN that does not exist is refused before the download, not after", () => {
+  // The expensive failure: without this check the script downloads and verifies ~1 GB,
+  // installs the prefix, and only then dies on `chmod` against the bogus path — with
+  // libc's message, the one path here that fails without explaining itself.
+  const r = runScript({ binaryPresent: false, env: { OLLAMA_BIN: "/nonexistent/ollama" } });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /OLLAMA_BIN=\/nonexistent\/ollama is not an executable file/);
+  assert.doesNotMatch(r.curl, /tar\.zst/, "the release was downloaded anyway");
+  r.cleanup();
+});
+
 test("a download whose bytes do not match the published sum installs nothing", () => {
   const r = runScript({ binaryPresent: false, corruptDownload: true });
   assert.equal(r.status, 2);
