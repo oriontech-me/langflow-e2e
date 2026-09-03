@@ -88,6 +88,7 @@ function runScript({
   serverExits = false,
   ignoresTerm = false,
   withUv = true,
+  stamp = null,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "start-langflow-source-test-"));
   const bin = join(dir, "bin");
@@ -105,6 +106,10 @@ function runScript({
     mkdirSync(fe, { recursive: true });
     writeFileSync(join(fe, "index.html"), "<!doctype html>");
   }
+  // The build stamp scripts/prepare-target-source.sh writes. The git stub below
+  // answers every rev-parse with "abc1234", so that is the sha a MATCHING stamp
+  // carries and anything else is the stale case.
+  if (repoExists && stamp) writeFileSync(join(repo, ".langflow-e2e-build-stamp"), `sha=${stamp}\n`);
 
   const uvLog = join(dir, "uv.log");
   const gitLog = join(dir, "git.log");
@@ -361,6 +366,41 @@ test("a still-running instance from a previous start is refused, naming the stop
   assert.match(second.stdout, /stop-langflow-source\.sh/);
   first.cleanup();
   second.cleanup();
+});
+
+test("a frontend build that belongs to another commit is refused", () => {
+  // What the LANGFLOW_SRC_REF note used to only warn about. A checkout moves the
+  // backend and leaves the previous build's index.html in place: the specs that did
+  // not change pass, the ones that did fail, and the report blames the product.
+  const r = runScript({ stamp: "deadbeefdeadbeef" });
+  assert.equal(r.status, 2);
+  assert.match(r.stdout, /was built from deadbeefde/);
+  assert.match(r.stdout, /prepare-target-source\.sh/);
+  assert.equal(r.pidFileExists, false);
+  r.cleanup();
+});
+
+test("an unstamped build warns by default and is fatal when the lane demands it", () => {
+  // Both halves are load-bearing. A clone built by hand has no stamp and has to stay
+  // usable; the scheduled lane runs the preparer first, so there "no stamp" means the
+  // preparer did not run and the assets' origin is unknown.
+  const lenient = runScript();
+  assert.equal(lenient.status, 0);
+  assert.match(lenient.stdout, /no build stamp at/);
+  lenient.cleanup();
+
+  const strict = runScript({ env: { LANGFLOW_REQUIRE_BUILD_STAMP: "1" } });
+  assert.equal(strict.status, 2);
+  assert.match(strict.stdout, /asks for a guarantee/);
+  assert.equal(strict.pidFileExists, false);
+  strict.cleanup();
+});
+
+test("a stamp that agrees with HEAD starts with nothing to say about provenance", () => {
+  const r = runScript({ stamp: "abc1234" });
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /build stamp/);
+  r.cleanup();
 });
 
 test("a clone with no frontend build is refused, naming the build command", () => {

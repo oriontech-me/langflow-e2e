@@ -45,6 +45,12 @@
 #        - the frontend assets must exist. They are gitignored upstream, so a fresh
 #          clone has none, and the backend still answers /health_check 200 while
 #          serving no UI at all — every Playwright spec then dies at page load.
+#        - the frontend assets must belong to THIS commit. Existence is not
+#          provenance: a checkout moves the backend and leaves the previous build's
+#          index.html in place, so the lane exercises an old UI against a new
+#          backend and passes or fails for reasons nobody can attribute. The build
+#          stamp written by scripts/prepare-target-source.sh is what makes that
+#          answerable here without this script touching anything.
 #
 # Usage:
 #   ./scripts/start-langflow-source.sh                      # clone at $LANGFLOW_SRC_REPO, port 7860
@@ -76,6 +82,15 @@ LOG_FILE="${STATE_DIR}/langflow.log"
 # an upstream path is a gate that goes stale — but stale here means a loud refusal
 # on a good clone, never a silent pass on a broken one.
 FRONTEND_DIR="${LANGFLOW_SRC_FRONTEND_DIR:-${REPO}/src/backend/base/langflow/frontend}"
+# Written by scripts/prepare-target-source.sh, next to the clone rather than under
+# /tmp so that a reboot does not read as a stale build. Its only job here is to name
+# the commit the served assets were built from.
+BUILD_STAMP_FILE="${LANGFLOW_SRC_STAMP_FILE:-${REPO}/.langflow-e2e-build-stamp}"
+# A MISSING stamp is a warning by default and fatal on demand. Both are needed: a
+# clone prepared by hand has no stamp and must stay usable, while the scheduled lane
+# always runs the preparer first, so there "no stamp" means the preparer did not run
+# and the assets' origin is unknown — which is exactly what the lane cannot afford.
+REQUIRE_BUILD_STAMP="${LANGFLOW_REQUIRE_BUILD_STAMP:-0}"
 # Source starts are far slower than pip's 120 s: the first dependency sync on a cold
 # cache compiles wheels. A deadline shorter than that reads as "Langflow is broken"
 # when the truth is "the machine is still building".
@@ -131,9 +146,11 @@ fi
 if [ -n "${LANGFLOW_SRC_REF:-}" ]; then
   echo "Checking out ${LANGFLOW_SRC_REF} in ${REPO}..."
   git -C "${REPO}" checkout --quiet "${LANGFLOW_SRC_REF}"
-  echo "NOTE: the frontend assets are NOT rebuilt by this script. If ${LANGFLOW_SRC_REF}"
-  echo "      changes the UI, rebuild them (see the frontend check below) or the run"
-  echo "      exercises the previous build's interface against the new backend."
+  echo "NOTE: the frontend assets are NOT rebuilt by this script — see the header's"
+  echo "      second promise. If ${LANGFLOW_SRC_REF} changes the UI, the build stamp"
+  echo "      check below will REFUSE the start rather than serve the previous build's"
+  echo "      interface against the new backend. Use scripts/prepare-target-source.sh"
+  echo "      to move the clone and rebuild in one step; it writes the stamp."
 fi
 
 SRC_SHA="$(git -C "${REPO}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -205,6 +222,36 @@ if [ ! -f "${FRONTEND_DIR}/index.html" ]; then
   echo "  make -C ${REPO} install_frontend build_frontend" >&2
   echo "(Override the location with LANGFLOW_SRC_FRONTEND_DIR if upstream moves it.)" >&2
   exit 2
+fi
+
+# --- ...and the UI has to be the one THIS commit builds -------------------------
+# The check the LANGFLOW_SRC_REF note used to only warn about. A stale build fails
+# GREEN in the cases that matter: an old UI against a new backend passes the specs
+# that did not change and fails the ones that did, and the report blames the product.
+HEAD_SHA_FULL="$(git -C "${REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
+STAMPED_SHA=""
+if [ -f "${BUILD_STAMP_FILE}" ]; then
+  STAMPED_SHA="$(grep -m1 '^sha=' "${BUILD_STAMP_FILE}" 2>/dev/null | sed 's/^sha=//' || true)"
+fi
+if [ -n "${STAMPED_SHA}" ] && [ "${STAMPED_SHA}" != "${HEAD_SHA_FULL}" ]; then
+  echo "ERROR: the frontend build at ${FRONTEND_DIR} was built from ${STAMPED_SHA:0:10}," >&2
+  echo "but the clone is at ${HEAD_SHA_FULL:0:10}. Starting would serve that older UI" >&2
+  echo "against this backend, and the run would attribute the difference to the product." >&2
+  echo "Rebuild and re-stamp:" >&2
+  echo "  TARGET_SHA=${HEAD_SHA_FULL} LANGFLOW_SRC_REPO=${REPO} ./scripts/prepare-target-source.sh" >&2
+  exit 2
+fi
+if [ -z "${STAMPED_SHA}" ]; then
+  if [ "${REQUIRE_BUILD_STAMP}" = "1" ]; then
+    echo "ERROR: no build stamp at ${BUILD_STAMP_FILE}, so the commit those assets were" >&2
+    echo "built from is unknown, and LANGFLOW_REQUIRE_BUILD_STAMP=1 asks for a guarantee." >&2
+    echo "An unperformed check is not a weaker guarantee, it is none. Run the preparer:" >&2
+    echo "  TARGET_SHA=${HEAD_SHA_FULL} LANGFLOW_SRC_REPO=${REPO} ./scripts/prepare-target-source.sh" >&2
+    exit 2
+  fi
+  echo "NOTE: no build stamp at ${BUILD_STAMP_FILE} — the assets exist but nothing says"
+  echo "      which commit they came from. Fine for a clone you build by hand; the"
+  echo "      scheduled lane sets LANGFLOW_REQUIRE_BUILD_STAMP=1 to make this fatal."
 fi
 
 echo "Starting Langflow on ${BIND_HOST}:${PORT} (logs: ${LOG_FILE})..."
