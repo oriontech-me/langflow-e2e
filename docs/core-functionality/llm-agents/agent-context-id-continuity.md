@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev0`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev1`)
 
 ---
 
@@ -62,6 +62,22 @@ image `daily-stable.yml` pulls as `:latest` — as well as on `1.12.0.dev39`, wh
 the geometry above was measured.
 
 ---
+
+> **The parametrized test currently fails on some providers (#1689).** On
+> `anthropic / claude-haiku-4-5` the message the Agent persists for its own turn
+> carries `context_id: null` while every other message of the same session
+> carries the configured one — 6 failures out of 6 across `1.12.0.dev45` and
+> `1.13.0.dev1`, and **downstream** of the #1060 confirmed-write gate, which
+> passes and so excludes a reverted write. On `openai / gpt-4o-mini`, against
+> the **same** build `1.13.0.dev1`, the same test passes (3 attempts, twice over
+> — measured on CI, which pins openai per #1169). The image is therefore held
+> constant and the provider is the axis; what the two paths do differently is
+> open in #1689. The related source fact — `agent.py` threads `context_id`
+> through the read path (`get_memory_data`) while `_construct_agent_message`
+> builds the stored Message without it and `lfx/base/agents/events.py` never
+> mentions it — is true but cannot be the whole cause, since it would fail both
+> providers. **No annotation is applied:** the test reports the truth per
+> provider, red where the defect reproduces and green where it does not.
 
 ## Preconditions *(optional)*
 

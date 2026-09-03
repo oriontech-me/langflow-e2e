@@ -371,14 +371,17 @@ async function retrieveViaMessageHistory(
 const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 1 loads the Simple Agent template — serial + --workers=1 per the
-// agent-area rule. Cleanup is id-scoped; nothing here wipes flows.
-test.describe.configure({ mode: "serial" });
+// agent-area rule (`llm-agents/CLAUDE.md`), so serial is declared on THAT
+// describe rather than on the file (#1690). File-level `mode: "serial"` makes a
+// failure skip every LATER test in the file. Measured on 1.13.0.dev1 — with the
+// parametrized test failing (it does on `anthropic / claude-haiku-4-5`, see
+// #1689), every run reported `skipped=0`. Cleanup is id-scoped; nothing here
+// wipes flows.
 
-// Declared BEFORE the parametrized loop deliberately (#1187). This file is
-// `mode: "serial"`, and in serial mode a failure SKIPS every later test in the
-// file — so with the routed test first, a weak-model failure there would skip this
-// one, which needs no provider at all. Ordering it first makes the model-free
-// coverage independent of whatever the routed target does.
+// Declared BEFORE the parametrized loop deliberately (#1187) — kept, though the
+// scoped serial above now makes the two describes independent of each other
+// rather than merely ordered, so this is belt-and-braces and no longer the thing
+// protecting the model-free coverage from a weak-model failure.
 test.describe("Context ID continuity — retrieval layer (model-free)", () => {
   test(
     "context-scoped retrieval returns all turns of the context and not the untagged control",
@@ -409,7 +412,7 @@ test.describe("Context ID continuity — retrieval layer (model-free)", () => {
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
-  test.describe(`Agent Context ID Continuity [${label}]`, () => {
+  test.describe.serial(`Agent Context ID Continuity [${label}]`, () => {
     test(
       "agent run persists every session message tagged with the custom context_id",
       { tag: ["@stable", "@regression", "@agents", "@components"] },
@@ -419,6 +422,7 @@ for (const { label, options, skipReason } of targets) {
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
+
 
         const nonce = `probe-${Date.now()}`;
         const contextId = `ctx-${nonce}`;

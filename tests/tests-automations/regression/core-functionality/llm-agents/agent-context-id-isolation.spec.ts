@@ -513,8 +513,14 @@ async function runRetrievalScopedTo(page: Page, contextId: string): Promise<stri
 const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 2 loads the Simple Agent template — serial + --workers=1 per the
-// agent-area rule. Cleanup is id-scoped; nothing here wipes flows.
-test.describe.configure({ mode: "serial" });
+// agent-area rule (`llm-agents/CLAUDE.md`), so serial is declared on THAT
+// describe rather than on the file (#1690). File-level `mode: "serial"` makes a
+// failure skip every LATER test in the file, and the two describes here share
+// nothing: the retrieval describe resolves no provider at all. Measured on
+// 1.13.0.dev1 — with the parametrized test failing (it does on
+// `anthropic / claude-haiku-4-5`, see #1689), every run reported `skipped=0`
+// and the model-free coverage still reported its own verdict.
+// Cleanup is id-scoped; nothing here wipes flows.
 
 test.describe("Context ID isolation — retrieval layer (model-free)", () => {
   test(
@@ -561,7 +567,7 @@ test.describe("Context ID isolation — retrieval layer (model-free)", () => {
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
-  test.describe(`Agent Context ID Isolation [${label}]`, () => {
+  test.describe.serial(`Agent Context ID Isolation [${label}]`, () => {
     test(
       "switching the agent's context_id re-tags new turns without touching previous ones",
       { tag: ["@stable", "@regression", "@agents", "@playground"] },
@@ -571,6 +577,7 @@ for (const { label, options, skipReason } of targets) {
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
+
 
         const nonce1 = `probe-A-${Date.now()}`;
         const nonce2 = `probe-B-${Date.now()}`;
