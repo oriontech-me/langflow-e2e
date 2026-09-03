@@ -136,6 +136,12 @@ UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}
 # page is fetched, so an unspecified order can leave `latest` and the version tag
 # pushed in the same run on different pages — and the resolution then falls back to
 # the git refs, quietly, for a reason that has nothing to do with the registry.
+#
+# The repository named here has to be the one the ACTIONS lane pulls. daily-stable.yml
+# takes `langflow_image` / `langflow_image_tag` inputs on manual dispatch, so a run
+# against `langflowai/langflow:1.12.0` would be compared with an expectation resolved
+# from `langflow-nightly:latest` — a comparison of a different pair of lanes than the
+# one it claims. Override this together with those inputs, never one alone.
 NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100&ordering=last_updated}"
 CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
 REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
@@ -308,32 +314,38 @@ phase_preflight() {
     # falls back to the refs and says so — so a failure here warns and continues.
     curl -sfS --max-time 20 "$NIGHTLY_TAGS_URL" -o "$RUN_DIR/nightly-tags.json" 2>> "$vlog" \
       || warn "could not read the published nightly image listing; the expected version will come from the git refs, which can run ahead of what actually shipped."
-    if git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$vlog"; then
-      local decision
-      decision="$(node scripts/resolve-target-version.mjs \
+    # Both inputs are best-effort, and NEITHER gates the other. The registry answers
+    # the question — which version — and the refs only add which commit that version
+    # was built from. Gating the whole resolution on the git fetch (as this did) hands
+    # github.com a veto over an answer it does not provide: github unreachable at
+    # 08:00, registry fine, and the run would report an unperformed check — fatal
+    # under REQUIRE_TARGET_VERSION. github is also the flakier of the two here, since
+    # the suite's own origin is the internal mirror and this is the only reach out.
+    : > "$RUN_DIR/upstream-refs.txt"
+    git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$vlog" \
+      || warn "could not reach $UPSTREAM_REPO_URL for the ref listing; the expected VERSION can still come from the registry, but the commit behind it will be unknown."
+    local decision
+    decision="$(node scripts/resolve-target-version.mjs \
         --refs-file "$RUN_DIR/upstream-refs.txt" \
         --image-tags-file "$RUN_DIR/nightly-tags.json" 2> "$verr" || true)"
-      # The resolver's warnings are the difference between "same commit" and "same
-      # cycle". Shown, not just filed: a run that silently downgraded its own claim
-      # is how a comparison starts meaning less than the reader thinks.
-      if [ -s "$verr" ]; then cat "$verr" >&2; cat "$verr" >> "$vlog"; fi
-      if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
-        TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
-        TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
-        TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
-        TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
-        info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
-      else
-        # Quote the resolver rather than inventing a reason: it distinguishes "no
-        # release branch in the listing" from "the file could not be read", and the
-        # two send the reader to different places.
-        local why
-        why="$(node -p "try{JSON.parse(process.argv[1]).error||''}catch{''}" "${decision:-}" 2>/dev/null || true)"
-        warn "could not resolve which Langflow this lane should test${why:+ — $why}"
-        warn "The comparison will not know whether both sides ran the same product."
-      fi
+    # The resolver's warnings are the difference between "same commit" and "same
+    # cycle". Shown, not just filed: a run that silently downgraded its own claim
+    # is how a comparison starts meaning less than the reader thinks.
+    if [ -s "$verr" ]; then cat "$verr" >&2; cat "$verr" >> "$vlog"; fi
+    if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
+      TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
+      TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
+      TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
+      TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
+      info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
     else
-      warn "could not reach $UPSTREAM_REPO_URL to resolve the expected Langflow version."
+      # Quote the resolver rather than inventing a reason: it distinguishes "no
+      # release branch in the listing" from "the file could not be read", and the
+      # two send the reader to different places.
+      local why
+      why="$(node -p "try{JSON.parse(process.argv[1]).error||''}catch{''}" "${decision:-}" 2>/dev/null || true)"
+      warn "could not resolve which Langflow this lane should test${why:+ — $why}"
+      warn "The comparison will not know whether both sides ran the same product."
     fi
   fi
 
@@ -738,7 +750,7 @@ phase_merge() {
     case "$TARGET_VERSION_MATCH" in
       yes | cycle) info "target version: $TARGET_VERSION_MATCH — $TARGET_VERSION_REASON" ;;
       no)
-        warn "TARGET VERSION MISMATCH — $TARGET_VERSION_REASON"
+        warn "TARGET VERSION MISMATCH (by $TARGET_RESOLUTION) — $TARGET_VERSION_REASON"
         warn "Every product difference between those two lands in this run's verdict, and"
         warn "the comparison with the Actions daily will read it as an environment"
         warn "divergence. Move the clone to $TARGET_EXPECTED_REF and rebuild before"
@@ -900,9 +912,21 @@ phase_verdict() {
   if [ "$REQUIRE_TARGET_VERSION" = "1" ]; then
     case "${TARGET_VERSION_MATCH:-unchecked}" in
       no)
-        err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
-        err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
-        err "products describes the changelog, not the environments."
+        if [ "${TARGET_RESOLUTION:-}" = "published-image" ]; then
+          err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
+          err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
+          err "products describes the changelog, not the environments."
+        else
+          # The expectation came from the git refs, which run AHEAD of what shipped —
+          # upstream tags before it builds. So this may not be a real mismatch, and
+          # asserting one would be asserting something the source cannot support. It
+          # still fails under REQUIRE, because an expectation that cannot be trusted is
+          # not a guarantee either; what changes is the claim.
+          err "the version check could not be established authoritatively: the expectation"
+          err "came from ${TARGET_RESOLUTION:-an unknown resolution}, not from the published image, and that"
+          err "source runs ahead of what shipped. Reported difference: ${TARGET_VERSION_REASON:-none recorded}."
+          err "REQUIRE_TARGET_VERSION=1 asks for a guarantee the registry was silent about."
+        fi
         failed=1
         ;;
       yes | cycle) ;;
