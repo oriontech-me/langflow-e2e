@@ -144,7 +144,13 @@ UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}
 # one it claims. Override this together with those inputs, never one alone.
 NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100&ordering=last_updated}"
 CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
-REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
+# Enforced by default since 2026-09-03, because the two conditions it was waiting for
+# both hold: this run PLACES the clone (see PREPARE_TARGET below), so a mismatch is no
+# longer somebody forgetting to move it by hand; and a source instance at v1.13.0.dev1
+# was smoked and reports `1.13.0.dev1` — the exact string the published-image strategy
+# expects, so enforcement cannot fail a correctly placed clone over a formatting
+# difference. Set to 0 to diagnose against a deliberately mismatched target.
+REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
 # Whether the run OBEYS the resolution instead of only reporting it. Reporting was
 # step 16's first half and was deliberately not fatal: failing at 08:00 over a clone
 # somebody had to move by hand threw away a day of data. This is the second half —
@@ -815,9 +821,12 @@ phase_merge() {
     [ -n "$LANGFLOW_VERSION" ] && break
   done
 
-  # The comparison this step exists for. A mismatch is reported, not fatal: while the
-  # clone is moved by hand, failing here would throw away a day of otherwise usable
-  # data. REQUIRE_TARGET_VERSION=1 flips that once the run moves the clone itself.
+  # The comparison this step exists for. A mismatch is now FATAL by default: the run
+  # placed the clone itself a few phases ago, so the two sides disagreeing means
+  # something actually went wrong — the placement did not take, or the target answered
+  # for an instance this run did not start. Producing a comparison anyway would file
+  # product changelog as an environment difference, which is the failure this whole
+  # step exists to remove. REQUIRE_TARGET_VERSION=0 goes back to reporting only.
   TARGET_VERSION_MATCH="unchecked"; TARGET_VERSION_REASON=""
   if [ "$CHECK_TARGET_VERSION" = "1" ] && [ -n "$TARGET_EXPECTED_VERSION" ]; then
     local compared

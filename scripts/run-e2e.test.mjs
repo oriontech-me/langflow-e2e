@@ -49,6 +49,12 @@ function verdict({ empty = "false", partial = "false", complete = "true", failed
     [
       `RUN_EMPTY=${empty} RUN_PARTIAL=${partial} SHARD_COMPLETE=${complete} TEST_JOB_FAILED=${failed}`,
       `RUN_TESTS=7 RUN_ERRORS=2 RUN_FIRST_ERROR="a top-level error" RUN_DIR=/tmp/does-not-matter`,
+      // The version dimension is neutralised on purpose. With enforcement on by
+      // default, leaving this unset makes it "unchecked" — fatal — so every case
+      // below would fail for the version reason instead of its own, and the ones
+      // that EXPECT a failure would pass for the wrong reason. The version states
+      // have their own tests.
+      `TARGET_VERSION_MATCH=yes`,
       // `set +e` because sourcing brought `set -e` with it, and a phase that returns
       // non-zero would abort this harness before it could report the code — which is
       // the very thing under test.
@@ -131,12 +137,23 @@ test("the publish switches are OFF by default, all four of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0 0");
 });
 
-test("the version check is on by default, and enforcing it is not — yet", () => {
-  // Detection before correction. While the clone is moved by hand, failing the run on
-  // a version gap would throw away a day of otherwise usable comparison data; the gap
-  // still has to be impossible to miss. REQUIRE flips once the run moves the clone.
+test("the version check is on by default, and so is enforcing it", () => {
+  // Enforcement waited for two things, and both arrived on 2026-09-03: the run now
+  // places the clone itself, so a mismatch is no longer somebody forgetting to move
+  // it; and a smoked source instance at v1.13.0.dev1 reports `1.13.0.dev1`, the exact
+  // string the published-image strategy expects — so the gate cannot fail a correctly
+  // placed clone over a formatting difference.
   const r = sourced(`echo "$CHECK_TARGET_VERSION $REQUIRE_TARGET_VERSION"`);
-  assert.equal(r.stdout.trim(), "1 0");
+  assert.equal(r.stdout.trim(), "1 1");
+});
+
+test("by default, a version mismatch now fails the run", () => {
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
 });
 
 test("the run moves the clone by default, and demands the stamp because of it", () => {
@@ -175,11 +192,14 @@ test("preparation is driven by the resolved COMMIT, and its failure stops the ru
   assert.match(text, /langflow_prepare_seconds/);
 });
 
-test("a version mismatch does not fail the run on its own", () => {
+test("with enforcement off, a version mismatch does not fail the run on its own", () => {
+  // The diagnosing path: pointed at a deliberately mismatched target, the run still
+  // produces its verdict and says what differed.
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
       `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "0" },
   );
   assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0);
 });
@@ -245,12 +265,13 @@ test("under REQUIRE, a check that could not RUN fails too", () => {
   }
 });
 
-test("without REQUIRE, none of the version states fail the run", () => {
+test("with REQUIRE explicitly off, none of the version states fail the run", () => {
   for (const match of ["yes", "cycle", "unknown", "unchecked", "no"]) {
     const r = sourced(
       `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
         `TARGET_VERSION_MATCH=${match}\n` +
         `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "0" },
     );
     assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
   }
