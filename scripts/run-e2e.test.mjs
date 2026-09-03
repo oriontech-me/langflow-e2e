@@ -148,10 +148,10 @@ test("a version mismatch does not fail the run on its own", () => {
   assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0);
 });
 
-test("REQUIRE_TARGET_VERSION=1 makes the mismatch fatal, naming what it costs", () => {
+test("REQUIRE_TARGET_VERSION=1 makes an AUTHORITATIVE mismatch fatal, naming what it costs", () => {
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
-      `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=published-image TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
     { REQUIRE_TARGET_VERSION: "1" },
   );
@@ -160,6 +160,24 @@ test("REQUIRE_TARGET_VERSION=1 makes the mismatch fatal, naming what it costs", 
   // The reason a reader needs: not "versions differ" but what a comparison between
   // different products actually produces.
   assert.match(r.stderr, /describes the changelog, not the environments/);
+});
+
+test("a mismatch the REGISTRY did not establish still fails, but claims less", () => {
+  // Chain the two failure modes: a registry blip drops the resolution to the git refs,
+  // those legitimately run ahead of the published image, and the comparison then
+  // reports a difference that may not exist between the lanes. It still fails under
+  // REQUIRE — an expectation that cannot be trusted is not a guarantee — but asserting
+  // "the target served the wrong Langflow" would assert what the source cannot support.
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=nightly-tag TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.13.0.dev0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "1" },
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(r.stderr, /could not be established authoritatively/);
+  assert.match(r.stderr, /runs ahead of what shipped/);
+  assert.doesNotMatch(r.stderr, /served the wrong Langflow/);
 });
 
 test("a matching version passes under REQUIRE, exactly or by cycle", () => {

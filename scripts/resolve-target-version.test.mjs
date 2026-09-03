@@ -199,6 +199,26 @@ test("a published version with no matching tag keeps the version and drops the c
   assert.match(d.warnings.join(" "), /exact commit of the published image is unknown/);
 });
 
+test("a listing that was REQUESTED but unusable warns, even when the refs answer", () => {
+  // The silent case: `imageTagsText` is falsy both when nobody asked for a listing and
+  // when curl never wrote one (or wrote an empty 200). The refs then answer confidently
+  // — `nightly-tag`, no warnings — and the reader has no way to know the registry was
+  // never consulted, which is the one thing that would make them doubt the answer.
+  const withTag = refs([
+    [sha(1), "refs/heads/release-1.13.0"],
+    [sha(2), "refs/tags/v1.13.0.dev1^{}"],
+  ]);
+  const silent = resolveTargetVersion(withTag, null, false);
+  assert.equal(silent.warnings.length, 0, "nobody asked for a listing: nothing to warn about");
+
+  for (const unusable of [null, ""]) {
+    const d = resolveTargetVersion(withTag, unusable, true);
+    assert.equal(d.strategy, "nightly-tag");
+    assert.match(d.warnings.join(" "), /requested but could not be used/);
+    assert.match(d.warnings.join(" "), /AHEAD of what shipped/);
+  }
+});
+
 test("published-image compares exactly, like the tag it replaced", () => {
   assert.equal(compareVersions("1.13.0.dev0", "1.13.0.dev0", "published-image").match, "yes");
   assert.equal(compareVersions("1.13.0.dev0", "1.13.0.dev1", "published-image").match, "no");

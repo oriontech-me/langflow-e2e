@@ -145,7 +145,7 @@ export function publishedNightlyVersion(imageTagsText) {
   return { version: match.name, digest, error: "" };
 }
 
-export function resolveTargetVersion(refsText, imageTagsText = null) {
+export function resolveTargetVersion(refsText, imageTagsText = null, imageRequested = false) {
   const warnings = [];
   const branches = [];
   const tags = new Map(); // "cycle.devN" -> { triple, dev, sha, peeled }
@@ -173,6 +173,16 @@ export function resolveTargetVersion(refsText, imageTagsText = null) {
   }
 
   // --- The published image decides, when it can be reached -----------------------
+  // The caller says whether it MEANT to consult the registry, because "no listing" and
+  // "a listing I could not use" are the same falsy value here and only one of them
+  // deserves silence. The likeliest failures — a file curl never wrote, or a 200 with
+  // an empty body — produce exactly that value, so without this the fallback most in
+  // need of a caveat is the one that carries none.
+  if (imageRequested && !imageTagsText) {
+    warnings.push(
+      "the published image listing was requested but could not be used, so this answer comes from the git refs. Those run AHEAD of what shipped: upstream creates the tag before it builds the image, and builds only if the tests pass.",
+    );
+  }
   if (imageTagsText) {
     const published = publishedNightlyVersion(imageTagsText);
     if (published.version) {
@@ -185,6 +195,12 @@ export function resolveTargetVersion(refsText, imageTagsText = null) {
           `the published image is ${published.version} but no refs/heads/release-${cycle} was listed — the branch may have been deleted, or the listing is partial.`,
         );
       }
+      // Best-effort by nature: upstream's nightly deletes and recreates the tag name
+      // (`git tag -d` + `git push --delete origin`, then a fresh tag), so v1.13.0.dev1
+      // can point somewhere new after the 1.13.0.dev1 image shipped. The VERSION
+      // verdict does not depend on this — the digest decided it — but the commit
+      // recorded here, and the ref an operator is told to move the clone to, can drift
+      // from what was actually built.
       if (!tag) {
         warnings.push(
           `no v${published.version} tag was found in the ref listing, so the exact commit of the published image is unknown here. The version comparison still holds; a checkout would have to resolve the commit another way.`,
@@ -327,6 +343,7 @@ function main(argv) {
   }
   const text = args.refsFile === "-" ? readFileSync(0, "utf8") : readFileSync(args.refsFile, "utf8");
   let imageTags = null;
+  const imageRequested = Boolean(args.imageTagsFile);
   if (args.imageTagsFile) {
     // A listing that cannot be read is not fatal: the git fallback exists for exactly
     // this, and it announces its own weakness in the warnings.
@@ -336,7 +353,7 @@ function main(argv) {
       imageTags = null;
     }
   }
-  const decision = resolveTargetVersion(text, imageTags);
+  const decision = resolveTargetVersion(text, imageTags, imageRequested);
   // Warnings go to stderr, as resolve-echo-endpoint.mjs does: they are the difference
   // between "same commit" and "same cycle", and a caller reading only stdout's fields
   // would never learn which one it got.
