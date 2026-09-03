@@ -117,6 +117,93 @@ test("no release branch at all is an error that names the rule, not a fallback t
   assert.match(d.error, /main/);
 });
 
+// --- the published image decides -------------------------------------------------
+
+/** A Docker Hub tags page, with `latest` sharing a digest with one version tag. */
+function imageTags(latestVersion, extra = []) {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const img = (d) => [
+    { architecture: "arm64", os: "linux", digest: `sha256:${"b".repeat(64)}` },
+    { architecture: "amd64", os: "linux", digest: d },
+  ];
+  return JSON.stringify({
+    results: [
+      { name: "latest", images: img(digest) },
+      { name: latestVersion, images: img(digest) },
+      ...extra.map((v) => ({ name: v, images: img(`sha256:${"c".repeat(64)}`) })),
+      { name: "base-latest", images: img(`sha256:${"d".repeat(64)}`) },
+    ],
+  });
+}
+
+test("the PUBLISHED image wins over a newer git tag", () => {
+  // The live case the day this was written: v1.13.0.dev1 was tagged, and `latest` was
+  // still 1.13.0.dev0. Upstream tags BEFORE it builds, and only ships if the tests
+  // pass — so a clone correctly sitting where the CI is would be called a mismatch.
+  const d = resolveTargetVersion(
+    refs([
+      [sha(1), "refs/heads/release-1.13.0"],
+      [sha(2), "refs/tags/v1.13.0.dev0^{}"],
+      [sha(3), "refs/tags/v1.13.0.dev1^{}"],
+    ]),
+    imageTags("1.13.0.dev0", ["1.13.0.dev1"]),
+  );
+  assert.equal(d.strategy, "published-image");
+  assert.equal(d.version, "1.13.0.dev0");
+  assert.equal(d.sha, sha(2), "the commit must be the one of the PUBLISHED version");
+  assert.match(d.digest, /^sha256:a+$/);
+});
+
+test("a release branch cut ahead of the image does not drag the answer with it", () => {
+  // release-1.14.0 exists before any nightly is built from it; `latest` is still the
+  // previous cycle. Branch-first resolution flips a whole cycle ahead of reality.
+  const d = resolveTargetVersion(
+    refs([
+      [sha(1), "refs/heads/release-1.13.0"],
+      [sha(2), "refs/heads/release-1.14.0"],
+      [sha(3), "refs/tags/v1.13.0.dev5^{}"],
+    ]),
+    imageTags("1.13.0.dev5"),
+  );
+  assert.equal(d.version, "1.13.0.dev5");
+  assert.equal(d.branch, "release-1.13.0");
+});
+
+test("the amd64 digest is the one matched, not whatever comes first", () => {
+  // Both lanes run amd64. Matching an arm64 digest finds nothing and drops the whole
+  // resolution to the fallback without saying why.
+  const payload = JSON.parse(imageTags("1.13.0.dev2"));
+  for (const t of payload.results) t.images.reverse();
+  const d = resolveTargetVersion(refs([[sha(1), "refs/heads/release-1.13.0"]]), JSON.stringify(payload));
+  assert.equal(d.strategy, "published-image");
+  assert.equal(d.version, "1.13.0.dev2");
+});
+
+test("an unreadable image listing falls back to the refs, naming what that costs", () => {
+  const d = resolveTargetVersion(
+    refs([
+      [sha(1), "refs/heads/release-1.13.0"],
+      [sha(2), "refs/tags/v1.13.0.dev1^{}"],
+    ]),
+    "not json at all",
+  );
+  assert.equal(d.strategy, "nightly-tag");
+  assert.equal(d.version, "1.13.0.dev1");
+  assert.match(d.warnings.join(" "), /before the image is built/);
+});
+
+test("a published version with no matching tag keeps the version and drops the commit", () => {
+  const d = resolveTargetVersion(refs([[sha(1), "refs/heads/release-1.13.0"]]), imageTags("1.13.0.dev9"));
+  assert.equal(d.version, "1.13.0.dev9");
+  assert.equal(d.sha, "");
+  assert.match(d.warnings.join(" "), /exact commit of the published image is unknown/);
+});
+
+test("published-image compares exactly, like the tag it replaced", () => {
+  assert.equal(compareVersions("1.13.0.dev0", "1.13.0.dev0", "published-image").match, "yes");
+  assert.equal(compareVersions("1.13.0.dev0", "1.13.0.dev1", "published-image").match, "no");
+});
+
 test("comparing under nightly-tag is exact", () => {
   assert.equal(compareVersions("1.13.0.dev1", "1.13.0.dev1", "nightly-tag").match, "yes");
   const bad = compareVersions("1.13.0.dev1", "1.12.0", "nightly-tag");
@@ -131,6 +218,19 @@ test("comparing under branch-head accepts the cycle, because the .devN is not ou
   const r = compareVersions("1.13.0", "1.13.0", "branch-head");
   assert.equal(r.match, "cycle");
   assert.equal(compareVersions("1.13.0", "1.12.0", "branch-head").match, "no");
+});
+
+test("an unrecognised strategy is UNKNOWN, never the looser comparison", () => {
+  // One character decides whether a different commit is a mismatch or a pass, and
+  // the looser rule is the one that answers when nobody recognises the strategy.
+  for (const bogus of ["nightlytag", "", "branch head", undefined]) {
+    const r = compareVersions("1.13.0.dev1", "1.13.0.dev0", bogus);
+    assert.equal(r.match, "unknown", String(bogus));
+    assert.match(r.reason, /unrecognised resolution strategy/);
+  }
+  // And the same inputs under the real strategy are still a mismatch, which is what
+  // makes the fallback dangerous rather than merely wrong.
+  assert.equal(compareVersions("1.13.0.dev1", "1.13.0.dev0", "nightly-tag").match, "no");
 });
 
 test("a missing version on either side is UNKNOWN, never a pass", () => {

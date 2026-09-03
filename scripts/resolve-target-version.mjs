@@ -29,7 +29,26 @@
  *      release-1.12.0 to release-1.13.0 with nobody editing anything, so a branch
  *      written into a script is the next `release-1.12.0` left behind.
  *
- * ## Why the tag beats the branch head
+ * ## Why the IMAGE, and not the tag, is the source of truth
+ *
+ * The tag is not evidence that anything shipped. Upstream's `create-nightly-tag`
+ * job runs BEFORE `frontend-tests-linux`, `backend-unit-tests` and `stress-tests`
+ * (they all `needs:` it), and `release-nightly-build` is gated on those passing. So
+ * `v1.13.0.dev2` can exist while `langflow-nightly:latest` — what daily-stable.yml
+ * actually pulls — is still `1.13.0.dev1`. A clone correctly sitting where the CI
+ * is would then be reported as a mismatch, and under REQUIRE_TARGET_VERSION the run
+ * would fail over a difference that does not exist.
+ *
+ * The same shape hits the branch: `release-1.14.0` is cut before any nightly is
+ * built from it, so branch-first resolution flips a cycle ahead of the image.
+ *
+ * So the published image decides, and the git refs only say WHICH COMMIT that
+ * version was built from — which is what a checkout needs. scripts/check-nightly-delta.ts
+ * reached the same conclusion for its own lane and says so in its header; the two
+ * resolutions are close enough that consolidating them is worth doing once this one
+ * has a second consumer.
+ *
+ * ## Why the tag beats the branch head, when the image cannot be reached
  *
  * Each nightly build leaves a tag: `v1.13.0.dev0` points at the exact commit the
  * published image was built from. The branch head has usually moved on by hours
@@ -56,6 +75,10 @@ const HELP = `usage: resolve-target-version.mjs --refs-file <path>
        resolve-target-version.mjs --compare <expected> <actual> <strategy>
 
   --refs-file PATH   output of \`git ls-remote --heads --tags <repo>\` ("-" for stdin)
+  --image-tags-file PATH
+                     a Docker Hub tags page for langflowai/langflow-nightly; when
+                     given, the PUBLISHED image decides and the refs only map that
+                     version to a commit
   --compare E A S    what the target SHOULD serve, what it did, and which strategy
                      resolved the first — prints "<match>\t<reason>" on stdout
   --help             this text
@@ -77,7 +100,52 @@ function compareTriples(a, b) {
   return 0;
 }
 
-export function resolveTargetVersion(refsText) {
+/**
+ * The version `:latest` currently points at, by manifest digest.
+ *
+ * Docker Hub returns one entry per platform variant and `:latest` shares its digest
+ * with the version tag built in the same run — the same rule check-nightly-delta.ts
+ * uses. amd64 is preferred because that is what both lanes run; without pinning a
+ * platform, an arm64 digest can match nothing and the whole resolution silently
+ * falls back.
+ */
+const NIGHTLY_VERSION = /^\d+\.\d+\.\d+\.dev\d+$/;
+
+function primaryDigest(images) {
+  if (!Array.isArray(images)) return "";
+  const amd64 = images.find((i) => i && i.architecture === "amd64" && (!i.os || i.os === "linux"));
+  return (amd64 || images[0] || {}).digest || "";
+}
+
+export function publishedNightlyVersion(imageTagsText) {
+  if (!imageTagsText) return { version: "", error: "no image listing was provided" };
+  let results;
+  try {
+    const parsed = JSON.parse(imageTagsText);
+    results = Array.isArray(parsed) ? parsed : parsed.results;
+  } catch {
+    return { version: "", error: "the image listing was not valid JSON" };
+  }
+  if (!Array.isArray(results)) return { version: "", error: "the image listing had no results array" };
+
+  const latest = results.find((t) => t && t.name === "latest");
+  if (!latest) return { version: "", error: "no `latest` tag in the image listing" };
+  const digest = primaryDigest(latest.images);
+  if (!digest) return { version: "", error: "the `latest` tag carries no digest" };
+
+  const match = results.find(
+    (t) => t && t.name !== "latest" && NIGHTLY_VERSION.test(t.name) && primaryDigest(t.images) === digest,
+  );
+  if (!match) {
+    return {
+      version: "",
+      error: `no X.Y.Z.devN tag shares \`latest\`'s digest (${digest.slice(0, 19)}…) in this page of the listing`,
+    };
+  }
+  return { version: match.name, digest, error: "" };
+}
+
+export function resolveTargetVersion(refsText, imageTagsText = null) {
   const warnings = [];
   const branches = [];
   const tags = new Map(); // "cycle.devN" -> { triple, dev, sha, peeled }
@@ -102,6 +170,41 @@ export function resolveTargetVersion(refsText) {
       // A peeled entry always wins over the unpeeled one for the same tag.
       if (!previous || (peeled && !previous.peeled)) tags.set(key, { triple, dev, sha, peeled });
     }
+  }
+
+  // --- The published image decides, when it can be reached -----------------------
+  if (imageTagsText) {
+    const published = publishedNightlyVersion(imageTagsText);
+    if (published.version) {
+      const triple = published.version.split(".").slice(0, 3).map(Number);
+      const cycle = triple.join(".");
+      const branch = branches.find((b) => compareTriples(b.triple, triple) === 0);
+      const tag = tags.get(published.version);
+      if (!branch) {
+        warnings.push(
+          `the published image is ${published.version} but no refs/heads/release-${cycle} was listed — the branch may have been deleted, or the listing is partial.`,
+        );
+      }
+      if (!tag) {
+        warnings.push(
+          `no v${published.version} tag was found in the ref listing, so the exact commit of the published image is unknown here. The version comparison still holds; a checkout would have to resolve the commit another way.`,
+        );
+      }
+      return {
+        ok: true,
+        branch: branch ? branch.ref.replace("refs/heads/", "") : `release-${cycle}`,
+        cycle,
+        version: published.version,
+        ref: `v${published.version}`,
+        sha: tag ? tag.sha : "",
+        digest: published.digest,
+        strategy: "published-image",
+        warnings,
+      };
+    }
+    warnings.push(
+      `could not read the published nightly from the image listing (${published.error}); falling back to the git refs. That fallback can run AHEAD of what shipped: the tag is created before the image is built and regardless of whether the build succeeds.`,
+    );
   }
 
   if (branches.length === 0) {
@@ -158,11 +261,25 @@ export function resolveTargetVersion(refsText) {
  * the plain cycle (`1.13.0`) while the CI's image reports a `.devN` of the same
  * cycle — comparing those as strings would report a mismatch on a correctly placed
  * clone, which is the false alarm that teaches people to ignore this check.
+ *
+ * An unrecognised strategy is UNKNOWN, never one of the two. Falling through to the
+ * looser rule is how a wrong answer gets a passing verdict: with a typo in the
+ * strategy, `1.13.0.dev1` against `1.13.0.dev0` stops being a mismatch and becomes
+ * "same cycle" — a pass, from a script whose entire purpose is refusing silent wrong
+ * decisions.
  */
+const STRATEGIES = new Set(["published-image", "nightly-tag", "branch-head"]);
+
 export function compareVersions(expected, actual, strategy) {
+  if (!STRATEGIES.has(strategy)) {
+    return {
+      match: "unknown",
+      reason: `unrecognised resolution strategy "${strategy}" — expected one of ${[...STRATEGIES].join(", ")}. Refusing to guess which comparison applies: the looser one would call a different commit a match.`,
+    };
+  }
   if (!actual) return { match: "unknown", reason: "the target reported no version" };
   if (!expected) return { match: "unknown", reason: "no expected version was resolved" };
-  if (strategy === "nightly-tag") {
+  if (strategy === "published-image" || strategy === "nightly-tag") {
     return expected === actual
       ? { match: "yes", reason: `exact: ${actual}` }
       : { match: "no", reason: `expected ${expected} (the commit the CI's image was built from), the target served ${actual}` };
@@ -174,10 +291,11 @@ export function compareVersions(expected, actual, strategy) {
 }
 
 function parseArgs(argv) {
-  const args = { refsFile: null, compare: null };
+  const args = { refsFile: null, imageTagsFile: null, compare: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--refs-file") args.refsFile = argv[++i];
+    else if (a === "--image-tags-file") args.imageTagsFile = argv[++i];
     // Three positionals rather than three flags: the caller is bash inside a
     // pipeline, and every extra flag there is another quoting mistake waiting.
     else if (a === "--compare") args.compare = [argv[++i], argv[++i], argv[++i]];
@@ -208,7 +326,21 @@ function main(argv) {
     return 2;
   }
   const text = args.refsFile === "-" ? readFileSync(0, "utf8") : readFileSync(args.refsFile, "utf8");
-  const decision = resolveTargetVersion(text);
+  let imageTags = null;
+  if (args.imageTagsFile) {
+    // A listing that cannot be read is not fatal: the git fallback exists for exactly
+    // this, and it announces its own weakness in the warnings.
+    try {
+      imageTags = readFileSync(args.imageTagsFile, "utf8");
+    } catch {
+      imageTags = null;
+    }
+  }
+  const decision = resolveTargetVersion(text, imageTags);
+  // Warnings go to stderr, as resolve-echo-endpoint.mjs does: they are the difference
+  // between "same commit" and "same cycle", and a caller reading only stdout's fields
+  // would never learn which one it got.
+  for (const w of decision.warnings ?? []) process.stderr.write(`::warning::resolve-target-version: ${w}\n`);
   process.stdout.write(JSON.stringify(decision) + "\n");
   // A resolution that failed is still printed, for the caller to quote; the exit code
   // is what says whether it is usable.
