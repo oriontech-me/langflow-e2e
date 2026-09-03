@@ -133,6 +133,7 @@ function runScript({
   addresses = ["203.0.113.10", "10.0.0.5"],
   corruptDownload = false,
   discoveryTools = true,
+  probeDelayS = 0,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "start-ollama-source-test-"));
   const bin = join(dir, "bin");
@@ -233,6 +234,7 @@ fi
 N=$(cat "${probeCount}" 2>/dev/null || echo 0)
 N=$((N + 1))
 echo "$N" > "${probeCount}"
+${probeDelayS ? `[ "$N" -gt 1 ] && sleep ${probeDelayS}` : ":"}
 if [ "$N" -eq 1 ]; then
   ${portBusy ? "exit 0" : "exit 22"}
 fi
@@ -509,6 +511,23 @@ test("a stop timeout that is not an integer is refused before anything is launch
   assert.equal(r.status, 2);
   assert.match(r.stderr, /OLLAMA_STOP_TIMEOUT_S must be a positive integer/);
   assert.equal(r.serverArgs, "");
+  r.cleanup();
+});
+
+test("the readiness deadline is wall clock, not a count of polls", () => {
+  // The case the probe's `--max-time` exists for is a FILTERED port: it does not
+  // refuse, it hangs, so each iteration costs the probe plus the sleep. Counting
+  // iterations turns an advertised 4s wait into 4 x (probe + sleep) — here ~12s, and
+  // with the real 60s default and a 5s max-time, six minutes announced as sixty
+  // seconds.
+  const started = Date.now();
+  const r = runScript({ healthy: false, probeDelayS: 2, env: { OLLAMA_START_TIMEOUT_S: "4", OLLAMA_STOP_TIMEOUT_S: "2" } });
+  const elapsedS = (Date.now() - started) / 1000;
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /did not answer in 4s/);
+  // Generous bound: the point is that it tracks the deadline rather than multiplying
+  // it by the per-iteration cost, which would land near 12s here.
+  assert.ok(elapsedS < 9, `waited ${elapsedS.toFixed(1)}s for a 4s deadline`);
   r.cleanup();
 });
 

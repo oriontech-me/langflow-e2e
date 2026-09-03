@@ -348,13 +348,19 @@ stop_launched_server() {
 }
 
 echo "Waiting for Ollama to answer (up to ${START_TIMEOUT_S}s)..."
-ELAPSED=0
+# Wall clock, not a poll counter. Each iteration costs the probe's `--max-time 5` PLUS
+# the sleep, and the probe only reaches that ceiling in the case it was added for — a
+# port that is filtered rather than closed, which hangs instead of refusing. Counting
+# iterations there advertises "up to 60s" and waits six minutes, then reports a 60s
+# timeout. `SECONDS` is a bash builtin and resets on assignment.
+SECONDS=0
+READY_AFTER=0
 READY=0
-while [ "${ELAPSED}" -lt "${START_TIMEOUT_S}" ]; do
+while [ "${SECONDS}" -lt "${START_TIMEOUT_S}" ]; do
   # Liveness first, same as the sibling starters: a process that exited is not slow,
   # and waiting out the deadline to say so misnames a failed bind as a busy machine.
   if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-    echo "ERROR: Ollama exited after ${ELAPSED}s without answering (PID ${SERVER_PID}). Last log lines:" >&2
+    echo "ERROR: Ollama exited after ${SECONDS}s without answering (PID ${SERVER_PID}). Last log lines:" >&2
     tail -n 20 "${LOG_FILE}" >&2 || true
     rm -f "${PID_FILE}"
     exit 1
@@ -363,10 +369,10 @@ while [ "${ELAPSED}" -lt "${START_TIMEOUT_S}" ]; do
   # when a bind lands on the wrong interface is exactly the half loopback cannot see.
   if curl -sf --max-time 5 "http://${HEALTH_HOST}:${PORT}/api/tags" > /dev/null 2>&1; then
     READY=1
+    READY_AFTER="${SECONDS}"
     break
   fi
   sleep "${POLL_INTERVAL_S}"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL_S))
 done
 
 if [ "${READY}" != "1" ]; then
@@ -392,6 +398,7 @@ if ! model_present; then
     exit 1
   fi
   echo "Pulling ${MODEL} (first run on this machine; up to ${PULL_TIMEOUT_S}s)..."
+  PULL_STARTED_AT="${SECONDS}"
   # `timeout` when it exists — a pull that stalls on a dropped link would otherwise
   # hold the whole lane. Absent (macOS), the pull runs unbounded rather than being
   # skipped: a missing coreutils is not a reason to start a server the spec will skip.
@@ -419,7 +426,14 @@ if ! model_present; then
   fi
 fi
 
-echo "Ollama ready after ${ELAPSED}s (PID: ${SERVER_PID}, port ${PORT}, model ${MODEL})"
+# Readiness and the pull are reported separately because they are different waits and
+# only one of them is the server's. Folding a 15-minute cold pull into "ready after"
+# would print a 2s start for a run that took a quarter of an hour.
+if [ -n "${PULL_STARTED_AT:-}" ]; then
+  echo "Ollama ready after ${READY_AFTER}s, plus $((SECONDS - PULL_STARTED_AT))s pulling ${MODEL} (PID: ${SERVER_PID}, port ${PORT})"
+else
+  echo "Ollama ready after ${READY_AFTER}s (PID: ${SERVER_PID}, port ${PORT}, model ${MODEL})"
+fi
 # Machine-readable, for `ssh <host> 'bash -s' < this` to capture. The caller turns
 # these into OLLAMA_BASE_URL / OLLAMA_BASE_URL_FROM_LANGFLOW / OLLAMA_TEST_MODEL —
 # the three the spec already reads, which is why this needs no resolver of its own.
