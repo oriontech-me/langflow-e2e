@@ -139,6 +139,42 @@ test("the version check is on by default, and enforcing it is not — yet", () =
   assert.equal(r.stdout.trim(), "1 0");
 });
 
+test("the run moves the clone by default, and demands the stamp because of it", () => {
+  // The second half of step 16. Detection alone left the operator to move the clone,
+  // and a lane that depends on someone remembering is a lane that reports changelog
+  // as environment difference on the day they forget.
+  const r = sourced(`echo "$PREPARE_TARGET $PREPARE_TARGET_SKIP_BUILD $STAMP_REQUIRED"`);
+  assert.equal(r.stdout.trim(), "1 0 1");
+});
+
+test("the stamp is demanded only when this run is what wrote it", () => {
+  // Both exceptions are deliberate. With preparation off, or with the build skipped,
+  // no stamp exists and refusing over its absence would break the hand-driven path
+  // that has to keep working while this is adopted.
+  assert.equal(sourced(`echo "$STAMP_REQUIRED"`, { PREPARE_TARGET: "0" }).stdout.trim(), "0");
+  assert.equal(sourced(`echo "$STAMP_REQUIRED"`, { PREPARE_TARGET_SKIP_BUILD: "1" }).stdout.trim(), "0");
+});
+
+test("preparation is driven by the resolved COMMIT, and its failure stops the run", () => {
+  const text = readFileSync(SCRIPT, "utf8");
+  // The commit, not the branch or the tag name: upstream recreates nightly tag names,
+  // so only the sha the registry digest matched cannot drift.
+  assert.match(text, /TARGET_SHA=\$\{TARGET_EXPECTED_SHA\}/);
+  assert.match(text, /prepare-target-source\.sh/);
+  assert.match(text, /LANGFLOW_REQUIRE_BUILD_STAMP=\$STAMP_REQUIRED/);
+
+  const block = text.match(/# --- Obey the resolution[\s\S]*?\n  log "Installing dependencies/)?.[0];
+  assert.ok(block, "the preparation block is not where this test expects it");
+  // A run that could not be placed must not continue: its verdict would be about a
+  // different product, and that is worth less than no verdict.
+  assert.match(block, /die "target preparation failed"/);
+  assert.doesNotMatch(block, /\|\| true/, "the preparation must not be allowed to fail silently");
+
+  // And what it did is recorded, because nobody recovers it afterwards.
+  assert.match(text, /langflow_prepared_sha/);
+  assert.match(text, /langflow_prepare_seconds/);
+});
+
 test("a version mismatch does not fail the run on its own", () => {
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +

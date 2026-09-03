@@ -145,6 +145,23 @@ UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}
 NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100&ordering=last_updated}"
 CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
 REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
+# Whether the run OBEYS the resolution instead of only reporting it. Reporting was
+# step 16's first half and was deliberately not fatal: failing at 08:00 over a clone
+# somebody had to move by hand threw away a day of data. This is the second half —
+# the run moves the clone itself, through scripts/prepare-target-source.sh, before
+# anything starts. That script is a no-op when the clone is already on the commit and
+# its build is stamped with it, so the cost lands only on the days the resolution
+# moves; with a nightly image, that is most days.
+PREPARE_TARGET="${PREPARE_TARGET:-1}"
+# Move the clone but do not build. Not a normal setting: the starter refuses a build
+# that does not belong to HEAD, so this ends the run early ON PURPOSE. It exists to
+# measure what a rebuild would cost, and to move a clone whose build is being done
+# by hand elsewhere.
+PREPARE_TARGET_SKIP_BUILD="${PREPARE_TARGET_SKIP_BUILD:-0}"
+# The stamp is only demanded when this run is the thing that wrote it. A clone
+# prepared by hand carries no stamp, and refusing it there would break the one
+# workflow that has to keep working while this is being adopted.
+STAMP_REQUIRED="$([ "${PREPARE_TARGET}" = "1" ] && [ "${PREPARE_TARGET_SKIP_BUILD}" != "1" ] && echo 1 || echo 0)"
 
 MIN_FREE_GB="${MIN_FREE_GB:-20}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -327,6 +344,7 @@ phase_preflight() {
   # here and compared after the run: asking now means the operator sees the gap before
   # spending an hour producing a comparison that a version difference already spoiled.
   TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
+  TARGET_EXPECTED_BRANCH=""
   if [ "$CHECK_TARGET_VERSION" = "1" ]; then
     local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
     # The registry listing is optional and its absence is survivable — the resolver
@@ -356,6 +374,9 @@ phase_preflight() {
       TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
       TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
       TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
+      # Carried for the preparer, not for the report: when the nightly tag has been
+      # recreated, the commit is only reachable through the branch it lives on.
+      TARGET_EXPECTED_BRANCH="$(node -p "JSON.parse(process.argv[1]).branch||''" "$decision")"
       info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
     else
       # Quote the resolver rather than inventing a reason: it distinguishes "no
@@ -366,6 +387,46 @@ phase_preflight() {
       warn "could not resolve which Langflow this lane should test${why:+ — $why}"
       warn "The comparison will not know whether both sides ran the same product."
     fi
+  fi
+
+  # --- Obey the resolution: put the target ON that commit -------------------------
+  # Failing here is the point. A run against the clone's old position still produces
+  # a verdict, and that verdict goes into the divergence list as "a real failure only
+  # Actions saw" — product changelog wearing an environment's clothes. A lane whose
+  # output would be misleading is worth less than no output.
+  TARGET_PREPARED_SHA=""; TARGET_REBUILT=""; TARGET_REBUILD_REASON=""; TARGET_PREPARE_S=""
+  if [ "$PREPARE_TARGET" = "1" ] && [ -n "${TARGET_EXPECTED_SHA}${TARGET_EXPECTED_REF}" ]; then
+    log "Preparing the target's clone"
+    local prep_out prep_log="$RUN_DIR/logs/prepare-target.log"
+    # stderr is streamed AND filed: a rebuild is the longest thing this run does, and
+    # a phase that prints nothing for half an hour is indistinguishable from a hang.
+    if ! prep_out="$(target_ssh \
+        "TARGET_SHA=${TARGET_EXPECTED_SHA} TARGET_REF=${TARGET_EXPECTED_REF} TARGET_BRANCH=${TARGET_EXPECTED_BRANCH} \
+         LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} \
+         PREPARE_SKIP_BUILD=${PREPARE_TARGET_SKIP_BUILD} bash -s" \
+        < scripts/prepare-target-source.sh 2> >(tee -a "$prep_log" >&2))"; then
+      err "could not put the target on ${TARGET_EXPECTED_REF:-${TARGET_EXPECTED_SHA}}."
+      err "Refusing to run. The comparison this lane exists to produce is only about"
+      err "the environment if both sides run the same product; against the clone's old"
+      err "position it describes the product's changelog instead. See $prep_log."
+      die "target preparation failed"
+    fi
+    printf '%s\n' "$prep_out" >> "$prep_log"
+    TARGET_PREPARED_SHA="$(printf '%s\n' "$prep_out" | sed -n 's/^prepared_sha=//p')"
+    TARGET_REBUILT="$(printf '%s\n' "$prep_out" | sed -n 's/^rebuilt=//p')"
+    TARGET_REBUILD_REASON="$(printf '%s\n' "$prep_out" | sed -n 's/^rebuild_reason=//p')"
+    TARGET_PREPARE_S="$(printf '%s\n' "$prep_out" | sed -n 's/^total_s=//p')"
+    # The preparer verifies its own checkout; this checks that the machine it verified
+    # is the one this run resolved. They differ if TARGET_SSH points somewhere else.
+    if [ -n "${TARGET_EXPECTED_SHA}" ] && [ "${TARGET_PREPARED_SHA}" != "${TARGET_EXPECTED_SHA}" ]; then
+      err "the target reports ${TARGET_PREPARED_SHA:-nothing} after being asked for ${TARGET_EXPECTED_SHA}."
+      die "the prepared commit is not the resolved one"
+    fi
+    info "target clone: ${TARGET_PREPARED_SHA:0:10} (rebuilt=${TARGET_REBUILT:-?}${TARGET_PREPARE_S:+, ${TARGET_PREPARE_S}s})"
+    [ "${TARGET_REBUILT}" = "yes" ] && info "  rebuilt because: ${TARGET_REBUILD_REASON}"
+  elif [ "$PREPARE_TARGET" = "1" ]; then
+    warn "no target commit was resolved, so the clone was left where it is. The version"
+    warn "check below still runs, but nothing has been placed — treat a match as luck."
   fi
 
   log "Installing dependencies (npm ci)"
@@ -500,7 +561,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
@@ -794,6 +855,10 @@ phase_merge() {
     langflow_expected_sha "${TARGET_EXPECTED_SHA:-}" \
     langflow_version_resolution "${TARGET_RESOLUTION:-}" \
     langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
+    langflow_prepared_sha "${TARGET_PREPARED_SHA:-}" \
+    langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
+    langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
+    langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}"
