@@ -374,8 +374,9 @@ const targets = resolveTestTargets({ tier: "any-completion" });
 // agent-area rule (`llm-agents/CLAUDE.md`), so serial is declared on THAT
 // describe rather than on the file (#1690). File-level `mode: "serial"` makes a
 // failure skip every LATER test in the file. Measured on 1.13.0.dev1 — with the
-// parametrized test failing, every run reported `skipped=0`. Cleanup is
-// id-scoped; nothing here wipes flows.
+// parametrized test failing (it does on `anthropic / claude-haiku-4-5`, see
+// #1689), every run reported `skipped=0`. Cleanup is id-scoped; nothing here
+// wipes flows.
 
 // Declared BEFORE the parametrized loop deliberately (#1187) — kept, though the
 // scoped serial above now makes the two describes independent of each other
