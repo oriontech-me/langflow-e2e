@@ -132,7 +132,11 @@ UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}
 # match. Asking the registry rather than the git tags is not a detail: upstream tags
 # before it builds and only ships if the tests pass, so a tag can exist for an image
 # that never shipped.
-NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100}"
+# `ordering=last_updated` is not decoration: the repository carries ~2700 tags and one
+# page is fetched, so an unspecified order can leave `latest` and the version tag
+# pushed in the same run on different pages — and the resolution then falls back to
+# the git refs, quietly, for a reason that has nothing to do with the registry.
+NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100&ordering=last_updated}"
 CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
 REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
 
