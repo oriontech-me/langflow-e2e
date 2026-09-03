@@ -231,7 +231,7 @@ credential-gated); the A2A scoping issue produced named checklist bullets.
 Review (2026-08-14): reassess; date the A2A spec batch and revisit the pool
 (templates refresh, MCP-servers-in-DB persistence) for Wave 6.
 
-### Wave 6 — Security, MCP consumption & Memory Base  ·  2026-08-10 → 2026-08-27 ◀ **CURRENT**
+### Wave 6 — Security, MCP consumption & Memory Base  ·  2026-08-10 → 2026-08-27
 
 First **risk-driven** wave: the order comes from the coverage audit (#1350), which
 ranked residual risk per area and found two areas with **no checklist entry at all**.
@@ -260,6 +260,48 @@ falling `%` here is expected and is not a regression.
 Exit: the nine named spec items are validated under `@stable`; #1400 has landed and the
 i18n batch is datable.
 Review (2026-08-27): reassess; date the i18n batch and revisit the pool.
+
+### Wave 7 — OSS API coverage  ·  2026-09-03 → 2026-09-17 ◀ **CURRENT**
+
+First wave measured against a **denominator the product defines**, not against
+checklist bullets: the OSS REST API surface. It exists because "100 % of the API
+covered" was not a number anyone could verify — nothing in the repo knew how many
+operations the API has, and the one machine-readable source, `/openapi.json`, is
+provably incomplete: on `1.13.0.dev0`/`dev1` it carries **120** operations against
+**254** in the instance's own router table, **137** of them hidden
+(`include_in_schema=False`), including `login`, `api_key`, `variables` and
+`custom_component` — three of which existing specs already drive. Measurement,
+definitions and exclusions: `docs/api/api-surface-coverage-gauge.md`.
+
+Requires (GitHub milestone *Wave 7 — OSS API coverage*):
+- **Create** (#1692): the gauge — router-table inventory committed as
+  `tests/assets/api/api-surface-baseline.json` (**204** operations in scope after
+  9 reasoned exclusions), a drift verdict beside the catalog's in `globalSetup`, the
+  `apiCoverage` fixture (a spec *declares* the operations it covers and a declared
+  operation it never issues **fails** it) and `npm run api:coverage` — plus the
+  **`files` family closed as the pilot**, 15/15 operations.
+- **Follow-ups, one issue per family, filed off the report's gap ranking** (largest
+  first): `flows` 21, `monitor` 20, `knowledge_bases` 16, `mcp` 15, `models` 11,
+  `memories` 10, then the long tail (`projects`, `folders`, `users`, `workflows`,
+  `build`, `catalog-policy`, `build_public_tmp`, `run`, `model_options`,
+  `registration`, `responses`, `session`, `webhook-events`).
+
+Notes: the pilot needs no provider key — a red there is the mechanism's fault, not
+a credential's, which is why `files` went first. `knowledge_bases` and `memories`
+do need one (embedding quota has already cost knowledge specs a red), so they are
+not the next two. **Covered** means driven on purpose with status *and* body
+shape asserted; incidental UI traffic earns nothing, and that is the gauge's
+definition implemented, not a limitation. The `@destructive` wipe operations are
+in scope but never `@stable` — no scheduled lane runs them (#1010).
+
+Convergence: a **second metric beside the checklist %** — `covered / 204`, per
+family, uncovered operations named. Directional: 15/204 after the pilot; the
+wave's own target is the families it dates, not a percentage.
+Exit: the gauge is merged and reports `files 15/15`; the next two families are
+filed as issues against this milestone with their operation counts.
+Review (2026-09-17): re-run `npm run api:coverage` against the then-current
+nightly, refresh the baseline if the surface moved (`npm run api:baseline`, a
+committed diff), and date the next families.
 
 ---
 

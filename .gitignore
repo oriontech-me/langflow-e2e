@@ -54,3 +54,6 @@ __pycache__/
 # logs and one copy of the tree per shard. Never committed — and left untracked it
 # would also put a full tree copy per shard in front of every `git status`.
 runs/
+
+# Per-machine API coverage measurement (#1692) — aggregated by npm run api:coverage
+.api-coverage/

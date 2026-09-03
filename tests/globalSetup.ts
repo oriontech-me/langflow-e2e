@@ -18,6 +18,7 @@ import {
   catalogVerdict,
   type CatalogSnapshot,
 } from "./helpers/other/component-catalog-drift";
+import { apiSurfaceVerdict } from "./helpers/other/api-surface-drift";
 
 dotenv.config();
 
@@ -29,6 +30,15 @@ dotenv.config();
  * by Playwright, and a cwd-relative path would break the moment the suite is run
  * from anywhere but the repo root.
  */
+/**
+ * The accepted API surface, committed so a route appearing or vanishing shows up
+ * as a reviewable diff (#1692). Refresh with `npm run api:baseline`.
+ */
+const API_SURFACE_BASELINE_PATH = path.join(
+  __dirname,
+  "assets/api/api-surface-baseline.json",
+);
+
 const CATALOG_BASELINE_PATH = path.join(
   __dirname,
   "assets/catalog/component-catalog-baseline.json",
@@ -272,6 +282,81 @@ async function preconfigureRouting(ctx: APIRequestContext): Promise<void> {
  * Costs one `GET /api/v1/all`: measured 70–85 ms and 524 KB compressed on
  * `1.12.0.dev10`, once per suite run.
  */
+/**
+ * Report drift of the REST API surface against the committed baseline (#1692).
+ *
+ * Warns, never fails — a new route costs nobody a test, and a removed one is
+ * legitimate when the image dropped a surface we do not test (#980). What it must
+ * never do is read as clean without a verdict, so every path that cannot produce
+ * one says so, naming the cause (#1012).
+ *
+ * Only the **schema-visible** half is compared: 137 of the 249 operations on
+ * `1.13.0.dev0` are `include_in_schema=False` and are absent from
+ * `/openapi.json` by construction, so diffing them against it would report ~90
+ * removals on every run. Those are carried from the baseline, and the count is
+ * printed so the line is never mistaken for the whole surface.
+ */
+async function reportApiSurfaceDrift(ctx: APIRequestContext): Promise<void> {
+  let baseline: unknown;
+  try {
+    baseline = JSON.parse(fs.readFileSync(API_SURFACE_BASELINE_PATH, "utf8"));
+  } catch (e) {
+    console.warn(
+      `[preflight] WARNING: could not read the API-surface baseline at ${API_SURFACE_BASELINE_PATH} (${String(e)}). ` +
+        `API surface drift is UNKNOWN for this run, not absent (#1692). ` +
+        `Regenerate it with: npm run api:baseline`,
+    );
+    return;
+  }
+
+  let schema: unknown;
+  try {
+    // Unauthenticated on purpose: `/openapi.json` needs no token, and borrowing
+    // the login another preflight step happened to perform would make this
+    // silently ordering-dependent — the trap `reportCatalogDrift` documents
+    // right below.
+    const res = await ctx.get("/openapi.json", { timeout: 30000 });
+    if (!res.ok()) {
+      console.warn(
+        `[preflight] WARNING: GET /openapi.json answered ${res.status()} — API surface drift is UNKNOWN for this run (#1692).`,
+      );
+      return;
+    }
+    schema = await res.json();
+  } catch (e) {
+    console.warn(
+      `[preflight] WARNING: GET /openapi.json failed (${String(e)}) — API surface drift is UNKNOWN for this run (#1692).`,
+    );
+    return;
+  }
+
+  const verdict = apiSurfaceVerdict(baseline, schema);
+  const version = (baseline as { version?: string } | null)?.version;
+  const baselineVersion = version ? ` (baseline: ${version})` : "";
+  if (verdict.kind === "unknown") {
+    console.warn(
+      `[preflight] WARNING: could not compare the API surface against the baseline — ${verdict.reason}. ` +
+        `Surface drift is UNKNOWN for this run, not absent (#1692). ` +
+        `Regenerate the baseline with: npm run api:baseline (it needs the container — the hidden ` +
+        `half of the router table is not readable over HTTP)`,
+    );
+    return;
+  }
+  if (verdict.kind === "clean") {
+    console.log(
+      `[preflight] API surface matches the baseline${baselineVersion} — ${verdict.schemaCount} operations in /openapi.json, ` +
+        `${verdict.hiddenCarried} hidden one(s) carried from the baseline.`,
+    );
+    return;
+  }
+  console.warn(
+    `[preflight] WARNING: the API surface DRIFTED from the baseline${baselineVersion} (#1692):\n` +
+      verdict.lines.join("\n") +
+      `\n  ${verdict.hiddenCarried} hidden operation(s) were carried from the baseline and NOT compared — ` +
+      `only npm run api:baseline can refresh those. If the drift is expected, accept it with that command.`,
+  );
+}
+
 async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
   let baseline: unknown;
   try {
@@ -385,6 +470,7 @@ export default async function globalSetup(): Promise<void> {
     }
     await preconfigureRouting(ctx);
     await reportCatalogDrift(ctx);
+    await reportApiSurfaceDrift(ctx);
   } finally {
     await ctx.dispose();
   }

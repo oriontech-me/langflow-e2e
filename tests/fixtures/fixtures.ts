@@ -14,6 +14,12 @@ import {
   attachRunStreamCapture,
   type CapturedStream,
 } from "./run-stream-capture";
+import {
+  coverageTeardownError,
+  installApiCoverage,
+  writeCoverageRecord,
+  type ApiCoverage,
+} from "./api-coverage";
 
 /**
  * How long a **v1** run-stream body may take to arrive.
@@ -95,7 +101,35 @@ export type PageWithErrorHooks = Page & {
 };
 
 // Extend test to log backend errors
-export const test = base.extend({
+export const test = base.extend<{ apiCoverage: ApiCoverage }>({
+  /**
+   * API-coverage declaration + verification (#1692).
+   *
+   * A spec that requests this fixture declares the operations it drives, and the
+   * recorder wraps the **test-scoped `APIRequestContext`** so the declaration is
+   * checked against what was actually issued. Only specs that ask for it are
+   * instrumented, and only the request context — never the page: traffic a page
+   * emits on its own is incidental, which is precisely what the gauge's
+   * definition of *covered* excludes (`docs/api/api-surface-coverage-gauge.md`).
+   */
+  apiCoverage: async ({ request }, use, testInfo) => {
+    const { coverage, recorded, declared } = installApiCoverage(request);
+    await use(coverage);
+
+    // Enforced only on an otherwise-passing test. A test that already failed has
+    // a real cause, and reporting an unfulfilled declaration on top of it buries
+    // that cause — the same reasoning as the stale-known-defect check below,
+    // which keys on `testInfo.status` rather than on `expectedStatus`.
+    const error =
+      testInfo.status === "passed"
+        ? coverageTeardownError(declared, recorded)
+        : null;
+    // No record when the declaration failed verification: a missing record reads
+    // as uncovered, which under-reports rather than inventing coverage.
+    if (!error) writeCoverageRecord(testInfo, declared, recorded);
+    if (error) throw error;
+  },
+
   page: async ({ page }, use, testInfo) => {
     const errors: Array<{
       url: string;
