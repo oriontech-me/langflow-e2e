@@ -27,7 +27,10 @@ wedge in the umbrella issue — #1030) and **keep** the measurement: the per-sha
 writes its outage totals and per-shard breakdown onto its `reports/daily-history.jsonl`
 line as `backend` (`scripts/lib/backend-history.mjs`; schema in `reports/README.md`).
 That series is the baseline any lever has to be compared against — read it with the
-two `jq` queries in that README rather than re-deriving it from artifacts. Do **not**
+two `jq` queries in that README rather than re-deriving it from artifacts. **Applying
+and measuring a lever against it is #1686**, which carries the candidate list, the
+levers already rejected on measurement, and the credential-hang-vs-load distinction a
+benchmark has to preserve; new run-level wedge occurrences are recorded there. Do **not**
 reach for `--max-failures` or a detect-and-abort probe: on run 30444299314 the heavy
 shards wedged 7-10 times and still passed ~100 specs each, so aborting costs more
 coverage than it saves.
@@ -48,18 +51,19 @@ past the helper's own 90 s flush budget and within reach of gunicorn's 120 s tim
 under any concurrent load. #1666 removed that sweep from `collect-models`; the
 spec-side path (`enableAndSettleModelToggles`, which still clicks every visible
 toggle) is #1679. Measure the outage total **after** narrowing that write before
-benchmarking a worker count or a runner size against it.
+benchmarking a worker count or a runner size against it — #1686 is blocked on exactly
+that, so a lever sized today would be sized against a wedge the suite is causing.
 
 **One gap to know before running the benchmark itself.** History lines are written on
 `schedule` only, so a lever measured through a `workflow_dispatch` of `daily-stable.yml`
 produces **no durable row** — its "after" would again be a table typed by hand from
 7-day artifacts. Either land the lever and compare across ≥2 scheduled dailies (what
-#1077's last *Done when* asks for anyway), or extend the append step first.
+#1686's last *Done when* asks for anyway), or extend the append step first.
 
 **Docs:** `ISSUE-817-CI-RUNNER-SIZING.md`, `ISSUE-833-SHARDING-DESIGN.md`,
 `ISSUE-833-SHARDING-PLAN.md`; `@stable`-removal rules → `CONTRIBUTING.md` →
 *Tag @stable* / *Triage protocol*.
-**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · #1077 · #1666 · #1679 · PR #888.
+**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · #1077 · #1666 · #1679 · #1686 · PR #888.
 
 **`@stable` verdict routing** (when someone wants to drop `@stable` over this):
 confirmed saturation (green at `--workers=1`, flakes at higher N) → **keep
