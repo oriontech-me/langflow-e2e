@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-02
+> **Last updated:** 2026-09-03
 
 ---
 
@@ -1394,7 +1394,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 542 `test()` calls carrying the `@stable` tag, distributed across 207 spec
+> 541 `test()` calls carrying the `@stable` tag, distributed across 207 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1769,7 +1769,6 @@
 - [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
 - [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
-- [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
 - [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
 - [x] clear chat on Default session must remove messages but keep the session → `playground-clear-history.spec.ts`
 - [x] deleting a user-created session must remove it and return to Default session → `playground-clear-history.spec.ts`

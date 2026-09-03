@@ -65,7 +65,7 @@ test.describe("Playground – Bulk Session Operations", () => {
 
   test(
     "select-all-checkbox must select all non-default sessions",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
