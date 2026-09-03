@@ -22,14 +22,44 @@ without killing a slow live-LLM build — #1048; Langflow's own docs get this
 backwards and advise raising it, so check the code, not `deployment-multi-worker.mdx`) ·
 **measure** the mid-run outage instead of inferring it (`scripts/watch-backend.mjs`
 probes the backend during each shard; `scripts/report-backend-outages.mjs` names the
-wedge in the umbrella issue — #1030). Do **not** reach for `--max-failures` or a
-detect-and-abort probe: on run 30444299314 the heavy shards wedged 7-10 times and
-still passed ~100 specs each, so aborting costs more coverage than it saves.
+wedge in the umbrella issue — #1030) and **keep** the measurement: the per-shard
+`liveness-N` artifacts expire after 7 days, so since #1077 every scheduled daily
+writes its outage totals and per-shard breakdown onto its `reports/daily-history.jsonl`
+line as `backend` (`scripts/lib/backend-history.mjs`; schema in `reports/README.md`).
+That series is the baseline any lever has to be compared against — read it with the
+two `jq` queries in that README rather than re-deriving it from artifacts. Do **not**
+reach for `--max-failures` or a detect-and-abort probe: on run 30444299314 the heavy
+shards wedged 7-10 times and still passed ~100 specs each, so aborting costs more
+coverage than it saves.
+
+**Before sizing a lever against it, note the wedge may be endogenous.** The 5
+consecutive dailies backfilled with #1077 (2026-08-27 → 09-02) include a near-control:
+2026-08-27 measured **0 outage windows on all 4 shards** — 547 tests executed of 549
+counted, 545 passing — at roughly half the summed shard span of the wedged days, so
+the wedge is not a constant of the runner. Read it with its own floor caveat, the one
+this series documents: that row still carries `blips_total: 19`, i.e. 19 single-probe
+failures below the 2-probe window threshold. The backend answered every probe on none
+of those shards; it merely never stayed unreachable long enough to open a window.
+`update_enabled_models` validates the provider key once **per model, synchronously,
+inside the request** (measured on an idle container, #1666: 1 model 0.4-1.0 s,
+30 models **103 s**, the same 30 *disabled* 0.02 s), and the lanes run
+`LANGFLOW_WORKERS: 1` — so a 30-model enable write blocks the only worker for 103 s,
+past the helper's own 90 s flush budget and within reach of gunicorn's 120 s timeout
+under any concurrent load. #1666 removed that sweep from `collect-models`; the
+spec-side path (`enableAndSettleModelToggles`, which still clicks every visible
+toggle) is #1679. Measure the outage total **after** narrowing that write before
+benchmarking a worker count or a runner size against it.
+
+**One gap to know before running the benchmark itself.** History lines are written on
+`schedule` only, so a lever measured through a `workflow_dispatch` of `daily-stable.yml`
+produces **no durable row** — its "after" would again be a table typed by hand from
+7-day artifacts. Either land the lever and compare across ≥2 scheduled dailies (what
+#1077's last *Done when* asks for anyway), or extend the append step first.
 
 **Docs:** `ISSUE-817-CI-RUNNER-SIZING.md`, `ISSUE-833-SHARDING-DESIGN.md`,
 `ISSUE-833-SHARDING-PLAN.md`; `@stable`-removal rules → `CONTRIBUTING.md` →
 *Tag @stable* / *Triage protocol*.
-**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · PR #888.
+**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · #1077 · #1666 · #1679 · PR #888.
 
 **`@stable` verdict routing** (when someone wants to drop `@stable` over this):
 confirmed saturation (green at `--workers=1`, flakes at higher N) → **keep
