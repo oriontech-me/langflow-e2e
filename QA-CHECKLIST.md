@@ -1370,7 +1370,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 37 | 32 | 4 | 1 | 0 |
+| `api/flows/` — REST API | 47 | 40 | 5 | 2 | 0 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1393,7 +1393,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **591** | **460 (78%)** | **52 (9%)** | **16 (3%)** | **63 (11%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **601** | **468 (78%)** | **53 (9%)** | **17 (3%)** | **63 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1409,11 +1409,21 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 541 `test()` calls carrying the `@stable` tag, distributed across 207 spec
+> 549 `test()` calls carrying the `@stable` tag, distributed across 209 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
+
+#### api/files/
+- [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
+- [x] deletes a flow-scoped file and the listing reflects it → `api-files-v1-flow-scoped.spec.ts`
+- [x] serves an image through images/ and refuses an unknown flow → `api-files-v1-flow-scoped.spec.ts`
+- [x] serves the bundled profile pictures → `api-files-v1-flow-scoped.spec.ts`
+- [x] uploads a file, the store reports it, and deleting it removes it → `api-files-v2-store.spec.ts`
+- [x] renames a file without moving it → `api-files-v2-store.spec.ts`
+- [x] zips a batch and deletes a batch → `api-files-v2-store.spec.ts`
+- [x] the batch path requires its trailing slash → `api-files-v2-store.spec.ts`
 
 #### api/flows/
 - [x] direct event_delivery streams build events inline (no job_id) and echoes the input → `api-build-direct-response.spec.ts`
@@ -1998,7 +2008,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 4 | 0 |
+| `api/flows/` — REST API | 5 | 0 |
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
