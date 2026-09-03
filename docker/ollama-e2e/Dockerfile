@@ -8,7 +8,19 @@
 # Rebuild + push happens via .github/workflows/build-ollama-image.yml (on
 # changes to this file or manual dispatch). To change the model, update
 # OLLAMA_E2E_MODEL here AND OLLAMA_TEST_MODEL in the workflows/.env.
-FROM ollama/ollama:latest
+#
+# The base tag is PINNED, and that is a change from `latest`. This image is
+# rebuilt rarely, so `latest` meant the container's Ollama moved whenever
+# someone happened to rebuild it — while scripts/start-ollama-source.sh, which
+# serves these same specs natively on the machines without Docker, stayed
+# where it was. A version difference between those two is the one difference
+# the VM lane cannot tell apart from a product change, and it would arrive
+# without anyone editing a line. 0.32.5 is what the image in the registry
+# carries today (built 2026-08-01, when `latest` was 0.32.5), so pinning it
+# records the status quo instead of moving it. Bumping this tag and the
+# script's VERSION default is ONE change: scripts/start-ollama-source.test.mjs
+# reads this line, so it cannot be done by halves.
+FROM ollama/ollama:0.32.5
 
 ARG OLLAMA_E2E_MODEL=llama3.2:1b
 
