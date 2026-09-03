@@ -224,3 +224,79 @@ test("totals and the entry shape are unchanged by the added field", () => {
     assert.ok("infra_signature" in e, "every failure and flake carries the field, so absent means pre-#1310");
   }
 });
+
+// ---------- an ABSENT report is an infra abort, not a skipped day (#1176) ----------
+
+// On 2026-07-31 every shard aborted before its first test, so no blob existed and the
+// merge step failed: results.json was never written. The appender exited 0, its step
+// went green, and the day is simply missing from the series — a `jq` query reads
+// 2026-07-30 followed by 2026-08-03 as consecutive weekdays. Absence reported as
+// success is the pattern #1012 exists to refuse.
+
+/** Run the appender with NO report at all, and return what it wrote (or null). */
+function appendWithNoReport({ ci = true } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "history-"));
+  const historyPath = join(dir, "history.jsonl");
+  const env = {
+    ...process.env,
+    PLAYWRIGHT_JSON: join(dir, "results.json"), // deliberately never created
+    HISTORY_FILE: historyPath,
+    WORKFLOW: "unit",
+    GITHUB_SERVER_URL: "https://example.invalid",
+    GITHUB_REPOSITORY: "o/r",
+    LANGFLOW_IMAGE: "img:tag",
+  };
+  if (ci) env.GITHUB_RUN_ID = "1";
+  else delete env.GITHUB_RUN_ID;
+  execFileSync(process.execPath, [SCRIPT], { env, encoding: "utf8" });
+  let raw;
+  try {
+    raw = readFileSync(historyPath, "utf8").trim();
+  } catch {
+    return null; // no file written at all
+  }
+  return raw ? JSON.parse(raw) : null;
+}
+
+test("#1176 a CI run with no report writes an entry instead of vanishing", () => {
+  const entry = appendWithNoReport();
+  assert.ok(entry, "the day must be recorded, not skipped");
+  assert.equal(entry.report_missing, true);
+  assert.deepEqual(entry.totals, { passed: 0, failed: 0, flaky: 0, skipped: 0 });
+  assert.equal(entry.run_id, "1");
+  assert.equal(entry.langflow_image, "img:tag");
+  assert.equal(entry.version, 1, "an additive optional field does not bump the schema version");
+});
+
+test("#1176 the entry carries its own reason, so the abort is not silent", () => {
+  const entry = appendWithNoReport();
+  assert.ok(Array.isArray(entry.run_errors) && entry.run_errors.length === 1);
+  assert.match(entry.run_errors[0], /absent/i);
+  assert.match(entry.run_errors[0], /infra abort/i);
+});
+
+test("#1176 the entry is selected by the README's existing zero-test query", () => {
+  // That query is `select([.totals[]] | add == 0)` printing
+  // `.run_errors[0] // "no recorded reason"`. Pinning both halves is the point: the
+  // fix is worthless if the line lands in the file but the published query walks past
+  // it, or selects it and prints the fallback.
+  const entry = appendWithNoReport();
+  const executed = Object.values(entry.totals).reduce((a, b) => a + b, 0);
+  assert.equal(executed, 0, "must be selected by the zero-test query");
+  assert.notEqual(
+    entry.run_errors?.[0] ?? null,
+    null,
+    "must print a cause, not the query's 'no recorded reason' fallback",
+  );
+});
+
+test("#1176 running locally still writes nothing — the file is CI-owned", () => {
+  // With no run id this is a developer's tree, and appending a junk line to a
+  // committed, machine-written file would be a worse bug than the one being fixed.
+  assert.equal(appendWithNoReport({ ci: false }), null);
+});
+
+test("#1176 an ordinary run carries no report_missing marker", () => {
+  const entry = append(report([{ title: "pass", status: "expected", results: [result("passed")] }]));
+  assert.equal(entry.report_missing, undefined, "present only on a missing report");
+});

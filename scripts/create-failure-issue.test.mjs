@@ -199,3 +199,31 @@ test("daily-stable.yml calls the script and no longer carries its own copy", () 
   assert.match(wf, /RUN_URL:/, "RUN_URL is what selects the Actions lane wording");
   assert.match(wf, /ISSUE_STRICT: *"1"/, "on Actions a failed creation must fail the step");
 });
+
+// The step being CORRECT is worth nothing if it is never reached, and for a total
+// shard abort it was not (#1176). A step `if:` with no status function gets an
+// implicit `success()` over every preceding step — and a total abort is guaranteed to
+// fail `Merge blob reports`, since there are no blobs to merge. So the one failure
+// mode with no per-test evidence to fall back on was the one that opened no issue,
+// while everything downstream (the ZERO-tests title and body, tested above) already
+// existed and simply could not be run.
+//
+// This is a structural assertion, which #1226 established cannot pin a behaviour — a
+// workflow `if:` has no other reachable surface from a unit test, so it is scoped to
+// exactly what it can prove: that the guard is still spelled there.
+test("#1176 the umbrella step survives an earlier failed step in the merge job", () => {
+  const wf = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
+
+  const step = wf.slice(wf.indexOf("- name: Create issue on failure"));
+  const ifLine = step.slice(0, step.indexOf("\n", step.indexOf("if:")));
+  assert.match(
+    ifLine,
+    /if: *always\(\)/,
+    "without a status function the implicit success() skips the umbrella on the one day it matters",
+  );
+  // The empty-report clause is what #1012 added for a run that goes green with zero
+  // tests. It is only reachable because of the guard above, so the two are pinned
+  // together rather than separately.
+  assert.match(ifLine, /runguard\.outputs\.empty == 'true'/);
+  assert.match(ifLine, /github\.event_name == 'schedule'/, "still scheduled-only");
+});

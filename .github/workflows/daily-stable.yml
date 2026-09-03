@@ -1398,8 +1398,25 @@ jobs:
       # `create-failure-issue.test.mjs` pins the body this lane produces byte-for-byte
       # against what the inline `actions/github-script` block emitted, and pins the
       # absence of a resurrected copy here.
+      # `always() &&` is load-bearing here for the same reason it is on `Refresh spec
+      # durations` above, and its absence had a sharper cost (#1176). A step `if:` with
+      # no status function gets an implicit `success()` over every preceding step — and
+      # a TOTAL shard abort is GUARANTEED to fail `Merge blob reports`, because there
+      # are no blobs to merge. So on run 30624101377 both clauses below held (all four
+      # shards failed AND runguard reported the report empty) and the umbrella was
+      # skipped anyway: the one failure mode with no per-test evidence to fall back on
+      # was the one that opened no issue. Everything downstream already existed —
+      # `runguard` is `always()` so its outputs are readable, and
+      # `create-failure-issue.mjs` has carried its own ZERO-tests title and body since
+      # #1012 — the step just could not be reached.
+      #
+      # Note the sibling `Auto-remove @stable from hard failures` carries no `always()`
+      # either. That is left alone deliberately: it is a WRITE path (it commits tag
+      # removals without review), its own gates already bar it from an empty or partial
+      # report, and widening when it fires is a decision of its own, not a side effect
+      # of this one.
       - name: Create issue on failure
-        if: (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
+        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the

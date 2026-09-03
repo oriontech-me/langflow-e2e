@@ -30,6 +30,7 @@
 //   "failures": [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
 //   "flaky":    [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
 //   "run_errors": [ "..." ]                     // optional, see below
+//   "report_missing": true                      // optional, see below
 //   `infra_signature` (additive to schema v1, #1310) is the id of the
 //   infra-signature the entry's error matched (`scripts/lib/infra-signatures.mjs`)
 //   or null — i.e. "the harness could not reach the backend, so this failure is
@@ -51,6 +52,14 @@
 //   model-parameterized spec carries on its describe title (e.g.
 //   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
 //   dataset to group failures by provider variant (#899).
+//   `report_missing` (optional, additive to schema v1, #1176) marks a line written
+//   with NO Playwright report at all — every shard aborted before producing a blob,
+//   so nothing was left to merge. Present only in that case; its absence is the
+//   normal state. The line still carries zero totals and is selected by the same
+//   "executed NO test at all" query as any other infra abort; this field is what
+//   separates "there was no report" from "the report reported errors", which are
+//   different diagnoses. Its `run_errors[0]` is SYNTHESIZED by this script rather
+//   than read from the report, which is the only place that happens.
 //   `run_errors` (optional, additive to schema v1) carries the TOP-LEVEL report
 //   errors — globalSetup / worker-level failures that stopped tests from running
 //   at all. Omitted when there are none, so its presence is itself the signal
@@ -67,12 +76,35 @@ const reportPath = process.env.PLAYWRIGHT_JSON || "results.json";
 const historyPath = process.env.HISTORY_FILE || "reports/weekly-history.jsonl";
 const workflow = process.env.WORKFLOW || "weekly-stable";
 
-if (!existsSync(reportPath)) {
-  console.error(`[history] Playwright JSON not found at ${reportPath}; skipping append.`);
+// An ABSENT report is an infra abort, not a reason to skip the day. Exiting 0 here
+// reported absence as SUCCESS: on 2026-07-31 every shard aborted before its first
+// test, so no blob existed, `Merge blob reports` failed, no results.json was ever
+// written — and `Append daily history` / `Commit daily history` both went green
+// while writing nothing. The day is simply missing from the series, and a `jq`
+// query reads 2026-07-30 followed by 2026-08-03 as two consecutive weekdays. The
+// day that most needs a record is the one that had none (#1176).
+//
+// The entry is built from what is knowable WITHOUT the report — date, run id, url,
+// image — with every total at zero, which is exactly the shape the README's "runs
+// that executed NO test at all" query already selects on, so this needs no new
+// query and no schema version bump. `run_errors` carries the synthesized reason so
+// that query prints a cause instead of its "no recorded reason" fallback, and
+// `report_missing` marks the provenance so a consumer can tell a report-sourced
+// error from this one.
+//
+// Only in a real CI run. Locally `GITHUB_RUN_ID` is unset and the old exit(0)
+// stands: running this script by hand in a tree with no results.json must not
+// append a junk line to a committed, machine-written file.
+const reportMissing = !existsSync(reportPath);
+if (reportMissing && !process.env.GITHUB_RUN_ID) {
+  console.error(`[history] Playwright JSON not found at ${reportPath}; skipping append (not a CI run).`);
   process.exit(0);
 }
+if (reportMissing) {
+  console.error(`[history] Playwright JSON not found at ${reportPath}; recording an infra abort.`);
+}
 
-const report = JSON.parse(readFileSync(reportPath, "utf8"));
+const report = reportMissing ? null : JSON.parse(readFileSync(reportPath, "utf8"));
 
 const totals = { passed: 0, failed: 0, flaky: 0, skipped: 0 };
 const failures = [];
@@ -220,7 +252,7 @@ function visit(node, suitePath = []) {
   for (const child of node.suites || []) visit(child, path);
 }
 
-for (const suite of report.suites || []) visit(suite);
+for (const suite of report?.suites || []) visit(suite);
 
 const runId = process.env.GITHUB_RUN_ID || "local";
 const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
@@ -234,7 +266,9 @@ const runUrl = repo ? `${serverUrl}/${repo}/actions/runs/${runId}` : null;
 // aborted in the globalSetup preflight and the history line said 0/0/0/0 with
 // no reason attached). Additive and optional — omitted when there are none, so
 // schema v1 readers are unaffected.
-const runErrors = (report?.errors || []).map((e) => errorSignature(e)).filter(Boolean);
+const runErrors = reportMissing
+  ? [`Playwright JSON absent at ${reportPath} — no shard produced a report (infra abort)`]
+  : (report?.errors || []).map((e) => errorSignature(e)).filter(Boolean);
 
 // In-run backend liveness (#1077). Built from the same per-shard summaries the
 // merge job's outage reporter renders into the umbrella issue, through that
@@ -278,6 +312,7 @@ const entry = {
   failures,
   flaky,
   ...(runErrors.length ? { run_errors: runErrors } : {}),
+  ...(reportMissing ? { report_missing: true } : {}),
   ...(backend ? { backend } : {}),
 };
 
