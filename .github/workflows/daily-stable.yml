@@ -1262,6 +1262,22 @@ jobs:
           HISTORY_FILE: reports/daily-history.jsonl
           WORKFLOW: daily-stable
           LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          # In-run backend liveness, persisted on the history line (#1077). The
+          # same directory the outage reporter above reads, so the row and the
+          # umbrella section describe the run with the same numbers. The wedge is
+          # otherwise measured ONLY into `liveness-N` artifacts, which expire
+          # after 7 days (see their upload step) — #1077 has to compare a lever
+          # against a baseline, and a series that evaporates is not one.
+          #
+          # Absent directory or no summary in it => the block is omitted, which
+          # is what a run without the measurement must look like. A directory
+          # whose shards all report `measured: false` is NOT that: it records
+          # `shards_measured: 0`, i.e. UNKNOWN, never a healthy backend (#1012).
+          LIVENESS_DIR: all-liveness
+          # Same reason the reporter takes it: without the expected count, a
+          # shard whose job died before writing a summary disappears from the row
+          # instead of reading as a gap.
+          SHARD_TOTAL: ${{ needs.prep.outputs.shard_total }}
 
       - name: Commit daily history
         if: always() && github.event_name == 'schedule'

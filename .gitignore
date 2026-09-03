@@ -49,3 +49,8 @@ all-liveness/
 # __pycache__ behind, which showed up as untracked noise on every subsequent diff.
 __pycache__/
 *.pyc
+
+# Run artifacts from scripts/run-e2e.sh (the VM orchestrator): merged reports, blobs,
+# logs and one copy of the tree per shard. Never committed — and left untracked it
+# would also put a full tree copy per shard in front of every `git status`.
+runs/
