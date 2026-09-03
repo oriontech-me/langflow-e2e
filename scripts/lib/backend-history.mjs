@@ -86,9 +86,36 @@ export function buildBackendBlock(summaries, report, shardTotal) {
   // `shards_measured: 0`, which reads as UNKNOWN and never as a clean backend.
   if (!summaries.length) return null;
 
+  // `readSummaries` takes ANY `*.json` that parses to an object, and the merge
+  // job's download directory is not guaranteed to hold only liveness artifacts —
+  // a stray file there was measured producing a phantom `{shard: "?"}` record,
+  // inflating `shards_reported`. That is exactly the slot `shard_total` vs
+  // `shards_reported` exists to expose (a shard whose job died before writing a
+  // summary), so a phantom does not merely add noise: it FILLS the gap that the
+  // absence was supposed to show, in a file that is machine-read as a series.
+  //
+  // Filtered HERE, before `attribute()`, and never in the caller: the shard join
+  // below is positional over the array `attribute()` mapped, so a filter applied
+  // afterwards would desynchronise the indexes and trade a visible phantom for
+  // two shards silently swapping totals. `hasOwn` and not a type check — a real
+  // summary always declares `shard`, including as the empty string a lane that
+  // forgot WATCH_LABEL produces.
+  const usable = summaries.filter((s) => s && Object.hasOwn(s, "shard"));
+  const rejected = summaries.length - usable.length;
+  if (rejected > 0) {
+    // Named, never silent (#1012): dropping input quietly is the same class of
+    // error as counting it wrongly.
+    console.warn(
+      `⚠️  [liveness] ignored ${rejected} file(s) under the liveness directory that are not shard summaries.`,
+    );
+  }
+  if (!usable.length) return null;
+  summaries = usable;
+
   const agg = attribute(summaries, collectAttempts(report));
   const byFile = countByFile(report);
   const claimed = new Set();
+  const doubleClaimed = new Set();
 
   const shards = agg.shards.map((shard, index) => {
     // Positional, not by label. `attribute()` maps `summaries` to its own
@@ -100,12 +127,21 @@ export function buildBackendBlock(summaries, report, shardTotal) {
     // a new lane is one forgotten env var away from not doing so.
     const summary = summaries[index];
     const totals = emptyTotals();
-    // Deduplicated for the same reason `attribute()` deduplicates its own copy
-    // of this list: `a.spec.ts` and `./a.spec.ts` are both accepted spellings
-    // of one file, and counting a shard's file twice inflates that shard's
-    // totals. `unassigned` below can only ever detect the UNDER-count, so a
-    // duplicate would break the sum-to-run-totals invariant silently.
+    // Each file is counted ONCE, across the whole run. Deduplicating within the
+    // shard is the same thing `attribute()` does to its own copy of this list
+    // (`a.spec.ts` and `./a.spec.ts` are both accepted spellings of one file);
+    // the cross-shard half matters for the same reason and is not covered by it.
+    // `unassigned` below can only ever detect the UNDER-count, so without this
+    // an over-count would break the sum-to-run-totals invariant in the one
+    // direction nothing checks — and that invariant is what makes a row's shard
+    // breakdown reconcilable with its own `totals` instead of merely plausible.
+    // The duplicate is attributed to the first shard that claimed it and named
+    // in `double_claimed`, rather than dropped from both or counted in both.
     for (const norm of new Set((summary?.files || []).map(normalizeSpecPath))) {
+      if (claimed.has(norm)) {
+        doubleClaimed.add(norm);
+        continue;
+      }
       claimed.add(norm);
       addTotals(totals, byFile.get(norm) || {});
     }
@@ -150,6 +186,10 @@ export function buildBackendBlock(summaries, report, shardTotal) {
     collateral_attempts: agg.collateralAttempts,
     shards,
     ...(isZero(unassigned) ? {} : { unassigned }),
+    // A file two shards both listed. The partitioner emits disjoint lists, so
+    // this is empty in practice and omitted — its presence means the partition
+    // itself is wrong, which is worth seeing on the row that depends on it.
+    ...(doubleClaimed.size ? { double_claimed: [...doubleClaimed].sort() } : {}),
   };
 }
 

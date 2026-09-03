@@ -23,7 +23,8 @@
 //   node scripts/backfill-backend-history.mjs \
 //     --history reports/daily-history.jsonl \
 //     --artifacts <dir> \
-//     [--shard-total 4] [--dry-run]
+//     --shard-total <n> \
+//     [--dry-run]
 //
 // `<dir>` holds one subdirectory per run id, laid out as the run's artifacts
 // download:  <dir>/<run_id>/liveness-N/backend-liveness.json
@@ -36,18 +37,45 @@ import path from "node:path";
 import { buildBackendBlock } from "./lib/backend-history.mjs";
 import { readSummaries } from "./report-backend-outages.mjs";
 
+// Accepts both `--flag value` and `--flag=value`. The `=` form used to fall
+// through to the fallback silently, which for `--shard-total=6` meant writing
+// the DEFAULT while the refusal below reported a number the caller never typed.
 function arg(name, fallback = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i === -1 ? fallback : process.argv[i + 1];
+  const argv = process.argv;
+  const i = argv.indexOf(`--${name}`);
+  if (i !== -1 && i + 1 < argv.length && !argv[i + 1].startsWith("--")) return argv[i + 1];
+  const inline = argv.find((a) => a.startsWith(`--${name}=`));
+  if (inline) return inline.slice(name.length + 3);
+  return fallback;
 }
 
 const historyPath = arg("history", "reports/daily-history.jsonl");
 const artifactsDir = arg("artifacts");
-const shardTotal = Number(arg("shard-total", "4")) || null;
 const dryRun = process.argv.includes("--dry-run");
 
 if (!artifactsDir) {
   console.error("--artifacts <dir> is required.");
+  process.exit(2);
+}
+
+// REQUIRED, and parsed strictly. It used to default to 4 — a guess about runs
+// the caller may not have checked, and `shard_total` is the one field whose
+// entire purpose is making a shard that uploaded NOTHING visible. A 2-shard
+// repro backfilled under that default records `shards_reported: 2` against
+// `shard_total: 4`, which reads as "two shards died" forever, and the
+// `shards_reported > shard_total` refusal below cannot see it — it only catches
+// the excess. An unparseable value is refused for the sharper version of the
+// same reason: `Number("abc") || null` yielded `null`, which SHORT-CIRCUITS that
+// refusal and writes the state this file's own comments call the one that makes
+// a silent shard undetectable.
+const shardTotalRaw = arg("shard-total");
+if (shardTotalRaw === null) {
+  console.error("--shard-total <n> is required — the run's real shard count, not a guess.");
+  process.exit(2);
+}
+const shardTotal = Number(shardTotalRaw);
+if (!Number.isInteger(shardTotal) || shardTotal < 1) {
+  console.error(`--shard-total must be a positive integer; got "${shardTotalRaw}".`);
   process.exit(2);
 }
 
@@ -66,7 +94,12 @@ if (!runDirs.length) {
 const blocks = new Map();
 for (const runId of runDirs) {
   const dir = path.join(artifactsDir, runId);
-  const summaries = readSummaries(dir).filter((s) => s.shard !== undefined);
+  // Unfiltered on purpose: `buildBackendBlock` rejects non-summary JSON itself
+  // (and says how many it dropped), so the live appender and this script cannot
+  // disagree about what counts as a shard. This script used to carry its own
+  // copy of that filter while the appender carried none — the hardening was on
+  // the ad-hoc path and missing from the one that runs unattended forever.
+  const summaries = readSummaries(dir);
   const reportPath = path.join(dir, "results.json");
   const report = fs.existsSync(reportPath)
     ? JSON.parse(fs.readFileSync(reportPath, "utf8"))
@@ -99,6 +132,12 @@ for (const runId of runDirs) {
   blocks.set(runId, block);
 }
 
+if (!fs.existsSync(historyPath)) {
+  // A raw ENOENT stack here points at `node:fs` rather than at the typo in
+  // `--history`, and this script's whole job is not to damage that file.
+  console.error(`History file not found at ${historyPath}.`);
+  process.exit(2);
+}
 const lines = fs.readFileSync(historyPath, "utf8").split("\n");
 const seen = new Set();
 const out = lines.map((line) => {

@@ -200,11 +200,14 @@ The series is **not continuous**. Document any missing weeks here rather than ba
         "totals": { "passed": 128, "failed": 0, "flaky": 4, "skipped": 2 }
       }
     ],
-    "unassigned": { "passed": 0, "failed": 2, "flaky": 0, "skipped": 0 }
+    "unassigned": { "passed": 0, "failed": 2, "flaky": 0, "skipped": 0 },
                                              // OPTIONAL: specs no shard claimed. Omitted when
                                              // empty — which is the normal case, and is why the
                                              // rest of this example is the real 2026-09-02 row
-                                             // while this one line is not.
+                                             // while these last two lines are not.
+    "double_claimed": ["a.spec.ts"]          // OPTIONAL: specs more than one shard listed.
+                                             // Omitted when empty; present means the partition
+                                             // is wrong.
   }
 }
 ```
@@ -227,7 +230,9 @@ The series is **not continuous**. Document any missing weeks here rather than ba
   - **Absent ≠ zero, and `shards_measured: 0` ≠ healthy.** The block is **omitted entirely** by a lane that never measured (the weekly, any local run, anything that does not set `LIVENESS_DIR`). A run whose shards *did* report but recorded no probes carries the block with `shards_measured: 0` — that is UNKNOWN, and must never be read as a backend that stayed up (#1012). `shards_reported` below `shard_total` is a shard whose job died before writing a summary; `shard_total: null` means the run declared no count, which is the one state that makes such a shard undetectable.
   - `blips_total` counts single-probe failures **below** the 2-probe window threshold, so they are excluded from `down_seconds_total`. A non-zero value means the down-share on that row is a **floor**, not a ceiling — the caveat that changed a triage conclusion on 2026-09-01 (#1665).
   - `span_seconds` is the **recorder's** observed span (first probe → last probe), not the shard job's duration: the recorder starts after the post-`collect-models` health gate and is killed in teardown. It is the window the down-share is computed against, and the only wall clock the artifacts can support.
-  - `attempts` / `failing` / `collateral` count test **attempts** (retries included — the cost of a wedge is precisely that each collateral test burns its whole retry budget), while `shards[].totals` counts **tests**, in the same vocabulary as the line's run-level `totals`. The per-shard totals **sum to that run-level `totals`**; when they cannot, the difference is named in `unassigned` rather than silently lost.
+  - `attempts` / `failing` / `collateral` count test **attempts** (retries included — the cost of a wedge is precisely that each collateral test burns its whole retry budget), while `shards[].totals` counts **tests**, in the same vocabulary as the line's run-level `totals`.
+  - **The per-shard totals plus `unassigned` sum to the line's run-level `totals`, always.** That is enforced, not hoped for: every spec file is counted exactly once across the whole run. A file no shard listed lands in `unassigned`; a file **two** shards listed is attributed to the first and named in `double_claimed` rather than counted twice — `unassigned` can only ever detect the under-count, so without that rule the sum would break in the one direction nothing checks. `double_claimed` is empty and omitted in practice, because `partition-shards.mjs` emits disjoint lists; its presence means the partition itself is wrong.
+  - A file under the liveness directory that is **not** a shard summary is ignored rather than counted as a shard, with the number ignored printed. Left in, it produces a phantom `{shard: "?"}` record that inflates `shards_reported` — filling exactly the gap against `shard_total` that a shard whose job died is supposed to show.
   - Absent from history written before #1077.
 - `param` (optional, additive to schema v1) is the parameterization label a model-parameterized spec carries on its `describe` title — e.g. `"google / gemini-2.5-flash"` or `"model:gpt-4o-mini"`. The triage dataset builder uses it to group failures by provider variant and surface **provider-wide** clusters (same provider failing across ≥2 spec files → likely an environment/package cause, not per-test rot; #899). Absent for non-parameterized specs and for history written before #899.
 
