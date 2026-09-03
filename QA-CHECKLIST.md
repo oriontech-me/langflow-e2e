@@ -1391,7 +1391,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 47 | 40 | 5 | 2 | 0 |
+| `api/flows/` — REST API | 63 | 55 | 5 | 3 | 0 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1414,7 +1414,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **601** | **468 (78%)** | **53 (9%)** | **17 (3%)** | **63 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **617** | **483 (78%)** | **53 (9%)** | **18 (3%)** | **63 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1430,7 +1430,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 548 `test()` calls carrying the `@stable` tag, distributed across 209 spec
+> 563 `test()` calls carrying the `@stable` tag, distributed across 215 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1457,6 +1457,7 @@
 - [x] POST /api/v1/custom_component with invalid code returns error → `api-custom-component-creation.spec.ts`
 - [x] GET /api/v1/all includes component types → `api-custom-component-creation.spec.ts`
 - [x] POST /api/v1/custom_component without auth returns 401 or 403 → `api-custom-component-creation.spec.ts`
+- [x] batch create makes every flow in the list and refuses a duplicate name → `api-flows-batch.spec.ts`
 - [x] POST creates flow and returns ID → `api-flows-crud.spec.ts`
 - [x] GET lists flows and includes the created one → `api-flows-crud.spec.ts`
 - [x] GET by ID returns correct flow → `api-flows-crud.spec.ts`
@@ -1466,6 +1467,20 @@
 - [x] GET non-existent flow returns 404 → `api-flows-crud.spec.ts`
 - [x] POST with missing name returns 422 → `api-flows-crud.spec.ts`
 - [x] deleted flow does not appear in flows listing → `api-flows-crud.spec.ts`
+- [x] a fresh flow has an empty, settled event log → `api-flows-events.spec.ts`
+- [x] posting events validates the type and un-settles the log → `api-flows-events.spec.ts`
+- [x] exports one flow as JSON and two as a ZIP → `api-flows-export-import.spec.ts`
+- [x] importing an export of an existing flow updates it in place → `api-flows-export-import.spec.ts`
+- [x] an import keeps the export's id, or mints one when it has none → `api-flows-export-import.spec.ts`
+- [x] public_flow hides a private flow and serves a public one, even anonymously → `api-flows-public-and-metadata.spec.ts`
+- [x] note_translations is an empty map for a flow without notes → `api-flows-public-and-metadata.spec.ts`
+- [x] basic_examples lists the starter flows → `api-flows-public-and-metadata.spec.ts`
+- [x] expand/ validates the compact body and echoes an empty graph → `api-flows-public-and-metadata.spec.ts`
+- [x] PUT merges into the flow instead of replacing it → `api-flows-put-and-bulk-delete.spec.ts`
+- [x] bulk DELETE removes exactly the ids it is given → `api-flows-put-and-bulk-delete.spec.ts`
+- [x] bulk DELETE of an unknown id reports zero, not an error → `api-flows-put-and-bulk-delete.spec.ts`
+- [x] versions lifecycle: create, list, read, activate with auto-snapshot, delete → `api-flows-versions.spec.ts`
+- [x] unknown version ids are refused with distinct messages → `api-flows-versions.spec.ts`
 - [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
 - [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`
 - [x] DELETE removes folder and it no longer appears in listing → `api-folders-crud.spec.ts`
