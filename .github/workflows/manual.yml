@@ -20,9 +20,13 @@ on:
         default: "nightly"
       test_tag:
         description: |
-          Playwright tag to run. Empty = every test. Common tags:
+          Playwright tag to run. Common tags:
             @stable @release @regression @api @components @workspace
             @agents @mcp @playground @auth @model-provider @files @ui-ux
+          Verifying a suite-wide change? Use @stable — it is the largest selection
+          this lane finishes inside its timeout. Empty = every test, which is NOT
+          bounded: it pulls in the unvalidated specs, and those retry twice against
+          a 5-minute per-test timeout. See CLAUDE.md -> What manual.yml can actually run.
         required: false
         default: ""
       test_grep:
@@ -131,7 +135,17 @@ jobs:
     needs: detect-target
     if: needs.detect-target.outputs.use_docker == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 90 was inside the distribution this lane has to cover, not above it (#1174).
+    # This lane runs UNSHARDED at 2 workers against one backend — the same regime as
+    # a single daily shard — so a shard's measured test time transfers directly. The
+    # `@stable` selection summed across the daily's four shards measured 55.4 / 56.9 /
+    # 64.2 / 140.3 min of test time on four recent runs (2026-09-01..03) — so 90 sits
+    # INSIDE that spread, and one of the four would have been killed partway, with no
+    # merged report at all. That is the failure this raise is about: not a slow run,
+    # but a dispatch that costs its full runtime and returns nothing.
+    # 180 covers the observed tail with margin. It costs nothing on a run that does
+    # not need it: this lane is dispatch-only and bills what it uses.
+    timeout-minutes: 180
 
     services:
       langflow:
@@ -432,10 +446,13 @@ jobs:
           # TOKENS_TIMEOUT_MS and TOKENS_DETAIL_CAP are deliberately NOT here: they
           # are defined once at job level, because the attribution sidecar in the
           # test step reads them too and a step-level env: does not reach it.
-          # Below the job's timeout-minutes: 90 so this is a real backstop, not
-          # dead configuration reached only after the runner already killed the
-          # job. Same reasoning as the daily's TOKENS_MAX_SECONDS.
-          TOKENS_MAX_SECONDS: "5100"
+          # Below the job's timeout-minutes so this is a real backstop, not dead
+          # configuration reached only after the runner already killed the job. Same
+          # reasoning as the daily's TOKENS_MAX_SECONDS. It tracks that timeout and
+          # was raised with it (#1174): left at 5100 under a 180-minute job it would
+          # have stopped recording 85 minutes in, silently losing token attribution
+          # for exactly the long dispatches the raise exists to allow.
+          TOKENS_MAX_SECONDS: "10500"
 
       # Export TOKENS_ATTRIB for the specs' cleanup sidecar (#1183), same as
       # daily-stable.yml / pr-validation.yml — with it unset, the helper makes
@@ -544,7 +561,11 @@ jobs:
     needs: detect-target
     if: needs.detect-target.outputs.use_docker == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Same bound as the docker job above (#1174). This job skips every parametrized
+    # LLM spec for want of a key, so its tail is shorter — but it runs the same
+    # unsharded lane against one instance, and an asymmetric cap here would only be
+    # surprising the day a dispatch hits it.
+    timeout-minutes: 180
 
     # `retries` is a dispatch input, not a Docker-lane input, so it is honoured on
     # BOTH target kinds — set at job level for the same reason as in `e2e-docker`

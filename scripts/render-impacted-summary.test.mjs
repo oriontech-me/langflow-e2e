@@ -138,6 +138,60 @@ test("the heading opens the summary and the counts follow it immediately", () =>
   assert.match(lines[3], /^- running in this PR:/);
 });
 
+// ---------- the suite-wide caveat names a runnable selection (#1174) ----------
+
+// The old wording told the reviewer to "dispatch manual.yml for the full suite". That
+// lane runs unsharded at 2 workers with one backend, and the `@stable` selection ALONE
+// measured 55/57/64/140 min of test time across four dailies in that same regime — so
+// the full suite was never inside its timeout, and the instruction could not be
+// followed as written. Nothing enforced it, so it simply went unfollowed: every
+// recorded manual dispatch is a narrow 5-27 min run.
+//
+// These assert on OUTPUT for the same reason the rest of this file does: the previous
+// version of this promise lived in the workflow text, where the only available guard
+// was a regex over YAML.
+test("the suite-wide caveat names a selection the lane can finish", () => {
+  const text = renderSummary({
+    specs: "a.spec.ts",
+    impacted: { specs: ["x"], direct: ["x"], dropped: [], fullSuite: true },
+    provider: { run: ["a.spec.ts"], stableRun: 1 },
+  }).join("\n");
+
+  assert.match(text, /suite-wide change/);
+  assert.match(text, /test_tag=@stable/, "names the selection to dispatch");
+  assert.doesNotMatch(
+    text,
+    /for the full suite/,
+    "must not promise a run the lane cannot finish",
+  );
+});
+
+test("the suite-wide caveat says what the selection leaves out", () => {
+  const text = renderSummary({
+    specs: "a.spec.ts",
+    impacted: { specs: ["x"], direct: ["x"], dropped: [], fullSuite: true },
+    provider: { run: ["a.spec.ts"], stableRun: 1 },
+  }).join("\n");
+
+  // Both halves of the residual, because naming a bound without naming its gap is the
+  // same overpromise in a quieter voice (#1012).
+  assert.match(text, /@destructive/);
+  assert.match(text, /@enterprise/);
+  assert.match(text, /@serving/);
+  assert.match(text, /outside `@stable`/, "names the unvalidated remainder too");
+});
+
+test("the suite-wide caveat is absent when the change is not suite-wide", () => {
+  const text = renderSummary({
+    specs: "a.spec.ts",
+    impacted: { specs: ["x"], direct: ["x"], dropped: [], fullSuite: false },
+    provider: { run: ["a.spec.ts"], stableRun: 1 },
+  }).join("\n");
+
+  assert.doesNotMatch(text, /suite-wide change/);
+  assert.doesNotMatch(text, /test_tag=@stable/);
+});
+
 // ---------- every caveat still gets said (#1012's rule) ----------
 
 test("each caveat survives the move out of the workflow", () => {
