@@ -76,7 +76,10 @@ jobs:
   lint:
     name: ESLint
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 10, not 5 - same reason as the TypeScript Check job above: on 2026-09-03 the
+    # `npm ci` step alone exceeded the five-minute budget twice in a row on PR #1705
+    # (registry stall; the lint step never ran), while everything else was green.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v7
