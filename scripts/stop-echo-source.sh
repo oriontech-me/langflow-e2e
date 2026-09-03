@@ -22,6 +22,20 @@ STATE_DIR="${ECHO_STATE_DIR:-${STATE_ROOT}/echo-source-${PORT}}"
 PID_FILE="${STATE_DIR}/echo.pid"
 TERM_TIMEOUT_S="${ECHO_STOP_TIMEOUT_S:-10}"
 
+# Checked rather than trusted, because nothing would fail if it were not: the value is
+# only read in a `while` condition, which `set -e` exempts, so a non-numeric value
+# makes the wait never run and the script goes straight to SIGKILL — killing a live
+# server and reporting a clean stop.
+case "${TERM_TIMEOUT_S}" in
+  '' | *[!0-9]*) TERM_TIMEOUT_OK=0 ;;
+  *) if [ "${TERM_TIMEOUT_S}" -ge 1 ]; then TERM_TIMEOUT_OK=1; else TERM_TIMEOUT_OK=0; fi ;;
+esac
+if [ "${TERM_TIMEOUT_OK}" != "1" ]; then
+  echo "ERROR: ECHO_STOP_TIMEOUT_S must be a positive integer of seconds (got '${TERM_TIMEOUT_S}')." >&2
+  echo "A bad value skips the graceful wait entirely and escalates straight to SIGKILL." >&2
+  exit 2
+fi
+
 if [ ! -f "${PID_FILE}" ]; then
   echo "No PID file for port ${PORT} (${PID_FILE})."
   exit 0

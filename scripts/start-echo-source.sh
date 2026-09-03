@@ -101,6 +101,11 @@ require_positive_int ECHO_POLL_INTERVAL_S "${POLL_INTERVAL_S}" \
   "Zero never advances the deadline, so the wait below would never end."
 require_positive_int ECHO_START_TIMEOUT_S "${START_TIMEOUT_S}" \
   "A non-numeric deadline makes the readiness loop skip every iteration, which reports a timeout for a run that never probed."
+# The one that announces nothing when it is wrong: it is only read in `while`
+# conditions, which `set -e` exempts, so a bad value skips the graceful wait entirely
+# and escalates straight to SIGKILL while still reporting a clean stop.
+require_positive_int ECHO_STOP_TIMEOUT_S "${STOP_TIMEOUT_S}" \
+  "A bad value skips the graceful wait entirely and escalates straight to SIGKILL."
 
 # --- The address Langflow has to be able to call --------------------------------
 # RFC-1918 only, and the reason is not tidiness. `LANGFLOW_SSRF_ALLOWED_HOSTS` carries
@@ -206,8 +211,19 @@ binary_version() {
   "$1" -version 2>&1 | head -1 | awk '{print $NF}'
 }
 
+# Read in two steps, never as `$(binary_version ... || echo unknown)`. That shape
+# APPENDS instead of replacing: this is a pipeline under `set -o pipefail`, and `head`
+# closes the pipe under the writer, so the substitution can capture a good version AND
+# the fallback — which then compares unequal to the pin and refuses the binary it just
+# read correctly. Emptiness is what "could not read it" actually looks like.
+read_binary_version() {
+  version_output="$(binary_version "$1" || true)"
+  [ -n "${version_output}" ] || version_output=unknown
+  printf '%s\n' "${version_output}"
+}
+
 if [ -x "${BIN}" ]; then
-  HAVE="$(binary_version "${BIN}" || echo unknown)"
+  HAVE="$(read_binary_version "${BIN}")"
   if [ "${HAVE}" != "${VERSION}" ]; then
     echo "ERROR: ${BIN} reports version '${HAVE}', not the pinned ${VERSION}." >&2
     echo "Refusing to run it: the point of the pin is that this endpoint behaves exactly" >&2
@@ -271,7 +287,7 @@ else
   # leaves a half-written binary under the pinned name for the next run to trust.
   mv "${TMP_DIR}/go-httpbin" "${BIN}"
   chmod +x "${BIN}"
-  HAVE="$(binary_version "${BIN}" || echo unknown)"
+  HAVE="$(read_binary_version "${BIN}")"
   if [ "${HAVE}" != "${VERSION}" ]; then
     echo "ERROR: the downloaded binary reports version '${HAVE}', not ${VERSION}." >&2
     rm -f "${BIN}"
@@ -302,12 +318,16 @@ SERVER_PID=$!
 echo "${SERVER_PID}" > "${PID_FILE}"
 
 echo "Waiting for the echo endpoint to answer (up to ${START_TIMEOUT_S}s)..."
-ELAPSED=0
-while [ "${ELAPSED}" -lt "${START_TIMEOUT_S}" ]; do
+# Wall clock, not a poll counter: each iteration also pays the probe's `--max-time 5`,
+# and the case that ceiling exists for — a filtered port, which hangs rather than
+# refusing — is exactly where counting iterations turns the advertised deadline into
+# several times itself. `SECONDS` is a bash builtin and resets on assignment.
+SECONDS=0
+while [ "${SECONDS}" -lt "${START_TIMEOUT_S}" ]; do
   # Liveness first, same as the Langflow starter: a process that exited is not slow,
   # and waiting out the deadline to say so misnames a failed bind as a busy machine.
   if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-    echo "ERROR: go-httpbin exited after ${ELAPSED}s without answering (PID ${SERVER_PID}). Last log lines:" >&2
+    echo "ERROR: go-httpbin exited after ${SECONDS}s without answering (PID ${SERVER_PID}). Last log lines:" >&2
     tail -n 20 "${LOG_FILE}" >&2 || true
     rm -f "${PID_FILE}"
     exit 1
@@ -318,7 +338,7 @@ while [ "${ELAPSED}" -lt "${START_TIMEOUT_S}" ]; do
   # process is up — not that the address the specs depend on is reachable, which is
   # the half that fails when a bind lands on the wrong interface.
   if curl -sf --max-time 5 "http://${HEALTH_HOST}:${PORT}/get" > /dev/null 2>&1; then
-    echo "Echo endpoint ready after ${ELAPSED}s (PID: ${SERVER_PID}, port ${PORT})"
+    echo "Echo endpoint ready after ${SECONDS}s (PID: ${SERVER_PID}, port ${PORT})"
     # Machine-readable, for `ssh <host> 'bash -s' < this` to capture. The caller feeds
     # it to scripts/resolve-echo-endpoint.mjs, which decides ECHO_BASE_URL and is the
     # gate that fails the lane if this address is one the specs cannot assert against.
@@ -327,7 +347,6 @@ while [ "${ELAPSED}" -lt "${START_TIMEOUT_S}" ]; do
     exit 0
   fi
   sleep "${POLL_INTERVAL_S}"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL_S))
 done
 
 echo "ERROR: the echo endpoint did not answer in ${START_TIMEOUT_S}s. Last log lines:" >&2
