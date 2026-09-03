@@ -11,12 +11,19 @@ const FLOW_BASE = {
   is_component: false,
 };
 
+// Every test declares the operations it asserts through the `apiCoverage` fixture
+// (#1699): the declaration is verified against what the test actually issued, so the
+// five CRUD operations count in `npm run api:coverage` — where they counted for
+// nothing before, despite being driven as contracts here since the spec was written.
+// No assertion changed. Cleanup deletes through `deleteFlow` are not declared: the
+// helper verifies them, but the DELETE contract is asserted by its own test below.
 test.describe("CRUD /api/v1/flows", () => {
   // Each test manages its own flow to remain independent
   test(
     "POST creates flow and returns ID",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow - ${Date.now()}`;
 
@@ -49,7 +56,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "GET lists flows and includes the created one",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/", "GET /api/v1/flows/"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow List - ${Date.now()}`;
 
@@ -88,7 +96,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "GET by ID returns correct flow",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/", "GET /api/v1/flows/{flow_id}"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Get - ${Date.now()}`;
 
@@ -126,7 +135,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "PATCH updates flow name and description",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/", "PATCH /api/v1/flows/{flow_id}", "GET /api/v1/flows/{flow_id}"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Patch - ${Date.now()}`;
       const updatedName = `${flowName} - Updated`;
@@ -176,7 +186,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "DELETE removes flow and returns 200",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/", "DELETE /api/v1/flows/{flow_id}"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Delete - ${Date.now()}`;
 
@@ -205,7 +216,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "GET after DELETE returns 404",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/", "GET /api/v1/flows/{flow_id}"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow 404 - ${Date.now()}`;
 
@@ -235,7 +247,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "GET non-existent flow returns 404",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/flows/{flow_id}"]);
       const authToken = await getAuthToken(request);
       const fakeId = "00000000-0000-0000-0000-000000000000";
 
@@ -251,7 +264,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "POST with missing name returns 422",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/"]);
       const authToken = await getAuthToken(request);
 
       await test.step("POST /api/v1/flows/ without required name returns 400 or 422", async () => {
@@ -269,7 +283,8 @@ test.describe("CRUD /api/v1/flows", () => {
   test(
     "deleted flow does not appear in flows listing",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/flows/", "GET /api/v1/flows/"]);
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Deleted List - ${Date.now()}`;
 
