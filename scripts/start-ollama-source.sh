@@ -7,13 +7,13 @@
 # ollama-provider.spec.ts has no substrate there.
 #
 # The container this replaces is OURS, not upstream's. docker/ollama-e2e/Dockerfile
-# bakes the test model into `ollama/ollama:latest` so no lane pays a 1.3 GB pull from
+# bakes the test model into an `ollama/ollama` base so no lane pays a 1.3 GB pull from
 # registry.ollama.ai mid-run (#583). Two consequences this script is built around:
 #
-#   - The pinned version is not a number anyone chose. It is whatever `latest` was
-#     when build-ollama-image.yml last ran, and that image is rebuilt rarely — so the
-#     pin here has to be derived from that date, not from the newest release. Bumping
-#     one side alone reintroduces the exact difference the VM lane exists to measure.
+#   - The pinned version is not a number anyone chose. It is the one the published
+#     image already carries, and that image is rebuilt rarely — so the pin had to be
+#     derived from the build, not from the newest release. Bumping one side alone
+#     reintroduces the exact difference the VM lane exists to measure.
 #   - The model is part of the image, so on a native host it is part of THIS script's
 #     job. ollama-provider.spec.ts SKIPS when the model is missing, with a reason —
 #     and a lane one silent test short reads as a lane that passed.
@@ -33,11 +33,17 @@
 #   ssh <host> 'bash -s' < scripts/start-ollama-source.sh     # how the VM lane starts it
 set -euo pipefail
 
-# Pinned to the version inside ghcr.io/<repo>/ollama-e2e:llama3.2-1b. That image was
-# built from `ollama/ollama:latest`, and `latest` was 0.32.5 from its release on
-# 2026-07-27 until 0.32.6 on 2026-08-19 — the image's own build sits inside that
-# window. Rebuilding the image moves this pin; the unit test reads the model out of
-# the Dockerfile for the same reason, so the two cannot drift silently.
+# Pinned to the version inside ghcr.io/<repo>/ollama-e2e:llama3.2-1b — derived, because
+# the image records it nowhere: build-ollama-image.yml last ran on `main` at
+# 2026-08-01T06:36Z, against a Dockerfile that then said `FROM ollama/ollama:latest`,
+# and upstream published 0.32.5 on 2026-07-27 and 0.32.6 on 2026-08-04. That build
+# therefore resolved to 0.32.5.
+#
+# The derivation is written down because it is the part that rots: the build date is
+# the evidence, not the release window, and quoting a window is how a later reader
+# picks the wrong version with a confident argument. From here on it is moot — the
+# Dockerfile pins the same tag, and the unit test reads BOTH the version and the model
+# out of that file, so image and script cannot drift apart silently.
 VERSION="${OLLAMA_VERSION:-0.32.5}"
 PORT="${OLLAMA_PORT:-11434}"
 BIND_HOST="${OLLAMA_BIND_HOST:-}"
