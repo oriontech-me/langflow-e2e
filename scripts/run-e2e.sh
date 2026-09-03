@@ -122,6 +122,15 @@ REPORT_URL="$RUN_URL_BASE/$RUN_ID/playwright-report/index.html"
 EVENT_NAME="${EVENT_NAME:-schedule}"
 WORKFLOW_ID="${WORKFLOW_ID:-daily-stable-vm}"
 
+# Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
+# `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
+# it. Here the run only REPORTS the gap: moving and rebuilding the clone is a second
+# change, and until it lands a mismatch has to be visible rather than fatal, or a
+# whole day of comparison data is lost to a version difference nobody can fix at 08:00.
+UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}"
+CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
+REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
+
 MIN_FREE_GB="${MIN_FREE_GB:-20}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_BACKENDS="${KEEP_BACKENDS:-0}"
@@ -279,6 +288,27 @@ phase_preflight() {
   local behind
   behind="$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)"
   info "suite: $branch @ ${sha:0:10}${behind:+ ($behind commit(s) behind origin)}"
+
+  # What the CI will be testing today, resolved by upstream's own rule. Informational
+  # here and compared after the run: asking now means the operator sees the gap before
+  # spending an hour producing a comparison that a version difference already spoiled.
+  TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_RESOLUTION=""
+  if [ "$CHECK_TARGET_VERSION" = "1" ]; then
+    if git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$RUN_DIR/logs/target-version.log"; then
+      local decision
+      decision="$(node scripts/resolve-target-version.mjs --refs-file "$RUN_DIR/upstream-refs.txt" 2>> "$RUN_DIR/logs/target-version.log" || true)"
+      if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
+        TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
+        TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
+        TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
+        info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, by $TARGET_RESOLUTION)"
+      else
+        warn "could not resolve which Langflow this lane should test — the comparison will not know whether both sides ran the same product."
+      fi
+    else
+      warn "could not reach $UPSTREAM_REPO_URL to resolve the expected Langflow version."
+    fi
+  fi
 
   log "Installing dependencies (npm ci)"
   npm ci
@@ -669,6 +699,28 @@ phase_merge() {
     [ -n "$LANGFLOW_VERSION" ] && break
   done
 
+  # The comparison this step exists for. A mismatch is reported, not fatal: while the
+  # clone is moved by hand, failing here would throw away a day of otherwise usable
+  # data. REQUIRE_TARGET_VERSION=1 flips that once the run moves the clone itself.
+  TARGET_VERSION_MATCH="unchecked"; TARGET_VERSION_REASON=""
+  if [ "$CHECK_TARGET_VERSION" = "1" ] && [ -n "$TARGET_EXPECTED_VERSION" ]; then
+    local compared
+    compared="$(node scripts/resolve-target-version.mjs --compare "$TARGET_EXPECTED_VERSION" "${LANGFLOW_VERSION:-}" "$TARGET_RESOLUTION" 2>/dev/null || true)"
+    TARGET_VERSION_MATCH="${compared%%	*}"
+    TARGET_VERSION_REASON="${compared#*	}"
+    case "$TARGET_VERSION_MATCH" in
+      yes | cycle) info "target version: $TARGET_VERSION_MATCH — $TARGET_VERSION_REASON" ;;
+      no)
+        warn "TARGET VERSION MISMATCH — $TARGET_VERSION_REASON"
+        warn "Every product difference between those two lands in this run's verdict, and"
+        warn "the comparison with the Actions daily will read it as an environment"
+        warn "divergence. Move the clone to $TARGET_EXPECTED_REF and rebuild before"
+        warn "treating today's differences as findings."
+        ;;
+      *) warn "target version: could not be compared — $TARGET_VERSION_REASON" ;;
+    esac
+  fi
+
   # Both versions in one place, because the whole point of this lane is comparing a
   # verdict with the CI's and neither number is guessable afterwards.
   node -e '
@@ -682,6 +734,9 @@ phase_merge() {
     suite_sha "$(git rev-parse HEAD)" \
     suite_branch "$(git rev-parse --abbrev-ref HEAD)" \
     langflow_version "${LANGFLOW_VERSION:-}" \
+    langflow_expected_version "${TARGET_EXPECTED_VERSION:-}" \
+    langflow_expected_ref "${TARGET_EXPECTED_REF:-}" \
+    langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}"
@@ -811,6 +866,12 @@ phase_verdict() {
   fi
   if [ "${TEST_JOB_FAILED:-0}" = "1" ]; then
     err "at least one shard had a failing test."
+    failed=1
+  fi
+  if [ "$REQUIRE_TARGET_VERSION" = "1" ] && [ "${TARGET_VERSION_MATCH:-unchecked}" = "no" ]; then
+    err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
+    err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
+    err "products describes the changelog, not the environments."
     failed=1
   fi
   [ "$failed" = "0" ] && log "Green run." || true

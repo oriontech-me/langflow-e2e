@@ -131,6 +131,49 @@ test("the publish switches are OFF by default, all four of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0 0");
 });
 
+test("the version check is on by default, and enforcing it is not — yet", () => {
+  // Detection before correction. While the clone is moved by hand, failing the run on
+  // a version gap would throw away a day of otherwise usable comparison data; the gap
+  // still has to be impossible to miss. REQUIRE flips once the run moves the clone.
+  const r = sourced(`echo "$CHECK_TARGET_VERSION $REQUIRE_TARGET_VERSION"`);
+  assert.equal(r.stdout.trim(), "1 0");
+});
+
+test("a version mismatch does not fail the run on its own", () => {
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0);
+});
+
+test("REQUIRE_TARGET_VERSION=1 makes the mismatch fatal, naming what it costs", () => {
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "1" },
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(r.stderr, /wrong Langflow/);
+  // The reason a reader needs: not "versions differ" but what a comparison between
+  // different products actually produces.
+  assert.match(r.stderr, /describes the changelog, not the environments/);
+});
+
+test("a matching version never fails, whatever REQUIRE says", () => {
+  for (const match of ["yes", "cycle", "unknown", "unchecked"]) {
+    const r = sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+        `TARGET_VERSION_MATCH=${match}\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "1" },
+    );
+    assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
+  }
+});
+
 test("the tunnel is the default, and refusing it is opt-in", () => {
   const r = sourced(`echo "$LANGFLOW_TUNNEL $ALLOW_NO_TUNNEL"`);
   assert.equal(r.stdout.trim(), "1 0");
