@@ -475,7 +475,13 @@ test("refusing to pull is a refusal, not a start without the model", () => {
 });
 
 test("a server that exits during startup is reported as that, not as a timeout", () => {
-  const r = runScript({ serverExits: true });
+  // The deadline is raised for this case alone, and it is not padding: the readiness
+  // loop checks liveness FIRST and the probe second, so distinguishing "exited" from
+  // "timed out" needs at least one iteration to land after the stub has actually
+  // died. At the 2s default that window is a single scheduling slot, and under the
+  // parallel lane it is occasionally missed — the run then reports the timeout, which
+  // is the message this very test exists to rule out.
+  const r = runScript({ serverExits: true, env: { OLLAMA_START_TIMEOUT_S: "8" } });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /exited after/);
   assert.ok(!existsSync(join(r.stateRoot, "ollama-source-11434", "ollama.pid")));
