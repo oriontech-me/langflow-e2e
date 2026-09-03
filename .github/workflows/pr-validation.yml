@@ -8,7 +8,12 @@ jobs:
   typecheck:
     name: TypeScript Check
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 10, not 5: this job carries three unit lanes (~3 min on a warm cache) after
+    # an `npm ci` that takes 2 s on a cache hit and 3-5+ min on a registry stall.
+    # On 2026-09-03 the 5-minute budget was consumed three times in a row on PR
+    # #1705 - twice inside the install, once inside the unit lane the install had
+    # eaten into - while the same commit's E2E lane and every other job were green.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v7
