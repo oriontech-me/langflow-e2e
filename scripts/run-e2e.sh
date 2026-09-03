@@ -203,6 +203,25 @@ gh_out() {
 
 HELD_SESSIONS=()
 
+# Which of the given ports have no local listener. `ssh -L` opens its listener as soon
+# as it connects, so this is answerable before anything else starts.
+#
+# The probe runs in a SUBSHELL, and that is the whole point: the descriptor it opens
+# dies with the subshell, so the caller needs no `exec 3>&-` to clean up. The version
+# that did have one carried `2>/dev/null` with it — and `exec` with no command applies
+# its redirections to THE SHELL, which sent stderr to /dev/null for the rest of the
+# run. Every warn and every err after preflight vanished, including the verdict's own
+# explanation of why it failed: the exit code stayed right and the reason stopped
+# existing. A smoke run found it; two reviews had not.
+ports_without_listener() {
+  local port
+  for port in "$@"; do
+    if ! (exec 3<> "/dev/tcp/127.0.0.1/${port}") 2> /dev/null; then
+      printf '%s\n' "$port"
+    fi
+  done
+}
+
 cleanup() {
   local code=$?
   if [ "$KEEP_BACKENDS" = "1" ]; then
@@ -369,14 +388,11 @@ phase_preflight() {
   # as soon as it connects, so this is answerable now — and answering it later, from a
   # failed health probe, cannot tell "no tunnel" from "backend did not start".
   if [ "$LANGFLOW_TUNNEL" = "1" ]; then
-    local i port missing=()
-    for i in $(seq 1 "$SHARDS"); do
-      port=$((BASE_PORT + i - 1))
-      if ! (exec 3<> "/dev/tcp/127.0.0.1/$port") 2>/dev/null; then missing+=("$port"); fi
-      exec 3>&- 2>/dev/null || true
-    done
-    if [ "${#missing[@]}" -gt 0 ]; then
-      err "no local listener on port(s): ${missing[*]}"
+    local missing
+    missing="$(ports_without_listener $(seq "$BASE_PORT" $((BASE_PORT + SHARDS - 1))) | tr '\n' ' ')"
+    missing="${missing% }"
+    if [ -n "$missing" ]; then
+      err "no local listener on port(s): ${missing}"
       err "The tunnel to the target is what makes the backend answer on localhost, and"
       err "Chromium treats ONLY localhost as a secure context: without it the ten"
       err "clipboard specs fail deterministically and this run's verdict differs from"

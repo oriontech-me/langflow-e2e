@@ -220,6 +220,26 @@ test("without REQUIRE, none of the version states fail the run", () => {
   }
 });
 
+test("the tunnel probe leaves the shell's stderr alone", () => {
+  // The bug this pins cost a whole run's diagnostics: the probe used to close its
+  // descriptor with `exec 3>&- 2>/dev/null`, and `exec` with no command applies its
+  // redirections to THE SHELL — so stderr went to /dev/null for the rest of the run.
+  // Every warn and err after preflight disappeared, including the verdict explaining
+  // why it failed. The exit code stayed correct and the reason stopped existing, which
+  // is the shape of failure this lane exists to catch, turned on the lane itself.
+  const r = sourced(
+    // Port 9 (discard) is closed on these machines; any closed port exercises the
+    // failure path, which is the one that used to do the damage.
+    `ports_without_listener 9 > /dev/null; warn "STILL SPEAKING"`,
+  );
+  assert.match(r.stderr, /STILL SPEAKING/, "stderr was redirected away by the probe");
+});
+
+test("the tunnel probe reports the ports that have no listener", () => {
+  const r = sourced(`ports_without_listener 9 65000 | tr '\\n' ' '`);
+  assert.equal(r.stdout.trim(), "9 65000");
+});
+
 test("the tunnel is the default, and refusing it is opt-in", () => {
   const r = sourced(`echo "$LANGFLOW_TUNNEL $ALLOW_NO_TUNNEL"`);
   assert.equal(r.stdout.trim(), "1 0");
