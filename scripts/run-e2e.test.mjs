@@ -49,6 +49,12 @@ function verdict({ empty = "false", partial = "false", complete = "true", failed
     [
       `RUN_EMPTY=${empty} RUN_PARTIAL=${partial} SHARD_COMPLETE=${complete} TEST_JOB_FAILED=${failed}`,
       `RUN_TESTS=7 RUN_ERRORS=2 RUN_FIRST_ERROR="a top-level error" RUN_DIR=/tmp/does-not-matter`,
+      // The version dimension is neutralised on purpose. With enforcement on by
+      // default, leaving this unset makes it "unchecked" — fatal — so every case
+      // below would fail for the version reason instead of its own, and the ones
+      // that EXPECT a failure would pass for the wrong reason. The version states
+      // have their own tests.
+      `TARGET_VERSION_MATCH=yes`,
       // `set +e` because sourcing brought `set -e` with it, and a phase that returns
       // non-zero would abort this harness before it could report the code — which is
       // the very thing under test.
@@ -131,19 +137,121 @@ test("the publish switches are OFF by default, all four of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0 0");
 });
 
-test("the version check is on by default, and enforcing it is not — yet", () => {
-  // Detection before correction. While the clone is moved by hand, failing the run on
-  // a version gap would throw away a day of otherwise usable comparison data; the gap
-  // still has to be impossible to miss. REQUIRE flips once the run moves the clone.
+test("the version check is on by default, and so is enforcing it", () => {
+  // Enforcement waited for two things, and both arrived on 2026-09-03: the run now
+  // places the clone itself, so a mismatch is no longer somebody forgetting to move
+  // it; and a smoked source instance at v1.13.0.dev1 reports `1.13.0.dev1`, the exact
+  // string the published-image strategy expects — so the gate cannot fail a correctly
+  // placed clone over a formatting difference.
   const r = sourced(`echo "$CHECK_TARGET_VERSION $REQUIRE_TARGET_VERSION"`);
-  assert.equal(r.stdout.trim(), "1 0");
+  assert.equal(r.stdout.trim(), "1 1");
 });
 
-test("a version mismatch does not fail the run on its own", () => {
+test("by default, a version mismatch now fails the run", () => {
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
       `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+});
+
+test("the run moves the clone by default, and demands the stamp because of it", () => {
+  // The second half of step 16. Detection alone left the operator to move the clone,
+  // and a lane that depends on someone remembering is a lane that reports changelog
+  // as environment difference on the day they forget.
+  const r = sourced(`echo "$PREPARE_TARGET $PREPARE_TARGET_SKIP_BUILD $STAMP_REQUIRED"`);
+  assert.equal(r.stdout.trim(), "1 0 1");
+});
+
+test("the stamp is demanded only when this run is what wrote it", () => {
+  // Both exceptions are deliberate. With preparation off, or with the build skipped,
+  // no stamp exists and refusing over its absence would break the hand-driven path
+  // that has to keep working while this is adopted.
+  assert.equal(sourced(`echo "$STAMP_REQUIRED"`, { PREPARE_TARGET: "0" }).stdout.trim(), "0");
+  assert.equal(sourced(`echo "$STAMP_REQUIRED"`, { PREPARE_TARGET_SKIP_BUILD: "1" }).stdout.trim(), "0");
+});
+
+// The decision that says whether this run places the clone. Behavioural rather than a
+// regex over the file: phase_preflight around it fetches, curls and runs `npm ci`, so
+// a spelling guard was the only reachable alternative and #1226 established that such
+// a guard passes the mutations it exists to catch.
+const plan = (env) => sourced(`echo "$(target_preparation_plan)"`, env).stdout.trim();
+
+test("a resolved commit is what makes this run place the clone", () => {
+  assert.equal(plan({ TARGET_EXPECTED_SHA: "a".repeat(40), TARGET_EXPECTED_VERSION: "1.13.0.dev1" }), "prepare");
+  assert.equal(plan({ PREPARE_TARGET: "0", TARGET_EXPECTED_SHA: "a".repeat(40) }), "off");
+  // Placement obeys a resolution. Turning the resolution off turns placement off with
+  // it, and says so as configuration rather than warning about an absent answer nobody
+  // asked for.
+  assert.equal(plan({ CHECK_TARGET_VERSION: "0" }), "off");
+});
+
+test("a resolved VERSION with no commit does not place the clone, and does not kill the run", () => {
+  // The regression this guards. resolve-target-version.mjs returns ok:true with an
+  // EMPTY sha in two routine states — the github ref listing unreachable or partial,
+  // and the nightly tag deleted and not yet recreated, which upstream does routinely —
+  // while still reporting `ref: v1.13.0.dev1`. Gating on `sha || ref` passed on the
+  // ref, handed the preparer a tag name the resolver had just failed to find, and the
+  // preparer correctly refused: `die "target preparation failed"` in phase_preflight,
+  // upstream of phase_publish, so zero tests AND no report. The version gate at the end
+  // produces the same red with the evidence attached, which is why this must skip.
+  assert.equal(plan({ TARGET_EXPECTED_VERSION: "1.13.0.dev1", TARGET_EXPECTED_REF: "v1.13.0.dev1", TARGET_EXPECTED_SHA: "" }), "skip-no-commit");
+  // And "nothing resolved at all" stays a distinct answer: it sends the reader to the
+  // resolver rather than to the ref listing.
+  assert.equal(plan({}), "skip-unresolved");
+});
+
+test("the stamp is demanded only by a run that actually wrote one", () => {
+  // Derived from what preparation DID, not from the configuration. The two diverge on
+  // the skip paths, and demanding the stamp there fails the START with "no build stamp"
+  // over a cause that belonged to the resolver — sending the operator to the wrong
+  // machine, on a day the run could still have produced its comparison.
+  const demand = (arg, env = {}) => sourced(`stamp_demand_for_plan ${arg}`, env).stdout.trim();
+  assert.equal(demand("prepare"), "1");
+  assert.equal(demand("prepare", { PREPARE_TARGET_SKIP_BUILD: "1" }), "0");
+  for (const p of ["skip-no-commit", "skip-unresolved", "off"]) assert.equal(demand(p), "0", p);
+});
+
+test("preparation is driven by the resolved COMMIT, and its failure stops the run", () => {
+  const text = readFileSync(SCRIPT, "utf8");
+  // The commit, not the branch or the tag name: upstream recreates nightly tag names,
+  // so the tag-name lookup that produces the sha can point somewhere new — and when it
+  // finds nothing the resolver reports an empty sha rather than a wrong one.
+  assert.match(text, /TARGET_SHA=\$\{TARGET_EXPECTED_SHA\}/);
+  assert.match(text, /prepare-target-source\.sh/);
+  assert.match(text, /LANGFLOW_REQUIRE_BUILD_STAMP=\$STAMP_REQUIRED/);
+  // A stray untracked file on a shared VM must not cost the placement its only escape
+  // hatch being PREPARE_TARGET=0, which switches the whole thing off.
+  assert.match(text, /PREPARE_ALLOW_DIRTY=\$\{PREPARE_TARGET_ALLOW_DIRTY\}/);
+
+  const block = text.match(/# --- Obey the resolution[\s\S]*?\n  log "Installing dependencies/)?.[0];
+  assert.ok(block, "the preparation block is not where this test expects it");
+  // A placement that was ATTEMPTED and failed must not continue: its verdict would be
+  // about a different product, and that is worth less than no verdict.
+  assert.match(block, /die "target preparation failed"/);
+  // The preparer's own summary is filed before that die, so the log the operator is
+  // pointed at has no path on which it is silently short (Copilot, PR #1701).
+  const failurePath = block.indexOf('die "target preparation failed"');
+  assert.ok(
+    block.lastIndexOf('>> "$prep_log"', failurePath) > block.indexOf("prep_out=\"$(target_ssh"),
+    "prep_out must be appended to the log before the failure path exits",
+  );
+  assert.doesNotMatch(block, /\|\| true/, "the preparation must not be allowed to fail silently");
+
+  // And what it did is recorded, because nobody recovers it afterwards.
+  assert.match(text, /langflow_prepared_sha/);
+  assert.match(text, /langflow_prepare_seconds/);
+});
+
+test("with enforcement off, a version mismatch does not fail the run on its own", () => {
+  // The diagnosing path: pointed at a deliberately mismatched target, the run still
+  // produces its verdict and says what differed.
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "0" },
   );
   assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0);
 });
@@ -209,12 +317,13 @@ test("under REQUIRE, a check that could not RUN fails too", () => {
   }
 });
 
-test("without REQUIRE, none of the version states fail the run", () => {
+test("with REQUIRE explicitly off, none of the version states fail the run", () => {
   for (const match of ["yes", "cycle", "unknown", "unchecked", "no"]) {
     const r = sourced(
       `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
         `TARGET_VERSION_MATCH=${match}\n` +
         `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "0" },
     );
     assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
   }

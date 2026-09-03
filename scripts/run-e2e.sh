@@ -144,7 +144,40 @@ UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}
 # one it claims. Override this together with those inputs, never one alone.
 NIGHTLY_TAGS_URL="${NIGHTLY_TAGS_URL:-https://hub.docker.com/v2/repositories/langflowai/langflow-nightly/tags?page_size=100&ordering=last_updated}"
 CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
-REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-0}"
+# Enforced by default since 2026-09-03, because the two conditions it was waiting for
+# both hold: this run PLACES the clone (see PREPARE_TARGET below), so a mismatch is no
+# longer somebody forgetting to move it by hand; and a source instance at v1.13.0.dev1
+# was smoked and reports `1.13.0.dev1` — the exact string the published-image strategy
+# expects, so enforcement cannot fail a correctly placed clone over a formatting
+# difference. Set to 0 to diagnose against a deliberately mismatched target.
+REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
+# Whether the run OBEYS the resolution instead of only reporting it. Reporting was
+# step 16's first half and was deliberately not fatal: failing at 08:00 over a clone
+# somebody had to move by hand threw away a day of data. This is the second half —
+# the run moves the clone itself, through scripts/prepare-target-source.sh, before
+# anything starts. That script is a no-op when the clone is already on the commit and
+# its build is stamped with it, so the cost lands only on the days the resolution
+# moves; with a nightly image, that is most days.
+PREPARE_TARGET="${PREPARE_TARGET:-1}"
+# Move the clone but do not build. Not a normal setting: the starter refuses a build
+# that does not belong to HEAD, so this ends the run early ON PURPOSE. It exists to
+# measure what a rebuild would cost, and to move a clone whose build is being done
+# by hand elsewhere.
+PREPARE_TARGET_SKIP_BUILD="${PREPARE_TARGET_SKIP_BUILD:-0}"
+# Forwarded to the preparer, which refuses a clone carrying somebody's uncommitted
+# work. Exposed here because without it the only way past one stray file on a shared
+# VM is PREPARE_TARGET=0, which switches the whole placement off to get past it.
+PREPARE_TARGET_ALLOW_DIRTY="${PREPARE_TARGET_ALLOW_DIRTY:-0}"
+# The stamp is only demanded when this run is the thing that wrote it. A clone
+# prepared by hand carries no stamp, and refusing it there would break the one
+# workflow that has to keep working while this is being adopted.
+#
+# This is the INTENT. What is actually demanded is decided in phase_preflight from
+# what the preparation step really DID — see stamp_demand_for_plan(). The two differ
+# whenever the resolution could not name a commit: demanding the stamp there fails
+# the start with "no build stamp" over a cause that belonged to the resolver, which
+# sends the operator to the wrong machine.
+STAMP_REQUIRED="$([ "${PREPARE_TARGET}" = "1" ] && [ "${PREPARE_TARGET_SKIP_BUILD}" != "1" ] && echo 1 || echo 0)"
 
 MIN_FREE_GB="${MIN_FREE_GB:-20}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -173,6 +206,55 @@ die()  { err "$*"; exit 1; }
 
 # shellcheck disable=SC2086
 target_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"; }
+
+# Should this run place the target's clone, and if not, why not?
+#
+# Split out of phase_preflight so the decision is testable without ssh — the phase
+# around it fetches, curls and runs `npm ci`, so the only reachable alternative was a
+# regex over this file, and a guard that pins a spelling does not pin a behaviour.
+#
+# The answer turns on a resolved COMMIT and never on the ref, which is the whole point.
+# scripts/resolve-target-version.mjs returns `ok: true` with an EMPTY sha in two states
+# it can neither help nor hide: the github ref listing unreachable or partial (the
+# registry alone answers the version, not the commit), and the nightly tag deleted and
+# not yet recreated — which upstream does routinely. In both it still reports a ref,
+# `v1.13.0.dev1`. Handing that name to the preparer as a checkout target asks it for a
+# tag the resolver has just said it could not find, so it refuses and the run dies at
+# preflight — before phase_publish, so with no report at all. That is strictly worse
+# than the red-with-a-report the version gate produces on its own, and it hands
+# github.com the veto the resolution deliberately took away from it.
+target_preparation_plan() {
+  if [ "${PREPARE_TARGET:-1}" != "1" ]; then
+    echo "off"
+  elif [ "${CHECK_TARGET_VERSION:-1}" != "1" ]; then
+    # Placement obeys a resolution, so switching the resolution off switches placement
+    # off with it. Distinguished from "unresolved" so the operator who asked for this
+    # is not warned about a failure that is their own configuration.
+    echo "off"
+  elif [ -n "${TARGET_EXPECTED_SHA:-}" ]; then
+    echo "prepare"
+  elif [ -n "${TARGET_EXPECTED_VERSION:-}" ]; then
+    # The version is known and authoritative; only its commit is not. Distinguished
+    # from the unresolved case because it sends the reader somewhere else entirely.
+    echo "skip-no-commit"
+  else
+    echo "skip-unresolved"
+  fi
+  return 0
+}
+
+# Whether the starter must REFUSE an unstamped build, given what preparation actually
+# did. Only a run that placed and rebuilt the clone wrote a stamp, so only that run is
+# entitled to demand one; anywhere else the demand fails the start over a missing file
+# this run never undertook to create.
+stamp_demand_for_plan() {
+  if [ "${1:-}" = "prepare" ] && [ "${PREPARE_TARGET_SKIP_BUILD:-0}" != "1" ]; then
+    echo 1
+  else
+    echo 0
+  fi
+  return 0
+}
 
 # Reads one key out of a $GITHUB_OUTPUT-formatted file, including the heredoc form
 # (`key<<DELIM ... DELIM`) that report-backend-outages.mjs uses for multi-line values.
@@ -327,6 +409,7 @@ phase_preflight() {
   # here and compared after the run: asking now means the operator sees the gap before
   # spending an hour producing a comparison that a version difference already spoiled.
   TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
+  TARGET_EXPECTED_BRANCH=""
   if [ "$CHECK_TARGET_VERSION" = "1" ]; then
     local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
     # The registry listing is optional and its absence is survivable — the resolver
@@ -356,6 +439,9 @@ phase_preflight() {
       TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
       TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
       TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
+      # Carried for the preparer, not for the report: when the nightly tag has been
+      # recreated, the commit is only reachable through the branch it lives on.
+      TARGET_EXPECTED_BRANCH="$(node -p "JSON.parse(process.argv[1]).branch||''" "$decision")"
       info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
     else
       # Quote the resolver rather than inventing a reason: it distinguishes "no
@@ -366,6 +452,79 @@ phase_preflight() {
       warn "could not resolve which Langflow this lane should test${why:+ — $why}"
       warn "The comparison will not know whether both sides ran the same product."
     fi
+  fi
+
+  # --- Obey the resolution: put the target ON that commit -------------------------
+  # Failing an ATTEMPTED placement is the point. A run against the clone's old position
+  # still produces a verdict, and that verdict goes into the divergence list as "a real
+  # failure only Actions saw" — product changelog wearing an environment's clothes. A
+  # lane whose output would be misleading is worth less than no output.
+  #
+  # Not placing at all is a different case and must not share that fate. When the
+  # resolution names no commit, dying here costs the whole run — this is upstream of
+  # phase_publish, so there is no report either — where the version gate at the end
+  # produces the same red WITH the evidence. target_preparation_plan() draws that line.
+  TARGET_PREPARED_SHA=""; TARGET_REBUILT=""; TARGET_REBUILD_REASON=""; TARGET_PREPARE_S=""
+  local plan; plan="$(target_preparation_plan)"
+  # What is demanded of the starter follows what preparation DID, not what was asked
+  # for. The configured value above is the intent; this is the outcome.
+  STAMP_REQUIRED="$(stamp_demand_for_plan "$plan")"
+  if [ "$plan" = "prepare" ]; then
+    log "Preparing the target's clone"
+    local prep_out prep_rc=0 prep_log="$RUN_DIR/logs/prepare-target.log"
+    # stderr is streamed AND filed: a rebuild is the longest thing this run does, and
+    # a phase that prints nothing for half an hour is indistinguishable from a hang.
+    #
+    # The status is captured rather than branched on directly, so the summary is filed
+    # on BOTH paths. On a failure the preparer has usually printed nothing to stdout —
+    # it emits its key=value block only after everything succeeded, and every refusal
+    # goes to stderr, which is tee'd — so this is insurance against a partial or
+    # polluted capture, not a lost summary. A log the operator is pointed at should
+    # not have a path on which it is silently short.
+    prep_out="$(target_ssh \
+        "TARGET_SHA=${TARGET_EXPECTED_SHA} TARGET_REF=${TARGET_EXPECTED_REF} TARGET_BRANCH=${TARGET_EXPECTED_BRANCH} \
+         LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} \
+         PREPARE_ALLOW_DIRTY=${PREPARE_TARGET_ALLOW_DIRTY} \
+         PREPARE_SKIP_BUILD=${PREPARE_TARGET_SKIP_BUILD} bash -s" \
+        < scripts/prepare-target-source.sh 2> >(tee -a "$prep_log" >&2))" || prep_rc=$?
+    printf '%s\n' "$prep_out" >> "$prep_log"
+    if [ "$prep_rc" != "0" ]; then
+      err "could not put the target on ${TARGET_EXPECTED_REF:-${TARGET_EXPECTED_SHA}}."
+      err "Refusing to run. The comparison this lane exists to produce is only about"
+      err "the environment if both sides run the same product; against the clone's old"
+      err "position it describes the product's changelog instead. See $prep_log."
+      die "target preparation failed"
+    fi
+    TARGET_PREPARED_SHA="$(printf '%s\n' "$prep_out" | sed -n 's/^prepared_sha=//p')"
+    TARGET_REBUILT="$(printf '%s\n' "$prep_out" | sed -n 's/^rebuilt=//p')"
+    TARGET_REBUILD_REASON="$(printf '%s\n' "$prep_out" | sed -n 's/^rebuild_reason=//p')"
+    TARGET_PREPARE_S="$(printf '%s\n' "$prep_out" | sed -n 's/^total_s=//p')"
+    # The preparer verifies its own checkout; this checks that the machine it verified
+    # is the one this run resolved. They differ if TARGET_SSH points somewhere else.
+    if [ -n "${TARGET_EXPECTED_SHA}" ] && [ "${TARGET_PREPARED_SHA}" != "${TARGET_EXPECTED_SHA}" ]; then
+      err "the target reports ${TARGET_PREPARED_SHA:-nothing} after being asked for ${TARGET_EXPECTED_SHA}."
+      die "the prepared commit is not the resolved one"
+    fi
+    info "target clone: ${TARGET_PREPARED_SHA:0:10} (rebuilt=${TARGET_REBUILT:-?}${TARGET_PREPARE_S:+, ${TARGET_PREPARE_S}s})"
+    [ "${TARGET_REBUILT}" = "yes" ] && info "  rebuilt because: ${TARGET_REBUILD_REASON}"
+  elif [ "$plan" = "skip-no-commit" ]; then
+    # The version is authoritative and the commit is not known — the registry decided
+    # the version string by digest, while the commit is looked up by TAG NAME in the
+    # git ref listing, and that lookup came back empty. Placing the clone on the tag
+    # name anyway would ask for the tag the resolver just failed to find; placing it on
+    # the branch head would build something nobody resolved and then fail the
+    # exact-match gate below for a difference this run invented. So: do less, say more.
+    warn "resolved ${TARGET_EXPECTED_VERSION} but not the commit behind it, so the clone was"
+    warn "left where it is. The registry names the version; the commit comes from the git"
+    warn "tag listing, which was empty for ${TARGET_EXPECTED_REF:-that version} — github"
+    warn "unreachable, or the nightly tag deleted and not yet recreated."
+    warn "The version check below still runs and will report the gap. To place it by hand:"
+    warn "  git -C <clone> checkout ${TARGET_EXPECTED_BRANCH:-release-<cycle>}  # cycle parity, not the commit"
+    warn "The build stamp is NOT demanded of the starter, because this run did not write one."
+  elif [ "$plan" = "skip-unresolved" ]; then
+    warn "no target version was resolved at all, so the clone was left where it is. The"
+    warn "version check below cannot run either — treat a green run as unverified, not as"
+    warn "evidence that both lanes tested the same product."
   fi
 
   log "Installing dependencies (npm ci)"
@@ -500,7 +659,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
@@ -754,9 +913,12 @@ phase_merge() {
     [ -n "$LANGFLOW_VERSION" ] && break
   done
 
-  # The comparison this step exists for. A mismatch is reported, not fatal: while the
-  # clone is moved by hand, failing here would throw away a day of otherwise usable
-  # data. REQUIRE_TARGET_VERSION=1 flips that once the run moves the clone itself.
+  # The comparison this step exists for. A mismatch is now FATAL by default: the run
+  # placed the clone itself a few phases ago, so the two sides disagreeing means
+  # something actually went wrong — the placement did not take, or the target answered
+  # for an instance this run did not start. Producing a comparison anyway would file
+  # product changelog as an environment difference, which is the failure this whole
+  # step exists to remove. REQUIRE_TARGET_VERSION=0 goes back to reporting only.
   TARGET_VERSION_MATCH="unchecked"; TARGET_VERSION_REASON=""
   if [ "$CHECK_TARGET_VERSION" = "1" ] && [ -n "$TARGET_EXPECTED_VERSION" ]; then
     local compared
@@ -794,6 +956,10 @@ phase_merge() {
     langflow_expected_sha "${TARGET_EXPECTED_SHA:-}" \
     langflow_version_resolution "${TARGET_RESOLUTION:-}" \
     langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
+    langflow_prepared_sha "${TARGET_PREPARED_SHA:-}" \
+    langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
+    langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
+    langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}"
