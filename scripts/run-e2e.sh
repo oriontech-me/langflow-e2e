@@ -202,6 +202,14 @@ export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-u
 # Actions daily was green, for no reason other than this variable (#1714). Read the
 # workflow before changing it — run-e2e.test.mjs asserts the two agree.
 LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-false}"
+# Checked because this is the first CALLER-supplied value to be interpolated into
+# the remote command bare, and because the flag reads anything that is not "true"
+# as false. `0`, `FALSE` or a value carrying a space would go in silently and land
+# the lane back in #1714 — tracing off, nothing said.
+case "$LANGFLOW_DEACTIVATE_TRACING" in
+  true | false) ;;
+  *) echo "LANGFLOW_DEACTIVATE_TRACING must be exactly 'true' or 'false', got: '$LANGFLOW_DEACTIVATE_TRACING'" >&2; exit 1 ;;
+esac
 
 # ---------------------------------------------------------------------------
 # UTILITIES
@@ -1030,7 +1038,16 @@ phase_publish() {
     fi
   fi
 
-  TOKENS_DIR="$RUN_DIR/all-tokens" node scripts/watch-tokens.mjs --summarize \
+  # TOKENS_SUPPRESS_HISTORY, because with tracing on this lane HAS spend to record and
+  # would otherwise append a line to reports/token-history.jsonl — a git-tracked file,
+  # inside the clone this run does not own. Two costs, both concrete: the line is an
+  # uncommitted modification that the next `git pull --ff-only` refuses (that refusal is
+  # the guarantee, so breaking it daily is not an option), and once committing is on
+  # there would be TWO lines a day for one scope — a double-counted trend and an
+  # anomaly window half as wide. The PR and manual lanes carry the same flag for the
+  # neighbouring reason, scope rather than duplication (#1183). This lane's own series
+  # belongs in the ledger outside the clone, which is a step of its own.
+  TOKENS_DIR="$RUN_DIR/all-tokens" TOKENS_SUPPRESS_HISTORY=1 node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 
   if [ "$COMMIT_HISTORY" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then
