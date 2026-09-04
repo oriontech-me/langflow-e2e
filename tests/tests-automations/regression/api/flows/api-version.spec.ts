@@ -9,7 +9,8 @@ test.describe("API Version", () => {
   test(
     "GET /api/v1/version returns 200 with a non-empty version string",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/version"]);
       const response = await request.get("/api/v1/version");
 
       expect(response.status()).toBe(200);
@@ -26,7 +27,8 @@ test.describe("API Version", () => {
   test(
     "GET /api/v1/version reports the Langflow package and main_version",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/version"]);
       const response = await request.get("/api/v1/version");
 
       expect(response.status()).toBe(200);
@@ -46,7 +48,8 @@ test.describe("API Version", () => {
   test(
     "GET /api/v1/version response has correct content-type",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/version"]);
       const response = await request.get("/api/v1/version");
 
       expect(response.status()).toBe(200);
@@ -57,7 +60,8 @@ test.describe("API Version", () => {
   test(
     "GET /api/v1/version responds within 5 seconds",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/version"]);
       const start = Date.now();
       const response = await request.get("/api/v1/version");
       const elapsed = Date.now() - start;

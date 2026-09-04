@@ -7,7 +7,8 @@ test.describe("API Health Check", () => {
   test(
     "GET /health_check returns 200 with status ok",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /health_check"]);
       const response = await request.get("/health_check");
 
       expect(response.status()).toBe(200);
@@ -21,7 +22,8 @@ test.describe("API Health Check", () => {
   test(
     "GET /health_check returns db ok",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /health_check"]);
       const response = await request.get("/health_check");
 
       expect(response.status()).toBe(200);
@@ -35,7 +37,8 @@ test.describe("API Health Check", () => {
   test(
     "GET /health_check responds within 5 seconds",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /health_check"]);
       const start = Date.now();
       const response = await request.get("/health_check");
       const elapsed = Date.now() - start;
@@ -48,7 +51,8 @@ test.describe("API Health Check", () => {
   test(
     "GET /health_check response has correct content-type",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /health_check"]);
       const response = await request.get("/health_check");
 
       expect(response.status()).toBe(200);
