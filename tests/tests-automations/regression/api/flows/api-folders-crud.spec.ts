@@ -3,7 +3,13 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 
-// Folders use the /api/v1/projects/ endpoint (legacy alias kept for compatibility)
+// Folders use the /api/v1/projects/ endpoint (legacy alias kept for compatibility).
+// The alias itself — seven 307 redirects — is asserted by
+// api/projects/api-folders-alias-redirects.spec.ts, and the projects contract this
+// file only samples is covered by api/projects/api-projects-crud.spec.ts (#1707).
+// The apiCoverage declarations below are that adoption: they credit the operations
+// these tests already drive and assert, and the fixture fails the test if a declared
+// operation is never issued.
 test.describe("Folder (Projects) CRUD via API", () => {
   // Id-scoped cleanup: each test pushes the ids it creates from the POST 201
   // response, and afterEach deletes exactly those. Inline cleanup at the end of
@@ -39,7 +45,8 @@ test.describe("Folder (Projects) CRUD via API", () => {
   test(
     "POST creates folder and returns ID and name",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/projects/"]);
       const authToken = await getAuthToken(request);
       const folderName = `Test Folder ${Date.now()}`;
 
@@ -61,7 +68,8 @@ test.describe("Folder (Projects) CRUD via API", () => {
   test(
     "GET lists folders and includes the created one",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/projects/", "GET /api/v1/projects/"]);
       const authToken = await getAuthToken(request);
       const folderName = `List Folder ${Date.now()}`;
 
@@ -99,7 +107,12 @@ test.describe("Folder (Projects) CRUD via API", () => {
   test(
     "DELETE removes folder and it no longer appears in listing",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare([
+        "POST /api/v1/projects/",
+        "GET /api/v1/projects/",
+        "DELETE /api/v1/projects/{project_id}",
+      ]);
       const authToken = await getAuthToken(request);
       const folderName = `Delete Folder ${Date.now()}`;
 
@@ -140,7 +153,13 @@ test.describe("Folder (Projects) CRUD via API", () => {
   test(
     "moving flow between folders via PATCH folder_id updates association",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare([
+        "POST /api/v1/projects/",
+        "POST /api/v1/flows/",
+        "PATCH /api/v1/flows/{flow_id}",
+        "GET /api/v1/flows/{flow_id}",
+      ]);
       const authToken = await getAuthToken(request);
 
       // Create two folders
