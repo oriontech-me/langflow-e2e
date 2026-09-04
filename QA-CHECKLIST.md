@@ -1432,7 +1432,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 81 | 72 | 5 | 3 | 1 |
+| `api/flows/` — REST API | 89 | 79 | 5 | 3 | 2 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1455,7 +1455,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **635** | **500 (79%)** | **53 (8%)** | **18 (3%)** | **64 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **643** | **507 (79%)** | **53 (8%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1471,7 +1471,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 578 `test()` calls carrying the `@stable` tag, distributed across 221 spec
+> 583 `test()` calls carrying the `@stable` tag, distributed across 223 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1559,6 +1559,13 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+
+#### api/models/
+- [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
+- [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
+- [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
+- [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
+- [x] the enabled_models write stores a DISABLED set, and it is per user → `api-models-selection.spec.ts`
 
 #### api/monitor/
 - [x] a run persists messages readable by flow, session and sender → `api-monitor-messages-lifecycle.spec.ts`
@@ -2103,7 +2110,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 5 | 1 |
+| `api/flows/` — REST API | 5 | 2 |
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
