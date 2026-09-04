@@ -24,20 +24,45 @@
 //     the exact product stage 1 of the migration was built to deliver.
 //
 // Hence a fail-closed enumeration rather than three more lines in a script: every
-// LANGFLOW_* on the workflow's service must either REACH the target or be RECORDED out
+// variable on the workflow's service must either REACH the target or be RECORDED out
 // of scope with a reason, and the 11th variable the daily gains forces that decision
 // when it is written instead of opening a gap that surfaces whenever someone next
 // notices an odd verdict. Same shape watch-upstream-areas.mjs --mode=check uses for the
 // `lfx` subtrees (#1581's rule: the reason is what a future reader acts on).
 //
-// WHAT THIS FILE DOES NOT DECIDE. It matches NAMES against the files that carry them.
-// Whether run-e2e.sh's default for a variable equals the workflow's declared VALUE is
-// asserted by run-e2e.test.mjs, which sources the script and reads the value it would
-// actually send — text here, behaviour there. Both are needed: a name present with the
-// wrong value passes this file, and a value that never crosses the ssh boundary passes
-// that one.
+// EVERY variable, not every `LANGFLOW_*`. The first version filtered on that prefix
+// with no comment, which quietly made `DO_NOT_TRACK`, a `LANGSMITH_*` or a
+// `PYTHONUNBUFFERED` on the service read as clean — and a fail-closed promise is what
+// makes the next reader stop looking. All ten today happen to carry the prefix; the
+// enumeration does not depend on that.
+//
+// THREE PLACES A VARIABLE CAN GO WRONG, and this file covers the first two:
+//
+//   1. NOT CARRIED — no file forwards it. The original gap (#1717).
+//   2. SHADOWED — the orchestrator forwards it and the STARTER overwrites it. A
+//      `VAR=value` prefix on `uv run` does not "add to" the inherited environment for
+//      that name; it REPLACES it for that command. The first version of this file said
+//      otherwise, and the gap was measured on this branch: one line added to the
+//      starter's launch block, in the same shape `LANGFLOW_AUTO_LOGIN=true` is written
+//      two lines above it, left every guard green while the server lost
+//      `foreign_keys: ON` — the silent half of #1717 reintroduced one layer down. So a
+//      variable the orchestrator carries must be ABSENT from that block or written
+//      `${NAME:-…}`, which inherits. Shape borrowed from a2a-flag-lanes.test.mjs's
+//      "the default is true, not merely present".
+//   3. CARRIED WITH THE WRONG VALUE. Split, and the split is worth stating because
+//      neither half covers the other:
+//        - starter-carried names are compared HERE, textually: the default written in
+//          the launch block against the workflow's declared value
+//        - orchestrator-carried names are compared in run-e2e.test.mjs, which SOURCES
+//          the script and reads the value it would really send, then watches it cross
+//          the ssh boundary. Text cannot answer that, and this file does not try
+//
+// VALUES ARE READ, NEVER RE-PARSED. Both halves go through scripts/lib/gh-expression.mjs
+// — #1226's rule. A second unquoter here would be a second answer able to disagree with
+// the first.
 
 import { readFileSync } from "node:fs";
+import { evaluateWorkflowValue } from "./gh-expression.mjs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,13 +88,63 @@ const indentOf = (line) => line.match(/^\s*/)[0].length;
 const isBlank = (line) => /^\s*$/.test(line);
 
 /**
- * The VALUES are read by scripts/lib/gh-expression.mjs, not here and not by a regex —
- * #1226's rule. That module already unquotes both YAML scalar forms, evaluates a
- * `${{ … }}` expression against a supplied context, and THROWS on a shape it cannot
- * read rather than returning the raw text as if it were a value. This file returns
- * raw text and leaves the reading to it; a second unquoter here would be a second
- * answer that can disagree with the first.
+ * The prefix assignments the source starter puts on `uv run`, plus the flags it
+ * derives from an environment variable.
+ *
+ * Read by walking BACK from the `${RUN_CMD}` line rather than forward from a marker,
+ * because the block's beginning is a comment and its end is the command — and the end
+ * is the only one of the two that cannot move without the launch itself changing.
+ *
+ * THROWS when it finds no assignments at all: that means the starter's launch no
+ * longer has this shape, and the honest answer is to say so rather than to report an
+ * empty block as "nothing shadowed" (#1012 — unevaluated is not clean).
  */
+export function readStarterLaunchEnv(text) {
+  const lines = stripComments(text).split("\n");
+  const runAt = lines.findIndex((l) => l.includes("${RUN_CMD}"));
+  if (runAt < 0) throw new Error("the starter has no ${RUN_CMD} launch line");
+
+  const assignments = new Map();
+  for (let i = runAt - 1; i >= 0; i -= 1) {
+    const m = lines[i].match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*\\$/);
+    if (!m) break;
+    const [, name, rawValue] = m;
+    // `NAME="${NAME:-default}"` is the overridable shape: the caller's value wins, so
+    // a variable written this way is forwarded, not shadowed. Greedy on purpose —
+    // LANGFLOW_DATABASE_URL's default itself contains `${STATE_DIR}`, and the closing
+    // brace of the expansion is the LAST one on the line.
+    const overridable = rawValue.match(new RegExp(`^"?\\$\\{${name}:-(.*)\\}"?$`));
+    assignments.set(name, {
+      raw: rawValue,
+      overridable: Boolean(overridable),
+      value: overridable ? overridable[1] : rawValue.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1"),
+    });
+  }
+  if (assignments.size === 0) throw new Error("no prefix assignments found before the starter's ${RUN_CMD}");
+
+  // Flags whose value comes from a variable — `--workers "${LANGFLOW_WORKERS:-1}"`.
+  // The workflow sets LANGFLOW_WORKERS as an environment variable and the starter
+  // spends it on the command line, so a name-only check would call it missing.
+  const flags = new Map();
+  for (const m of text.matchAll(/--[a-z-]+\s+"?\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}"?/g)) {
+    flags.set(m[1], { value: m[2] });
+  }
+  return { assignments, flags };
+}
+
+/**
+ * The names the orchestrator actually composes into the remote environment.
+ *
+ * Read out of `mirrored_target_env`'s BODY, not out of the whole file. "The file names
+ * it somewhere" was the first version's test and it is not the property: a variable
+ * mentioned in a string, or left behind in a stale branch, would satisfy it while
+ * nothing reached the target.
+ */
+export function readMirroredNames(text) {
+  const body = stripComments(text).match(/mirrored_target_env\(\)\s*\{([\s\S]*?)\n\}/);
+  if (!body) throw new Error("the orchestrator has no mirrored_target_env() function");
+  return new Set([...body[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)=\$\(shq /g)].map((m) => m[1]));
+}
 
 /**
  * The `env:` mapping of one service in a workflow's job, as a Map of name -> raw text.
@@ -210,12 +285,29 @@ export function checkVmEnvParity({
     };
   }
 
-  const sources = {
-    orchestrator: { text: stripComments(orchestrator), path: ORCHESTRATOR_PATH },
-    starter: { text: stripComments(starter), path: STARTER_PATH },
+  let launch;
+  let mirrored;
+  try {
+    launch = readStarterLaunchEnv(starter);
+    mirrored = readMirroredNames(orchestrator);
+  } catch (err) {
+    return {
+      ok: false,
+      carried,
+      findings: [{ kind: "unreadable", name: null, message: `cannot read the VM lane's carriers: ${err.message}` }],
+    };
+  }
+
+  /** What the workflow declares, or null when it is a shape gh-expression refuses. */
+  const declaredValue = (name) => {
+    try {
+      return { value: evaluateWorkflowValue(env.get(name), {}) };
+    } catch (err) {
+      return { error: err.message };
+    }
   };
 
-  const wanted = [...env.keys()].filter((name) => name.startsWith("LANGFLOW_"));
+  const wanted = [...env.keys()];
 
   for (const name of wanted) {
     const entry = classification[name];
@@ -238,21 +330,81 @@ export function checkVmEnvParity({
       carried.push({ name, carrier: null, reason: entry.reason });
       continue;
     }
-    const source = sources[entry.carrier];
-    if (!source) {
+    if (!["orchestrator", "starter"].includes(entry.carrier)) {
       findings.push({ kind: "bad-carrier", name, message: `${name} names an unknown carrier: ${entry.carrier}` });
       continue;
     }
-    // The name, anywhere in the carrier — including as `--workers`' source variable,
-    // which is why this is a name search and not an assignment match. What the value
-    // becomes is run-e2e.test.mjs's question.
-    if (!source.text.includes(name)) {
+
+    const shadow = launch.assignments.get(name);
+
+    if (entry.carrier === "orchestrator") {
+      // Composed into the remote environment — read out of the function, not out of
+      // the file, so a stale mention cannot answer for a live one.
+      if (!mirrored.has(name)) {
+        findings.push({
+          kind: "not-carried",
+          name,
+          message: `${name} is classified as reaching the target through ${ORCHESTRATOR_PATH}, and mirrored_target_env() does not compose it`,
+        });
+        continue;
+      }
+      // …and NOT overwritten on arrival. This is the door #1716 walked through, one
+      // layer down: a prefix assignment on `uv run` replaces the inherited value for
+      // that name, so the orchestrator's value never reaches the server and every
+      // other check here still passes.
+      if (shadow && !shadow.overridable) {
+        findings.push({
+          kind: "shadowed",
+          name,
+          message:
+            `${name} is carried by ${ORCHESTRATOR_PATH} and then OVERWRITTEN by ${STARTER_PATH}'s launch block ` +
+            `(\`${name}=${shadow.raw}\`). A prefix assignment on \`uv run\` replaces the inherited value for that ` +
+            `name, so the value this lane sends never reaches the server — and nothing goes red. Write it ` +
+            `\`${name}="\${${name}:-…}"\` so the caller's value wins, or drop the line.`,
+        });
+        continue;
+      }
+      carried.push({ name, carrier: entry.carrier, reason: entry.reason, sameValue: entry.sameValue !== false });
+      continue;
+    }
+
+    // carrier === "starter": it must be in the launch block, or spent on a flag the
+    // way `--workers "${LANGFLOW_WORKERS:-1}"` spends LANGFLOW_WORKERS.
+    const flag = launch.flags.get(name);
+    if (!shadow && !flag) {
       findings.push({
         kind: "not-carried",
         name,
-        message: `${name} is classified as reaching the target through ${source.path}, and that file never names it`,
+        message: `${name} is classified as reaching the target through ${STARTER_PATH}, and its launch block neither sets it nor spends it on a flag`,
       });
       continue;
+    }
+
+    // The starter's own default against the workflow's declared value. Nothing else in
+    // the repo compares these six: run-e2e.test.mjs measures the orchestrator's four by
+    // sourcing the script, and a2a-flag-lanes.test.mjs pins the A2A shape in the docker
+    // and pip starters — not in this one, which is the starter this lane actually uses.
+    if (entry.sameValue !== false) {
+      const declared = declaredValue(name);
+      if (declared.error) {
+        findings.push({
+          kind: "unreadable-value",
+          name,
+          message: `${name}'s value in the workflow cannot be read, so parity is unverified — ${declared.error}`,
+        });
+        continue;
+      }
+      const mine = (shadow ?? flag).value;
+      if (mine !== declared.value) {
+        findings.push({
+          kind: "value-drift",
+          name,
+          message:
+            `${name}: daily-stable.yml declares ${JSON.stringify(declared.value)} and ${STARTER_PATH} uses ` +
+            `${JSON.stringify(mine)}. Match it, or record the difference with \`sameValue: false\` and the reason.`,
+        });
+        continue;
+      }
     }
     carried.push({ name, carrier: entry.carrier, reason: entry.reason, sameValue: entry.sameValue !== false });
   }

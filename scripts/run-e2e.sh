@@ -205,11 +205,16 @@ export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-u
 # starter brought its instance up, and a lane-specific value written there would either
 # break that assertion or defeat its purpose (#1716's relocation).
 #
-# How these actually arrive. Each is passed as a `VAR=value` prefix on the remote
-# `bash -s`, which puts it in THAT shell's environment; the starter never names them and
-# does not need to — its own settings are prefix assignments on `uv run`, which add to
-# the inherited environment rather than replace it, so the server sees both. That is
-# what lets a variable be mirrored here without touching the starter at all.
+# How these actually arrive, stated precisely because the first draft of this comment
+# was wrong and the error was load-bearing. Each is passed as a `VAR=value` prefix on
+# the remote `bash -s`, which puts it in THAT shell's environment, and the starter
+# inherits it. The starter does not need to name them — but if it DOES name one with a
+# literal, its own `uv run` prefix assignment REPLACES the inherited value for that name
+# instead of adding to it, and what this file sends never reaches the server. Nothing
+# turns red when that happens: it is the silent half of #1717, one layer down. So the
+# rule is checked rather than trusted — scripts/check-vm-env-parity.mjs refuses a
+# mirrored name that start-langflow-source.sh's launch block sets to anything other than
+# `${NAME:-…}`, which is the shape that lets the caller's value win.
 #
 # Every value is overridable, and an override is how a MACHINE records a measured
 # exception — the qa VM overrides tracing while #1720 is open, with the reason written
@@ -272,7 +277,7 @@ LANGFLOW_SQLITE_PRAGMAS="${LANGFLOW_SQLITE_PRAGMAS:-$DEFAULT_SQLITE_PRAGMAS}"
 # reason the tracing override is: a machine may need a measured exception, and it
 # records the reason where it makes it.
 node -e 'const v=process.argv[1];let p;try{p=JSON.parse(v)}catch(e){console.error("LANGFLOW_SQLITE_PRAGMAS is not valid JSON ("+e.message+"): "+v);process.exit(1)}if(p===null||typeof p!=="object"||Array.isArray(p)){console.error("LANGFLOW_SQLITE_PRAGMAS must be a JSON object, got: "+v);process.exit(1)}' \
-  "$LANGFLOW_SQLITE_PRAGMAS" || exit 1
+  "$LANGFLOW_SQLITE_PRAGMAS"
 
 # ---------------------------------------------------------------------------
 # UTILITIES

@@ -39,7 +39,7 @@ if (result.ok) {
   const scoped = result.carried.filter((c) => c.carrier !== null).length;
   const out = result.carried.length - scoped;
   console.log(
-    `VM env parity OK — ${result.carried.length} LANGFLOW_* on the daily's service: ` +
+    `VM env parity OK — ${result.carried.length} variables on the daily's service: ` +
       `${scoped} carried to the target, ${out} recorded out of scope.`,
   );
   process.exit(0);
