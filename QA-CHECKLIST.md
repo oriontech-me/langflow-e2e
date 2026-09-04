@@ -1448,7 +1448,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 89 | 79 | 5 | 3 | 2 |
+| `api/flows/` — REST API | 100 | 90 | 5 | 3 | 2 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1471,7 +1471,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **643** | **507 (79%)** | **53 (8%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **654** | **518 (79%)** | **53 (8%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1487,11 +1487,16 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 583 `test()` calls carrying the `@stable` tag, distributed across 223 spec
+> 592 `test()` calls carrying the `@stable` tag, distributed across 226 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
+
+#### api/auth/
+- [x] the session probe answers anonymous and authenticated alike, and says which → `api-session-auth-lifecycle.spec.ts`
+- [x] login takes a form body and refuses an empty one → `api-session-auth-lifecycle.spec.ts`
+- [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
@@ -1575,6 +1580,14 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+
+#### api/instance/
+- [x] the three health routes are not synonyms of each other → `api-instance-identity.spec.ts`
+- [x] version and config answer unauthenticated, the catalog and starter projects do not → `api-instance-identity.spec.ts`
+- [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
+- [x] code validation answers 200 for broken code, with the verdict in the body → `api-validation-endpoints.spec.ts`
+- [x] prompt validation extracts variables only when it is given a node → `api-validation-endpoints.spec.ts`
+- [x] a custom component is described, and a field update echoes the code back → `api-validation-endpoints.spec.ts`
 
 #### api/models/
 - [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
