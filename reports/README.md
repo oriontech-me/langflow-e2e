@@ -23,8 +23,9 @@ carry. Four known blind spots (#1211), stated here rather than only in a PR body
 comment so a reader of a number finds its limits in the same place:
 
 - **A local instance records nothing, and developer spend is OUT OF SCOPE for this series
-  (#1300).** Both start scripts set `LANGFLOW_DEACTIVATE_TRACING=true`, so the poller has no
-  traces to read at all when developing against a local container. That is a **decision**, not a
+  (#1300).** The Docker and pip start scripts set `LANGFLOW_DEACTIVATE_TRACING=true` as a
+  literal, and `start-langflow-source.sh` defaults it to `true`, so the poller has no traces to
+  read at all when developing locally. That is a **decision**, not a
   pending fix: flipping the flag locally would produce traces nobody can attribute, because the CI
   secret and a developer's `.env` draw on one account balance and #1183's key-separation
   recommendation (`ANTHROPIC_API_KEY_AGENT` / `ANTHROPIC_API_KEY_CI`) is still unimplemented — so a
@@ -32,6 +33,13 @@ comment so a reader of a number finds its limits in the same place:
   consequence to carry: **this file is CI spend, and must never be quoted as total account
   spend.** The gap between the two is whatever developers spent locally, which only the provider
   console can answer, and only once the keys are split.
+- **The scheduled VM lane traces, and still writes nothing here (#1714).** It is not a local
+  instance: `scripts/run-e2e.sh` overrides that default and runs with tracing ON, the way
+  `daily-stable.yml` does, because the traces specs assert against a traced instance. Its
+  summary call carries `TOKENS_SUPPRESS_HISTORY=1` all the same — while both dailies run, the
+  Actions one owns this series, and a second line a day for the same `@stable` sweep would
+  double-count the trend and halve the anomaly window. The VM lane's own series lives outside
+  that clone until the switch makes it the only writer.
 - **`Collect models` spend enters the totals with no spec name.** That pre-flight sweep drives the
   same Langflow instance the token poller watches, but it is not a spec run, so its traces land in
   `unattributed`, never in `by_spec`.

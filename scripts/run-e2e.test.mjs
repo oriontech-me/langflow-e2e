@@ -28,6 +28,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -135,6 +136,86 @@ test("the publish switches are OFF by default, all four of them", () => {
   // none, and this is where that decision is enforced.
   const r = sourced(`echo "$CREATE_ISSUE $NOTIFY_SLACK $POST_QA_PLATFORM $COMMIT_HISTORY"`);
   assert.equal(r.stdout.trim(), "0 0 0 0");
+});
+
+// Comment lines go before anything is matched, for the reason watch-tokens.test.mjs
+// already paid for at #1300: a `#` line merely SPELLING the old value could both mask
+// a real setting and fail a CORRECT workflow — and the failure message would then
+// invite the next reader to "fix" this lane by restoring the value that caused #1714.
+const stripComments = (text) =>
+  text
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+test("the lane runs tracing the way the workflow does, read out of the workflow", () => {
+  // What this pins cost nine @stable tests on 2026-09-04: the VM lane came back red
+  // while the same day's Actions daily was green, because all three starters keep
+  // tracing OFF and daily-stable.yml runs it ON. A literal here would drift the moment
+  // the workflow changed, so the expectation is READ from the workflow, never copied.
+  const wf = stripComments(readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8"));
+
+  // EVERY occurrence, not the first: a second setting further down the file would
+  // otherwise pass unnoticed while this lane mirrored only one of them.
+  const settings = [...wf.matchAll(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/g)].map((m) => m[1].trim());
+  assert.equal(
+    settings.length,
+    1,
+    `daily-stable.yml must set the tracing flag exactly once for this to be readable; found ${settings.length}`,
+  );
+
+  // Evaluated rather than string-compared, for the day the value becomes an
+  // expression — it already is one on pr-validation.yml. An expression this cannot
+  // evaluate fails here deliberately: a guard that cannot read the value is a guard
+  // that is not checking it.
+  let declared;
+  try {
+    declared = evaluateWorkflowValue(settings[0], {});
+  } catch (err) {
+    assert.fail(`cannot evaluate daily-stable.yml's tracing setting, so it is unverified — ${err.message}`);
+  }
+
+  // The environment is blanked, not inherited. `sourced()` forwards process.env, so an
+  // exported LANGFLOW_DEACTIVATE_TRACING — on the VM, or in the shell of whoever was
+  // debugging #1714 — would answer for the default and let this test pass with the
+  // line deleted. `:-` treats empty as unset, so this measures the default itself.
+  const r = sourced(`echo "$LANGFLOW_DEACTIVATE_TRACING"`, { LANGFLOW_DEACTIVATE_TRACING: "" });
+  assert.equal(
+    r.stdout.trim(),
+    declared,
+    `this lane has to trace the way daily-stable.yml does (${declared})`,
+  );
+});
+
+test("a tracing value that is neither true nor false stops the run", () => {
+  // The flag reads anything that is not "true" as false, so `0` or `FALSE` would mean
+  // tracing OFF while looking deliberate — #1714's failure class, arriving through the
+  // caller instead of the file.
+  const r = sourced(`echo unreachable`, { LANGFLOW_DEACTIVATE_TRACING: "0" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /must be exactly 'true' or 'false'/);
+});
+
+test("the lane does not append to the daily's token series", () => {
+  // With tracing ON this lane has spend to record, and the summarizer's default is to
+  // append one line to reports/token-history.jsonl — a git-tracked file, in a clone
+  // this run does not own, whose `git pull --ff-only` would then refuse every day.
+  const line = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes("watch-tokens.mjs --summarize"));
+  assert.ok(line, "could not find the token summary invocation");
+  assert.match(line, /TOKENS_SUPPRESS_HISTORY=1/);
+});
+
+test("the tracing value crosses the ssh boundary, which a default alone does not", () => {
+  // The failure mode this catches LOOKS fixed: the value is set here, the shell that
+  // runs the starter is on the other machine, and it inherits nothing from this one.
+  // A variable that never crosses is a variable that never applied.
+  const line = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes("bash -s; sleep 86400"));
+  assert.ok(line, "could not find the command that starts the backend on the target");
+  assert.match(line, /LANGFLOW_DEACTIVATE_TRACING=\$LANGFLOW_DEACTIVATE_TRACING/);
 });
 
 test("the version check is on by default, and so is enforcing it", () => {

@@ -194,6 +194,23 @@ export PATH="$HOME/.local/bin:$PATH"
 # globalSetup — see the migration's divergence list, entry 1.
 export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
 
+# Tracing ON, because daily-stable.yml runs with it on and the traces/observability
+# specs assert against a traced instance. Both starters default it OFF — right for a
+# developer's own instance, wrong for the lane that has to match CI — so the value
+# belongs here, in the file whose whole job is mirroring that workflow. Measured, not
+# assumed: on 2026-09-04 eight @stable specs failed on the VM while the same day's
+# Actions daily was green, for no reason other than this variable (#1714). Read the
+# workflow before changing it — run-e2e.test.mjs asserts the two agree.
+LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-false}"
+# Checked because this is the first CALLER-supplied value to be interpolated into
+# the remote command bare, and because the flag reads anything that is not "true"
+# as false. `0`, `FALSE` or a value carrying a space would go in silently and land
+# the lane back in #1714 — tracing off, nothing said.
+case "$LANGFLOW_DEACTIVATE_TRACING" in
+  true | false) ;;
+  *) echo "LANGFLOW_DEACTIVATE_TRACING must be exactly 'true' or 'false', got: '$LANGFLOW_DEACTIVATE_TRACING'" >&2; exit 1 ;;
+esac
+
 # ---------------------------------------------------------------------------
 # UTILITIES
 # ---------------------------------------------------------------------------
@@ -659,7 +676,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED LANGFLOW_DEACTIVATE_TRACING=$LANGFLOW_DEACTIVATE_TRACING ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
@@ -1021,7 +1038,16 @@ phase_publish() {
     fi
   fi
 
-  TOKENS_DIR="$RUN_DIR/all-tokens" node scripts/watch-tokens.mjs --summarize \
+  # TOKENS_SUPPRESS_HISTORY, because with tracing on this lane HAS spend to record and
+  # would otherwise append a line to reports/token-history.jsonl — a git-tracked file,
+  # inside the clone this run does not own. Two costs, both concrete: the line is an
+  # uncommitted modification that the next `git pull --ff-only` refuses (that refusal is
+  # the guarantee, so breaking it daily is not an option), and once committing is on
+  # there would be TWO lines a day for one scope — a double-counted trend and an
+  # anomaly window half as wide. The PR and manual lanes carry the same flag for the
+  # neighbouring reason, scope rather than duplication (#1183). This lane's own series
+  # belongs in the ledger outside the clone, which is a step of its own.
+  TOKENS_DIR="$RUN_DIR/all-tokens" TOKENS_SUPPRESS_HISTORY=1 node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 
   if [ "$COMMIT_HISTORY" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then

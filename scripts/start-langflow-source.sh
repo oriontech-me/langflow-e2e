@@ -258,7 +258,15 @@ echo "Starting Langflow on ${BIND_HOST}:${PORT} (logs: ${LOG_FILE})..."
 # The flags below carry the same reasoning as scripts/start-langflow-pip.sh — read
 # that file's comments for the why of each. Repeated here rather than sourced because
 # a starter that hides its environment behind an include is a starter nobody audits.
-#   LANGFLOW_DEACTIVATE_TRACING  local spend is out of scope for token history (#1300, #1183)
+#   LANGFLOW_DEACTIVATE_TRACING  local spend is out of scope for token history (#1300, #1183).
+#                                Overridable, and the default deliberately STAYS `true`: this
+#                                block is asserted against start-langflow-pip.sh's, and a
+#                                different default here would let a spec tell which starter
+#                                brought its instance up. The scheduled lane needs the
+#                                opposite value — daily-stable.yml runs with tracing ON and
+#                                the traces specs assert against a traced instance — so
+#                                scripts/run-e2e.sh sets it, which is the file whose job is
+#                                to mirror that workflow (#1714).
 #   LANGFLOW_A2A_ENABLED         product default is OFF, and a disabled server passes every A2A spec while testing nothing (#1240, #1195)
 #   LANGFLOW_SSRF_ALLOWED_HOSTS  private ranges only, loopback deliberately OUT (security/ssrf-url-validation.spec.ts asserts the refusal)
 #   --workers 1                  Langflow defaults to (2*cpu)+1, each holding full in-memory state (#773) — and on this lane N shards multiply it
@@ -280,7 +288,7 @@ cd "${REPO}"
 LANGFLOW_AUTO_LOGIN=true \
 LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
 LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
-LANGFLOW_DEACTIVATE_TRACING=true \
+LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}" \
 LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
 LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
 LANGFLOW_CONFIG_DIR="${STATE_DIR}/data" \
