@@ -75,7 +75,8 @@ test.describe("Custom Component Creation API", () => {
   test(
     "POST /api/v1/custom_component returns valid component structure",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/auto_login", "POST /api/v1/custom_component"]);
       const authToken = await getBearerToken(request);
 
       const res = await request.post("/api/v1/custom_component", {
@@ -119,7 +120,8 @@ test.describe("Custom Component Creation API", () => {
   test(
     "POST /api/v1/custom_component with invalid code returns error",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/auto_login", "POST /api/v1/custom_component"]);
       const authToken = await getBearerToken(request);
 
       const res = await request.post("/api/v1/custom_component", {
@@ -140,7 +142,8 @@ test.describe("Custom Component Creation API", () => {
   test(
     "GET /api/v1/all includes component types",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["GET /api/v1/all", "GET /api/v1/auto_login"]);
       const authToken = await getBearerToken(request);
 
       const res = await request.get("/api/v1/all", {
@@ -200,7 +203,8 @@ test.describe("Custom Component Creation API", () => {
   test(
     "POST /api/v1/custom_component without auth returns 401 or 403",
     { tag: ["@stable", "@release", "@api", "@regression"] },
-    async ({ request }) => {
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/custom_component"]);
       const res = await request.post("/api/v1/custom_component", {
         data: { code: "class X: pass" },
       });
