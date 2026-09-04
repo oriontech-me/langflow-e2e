@@ -194,6 +194,15 @@ export PATH="$HOME/.local/bin:$PATH"
 # globalSetup — see the migration's divergence list, entry 1.
 export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
 
+# Tracing ON, because daily-stable.yml runs with it on and the traces/observability
+# specs assert against a traced instance. Both starters default it OFF — right for a
+# developer's own instance, wrong for the lane that has to match CI — so the value
+# belongs here, in the file whose whole job is mirroring that workflow. Measured, not
+# assumed: on 2026-09-04 eight @stable specs failed on the VM while the same day's
+# Actions daily was green, for no reason other than this variable (#1714). Read the
+# workflow before changing it — run-e2e.test.mjs asserts the two agree.
+LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-false}"
+
 # ---------------------------------------------------------------------------
 # UTILITIES
 # ---------------------------------------------------------------------------
@@ -659,7 +668,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED LANGFLOW_DEACTIVATE_TRACING=$LANGFLOW_DEACTIVATE_TRACING ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 

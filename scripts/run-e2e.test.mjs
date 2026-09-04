@@ -137,6 +137,33 @@ test("the publish switches are OFF by default, all four of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0 0");
 });
 
+test("the lane runs tracing the way the workflow does, read out of the workflow", () => {
+  // What this pins cost eight @stable specs on 2026-09-04: the VM lane came back red
+  // while the same day's Actions daily was green, because both starters default tracing
+  // OFF and daily-stable.yml runs it ON. A literal here would drift the moment the
+  // workflow changed, so the expectation is READ from the workflow, never copied.
+  const wf = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+  const declared = wf.match(/LANGFLOW_DEACTIVATE_TRACING:\s*"?([A-Za-z]+)"?/)?.[1];
+  assert.ok(declared, "could not read LANGFLOW_DEACTIVATE_TRACING out of daily-stable.yml");
+  const r = sourced(`echo "$LANGFLOW_DEACTIVATE_TRACING"`);
+  assert.equal(
+    r.stdout.trim(),
+    declared,
+    `this lane has to trace the way daily-stable.yml does (${declared})`,
+  );
+});
+
+test("the tracing value crosses the ssh boundary, which a default alone does not", () => {
+  // The failure mode this catches LOOKS fixed: the value is set here, the shell that
+  // runs the starter is on the other machine, and it inherits nothing from this one.
+  // A variable that never crosses is a variable that never applied.
+  const line = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes("bash -s; sleep 86400"));
+  assert.ok(line, "could not find the command that starts the backend on the target");
+  assert.match(line, /LANGFLOW_DEACTIVATE_TRACING=\$LANGFLOW_DEACTIVATE_TRACING/);
+});
+
 test("the version check is on by default, and so is enforcing it", () => {
   // Enforcement waited for two things, and both arrived on 2026-09-03: the run now
   // places the clone itself, so a mismatch is no longer somebody forgetting to move
