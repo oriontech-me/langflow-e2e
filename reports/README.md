@@ -23,8 +23,12 @@ carry. Four known blind spots (#1211), stated here rather than only in a PR body
 comment so a reader of a number finds its limits in the same place:
 
 - **A local instance records nothing, and developer spend is OUT OF SCOPE for this series
-  (#1300).** Both start scripts set `LANGFLOW_DEACTIVATE_TRACING=true`, so the poller has no
-  traces to read at all when developing against a local container. That is a **decision**, not a
+  (#1300).** Both start scripts *default* `LANGFLOW_DEACTIVATE_TRACING` to `true`, so the poller
+  has no traces to read at all when developing against a local container. The value is a
+  parameter rather than a literal because the scheduled VM lane needs the opposite and is not a
+  local instance: `scripts/run-e2e.sh` runs it with tracing ON, the way `daily-stable.yml` does,
+  and on the same CI keys — so its spend belongs in this series exactly as the Actions lane's
+  does, and the attribution problem below is not reintroduced (#1714). That is a **decision**, not a
   pending fix: flipping the flag locally would produce traces nobody can attribute, because the CI
   secret and a developer's `.env` draw on one account balance and #1183's key-separation
   recommendation (`ANTHROPIC_API_KEY_AGENT` / `ANTHROPIC_API_KEY_CI`) is still unimplemented — so a
