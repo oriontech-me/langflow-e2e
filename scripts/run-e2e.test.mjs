@@ -213,10 +213,29 @@ test("a custom-components value that is neither true nor false stops the run", (
 test("a worker timeout that is not a positive integer stops the run", () => {
   // gunicorn hands this to a watchdog. A non-numeric value is not a slow ceiling, it
   // is no ceiling — and #1048's whole point is bounding what one wedge costs.
-  for (const bad of ["", "abc", "12s", "-5", "0"]) {
-    const r = sourced(`echo unreachable`, { LANGFLOW_WORKER_TIMEOUT: bad || "x" });
+  //
+  // The empty string is NOT in this list, and both reviewers caught it there: the
+  // first version wrote `bad || "x"`, which substituted "x" for it, so the empty case
+  // was never sent while a failure would have printed `LANGFLOW_WORKER_TIMEOUT=""`
+  // about a value it did not test. It also cannot belong here — `:-` treats empty as
+  // unset, so empty legitimately takes the default. That is the test below.
+  for (const bad of ["abc", "12s", "-5", "0", "1 2"]) {
+    const r = sourced(`echo unreachable`, { LANGFLOW_WORKER_TIMEOUT: bad });
     assert.notEqual(r.status, 0, `LANGFLOW_WORKER_TIMEOUT=${JSON.stringify(bad)} should have been refused`);
     assert.match(r.stderr, /LANGFLOW_WORKER_TIMEOUT must be/);
+  }
+});
+
+test("an empty override is an absent one, for every mirrored variable", () => {
+  // The property the dead case was hiding, and it is worth pinning in its own right:
+  // `${VAR:-default}` treats empty as unset, so a wrapper that exports a mirrored name
+  // and leaves it blank gets the workflow's value rather than an empty one handed to
+  // the server. It is also what makes every other test in this file honest, since they
+  // all blank the environment to measure the defaults.
+  for (const name of MIRRORED) {
+    const raw = DECLARED.get(name);
+    const r = sourced(`printf '<<%s>>' "$${name}"`, { ...BLANKED, [name]: "" });
+    assert.equal(r.stdout.match(/<<([\s\S]*)>>/)?.[1], evaluateWorkflowValue(raw, {}), `${name} empty should take the default`);
   }
 });
 
