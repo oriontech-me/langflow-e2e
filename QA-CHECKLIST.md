@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-03
+> **Last updated:** 2026-09-04
 
 ---
 
@@ -1406,7 +1406,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 63 | 55 | 5 | 3 | 0 |
+| `api/flows/` — REST API | 73 | 64 | 5 | 3 | 1 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1429,7 +1429,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **617** | **483 (78%)** | **53 (9%)** | **18 (3%)** | **63 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **627** | **492 (78%)** | **53 (8%)** | **18 (3%)** | **64 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1445,7 +1445,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 563 `test()` calls carrying the `@stable` tag, distributed across 215 spec
+> 572 `test()` calls carrying the `@stable` tag, distributed across 218 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1533,6 +1533,17 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+
+#### api/monitor/
+- [x] a run persists messages readable by flow, session and sender → `api-monitor-messages-lifecycle.spec.ts`
+- [x] a message can be edited in place, and the edit is flagged → `api-monitor-messages-lifecycle.spec.ts`
+- [x] renaming a session moves every message and empties the old one → `api-monitor-messages-lifecycle.spec.ts`
+- [x] deletes are scoped: by message id, by session, by session list → `api-monitor-messages-lifecycle.spec.ts`
+- [x] builds, transactions and the job queue → `api-monitor-messages-lifecycle.spec.ts`
+- [x] every shared endpoint requires source_flow_id and reads an empty namespace → `api-monitor-shared.spec.ts`
+- [x] the shared write surface refuses what is not there, and never without the parameter → `api-monitor-shared.spec.ts`
+- [x] a run emits a trace that can be listed, filtered, read and deleted by id → `api-monitor-traces.spec.ts`
+- [x] the bulk delete is scoped to a flow → `api-monitor-traces.spec.ts`
 
 #### core-components/
 - [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
@@ -2058,7 +2069,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 5 | 0 |
+| `api/flows/` — REST API | 5 | 1 |
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
