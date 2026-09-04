@@ -448,8 +448,18 @@ test("tracing is the caller's to set, and its default is not moved", () => {
   // is what #1300/#1183 decided. So the value has to be a parameter — and the default
   // has to STAY put, because the env-block parity test below is what keeps a spec from
   // being able to tell which starter brought its instance up (#1714).
+  // The pip starter's value is READ, not repeated: the claim being made is that the two
+  // agree, and a hardcoded `true` here would keep passing after pip changed. That is the
+  // same "read from that file" the env-block parity test below uses.
+  // Anchored to the start of a line, because the pip starter's own COMMENT spells the
+  // same assignment two lines above the real one — an unanchored match reads the prose
+  // and keeps passing after the setting changes. Found by mutation: flipping pip's real
+  // value left this test green.
+  const pipDefault = readFileSync(PIP_START, "utf8").match(/^LANGFLOW_DEACTIVATE_TRACING=(\w+)/m)?.[1];
+  assert.ok(pipDefault, "could not read the pip starter's tracing value");
+
   const off = runScript();
-  assert.match(off.langflowEnv, /^LANGFLOW_DEACTIVATE_TRACING=true$/m);
+  assert.match(off.langflowEnv, new RegExp(`^LANGFLOW_DEACTIVATE_TRACING=${pipDefault}$`, "m"));
   off.cleanup();
 
   const on = runScript({ env: { LANGFLOW_DEACTIVATE_TRACING: "false" } });
