@@ -1419,7 +1419,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 73 | 64 | 5 | 3 | 1 |
+| `api/flows/` — REST API | 81 | 72 | 5 | 3 | 1 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1442,7 +1442,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **627** | **492 (78%)** | **53 (8%)** | **18 (3%)** | **64 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **635** | **500 (79%)** | **53 (8%)** | **18 (3%)** | **64 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1458,7 +1458,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 572 `test()` calls carrying the `@stable` tag, distributed across 218 spec
+> 578 `test()` calls carrying the `@stable` tag, distributed across 221 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1557,6 +1557,14 @@
 - [x] the shared write surface refuses what is not there, and never without the parameter → `api-monitor-shared.spec.ts`
 - [x] a run emits a trace that can be listed, filtered, read and deleted by id → `api-monitor-traces.spec.ts`
 - [x] the bulk delete is scoped to a flow → `api-monitor-traces.spec.ts`
+
+#### api/projects/
+- [x] every folders route is a 307 onto its projects twin, and the alias has no PUT → `api-folders-alias-redirects.spec.ts`
+- [x] a project is created, listed, read with its flows and deleted by id → `api-projects-crud.spec.ts`
+- [x] PATCH is partial, PUT merges but refuses a body without a name → `api-projects-crud.spec.ts`
+- [x] a duplicate name is suffixed and the required field is enforced → `api-projects-crud.spec.ts`
+- [x] download refuses an empty project and returns a ZIP for a populated one → `api-projects-transfer.spec.ts`
+- [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
 
 #### core-components/
 - [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
