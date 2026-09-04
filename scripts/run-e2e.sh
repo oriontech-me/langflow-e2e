@@ -194,22 +194,85 @@ export PATH="$HOME/.local/bin:$PATH"
 # globalSetup — see the migration's divergence list, entry 1.
 export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
 
+# ---------------------------------------------------------------------------
+# THE DAILY'S SERVICE ENVIRONMENT, MIRRORED
+# ---------------------------------------------------------------------------
+# daily-stable.yml configures the instance under test through its service `env:` block.
+# Everything there that is right for ANY local instance already lives in the starters;
+# what is chosen FOR THIS LANE belongs here, in the file whose declared job is
+# mirroring that workflow. The split is not a preference: the starters' env blocks are
+# asserted identical to start-langflow-pip.sh's precisely so a spec cannot tell which
+# starter brought its instance up, and a lane-specific value written there would either
+# break that assertion or defeat its purpose (#1716's relocation).
+#
+# How these actually arrive. Each is passed as a `VAR=value` prefix on the remote
+# `bash -s`, which puts it in THAT shell's environment; the starter never names them and
+# does not need to — its own settings are prefix assignments on `uv run`, which add to
+# the inherited environment rather than replace it, so the server sees both. That is
+# what lets a variable be mirrored here without touching the starter at all.
+#
+# Every value is overridable, and an override is how a MACHINE records a measured
+# exception — the qa VM overrides tracing while #1720 is open, with the reason written
+# beside it. What is pinned here is the DEFAULT: scripts/check-vm-env-parity.mjs fails
+# when the workflow gains a service variable this file neither carries nor classifies,
+# and run-e2e.test.mjs reads each default OUT OF the workflow instead of out of a copy,
+# so a value changed there cannot leave this one behind (#1717).
+
+# Rejecting a value that is neither `true` nor `false` instead of passing it through:
+# these flags read anything that is not "true" as false, so `0`, `FALSE` or a value
+# carrying a space would go in silently and invert the setting with nothing said —
+# #1714's failure class, arriving through the caller rather than through a file.
+require_bool() {
+  case "$2" in
+    true | false) ;;
+    *) echo "$1 must be exactly 'true' or 'false', got: '$2'" >&2; exit 1 ;;
+  esac
+}
+
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
 # specs assert against a traced instance. Both starters default it OFF — right for a
-# developer's own instance, wrong for the lane that has to match CI — so the value
-# belongs here, in the file whose whole job is mirroring that workflow. Measured, not
-# assumed: on 2026-09-04 eight @stable specs failed on the VM while the same day's
-# Actions daily was green, for no reason other than this variable (#1714). Read the
-# workflow before changing it — run-e2e.test.mjs asserts the two agree.
+# developer's own instance, wrong for the lane that has to match CI. Measured, not
+# assumed: on 2026-09-04 nine @stable specs failed on the VM while the same day's
+# Actions daily was green, for no reason other than this variable (#1714).
 LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-false}"
-# Checked because this is the first CALLER-supplied value to be interpolated into
-# the remote command bare, and because the flag reads anything that is not "true"
-# as false. `0`, `FALSE` or a value carrying a space would go in silently and land
-# the lane back in #1714 — tracing off, nothing said.
-case "$LANGFLOW_DEACTIVATE_TRACING" in
-  true | false) ;;
-  *) echo "LANGFLOW_DEACTIVATE_TRACING must be exactly 'true' or 'false', got: '$LANGFLOW_DEACTIVATE_TRACING'" >&2; exit 1 ;;
+require_bool LANGFLOW_DEACTIVATE_TRACING "$LANGFLOW_DEACTIVATE_TRACING"
+
+# Caps what ONE wedge costs (#1048). The value is a heartbeat watchdog on the event
+# loop, not a per-request deadline, and a wedged worker never recovers on its own. Not
+# a starter default: 120 is chosen for THIS lane's load, and a developer's instance has
+# no reason to inherit it. Read daily-stable.yml's comment before changing it — it
+# records why the product's own docs argue for the opposite and are wrong.
+LANGFLOW_WORKER_TIMEOUT="${LANGFLOW_WORKER_TIMEOUT:-120}"
+case "$LANGFLOW_WORKER_TIMEOUT" in
+  '' | *[!0-9]*) echo "LANGFLOW_WORKER_TIMEOUT must be a positive integer of seconds, got: '$LANGFLOW_WORKER_TIMEOUT'" >&2; exit 1 ;;
 esac
+[ "$LANGFLOW_WORKER_TIMEOUT" -gt 0 ] || { echo "LANGFLOW_WORKER_TIMEOUT must be greater than zero." >&2; exit 1; }
+
+# The workflow sets this to OVERRIDE a default the nightly image bakes in (`false`, a
+# security default). A source instance bakes in nothing, so the two lanes agree today
+# for DIFFERENT REASONS — measured on 2026-09-04, the custom-component specs pass 8/8
+# on the VM without it. Mirrored anyway, and that is exactly #1717's point: latent
+# agreement is the half of this class no run can report, because the day the product
+# default moves, only one lane notices.
+LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}"
+require_bool LANGFLOW_ALLOW_CUSTOM_COMPONENTS "$LANGFLOW_ALLOW_CUSTOM_COMPONENTS"
+
+# `foreign_keys: ON`. The dict replaces the product default wholesale, so the default
+# pragmas are repeated here rather than merged. This is the SILENT half of #1717: with
+# SQLite foreign keys off, a cascade/orphan defect (upstream #13955, the span -> trace
+# FK) leaves the raw DELETE "succeeding" with orphaned rows, so traces-delete-cascade
+# passes on the VM and fails on Actions. This lane's entire product is the comparison
+# between those two verdicts, so this one cannot be found by running anything: it
+# produces agreement, not failure.
+DEFAULT_SQLITE_PRAGMAS='{"synchronous": "NORMAL", "journal_mode": "WAL", "busy_timeout": 30000, "foreign_keys": "ON"}'
+LANGFLOW_SQLITE_PRAGMAS="${LANGFLOW_SQLITE_PRAGMAS:-$DEFAULT_SQLITE_PRAGMAS}"
+# Parseability, not content. Malformed JSON is never intentional and Langflow falls
+# back to its own defaults without saying so — this variable's failure mode arriving
+# through the caller. WHICH pragmas are set stays the operator's call, for the same
+# reason the tracing override is: a machine may need a measured exception, and it
+# records the reason where it makes it.
+node -e 'const v=process.argv[1];let p;try{p=JSON.parse(v)}catch(e){console.error("LANGFLOW_SQLITE_PRAGMAS is not valid JSON ("+e.message+"): "+v);process.exit(1)}if(p===null||typeof p!=="object"||Array.isArray(p)){console.error("LANGFLOW_SQLITE_PRAGMAS must be a JSON object, got: "+v);process.exit(1)}' \
+  "$LANGFLOW_SQLITE_PRAGMAS" || exit 1
 
 # ---------------------------------------------------------------------------
 # UTILITIES
@@ -223,6 +286,39 @@ die()  { err "$*"; exit 1; }
 
 # shellcheck disable=SC2086
 target_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"; }
+
+# Shell-quote a value for the shell on the OTHER side of ssh. ssh joins its arguments
+# with spaces and hands ONE string to a shell over there, so anything unquoted is
+# re-split on arrival. Every mirrored value used to be a bare word and survived that;
+# LANGFLOW_SQLITE_PRAGMAS is a JSON object, and unquoted it would set the variable to
+# `{"synchronous":` and feed the remaining five words to `bash -s` as arguments.
+# Single quotes, closed and reopened around each embedded one (`'\''`) — the POSIX
+# form, so it does not depend on the login shell ssh happens to start over there, and
+# it stays readable in a log. `printf %q` round-trips too, but its output is
+# bash-specific and unreadable at a glance.
+#
+# Written with sed rather than `${1//\'/…}` because the parameter-expansion form is
+# what the first version used and it was WRONG: inside double quotes the backslashes
+# are consumed twice, and it produced `'it\'\\'\'s'`, which does not parse at all. No
+# mirrored value carries a quote today — this would arrive the day someone overrides
+# one from a wrapper, and the failure would be a syntax error in a remote command
+# nobody ever printed.
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# The environment the target's shell must carry for its instance to match the one
+# daily-stable.yml's service brings up — see THE DAILY'S SERVICE ENVIRONMENT above for
+# why each value lives here and not in the starter.
+#
+# A function rather than a string spelled into the ssh line, so the unit tests can read
+# exactly what would be sent, quoting included, without a machine to send it to. The
+# trailing space is part of the contract: the caller concatenates.
+mirrored_target_env() {
+  printf '%s' \
+    "LANGFLOW_DEACTIVATE_TRACING=$(shq "$LANGFLOW_DEACTIVATE_TRACING") " \
+    "LANGFLOW_WORKER_TIMEOUT=$(shq "$LANGFLOW_WORKER_TIMEOUT") " \
+    "LANGFLOW_ALLOW_CUSTOM_COMPONENTS=$(shq "$LANGFLOW_ALLOW_CUSTOM_COMPONENTS") " \
+    "LANGFLOW_SQLITE_PRAGMAS=$(shq "$LANGFLOW_SQLITE_PRAGMAS") "
+}
 
 # Should this run place the target's clone, and if not, why not?
 #
@@ -676,7 +772,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED LANGFLOW_DEACTIVATE_TRACING=$LANGFLOW_DEACTIVATE_TRACING ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 

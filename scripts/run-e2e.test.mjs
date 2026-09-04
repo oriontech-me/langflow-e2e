@@ -29,6 +29,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
+import { readServiceEnv, CLASSIFICATION } from "./lib/vm-env-parity.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -138,53 +139,57 @@ test("the publish switches are OFF by default, all four of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0 0");
 });
 
-// Comment lines go before anything is matched, for the reason watch-tokens.test.mjs
-// already paid for at #1300: a `#` line merely SPELLING the old value could both mask
-// a real setting and fail a CORRECT workflow — and the failure message would then
-// invite the next reader to "fix" this lane by restoring the value that caused #1714.
-const stripComments = (text) =>
-  text
-    .split("\n")
-    .filter((line) => !/^\s*#/.test(line))
-    .join("\n");
+// daily-stable.yml's Langflow service environment, read once. The reader strips
+// full-line comments for the reason watch-tokens.test.mjs already paid for at #1300 —
+// a `#` line merely SPELLING a value both masks a real setting and fails a CORRECT
+// workflow — and scopes the read to the SERVICE block, so the LANGFLOW_IMAGE and
+// LANGFLOW_VERSION that later jobs set as step env cannot read as gaps in this lane.
+const DECLARED = readServiceEnv(readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8"));
 
-test("the lane runs tracing the way the workflow does, read out of the workflow", () => {
+// The variables this script is the declared carrier for. DERIVED from the
+// classification rather than listed here as well: a variable added there and given no
+// default in the script would otherwise be pinned by nothing, which is the gap the
+// classification exists to close.
+const MIRRORED = Object.entries(CLASSIFICATION)
+  .filter(([, entry]) => entry.carrier === "orchestrator" && entry.sameValue !== false)
+  .map(([name]) => name);
+
+// `sourced()` forwards process.env, so an exported LANGFLOW_* — on the VM, or in the
+// shell of whoever was debugging #1714 — would answer for the default and let these
+// tests pass with the line deleted. `:-` treats empty as unset, so blanking measures
+// the default itself.
+const BLANKED = Object.fromEntries(MIRRORED.map((name) => [name, ""]));
+
+test("this lane mirrors the workflow's own values, read out of the workflow", () => {
   // What this pins cost nine @stable tests on 2026-09-04: the VM lane came back red
   // while the same day's Actions daily was green, because all three starters keep
-  // tracing OFF and daily-stable.yml runs it ON. A literal here would drift the moment
-  // the workflow changed, so the expectation is READ from the workflow, never copied.
-  const wf = stripComments(readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8"));
+  // tracing OFF and daily-stable.yml runs it ON (#1714). A literal here would drift
+  // the moment the workflow changed, so every expectation is READ from the workflow,
+  // never copied — and the loop is over the classification, so the next variable to be
+  // mirrored is covered by this test on the day it is classified.
+  assert.ok(MIRRORED.length >= 4, `expected the lane to mirror several variables, found ${MIRRORED.length}`);
 
-  // EVERY occurrence, not the first: a second setting further down the file would
-  // otherwise pass unnoticed while this lane mirrored only one of them.
-  const settings = [...wf.matchAll(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/g)].map((m) => m[1].trim());
-  assert.equal(
-    settings.length,
-    1,
-    `daily-stable.yml must set the tracing flag exactly once for this to be readable; found ${settings.length}`,
-  );
+  for (const name of MIRRORED) {
+    const raw = DECLARED.get(name);
+    assert.ok(raw !== undefined, `${name} is mirrored here, but daily-stable.yml's service does not set it`);
 
-  // Evaluated rather than string-compared, for the day the value becomes an
-  // expression — it already is one on pr-validation.yml. An expression this cannot
-  // evaluate fails here deliberately: a guard that cannot read the value is a guard
-  // that is not checking it.
-  let declared;
-  try {
-    declared = evaluateWorkflowValue(settings[0], {});
-  } catch (err) {
-    assert.fail(`cannot evaluate daily-stable.yml's tracing setting, so it is unverified — ${err.message}`);
+    // Evaluated rather than string-compared, for the day a value becomes an expression
+    // — it already is one on pr-validation.yml. An expression this cannot evaluate
+    // fails deliberately: a guard that cannot read the value is a guard that is not
+    // checking it (#1226).
+    let declared;
+    try {
+      declared = evaluateWorkflowValue(raw, {});
+    } catch (err) {
+      assert.fail(`cannot evaluate daily-stable.yml's ${name}, so it is unverified — ${err.message}`);
+    }
+
+    // Delimited, because an empty value and a value this failed to read are otherwise
+    // the same empty string.
+    const r = sourced(`printf '<<%s>>' "$${name}"`, BLANKED);
+    const got = r.stdout.match(/<<([\s\S]*)>>/)?.[1];
+    assert.equal(got, declared, `this lane has to run ${name} the way daily-stable.yml does`);
   }
-
-  // The environment is blanked, not inherited. `sourced()` forwards process.env, so an
-  // exported LANGFLOW_DEACTIVATE_TRACING — on the VM, or in the shell of whoever was
-  // debugging #1714 — would answer for the default and let this test pass with the
-  // line deleted. `:-` treats empty as unset, so this measures the default itself.
-  const r = sourced(`echo "$LANGFLOW_DEACTIVATE_TRACING"`, { LANGFLOW_DEACTIVATE_TRACING: "" });
-  assert.equal(
-    r.stdout.trim(),
-    declared,
-    `this lane has to trace the way daily-stable.yml does (${declared})`,
-  );
 });
 
 test("a tracing value that is neither true nor false stops the run", () => {
@@ -194,6 +199,36 @@ test("a tracing value that is neither true nor false stops the run", () => {
   const r = sourced(`echo unreachable`, { LANGFLOW_DEACTIVATE_TRACING: "0" });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /must be exactly 'true' or 'false'/);
+});
+
+test("a custom-components value that is neither true nor false stops the run", () => {
+  // Same reader, same class: `0` here would disable the feature while reading as a
+  // deliberate setting, and the custom-component specs would fail against a disabled
+  // surface rather than exercise it.
+  const r = sourced(`echo unreachable`, { LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "0" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /LANGFLOW_ALLOW_CUSTOM_COMPONENTS must be exactly 'true' or 'false'/);
+});
+
+test("a worker timeout that is not a positive integer stops the run", () => {
+  // gunicorn hands this to a watchdog. A non-numeric value is not a slow ceiling, it
+  // is no ceiling — and #1048's whole point is bounding what one wedge costs.
+  for (const bad of ["", "abc", "12s", "-5", "0"]) {
+    const r = sourced(`echo unreachable`, { LANGFLOW_WORKER_TIMEOUT: bad || "x" });
+    assert.notEqual(r.status, 0, `LANGFLOW_WORKER_TIMEOUT=${JSON.stringify(bad)} should have been refused`);
+    assert.match(r.stderr, /LANGFLOW_WORKER_TIMEOUT must be/);
+  }
+});
+
+test("pragmas that are not a JSON object stop the run", () => {
+  // Langflow falls back to its own defaults on a value it cannot parse, without saying
+  // so — which is this variable's own failure mode (a silent loss of foreign_keys)
+  // arriving through the caller.
+  for (const bad of ["{oops", '["foreign_keys"]', '"ON"']) {
+    const r = sourced(`echo unreachable`, { LANGFLOW_SQLITE_PRAGMAS: bad });
+    assert.notEqual(r.status, 0, `LANGFLOW_SQLITE_PRAGMAS=${bad} should have been refused`);
+    assert.match(r.stderr, /LANGFLOW_SQLITE_PRAGMAS/);
+  }
 });
 
 test("the lane does not append to the daily's token series", () => {
@@ -207,15 +242,78 @@ test("the lane does not append to the daily's token series", () => {
   assert.match(line, /TOKENS_SUPPRESS_HISTORY=1/);
 });
 
-test("the tracing value crosses the ssh boundary, which a default alone does not", () => {
-  // The failure mode this catches LOOKS fixed: the value is set here, the shell that
+test("the mirrored values cross the ssh boundary, which a default alone does not", () => {
+  // The failure mode this catches LOOKS fixed: the values are set here, the shell that
   // runs the starter is on the other machine, and it inherits nothing from this one.
   // A variable that never crosses is a variable that never applied.
   const line = readFileSync(SCRIPT, "utf8")
     .split("\n")
     .find((l) => l.includes("bash -s; sleep 86400"));
   assert.ok(line, "could not find the command that starts the backend on the target");
-  assert.match(line, /LANGFLOW_DEACTIVATE_TRACING=\$LANGFLOW_DEACTIVATE_TRACING/);
+  assert.match(line, /\$\(mirrored_target_env\)/);
+
+  // And what that composer would actually produce, rather than the fact that it is
+  // called: a variable dropped from the function is invisible to the line above.
+  const r = sourced(`mirrored_target_env`, BLANKED);
+  for (const name of MIRRORED) {
+    assert.match(r.stdout, new RegExp(`(^|\\s)${name}=`), `${name} never reaches the target's shell`);
+  }
+});
+
+test("the remote quoting survives a value carrying a quote, which no current value does", () => {
+  // The branch none of today's values reach, and therefore the one that will be wrong
+  // when it is first needed — the day someone overrides a mirrored variable from the
+  // qa wrapper. The first implementation was wrong here and passed every other test in
+  // this file: `${1//\\'/…}` eats its backslashes twice inside double quotes and
+  // produced a string that did not parse.
+  const hostile = `it's {"a": "b"} and $x`;
+  // Handed over through the ENVIRONMENT, not spelled into the body: a double-quoted
+  // literal would let this shell expand the `$x` before shq ever saw it, and the test
+  // would then be quoting a string it had already flattened.
+  const r = sourced(
+    [
+      `q="$(shq "$HOSTILE")"`,
+      `printf '%s\\n' 'printf "%s" "$X"' | env -u X bash -c "X=$q bash -s"`,
+    ].join("\n"),
+    { HOSTILE: hostile },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  // Not just "it parsed": `$x` must arrive unexpanded, which is the other half of what
+  // quoting is for here.
+  assert.equal(r.stdout, hostile);
+});
+
+test("a mirrored value survives the shell on the far side, spaces and quotes included", () => {
+  // ssh joins its arguments and hands ONE string to a shell over there, so anything
+  // unquoted is re-split on arrival. Every mirrored value used to be a bare word and
+  // survived that by luck; LANGFLOW_SQLITE_PRAGMAS is a JSON object, and unquoted it
+  // sets the variable to `{"synchronous":` and feeds five loose words to `bash -s`.
+  //
+  // `bash -c "$remote"` is the far side: same concatenated string, same re-split.
+  //
+  // Every mirrored name is UNSET for it, and that is the load-bearing half. ssh
+  // forwards no environment, so the only way a value can arrive there is inside the
+  // command string — while this test's own shell holds all of them, exported by the
+  // harness. Without the `env -u` the far side would read them by inheritance and the
+  // test would pass with the composer emptied, which is the exact failure the test
+  // above exists for, reintroduced one layer down. Measured: dropping the pragmas from
+  // the composer left this assertion green until the unsets were added.
+  const unset = MIRRORED.map((name) => `-u ${name}`).join(" ");
+  const r = sourced(
+    [
+      `remote="$(mirrored_target_env)LANGFLOW_PORT=7999 bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_SQLITE_PRAGMAS"' | env ${unset} bash -c "$remote"`,
+    ].join("\n"),
+    BLANKED,
+  );
+  assert.equal(r.status, 0, r.stderr);
+  // Parsed, not string-matched: the property is that the far side can still READ it.
+  const pragmas = JSON.parse(r.stdout);
+  assert.equal(
+    pragmas.foreign_keys,
+    "ON",
+    "the pragmas arrived unreadable, so the cascade class silently stops being compared",
+  );
 });
 
 test("the version check is on by default, and so is enforcing it", () => {
