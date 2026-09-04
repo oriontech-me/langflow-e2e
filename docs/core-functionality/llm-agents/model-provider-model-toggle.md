@@ -1,6 +1,6 @@
 # Model Provider Model Toggle
 
-**Last validated:** Langflow 1.12.x (measured on `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
+**Last validated:** Langflow 1.13.x (measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -31,9 +31,9 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 ### Test 1 — toggle changes immediately and persists across reopen
 
 1. `SimpleAgentTemplatePage.load({ provider })` — configures the provider's API key globally and enables all its models (the known baseline). `MODEL_NOT_AVAILABLE` is caught and turned into a skip.
-2. Navigate to **Settings → Model Providers**, expand the provider through `waitForProviderRow()` (see *Waiting for the provider list* below — never a bare `provider-item-...` wait), and wait for `model-provider-selection` and `llm-models-section`.
+2. Navigate to **Settings → Model Providers** through `navigateSettingsPages()` (see *Reaching the Settings page* below — three **verified** hops, never three blind clicks), expand the provider through `waitForProviderRow()` (see *Waiting for the provider list* — never a bare `provider-item-...` wait), and wait for `model-provider-selection` and `llm-models-section`.
 3. Read the first visible `llm-toggle-<model>` to derive a model name, filter the list to it via `model-search-input`, and assert it is enabled (`aria-checked="true"`).
-4. Disable it: click the toggle, assert `aria-checked="false"` immediately (optimistic), and wait for the `POST .../enabled_models` response (debounced persistence flush).
+4. Disable it: click the toggle, assert `aria-checked="false"` immediately (optimistic), and wait for the `POST .../enabled_models` response (debounced persistence flush) — through `toggleWriteVerdict()`, so a write that never lands says which half failed (see *Waiting for the persistence write* below).
 5. Reload the app, reopen Model Providers, re-expand the provider, search for the same model and assert its toggle is still `aria-checked="false"` (persisted).
 6. Restore the baseline: re-enable the model and assert `aria-checked="true"`.
 
@@ -52,7 +52,7 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
    (#1461). **The dropdown mixes models from every configured provider** (#597 — with
    Google configured by sibling specs it listed `gemini-3.5-flash` first while the
    test's provider was OpenAI), so the options alone cannot pick the target.
-3. In **Settings → Model Providers**, open the test's provider through
+3. In **Settings → Model Providers** (reached through `navigateSettingsPages()`), open the test's provider through
    `waitForProviderRow()` and read its
    `llm-toggle-<model>` ids via `enumerateEnabledModels()` — every toggle the panel
    renders, in the **bare** ids the picker's testid does not use. (The helper's name
@@ -138,6 +138,101 @@ reachable only from an instance that is misbehaving on purpose. Its verdicts:
 
 ---
 
+## Reaching the Settings page *(required)*
+
+Every hop into Settings goes through `navigateSettingsPages()`
+(`tests/helpers/ui/go-to-settings.ts`), which **verifies the effect of each
+click before making the next one**. The reason is attribution, and the total
+budget is deliberately **not raised** — it is the same worst case as the three
+clicks it replaces (3 x `actionTimeout`, 20 s each), minus the unconditional
+`waitForTimeout(500)` it no longer needs.
+
+The old helper fired three blind clicks: `user-profile-settings`, then
+`getByText("Settings").first()`, then `getByText("<section>").first()`. Nothing
+checked that any of them took effect, and a hop the DOM **accepts** while the
+app **discards** it therefore surfaced one hop LATER, at a locator that never had
+a chance. Measured on #1696, from the dailies' own `results.json` and blob
+reports:
+
+| Daily | What Playwright reported | What the artifacts show |
+|---|---|---|
+| 2026-09-03 (run `33756085604`) | `locator.click: Timeout 20000ms exceeded` / `waiting for getByText('Model Providers').first()`, at `go-to-settings.ts:15` | the failure-time screenshot and aria snapshot are the **home page** — Projects sidebar, flow list, dropdown closed, the account button carrying a focus ring. `Settings` appears **0 times** in the snapshot. Hops 1 and 2 both returned success. |
+| 2026-09-01 (run `33511210195`) | the same line, the same locator, the same budget, on attempt 2 | second, independent occurrence — the shape is recurrent, not a one-off |
+
+The same run's passing retry times the mechanism: the hop-1 click took
+**1532 ms** of actionability wait right after `page.goto("/")`, against **121 ms**
+for the identical click earlier in the same test, and its stderr carries
+`agent credential settled slowly: 6.2s` (the #751 guard) — a saturated backend.
+Locally, a `MutationObserver` on `1.13.0.dev0` shows the header's DOM node being
+**replaced ~616 ms** after `goto("/")`, which is what discards a Radix menu whose
+trigger was clicked just before it. Four different "signatures" over 30 days,
+one cause; a call log that names nothing, because the step that failed is not the
+step that reports.
+
+Three verified hops, each with its **own** real testid rather than a text match
+(`getByText` is case-insensitive and unscoped; the stable handles exist and were
+measured on `1.13.0.dev0`):
+
+| hop | click | effect waited for |
+|---|---|---|
+| 1 — open the account menu | `user-profile-settings` | `menu_settings_button` visible |
+| 2 — enter Settings | `menu_settings_button` | the URL matches `/\/settings(?:\/|$)/` |
+| 3 — open the section | `sidebar-nav-<section>` (a real `<a href="/settings/...">`) | `location.pathname` equals **that anchor's own `href`**, then `settings_menu_header` reads `<section>` |
+
+A hop whose effect does not land is **re-attempted once, inside the same
+deadline**, and the re-attempt is announced on stdout rather than being silent —
+a dropped click is repaired the way #1518 repairs the sidebar's dropped `fill`,
+but a *systematic* breakage must not hide behind the repair. If the effect still
+does not land, `settingsNavVerdict()` throws naming the hop and what the page was
+showing. It is a **pure** function over the snapshot, unit-tested in
+`go-to-settings.test.ts`, for the same reason `providerRowVerdict()` is: the
+branches that matter are otherwise reachable only from an instance misbehaving
+on purpose.
+
+| kind | when | reads as |
+|---|---|---|
+| `menu-unopened` | the trigger was clicked twice and `menu_settings_button` never rendered | the account menu never opened — an app-shell stall, not a missing Settings page |
+| `page-unreached` | the URL never became `/settings…`, **or** it did and the sidebar rendered **zero** `sidebar-nav-*` entries | the Settings route never mounted; the verdict carries the pathname the page is actually on. Hop 2 keys on the URL, not on the `sidebar-nav-` prefix, which the flow sidebar also uses — and zero entries is a shell that never mounted, never a renamed section |
+| `section-absent` | the URL is `/settings…`, the sidebar rendered **other** `sidebar-nav-*` entries, and `sidebar-nav-<section>` is not among them | a PRODUCT finding — the section was renamed or removed; it names every entry that DID render |
+| `section-unconfirmed` | the pathname never became the anchor's `href`, **or** it did and a `settings_menu_header` that IS on the page never read `<section>` | the section route did not take, or it took and the page mounted the wrong content; the verdict carries the header text and the pathname |
+
+Hop 3's target path is read from the clicked anchor's **own** `href`, never from a
+name-to-path table — the anchor is the single source, so a section Langflow
+renames cannot desync a map (the `langflowProviderName` argument, #1043/#1184).
+The header is the *content* half of the confirmation and is treated as optional
+for the same reason: `sidebar-nav-Langflow MCP Client` renders **no**
+`settings_menu_header` at all (measured across all nine sections on
+`1.13.0.dev0`; the other eight render exactly one, whose text equals the sidebar
+title, so the `.last()` at the call sites is defensive rather than required).
+When the pathname matched and the header was never present in any poll, the hop
+is accepted on the URL alone and says so once on stdout; a header that IS
+present and reads something else is `section-unconfirmed`. No section list is
+hardcoded either way.
+
+---
+
+## Waiting for the persistence write *(required)*
+
+`setToggle()` arms `page.waitForResponse` for `POST .../enabled_models` **before**
+clicking, because the write is debounced ~1 s and navigating away first would drop
+it. On the 2026-09-01 daily (run `33511210195`) that wait timed out at 15 s on
+**both** tests, and the bare
+`TimeoutError: page.waitForResponse: Timeout 15000ms exceeded while waiting for
+event "response"` cannot distinguish the two things that produce it.
+`toggleWriteVerdict()` — pure, unit-tested in `model-toggle-write.test.ts` —
+splits them, with the **budget unchanged**:
+
+| kind | when | reads as |
+|---|---|---|
+| `not-issued` | no `POST .../enabled_models` request was even observed | the UI never fired the debounced write — a suite or product defect, and the toggle's `aria-checked` at that moment is named |
+| `unanswered` | the request was issued and the instance did not answer inside the budget | INSTANCE saturation; the request count and the budget are named. Do not raise it to make this pass (#1648) |
+
+This is **attribution, not a fix**: a saturated instance still fails, correctly.
+What changes is that the failure says which half of the round-trip broke, so the
+next occurrence is not a fifth nameless "signature" (#1012/#1626).
+
+---
+
 ## Validation criterion *(required)*
 
 - Toggling a model flips `aria-checked` immediately (optimistic update).
@@ -151,6 +246,31 @@ reachable only from an instance that is misbehaving on purpose. Its verdicts:
   Force-failable in both directions: hold `GET /api/v1/models?purpose=configure` past
   the budget and the failure must say `PROVIDER_LIST_STALLED`; render the list without
   the target provider and it must say `PROVIDER_ABSENT` and list the ones that rendered.
+- Reaching **Settings → Model Providers** fails with the HOP named — `menu-unopened`,
+  `page-unreached`, `section-absent` or `section-unconfirmed` — never as a bare
+  `getByText(...)` click timeout one hop downstream of the hop that actually broke.
+  Force-failable in both directions, and the negative direction is **measured**, not
+  asserted: swallowing hop 2's selection at the DOM level — a capture-phase
+  `stopImmediatePropagation` on `menu_settings_button`, so the item is still visible,
+  hit-tested and clicked while the event never reaches Radix's `onSelect` — reproduces
+  the daily byte-for-byte against the OLD helper, and all four verdict branches were
+  then measured against the new one on `1.13.0.dev2`:
+
+  | mutation | old helper | new helper |
+  |---|---|---|
+  | none (control) | PASSED 1155 ms | PASSED 646–895 ms across all five sections |
+  | hop 2's selection swallowed **once** | **FAILED 20527 ms** — `locator.click: Timeout 20000ms exceeded` / `waiting for getByText('Model Providers').first()`, page still on the previous route, **zero** `Settings` text nodes, no open menu | **PASSED 3/3** (9056–9667 ms) through the announced hop-2 repair — this is the case the repair exists for |
+  | **every** selection swallowed | same, nameless | **FAILED** `SETTINGS_PAGE_UNREACHED`, naming the pathname it is stuck on |
+  | `menu_settings_button`'s testid stripped | nameless | **FAILED** `SETTINGS_MENU_UNOPENED`, and it distinguishes the case: *"The menu DID open … so this is a RENAMED testid rather than an app-shell stall"* |
+  | `sidebar-nav-Model Providers`'s testid stripped | nameless | **FAILED** `SETTINGS_SECTION_ABSENT`, listing the 8 sections that did render |
+
+  Note the second and third rows are different mutations on purpose: a single dropped
+  selection MUST be repaired, so only swallowing every one of them can force hop 2's
+  verdict.
+- A persistence write that does not complete inside its unchanged 15 s budget fails as
+  `TOGGLE_WRITE_NOT_ISSUED` (no POST was ever observed) or `TOGGLE_WRITE_UNANSWERED`
+  (the POST was issued, the instance did not answer) — never as a bare
+  `page.waitForResponse` timeout.
 - The baseline is restored at the end of each test (model left enabled) so sibling specs are unaffected.
 
 ---
@@ -196,6 +316,12 @@ flow count grows.
 - `src/frontend/src/hooks/use-refresh-model-inputs.ts` — refreshes component model dropdowns when toggles change (the propagation behavior in Test 2).
 - `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/` — renders the Agent's `model_model` trigger, `value-dropdown-model_model` value span, and the `-option` dropdown entries. `components/ModelList.tsx` owns `getModelOptionTestId(provider, modelName)` = `${provider}-${modelName}-option` and the cmdk `value` = `${provider}::${modelName}` that surfaces as `data-value` — the two attributes this spec resolves a model by.
 - `tests/helpers/provider-setup/model-option.ts` — the shared identity reader (#1463): `enumerateModelOptions()`, `enumerateEnabledModels()`, `ModelOption`, plus `censusForTarget()` / `hasOptionIdentity()` (#1464). Test 2 matches options exclusively through it; the classification is pure and unit-tested in `model-option.test.ts`, because the branch that must not regress ("a `target: 0` verdict counts only with `total > 0` and `providerOthers > 0`") is otherwise reachable only from a live run.
+- `tests/helpers/ui/go-to-settings.ts` — `navigateSettingsPages()` and the pure `settingsNavVerdict()` (#1696). The three verified hops above; `go-to-settings.test.ts` covers the classification. Shared with `mcp-server-starter-projects`, `settings-message-history`, `remove-provider-api-key`, `model-provider-modal-actions`, `model-provider-api-key` and `modelProviderModal`, so a change here is suite-wide by design — the same 20 s `locator.click` shape was recorded against four of those specs.
+- `tests/helpers/provider-setup/model-toggle-write.ts` — the pure `toggleWriteVerdict()` (#1696) behind `setToggle()`'s persistence wait; `model-toggle-write.test.ts` covers it.
+- `src/frontend/src/components/core/appHeaderComponent/components/AccountMenu/index.tsx` — owns `user-profile-settings` (hop 1's trigger, line 57) and `menu_settings_button` (hop 2's item, line 98, verified on `main`). Renaming `menu_settings_button` turns hop 1 into `SETTINGS_MENU_UNOPENED`, which is a loud failure rather than a silent one.
+- `src/frontend/src/components/core/sidebarComponent/index.tsx` — renders `data-testid={`sidebar-nav-${item.title}`}` on a real `CustomLink` (line 53 on `main`), one per settings section: `sidebar-nav-General`, `sidebar-nav-Model Providers`, `sidebar-nav-Global Variables`, `sidebar-nav-MCP Servers`, `sidebar-nav-Messages`, `sidebar-nav-DB Providers`, `sidebar-nav-Langflow API Keys`, `sidebar-nav-Langflow MCP Client`, `sidebar-nav-Shortcuts` (all nine enumerated live on `1.13.0.dev0`). Hop 3 clicks the requested one; a section missing from this list is the `section-absent` verdict. The component is generic — the flow sidebar uses the same prefix — so hop 2 keys on the URL, not on the prefix alone.
+- `src/frontend/src/pages/SettingsPage/pages/ModelProvidersPage/index.tsx` — owns this section's `settings_menu_header`, the observable hop 3 confirms. Each settings page renders its own, so the header text is what identifies the section.
+- `src/frontend/tests/utils/go-to-settings.ts` — **upstream's own copy of this helper**, and the reason this repo's version is a fix rather than an invention. Our `navigateSettingsPages()` is a fork of the pre-`76fb85da` version: `release-1.9.7` still carries it byte-identically, `waitForTimeout(500)` included. Upstream rewrote it on **2026-08-25** in `76fb85da` — *"test: stabilize release Playwright navigation"* — onto exactly the testids above plus a `waitForURL(/\/settings(?:\/|$)/)`, i.e. it reached the same conclusion from the same symptom before we did. This repo adopts that shape and adds two things upstream does not have: the `settingsNavVerdict()` attribution and the bounded per-hop re-attempt. It deliberately does **not** adopt upstream's budgets (`TIMEOUTS.medium` 10 s / `TIMEOUTS.standard` 30 s) — 30 s would raise the last hop above the 20 s `actionTimeout` it has today and hide the stall.
 - `tests/helpers/provider-setup/provider-list-state.ts` — `waitForProviderRow()` and the pure `providerRowVerdict()` (#1648). Reads the four provider-list states listed above; `provider-list-state.test.ts` covers the classification.
 - `src/frontend/src/modals/modelProviderModal/components/ProviderList.tsx` — owns all four state testids (`provider-list-loading` line 82, `provider-list-error` 94, `provider-list-empty` 105, `provider-list` 119 on `release-1.12.0`). Renaming any of them turns the verdict into `unreached`, which is a loud failure rather than a silent one.
 - `src/frontend/src/modals/modelProviderModal/components/ProviderListItem.tsx` — the row itself, whose testid is built as `provider-item-` plus the provider's display name. Single source of the name this suite waits on.

@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, Request, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage } from "../../../../pages";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
@@ -13,6 +13,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
+import { toggleWriteVerdict } from "../../../../helpers/provider-setup/model-toggle-write";
 import {
   censusForTarget,
   enumerateEnabledModels,
@@ -64,6 +65,11 @@ const providerItemTestId = provider
 const providerLabel = provider ? langflowProviderName(provider) : "";
 
 const ENABLED_MODELS_ENDPOINT = "/api/v1/models/enabled_models";
+
+// The debounced persistence write's budget, UNCHANGED from the inline 15000 it
+// replaces (#1696). Named only so `toggleWriteVerdict` can quote the same number
+// it waited on — raising it would hide the saturation the verdict exists to name.
+const TOGGLE_WRITE_TIMEOUT_MS = 15000;
 
 // SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) and the
 // canvas URL id is transient on 1.11 — track every flow the load actually
@@ -206,23 +212,80 @@ async function toggleForModel(page: Page, modelName: string): Promise<Locator> {
 
 // Flip a toggle and wait for the optimistic UI change plus the debounced POST
 // that persists it (useModelToggleQueue debounces the write by 1000ms).
+//
+// The wait is armed BEFORE the click because navigating away first would drop
+// the debounced write. When it times out, the bare
+// `page.waitForResponse: Timeout 15000ms exceeded while waiting for event
+// "response"` cannot distinguish the UI never firing the write from the
+// instance never answering one that was sent — it appeared on BOTH tests of
+// this file on daily 2026-09-01 (run 33511210195) and said neither. The
+// requests and responses are therefore counted and handed to the pure
+// `toggleWriteVerdict` (#1696). The budget is UNCHANGED: this is attribution,
+// and a saturated instance still fails, correctly.
 async function setToggle(
   page: Page,
   toggle: Locator,
   enabled: boolean,
+  modelName: string,
 ): Promise<void> {
   const current = (await toggle.getAttribute("aria-checked")) === "true";
   if (current === enabled) return;
-  const save = page.waitForResponse(
-    (resp) =>
-      resp.url().includes(ENABLED_MODELS_ENDPOINT) &&
-      resp.request().method() === "POST",
-    { timeout: 15000 },
-  );
-  await toggle.click();
-  // Optimistic update — the switch reflects the new state immediately.
-  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
-  await save;
+
+  const isWrite = (url: string, method: string) =>
+    url.includes(ENABLED_MODELS_ENDPOINT) && method === "POST";
+  let requestsSeen = 0;
+  let responsesSeen = 0;
+  const onRequest = (req: Request) => {
+    if (isWrite(req.url(), req.method())) requestsSeen += 1;
+  };
+  const onResponse = (resp: Response) => {
+    if (isWrite(resp.url(), resp.request().method())) responsesSeen += 1;
+  };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+
+  try {
+    const save = page.waitForResponse(
+      (resp) => isWrite(resp.url(), resp.request().method()),
+      { timeout: TOGGLE_WRITE_TIMEOUT_MS },
+    );
+    try {
+      await toggle.click();
+      // Optimistic update — the switch reflects the new state immediately.
+      await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+    } catch (error) {
+      // `save` is still armed. Discard its outcome so its later rejection is
+      // not an UNHANDLED one, which would replace this real failure with a
+      // worse, unattributed one — then report what actually broke. The discard
+      // lives here and never at arming time: a `.catch()` on `save` itself
+      // would make the `await` below resolve and silently disable the verdict.
+      void save.catch(() => {});
+      throw error;
+    }
+    try {
+      await save;
+    } catch (error) {
+      const ariaChecked = (await toggle.getAttribute("aria-checked")) ?? "";
+      const verdict = toggleWriteVerdict(
+        {
+          requestsSeen,
+          responsesSeen,
+          ariaChecked,
+          wantedEnabled: enabled,
+          model: modelName,
+        },
+        ENABLED_MODELS_ENDPOINT,
+        TOGGLE_WRITE_TIMEOUT_MS,
+      );
+      throw new Error(
+        `${verdict.message} Underlying wait failed with: ` +
+          `${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+      );
+    }
+  } finally {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
+  }
 }
 
 // Reads the OPEN model picker and counts what it establishes about the target.
@@ -253,19 +316,21 @@ async function readPickerCensus(
 test.describe.configure({ mode: "serial" });
 
 test.describe("Model Provider Model Toggle", () => {
-  // Quarantined at the triage of daily #1694 (run 33756085604, 2026-09-03).
-  // This test failed on 6 of the last 30 dailies under 4 distinct signatures,
-  // each stalling at a different step of the same short path (open Model
-  // Providers -> pick the provider -> toggle a model -> await the write). On
-  // 2026-09-03 it timed out on `getByText('Model Providers')` with only 1 of
-  // 21 liveness probes failing in its window, so it is not wedge collateral.
-  // Being `fixme` (a skip, not a failure) keeps the serial sibling below
-  // running. Lifting the quarantine (remove test.fixme + restore @stable) is
-  // a deliverable of #1696.
-  test.fixme(
+  // Quarantine LIFTED here (#1696) — `test.fixme` removed and `@stable`
+  // restored. It was quarantined at the triage of daily #1694 after failing 6
+  // of 30 dailies under 4 signatures, and reading each run's own artifacts
+  // resolved those into causes rather than one flake: two occurrences
+  // (2026-09-01, 2026-09-03) were `navigateSettingsPages` reporting a hop that
+  // never had a chance instead of the hop that broke, and that is what this
+  // issue fixes; one (2026-08-31) was the bare `provider-item-*` wait, already
+  // closed by #1648 after that daily; one (2026-09-01) was the persistence
+  // write, now attributed by `toggleWriteVerdict` rather than papered over; and
+  // three were page-entry-barrier wedge collateral belonging to #1589/#1549.
+  // The byte-identical signature carrying two different locators is #1626.
+  test(
     "model toggle changes immediately and persists across reopen",
     {
-      tag: ["@regression", "@components", "@model-provider"],
+      tag: ["@stable", "@regression", "@components", "@model-provider"],
     },
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
@@ -291,7 +356,7 @@ test.describe("Model Provider Model Toggle", () => {
       });
 
       await test.step("disable the model — change is immediate and persisted", async () => {
-        await setToggle(page, toggle, false);
+        await setToggle(page, toggle, false, modelName);
       });
 
       await test.step("reopen Model Providers — disabled state persisted", async () => {
@@ -301,7 +366,7 @@ test.describe("Model Provider Model Toggle", () => {
         await expect(reopened).toHaveAttribute("aria-checked", "false");
 
         // Restore the baseline so the model stays enabled for other specs.
-        await setToggle(page, reopened, true);
+        await setToggle(page, reopened, true, modelName);
         await expect(reopened).toHaveAttribute("aria-checked", "true");
       });
     },
@@ -452,7 +517,7 @@ test.describe("Model Provider Model Toggle", () => {
         ).toBeGreaterThan(0);
 
         const toggle = await toggleForModel(page, targetModel);
-        await setToggle(page, toggle, false);
+        await setToggle(page, toggle, false, targetModel);
         // Armed for the failure-path restore in afterEach; disarmed by the re-enable
         // step below when the test completes normally.
         disabledModel = targetModel;
@@ -512,7 +577,7 @@ test.describe("Model Provider Model Toggle", () => {
       await test.step("re-enabling the model brings it back to the dropdown", async () => {
         await openProviderModelList(page);
         const toggle = await toggleForModel(page, targetModel);
-        await setToggle(page, toggle, true);
+        await setToggle(page, toggle, true, targetModel);
         // Restored by the test itself — the afterEach net is no longer needed.
         disabledModel = null;
 
