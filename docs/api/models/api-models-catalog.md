@@ -36,8 +36,8 @@ Measured contracts (`1.13.0.dev0`, keyless instance):
 | `GET /api/v1/models/enabled_models` | `200 {enabled_models, enabled_models_by_type}`; `enabled_models` is `{provider: {model_id: boolean}}` — all `false` on a keyless instance |
 | `GET /api/v1/models/default_model` | `200 {"default_model": null}` when unset; the query parameter is **`model_type`** (`"language"` default, or `"embedding"`) — two separate stored variables |
 | `GET /api/v1/models/default_model?model_type=<garbage>` | `200` — **not** a `422`: the route branches `language` vs *everything else*, so an unknown value silently reads the **embedding** slot |
-| `GET /api/v1/model_options/language` | `200 []` on a keyless instance |
-| `GET /api/v1/model_options/embedding` | `200 []` on a keyless instance |
+| `GET /api/v1/model_options/language` | `200`, a list of option rows — **`[]` only when nothing is configured**. On a lane that ran the provider sweep each row carries at least `{category, icon, metadata, name, provider, provider_id}` |
+| `GET /api/v1/model_options/embedding` | same shape, same dependency on the instance |
 
 **The hierarchy, measured on `1.13.0.dev0`:** `/models` (9: anthropic, azure-ai-foundry,
 google-generative-ai, ibm-watsonx, ollama, openai, openai-compatible, openrouter, vllm)
@@ -65,8 +65,13 @@ back as `null` rather than as an error.
 
 `@api` `@model-provider` `@stable`
 
-`@stable`: read-only, keyless, no run. The empty `model_options` list is the honest
-keyless state and is asserted as such.
+`@stable`: read-only, no run, and **no assertion depends on a credential being
+present or absent**. That is a correction, not a design note: the first version
+asserted `model_options === []` and reddened the PR lane, which configures providers
+before running (`Collect models`). The content of `model_options` and whether a
+`default_model` is set are properties of the **instance**, so this file asserts their
+shape and leaves the round-trip to `api-models-selection.spec.ts`, which owns the
+principal it writes to.
 
 ---
 
@@ -87,13 +92,17 @@ beyond an auth token; nothing is created, so there is nothing to clean up.
 5. `GET /models/provider-variable-mapping` → `200`; the `OpenAI` key maps to the
    variable name the resolvers expect.
 
-**Test 2 — `the enabled and default reads describe a keyless instance`**
+**Test 2 — `the enabled and default reads hold their shape whether or not a provider is configured`**
 1. `GET /models/enabled_providers` → `200` with both keys.
 2. `GET /models/enabled_models` → `200` with both keys; `enabled_models` is an object
    of objects of booleans.
-3. `GET /models/default_model` → `200 {"default_model": null}`; the same for
-   `?model_type=embedding`.
-4. `GET /model_options/language` and `/embedding` → `200 []`.
+3. `GET /models/default_model`, with no query and with each `model_type` → `200` whose
+   only key is `default_model`; when it is **not** null it is a
+   `{model_name, provider, model_type}` triple. Not asserted as null — see the Tags
+   note.
+4. `GET /model_options/language` and `/embedding` → `200` and an array; every row (if
+   any) carries the six required fields as a **superset**, since the sibling
+   `/models` rows already vary by provider.
 
 ---
 

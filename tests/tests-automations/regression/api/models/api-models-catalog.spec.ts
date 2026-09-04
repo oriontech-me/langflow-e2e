@@ -142,7 +142,7 @@ test.describe("Models API — the catalog read surface", () => {
   );
 
   test(
-    "the enabled and default reads describe a keyless instance",
+    "the enabled and default reads hold their shape whether or not a provider is configured",
     { tag: ["@stable", "@api", "@model-provider"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
@@ -186,20 +186,52 @@ test.describe("Models API — the catalog read surface", () => {
         }
       });
 
-      await test.step("the default model is unset, per model_type, on a keyless instance", async () => {
+      await test.step("the default model read answers one envelope per model_type", async () => {
         for (const query of ["", "?model_type=language", "?model_type=embedding"]) {
           const body = await getJson(request, `/api/v1/models/default_model${query}`);
           expect(Object.keys(body)).toEqual(["default_model"]);
-          expect(body.default_model, `default_model${query}`).toBeNull();
+          // null when unset, a {model_name, provider, model_type} triple when set —
+          // and NOT asserted as null: a lane that ran the provider sweep may have
+          // one. The round-trip is asserted properly, on a principal the test owns,
+          // in api-models-selection.spec.ts.
+          if (body.default_model !== null) {
+            expect(Object.keys(body.default_model).sort()).toEqual([
+              "model_name",
+              "model_type",
+              "provider",
+            ]);
+          }
         }
       });
 
-      await test.step("model_options answers an empty list when no provider is configured", async () => {
+      await test.step("model_options answers option rows, and is empty only when nothing is configured", async () => {
         for (const kind of ["language", "embedding"]) {
-          const body = await getJson(request, `/api/v1/model_options/${kind}`);
+          const body = (await getJson(request, `/api/v1/model_options/${kind}`)) as Array<
+            Record<string, unknown>
+          >;
           expect(Array.isArray(body)).toBe(true);
-          // Keyless is the honest state here — an empty list, not a 4xx.
-          expect(body).toEqual([]);
+          // The CONTENT is a property of the instance and must not be asserted:
+          // keyless it is `[]`; on a lane that ran the provider sweep it is one row
+          // per selectable model. The first version of this step asserted `[]` and
+          // reddened the PR lane, which configures credentials — the shape is the
+          // contract, the emptiness is not.
+          for (const row of body) {
+            // A required SUPERSET, for the same reason the catalog rows are: the
+            // /models rows already vary by provider, so an exact key set is the
+            // wrong shape of assertion on this API.
+            expect(Object.keys(row).sort(), `model_options/${kind} row`).toEqual(
+              expect.arrayContaining([
+                "category",
+                "icon",
+                "metadata",
+                "name",
+                "provider",
+                "provider_id",
+              ]),
+            );
+            expect(typeof row.name).toBe("string");
+            expect(typeof row.provider_id).toBe("string");
+          }
         }
       });
     },
