@@ -36,10 +36,14 @@ comment so a reader of a number finds its limits in the same place:
 - **The scheduled VM lane traces, and still writes nothing here (#1714).** It is not a local
   instance: `scripts/run-e2e.sh` overrides that default and runs with tracing ON, the way
   `daily-stable.yml` does, because the traces specs assert against a traced instance. Its
-  summary call carries `TOKENS_SUPPRESS_HISTORY=1` all the same — while both dailies run, the
-  Actions one owns this series, and a second line a day for the same `@stable` sweep would
-  double-count the trend and halve the anomaly window. The VM lane's own series lives outside
-  that clone until the switch makes it the only writer.
+  summary call does not write **here**, all the same: while both dailies run, the Actions one
+  owns this file, and a second line a day for the same `@stable` sweep would double-count the
+  trend and halve the anomaly window. It writes its own series to a **ledger outside the clone**
+  (`LEDGER_DIR`, default `$XDG_STATE_HOME/langflow-e2e`), one file per series with the same
+  schemas as the three here, and every line it writes carries `workflow: "daily-stable-vm"` — so
+  when the two are merged, which era a row came from is still readable. Outside the clone because
+  `reports/` is tracked: a line written here by the VM lane is an uncommitted change that the
+  machine's next `git pull --ff-only` refuses, silently, the following morning.
 - **`Collect models` spend enters the totals with no spec name.** That pre-flight sweep drives the
   same Langflow instance the token poller watches, but it is not a spec run, so its traces land in
   `unattributed`, never in `by_spec`.

@@ -131,12 +131,31 @@ test("gh_out reads plain and heredoc values, which the outage report needs", () 
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("the publish switches are OFF by default, all four of them", () => {
+test("the publish switches are OFF by default, all three of them", () => {
   // Not a preference: while both dailies run, only the Actions one has consequence.
   // A second issue or a second Slack message for one day's verdict is worse than
   // none, and this is where that decision is enforced.
-  const r = sourced(`echo "$CREATE_ISSUE $NOTIFY_SLACK $POST_QA_PLATFORM $COMMIT_HISTORY"`);
-  assert.equal(r.stdout.trim(), "0 0 0 0");
+  const r = sourced(`echo "$CREATE_ISSUE $NOTIFY_SLACK $POST_QA_PLATFORM"`);
+  assert.equal(r.stdout.trim(), "0 0 0");
+});
+
+test("writing back to the repository is absent, not merely switched off", () => {
+  // The fourth switch used to be COMMIT_HISTORY, and it gated an append that committed
+  // nothing — so the series this lane has to keep was being held back by a decision
+  // that belonged to a later etapa. Now the append happens and the COMMIT is what is
+  // missing. Pinned by absence rather than by a default, because a variable set to
+  // zero reads as "implemented, disabled" and invites someone to flip it on a machine
+  // that has no write credentials and no review.
+  // Comments are stripped first, for the reason #1716 paid for: a comment that merely
+  // SPELLS the thing under test fails a correct file, and the paragraph explaining why
+  // COMMIT_HISTORY was removed is exactly such a comment.
+  const code = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+  const writes = code.split("\n").filter((l) => /\bgit\s+(commit|push|add)\b/.test(l));
+  assert.deepEqual(writes, [], "this lane must not write to the repository");
+  assert.doesNotMatch(code, /COMMIT_HISTORY/, "the switch is gone, not renamed");
 });
 
 // daily-stable.yml's Langflow service environment, read once. The reader strips
@@ -250,16 +269,6 @@ test("pragmas that are not a JSON object stop the run", () => {
   }
 });
 
-test("the lane does not append to the daily's token series", () => {
-  // With tracing ON this lane has spend to record, and the summarizer's default is to
-  // append one line to reports/token-history.jsonl — a git-tracked file, in a clone
-  // this run does not own, whose `git pull --ff-only` would then refuse every day.
-  const line = readFileSync(SCRIPT, "utf8")
-    .split("\n")
-    .find((l) => l.includes("watch-tokens.mjs --summarize"));
-  assert.ok(line, "could not find the token summary invocation");
-  assert.match(line, /TOKENS_SUPPRESS_HISTORY=1/);
-});
 
 test("the mirrored values cross the ssh boundary, which a default alone does not", () => {
   // The failure mode this catches LOOKS fixed: the values are set here, the shell that
@@ -605,6 +614,7 @@ test("the stop scripts run before the holders are killed", () => {
     "cleanup kills the holding sessions before asking the stop scripts to run",
   );
 });
+
 // ---------------------------------------------------------------------------
 // THE LEDGER — the three series this lane has to keep
 // ---------------------------------------------------------------------------
@@ -753,4 +763,35 @@ test("the ledger is seeded once from the Actions series, and an existing one is 
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("nothing in the publish phase writes into the tracked series", () => {
+  // The three paths may appear there ONLY as the source ledger_seed copies FROM. A
+  // write to any of them is the dirty tree this whole change exists to avoid, and it
+  // would look exactly like a working run until the next morning's pull.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  assert.ok(publish.length > 0, "could not isolate phase_publish");
+  const TRACKED = ["reports/daily-history.jsonl", "reports/token-history.jsonl", "reports/spec-durations.json"];
+  for (const line of publish.split("\n")) {
+    const code = line.trim();
+    if (code.startsWith("#")) continue;
+    for (const path of TRACKED) {
+      if (!code.includes(path)) continue;
+      assert.ok(code.startsWith("ledger_seed "), `${path} is touched by something other than the seed: ${code}`);
+    }
+  }
+  // And the appenders are pointed somewhere, rather than left on their defaults —
+  // whose defaults are precisely the tracked paths above.
+  assert.match(publish, /HISTORY_FILE="\$LEDGER_HISTORY"/);
+  assert.match(publish, /mv "\$next" "\$LEDGER_DURATIONS"/);
+});
+
+test("the matrix still balances on the tracked durations while both dailies run", () => {
+  // Turning this on early would move specs onto different shards than the Actions lane
+  // puts them, so a failure's neighbours — and the load its backend was under —
+  // would differ for a reason that has nothing to do with the product. The comparison
+  // is the product of this etapa; the switch belongs to the one after it.
+  const r = sourced(`echo "$USE_LEDGER_DURATIONS"`);
+  assert.equal(r.stdout.trim(), "0");
 });
