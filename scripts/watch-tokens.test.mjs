@@ -7,8 +7,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-;
-
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";

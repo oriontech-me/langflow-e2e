@@ -2,8 +2,7 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import realFs, { mkdtempSync, writeFileSync } from "node:fs";
-
+import realFs, { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { MERGE_CODES, mergeTokenPayload, resolveTargetProvider } from "./merge-token-payload.mjs";

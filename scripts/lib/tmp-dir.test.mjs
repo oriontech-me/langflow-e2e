@@ -3,9 +3,12 @@
 //
 // Two halves, and the structural one is what stops the leak coming back. The
 // behavioural tests prove the sweep works; they cannot prove the 26th test file
-// will use it. A rule that "no test calls `mkdtempSync` directly" is crisply
+// will use it. A rule that "the name `mkdtempSync` does not appear" is crisply
 // checkable, which "does this file clean up somewhere" is not — 25 of the 36 files
-// that leaked all *looked* fine in review.
+// that leaked all *looked* fine in review. It matches the NAME rather than the
+// call because the first version matched only the call, and a mechanical rewrite
+// left the import behind in two files: half-converted, invisible here, and
+// invisible to `npm run lint` too, where `no-unused-vars` is only a warning.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -82,7 +85,7 @@ function testFiles(dir = REPO_ROOT, out = []) {
   return out;
 }
 
-test("no unit test creates a temp directory the process will not clean up", () => {
+test("no unit test names mkdtempSync — the directory it makes is the one nothing removes", () => {
   const offenders = [];
   let scanned = 0;
 
@@ -95,7 +98,12 @@ test("no unit test creates a temp directory the process will not clean up", () =
       .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
       .replace(/(^|[^:\w])\/\/.*$/gm, (m, prefix) => prefix + m.slice(prefix.length).replace(/[^\n]/g, " "));
 
-    for (const match of code.matchAll(/\bmkdtempSync\s*\(/g)) {
+    // The NAME, not just the call. The first version matched `mkdtempSync\s*\(`
+    // and a mechanical rewrite left the import behind in two files — half-converted,
+    // and invisible to both this guard and `npm run lint` (`no-unused-vars` is a
+    // warning here, so CI stayed green). "The name does not appear" is the stricter
+    // rule and it is no harder to check.
+    for (const match of code.matchAll(/\bmkdtempSync\b/g)) {
       const line = code.slice(0, match.index).split("\n").length;
       offenders.push(`${file}:${line}`);
     }
@@ -104,7 +112,7 @@ test("no unit test creates a temp directory the process will not clean up", () =
   assert.deepEqual(
     offenders,
     [],
-    `these tests create a temp directory nothing removes — use makeTempDir() from scripts/lib/tmp-dir instead:\n  ${offenders.join(
+    `these tests name mkdtempSync — use makeTempDir() from scripts/lib/tmp-dir instead, and drop the import:\n  ${offenders.join(
       "\n  ",
     )}`,
   );
