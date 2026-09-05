@@ -25,7 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
@@ -969,10 +969,19 @@ test("the merge config points at the same testDir the suite config does", () => 
   // Duplicated on purpose (importing the full config would evaluate it for a step that
   // runs after every test). Drift would not fail loudly — it would relabel every path
   // in the merged report — so the drift is what gets pinned.
-  const read = (f) => readFileSync(join(REPO_ROOT, f), "utf8").match(/testDir:\s*"([^"]+)"/)?.[1];
-  const suite = read("playwright.config.ts");
+  //
+  // RESOLVED, not compared as a literal. Playwright resolves `testDir` against the
+  // directory of the config file that declares it, so two files can carry the same
+  // "./tests" string and still name two different trees the moment one of them moves.
+  // The string is not the property under test; the directory it lands on is.
+  const testDirOf = (f) => {
+    const abs = join(REPO_ROOT, f);
+    const literal = readFileSync(abs, "utf8").match(/testDir:\s*"([^"]+)"/)?.[1];
+    return literal === undefined ? undefined : resolve(dirname(abs), literal);
+  };
+  const suite = testDirOf("playwright.config.ts");
   assert.ok(suite, "playwright.config.ts declares no testDir");
-  assert.equal(read("playwright.merge.config.ts"), suite);
+  assert.equal(testDirOf("playwright.merge.config.ts"), suite);
 });
 
 test("a failed merge is NAMED and does not abort the run, so guard 2 still classifies it", () => {
@@ -989,9 +998,13 @@ test("a failed merge is NAMED and does not abort the run, so guard 2 still class
     { mode: 0o755 },
   );
 
+  // NO `set +e` here, and that is the point of the test. Shell options are global,
+  // not per-function: disabling errexit around the call disables the very mechanism
+  // under test, and a phase_merge that DOES abort a real run would still reach the
+  // echo and pass every assertion below. Under `set -e` an abort is observable as the
+  // absence of the marker, which is the only honest way to observe it.
   const r = sourced(
     [
-      "set +e",
       `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1`,
       // The version dimension is neutralised: phase_merge reads it after guard 2, and
       // under `set -u` an unset expectation would abort this harness for a reason that
@@ -999,12 +1012,12 @@ test("a failed merge is NAMED and does not abort the run, so guard 2 still class
       "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
       "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
       "phase_merge",
-      'echo "AFTER_PHASE=$? MERGE_OK=$MERGE_OK"',
+      'echo "REACHED_AFTER_MERGE MERGE_OK=$MERGE_OK"',
     ].join("\n"),
     { PATH: `${bin}:${process.env.PATH}` },
   );
 
-  assert.match(r.stdout + r.stderr, /AFTER_PHASE=0/, "the phase must not abort — guard 2 has to run");
+  assert.match(r.stdout + r.stderr, /REACHED_AFTER_MERGE/, "the phase must not abort — guard 2 has to run");
   assert.match(r.stdout + r.stderr, /MERGE_OK=false/);
   assert.match(r.stderr, /merge-reports FAILED/);
   assert.match(r.stderr, /different test directories/, "the underlying error has to reach the log");
@@ -1016,11 +1029,12 @@ test("a failed merge fails the verdict, and does not call it 'zero tests execute
   // which is the wrong repair for a run whose shards all finished.
   const r = sourced(
     [
-      "set +e",
       "MERGE_OK=false RUN_EMPTY=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
       "RUN_TESTS=0 RUN_ERRORS=0 RUN_DIR=/tmp/does-not-matter TARGET_VERSION_MATCH=yes",
-      "phase_verdict",
-      'echo "EXIT=$?"',
+      // `set +e` around this ONE call and no wider, the same way the verdict() helper
+      // does it: phase_verdict is expected to return non-zero here, so errexit has to
+      // be off for it and on for everything else.
+      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
     ].join("\n"),
   );
   assert.match(r.stdout + r.stderr, /EXIT=1/);
