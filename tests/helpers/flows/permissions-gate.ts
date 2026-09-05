@@ -109,7 +109,8 @@
  *
  * One ceiling exists and is not obvious from here: `open-flow-by-id.test.ts`
  * asserts `CANVAS_TIMEOUT_MS > PERMISSIONS_GATE_TIMEOUT_MS` and pins the canvas
- * budget at 100 s, so raising this past 100 s fails the unit lane. That is an
+ * budget at 100 s, so raising this TO 100 s already fails the unit lane — the
+ * relation is strict, not `>=`. That is an
  * ORDERING claim about that entry's two budgets — "nothing is on screen yet" must
  * outlast "the editor is up and the query has not answered" — and 100 s is ~34×
  * the largest gate wait ever measured, so the ceiling is not near. Worth knowing

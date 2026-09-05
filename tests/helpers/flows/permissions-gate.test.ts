@@ -15,6 +15,12 @@
 // guard: every gate on `menu_bar_display` being enabled must name
 // `PERMISSIONS_GATE_TIMEOUT_MS`, never a literal and never nothing.
 //
+// The comment scanner both guards run first is `./strip-comments`, one copy since
+// review of this PR found it losing real code in `open-flow-by-id.ts` — the file
+// named in CANONICAL_GATE_FILES below. A guard that reads a blanked file reports
+// nothing and passes, which is the one failure mode it cannot tell you about, so
+// the scanner carries its own tests.
+//
 // WHAT IT DELIBERATELY DOES NOT DO
 //
 // It does not pin the constant to any other constant. PR #1221 removed exactly
@@ -29,6 +35,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
+import { stripComments } from "./strip-comments";
 
 /** The suite root, resolved from this file rather than from `process.cwd()`. */
 const TESTS_ROOT = join(__dirname, "..", "..");
@@ -41,6 +48,24 @@ const HEADER_LOCATOR = String.raw`(?:getByTestId\(\s*["'\`]menu_bar_display["'\`
 
 /** `.first()`, `.nth(0)` and friends between the locator and the assertion. */
 const LOCATOR_CHAIN = String.raw`\s*(?:\.\s*\w+\s*\([^()]*\)\s*)*`;
+
+/**
+ * `expect`'s optional second argument, the failure message.
+ *
+ * Not hypothetical and not exotic: the suite passes one ~9 times already
+ * (`serving/end-user-identity-required.spec.ts`, `collect-models.spec.ts`,
+ * `enterprise/authz/share-discovery.spec.ts`, ...), and naming the failure is this
+ * repo's house style — so it is the likely spelling of the NEXT gate someone
+ * writes. Without this the closing paren was required immediately after the
+ * locator, and `expect(page.getByTestId("menu_bar_display"), "must be writable")`
+ * found zero gates and reported nothing.
+ */
+const EXPECT_MESSAGE = String.raw`(?:\s*,\s*[^()]*)?`;
+
+/** Regex-escape an identifier before interpolating it into a pattern. */
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
 
 /**
  * The two spellings of "wait until this button is usable".
@@ -60,31 +85,6 @@ const USABLE_ASSERTION = String.raw`(?:toBeEnabled|not\s*\.\s*toBeDisabled)`;
 /** 1-indexed line of an offset, for a message that points somewhere. */
 function lineOf(code: string, index: number): number {
   return code.slice(0, index).split("\n").length;
-}
-
-/**
- * Strip comments WITHOUT moving anything.
- *
- * Blanking each character rather than deleting the comment is what keeps
- * `lineOf` honest: deleting a block comment shifts every line below it, and the
- * guard then names a line the offender is not on. Measured on the sibling
- * implementation this was copied from — a real offender at
- * `setup-playground.ts:199` was reported as line 148, a 51-line skew, which is
- * worse than no line at all because it reads as precise.
- *
- * It also stops a removal from JOINING the tokens either side of it
- * (`foo/*c*\/bar` → `foobar`), which could synthesise a match that is not in the
- * source.
- *
- * Line comments are matched only when `//` follows start-of-line or whitespace
- * AND is not preceded by a colon — otherwise `page.goto("http://…")` would be
- * blanked mid-string and the file would stop parsing as the code it is.
- */
-function stripComments(source: string): string {
-  const blank = (text: string) => text.replace(/[^\n]/g, " ");
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, blank)
-    .replace(/(^|[^:\w])\/\/.*$/gm, (_match, prefix: string) => prefix + blank(_match.slice(prefix.length)));
 }
 
 export interface Gate {
@@ -108,8 +108,10 @@ export interface Gate {
  *  - a locator returned by a helper or a Page Object method, rather than resolved
  *    at the call site;
  *  - an assignment without `const`/`let`/`var` on the same statement;
- *  - an options object containing a call (`{ timeout: f(1) }`) — the outer `\)`
- *    would close early;
+ *  - a call as the WHOLE argument (`toBeEnabled(opts(1))`) — the outer `\)`
+ *    closes early. An options object CONTAINING a call is fine
+ *    (`{ timeout: ms(30) }` is captured whole and correctly reported), which is
+ *    the opposite of what this list claimed until it was checked;
  *  - arithmetic on the constant (`{ timeout: PERMISSIONS_GATE_TIMEOUT_MS * 2 }`)
  *    reads as compliant, because the test is that the name appears.
  *
@@ -121,7 +123,7 @@ export function findEnabledGates(source: string): Gate[] {
   const gates: Gate[] = [];
 
   const inline = new RegExp(
-    `${HEADER_LOCATOR}${LOCATOR_CHAIN}\\)${LOCATOR_CHAIN}\\.\\s*${USABLE_ASSERTION}\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
+    `${HEADER_LOCATOR}${LOCATOR_CHAIN}${EXPECT_MESSAGE}\\)${LOCATOR_CHAIN}\\.\\s*${USABLE_ASSERTION}\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
     "g",
   );
   for (const match of code.matchAll(inline)) {
@@ -132,10 +134,14 @@ export function findEnabledGates(source: string): Gate[] {
     `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[^;]*${HEADER_LOCATOR}`,
     "g",
   );
-  for (const declaration of code.matchAll(assigned)) {
-    const name = declaration[1];
+  // Distinct names, because the scan below is file-wide: two declarations of the
+  // same locator variable in one file used to report every one of its gates twice.
+  const names = new Set(
+    [...code.matchAll(assigned)].map((declaration) => declaration[1]),
+  );
+  for (const name of names) {
     const viaVariable = new RegExp(
-      `expect(?:\\.\\s*soft)?\\(\\s*${name}${LOCATOR_CHAIN}\\)${LOCATOR_CHAIN}\\.\\s*${USABLE_ASSERTION}\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
+      `expect(?:\\.\\s*soft)?\\(\\s*${escapeForRegExp(name)}${LOCATOR_CHAIN}${EXPECT_MESSAGE}\\)${LOCATOR_CHAIN}\\.\\s*${USABLE_ASSERTION}\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
       "g",
     );
     for (const use of code.matchAll(viaVariable)) {
@@ -168,6 +174,9 @@ export function gateComplaint(gate: Gate): string | null {
 function suiteFiles(dir: string = TESTS_ROOT): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
+    // The sibling guard skips this and this one did not; a stray install under
+    // `tests/` would have the sweep read a vendored tree it does not own.
+    if (entry === "node_modules") continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       out.push(...suiteFiles(full));
@@ -242,6 +251,65 @@ test("the guard sees both spellings, and reads the timeout out of each", () => {
     `await expect(page.getByTestId("menu_bar_display").first()).toBeEnabled({ timeout: PERMISSIONS_GATE_TIMEOUT_MS });`,
   );
   assert.equal(chained.length, 1);
+  assert.equal(gateComplaint(chained[0]), null);
+});
+
+test("a failure message on the expect is the same gate, and the guard sees it", () => {
+  // ~9 call sites in this suite already pass one, and naming the failure is the
+  // house style — so this is the likely spelling of the next gate. The guard used
+  // to find ZERO here, which is the quiet failure: green, and blind.
+  const inline = findEnabledGates(
+    `await expect(page.getByTestId("menu_bar_display"), "the flow must be writable").toBeEnabled({ timeout: 30000 });`,
+  );
+  assert.equal(inline.length, 1);
+  assert.match(gateComplaint(inline[0]) ?? "", /not PERMISSIONS_GATE_TIMEOUT_MS/);
+
+  const variable = findEnabledGates(
+    `const headerButton = page.getByTestId("menu_bar_display");\nawait expect(headerButton, "writable").toBeEnabled({ timeout: PERMISSIONS_GATE_TIMEOUT_MS });`,
+  );
+  assert.equal(variable.length, 1);
+  assert.equal(gateComplaint(variable[0]), null);
+});
+
+test("a `$`-prefixed locator variable is not a regex anchor", () => {
+  // `$` is admitted by the identifier class and was interpolated into the pattern
+  // unescaped, so `$btn` compiled to an end-of-input assertion and matched nothing.
+  const gates = findEnabledGates(
+    `const $btn = page.getByTestId("menu_bar_display");\nawait expect($btn).toBeEnabled({ timeout: 30000 });`,
+  );
+  assert.equal(gates.length, 1);
+  assert.match(gateComplaint(gates[0]) ?? "", /not PERMISSIONS_GATE_TIMEOUT_MS/);
+});
+
+test("one locator variable declared twice reports each gate once", () => {
+  const gates = findEnabledGates(
+    [
+      `const headerButton = page.getByTestId("menu_bar_display");`,
+      `await expect(headerButton).toBeEnabled({ timeout: 30000 });`,
+      `const headerButton = page.getByTestId("menu_bar_display");`,
+    ].join("\n"),
+  );
+  assert.equal(gates.length, 1);
+});
+
+test("a gate is found next to the code shapes that used to blank it", () => {
+  // The scanner defect this guard shipped with, as behaviour rather than prose:
+  // a `/*` inside a string or inside a line comment opened a span that ran to the
+  // next `*/`, and every gate in between was invisible. Both shapes are in the
+  // tree — the xpath idiom 49 times, and the glob in `open-flow-by-id.ts:20`, the
+  // canonical file this very guard asserts a gate in.
+  for (const preamble of [
+    `const CANVAS = '//*[@id="react-flow-id"]';`,
+    "// see `tests/fixtures/**` for why this is a helper",
+    `await page.goto("http://localhost:7860/");`,
+    `await page.goto("//protocol-relative");`,
+  ]) {
+    const gates = findEnabledGates(
+      `${preamble}\nawait expect(page.getByTestId("menu_bar_display")).toBeEnabled({ timeout: 30000 });\n/** a doc comment closing the fake span */`,
+    );
+    assert.equal(gates.length, 1, `blanked by: ${preamble}`);
+    assert.equal(gates[0].line, 2, `wrong line after: ${preamble}`);
+  }
 });
 
 test("`not.toBeDisabled` is the same gate, and the guard sees it", () => {
@@ -281,7 +349,7 @@ test("asserting the button is NOT usable is a different question, and is left al
   }
 });
 
-test("the guard rejects the two ways the divergence comes back", () => {
+test("the guard rejects the three ways the divergence comes back", () => {
   // A literal — how all five started.
   const literal = findEnabledGates(
     `await expect(page.getByTestId("menu_bar_display")).toBeEnabled({ timeout: 30000 });`,

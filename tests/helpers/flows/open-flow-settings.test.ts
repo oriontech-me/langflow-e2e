@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { HEADER_PRESENT_TIMEOUT_MS } from "./open-flow-settings";
+import { stripComments } from "./strip-comments";
 
 /** The suite root, resolved from this file rather than from `process.cwd()`. */
 const TESTS_ROOT = join(__dirname, "..", "..");
@@ -60,26 +61,6 @@ const LOCATOR_CHAIN = String.raw`\s*(?:\.\s*\w+\s*\([^()]*\)\s*)*`;
 /** 1-indexed line of an offset, for a message that points somewhere. */
 function lineOf(code: string, index: number): number {
   return code.slice(0, index).split("\n").length;
-}
-
-/**
- * Strip comments so the guard does not fail on its own documentation.
- *
- * Blanked, not deleted (#1222): deleting a block comment shifts every line below
- * it, so `lineOf` named a line the offender is not on — measured at 51 lines of
- * skew on a real file, which is worse than no line at all because it reads as
- * precise. Blanking also stops a removal from JOINING the tokens either side of
- * it, which could synthesise a match that is not in the source.
- *
- * Line comments are matched only when `//` follows start-of-line or whitespace
- * AND is not preceded by a colon — otherwise `page.goto("http://…")` would be
- * truncated mid-string and the file would stop parsing as the code it is.
- */
-function stripComments(source: string): string {
-  const blank = (text: string) => text.replace(/[^\n]/g, " ");
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, blank)
-    .replace(/(^|[^:\w])\/\/.*$/gm, (match, prefix: string) => prefix + blank(match.slice(prefix.length)));
 }
 
 /**
