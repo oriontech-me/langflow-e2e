@@ -122,6 +122,47 @@ REPORT_URL="$RUN_URL_BASE/$RUN_ID/playwright-report/index.html"
 EVENT_NAME="${EVENT_NAME:-schedule}"
 WORKFLOW_ID="${WORKFLOW_ID:-daily-stable-vm}"
 
+# ---------------------------------------------------------------------------
+# THE LEDGER — the three series this lane has to keep
+# ---------------------------------------------------------------------------
+# reports/daily-history.jsonl, reports/token-history.jsonl and
+# reports/spec-durations.json only grow because the Actions daily writes them, and the
+# next etapa turns that daily off. Nothing else appends, so the gap would run from
+# there to the day this lane commits: build-triage-dataset.mjs would read a base that
+# starts partial, and the shard matrix — which balances by measured duration — would
+# degrade with it, both for a reason no run reports. This lane starts keeping the three
+# now, while the Actions series is still complete enough to seed from.
+#
+# OUTSIDE the clone, and that is not a preference. `reports/` is tracked, so a run that
+# writes there leaves the tree dirty and the wrapper's next `git pull --ff-only`
+# refuses — and that refusal is a guarantee worth keeping, not an obstacle: it is what
+# stops a machine from silently discarding local work. So the series moves, not the
+# protection. ledger_dir_is_outside_repo() checks it rather than trusting the default,
+# because the cost of getting it wrong is paid once a day, quietly, by the pull.
+#
+# WORKFLOW_ID above is what keeps the two eras apart inside one file: every line this
+# lane writes carries `daily-stable-vm`, so the Actions rows stay distinguishable after
+# the two series are merged.
+KEEP_LEDGER="${KEEP_LEDGER:-1}"
+# `$XDG_STATE_HOME` is the right shelf for this: state that must survive between runs,
+# is not a cache (losing it loses history), and is not config. Empty rather than a
+# fallback path when neither variable is set — an unwritable ledger is refused in
+# preflight, where it costs a variable, instead of guessed at into a directory nobody
+# looks in.
+LEDGER_HOME="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
+LEDGER_DIR="${LEDGER_DIR:-${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}}"
+LEDGER_HISTORY="${LEDGER_HISTORY:-${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}}"
+LEDGER_TOKENS="${LEDGER_TOKENS:-${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}}"
+LEDGER_DURATIONS="${LEDGER_DURATIONS:-${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}}"
+# The READ side, and it stays off here on purpose. While both dailies run, the product
+# is a comparison, and a matrix balanced by VM-measured durations puts specs on
+# different shards than the Actions lane does — so a failure's neighbours differ for a
+# reason that has nothing to do with the product. It turns on when the Actions daily
+# stops and the comparison is over. (Step 11 may want it earlier, with SHARDS above 1
+# and the comparison narrowed on purpose; that is a measurement decision, not a
+# default.)
+USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
+
 # Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
 # `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
 # it. Here the run only REPORTS the gap: moving and rebuilding the clone is a second
@@ -401,6 +442,95 @@ gh_out() {
   ' "$file" "$key"
 }
 
+# --- The ledger ------------------------------------------------------------------
+
+# Does THIS run keep the three series? Asked in three places, answered once.
+#
+# `schedule` mirrors the workflow, where all three steps carry
+# `if: github.event_name == 'schedule'`, and the reason is the one #1183 already
+# states for the token series: a manual run's scope is whatever grep was typed, while
+# every reader of these files assumes one full @stable sweep per entry. Such a line
+# does not read as noise — it reads as a bad day, and the anomaly baseline moves with
+# it. KEEP_LEDGER=0 is for the runs that ARE schedule-shaped and still must not be
+# recorded, a smoke through the real systemd unit being exactly that.
+ledger_active() {
+  [ "$KEEP_LEDGER" = "1" ] && [ "$EVENT_NAME" = "schedule" ] && [ -n "$LEDGER_DIR" ]
+}
+
+# Refuses a ledger inside the clone, which is the one way this change could defeat its
+# own purpose. Both sides go through `pwd -P`, so a symlink pointing back into the
+# working tree is caught too — the question is where the bytes land, not how the path
+# is spelled.
+#
+# It answers for a path that does not exist yet, by resolving the nearest ancestor that
+# does and carrying the remainder back on. That is what lets preflight refuse BEFORE
+# creating anything: a rejected ledger must not leave its own directory behind inside
+# the clone as the trace of the check that rejected it.
+ledger_dir_is_outside_repo() {
+  local dir="$1" probe="$1" rest="" real repo
+  while [ ! -d "$probe" ]; do
+    case "$probe" in
+      */*) rest="/${probe##*/}$rest"; probe="${probe%/*}"; [ -n "$probe" ] || probe="/" ;;
+      # No slash left: a relative path, and this script runs from $REPO_DIR.
+      *)   rest="/$probe$rest"; probe="."; break ;;
+    esac
+  done
+  real="$(cd "$probe" && pwd -P)$rest"
+  repo="$(cd "$REPO_DIR" && pwd -P)"
+  case "$real/" in "$repo"/*) return 1 ;; *) return 0 ;; esac
+}
+
+# The Actions series is what this one continues, so a ledger file that does not exist
+# yet is seeded from the tracked one instead of starting empty. Day zero is not free:
+# the durations file is what balances the matrix, and the token summary's anomaly
+# baseline is a median over recent entries — both answer badly from three lines, and
+# answer badly in the direction of looking fine. One-way and once; after the copy the
+# tracked file is never read again, and it is never written.
+ledger_seed() {
+  local ledger="$1" tracked="$2"
+  [ -n "$ledger" ] || return 0
+  if [ -e "$ledger" ]; then return 0; fi
+  if [ ! -f "$tracked" ]; then return 0; fi
+  cp "$tracked" "$ledger" && info "ledger: seeded ${ledger##*/} from $tracked"
+}
+
+# Settles the ledger BEFORE the run rather than at publish time, and split out of
+# phase_preflight so the decision is testable without ssh. A ledger that cannot be
+# written is a day of data lost, and if the first write is also the first check the
+# loss is found at 08:50, after the whole hour has been spent — while here it is still
+# the cheapest failure in this script to fix, one variable.
+preflight_ledger() {
+  if ledger_active; then
+    # Placement is settled before creation, so a refused ledger leaves nothing behind.
+    ledger_dir_is_outside_repo "$LEDGER_DIR" \
+      || die "LEDGER_DIR ($LEDGER_DIR) is inside the clone. The three series live outside it precisely so that a run cannot leave the tree dirty — and a dirty tree is what the wrapper's next \`git pull --ff-only\` refuses, every morning, without saying why."
+    mkdir -p "$LEDGER_DIR" || die "cannot create the ledger directory ($LEDGER_DIR)."
+    [ -w "$LEDGER_DIR" ] || die "the ledger directory is not writable ($LEDGER_DIR)."
+    info "ledger: $LEDGER_DIR"
+  elif [ "$KEEP_LEDGER" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then
+    # Reached only with LEDGER_DIR empty, which means neither XDG_STATE_HOME nor HOME
+    # was set — the systemd shape of #1715, where what a unit inherits is not what a
+    # login shell has. Fatal rather than a warning: a scheduled run that quietly keeps
+    # no series is indistinguishable, months later, from a machine that was down.
+    die "LEDGER_DIR is unset and neither XDG_STATE_HOME nor HOME is set, so this run has nowhere to keep the three series. Set LEDGER_DIR, or KEEP_LEDGER=0 for a run that must not be recorded."
+  else
+    info "ledger: not kept for this run (KEEP_LEDGER=$KEEP_LEDGER, event=$EVENT_NAME)"
+  fi
+}
+
+# Where this run's spend line goes, as one KEY=VALUE per line. A function so the
+# composition is testable rather than read: the two outcomes are mutually exclusive by
+# construction, and WORKFLOW can never be dropped while the history path is set —
+# without it the summarizer writes `workflow: "unknown"`, which reads as an Actions row
+# that lost its label rather than as a VM one.
+tokens_history_env() {
+  if ledger_active; then
+    printf '%s\n' "TOKENS_HISTORY=$LEDGER_TOKENS" "WORKFLOW=$WORKFLOW_ID"
+  else
+    printf '%s\n' "TOKENS_SUPPRESS_HISTORY=1"
+  fi
+}
+
 HELD_SESSIONS=()
 
 # Which of the given ports have no local listener. `ssh -L` opens its listener as soon
@@ -511,6 +641,8 @@ phase_preflight() {
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
   info "run dir: $RUN_DIR"
+
+  preflight_ledger
 
   # The suite this run executes, recorded before anything else can move it. Without a
   # repository on the target this is also the only record of which starter version ran
