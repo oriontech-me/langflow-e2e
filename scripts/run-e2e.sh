@@ -1291,6 +1291,12 @@ phase_merge() {
 
   # Both versions in one place, because the whole point of this lane is comparing a
   # verdict with the CI's and neither number is guessable afterwards.
+  #
+  # merge_ok rides along for the same reason. Without it a run whose four shards all
+  # passed but whose merge failed is byte-identical here to a run where nothing ran —
+  # both carry tests_total 0 — and this file is what stage 1's comparison and the
+  # history actually read. The distinction phase_verdict draws would end at the
+  # terminal. (#1726)
   node -e '
     const fs = require("fs");
     const [out, ...kv] = process.argv.slice(1);
@@ -1313,7 +1319,8 @@ phase_merge() {
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
-    tests_total "${RUN_TESTS:-0}"
+    tests_total "${RUN_TESTS:-0}" \
+    merge_ok "${MERGE_OK:-true}"
 
   info "tests: ${RUN_TESTS:-0} | top-level errors: ${RUN_ERRORS:-0} | empty: $RUN_EMPTY | partial: $RUN_PARTIAL"
   info "Langflow: ${LANGFLOW_VERSION:-<unknown>}"

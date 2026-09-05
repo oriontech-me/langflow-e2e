@@ -1021,6 +1021,14 @@ test("a failed merge is NAMED and does not abort the run, so guard 2 still class
   assert.match(r.stdout + r.stderr, /MERGE_OK=false/);
   assert.match(r.stderr, /merge-reports FAILED/);
   assert.match(r.stderr, /different test directories/, "the underlying error has to reach the log");
+
+  // The failure has to survive the terminal. run-metadata.json is what stage 1's
+  // comparison and the history read, and without this field a run whose four shards
+  // all passed is byte-identical there to one where nothing ran — both `tests_total`
+  // zero — which is the conflation phase_verdict was changed to remove.
+  const meta = JSON.parse(readFileSync(join(dir, "run-metadata.json"), "utf8"));
+  assert.equal(meta.merge_ok, "false");
+  assert.equal(meta.tests_total, "0", "the guard sees no report, which is exactly why merge_ok has to be there");
 });
 
 test("a failed merge fails the verdict, and does not call it 'zero tests executed'", () => {
