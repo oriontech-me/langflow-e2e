@@ -21,7 +21,8 @@ distributions** (`lfx_openai`, `lfx_anthropic`, `lfx_google`, …) plus an aggre
 `lfx-bundles` package. The old import paths still exist as shims, which re-point at
 the installed distribution and raise a `ModuleNotFoundError` when it is absent. The
 shims are **deleted at M4** (see *The M4 deadline* — no published date; upstream's own
-stated shape puts it no earlier than 1.14).
+stated shape puts it no earlier than 1.14, and on today's tip probably a minor
+later than that. 1.14 is the floor, not the estimate).
 
 **There are two kinds of shim, and the distinction changes the diagnosis:**
 
@@ -351,7 +352,7 @@ M4 needs **a loud deprecation minor first**, by upstream's own statement. So a
 minor whose shims are silent is neither the removal minor nor the one before it.
 
 Measured 2026-09-05 on `origin/release-1.13.0` (tip `a43ed6fbca`) — the newest line
-in development, with `v1.12.0` released four days earlier: **78
+in development, with `v1.12.0` released 2026-09-01: **78
 `lfx-bundles-shim` directories, and not one of them emits a `DeprecationWarning`.**
 (The token appears twice under `components/`, both unrelated:
 `agentics/helpers/model_config.py`, and LangChain's own
