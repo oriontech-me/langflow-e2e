@@ -10,12 +10,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildBackendBlock, countByFile } from "./backend-history.mjs";
+import { makeTempDir } from "./tmp-dir.mjs";
 
 const APPENDER = fileURLToPath(new URL("../append-weekly-history.mjs", import.meta.url));
 
@@ -286,7 +287,7 @@ test("spec paths normalise across the two forms the shard list can carry", () =>
 // --- through the appender, as the workflow drives it -------------------------
 
 function append(env) {
-  const dir = mkdtempSync(join(tmpdir(), "backend-history-"));
+  const dir = makeTempDir("backend-history-");
   const reportPath = join(dir, "results.json");
   const historyPath = join(dir, "history.jsonl");
   writeFileSync(
@@ -472,7 +473,6 @@ test("the appender does not statically import the liveness block builder", () =>
     "…and the block builder must still be imported at all",
   );
 });
-
 
 test("the daily's history step reads the same liveness directory the reporter does", () => {
   // Structural, and deliberately narrow. It cannot tell whether the block is

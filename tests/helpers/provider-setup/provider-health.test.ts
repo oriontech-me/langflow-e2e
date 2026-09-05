@@ -30,6 +30,7 @@ import {
   writeProviderHealth,
   type ProviderHealthRecord,
 } from "./provider-health";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 /** Verbatim from run 30374528125's providers.json — Google monthly spend cap. */
 const SPEND_CAP =
@@ -222,7 +223,7 @@ test("readProviderHealth returns null for malformed JSON instead of throwing", (
   // A truncated write (killed collect-models) must degrade to "no signal", not
   // crash every spec that consults the gate at collection time.
   const file = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-")),
+    makeTempDir("provider-health-"),
     "providers.json",
   );
   fs.writeFileSync(file, '[{"provider":"google",');
@@ -231,7 +232,7 @@ test("readProviderHealth returns null for malformed JSON instead of throwing", (
 
 test("readProviderHealth returns null for valid JSON that is not an array", () => {
   const file = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-")),
+    makeTempDir("provider-health-"),
     "providers.json",
   );
   fs.writeFileSync(file, '{"provider":"google","status":"inactive"}');
@@ -240,7 +241,7 @@ test("readProviderHealth returns null for valid JSON that is not an array", () =
 
 test("readProviderHealth parses a real providers.json shape", () => {
   const file = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-")),
+    makeTempDir("provider-health-"),
     "providers.json",
   );
   fs.writeFileSync(file, JSON.stringify(RUN_30374528125));
@@ -327,7 +328,7 @@ test("the degraded record drives the existing skip gate", () => {
 });
 
 test("writeProviderHealth round-trips through readProviderHealth", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-"));
+  const dir = makeTempDir("provider-health-");
   const file = path.join(dir, "nested", "providers.json");
   const records = degradeProviders(null, ["google"], "never imported");
 
@@ -338,7 +339,7 @@ test("writeProviderHealth round-trips through readProviderHealth", () => {
 test("writeProviderHealth reports failure instead of throwing", () => {
   // It runs from globalSetup: a write failure must never become the reason the
   // suite cannot start. The caller says so out loud instead of assuming success.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-"));
+  const dir = makeTempDir("provider-health-");
   const asDir = path.join(dir, "providers.json");
   fs.mkdirSync(asDir); // a directory where the file should go — write must fail
 
@@ -373,7 +374,6 @@ function captureWarnings(run: () => void): string[] {
   }
   return warnings;
 }
-
 
 test("maps every inactive provider to its collected reason", () => {
   const reasons = providerSkipReasons(RUN_30374528125, QUIET);
@@ -445,7 +445,7 @@ test("with no records argument it READS providers.json", () => {
   // these tests green while silently disabling the gate for the whole agent family —
   // #1029's failure mode, restored by a one-word edit. `jsonPath` is the same
   // test-only seam `readProviderHealth` / `writeProviderHealth` already take.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-skip-reasons-"));
+  const dir = makeTempDir("provider-skip-reasons-");
   const file = path.join(dir, "providers.json");
   writeProviderHealth(RUN_30374528125, file);
 

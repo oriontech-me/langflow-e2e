@@ -25,6 +25,7 @@ import {
   type ModelRecord,
   type TestTarget,
 } from "./test-targets";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 /** Shaped like a real models.json: settled model first per provider (collect-models
  * promotes it), with the rejected/unsuitable ones still listed behind it. */
@@ -386,7 +387,7 @@ test("an unreadable models.json THROWS — a missing file is a state, a corrupt 
   // silently run the first-provider fallback — a different suite than intended —
   // while the report looked normal (#1035). The pre-#1184 copies threw here too
   // (`JSON.parse` with no `try`), so this is a restoration, not a new rule.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "test-targets-"));
+  const dir = makeTempDir("test-targets-");
   try {
     const bad = path.join(dir, "models.json");
     fs.writeFileSync(bad, "{ not json");

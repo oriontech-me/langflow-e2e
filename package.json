@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Langflow E2E regression test suite (Playwright)",
   "private": true,
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "test": "npx playwright test",
     "test:core": "npx playwright test tests/core/",

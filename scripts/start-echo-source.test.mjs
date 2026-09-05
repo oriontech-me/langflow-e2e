@@ -29,11 +29,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -103,7 +104,7 @@ function runScript({
   corruptDownload = false,
   discoveryTools = true,
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "start-echo-source-test-"));
+  const dir = makeTempDir("start-echo-source-test-");
   const bin = join(dir, "bin");
   const binDir = join(dir, "echo-bin");
   const stateRoot = join(dir, "state-root");
@@ -495,7 +496,7 @@ test("the pre-start port probe carries a deadline, like the readiness poll", () 
 });
 
 test("stopping a port with no PID file is a no-op, not an error", () => {
-  const dir = mkdtempSync(join(tmpdir(), "stop-echo-source-test-"));
+  const dir = makeTempDir("stop-echo-source-test-");
   const r = spawnSync("bash", [STOP], {
     encoding: "utf8",
     env: { ...process.env, ECHO_STATE_ROOT: dir, ECHO_PORT: "8099" },

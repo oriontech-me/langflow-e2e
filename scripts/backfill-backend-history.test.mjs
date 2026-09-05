@@ -8,10 +8,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./backfill-backend-history.mjs", import.meta.url));
 
@@ -65,7 +66,7 @@ const historyLine = (runId, over = {}) =>
  * @param lines the history file's raw lines
  */
 function setup(runs, lines) {
-  const dir = mkdtempSync(join(tmpdir(), "backfill-"));
+  const dir = makeTempDir("backfill-");
   const artifacts = join(dir, "artifacts");
   for (const [runId, spec] of Object.entries(runs)) {
     const runDir = join(artifacts, runId);
@@ -201,7 +202,7 @@ test("a run with liveness but no usable summary is refused, naming the artifact"
   // Without this branch the run falls through carrying a null block and dies
   // later with "No history line for run(s)" — pointing the operator at the
   // history file when the cause is a missing download.
-  const dir = mkdtempSync(join(tmpdir(), "backfill-"));
+  const dir = makeTempDir("backfill-");
   const artifacts = join(dir, "artifacts");
   mkdirSync(join(artifacts, "111"), { recursive: true });
   writeFileSync(join(artifacts, "111", "results.json"), JSON.stringify(report()));

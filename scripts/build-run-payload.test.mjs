@@ -10,10 +10,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./build-run-payload.mjs", import.meta.url));
 
@@ -39,7 +40,7 @@ const REPORT = {
 
 /** Run the builder against REPORT with `env` layered on the minimum it requires. */
 function build(env = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "payload-"));
+  const dir = makeTempDir("payload-");
   const reportPath = join(dir, "results.json");
   writeFileSync(reportPath, JSON.stringify(REPORT));
   const stdout = execFileSync(process.execPath, [SCRIPT], {

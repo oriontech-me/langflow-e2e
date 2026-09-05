@@ -20,11 +20,11 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { cleanAllFlows } from "./clean-all-flows";
 import { resetAttributedFlows } from "./token-attribution";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 const AMBIENT = () => ({
   title: "a spec that swept the instance",
@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 
 test("the sweep deletes every flow WITHOUT attributing any of them (§2.2)", async () => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sweep-")), "token-attrib.jsonl");
+  const out = path.join(makeTempDir("sweep-"), "token-attrib.jsonl");
   process.env.TOKENS_ATTRIB = out;
   try {
     const { page, gets, deletes } = fakePage();

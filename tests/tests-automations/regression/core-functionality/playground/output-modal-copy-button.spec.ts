@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "../../../../helpers/flows/permissions-gate";
 import { setupBlankFlow } from "../../../../helpers/flows/setup-blank-flow";
 import { expandFocusedNode } from "../../../../helpers/ui/expand-focused-node";
 import { seedAssistantDiscovered } from "../../../../helpers/ui/assistant-onboarding";
@@ -64,7 +65,7 @@ test.describe("Output Modal — Copy Button", () => {
         // Without this the add is dropped with no error and the count assertion
         // below fails without naming the cause.
         await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
-          timeout: 30000,
+          timeout: PERMISSIONS_GATE_TIMEOUT_MS,
         });
         await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
           timeout: 30000,
