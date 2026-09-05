@@ -1161,3 +1161,34 @@ test("a payload the guards accepted but the builder could not produce is not a g
   assert.doesNotMatch(r.stdout, /Green run/);
   assert.match(r.stderr, /could NOT be built from a report the guards ACCEPTED/);
 });
+
+test("the payload verdict stays quiet when the guards already rejected the report", () => {
+  // The branch above must not answer a question another branch already answered, and
+  // here it cannot answer it truthfully at all: with the merge fine and no
+  // results.json, the guards report the run empty and unreadable, and a line saying
+  // "a report the guards ACCEPTED" / "the report itself is readable" is false twice
+  // over — printed directly beneath the empty branch saying the opposite.
+  //
+  // Contradicting itself inside one verdict is the defect this whole PR is about.
+  const dir = makeTempDir("payload-quiet-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
+      "MERGE_OK=true RUN_EMPTY=true RUN_UNREADABLE=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
+      "RUN_TESTS=0 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
+      "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
+      "phase_publish",
+      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
+    ].join("\n"),
+  );
+
+  // Still red, and still red for the RIGHT reason — the one branch that can say
+  // something true about this run.
+  assert.match(r.stdout + r.stderr, /EXIT=1/);
+  assert.match(r.stderr, /ZERO tests executed/);
+  assert.doesNotMatch(r.stderr, /guards ACCEPTED/, "the guards rejected it — saying otherwise contradicts the line above");
+  assert.doesNotMatch(r.stderr, /the report itself is readable/, "there is no report at all");
+});

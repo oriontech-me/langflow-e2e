@@ -1532,9 +1532,21 @@ phase_verdict() {
   # record, no totals, every number downstream missing, and the day reported as clean.
   # Silent green is the one verdict this lane cannot afford (#1012).
   #
-  # Not said when the merge failed: there the absent payload is the consequence and
-  # the branch above already names the cause.
-  if [ "${PAYLOAD_OK:-true}" = "false" ] && [ "${MERGE_OK:-true}" = "true" ]; then
+  # It fires ONLY when every other guard was happy, and that is not a refinement —
+  # without it the sentence is false. With the merge fine and no results.json at all,
+  # the empty branch above correctly says "ZERO tests executed, find out why nothing
+  # ran" and this one answered underneath it with "a report the guards ACCEPTED" and
+  # "the report itself is readable". Two contradictory triage instructions in one
+  # verdict, the second of them wrong on both counts — the exact defect this PR
+  # exists to remove, reintroduced two commits after removing it.
+  #
+  # Every excluded case is already red with its cause named, and there the absent
+  # payload is the consequence rather than the finding. What is left is the case that
+  # would otherwise be green, which is the only one that needed a branch.
+  if [ "${PAYLOAD_OK:-true}" = "false" ] \
+    && [ "${MERGE_OK:-true}" = "true" ] \
+    && [ "${RUN_EMPTY:-true}" = "false" ] \
+    && [ "${RUN_PARTIAL:-false}" = "false" ]; then
     err "the run payload could NOT be built from a report the guards ACCEPTED — this run has no analysis, no totals and no QA Platform record."
     err "Triage: the report itself is readable, so start from scripts/build-run-payload.mjs against $RUN_DIR/results.json, not from the shards."
     failed=1
