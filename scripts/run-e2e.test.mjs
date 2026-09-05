@@ -1049,3 +1049,72 @@ test("a failed merge fails the verdict, and does not call it 'zero tests execute
   assert.match(r.stderr, /the shards RAN and the MERGE failed/);
   assert.doesNotMatch(r.stderr, /ZERO tests executed/);
 });
+
+test("a failed merge still reaches PUBLISH, and the issue and the message name the merge", () => {
+  // The property the whole failure path exists for, and the one nothing covered:
+  // main() is `phase_merge; phase_publish; phase_verdict`, so a phase_merge that no
+  // longer aborts buys nothing if phase_publish aborts one line later. It did —
+  // build-run-payload.mjs exits 1 with no results.json and was the only step in that
+  // phase without a `|| warn` — which left the run exactly where it had been: no
+  // issue, no Slack message, no verdict, and now WITH run-metadata.json, so the
+  // watchdog's "finished without run-metadata.json" alarm stopped firing too.
+  //
+  // The three phases are therefore driven in main()'s own order, with both notifiers
+  // ON and in dry-run so their rendered text can be read without posting anything.
+  const dir = mkdtempSync(join(tmpdir(), "merge-fail-e2e-"));
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  writeFileSync(join(dir, "all-blobs", "shard-1.zip"), "");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "npx"),
+    "#!/usr/bin/env bash\necho 'Error: Blob reports being merged were recorded with different test directories' >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0`,
+      "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
+      "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      "TARGET_VERSION_MATCH=yes",
+      "phase_merge",
+      "phase_publish",
+      'echo "REACHED_AFTER_PUBLISH"',
+      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
+    ].join("\n"),
+    {
+      PATH: `${bin}:${process.env.PATH}`,
+      // The two surfaces a human actually opens, turned on and pointed nowhere.
+      CREATE_ISSUE: "1",
+      NOTIFY_SLACK: "1",
+      ISSUE_DRY_RUN: "1",
+      SLACK_DRY_RUN: "1",
+      // Nothing is recorded: this is a smoke, not a run.
+      KEEP_LEDGER: "0",
+      POST_QA_PLATFORM: "0",
+    },
+  );
+  const out = r.stdout + r.stderr;
+
+  // 1. The run gets past publish at all.
+  assert.match(out, /REACHED_AFTER_PUBLISH/, "phase_publish must not abort — the notifiers and the verdict are downstream of it");
+  assert.match(out, /payload build FAILED/, "and it must SAY the payload could not be built, rather than pass over it");
+
+  // 2. The verdict is red, and names the merge rather than an empty run.
+  assert.match(out, /EXIT=1/);
+  assert.match(r.stderr, /the shards RAN and the MERGE failed/);
+
+  // 3. The two published surfaces agree with the verdict. This is the half that used
+  //    to disagree: both key off RUN_EMPTY/RUN_UNREADABLE, which a failed merge sets
+  //    true, so they announced "ZERO tests executed" on a day every shard finished.
+  const issue = readFileSync(join(dir, "issue-body.md"), "utf8");
+  assert.match(issue, /could not MERGE its shard reports/, "the issue title is what gets scanned in the list");
+  assert.match(issue, /The shards RAN — the MERGE failed/);
+  assert.doesNotMatch(issue, /ZERO tests/);
+  assert.doesNotMatch(issue, /find why nothing ran/);
+
+  assert.match(out, /could not MERGE its shard reports/, "the Slack headline, from SLACK_DRY_RUN");
+  assert.doesNotMatch(out, /executed ZERO tests/, "no surface may say nothing ran on a run whose every shard finished");
+});

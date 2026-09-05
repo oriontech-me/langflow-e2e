@@ -1336,8 +1336,21 @@ phase_publish() {
   # Built ALWAYS, even with every POST disabled: it is the only analysis of the merged
   # report into totals and failures, and the Slack notifier reads it rather than
   # carrying a second parser that can disagree with the first.
+  #
+  # FAIL-SOFT, and this is the line that made the merge fix incomplete. This script
+  # exits 1 when there is no results.json (build-run-payload.mjs), and it was the one
+  # step in this phase without a `|| warn` — so under `set -euo pipefail` a failed
+  # merge still killed main() here, one phase after phase_merge stopped aborting, and
+  # with the same result: no issue, no Slack message, no verdict. Worse than before,
+  # in fact: run-metadata.json now exists, so the watchdog's "finished without
+  # run-metadata.json" case stops firing while publish still dies.
+  #
+  # The notifier is already written for an absent payload ("reporting what the guards
+  # saw instead"), and on the day the merge fails the guards' verdict is exactly what
+  # has to reach a human. (#1726)
   log "Building the run payload"
   local stable_count total_count
+  PAYLOAD_OK=true
   stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
   total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
 
@@ -1349,11 +1362,16 @@ phase_publish() {
   STABLE_COUNT="$stable_count" \
   TOTAL_COUNT="$total_count" \
   EVIDENCE_URL="$REPORT_URL" \
-    node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
-  info "payload: $RUN_DIR/payload.json"
+    node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json" \
+    || { PAYLOAD_OK=false; warn "the payload build FAILED — the notifiers report what the guards saw instead."; }
+  if [ "$PAYLOAD_OK" = "true" ]; then
+    info "payload: $RUN_DIR/payload.json"
+  fi
 
   if [ "$POST_QA_PLATFORM" = "1" ]; then
-    if [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
+    if [ "${PAYLOAD_OK:-true}" != "true" ]; then
+      warn "there is no payload to POST — the QA Platform record is skipped for this run."
+    elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
       local code
