@@ -552,12 +552,17 @@ durations_table() {
 
 # Where this run's spend line goes, as one KEY=VALUE per line. A function so the
 # composition is testable rather than read: the two outcomes are mutually exclusive by
-# construction, and WORKFLOW can never be dropped while the history path is set —
-# without it the summarizer writes `workflow: "unknown"`, which reads as an Actions row
-# that lost its label rather than as a VM one.
+# construction, and neither label can be dropped while the history path is set.
+#
+# WORKFLOW, because without it the summarizer writes `workflow: "unknown"`, which reads
+# as an Actions row that lost its label rather than as a VM one. GITHUB_RUN_ID because
+# the summarizer takes the run's identity from the environment, which in Actions is
+# simply there and here is not: a smoke found the spend row landing with
+# `run_id: null` while the history row for the SAME run carried the id, and a row that
+# cannot be joined back to its run is dropped by every consumer that groups by run.
 tokens_history_env() {
   if ledger_active; then
-    printf '%s\n' "TOKENS_HISTORY=$LEDGER_TOKENS" "WORKFLOW=$WORKFLOW_ID"
+    printf '%s\n' "TOKENS_HISTORY=$LEDGER_TOKENS" "WORKFLOW=$WORKFLOW_ID" "GITHUB_RUN_ID=$RUN_ID"
   else
     printf '%s\n' "TOKENS_SUPPRESS_HISTORY=1"
   fi

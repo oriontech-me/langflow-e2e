@@ -715,9 +715,19 @@ test("the spend line carries its label, and the two outcomes cannot both happen"
   // Without WORKFLOW the summarizer writes `workflow: "unknown"`, which in a merged
   // series reads as an Actions row that lost its label rather than as a VM one — and
   // the whole point of keeping a separate series is being able to tell the two eras
-  // apart afterwards.
-  const kept = sourced(`tokens_history_env`, { LEDGER_DIR: "/tmp/led", EVENT_NAME: "schedule" }).stdout.trim().split("\n");
-  assert.deepEqual(kept, ["TOKENS_HISTORY=/tmp/led/token-history.jsonl", "WORKFLOW=daily-stable-vm"]);
+  // apart afterwards. Both labels are pinned here, not just the path.
+  const kept = sourced(`tokens_history_env`, { LEDGER_DIR: "/tmp/led", EVENT_NAME: "schedule", RUN_ID: "r-1" })
+    .stdout.trim()
+    .split("\n");
+  assert.deepEqual(kept, [
+    "TOKENS_HISTORY=/tmp/led/token-history.jsonl",
+    "WORKFLOW=daily-stable-vm",
+    // Found by a smoke: the summarizer takes the run's identity from the environment,
+    // which in Actions is simply there. Without it the spend row lands with
+    // `run_id: null` while the history row for the SAME run carries the id, and every
+    // consumer that groups by run drops the VM's rows.
+    "GITHUB_RUN_ID=r-1",
+  ]);
 
   const suppressed = sourced(`tokens_history_env`, { EVENT_NAME: "manual" }).stdout.trim().split("\n");
   assert.deepEqual(suppressed, ["TOKENS_SUPPRESS_HISTORY=1"]);
