@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -760,6 +760,47 @@ test("the ledger is seeded once from the Actions series, and an existing one is 
     const missing = sourced(`ledger_seed ${JSON.stringify(join(tmp, "b.json"))} ${JSON.stringify(join(tmp, "nope.json"))}`);
     assert.equal(missing.status, 0);
     assert.equal(existsSync(join(tmp, "b.json")), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a seed that cannot be copied warns, and does not take the day's verdict with it", () => {
+  // phase_publish runs under `set -e`, so a bare `cp` failing here would abort the
+  // whole phase — after the run, before the verdict. The series is worth less than the
+  // day it would cost, and every other step in that phase already says so.
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-"));
+  try {
+    const tracked = join(tmp, "tracked.jsonl");
+    writeFileSync(tracked, "a line\n");
+    const unwritable = join(tmp, "locked");
+    mkdirSync(unwritable, { mode: 0o500 });
+    const r = sourced(`ledger_seed ${JSON.stringify(join(unwritable, "ledger.jsonl"))} ${JSON.stringify(tracked)}; echo "EXIT=$?"`);
+    assert.match(r.stdout, /EXIT=0/, "a failed seed must not fail the caller");
+    assert.match(r.stderr, /starts from nothing/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("asking for the ledger's durations and finding none is said out loud", () => {
+  // Falling back in silence is how a run ends up balanced by numbers nobody chose,
+  // and the symptom — shards of uneven length — reads as the suite's own drift.
+  const tracked = "reports/spec-durations.json";
+  const off = sourced(`durations_table`);
+  assert.equal(off.stdout.trim(), tracked);
+  assert.equal(off.stderr.trim(), "");
+
+  const missing = sourced(`durations_table`, { USE_LEDGER_DURATIONS: "1", LEDGER_DIR: "/tmp/no-such-ledger-dir" });
+  assert.equal(missing.stdout.trim(), tracked, "a missing table must not become an empty argument");
+  assert.match(missing.stderr, /USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet/);
+
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-dur-"));
+  try {
+    writeFileSync(join(tmp, "spec-durations.json"), "{}\n");
+    const present = sourced(`durations_table`, { USE_LEDGER_DURATIONS: "1", LEDGER_DIR: tmp });
+    assert.equal(present.stdout.trim(), join(tmp, "spec-durations.json"));
+    assert.equal(present.stderr.trim(), "");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

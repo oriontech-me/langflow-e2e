@@ -500,7 +500,16 @@ ledger_seed() {
   [ -n "$ledger" ] || return 0
   if [ -e "$ledger" ]; then return 0; fi
   if [ ! -f "$tracked" ]; then return 0; fi
-  cp "$tracked" "$ledger" && info "ledger: seeded ${ledger##*/} from $tracked"
+  # Fail-soft, like every other step in phase_publish. A seed that cannot be copied
+  # costs this series its baseline and nothing else, while aborting would take the
+  # day's verdict down with it — the run has already happened, and the verdict is what
+  # this lane exists to produce.
+  if cp "$tracked" "$ledger"; then
+    info "ledger: seeded ${ledger##*/} from $tracked"
+  else
+    warn "could not seed ${ledger##*/} from $tracked — this series starts from nothing."
+  fi
+  return 0
 }
 
 # Settles the ledger BEFORE the run rather than at publish time, and split out of
@@ -525,6 +534,20 @@ preflight_ledger() {
   else
     info "ledger: not kept for this run (KEEP_LEDGER=$KEEP_LEDGER, event=$EVENT_NAME)"
   fi
+}
+
+# Which duration table balances the matrix. A switch that is ON and finds nothing must
+# say so: falling back in silence is how a run comes to be balanced by numbers nobody
+# chose, and the symptom — shards of uneven length — looks like the suite's own drift.
+durations_table() {
+  if [ "$USE_LEDGER_DURATIONS" = "1" ]; then
+    if [ -n "$LEDGER_DURATIONS" ] && [ -f "$LEDGER_DURATIONS" ]; then
+      printf '%s\n' "$LEDGER_DURATIONS"
+      return 0
+    fi
+    warn "USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet (${LEDGER_DURATIONS:-<no ledger>}) — this run balances on the tracked one instead."
+  fi
+  printf '%s\n' "reports/spec-durations.json"
 }
 
 # Where this run's spend line goes, as one KEY=VALUE per line. A function so the
@@ -898,10 +921,8 @@ phase_prep() {
   # neighbours — and the load its backend was under — differ for a reason that has
   # nothing to do with the product. The ledger's own timings take over with
   # USE_LEDGER_DURATIONS, which is the next etapa's switch to throw.
-  local durations=reports/spec-durations.json
-  if [ "$USE_LEDGER_DURATIONS" = "1" ] && [ -n "$LEDGER_DURATIONS" ] && [ -f "$LEDGER_DURATIONS" ]; then
-    durations="$LEDGER_DURATIONS"
-  fi
+  local durations
+  durations="$(durations_table)"
   info "durations: $durations"
 
   node scripts/partition-shards.mjs matrix \
@@ -1293,7 +1314,7 @@ phase_publish() {
     # copy every day would re-merge Actions timings into this lane's series forever and
     # the VM's own numbers would never take over.
     if node scripts/partition-shards.mjs extract "$RUN_DIR/results.json" "$LEDGER_DURATIONS" > "$next"; then
-      mv "$next" "$LEDGER_DURATIONS"
+      mv "$next" "$LEDGER_DURATIONS" || warn "could not replace $LEDGER_DURATIONS — the table is left as it was."
     else
       warn "duration extraction FAILED — $LEDGER_DURATIONS is left as it was (#1252)."
     fi
