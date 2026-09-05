@@ -146,14 +146,24 @@ test("writing back to the repository is absent, not merely switched off", () => 
   // missing. Pinned by absence rather than by a default, because a variable set to
   // zero reads as "implemented, disabled" and invites someone to flip it on a machine
   // that has no write credentials and no review.
-  // Comments are stripped first, for the reason #1716 paid for: a comment that merely
-  // SPELLS the thing under test fails a correct file, and the paragraph explaining why
-  // COMMIT_HISTORY was removed is exactly such a comment.
+  // Comments AND the insides of double-quoted strings are stripped first, for the
+  // reason #1716 paid for and then one layer over. A comment that merely SPELLS the
+  // thing under test fails a correct file — the paragraph explaining why
+  // COMMIT_HISTORY was removed is exactly such a comment. And so is a `warn` that
+  // TELLS AN OPERATOR to run `git -C <clone> checkout …  # cycle parity, not the
+  // commit`: that line is this script asking a human to move a clone, not this script
+  // writing to a repository, and widening the pattern below is what made it look like
+  // one. Stripping the quotes keeps the widening without buying a false positive.
   const code = readFileSync(SCRIPT, "utf8")
     .split("\n")
     .filter((l) => !l.trim().startsWith("#"))
+    .map((l) => l.replace(/"[^"]*"/g, '""'))
     .join("\n");
-  const writes = code.split("\n").filter((l) => /\bgit\s+(commit|push|add)\b/.test(l));
+  // `git\s+(commit|…)` missed every spelling with a flag in between, and `git -C` is
+  // not exotic here — it is how a script that operates on a clone BY PATH is written,
+  // which is what the later etapa's commit will be. `git -C "$REPO_DIR" add -A` passed
+  // the old pattern untouched.
+  const writes = code.split("\n").filter((l) => /\bgit\b[^\n]*\b(commit|push|add)\b/.test(l));
   assert.deepEqual(writes, [], "this lane must not write to the repository");
   assert.doesNotMatch(code, /COMMIT_HISTORY/, "the switch is gone, not renamed");
 });
@@ -674,6 +684,55 @@ test("a ledger inside the clone is refused, however the path is spelled", () => 
   }
 });
 
+test("preflight CREATES the ledger it accepts, which is the path every night takes", () => {
+  // The whole argument for checking here rather than at publish is that an unusable
+  // ledger costs one variable instead of an hour. Every other preflight test is a
+  // REFUSAL, so the branch that actually runs was pinned by nothing: deleting the
+  // `mkdir` and the `-w` check outright left the file green.
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-ok-"));
+  try {
+    const dir = join(tmp, "state", "langflow-e2e");
+    const r = preflightLedger({ LEDGER_DIR: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(dir), true, "preflight has to create the directory it accepted");
+    assert.match(r.stdout, new RegExp(`ledger: ${dir}`), "and say where it is — the log is the only record at 08:00");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a ledger directory that exists and cannot be written is refused", { skip: process.getuid?.() === 0 ? "root writes anywhere, so -w cannot be exercised" : false }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-dir-"));
+  try {
+    const dir = join(tmp, "locked");
+    mkdirSync(dir, { mode: 0o500 });
+    const r = preflightLedger({ LEDGER_DIR: dir });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /not writable/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("the three series paths are derived, and the environment cannot move them", () => {
+  // They used to be overridable, and that was a hole straight through the placement
+  // guard: a legal LEDGER_DIR with LEDGER_HISTORY pointing at the tracked file passed
+  // preflight with exit 0 and then handed reports/daily-history.jsonl to the appender.
+  // The publish-phase test could not catch it either — it reads the script text, and
+  // the script text says "$LEDGER_HISTORY".
+  const r = sourced(`echo "$LEDGER_HISTORY"; echo "$LEDGER_TOKENS"; echo "$LEDGER_DURATIONS"`, {
+    LEDGER_DIR: "/tmp/led",
+    LEDGER_HISTORY: join(REPO_ROOT, "reports/daily-history.jsonl"),
+    LEDGER_TOKENS: join(REPO_ROOT, "reports/token-history.jsonl"),
+    LEDGER_DURATIONS: join(REPO_ROOT, "reports/spec-durations.json"),
+  });
+  assert.deepEqual(r.stdout.trim().split("\n"), [
+    "/tmp/led/daily-history.jsonl",
+    "/tmp/led/token-history.jsonl",
+    "/tmp/led/spec-durations.json",
+  ]);
+});
+
 test("a KEEP_LEDGER that is neither 0 nor 1 stops the run instead of keeping nothing", () => {
   // Anything but "1" fell through to the `else`, which is the one branch that does not
   // die — so a typo'd truthy walked past the very `die` that exists because a scheduled
@@ -694,25 +753,6 @@ test("USE_LEDGER_DURATIONS is validated the same way", () => {
   const r = sourced(`echo REACHED`, { USE_LEDGER_DURATIONS: "true" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /USE_LEDGER_DURATIONS must be exactly '0' or '1'/);
-});
-
-test("the three series paths are derived, and the environment cannot move them", () => {
-  // They used to be overridable, and that was a hole straight through the placement
-  // guard: a legal LEDGER_DIR with LEDGER_HISTORY pointing at the tracked file passed
-  // preflight with exit 0 and then handed reports/daily-history.jsonl to the appender.
-  // The publish-phase test could not catch it either — it reads the script text, and
-  // the script text says "$LEDGER_HISTORY".
-  const r = sourced(`echo "$LEDGER_HISTORY"; echo "$LEDGER_TOKENS"; echo "$LEDGER_DURATIONS"`, {
-    LEDGER_DIR: "/tmp/led",
-    LEDGER_HISTORY: join(REPO_ROOT, "reports/daily-history.jsonl"),
-    LEDGER_TOKENS: join(REPO_ROOT, "reports/token-history.jsonl"),
-    LEDGER_DURATIONS: join(REPO_ROOT, "reports/spec-durations.json"),
-  });
-  assert.deepEqual(r.stdout.trim().split("\n"), [
-    "/tmp/led/daily-history.jsonl",
-    "/tmp/led/token-history.jsonl",
-    "/tmp/led/spec-durations.json",
-  ]);
 });
 
 test("preflight refuses a ledger inside the clone, and creates nothing on the way out", () => {
