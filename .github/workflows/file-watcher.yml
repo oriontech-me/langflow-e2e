@@ -50,16 +50,22 @@ jobs:
       # annotations land here, the report is still produced, and the job is failed
       # at the end by "Enforce the path guard" — coverage first, strictness kept
       # (the trade-off `Collect models` makes on the daily, #980/#570).
+      #
+      # `--verdict` carries the outcome to the sweep, which prints it ABOVE the
+      # area table (#1182). The annotations below are in the job log; the person
+      # acting on the issue is not.
       - name: Guard the monitored paths against the checkout
         id: guard
         continue-on-error: true
-        run: node scripts/watch-upstream-areas.mjs --mode=check --root langflow-upstream
+        run: node scripts/watch-upstream-areas.mjs --mode=check --root langflow-upstream --verdict guard-verdict.json
 
       - name: Detect changes in monitored paths
         id: detect
         env:
           SINCE: ${{ inputs.since || '24 hours ago' }}
-        run: node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "$SINCE"
+        run: |
+          node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream \
+            --since "$SINCE" --verdict guard-verdict.json
 
       - name: Create review issue if changes detected
         if: steps.detect.outputs.has_changes == 'true'
@@ -83,6 +89,29 @@ jobs:
               // decided on.
               labels: ['needs-triage', 'automated'],
             });
+
+      # `window_commits` is the sweep's own denominator: "0 areas changed" over a
+      # window that selected no commits at all says nothing about the areas. It
+      # used to be written to $GITHUB_OUTPUT and read by nobody, so a drift in the
+      # name would have been invisible — the summary is what makes it consumed.
+      - name: Summarise the sweep
+        if: always() && steps.detect.outcome != 'skipped'
+        env:
+          WINDOW_COMMITS: ${{ steps.detect.outputs.window_commits }}
+          HAS_CHANGES: ${{ steps.detect.outputs.has_changes }}
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          SINCE: ${{ inputs.since || '24 hours ago' }}
+        run: |
+          {
+            echo "### Upstream sweep"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Window | \`${SINCE}\` |"
+            echo "| Upstream commits in window (repo-wide) | ${WINDOW_COMMITS:-unknown} |"
+            echo "| Areas changed | ${HAS_CHANGES:-unknown} |"
+            echo "| Path guard | ${GUARD_OUTCOME:-unknown} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The guard's verdict decides the job, but only after the report exists.
       - name: Enforce the path guard

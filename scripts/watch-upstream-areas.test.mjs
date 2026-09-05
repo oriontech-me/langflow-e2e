@@ -28,6 +28,7 @@ import {
   RELEASE_LINES_TRACKED,
   areaCommands,
   buildAreas,
+  buildGuardVerdict,
   checkDocDeps,
   classifyDepToken,
   detectChangedAreas,
@@ -35,8 +36,10 @@ import {
   findMissingPaths,
   matchGlob,
   parseDocDeps,
+  parseGuardVerdict,
   parseRefList,
   pickReleaseBranches,
+  renderGuardLine,
   renderIssueBody,
 } from "./watch-upstream-areas.mjs";
 
@@ -170,6 +173,29 @@ test("detectChangedAreas skips areas with no commits and caps the listing", () =
   assert.equal(changed[0].grep, "@one|@two");
   assert.equal(changed[0].commits.length, MAX_COMMITS_PER_AREA);
   assert.equal(changed[0].commits[0], "abc0 commit 0");
+  // The cap is announced, never silent (#1012): the count it sliced from has to
+  // survive the slice, or the renderer has nothing to announce.
+  assert.equal(changed[0].totalCommits, 9);
+});
+
+test("the commit cap names what it dropped, and says nothing when it dropped nothing", () => {
+  const nine = Array.from({ length: 9 }, (_, i) => `abc${i} commit ${i}`).join("\n");
+  const capped = detectChangedAreas({ areas: [AREA_A], commitsFor: () => nine });
+  const body = renderIssueBody({ since: "24 hours ago", today: "2026-07-30", areas: capped });
+  assert.match(body, /… and 4 more commit\(s\) not shown \(cap: 5 per area\)\./);
+
+  const two = detectChangedAreas({ areas: [AREA_A], commitsFor: () => "abc0 one\nabc1 two" });
+  const short = renderIssueBody({ since: "24 hours ago", today: "2026-07-30", areas: two });
+  assert.doesNotMatch(short, /more commit\(s\) not shown/);
+
+  // A caller that never recorded a total (a hand-built area, as the older tests
+  // pass) must not grow a phantom line claiming commits were dropped.
+  const legacy = renderIssueBody({
+    since: "24 hours ago",
+    today: "2026-07-30",
+    areas: [{ area: "Area A", grep: "@one", checklist: "AREA 1", commits: ["abc0 one"] }],
+  });
+  assert.doesNotMatch(legacy, /more commit\(s\) not shown/);
 });
 
 // ---------- renderIssueBody ----------
@@ -221,6 +247,111 @@ test("a hostile commit subject cannot close the heredoc output", () => {
   // The other two lines survive verbatim — the guard drops the delimiter only.
   assert.match(body, /evil \$\{process\.exit\(1\)\} `whoami`/);
   assert.match(body, /^body=pwned$/m);
+});
+
+// ---------- the guard verdict reaching the issue body (#1182) ----------
+
+const FAILED_VERDICT = buildGuardVerdict({
+  missing: [{ area: "MCP Server", path: "src/lfx/src/lfx/base/mcp/" }],
+  unclassified: ["nodes"],
+  stale: [],
+  checkedPaths: 88,
+  areaCount: 14,
+});
+
+test("parseGuardVerdict reads a clean verdict as ok and a populated one as failed", () => {
+  const clean = parseGuardVerdict(
+    JSON.stringify(buildGuardVerdict({ missing: [], unclassified: [], stale: [], checkedPaths: 88, areaCount: 14 })),
+  );
+  assert.equal(clean.status, "ok");
+  assert.equal(clean.checkedPaths, 88);
+
+  const failed = parseGuardVerdict(JSON.stringify(FAILED_VERDICT));
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.missing[0].area, "MCP Server");
+
+  // A stale entry alone is a warning upstream, and must not turn the sweep into
+  // an incomplete one — `findLfxDrift` deliberately does not fail on it.
+  const staleOnly = parseGuardVerdict(
+    JSON.stringify(
+      buildGuardVerdict({ missing: [], unclassified: [], stale: ["base/mcp"], checkedPaths: 88, areaCount: 14 }),
+    ),
+  );
+  assert.equal(staleOnly.status, "ok");
+});
+
+test("every way of not having a verdict is unknown WITH a reason, never ok", () => {
+  // The guard crashed before it could decide (exit 2 writes no file at all).
+  for (const absent of [null, undefined, "", "   "]) {
+    const verdict = parseGuardVerdict(absent);
+    assert.equal(verdict.status, "unknown");
+    assert.match(verdict.reason, /no verdict/);
+  }
+  assert.equal(parseGuardVerdict("{ truncated").status, "unknown");
+  assert.match(parseGuardVerdict("{ truncated").reason, /not readable JSON/);
+  assert.equal(parseGuardVerdict("[]").status, "unknown");
+  assert.equal(parseGuardVerdict("null").status, "unknown");
+  // A future writer bumping the shape must not read as a pass here.
+  assert.match(parseGuardVerdict(JSON.stringify({ version: 2, missing: [] })).reason, /version 2/);
+  assert.match(parseGuardVerdict(JSON.stringify({ version: 1 })).reason, /no `missing`/);
+});
+
+test("the issue body states the guard's verdict in all four states", () => {
+  const render = (guard) => renderIssueBody({ ...RENDER_ARGS, guard });
+
+  assert.match(render(parseGuardVerdict(JSON.stringify(FAILED_VERDICT))), /\*\*Path guard:\*\* ❌/);
+  assert.match(render(parseGuardVerdict("{ truncated")), /\*\*Path guard:\*\* ⚠️ verdict unavailable/);
+  assert.match(
+    render(
+      parseGuardVerdict(
+        JSON.stringify(
+          buildGuardVerdict({ missing: [], unclassified: [], stale: [], checkedPaths: 88, areaCount: 14 }),
+        ),
+      ),
+    ),
+    /\*\*Path guard:\*\* ✅ all 88 monitored path\(s\) across 14 area\(s\)/,
+  );
+  // The state this issue is about: a sweep that never verified its own paths
+  // must SAY so, not omit the line. Omission is what let the body read complete.
+  assert.match(render(undefined), /\*\*Path guard:\*\* ⚠️ not run/);
+});
+
+test("a failed guard names the areas that were not fully evaluated, above the table", () => {
+  const body = renderIssueBody({ ...RENDER_ARGS, guard: parseGuardVerdict(JSON.stringify(FAILED_VERDICT)) });
+
+  assert.match(body, /### ⚠️ Path guard failed — this sweep is incomplete/);
+  assert.match(body, /\| MCP Server \| `src\/lfx\/src\/lfx\/base\/mcp\/` \|/);
+  assert.match(body, /1 `lfx` subtree\(s\) exist upstream that no area classifies: `nodes`\./);
+  // Above the area table, which is the whole point — the reader must meet the
+  // caveat before the rows it qualifies.
+  assert.ok(
+    body.indexOf("Path guard failed") < body.indexOf("### Changed areas"),
+    "the guard caveat must precede the area table",
+  );
+});
+
+test("an area name carrying a pipe cannot shred the guard's own table", () => {
+  const guard = parseGuardVerdict(
+    JSON.stringify(
+      buildGuardVerdict({
+        missing: [{ area: "A | B", path: "src/x|y.py" }],
+        unclassified: ["a|b"],
+        stale: [],
+        checkedPaths: 1,
+        areaCount: 1,
+      }),
+    ),
+  );
+  const row = renderIssueBody({ ...RENDER_ARGS, guard })
+    .split("\n")
+    .find((l) => l.startsWith("| A "));
+  assert.equal(row.replace(/\\\|/g, "").split("|").length - 1, 3);
+});
+
+test("renderGuardLine never claims a count it was not given", () => {
+  const line = renderGuardLine({ status: "ok", missing: [], unclassified: [], checkedPaths: null, areaCount: null });
+  assert.match(line, /every monitored path exists in the checkout/);
+  assert.doesNotMatch(line, /null/);
 });
 
 // ---------- the real table ----------
@@ -293,6 +424,14 @@ test("file-watcher.yml runs both modes and consumes every output this script emi
   );
   assert.match(yml, /id: guard\s*\n\s*continue-on-error: true/);
   assert.match(yml, /steps\.guard\.outcome == 'failure'/);
+  // The guard's verdict has to reach the sweep, or the issue body is written
+  // without it and the caveat #1182 adds can never fire (both sides, same file).
+  assert.match(yml, /--mode=check[^\n]*--verdict guard-verdict\.json/);
+  assert.match(yml, /--verdict guard-verdict\.json/g);
+  assert.equal((yml.match(/--verdict guard-verdict\.json/g) || []).length, 2, "both modes must name the same file");
+  // `window_commits` was an output nothing read. An unread output is where a
+  // rename goes unnoticed, so the summary consumes it.
+  assert.match(yml, /steps\.detect\.outputs\.window_commits/);
 });
 
 // ---------- the window ----------
@@ -328,6 +467,7 @@ test("parseArgs accepts both --flag value and --flag=value", () => {
     releases: "",
     ref: "HEAD",
     changed: "",
+    verdict: "",
   });
   // check-docs adds two flags; `--changed` defaults to empty, which is what makes
   // the diff-scoped severity opt-in rather than silently absent (#1298).
@@ -338,6 +478,7 @@ test("parseArgs accepts both --flag value and --flag=value", () => {
     ref: "origin/main",
     releases: "",
     changed: "list.txt",
+    verdict: "",
   });
   assert.throws(() => parseArgs(["--nope"]), /unknown argument --nope/);
   assert.throws(() => parseArgs(["--root"]), /--root needs a value/);
@@ -363,33 +504,38 @@ test("the CLI exits 2 — could not decide — for an unusable root or a bad fla
   assert.equal(runCli(["--mode=detect", "--root", REPO_ROOT, "--since", "undefined"]).code, 2);
 });
 
+/** A checkout satisfying the whole table — every monitored path and every classified lfx child. */
+function buildCheckoutFixture(prefix) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  for (const area of AREAS) {
+    for (const p of area.paths) {
+      const rel = p.replace(/\/$/, "");
+      if (rel.endsWith(".py") || rel.endsWith(".ts") || rel.endsWith(".tsx")) {
+        fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), "");
+      } else {
+        fs.mkdirSync(path.join(root, rel), { recursive: true });
+      }
+    }
+  }
+  // Every classified lfx child must exist, or the drift scan reports it too.
+  for (const key of Object.keys(LFX_CLASSIFICATION)) {
+    const target = path.join(root, LFX_ROOT, key);
+    if (key.endsWith(".py")) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, "");
+    } else {
+      fs.mkdirSync(target, { recursive: true });
+    }
+  }
+  return root;
+}
+
 test("the CLI exits 1 and names the path when the checkout contradicts the table", () => {
   // A tree with the lfx layout but one monitored path deliberately absent.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-cli-"));
+  const root = buildCheckoutFixture("watcher-cli-");
   try {
-    for (const area of AREAS) {
-      for (const p of area.paths) {
-        const rel = p.replace(/\/$/, "");
-        if (rel.endsWith(".py") || rel.endsWith(".ts") || rel.endsWith(".tsx")) {
-          fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
-          fs.writeFileSync(path.join(root, rel), "");
-        } else {
-          fs.mkdirSync(path.join(root, rel), { recursive: true });
-        }
-      }
-    }
-    // Every classified lfx child must exist, or the drift scan reports it too.
-    for (const key of Object.keys(LFX_CLASSIFICATION)) {
-      const target = path.join(root, LFX_ROOT, key);
-      if (key.endsWith(".py")) {
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, "");
-      } else {
-        fs.mkdirSync(target, { recursive: true });
-      }
-    }
-
-    // Now take one watched subtree away — the flow_constants case.
+    // Take one watched subtree away — the flow_constants case.
     fs.rmSync(path.join(root, LFX_ROOT, "base/mcp"), { recursive: true });
 
     const result = runCli(["--mode=check", "--root", root]);
@@ -400,6 +546,77 @@ test("the CLI exits 1 and names the path when the checkout contradicts the table
     assert.match(result.err, /::warning::LFX_CLASSIFICATION records "base\/mcp"/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the guard writes its verdict BEFORE it exits 1 — that is the whole carrier", () => {
+  // If the file only appeared on a clean run, the report would gain a caveat in
+  // exactly the case where it does not need one, and stay silent in the case
+  // #1182 is about.
+  const root = buildCheckoutFixture("watcher-verdict-");
+  const cleanRoot = buildCheckoutFixture("watcher-verdict-ok-");
+  const verdictPath = path.join(root, "guard-verdict.json");
+  try {
+    fs.rmSync(path.join(root, LFX_ROOT, "base/mcp"), { recursive: true });
+
+    const failed = runCli(["--mode=check", "--root", root, "--verdict", verdictPath]);
+    assert.equal(failed.code, 1);
+    const verdict = parseGuardVerdict(fs.readFileSync(verdictPath, "utf8"));
+    assert.equal(verdict.status, "failed");
+    assert.ok(
+      verdict.missing.some((m) => m.area === "MCP Server"),
+      "the verdict must carry the AREA, not just a count",
+    );
+    assert.equal(verdict.checkedPaths, AREAS.reduce((n, a) => n + a.paths.length, 0));
+
+    // And a clean checkout writes an `ok` verdict rather than no file at all —
+    // absent means "could not decide", so it must not double as "all good".
+    fs.rmSync(verdictPath);
+    const clean = runCli(["--mode=check", "--root", cleanRoot, "--verdict", verdictPath]);
+    assert.equal(clean.code, 0);
+    assert.equal(parseGuardVerdict(fs.readFileSync(verdictPath, "utf8")).status, "ok");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cleanRoot, { recursive: true, force: true });
+  }
+});
+
+test("the sweep prints the guard's verdict, and says so when it has none", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-sweep-"));
+  const verdictPath = path.join(dir, "guard-verdict.json");
+  try {
+    fs.writeFileSync(
+      verdictPath,
+      JSON.stringify(
+        buildGuardVerdict({
+          missing: [{ area: "MCP Server", path: "src/lfx/src/lfx/base/mcp/" }],
+          unclassified: [],
+          stale: [],
+          checkedPaths: 88,
+          areaCount: 14,
+        }),
+      ),
+    );
+
+    // REPO_ROOT is a git repo, so the sweep runs for real; none of the monitored
+    // paths exist here, so it reports zero areas and the body is the caveat.
+    const withVerdict = runCli(["--mode=detect", "--root", REPO_ROOT, "--verdict", verdictPath]);
+    assert.equal(withVerdict.code, 0);
+    assert.match(withVerdict.out, /\*\*Path guard:\*\* ❌ 1 monitored path\(s\) missing/);
+    assert.match(withVerdict.out, /\| MCP Server \|/);
+    assert.match(withVerdict.err, /::warning::the path guard's verdict is "failed"/);
+
+    // Declaring the flag asserts a guard ran: a file that is not there is
+    // "unavailable", never silence.
+    fs.rmSync(verdictPath);
+    const gone = runCli(["--mode=detect", "--root", REPO_ROOT, "--verdict", verdictPath]);
+    assert.match(gone.out, /\*\*Path guard:\*\* ⚠️ verdict unavailable/);
+
+    // No flag at all is the local run — still stated, never omitted.
+    const none = runCli(["--mode=detect", "--root", REPO_ROOT]);
+    assert.match(none.out, /\*\*Path guard:\*\* ⚠️ not run/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

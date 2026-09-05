@@ -69,8 +69,9 @@
  * decision instead of silently widening the blind spot.
  *
  * Run:
- *   node scripts/watch-upstream-areas.mjs --mode=check  --root langflow-upstream
- *   node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "24 hours ago"
+ *   node scripts/watch-upstream-areas.mjs --mode=check  --root langflow-upstream [--verdict guard.json]
+ *   node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "24 hours ago" \
+ *       [--verdict guard.json]   # carries the guard's verdict into the issue body (#1182)
  *   node scripts/watch-upstream-areas.mjs --mode=areas          # print the table, no checkout needed
  *   node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream
  *   node scripts/watch-upstream-areas.mjs --mode=check-docs --root langflow-upstream \
@@ -988,13 +989,17 @@ export function detectChangedAreas({ areas = AREAS, commitsFor }) {
   for (const entry of areas) {
     const commits = String(commitsFor(entry.paths) || "").trim();
     if (!commits) continue;
+    const lines = commits.split("\n");
     changed.push({
       area: entry.area,
       tags: entry.tags,
       checklist: entry.checklist,
       grep: entry.tags.join("|"),
       runs: entry.runs,
-      commits: commits.split("\n").slice(0, MAX_COMMITS_PER_AREA),
+      commits: lines.slice(0, MAX_COMMITS_PER_AREA),
+      // What the cap dropped. A cap is announced in the log AND in the report,
+      // never silent (#1012) — five commits otherwise read as the whole story.
+      totalCommits: lines.length,
     });
   }
   return changed;
@@ -1023,13 +1028,157 @@ export function areaCommands(area) {
 }
 
 /**
+ * The guard verdict, as `--mode=check` hands it to `--mode=detect` (#1182).
+ *
+ * WHY IT IS A FILE AND NOT AN ANNOTATION
+ *
+ * `--mode=check` already fails loudly on a monitored path that upstream deleted
+ * — but it does so in the JOB LOG, and `Create review issue` runs before the job
+ * is failed. So the person acting on the issue read an area table produced with
+ * a path the sweep silently ignores, and nothing in front of them said so. That
+ * is #1092's own thesis (an area that cannot be evaluated must not read as
+ * clean) surviving in the one place the reader actually looks.
+ *
+ * The verdict therefore has to travel from one step to the next, and a file is
+ * the carrier that survives the guard EXITING 1 while still carrying a SHAPE:
+ * the report needs which areas and which paths, not a boolean, and keeping it in
+ * the script is what puts it under `npm run test:scripts`.
+ */
+export const GUARD_VERDICT_VERSION = 1;
+
+/**
+ * @param {{missing: Array<{area: string, path: string}>, unclassified: string[], stale: string[], checkedPaths: number, areaCount: number}} parts
+ */
+export function buildGuardVerdict({ missing, unclassified, stale, checkedPaths, areaCount }) {
+  return {
+    version: GUARD_VERDICT_VERSION,
+    checkedPaths,
+    areaCount,
+    missing,
+    unclassified,
+    stale,
+  };
+}
+
+/**
+ * Read a verdict written by `buildGuardVerdict`, fail-closed.
+ *
+ * Every way of NOT having a usable verdict collapses to `unknown` WITH a reason,
+ * never to `ok`: the guard crashed before deciding (exit 2 writes no file), the
+ * file is truncated, or a future version wrote a shape this reader does not
+ * understand. #1012's rule — unevaluated is unknown, not clean.
+ *
+ * @param {string|null|undefined} text raw file contents, or null when absent
+ * @returns {{status: "ok"|"failed"|"unknown", reason?: string, missing: Array, unclassified: string[], stale: string[], checkedPaths: number|null, areaCount: number|null}}
+ */
+export function parseGuardVerdict(text) {
+  const unknown = (reason) => ({
+    status: "unknown",
+    reason,
+    missing: [],
+    unclassified: [],
+    stale: [],
+    checkedPaths: null,
+    areaCount: null,
+  });
+
+  if (text === null || text === undefined || String(text).trim() === "") {
+    return unknown("the guard wrote no verdict — it could not read the checkout at all (exit 2), or it never ran");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return unknown(`the guard's verdict file is not readable JSON (${error.message})`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return unknown("the guard's verdict file does not hold an object");
+  }
+  if (parsed.version !== GUARD_VERDICT_VERSION) {
+    return unknown(
+      `the guard's verdict is version ${JSON.stringify(parsed.version)}, and this reader understands ${GUARD_VERDICT_VERSION}`,
+    );
+  }
+  if (!Array.isArray(parsed.missing) || !Array.isArray(parsed.unclassified)) {
+    return unknown("the guard's verdict carries no `missing` or no `unclassified` list");
+  }
+
+  return {
+    status: parsed.missing.length > 0 || parsed.unclassified.length > 0 ? "failed" : "ok",
+    missing: parsed.missing,
+    unclassified: parsed.unclassified,
+    stale: Array.isArray(parsed.stale) ? parsed.stale : [],
+    checkedPaths: typeof parsed.checkedPaths === "number" ? parsed.checkedPaths : null,
+    areaCount: typeof parsed.areaCount === "number" ? parsed.areaCount : null,
+  };
+}
+
+/**
+ * One line in the issue header, for every state INCLUDING the two that used to
+ * be silent. An absent `guard` is a sweep that never verified its own paths, and
+ * it is reported as such rather than omitted — the omission is precisely what
+ * let the body read as complete.
+ */
+export function renderGuardLine(guard) {
+  if (!guard) {
+    return "**Path guard:** ⚠️ not run — the monitored paths were **not** verified against this checkout, so an area watching a deleted path is indistinguishable from a quiet one.";
+  }
+  if (guard.status === "unknown") {
+    return `**Path guard:** ⚠️ verdict unavailable — ${guard.reason}. The areas below may have been evaluated against paths that no longer exist upstream.`;
+  }
+  if (guard.status === "failed") {
+    const parts = [];
+    if (guard.missing.length > 0) parts.push(`${guard.missing.length} monitored path(s) missing`);
+    if (guard.unclassified.length > 0) parts.push(`${guard.unclassified.length} unclassified \`lfx\` subtree(s)`);
+    return `**Path guard:** ❌ ${parts.join(", ")} — this sweep is **incomplete**, see below.`;
+  }
+  const scope =
+    guard.checkedPaths === null || guard.areaCount === null
+      ? "every monitored path exists in the checkout"
+      : `all ${guard.checkedPaths} monitored path(s) across ${guard.areaCount} area(s) exist in the checkout`;
+  return `**Path guard:** ✅ ${scope}.`;
+}
+
+/**
+ * The detail block, printed only when there is detail to give. It names the
+ * AREAS, because "a path is gone" is a fact about the table while "this row says
+ * nothing" is the fact the reader needs.
+ */
+export function renderGuardSection(guard) {
+  if (!guard || guard.status === "ok" || guard.status === "unknown") return [];
+
+  const lines = ["### ⚠️ Path guard failed — this sweep is incomplete", ""];
+  if (guard.missing.length > 0) {
+    lines.push(
+      `The sweep over a path that is not in the checkout prints nothing, exactly as a quiet area does. The ${guard.missing.length} area/path pair(s) below produced no verdict at all — their rows, or their absence from the table, say nothing:`,
+      "",
+      "| Area not fully evaluated | Missing path |",
+      "|---|---|",
+      ...guard.missing.map((m) => `| ${cell(m.area)} | \`${cell(m.path)}\` |`),
+      "",
+    );
+  }
+  if (guard.unclassified.length > 0) {
+    lines.push(
+      `${guard.unclassified.length} \`lfx\` subtree(s) exist upstream that no area classifies: ${guard.unclassified
+        .map((k) => `\`${cell(k)}\``)
+        .join(", ")}.`,
+      "",
+    );
+  }
+  lines.push("Repoint or drop the entries in `scripts/watch-upstream-areas.mjs`, then re-run the sweep.", "");
+  return lines;
+}
+
+/**
  * The revalidation issue body.
  *
  * Rendered here rather than in the workflow so it is covered by
  * `npm run test:scripts` — the unescaped `|` that used to shred every row of the
  * table was invisible for exactly as long as this lived in inline YAML.
  */
-export function renderIssueBody({ since, areas, today, window }) {
+export function renderIssueBody({ since, areas, today, window, guard }) {
   return [
     "## Langflow source changes detected — test review required",
     "",
@@ -1037,7 +1186,9 @@ export function renderIssueBody({ since, areas, today, window }) {
     `**Window:** \`${since}\`` +
       (window ? ` — ${window.count} upstream commit(s) repo-wide; newest in checkout: \`${window.newest}\`` : ""),
     "**Source:** [langflow-ai/langflow](https://github.com/langflow-ai/langflow)",
+    renderGuardLine(guard),
     "",
+    ...renderGuardSection(guard),
     "### Changed areas, affected tags and checklist sections",
     "",
     "| Area | Run these tests | Checklist |",
@@ -1050,7 +1201,18 @@ export function renderIssueBody({ since, areas, today, window }) {
     ),
     "",
     "### Commits",
-    ...areas.flatMap((a) => ["", `#### ${a.area}`, "```", ...a.commits, "```"]),
+    ...areas.flatMap((a) => [
+      "",
+      `#### ${a.area}`,
+      "```",
+      ...a.commits,
+      "```",
+      ...(typeof a.totalCommits === "number" && a.totalCommits > a.commits.length
+        ? [
+            `_… and ${a.totalCommits - a.commits.length} more commit(s) not shown (cap: ${MAX_COMMITS_PER_AREA} per area)._`,
+          ]
+        : []),
+    ]),
     "",
     "### Action required",
     "1. Review the commits listed above",
@@ -1114,12 +1276,32 @@ function describeWindow(root, since) {
   return { count, newest };
 }
 
-function runCheck(root) {
+function runCheck(root, verdictPath) {
   const missing = findMissingPaths({ exists: (p) => fs.existsSync(path.join(root, p)) });
   const drift = findLfxDrift({ listChildren: listChildrenFactory(root) });
 
   const total = AREAS.reduce((n, a) => n + a.paths.length, 0);
   process.stdout.write(`Checked ${total} monitored paths across ${AREAS.length} areas; scanned ${drift.scanned.length} lfx level(s).\n`);
+
+  // Written BEFORE the exit below, on both outcomes: the sweep step needs the
+  // verdict most precisely when the guard is about to fail the job (#1182).
+  if (verdictPath) {
+    const verdict = buildGuardVerdict({
+      missing,
+      unclassified: drift.unclassified,
+      stale: drift.stale,
+      checkedPaths: total,
+      areaCount: AREAS.length,
+    });
+    try {
+      fs.writeFileSync(verdictPath, `${JSON.stringify(verdict, null, 2)}\n`);
+    } catch (error) {
+      // Never fatal: an unwritable verdict costs the report a line, while
+      // aborting here would cost the whole sweep. The reader turns the absent
+      // file into "verdict unavailable", which is the honest outcome.
+      process.stderr.write(`::warning::could not write the guard verdict to "${verdictPath}" (${error.message}).\n`);
+    }
+  }
 
   for (const key of drift.stale) {
     process.stderr.write(
@@ -1325,7 +1507,25 @@ function runCheckDocs(root, trunkRef, releaseRefs, changedListPath) {
   );
 }
 
-function runDetect(root, since) {
+/**
+ * The guard verdict for this sweep, or `undefined` when no `--verdict` was
+ * declared (a local `--mode=detect` with no guard in front of it).
+ *
+ * Declaring the flag is the assertion that a guard ran, so a file that is not
+ * there is NOT the same as not asking: it becomes `unknown`, printed as such.
+ */
+function readGuardVerdict(verdictPath) {
+  if (!verdictPath) return undefined;
+  let raw = null;
+  try {
+    raw = fs.readFileSync(verdictPath, "utf8");
+  } catch {
+    raw = null;
+  }
+  return parseGuardVerdict(raw);
+}
+
+function runDetect(root, since, verdictPath) {
   let changed;
   let window;
   try {
@@ -1350,8 +1550,15 @@ function runDetect(root, since) {
     );
   }
 
+  const guard = readGuardVerdict(verdictPath);
+  if (guard && guard.status !== "ok") {
+    process.stderr.write(
+      `::warning::the path guard's verdict is "${guard.status}" — the revalidation issue will say so above the area table.\n`,
+    );
+  }
+
   const today = new Date().toISOString().split("T")[0];
-  const body = renderIssueBody({ since, areas: changed, today, window });
+  const body = renderIssueBody({ since, areas: changed, today, window, guard });
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(
       process.env.GITHUB_OUTPUT,
@@ -1369,7 +1576,10 @@ function runDetect(root, since) {
     process.stdout.write(`${body}\n`);
   }
   for (const entry of changed) {
-    process.stderr.write(`  ${entry.area}: ${entry.commits.length} commit(s)\n`);
+    const dropped = entry.totalCommits - entry.commits.length;
+    process.stderr.write(
+      `  ${entry.area}: ${entry.commits.length} commit(s)${dropped > 0 ? ` (+${dropped} not shown, cap ${MAX_COMMITS_PER_AREA})` : ""}\n`,
+    );
   }
   process.stdout.write(`${changed.length} area(s) changed since ${since}\n`);
 }
@@ -1424,8 +1634,8 @@ export function parseRefList(value, { allowEmpty = false } = {}) {
 
 /** `--flag value` and `--flag=value` both work — the mixed forms bit a reviewer. */
 export function parseArgs(args) {
-  const opts = { mode: "check", root: ".", since: "24 hours ago", ref: "HEAD", releases: "", changed: "" };
-  const KEYS = new Set(["mode", "root", "since", "ref", "releases", "changed"]);
+  const opts = { mode: "check", root: ".", since: "24 hours ago", ref: "HEAD", releases: "", changed: "", verdict: "" };
+  const KEYS = new Set(["mode", "root", "since", "ref", "releases", "changed", "verdict"]);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     const match = /^--([a-z]+)(?:=(.*))?$/.exec(a);
@@ -1445,7 +1655,7 @@ function main(argv) {
     process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
     process.exit(2);
   }
-  const { mode, root, since, ref, releases, changed } = opts;
+  const { mode, root, since, ref, releases, changed, verdict } = opts;
 
   if (mode === "areas") {
     process.stdout.write(`${renderAreaTable()}\n`);
@@ -1476,13 +1686,15 @@ function main(argv) {
   const releaseRefs = mode === "check-docs" ? parseRefList(releases, { allowEmpty: true }) : [];
 
   try {
-    if (mode === "check") return runCheck(root);
+    if (mode === "check") return runCheck(root, verdict);
     if (mode === "release-ref") return runReleaseRef(root);
     if (mode === "check-docs") return runCheckDocs(root, ref, releaseRefs, changed);
-    return runDetect(root, since);
+    return runDetect(root, since, verdict);
   } catch (error) {
-    // Includes the fail-closed throw from findLfxDrift and a bad area name in
-    // buildAreas — both mean the table no longer describes the checkout.
+    // The fail-closed throw from findLfxDrift: the table no longer describes the
+    // checkout. NOT a bad area name in buildAreas — `export const AREAS =
+    // buildAreas()` runs at module load, before main(), so that one still exits
+    // with a raw stack trace and no `::error::` annotation.
     process.stderr.write(`::error::${error.message}\n`);
     process.exit(1);
   }
