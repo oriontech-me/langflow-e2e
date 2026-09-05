@@ -20,7 +20,8 @@ Most component families moved out of `lfx.components.*` into **per-vendor
 distributions** (`lfx_openai`, `lfx_anthropic`, `lfx_google`, …) plus an aggregate
 `lfx-bundles` package. The old import paths still exist as shims, which re-point at
 the installed distribution and raise a `ModuleNotFoundError` when it is absent. The
-shims are **deleted at M4** (see *The M4 deadline* — it has no published date).
+shims are **deleted at M4** (see *The M4 deadline* — no published date; upstream's own
+stated shape puts it no earlier than 1.14).
 
 **There are two kinds of shim, and the distinction changes the diagnosis:**
 
@@ -316,26 +317,120 @@ declared; 116 of them name no path at all.
 
 ## The M4 deadline
 
-**There is no published date, and this was searched for rather than assumed.** `M4`
-appears in **79 files** on `origin/release-1.12.0`, and **none of them carries a
-date**: the 77 bundle-shim `__init__.py` docstrings ("removed once the deprecation
-window closes (M4)"), `lfx/base/datastax/__init__.py`, and two scripts —
-`scripts/ci/check_components_frozen.py` ("the M4 shim cleanup later removes those
-dirs") and `scripts/migrate/consolidate_bundles.py`, which is the generator that
-writes those docstrings in the first place. So the label is machinery, not a plan.
-It is absent from:
+**There is no published date and no target release. Asked of every public source
+rather than assumed, and the search is recorded below so nobody repeats it
+(#1297).** What upstream *has* stated is M4's **shape**, and that is enough to
+derive a floor — which turns out to be the useful half.
 
-- every `.md` on `origin/release-1.12.0`, including `BUNDLE_API.md`, the migration's
-  own design document — which *does* discuss M1 and M2, making the silence on M4
-  informative rather than merely absent;
-- any `\bM[0-9]\b` token in upstream markdown;
-- upstream issues and PRs mentioning `lfx-bundles` with a deprecation date;
-- upstream **milestones** — `langflow-ai/langflow` has none.
+### What M4 is, in upstream's own words
 
-So the deadline cannot be turned into a date from the repository. Getting one
-requires **asking the Langflow team** — tracked as #1297, and not something this
-suite can resolve on its own. Until then, treat M4 as "not
-before the next minor" and rely on the drift detector rather than the calendar.
+Two PR bodies from the Phase A stack, both merged 2026-06-23, are the only public
+statements about M4 that exist anywhere:
+
+- [langflow-ai/langflow#13568](https://github.com/langflow-ai/langflow/pull/13568),
+  under *"Deliberately deferred (follow-ups, not in Phase A's 10-PR plan)"*:
+
+  > `M4: shim removal (one loud deprecation minor first), locale-extractor lfx_bundles walk`
+
+  and, earlier in the same body: *"**Deprecation warnings deliberately deferred to
+  M4** (a warning would fire on every `pip install langflow` boot today)."*
+
+- [langflow-ai/langflow#13577](https://github.com/langflow-ai/langflow/pull/13577):
+
+  > "**Decision: deprecation warnings are NOT warranted now.** The surface is
+  > small, the shims are contract-tested, and a warning would fire on every
+  > `pip install langflow` boot […]. Revisit at **M4 (shim removal)** — one loud
+  > minor release before removal is the right shape."
+
+Neither names a date or a release number. Both are worded as *revisit later*, not
+as *scheduled for X*.
+
+### The floor that follows, and it is not close
+
+M4 needs **a loud deprecation minor first**, by upstream's own statement. So a
+minor whose shims are silent is neither the removal minor nor the one before it.
+
+Measured 2026-09-05 on `origin/release-1.13.0` (tip `a43ed6fbca`) — the newest line
+in development, with `v1.12.0` released four days earlier: **78
+`lfx-bundles-shim` directories, and not one of them emits a `DeprecationWarning`.**
+(The token appears twice under `components/`, both unrelated:
+`agentics/helpers/model_config.py`, and LangChain's own
+`LangChainDeprecationWarning` being *suppressed* in `tools/__init__.py`.)
+
+So the loud minor has not shipped, and on today's tip it is not 1.13 either.
+**M4 cannot land before 1.14, and on the current tip more likely not before 1.15.**
+Upstream's recent minor cadence is 44 and 40 days (`v1.10.0` 2026-06-09 →
+`v1.11.0` 07-23 → `v1.12.0` 09-01), which would put 1.14 around late November 2026
+— a *projection from cadence*, never a date upstream gave, and it must not be
+quoted as one.
+
+### Why the label cannot be resolved from public sources at all
+
+`M1`–`M4` are defined in a document that is **not in the repository**: the
+*"Bundle Separation: Developer Guide"*, cited by section number from code —
+`scripts/migrate/check_router_trust.py:4` (the Extension-System trust boundary) and
+`src/lfx/src/lfx/extension/init_template.py:68` (*"§2: richer templates …"*) — and
+tied to Jira `LE-1017`. No file matching it exists on any ref. That is why the
+four-milestone plan is legible in the code and nowhere in the docs.
+
+The label entered the tree in **`7896b9f7f17a`** (2026-06-23) =
+[#13563](https://github.com/langflow-ai/langflow/pull/13563), *"feat(bundles):
+metapackage split (Phase A)"* — whose own body calls the epic **"Phase A"** and
+carries no milestone table. The docstrings are generated by
+`scripts/migrate/consolidate_bundles.py` (`_shim_source()`), which hardcodes
+*"removed once the deprecation window closes (M4)."* The label is machinery, not a
+plan.
+
+### The negatives — searched, empty, so do not search them again
+
+| Where | Result |
+|---|---|
+| `git log --all -S "M4" -- '*.md'` upstream | **empty** — no markdown file, in any revision on any fetched ref, has ever contained `M4`. This kills the plausible "an earlier `BUNDLE_API.md` listed M3/M4 before being trimmed" hypothesis outright |
+| `BUNDLE_API.md`, 15 revisions back to `cc009c9133` | `M1` only (line 179, the DuckDuckGo proof-of-delivery gate); no `M2`/`M3` definition exists anywhere either |
+| `src/bundles/PORTING.md`, `NIGHTLY.md`, `lfx-bundles/README.md` | no deprecation window, no removal release |
+| `docs/docs/**` (the docs-site source) | zero hits for shim / deprecation / removal of the **import paths**; the 81 `bundles-*.mdx` pages deprecate individual *components*, never the shims |
+| `gh search issues` / `gh search prs` — `M4`, `lfx-bundles`, `shim`, `deprecation window`, `consolidate_bundles`, `check_components_frozen`, `bundle migration milestone` | only the Phase A stack (#13043, #13563–#13580); **no issue or PR discusses removal timing** |
+| every comment thread on #13563, #13568, #13577 (both the `pulls/` and `issues/` endpoints) | **zero** matches for `M4`, `deprecation window`, `shim removal`, `loud deprecation` — nobody has ever asked in-thread |
+| GitHub **Discussions** (703, enabled — via GraphQL) | `M4` / `shim deprecation` → 0; `lfx-bundles` → #14592 only, about getting a bundle onto the official list |
+| `gh release list` + the `v1.11.0` / `v1.12.0` bodies | auto-generated PR lists; no deprecation statement |
+| `gh api repos/langflow-ai/langflow/milestones?state=all` | `[]` — the repo uses no GitHub milestones at all |
+
+Two traps this search hit, both of which produce a confident wrong answer:
+
+- **The REST discussions endpoint is useless here.** `gh api …/discussions`
+  returning nothing reads as "discussions are off". They are on — 703 of them — and
+  only the GraphQL search reaches them. A negative from the REST call is not a
+  negative.
+- **"Bundle separation concludes in 1.12" is not an M4 date.** The current release
+  notes (`docs/docs/Support/release-notes.mdx`) say exactly that, but the sentence
+  is about which provider bundles the default `uv pip install langflow` ships, and
+  it goes on to promise *"existing component class names remain compatible"*.
+  Reading it as the shim-removal date inverts its meaning.
+
+One gap, stated rather than papered over: upstream's `projectsV2` boards were
+**not** reachable (the token lacks `read:project`). If a public roadmap board
+exists, that is the one place this sweep did not look.
+
+### If a date is wanted, this is where to ask
+
+No upstream thread on the question exists, so there is nothing to subscribe to. In
+order of directness:
+
+1. A comment on [#13568](https://github.com/langflow-ai/langflow/pull/13568) —
+   where the `M4: shim removal (one loud deprecation minor first)` follow-up line
+   lives; its author owns the whole bundle-separation stack.
+2. A new **Q&A discussion**:
+   `https://github.com/langflow-ai/langflow/discussions/new?category=q-a`.
+
+### What to do until then
+
+Treat M4 as **"not before 1.14, and not on a published schedule"**, and rely on the
+drift detector rather than the calendar — `globalSetup`'s catalog comparison names
+a vanished family at the gate, which is the mechanism that actually protects the
+suite. The measurement to re-run when a date does appear is *Hardcoded
+`lfx/components/...` paths and the M4 expiry* below: today it reports **29
+occurrences, zero of them pointing at a shim**, so the deletion breaks none of our
+recorded paths.
 
 ---
 
