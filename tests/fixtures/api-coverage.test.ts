@@ -9,7 +9,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   buildCoverageRecord,
@@ -17,6 +16,7 @@ import {
   installApiCoverage,
   writeCoverageRecord,
 } from "./api-coverage";
+import { makeTempDir } from "../../scripts/lib/tmp-dir.mjs";
 
 /** Stands in for a test-scoped APIRequestContext. */
 const fakeContext = () => {
@@ -164,7 +164,7 @@ test("writeCoverageRecord persists the record, and writes nothing when nothing w
   // its force-fail into a false positive (the ff-run trap: it banks any
   // failure). What genuinely needs a Playwright session is the fixture FAILING
   // the test, and that is all the gate spec asserts now.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "api-coverage-"));
+  const dir = makeTempDir("api-coverage-");
   const info = {
     testId: "abc123",
     titlePath: ["chromium", "suite", "a test"],
@@ -192,7 +192,7 @@ test("writeCoverageRecord persists the record, and writes nothing when nothing w
 });
 
 test("writeCoverageRecord credits nothing for a test that did not pass", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "api-coverage-"));
+  const dir = makeTempDir("api-coverage-");
   writeCoverageRecord(
     {
       testId: "failed1",

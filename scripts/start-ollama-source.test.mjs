@@ -32,11 +32,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -135,7 +136,7 @@ function runScript({
   discoveryTools = true,
   probeDelayS = 0,
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "start-ollama-source-test-"));
+  const dir = makeTempDir("start-ollama-source-test-");
   const bin = join(dir, "bin");
   const prefix = join(dir, "ollama-prefix");
   const stateRoot = join(dir, "state-root");
@@ -566,7 +567,7 @@ function runStop(env, stateRoot) {
 }
 
 test("stop is a no-op when there is no PID file for that port", () => {
-  const dir = mkdtempSync(join(tmpdir(), "stop-ollama-source-test-"));
+  const dir = makeTempDir("stop-ollama-source-test-");
   const r = runStop({ OLLAMA_PORT: "11434" }, dir);
   assert.equal(r.status, 0);
   assert.match(r.stdout, /No PID file for port 11434/);
@@ -574,7 +575,7 @@ test("stop is a no-op when there is no PID file for that port", () => {
 });
 
 test("stop clears a PID file whose process is already gone", () => {
-  const dir = mkdtempSync(join(tmpdir(), "stop-ollama-source-test-"));
+  const dir = makeTempDir("stop-ollama-source-test-");
   const stateDir = join(dir, "ollama-source-11434");
   mkdirSync(stateDir, { recursive: true });
   const pidFile = join(stateDir, "ollama.pid");

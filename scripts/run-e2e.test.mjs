@@ -24,12 +24,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 import { readServiceEnv, CLASSIFICATION } from "./lib/vm-env-parity.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -122,7 +123,7 @@ test("an unreadable report defaults to empty, not to green", () => {
 });
 
 test("gh_out reads plain and heredoc values, which the outage report needs", () => {
-  const dir = mkdtempSync(join(tmpdir(), "run-e2e-test-"));
+  const dir = makeTempDir("run-e2e-test-");
   const file = join(dir, "outputs.txt");
   writeFileSync(file, ["empty=false", "summary_md<<EOF_MD", "| shard | down |", "| 1 | 4s |", "EOF_MD", "partial=true"].join("\n") + "\n");
   const r = sourced(`gh_out ${JSON.stringify(file)} empty; echo; gh_out ${JSON.stringify(file)} summary_md; echo; gh_out ${JSON.stringify(file)} partial`);
@@ -293,7 +294,6 @@ test("pragmas that are not a JSON object stop the run", () => {
     assert.match(r.stderr, /LANGFLOW_SQLITE_PRAGMAS/);
   }
 });
-
 
 test("the mirrored values cross the ssh boundary, which a default alone does not", () => {
   // The failure mode this catches LOOKS fixed: the values are set here, the shell that
@@ -677,7 +677,7 @@ test("a ledger inside the clone is refused, however the path is spelled", () => 
   // The one way this change defeats its own purpose. Each of these writes into the
   // working tree, and the cost is paid the NEXT morning, by a `git pull --ff-only`
   // that refuses for a reason nobody is watching at 08:00.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-refuse-"));
+  const tmp = makeTempDir("ledger-refuse-");
   const sneaky = join(tmp, "looks-outside");
   symlinkSync(join(REPO_ROOT, "reports"), sneaky);
   const cases = [
@@ -704,7 +704,7 @@ test("preflight CREATES the ledger it accepts, which is the path every night tak
   // ledger costs one variable instead of an hour. Every other preflight test is a
   // REFUSAL, so the branch that actually runs was pinned by nothing: deleting the
   // `mkdir` and the `-w` check outright left the file green.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-ok-"));
+  const tmp = makeTempDir("ledger-ok-");
   try {
     const dir = join(tmp, "state", "langflow-e2e");
     const r = preflightLedger({ LEDGER_DIR: dir });
@@ -719,7 +719,7 @@ test("preflight CREATES the ledger it accepts, which is the path every night tak
 });
 
 test("a ledger directory that exists and cannot be written is refused", { skip: process.getuid?.() === 0 ? "root writes anywhere, so -w cannot be exercised" : false }, () => {
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-dir-"));
+  const tmp = makeTempDir("ledger-ro-dir-");
   try {
     const dir = join(tmp, "locked");
     mkdirSync(dir, { mode: 0o500 });
@@ -843,7 +843,7 @@ test("the ledger is seeded once from the Actions series, and an existing one is 
   // Day zero is not free: the durations file is what balances the matrix and the token
   // summary's anomaly baseline is a median over recent entries, and both answer badly
   // from three lines — badly in the direction of looking fine.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-seed-"));
+  const tmp = makeTempDir("ledger-seed-");
   try {
     const tracked = join(tmp, "tracked.jsonl");
     const ledger = join(tmp, "ledger.jsonl");
@@ -877,7 +877,7 @@ test("a seed that cannot be copied warns, and does not take the day's verdict wi
   // phase_publish runs under `set -e`, so a bare `cp` failing here would abort the
   // whole phase — after the run, before the verdict. The series is worth less than the
   // day it would cost, and every other step in that phase already says so.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-"));
+  const tmp = makeTempDir("ledger-ro-");
   try {
     const tracked = join(tmp, "tracked.jsonl");
     writeFileSync(tracked, "a line\n");
@@ -903,7 +903,7 @@ test("asking for the ledger's durations and finding none is said out loud", () =
   assert.equal(missing.stdout.trim(), tracked, "a missing table must not become an empty argument");
   assert.match(missing.stderr, /USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet/);
 
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-dur-"));
+  const tmp = makeTempDir("ledger-dur-");
   try {
     writeFileSync(join(tmp, "spec-durations.json"), "{}\n");
     const present = sourced(`durations_table`, { USE_LEDGER_DURATIONS: "1", LEDGER_DIR: tmp });

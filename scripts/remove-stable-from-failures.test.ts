@@ -27,6 +27,7 @@ import * as os from "os";
 import * as path from "path";
 import { collectHardFailures, lastFailureError } from "./remove-stable-from-failures";
 import { classifyInfraError } from "./lib/infra-signatures";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = path.join(__dirname, "remove-stable-from-failures.ts");
 
@@ -89,7 +90,7 @@ function runScript(opts: {
   /** The #1030 liveness verdict the action forwards; "" when unmeasured. */
   backendWedged?: string;
 }): { result: Result; after: Record<string, string> } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-"));
+  const dir = makeTempDir("autoremove-");
   try {
     for (const [file, titles] of Object.entries(opts.specs)) {
       fs.writeFileSync(path.join(dir, file), specSource(titles));
@@ -584,7 +585,7 @@ test("a FLAKY test keeps @stable", () => {
 // ─── Splicing ────────────────────────────────────────────────────────────────
 
 test("removes only the @stable element, preserving comments and the other tags", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-splice-"));
+  const dir = makeTempDir("autoremove-splice-");
   try {
     const source = [
       "import { test } from '../fixtures/fixtures';",
@@ -662,7 +663,7 @@ test("removes only the @stable element, preserving comments and the other tags",
 test("an unresolvable spec path is reported, not silently swallowed", () => {
   // The #476 failure mode: every failure skipped as "spec file not found" while
   // the script exits with a clean `none`. It must surface a warning annotation.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-missing-"));
+  const dir = makeTempDir("autoremove-missing-");
   try {
     const report = {
       config: { rootDir: dir },
@@ -699,7 +700,7 @@ test("an unresolvable spec path is reported, not silently swallowed", () => {
 // ─── The report parser (exported, so tested directly) ────────────────────────
 
 test("collectHardFailures reads nested suites and counts only 'unexpected'", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-parse-"));
+  const dir = makeTempDir("autoremove-parse-");
   try {
     fs.writeFileSync(path.join(dir, "fixture-1017-deep.spec.ts"), specSource(["hard", "flaky"]));
     const reportPath = path.join(dir, "results.json");
@@ -737,7 +738,7 @@ test("collectHardFailures reads nested suites and counts only 'unexpected'", () 
 test("collectHardFailures returns [] for a missing or unparseable report", () => {
   assert.deepEqual(collectHardFailures(path.join(os.tmpdir(), "does-not-exist-1017.json")), []);
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-bad-"));
+  const dir = makeTempDir("autoremove-bad-");
   try {
     const bad = path.join(dir, "results.json");
     fs.writeFileSync(bad, "{ nope");
@@ -796,7 +797,7 @@ function withTestsRootFixture<T>(
 
 /** A one-hard-failure report for the fixture, optionally carrying a rootDir. */
 function fixtureReport(specFile: string, rootDir?: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-476-"));
+  const dir = makeTempDir("autoremove-476-");
   const reportPath = path.join(dir, "results.json");
   fs.writeFileSync(
     reportPath,

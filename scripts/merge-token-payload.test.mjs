@@ -2,11 +2,11 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import realFs, { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import realFs, { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { MERGE_CODES, mergeTokenPayload, resolveTargetProvider } from "./merge-token-payload.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const daily = () =>
@@ -373,7 +373,7 @@ test("the POST step handles every MERGE_CODES verdict, and has a fallback for no
 // every other test in this file green while the step's verdict goes permanently
 // empty — measured: that mutation passed 19/19 before this test existed.
 test("the daily's own extractor reads the real CLI's real stdout", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "merge-token-payload-"));
+  const dir = makeTempDir("merge-token-payload-");
   writeFileSync(path.join(dir, "payload.json"), JSON.stringify(PAYLOAD));
   // No tokens block on disk → the CLI must reach `block_missing`, a verdict the
   // step has a distinct branch for.

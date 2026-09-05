@@ -14,10 +14,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, readFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./append-weekly-history.mjs", import.meta.url));
 
@@ -62,7 +63,7 @@ function report(specs) {
 
 /** Run the appender over `rep` and return the single JSONL entry it wrote. */
 function append(rep, envOver = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "history-"));
+  const dir = makeTempDir("history-");
   const reportPath = join(dir, "results.json");
   const historyPath = join(dir, "history.jsonl");
   writeFileSync(reportPath, JSON.stringify(rep));
@@ -225,7 +226,6 @@ test("totals and the entry shape are unchanged by the added field", () => {
     assert.ok("infra_signature" in e, "every failure and flake carries the field, so absent means pre-#1310");
   }
 });
-
 
 // The resolved version, and why it is worth a test of its own. LANGFLOW_IMAGE is a
 // moving tag: two rows both saying ":latest" are two different products on two

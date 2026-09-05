@@ -12,9 +12,8 @@
 // the number, and what is it above.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import { spawnSync } from "node:child_process";
 
 import {
@@ -22,6 +21,7 @@ import {
   countSpecs,
   renderSummary,
 } from "./render-impacted-summary.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const REGRESSION = "tests/tests-automations/regression/";
@@ -301,7 +301,7 @@ test("bad input is unrenderable, never a partial summary", () => {
 const CLI = path.join(REPO_ROOT, "scripts/render-impacted-summary.mjs");
 
 test("the CLI renders from files and exits 2 on anything undecidable", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "render-summary-"));
+  const dir = makeTempDir("render-summary-");
   const impacted = path.join(dir, "impacted.json");
   const provider = path.join(dir, "provider.json");
   try {

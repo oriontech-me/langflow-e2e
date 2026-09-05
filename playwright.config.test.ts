@@ -20,8 +20,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "child_process";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
+import { makeTempDir } from "./scripts/lib/tmp-dir.mjs";
 
 const REPO_ROOT = __dirname;
 /** The local CLI entrypoint. NOT `npx`, which downloads from the registry when the
@@ -58,7 +58,7 @@ function importConfig(
   // exported variable a developer may well have set in the shell that runs these.
   delete base.PW_LOCALE;
 
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "config-1024-"));
+  const cwd = makeTempDir("config-1024-");
   try {
     // spawnSync, not execFileSync: the two streams must be read from ONE run and
     // kept apart, so a noisy stderr can never be mistaken for a stdout write.
@@ -111,7 +111,7 @@ function readFromConfig(
   delete base.PW_DESTRUCTIVE;
   delete base.PW_LOCALE;
 
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "config-1400-"));
+  const cwd = makeTempDir("config-1400-");
   try {
     return execFileSync(
       process.execPath,
@@ -278,7 +278,7 @@ test("the daily's prep command produces parseable JSON", () => {
   // on a polluted stdout, so run it over this output and require a usable matrix.
   // Through a real file, exactly as the workflow does (`> /tmp/stable-list.json`),
   // rather than `/dev/stdin` — the script reads its argument with readFileSync.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-1024-"));
+  const dir = makeTempDir("prep-1024-");
   try {
     const listPath = path.join(dir, "stable-list.json");
     fs.writeFileSync(listPath, listed);
