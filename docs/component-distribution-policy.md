@@ -54,11 +54,22 @@ cut from, **not** `main`:
 | Categories in `GET /api/v1/all` | **36** (20 vendor + 16 core) |
 | Component types in `GET /api/v1/all` | **189** |
 
-**The ref matters, and getting it wrong is easy:** on `origin/main` the split is
-**78 / 28**, because `cassandra` became a shim on the release line only
-(2026-07-30) and has not merged back. The nightly is cut from `release-1.12.0`, so
-that is the ref to compare against; the running **image** is the final authority,
-and the *How to re-measure* section reads it directly.
+**The ref matters, and getting it wrong is easy — but the ref that differs has
+changed, so re-read this before quoting it.** The `cassandra` split that used to
+make `origin/main` read **78 / 28** against the release line's 77 / 27 **has merged
+back** (`c3bfdb7d03`, *"back-merge release-1.12.0 into main (fast-forward only)"*,
+#14652, 2026-08-18). Re-measured 2026-09-05:
+
+| ref | `lfx-bundles-shim` | `lfx-compat-shim` | total `components/*` | core |
+|---|---|---|---|---|
+| `origin/release-1.12.0` | 77 | 2 | 106 | 27 |
+| `origin/main` | 77 | 2 | 106 | 27 |
+| `origin/release-1.13.0` | **78** | 2 | **107** | 27 |
+
+So `main` and the 1.12 line now agree, and the line that differs is
+`release-1.13.0`. The nightly is cut from a release line, so that is still the ref
+to compare against; the running **image** is the final authority, and the
+*How to re-measure* section reads it directly.
 
 **The rule that matters**, stated in the direction that actually holds — the
 biconditional is false and the honest form is two measured claims:
@@ -237,25 +248,34 @@ duplicated. The exclusion is right either way, but the stronger claim is false.
 
 ## Hardcoded `lfx/components/...` paths and the M4 expiry
 
-Measured across the whole repo (`*.ts`, `*.md`, `*.mjs`) with the grep in
-*How to re-measure*: **29 occurrences across 21 files, and none of them points at a
-shim.** They resolve to six families:
+Re-measured 2026-09-05 across the whole repo (`*.ts`, `*.md`, `*.mjs`) with the
+grep in *How to re-measure*: **60 occurrences across 46 files, and none of them
+points at a shim.** They resolve to nine families:
 
-| Family | Occurrences | Core on `release-1.12.0` |
+| Family | Occurrences | Real directory on `release-1.13.0` |
 |---|---|---|
-| `models_and_agents` | 8 | yes |
-| `input_output` | 7 | yes |
+| `models_and_agents` | 21 | yes |
+| `input_output` | 15 | yes |
 | `processing` | 7 | yes |
-| `flow_controls` | 4 | yes |
-| `data_source` | 2 | yes |
+| `flow_controls` | 6 | yes |
+| `data_source` | 6 | yes |
+| `utilities` | 2 | yes (43 lines) |
+| `prototypes` | 1 | yes (35 lines) |
+| `agentics` | 1 | yes (48 lines) |
 | `agents` | 1 | **no — does not exist**, see below |
 
-The 29th is this file quoting the bad path below as an example, which the grep
-counts; the 28 the first version of this section reported was the same measurement
-before that example was written down. Either way the conclusion is the one that
-matters and it is unchanged: **the M4 shim deletion breaks zero of our recorded
-paths today.** #1040 assumed otherwise ("anything of ours that reaches
-`lfx.components.*` directly breaks silently at that point") — measured, it does not.
+**The count roughly doubled and the conclusion did not**, which is the part worth
+carrying: the growth is #1298/#1314's doc-path sweep writing *correct* paths where
+docs previously carried dead or absent ones, not new coupling to the shim layer.
+Three families are new to this table (`utilities`, `prototypes`, `agentics`) and
+all three are real directories with real content, not shims. So it still holds:
+**the M4 shim deletion breaks zero of our recorded paths today.** #1040 assumed
+otherwise ("anything of ours that reaches `lfx.components.*` directly breaks
+silently at that point") — measured twice now, it does not.
+
+A number in this section goes stale on its own, without anything being wrong: it
+counts *our* prose, so every doc that names a component path moves it. Re-run the
+grep rather than trusting the figure — the conclusion is the durable part.
 **Re-measure when M4 gets a date**, since core families keep moving.
 
 ### The dead paths this did find — 20 of them, not one
@@ -309,10 +329,13 @@ as `--mode=check` itself, which is what this section predicted: `check` scans th
 diff (#980) — a path in a doc the PR changed fails, a pre-existing one is reported
 as a `::warning::` — and since #1574 it resolves against `origin/main` **plus the
 two release lines the nightly is cut from**, naming in a `::notice::` any path that
-resolves on only some of them. Measured 2026-08-25: 502 paths, zero unresolved —
-spread over the **145** docs that declare any, out of 261 scanned (1 exempt). The
-guard's own line reads `from 261 doc(s)` because that is what it read, not what
-declared; 116 of them name no path at all.
+resolves on only some of them. Re-measured 2026-09-05 against `origin/main` +
+`release-1.12.0` + `release-1.13.0`: **589 paths, zero unresolved, and zero
+`::notice::`** — spread over the **178** docs that declare any, out of 294 scanned
+(1 exempt). The guard's own line reads `from 294 doc(s)` because that is what it
+read, not what declared; 116 of them name no path at all. The one path that used to
+resolve on `release-1.12.0` only now resolves everywhere, which is the same
+back-merge recorded above.
 
 ---
 
@@ -325,8 +348,10 @@ derive a floor — which turns out to be the useful half.
 
 ### What M4 is, in upstream's own words
 
-Two PR bodies from the Phase A stack, both merged 2026-06-23, are the only public
-statements about M4 that exist anywhere:
+Four PR bodies carry an `M4` token. Two of them say what M4 *is*, and both come
+from the Phase A stack — merged into their stack branches on **2026-06-11**, and
+reaching a release line on 2026-06-23 with #13563 (which is a different date from
+a different PR, and running `gh pr view 13568` will show you so):
 
 - [langflow-ai/langflow#13568](https://github.com/langflow-ai/langflow/pull/13568),
   under *"Deliberately deferred (follow-ups, not in Phase A's 10-PR plan)"*:
@@ -346,20 +371,54 @@ statements about M4 that exist anywhere:
 Neither names a date or a release number. Both are worded as *revisit later*, not
 as *scheduled for X*.
 
+The other two matter for a different reason, and the more recent one is the one to
+know about:
+
+- [#13567](https://github.com/langflow-ai/langflow/pull/13567) (same stack): *"Removals
+  are allowed, so the M4 shim cleanup (which only shrinks the set) never trips it"* —
+  about `check_components_frozen.py`, not about timing.
+- [#14790](https://github.com/langflow-ai/langflow/pull/14790) — **open**, created
+  2026-08-27, by an external contributor, and therefore the **most recent public M4
+  statement**, five months after the Phase A ones: *"No `src/lfx/components/volcengine`
+  shim — that layer is the deprecation path being removed at M4, and #14549 didn't add
+  one either."*
+
+**#14790 changes the shape of the risk, and is the most useful thing this search
+found.** New bundles now ship with **no shim at all** (confirmed on #14549,
+OrcaRouter, merged 2026-08-16), so the M4 surface is **frozen and shrinking**
+rather than growing with the catalog — and shims are already being deleted
+piecemeal outside M4 (`f28337bf8f`, *"remove stale vllm component shim"*,
+2026-06-30). Whatever M4 costs, it costs it against a set that gets smaller.
+
+So the claim that survives is the narrow one: **no issue or PR discusses removal
+*timing*.** "The only two public statements about M4" was the first version of this
+section and it was wrong — `gh search prs --repo langflow-ai/langflow "M4"` returns
+four, and #14790 is its first hit.
+
 ### The floor that follows, and it is not close
 
 M4 needs **a loud deprecation minor first**, by upstream's own statement. So a
 minor whose shims are silent is neither the removal minor nor the one before it.
 
 Measured 2026-09-05 on `origin/release-1.13.0` (tip `a43ed6fbca`) — the newest line
-in development, with `v1.12.0` released 2026-09-01: **78
-`lfx-bundles-shim` directories, and not one of them emits a `DeprecationWarning`.**
-(The token appears twice under `components/`, both unrelated:
-`agentics/helpers/model_config.py`, and LangChain's own
-`LangChainDeprecationWarning` being *suppressed* in `tools/__init__.py`.)
+in development, with `v1.12.0` released 2026-09-01: **78 `lfx-bundles-shim`
+directories under `components/`** — 79 counting the one outside it,
+`lfx/base/datastax/` — **and not one of them emits a `DeprecationWarning`.**
+(The token appears 3 times in 2 files under `components/`, all unrelated:
+`agentics/helpers/model_config.py:70`, and LangChain's own
+`LangChainDeprecationWarning` imported and then *suppressed* in
+`tools/__init__.py`. There is no central warn path either — zero `warnings.warn`
+under `lfx/interface/` or `lfx/extension/` — so the claim is stronger than "no
+warning in the shims".)
 
 So the loud minor has not shipped, and on today's tip it is not 1.13 either.
 **M4 cannot land before 1.14, and on the current tip more likely not before 1.15.**
+
+One joint in that floor is soft and worth naming rather than leaving for the next
+reader to find: *"one loud minor release before removal is the right shape"* was a
+**stated intent in June 2026, not a commitment**, and nothing forces the warning
+into a *minor* rather than a patch. The floor is as binding as upstream's own
+stated plan and no more.
 Upstream's recent minor cadence is 44 and 40 days (`v1.10.0` 2026-06-09 →
 `v1.11.0` 07-23 → `v1.12.0` 09-01), which would put 1.14 around late November 2026
 — a *projection from cadence*, never a date upstream gave, and it must not be
@@ -386,22 +445,26 @@ plan.
 
 | Where | Result |
 |---|---|
-| `git log --all -S "M4" -- '*.md'` upstream | **empty** — no markdown file, in any revision on any fetched ref, has ever contained `M4`. This kills the plausible "an earlier `BUNDLE_API.md` listed M3/M4 before being trimmed" hypothesis outright |
-| `BUNDLE_API.md`, 15 revisions back to `cc009c9133` | `M1` only (line 179, the DuckDuckGo proof-of-delivery gate); no `M2`/`M3` definition exists anywhere either |
+| `git log --all -S "M4" -- '*.md' '*.mdx'` upstream | **empty** — no markdown file, in any revision on any fetched ref, has ever contained `M4`. `*.mdx` is in the pathspec deliberately: git's `*.md` does **not** match it, and the entire docs site is `.mdx`. The control matters as much as the result — the same command with `M1` is **non-empty** (`cc009c9133` and others, via `M1_DOGFOOD_CHECKLIST.md`), which is what proves the pickaxe does find M-tokens in markdown rather than proving nothing. Together they kill the plausible "an earlier `BUNDLE_API.md` listed M3/M4 before being trimmed" hypothesis |
+| `BUNDLE_API.md`, 15 revisions on `origin/main` back to `cc009c9133` | `M1` only (line 179, the DuckDuckGo proof-of-delivery gate); no `M2`/`M3` definition exists anywhere either |
 | `src/bundles/PORTING.md`, `NIGHTLY.md`, `lfx-bundles/README.md` | no deprecation window, no removal release |
-| `docs/docs/**` (the docs-site source) | zero hits for shim / deprecation / removal of the **import paths**; the 81 `bundles-*.mdx` pages deprecate individual *components*, never the shims |
-| `gh search issues` / `gh search prs` — `M4`, `lfx-bundles`, `shim`, `deprecation window`, `consolidate_bundles`, `check_components_frozen`, `bundle migration milestone` | only the Phase A stack (#13043, #13563–#13580); **no issue or PR discusses removal timing** |
+| `docs/docs/**` (the docs-site source) | zero hits for `shim` anywhere; the `bundles-*.mdx` pages (77 on `main`/`release-1.12.0`, 78 on `release-1.13.0`) deprecate individual *components*, never the import paths |
+| `gh search issues` / `gh search prs` — `M4`, `lfx-bundles`, `shim`, `deprecation window`, `consolidate_bundles`, `check_components_frozen`, `bundle migration milestone` | the Phase A stack (#13043, #13563–#13580) **plus #14790**, which is outside that range and is the search's first hit; **no issue or PR discusses removal timing** |
 | every comment thread on #13563, #13568, #13577 (both the `pulls/` and `issues/` endpoints) | **zero** matches for `M4`, `deprecation window`, `shim removal`, `loud deprecation` — nobody has ever asked in-thread |
-| GitHub **Discussions** (703, enabled — via GraphQL) | `M4` / `shim deprecation` → 0; `lfx-bundles` → #14592 only, about getting a bundle onto the official list |
+| GitHub **Discussions** (703, enabled — searched via GraphQL, see the trap below) | `M4` → **1 hit, unrelated** (#10282, *"Freeze button not working in 1.6.4"* — a fuzzy match, recorded as 1 rather than 0 so the next person does not think they ran it differently); `shim deprecation` → 0; `lfx-bundles` → #14592 only, about getting a bundle onto the official list |
 | `gh release list` + the `v1.11.0` / `v1.12.0` bodies | auto-generated PR lists; no deprecation statement |
 | `gh api repos/langflow-ai/langflow/milestones?state=all` | `[]` — the repo uses no GitHub milestones at all |
 
 Two traps this search hit, both of which produce a confident wrong answer:
 
-- **The REST discussions endpoint is useless here.** `gh api …/discussions`
-  returning nothing reads as "discussions are off". They are on — 703 of them — and
-  only the GraphQL search reaches them. A negative from the REST call is not a
-  negative.
+- **REST cannot answer "does any discussion mention M4", and the reason is not the
+  one you would guess.** `gh api repos/langflow-ai/langflow/discussions` works fine
+  — `HTTP 200`, a page of 30. What it has no notion of is **text search**, so
+  answering the question through REST means paginating all 703. `search(type:
+  DISCUSSION)` in GraphQL is the route. (An earlier version of this note claimed
+  the REST endpoint returned nothing on a repo whose Discussions are on. It does
+  not, and a documented trap that is itself false is worse than no note — so this
+  one is written from the response, not from the memory of one.)
 - **"Bundle separation concludes in 1.12" is not an M4 date.** The current release
   notes (`docs/docs/Support/release-notes.mdx`) say exactly that, but the sentence
   is about which provider bundles the default `uv pip install langflow` ships, and
