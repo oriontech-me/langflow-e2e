@@ -42,11 +42,14 @@ import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
  * Kept at 15 s and kept LOCAL, which is the half of #1222 that is easy to miss:
  * this budget and the permissions gate below were one constant doing two jobs,
  * and they answer different questions. An absent `flow_name` means the editor
- * never mounted — the caller has not landed on the canvas — while a header that
- * is present but disabled means the permissions query has not answered. The
- * second is now `PERMISSIONS_GATE_TIMEOUT_MS`, shared with the four other places
- * that wait on the same button; this one has no siblings to converge with, and
- * changing it would be a behaviour change #1222 did not ask for.
+ * never mounted — the caller has not landed on the canvas. A header that is
+ * present but disabled is the OTHER question, and it has two answers, not one:
+ * the permissions query is still in flight, or it has answered and the map
+ * genuinely denies `write` (the note on `openFlowSettings` below keeps them
+ * distinct, because they send a reader to opposite places). That budget is now
+ * `PERMISSIONS_GATE_TIMEOUT_MS`, shared with the four other places that wait on
+ * the same button; this one has no siblings to converge with, and changing it
+ * would be a behaviour change #1222 did not ask for.
  *
  * Still not measured, and still not pretending to be: 15 s comes from
  * `rename-flow.ts`'s `MODAL_TIMEOUT` (#357, sized for the modal's inputs). What

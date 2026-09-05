@@ -47,11 +47,29 @@ function lineOf(code: string, index: number): number {
   return code.slice(0, index).split("\n").length;
 }
 
-/** Strip comments so the guard does not read its own documentation as code. */
+/**
+ * Strip comments WITHOUT moving anything.
+ *
+ * Blanking each character rather than deleting the comment is what keeps
+ * `lineOf` honest: deleting a block comment shifts every line below it, and the
+ * guard then names a line the offender is not on. Measured on the sibling
+ * implementation this was copied from — a real offender at
+ * `setup-playground.ts:199` was reported as line 148, a 51-line skew, which is
+ * worse than no line at all because it reads as precise.
+ *
+ * It also stops a removal from JOINING the tokens either side of it
+ * (`foo/*c*\/bar` → `foobar`), which could synthesise a match that is not in the
+ * source.
+ *
+ * Line comments are matched only when `//` follows start-of-line or whitespace
+ * AND is not preceded by a colon — otherwise `page.goto("http://…")` would be
+ * blanked mid-string and the file would stop parsing as the code it is.
+ */
 function stripComments(source: string): string {
+  const blank = (text: string) => text.replace(/[^\n]/g, " ");
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:\w])\/\/.*$/gm, "$1");
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/(^|[^:\w])\/\/.*$/gm, (_match, prefix: string) => prefix + blank(_match.slice(prefix.length)));
 }
 
 export interface Gate {

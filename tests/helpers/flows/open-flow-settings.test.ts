@@ -65,14 +65,21 @@ function lineOf(code: string, index: number): number {
 /**
  * Strip comments so the guard does not fail on its own documentation.
  *
+ * Blanked, not deleted (#1222): deleting a block comment shifts every line below
+ * it, so `lineOf` named a line the offender is not on — measured at 51 lines of
+ * skew on a real file, which is worse than no line at all because it reads as
+ * precise. Blanking also stops a removal from JOINING the tokens either side of
+ * it, which could synthesise a match that is not in the source.
+ *
  * Line comments are matched only when `//` follows start-of-line or whitespace
  * AND is not preceded by a colon — otherwise `page.goto("http://…")` would be
  * truncated mid-string and the file would stop parsing as the code it is.
  */
 function stripComments(source: string): string {
+  const blank = (text: string) => text.replace(/[^\n]/g, " ");
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:\w])\/\/.*$/gm, "$1");
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/(^|[^:\w])\/\/.*$/gm, (match, prefix: string) => prefix + blank(match.slice(prefix.length)));
 }
 
 /**
