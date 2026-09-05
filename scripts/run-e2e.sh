@@ -24,9 +24,11 @@
 #     services.go-httpbin               |   start-echo-source.sh     on the TARGET host
 #     actions/upload-artifact           |   copies into $RUN_DIR
 #   job `merge`                         | phase_merge + phase_publish
+#     "Append daily history"            |   the same appenders, writing to the LEDGER
+#     "Commit daily history"            |   nothing — see difference 6
 #   "Fail scheduled run on ..."         | phase_verdict
 #
-# ## The five differences that matter
+# ## The six differences that matter
 #
 # 1. TWO MACHINES, NOT ONE. Playwright runs here (the runner host); Langflow, the
 #    echo endpoint and Ollama run on the TARGET host, driven over
@@ -60,11 +62,20 @@
 #    acted on. The code paths exist and are off by default; they turn on when the
 #    webhook and the secrets exist.
 #
+# 6. THE THREE SERIES ARE WRITTEN, NOT COMMITTED. daily-history.jsonl,
+#    token-history.jsonl and spec-durations.json are appended to a LEDGER outside the
+#    clone rather than to `reports/`, and no commit happens here at all. Writing inside
+#    the clone would leave the tree dirty, and the wrapper's `git pull --ff-only` then
+#    refuses the next morning — the protection working exactly as designed, against
+#    us. Committing them back is a later etapa's job and is absent code today, not a
+#    switch set to zero: a switch reads as implemented and disabled.
+#
 # ## Usage
 #
 #   TARGET_SSH=<ssh-alias> ./scripts/run-e2e.sh              # 4 shards
 #   TARGET_SSH=<alias> SHARDS=2 ./scripts/run-e2e.sh
 #   TARGET_SSH=<alias> DRY_RUN=1 ./scripts/run-e2e.sh        # preflight + partition only
+#   TARGET_SSH=<alias> KEEP_LEDGER=0 ./scripts/run-e2e.sh    # a smoke: record nothing
 #
 # The target host is never named in this repository: it is internal topology, and it
 # lives in the destination wiki. TARGET_SSH is required and has no default.
@@ -110,8 +121,6 @@ WITH_OLLAMA="${WITH_OLLAMA:-1}"
 CREATE_ISSUE="${CREATE_ISSUE:-0}"
 NOTIFY_SLACK="${NOTIFY_SLACK:-0}"
 POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
-COMMIT_HISTORY="${COMMIT_HISTORY:-0}"
-REFRESH_DURATIONS="${REFRESH_DURATIONS:-0}"
 
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUNS_ROOT="${RUNS_ROOT:-$REPO_DIR/runs}"
@@ -121,6 +130,47 @@ RUN_URL_BASE="${RUN_URL_BASE:-file://$RUNS_ROOT}"
 REPORT_URL="$RUN_URL_BASE/$RUN_ID/playwright-report/index.html"
 EVENT_NAME="${EVENT_NAME:-schedule}"
 WORKFLOW_ID="${WORKFLOW_ID:-daily-stable-vm}"
+
+# ---------------------------------------------------------------------------
+# THE LEDGER — the three series this lane has to keep
+# ---------------------------------------------------------------------------
+# reports/daily-history.jsonl, reports/token-history.jsonl and
+# reports/spec-durations.json only grow because the Actions daily writes them, and the
+# next etapa turns that daily off. Nothing else appends, so the gap would run from
+# there to the day this lane commits: build-triage-dataset.mjs would read a base that
+# starts partial, and the shard matrix — which balances by measured duration — would
+# degrade with it, both for a reason no run reports. This lane starts keeping the three
+# now, while the Actions series is still complete enough to seed from.
+#
+# OUTSIDE the clone, and that is not a preference. `reports/` is tracked, so a run that
+# writes there leaves the tree dirty and the wrapper's next `git pull --ff-only`
+# refuses — and that refusal is a guarantee worth keeping, not an obstacle: it is what
+# stops a machine from silently discarding local work. So the series moves, not the
+# protection. ledger_dir_is_outside_repo() checks it rather than trusting the default,
+# because the cost of getting it wrong is paid once a day, quietly, by the pull.
+#
+# WORKFLOW_ID above is what keeps the two eras apart inside one file: every line this
+# lane writes carries `daily-stable-vm`, so the Actions rows stay distinguishable after
+# the two series are merged.
+KEEP_LEDGER="${KEEP_LEDGER:-1}"
+# `$XDG_STATE_HOME` is the right shelf for this: state that must survive between runs,
+# is not a cache (losing it loses history), and is not config. Empty rather than a
+# fallback path when neither variable is set — an unwritable ledger is refused in
+# preflight, where it costs a variable, instead of guessed at into a directory nobody
+# looks in.
+LEDGER_HOME="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
+LEDGER_DIR="${LEDGER_DIR:-${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}}"
+LEDGER_HISTORY="${LEDGER_HISTORY:-${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}}"
+LEDGER_TOKENS="${LEDGER_TOKENS:-${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}}"
+LEDGER_DURATIONS="${LEDGER_DURATIONS:-${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}}"
+# The READ side, and it stays off here on purpose. While both dailies run, the product
+# is a comparison, and a matrix balanced by VM-measured durations puts specs on
+# different shards than the Actions lane does — so a failure's neighbours differ for a
+# reason that has nothing to do with the product. It turns on when the Actions daily
+# stops and the comparison is over. (Step 11 may want it earlier, with SHARDS above 1
+# and the comparison narrowed on purpose; that is a measurement decision, not a
+# default.)
+USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
 
 # Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
 # `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
@@ -401,6 +451,123 @@ gh_out() {
   ' "$file" "$key"
 }
 
+# --- The ledger ------------------------------------------------------------------
+
+# Does THIS run keep the three series? Asked in three places, answered once.
+#
+# `schedule` mirrors the workflow, where all three steps carry
+# `if: github.event_name == 'schedule'`, and the reason is the one #1183 already
+# states for the token series: a manual run's scope is whatever grep was typed, while
+# every reader of these files assumes one full @stable sweep per entry. Such a line
+# does not read as noise — it reads as a bad day, and the anomaly baseline moves with
+# it. KEEP_LEDGER=0 is for the runs that ARE schedule-shaped and still must not be
+# recorded, a smoke through the real systemd unit being exactly that.
+ledger_active() {
+  [ "$KEEP_LEDGER" = "1" ] && [ "$EVENT_NAME" = "schedule" ] && [ -n "$LEDGER_DIR" ]
+}
+
+# Refuses a ledger inside the clone, which is the one way this change could defeat its
+# own purpose. Both sides go through `pwd -P`, so a symlink pointing back into the
+# working tree is caught too — the question is where the bytes land, not how the path
+# is spelled.
+#
+# It answers for a path that does not exist yet, by resolving the nearest ancestor that
+# does and carrying the remainder back on. That is what lets preflight refuse BEFORE
+# creating anything: a rejected ledger must not leave its own directory behind inside
+# the clone as the trace of the check that rejected it.
+ledger_dir_is_outside_repo() {
+  local probe="$1" rest="" real repo
+  while [ ! -d "$probe" ]; do
+    case "$probe" in
+      */*) rest="/${probe##*/}$rest"; probe="${probe%/*}"; [ -n "$probe" ] || probe="/" ;;
+      # No slash left: a relative path, and this script runs from $REPO_DIR.
+      *)   rest="/$probe$rest"; probe="."; break ;;
+    esac
+  done
+  real="$(cd "$probe" && pwd -P)$rest"
+  repo="$(cd "$REPO_DIR" && pwd -P)"
+  case "$real/" in "$repo"/*) return 1 ;; *) return 0 ;; esac
+}
+
+# The Actions series is what this one continues, so a ledger file that does not exist
+# yet is seeded from the tracked one instead of starting empty. Day zero is not free:
+# the durations file is what balances the matrix, and the token summary's anomaly
+# baseline is a median over recent entries — both answer badly from three lines, and
+# answer badly in the direction of looking fine. One-way and once; after the copy the
+# tracked file is never read again, and it is never written.
+ledger_seed() {
+  local ledger="$1" tracked="$2"
+  [ -n "$ledger" ] || return 0
+  if [ -e "$ledger" ]; then return 0; fi
+  if [ ! -f "$tracked" ]; then return 0; fi
+  # Fail-soft, like every other step in phase_publish. A seed that cannot be copied
+  # costs this series its baseline and nothing else, while aborting would take the
+  # day's verdict down with it — the run has already happened, and the verdict is what
+  # this lane exists to produce.
+  if cp "$tracked" "$ledger"; then
+    info "ledger: seeded ${ledger##*/} from $tracked"
+  else
+    warn "could not seed ${ledger##*/} from $tracked — this series starts from nothing."
+  fi
+  return 0
+}
+
+# Settles the ledger BEFORE the run rather than at publish time, and split out of
+# phase_preflight so the decision is testable without ssh. A ledger that cannot be
+# written is a day of data lost, and if the first write is also the first check the
+# loss is found at 08:50, after the whole hour has been spent — while here it is still
+# the cheapest failure in this script to fix, one variable.
+preflight_ledger() {
+  if ledger_active; then
+    # Placement is settled before creation, so a refused ledger leaves nothing behind.
+    ledger_dir_is_outside_repo "$LEDGER_DIR" \
+      || die "LEDGER_DIR ($LEDGER_DIR) is inside the clone. The three series live outside it precisely so that a run cannot leave the tree dirty — and a dirty tree is what the wrapper's next \`git pull --ff-only\` refuses, every morning, without saying why."
+    mkdir -p "$LEDGER_DIR" || die "cannot create the ledger directory ($LEDGER_DIR)."
+    [ -w "$LEDGER_DIR" ] || die "the ledger directory is not writable ($LEDGER_DIR)."
+    info "ledger: $LEDGER_DIR"
+  elif [ "$KEEP_LEDGER" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then
+    # Reached only with LEDGER_DIR empty, which means neither XDG_STATE_HOME nor HOME
+    # was set — the systemd shape of #1715, where what a unit inherits is not what a
+    # login shell has. Fatal rather than a warning: a scheduled run that quietly keeps
+    # no series is indistinguishable, months later, from a machine that was down.
+    die "LEDGER_DIR is unset and neither XDG_STATE_HOME nor HOME is set, so this run has nowhere to keep the three series. Set LEDGER_DIR, or KEEP_LEDGER=0 for a run that must not be recorded."
+  else
+    info "ledger: not kept for this run (KEEP_LEDGER=$KEEP_LEDGER, event=$EVENT_NAME)"
+  fi
+}
+
+# Which duration table balances the matrix. A switch that is ON and finds nothing must
+# say so: falling back in silence is how a run comes to be balanced by numbers nobody
+# chose, and the symptom — shards of uneven length — looks like the suite's own drift.
+durations_table() {
+  if [ "$USE_LEDGER_DURATIONS" = "1" ]; then
+    if [ -n "$LEDGER_DURATIONS" ] && [ -f "$LEDGER_DURATIONS" ]; then
+      printf '%s\n' "$LEDGER_DURATIONS"
+      return 0
+    fi
+    warn "USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet (${LEDGER_DURATIONS:-<no ledger>}) — this run balances on the tracked one instead."
+  fi
+  printf '%s\n' "reports/spec-durations.json"
+}
+
+# Where this run's spend line goes, as one KEY=VALUE per line. A function so the
+# composition is testable rather than read: the two outcomes are mutually exclusive by
+# construction, and neither label can be dropped while the history path is set.
+#
+# WORKFLOW, because without it the summarizer writes `workflow: "unknown"`, which reads
+# as an Actions row that lost its label rather than as a VM one. GITHUB_RUN_ID because
+# the summarizer takes the run's identity from the environment, which in Actions is
+# simply there and here is not: a smoke found the spend row landing with
+# `run_id: null` while the history row for the SAME run carried the id, and a row that
+# cannot be joined back to its run is dropped by every consumer that groups by run.
+tokens_history_env() {
+  if ledger_active; then
+    printf '%s\n' "TOKENS_HISTORY=$LEDGER_TOKENS" "WORKFLOW=$WORKFLOW_ID" "GITHUB_RUN_ID=$RUN_ID"
+  else
+    printf '%s\n' "TOKENS_SUPPRESS_HISTORY=1"
+  fi
+}
+
 HELD_SESSIONS=()
 
 # Which of the given ports have no local listener. `ssh -L` opens its listener as soon
@@ -511,6 +678,8 @@ phase_preflight() {
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
   info "run dir: $RUN_DIR"
+
+  preflight_ledger
 
   # The suite this run executes, recorded before anything else can move it. Without a
   # repository on the target this is also the only record of which starter version ran
@@ -751,8 +920,18 @@ phase_prep() {
   # stderr precisely because of this (#1024).
   npx playwright test --grep "@stable" --list --reporter=json > "$RUN_DIR/stable-list.json"
 
+  # Which timings balance the matrix. The TRACKED file while both dailies run: the
+  # product of this etapa is a comparison, and a matrix balanced by VM-measured
+  # durations puts specs on different shards than the Actions lane does, so a failure's
+  # neighbours — and the load its backend was under — differ for a reason that has
+  # nothing to do with the product. The ledger's own timings take over with
+  # USE_LEDGER_DURATIONS, which is the next etapa's switch to throw.
+  local durations
+  durations="$(durations_table)"
+  info "durations: $durations"
+
   node scripts/partition-shards.mjs matrix \
-    "$RUN_DIR/stable-list.json" reports/spec-durations.json "$SHARDS" > "$RUN_DIR/matrix.json"
+    "$RUN_DIR/stable-list.json" "$durations" "$SHARDS" > "$RUN_DIR/matrix.json"
 
   SHARD_TOTAL="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).shard_total" "$RUN_DIR/matrix.json")"
   info "$SHARD_TOTAL shard(s)"
@@ -1129,34 +1308,62 @@ phase_publish() {
     fi
   fi
 
-  if [ "$REFRESH_DURATIONS" = "1" ] && [ "$RUN_EMPTY" = "false" ] && [ "$RUN_PARTIAL" = "false" ]; then
-    log "Refreshing reports/spec-durations.json"
+  # The durations series. Empty and partial are excluded for the workflow's own reason:
+  # `extract` merges onto what it is given, and a sweep that ran a fraction of the
+  # specs would rewrite the balance of the whole matrix from a fraction of the evidence.
+  if ledger_active && [ "$RUN_EMPTY" = "false" ] && [ "$RUN_PARTIAL" = "false" ]; then
+    log "Recording the spec durations"
+    ledger_seed "$LEDGER_DURATIONS" reports/spec-durations.json
     local next="$RUN_DIR/spec-durations.next.json"
-    if node scripts/partition-shards.mjs extract "$RUN_DIR/results.json" reports/spec-durations.json > "$next"; then
-      mv "$next" reports/spec-durations.json
+    # The PREVIOUS file is the ledger's own, never the tracked one: reading the tracked
+    # copy every day would re-merge Actions timings into this lane's series forever and
+    # the VM's own numbers would never take over.
+    if node scripts/partition-shards.mjs extract "$RUN_DIR/results.json" "$LEDGER_DURATIONS" > "$next"; then
+      mv "$next" "$LEDGER_DURATIONS" || warn "could not replace $LEDGER_DURATIONS — the table is left as it was."
     else
-      warn "duration extraction FAILED — spec-durations.json is left as it was (#1252)."
+      warn "duration extraction FAILED — $LEDGER_DURATIONS is left as it was (#1252)."
     fi
   fi
 
-  # TOKENS_SUPPRESS_HISTORY, because with tracing on this lane HAS spend to record and
-  # would otherwise append a line to reports/token-history.jsonl — a git-tracked file,
-  # inside the clone this run does not own. Two costs, both concrete: the line is an
-  # uncommitted modification that the next `git pull --ff-only` refuses (that refusal is
-  # the guarantee, so breaking it daily is not an option), and once committing is on
-  # there would be TWO lines a day for one scope — a double-counted trend and an
-  # anomaly window half as wide. The PR and manual lanes carry the same flag for the
-  # neighbouring reason, scope rather than duplication (#1183). This lane's own series
-  # belongs in the ledger outside the clone, which is a step of its own.
-  TOKENS_DIR="$RUN_DIR/all-tokens" TOKENS_SUPPRESS_HISTORY=1 node scripts/watch-tokens.mjs --summarize \
+  # The spend series. It was suppressed until now for a reason that has since been
+  # removed, not because this lane has nothing to record: the summarizer's default
+  # target is reports/token-history.jsonl, tracked, inside a clone this run does not
+  # own, and the line it appends is an uncommitted change the next `git pull --ff-only`
+  # refuses every morning. Pointed at the ledger it is neither, and #1183's argument
+  # turns around — that one excludes the PR and manual lanes because their scope is not
+  # the daily's sweep, and this lane's scope IS the daily's sweep. What must not happen
+  # is the two ending up in one series, and WORKFLOW is what prevents it: without it
+  # the summarizer writes `workflow: "unknown"`, which is indistinguishable from an
+  # Actions row that lost its label.
+  if ledger_active; then
+    ledger_seed "$LEDGER_TOKENS" reports/token-history.jsonl
+  fi
+  local tokens_env=() kv
+  while IFS= read -r kv; do tokens_env+=("$kv"); done < <(tokens_history_env)
+  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+    node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 
-  if [ "$COMMIT_HISTORY" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then
+  # The run series — one line per scheduled sweep, and the switch that used to gate it
+  # was named for something this script does not do. COMMIT_HISTORY implied a commit;
+  # the code under it only ever wrote a file, so the append was being held back by a
+  # decision that belonged to a later etapa, and the series it feeds would have had a
+  # hole exactly as wide as the wait. Committing is what stays behind, and it stays
+  # behind as absent code rather than as a switch set to zero.
+  #
+  # LIVENESS_DIR and SHARD_TOTAL are passed for the same reason the workflow passes
+  # them: without the expected count a shard that died before writing its summary
+  # vanishes from the row instead of reading as a gap (#1012), and the wedge this lane
+  # is measuring (#1720) is exactly what those fields carry.
+  if ledger_active; then
     log "Recording the daily history"
+    ledger_seed "$LEDGER_HISTORY" reports/daily-history.jsonl
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
-    HISTORY_FILE=reports/daily-history.jsonl \
+    HISTORY_FILE="$LEDGER_HISTORY" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
+    LIVENESS_DIR="$RUN_DIR/all-liveness" \
+    SHARD_TOTAL="${SHARD_TOTAL:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 

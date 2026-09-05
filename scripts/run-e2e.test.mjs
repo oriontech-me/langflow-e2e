@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -131,12 +131,31 @@ test("gh_out reads plain and heredoc values, which the outage report needs", () 
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("the publish switches are OFF by default, all four of them", () => {
+test("the publish switches are OFF by default, all three of them", () => {
   // Not a preference: while both dailies run, only the Actions one has consequence.
   // A second issue or a second Slack message for one day's verdict is worse than
   // none, and this is where that decision is enforced.
-  const r = sourced(`echo "$CREATE_ISSUE $NOTIFY_SLACK $POST_QA_PLATFORM $COMMIT_HISTORY"`);
-  assert.equal(r.stdout.trim(), "0 0 0 0");
+  const r = sourced(`echo "$CREATE_ISSUE $NOTIFY_SLACK $POST_QA_PLATFORM"`);
+  assert.equal(r.stdout.trim(), "0 0 0");
+});
+
+test("writing back to the repository is absent, not merely switched off", () => {
+  // The fourth switch used to be COMMIT_HISTORY, and it gated an append that committed
+  // nothing — so the series this lane has to keep was being held back by a decision
+  // that belonged to a later etapa. Now the append happens and the COMMIT is what is
+  // missing. Pinned by absence rather than by a default, because a variable set to
+  // zero reads as "implemented, disabled" and invites someone to flip it on a machine
+  // that has no write credentials and no review.
+  // Comments are stripped first, for the reason #1716 paid for: a comment that merely
+  // SPELLS the thing under test fails a correct file, and the paragraph explaining why
+  // COMMIT_HISTORY was removed is exactly such a comment.
+  const code = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+  const writes = code.split("\n").filter((l) => /\bgit\s+(commit|push|add)\b/.test(l));
+  assert.deepEqual(writes, [], "this lane must not write to the repository");
+  assert.doesNotMatch(code, /COMMIT_HISTORY/, "the switch is gone, not renamed");
 });
 
 // daily-stable.yml's Langflow service environment, read once. The reader strips
@@ -250,16 +269,6 @@ test("pragmas that are not a JSON object stop the run", () => {
   }
 });
 
-test("the lane does not append to the daily's token series", () => {
-  // With tracing ON this lane has spend to record, and the summarizer's default is to
-  // append one line to reports/token-history.jsonl — a git-tracked file, in a clone
-  // this run does not own, whose `git pull --ff-only` would then refuse every day.
-  const line = readFileSync(SCRIPT, "utf8")
-    .split("\n")
-    .find((l) => l.includes("watch-tokens.mjs --summarize"));
-  assert.ok(line, "could not find the token summary invocation");
-  assert.match(line, /TOKENS_SUPPRESS_HISTORY=1/);
-});
 
 test("the mirrored values cross the ssh boundary, which a default alone does not", () => {
   // The failure mode this catches LOOKS fixed: the values are set here, the shell that
@@ -604,4 +613,236 @@ test("the stop scripts run before the holders are killed", () => {
     cleanup.indexOf("stop-langflow-source.sh") < cleanup.indexOf('kill "$pid"'),
     "cleanup kills the holding sessions before asking the stop scripts to run",
   );
+});
+
+// ---------------------------------------------------------------------------
+// THE LEDGER — the three series this lane has to keep
+// ---------------------------------------------------------------------------
+// reports/daily-history.jsonl, reports/token-history.jsonl and
+// reports/spec-durations.json have exactly one writer today, the Actions daily, and the
+// next etapa turns it off. What these tests protect is therefore a failure with no
+// symptom: a lane that keeps the series in the wrong place, under the wrong label, or
+// not at all still produces a green run and a report that opens fine, and the damage
+// only shows up later, as a base that begins partial and a matrix balanced on nothing.
+
+/** Runs `preflight_ledger` under a given environment. `die` exits, so status is the verdict. */
+function preflightLedger(env = {}) {
+  return sourced(`preflight_ledger`, env);
+}
+
+test("the ledger has a default, it sits outside the clone, and it names all three series", () => {
+  const r = sourced(`echo "$LEDGER_DIR"; echo "$LEDGER_HISTORY"; echo "$LEDGER_TOKENS"; echo "$LEDGER_DURATIONS"`, {
+    HOME: "/home/nobody",
+    XDG_STATE_HOME: "",
+    LEDGER_DIR: "",
+  });
+  const [dir, history, tokens, durations] = r.stdout.trim().split("\n");
+  assert.equal(dir, "/home/nobody/.local/state/langflow-e2e");
+  assert.equal(history, `${dir}/daily-history.jsonl`);
+  assert.equal(tokens, `${dir}/token-history.jsonl`);
+  assert.equal(durations, `${dir}/spec-durations.json`);
+});
+
+test("XDG_STATE_HOME wins over HOME, which is what makes the ledger relocatable per machine", () => {
+  const r = sourced(`echo "$LEDGER_DIR"`, { HOME: "/home/nobody", XDG_STATE_HOME: "/srv/state", LEDGER_DIR: "" });
+  assert.equal(r.stdout.trim(), "/srv/state/langflow-e2e");
+});
+
+test("a ledger inside the clone is refused, however the path is spelled", () => {
+  // The one way this change defeats its own purpose. Each of these writes into the
+  // working tree, and the cost is paid the NEXT morning, by a `git pull --ff-only`
+  // that refuses for a reason nobody is watching at 08:00.
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-refuse-"));
+  const sneaky = join(tmp, "looks-outside");
+  symlinkSync(join(REPO_ROOT, "reports"), sneaky);
+  const cases = [
+    [REPO_ROOT, "the clone itself"],
+    [join(REPO_ROOT, "reports"), "the tracked directory the series live in"],
+    [join(REPO_ROOT, "runs/ledger"), "a path that does not exist yet"],
+    ["runs/ledger", "a relative path, which resolves against the clone"],
+    [sneaky, "a symlink that resolves back into the clone"],
+  ];
+  try {
+    for (const [dir, why] of cases) {
+      const r = sourced(`set +e; ledger_dir_is_outside_repo ${JSON.stringify(dir)}; echo "EXIT=$?"`);
+      assert.match(r.stdout, /EXIT=1/, `${why} was accepted (${dir})`);
+    }
+    const ok = sourced(`set +e; ledger_dir_is_outside_repo ${JSON.stringify(tmp)}; echo "EXIT=$?"`);
+    assert.match(ok.stdout, /EXIT=0/, "a directory genuinely outside the clone must be accepted");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("preflight refuses a ledger inside the clone, and creates nothing on the way out", () => {
+  const inside = join(REPO_ROOT, "runs/ledger-should-not-exist");
+  const r = preflightLedger({ LEDGER_DIR: inside });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /inside the clone/);
+  assert.equal(existsSync(inside), false, "a refused ledger must not leave its own directory behind");
+});
+
+test("preflight refuses when there is nowhere to put the ledger, rather than skipping it", () => {
+  // A scheduled run that quietly keeps no series is indistinguishable, months later,
+  // from a machine that was down — which is the same confusion the watchdog exists to
+  // remove, one layer down. (With HOME truly UNSET this script dies earlier still, on
+  // the PATH export: that is #1715, and it is a different bug.)
+  const r = preflightLedger({ LEDGER_DIR: "", HOME: "", XDG_STATE_HOME: "" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /nowhere to keep the three series/);
+  assert.match(r.stderr, /KEEP_LEDGER=0/, "the message has to name the way out it expects");
+});
+
+test("KEEP_LEDGER=0 passes preflight and says so, which is what a smoke needs", () => {
+  const r = preflightLedger({ KEEP_LEDGER: "0", LEDGER_DIR: "", HOME: "", XDG_STATE_HOME: "" });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /ledger: not kept for this run/);
+});
+
+test("only a scheduled run keeps the series", () => {
+  // Mirrors the workflow, where all three steps are on `github.event_name ==
+  // 'schedule'`, for the reason #1183 gives for the token series: every reader of
+  // these files assumes one full @stable sweep per entry, so a line from a run that
+  // executed a grep does not read as noise — it reads as a bad day.
+  const active = (env) => sourced(`set +e; ledger_active; echo "EXIT=$?"`, env).stdout.match(/EXIT=(\d)/)[1];
+  assert.equal(active({ LEDGER_DIR: "/tmp/led", EVENT_NAME: "schedule" }), "0");
+  assert.equal(active({ LEDGER_DIR: "/tmp/led", EVENT_NAME: "manual" }), "1");
+  assert.equal(active({ LEDGER_DIR: "/tmp/led", KEEP_LEDGER: "0" }), "1");
+  assert.equal(active({ LEDGER_DIR: "", HOME: "", XDG_STATE_HOME: "" }), "1");
+});
+
+test("the spend line carries its label, and the two outcomes cannot both happen", () => {
+  // Without WORKFLOW the summarizer writes `workflow: "unknown"`, which in a merged
+  // series reads as an Actions row that lost its label rather than as a VM one — and
+  // the whole point of keeping a separate series is being able to tell the two eras
+  // apart afterwards. Both labels are pinned here, not just the path.
+  const kept = sourced(`tokens_history_env`, { LEDGER_DIR: "/tmp/led", EVENT_NAME: "schedule", RUN_ID: "r-1" })
+    .stdout.trim()
+    .split("\n");
+  assert.deepEqual(kept, [
+    "TOKENS_HISTORY=/tmp/led/token-history.jsonl",
+    "WORKFLOW=daily-stable-vm",
+    // Found by a smoke: the summarizer takes the run's identity from the environment,
+    // which in Actions is simply there. Without it the spend row lands with
+    // `run_id: null` while the history row for the SAME run carries the id, and every
+    // consumer that groups by run drops the VM's rows.
+    "GITHUB_RUN_ID=r-1",
+  ]);
+
+  const suppressed = sourced(`tokens_history_env`, { EVENT_NAME: "manual" }).stdout.trim().split("\n");
+  assert.deepEqual(suppressed, ["TOKENS_SUPPRESS_HISTORY=1"]);
+
+  for (const out of [kept, suppressed]) {
+    const names = out.map((kv) => kv.split("=")[0]);
+    assert.ok(
+      !(names.includes("TOKENS_HISTORY") && names.includes("TOKENS_SUPPRESS_HISTORY")),
+      "a suppressed summary with a history path set would silently pick one and drop the other",
+    );
+  }
+});
+
+test("the ledger is seeded once from the Actions series, and an existing one is never overwritten", () => {
+  // Day zero is not free: the durations file is what balances the matrix and the token
+  // summary's anomaly baseline is a median over recent entries, and both answer badly
+  // from three lines — badly in the direction of looking fine.
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-seed-"));
+  try {
+    const tracked = join(tmp, "tracked.jsonl");
+    const ledger = join(tmp, "ledger.jsonl");
+    writeFileSync(tracked, "from-actions\n");
+
+    const first = sourced(`ledger_seed ${JSON.stringify(ledger)} ${JSON.stringify(tracked)}`);
+    assert.equal(first.status, 0);
+    assert.equal(readFileSync(ledger, "utf8"), "from-actions\n");
+
+    writeFileSync(ledger, "from-the-vm\n");
+    writeFileSync(tracked, "a-later-actions-run\n");
+    const second = sourced(`ledger_seed ${JSON.stringify(ledger)} ${JSON.stringify(tracked)}`);
+    assert.equal(second.status, 0);
+    assert.equal(
+      readFileSync(ledger, "utf8"),
+      "from-the-vm\n",
+      "re-seeding would replay the Actions series over the VM's own, every single day",
+    );
+
+    // A tracked file that does not exist is not an error: spec-durations.json has been
+    // absent from the tree before (#1252).
+    const missing = sourced(`ledger_seed ${JSON.stringify(join(tmp, "b.json"))} ${JSON.stringify(join(tmp, "nope.json"))}`);
+    assert.equal(missing.status, 0);
+    assert.equal(existsSync(join(tmp, "b.json")), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a seed that cannot be copied warns, and does not take the day's verdict with it", () => {
+  // phase_publish runs under `set -e`, so a bare `cp` failing here would abort the
+  // whole phase — after the run, before the verdict. The series is worth less than the
+  // day it would cost, and every other step in that phase already says so.
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-"));
+  try {
+    const tracked = join(tmp, "tracked.jsonl");
+    writeFileSync(tracked, "a line\n");
+    const unwritable = join(tmp, "locked");
+    mkdirSync(unwritable, { mode: 0o500 });
+    const r = sourced(`ledger_seed ${JSON.stringify(join(unwritable, "ledger.jsonl"))} ${JSON.stringify(tracked)}; echo "EXIT=$?"`);
+    assert.match(r.stdout, /EXIT=0/, "a failed seed must not fail the caller");
+    assert.match(r.stderr, /starts from nothing/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("asking for the ledger's durations and finding none is said out loud", () => {
+  // Falling back in silence is how a run ends up balanced by numbers nobody chose,
+  // and the symptom — shards of uneven length — reads as the suite's own drift.
+  const tracked = "reports/spec-durations.json";
+  const off = sourced(`durations_table`);
+  assert.equal(off.stdout.trim(), tracked);
+  assert.equal(off.stderr.trim(), "");
+
+  const missing = sourced(`durations_table`, { USE_LEDGER_DURATIONS: "1", LEDGER_DIR: "/tmp/no-such-ledger-dir" });
+  assert.equal(missing.stdout.trim(), tracked, "a missing table must not become an empty argument");
+  assert.match(missing.stderr, /USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet/);
+
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-dur-"));
+  try {
+    writeFileSync(join(tmp, "spec-durations.json"), "{}\n");
+    const present = sourced(`durations_table`, { USE_LEDGER_DURATIONS: "1", LEDGER_DIR: tmp });
+    assert.equal(present.stdout.trim(), join(tmp, "spec-durations.json"));
+    assert.equal(present.stderr.trim(), "");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("nothing in the publish phase writes into the tracked series", () => {
+  // The three paths may appear there ONLY as the source ledger_seed copies FROM. A
+  // write to any of them is the dirty tree this whole change exists to avoid, and it
+  // would look exactly like a working run until the next morning's pull.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  assert.ok(publish.length > 0, "could not isolate phase_publish");
+  const TRACKED = ["reports/daily-history.jsonl", "reports/token-history.jsonl", "reports/spec-durations.json"];
+  for (const line of publish.split("\n")) {
+    const code = line.trim();
+    if (code.startsWith("#")) continue;
+    for (const path of TRACKED) {
+      if (!code.includes(path)) continue;
+      assert.ok(code.startsWith("ledger_seed "), `${path} is touched by something other than the seed: ${code}`);
+    }
+  }
+  // And the appenders are pointed somewhere, rather than left on their defaults —
+  // whose defaults are precisely the tracked paths above.
+  assert.match(publish, /HISTORY_FILE="\$LEDGER_HISTORY"/);
+  assert.match(publish, /mv "\$next" "\$LEDGER_DURATIONS"/);
+});
+
+test("the matrix still balances on the tracked durations while both dailies run", () => {
+  // Turning this on early would move specs onto different shards than the Actions lane
+  // puts them, so a failure's neighbours — and the load its backend was under —
+  // would differ for a reason that has nothing to do with the product. The comparison
+  // is the product of this etapa; the switch belongs to the one after it.
+  const r = sourced(`echo "$USE_LEDGER_DURATIONS"`);
+  assert.equal(r.stdout.trim(), "0");
 });
