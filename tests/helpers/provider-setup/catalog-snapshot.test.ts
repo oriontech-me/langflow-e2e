@@ -28,7 +28,7 @@ import {
 import { resolveGeminiModel } from "./resolve-gemini-model";
 import { resolveGptModel } from "./resolve-gpt-model";
 import { resolveTestTargets } from "./test-targets";
-import { makeTempDir } from "../../../scripts/lib/tmp-dir";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 const OPENAI_ONLY = [{ provider: "openai", model: "gpt-4o-mini" }];
 const WITH_GOOGLE = [

@@ -18,11 +18,10 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import { recordTokenAttribution, resetAttributedFlows } from "./token-attribution";
-import { makeTempDir } from "../../../scripts/lib/tmp-dir";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 function tmpFile(): string {
   return path.join(makeTempDir("attrib-"), "token-attrib.jsonl");

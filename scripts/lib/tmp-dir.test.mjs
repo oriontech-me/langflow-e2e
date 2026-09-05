@@ -20,8 +20,13 @@ import { makeTempDir, removeAllTempDirs } from "./tmp-dir.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const HELPER_MJS = "scripts/lib/tmp-dir.mjs";
-const HELPER_TS = "scripts/lib/tmp-dir.ts";
-/** This file holds the offending spelling as a fixture, so it cannot scan itself. */
+const HELPER_TYPES = "scripts/lib/tmp-dir.d.mts";
+/**
+ * This file holds the offending spelling as a fixture, so it cannot scan itself.
+ * Matched by SUFFIX, not by exact path: an identical copy reached through another
+ * checkout is still this file, and skipping it by full path is what made the walk
+ * report its own sibling as an offender.
+ */
 const SELF = "scripts/lib/tmp-dir.test.mjs";
 
 // ---------- behaviour ----------
@@ -74,23 +79,55 @@ test("a directory the sweep cannot remove costs a leak, never a failed run", () 
 
 // ---------- the guard ----------
 
-/** Every `*.test.mjs` / `*.test.ts` under the directories both unit lanes read. */
-function testFiles(dir = REPO_ROOT, out = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+/**
+ * Exactly the roots the three lanes glob — NOT a full-tree walk.
+ *
+ * The first version recursed everything under the repo root, and this repo puts
+ * whole checkouts at `.claude/worktrees/<branch>/`. From the main checkout it
+ * scanned 267 files, 137 of them on other people's branches, and reported 95
+ * offenders — two of which were the SIBLING COPY of this very file, whose plain
+ * text mentions of the name only escape via `SELF`, an exact path the copy cannot
+ * match. CI (a fresh clone, no worktrees) stayed green throughout: the same
+ * CI-green / local-red inversion this whole change exists to correct.
+ *
+ * Deriving the roots from the lanes also makes the floor below mean something.
+ */
+const SCAN_ROOTS = ["scripts", "tests", ".claude/skills"];
+
+function walk(dir, out) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out; // a root that does not exist is caught by the floor, not here
+  }
+  for (const entry of entries) {
     if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) testFiles(full, out);
+    if (entry.isDirectory()) walk(full, out);
     else if (/\.test\.(mjs|ts)$/.test(entry.name)) out.push(full.slice(REPO_ROOT.length));
   }
   return out;
 }
 
+/** Every `*.test.mjs` / `*.test.ts` the three unit lanes actually run. */
+function testFiles() {
+  const out = [];
+  // `test:units` globs root-level `*.test.ts` too (playwright.config.test.ts).
+  for (const entry of readdirSync(REPO_ROOT, { withFileTypes: true })) {
+    if (entry.isFile() && /\.test\.ts$/.test(entry.name)) out.push(entry.name);
+  }
+  for (const root of SCAN_ROOTS) walk(join(REPO_ROOT, root), out);
+  return out;
+}
+
 test("no unit test names mkdtempSync — the directory it makes is the one nothing removes", () => {
   const offenders = [];
+  const files = testFiles();
   let scanned = 0;
 
-  for (const file of testFiles()) {
-    if (file === SELF) continue;
+  for (const file of files) {
+    if (file.endsWith(SELF)) continue;
     scanned += 1;
     const source = readFileSync(join(REPO_ROOT, file), "utf8");
     // Comments are blanked, not deleted, so the line number stays honest (#1222).
@@ -119,23 +156,53 @@ test("no unit test names mkdtempSync — the directory it makes is the one nothi
 
   // A sweep that finds no test files passes, and would keep passing after a
   // directory rename — the guard's own failure mode, and the one it cannot report
-  // because it looks exactly like compliance.
-  assert.ok(scanned > 50, `only ${scanned} test file(s) scanned — the sweep no longer reaches the unit lanes`);
+  // because it looks exactly like compliance. A bare count does not pin that: move
+  // this file one directory down and `REPO_ROOT` resolves to `scripts/`, which
+  // alone holds 57 files, so any threshold under that passes with every file under
+  // `tests/` — the biggest leaker included — silently out of scope.
+  //
+  // So the floor names one file per region the lanes glob. Losing a region becomes
+  // a failure that says which one.
+  for (const anchor of [
+    "playwright.config.test.ts", //            root-level, test:units
+    "scripts/watch-upstream-areas.test.mjs", // scripts, test:scripts
+    "tests/helpers/flows/token-attribution.test.ts", // tests, test:units — 4480 dirs, the worst offender
+    ".claude/skills/langflow-e2e-issue-deterministic/pipeline/state.test.ts", // test:pipeline
+  ]) {
+    assert.ok(
+      files.includes(anchor),
+      `${anchor} was not scanned — the sweep no longer reaches the region it anchors (scanned ${scanned})`,
+    );
+  }
 });
 
-test("the two copies of the helper stay in step", () => {
-  // They are a deliberate duplication — the root tsconfig is `"module": "commonjs"`
-  // and Node 20 cannot `require()` an ESM `.mjs`, so a `.ts` test cannot reach the
-  // `.mjs` copy at all. Pinned rather than trusted: a name added to one and not the
-  // other is how the duplication stops being a copy.
-  const names = (file) =>
-    [...readFileSync(join(REPO_ROOT, file), "utf8").matchAll(/export function (\w+)/g)].map((m) => m[1]).sort();
+test("the declaration file describes the implementation it stands for", () => {
+  // There is ONE implementation now; what can still drift is its `.d.mts`. The two
+  // directions fail differently, and only one of them is loud: a name the `.mjs`
+  // gains and the `.d.mts` does not is a compile error for the first `.ts` caller,
+  // while a name the `.d.mts` declares and the `.mjs` does not have typechecks
+  // clean and is `undefined` at run time.
+  const exported = (file, re) => [...readFileSync(join(REPO_ROOT, file), "utf8").matchAll(re)].map((m) => m[1]).sort();
 
-  assert.deepEqual(names(HELPER_MJS), names(HELPER_TS));
-  assert.deepEqual(names(HELPER_MJS), ["makeTempDir", "removeAllTempDirs"]);
+  const impl = exported(HELPER_MJS, /export function (\w+)/g);
+  const declared = exported(HELPER_TYPES, /export declare function (\w+)/g);
 
-  // And both say WHY they are duplicated, so the next reader does not "fix" it.
-  for (const file of [HELPER_MJS, HELPER_TS]) {
-    assert.match(readFileSync(join(REPO_ROOT, file), "utf8"), /commonjs/i, `${file} does not record why the copy exists`);
+  assert.deepEqual(declared, impl, "the .d.mts and the .mjs disagree about what is exported");
+  assert.deepEqual(impl, ["makeTempDir", "removeAllTempDirs"]);
+});
+
+test("the exit sweep is proven against the module every lane actually loads", () => {
+  // The `.ts` twin this replaced had ZERO behavioural coverage, and it was the copy
+  // the biggest leaker used: deleting its exit hook would have leaked the whole
+  // `test:units` lane with every test green. One implementation is what makes the
+  // proof above cover all three lanes — asserted here so the twin cannot come back
+  // without someone noticing this test no longer says what it claims.
+  assert.equal(existsSync(join(REPO_ROOT, "scripts/lib/tmp-dir.ts")), false, "a second implementation is back");
+  for (const file of ["tests/helpers/flows/token-attribution.test.ts", "playwright.config.test.ts"]) {
+    assert.match(
+      readFileSync(join(REPO_ROOT, file), "utf8"),
+      /from "[^"]*tmp-dir\.mjs"/,
+      `${file} does not load the implementation the exit-sweep test proves`,
+    );
   }
 });

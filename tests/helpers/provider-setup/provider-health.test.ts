@@ -30,7 +30,7 @@ import {
   writeProviderHealth,
   type ProviderHealthRecord,
 } from "./provider-health";
-import { makeTempDir } from "../../../scripts/lib/tmp-dir";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 /** Verbatim from run 30374528125's providers.json — Google monthly spend cap. */
 const SPEND_CAP =

@@ -25,7 +25,7 @@ import {
   type ModelRecord,
   type TestTarget,
 } from "./test-targets";
-import { makeTempDir } from "../../../scripts/lib/tmp-dir";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 /** Shaped like a real models.json: settled model first per provider (collect-models
  * promotes it), with the rejected/unsuitable ones still listed behind it. */

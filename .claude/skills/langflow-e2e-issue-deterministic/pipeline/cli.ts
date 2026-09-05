@@ -1,5 +1,4 @@
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import type {
   BackendAmbient, FFEntry, Phase, PipelineState, PwStats, ReproRate, RunRecord,
@@ -9,6 +8,7 @@ import {
   setType, abortState, metricsOf, listStates, spineFor, TERMINAL, now,
 } from './state.ts'
 import { classify, detectBodyFormat } from './classify.ts'
+import { makeTempDir } from '../../../../scripts/lib/tmp-dir.mjs'
 import {
   ghIssueView, ghAssignSelf, ghPrView, runPlaywright, npmRun, gitCurrentBranch,
   gitDiffNames, gitDiffOf, enumerateTests, enumerateTestEntries, enumerateRunnableTests,
@@ -642,7 +642,10 @@ async function main() {
     if (!runId) fail('artifacts needs --run <workflow-run-id> [--filter "<test title>"]')
     const name = ghRunArtifactName(REPO, runId)
     if (!name) fail(`no playwright-json artifact on run ${runId} (expired, or the run produced none)`)
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pipeline-${issue}-`))
+    // Not a test, so the guard in `tmp-dir.test.mjs` does not cover this — but it
+    // is the same leak: the artifact is downloaded, one JSON is read out of it, and
+    // the directory used to stay behind for good (#1732).
+    const dir = makeTempDir(`pipeline-${issue}-`)
     if (!ghRunDownload(REPO, runId, name, dir)) fail(`gh run download failed for artifact ${name}`)
     const file = fs.readdirSync(dir).find(f => f.endsWith('.json'))
     if (!file) fail(`artifact ${name} contains no .json`)

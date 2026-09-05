@@ -16,7 +16,7 @@ import {
   installApiCoverage,
   writeCoverageRecord,
 } from "./api-coverage";
-import { makeTempDir } from "../../scripts/lib/tmp-dir";
+import { makeTempDir } from "../../scripts/lib/tmp-dir.mjs";
 
 /** Stands in for a test-scoped APIRequestContext. */
 const fakeContext = () => {

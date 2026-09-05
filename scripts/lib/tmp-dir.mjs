@@ -26,14 +26,32 @@
 // accepted. A test that wants the directory gone mid-run may still `rmSync` it;
 // the exit sweep uses `force: true`, so removing it twice is a no-op.
 //
-// WHY THERE ARE TWO COPIES OF FIFTEEN LINES
+// WHY THIS IS THE ONLY COPY
 //
-// `tmp-dir.ts` is the same helper for the `ts-node` lane, and it is a copy rather
-// than an import because the root `tsconfig.json` is `"module": "commonjs"`:
-// `require()` of an ESM `.mjs` is not loadable on Node 20, so a `.ts` test cannot
-// reach this file at all. The duplication is deliberate and pinned — the guard in
-// `tmp-dir.test.mjs` asserts the two exports stay in step — rather than left to
-// look like an oversight.
+// The first version of this shipped a `tmp-dir.ts` twin, justified with a claim
+// that is FALSE: "the root tsconfig is `"module": "commonjs"` and Node 20 cannot
+// `require()` an ESM `.mjs`". Node can, unflagged, since 20.19 — measured on this
+// repo's 20.20.2, and CI pins `node-version: "20"`, which resolves to the newest
+// 20.x. What actually stood in the way was TYPES, and types cost a declaration
+// file (`tmp-dir.d.mts`) rather than a fork of the implementation.
+//
+// The distinction was not pedantry. A second copy meant the `.ts` lane's helper
+// had **no behavioural coverage at all**: deleting its `process.on("exit")` would
+// have leaked every directory `test:units` creates — including the suite's worst
+// offender, 4480 directories — with every test, this file's guard included, still
+// green. One implementation is one thing to test.
+//
+// The cost is explicit rather than latent: `require(esm)` puts a floor under the
+// `ts-node` lane, so `package.json` now declares `"engines": {"node": ">=20.19"}`.
+//
+// WHY THE SWEEP IS `exit` AND NOT ALSO `SIGINT`
+//
+// Interrupting a 50 s lane is routine, and `exit` does not fire for it — so
+// Ctrl-C still leaks, which is a real gap and is stated rather than hidden. A
+// `SIGINT` listener is not a free fix: registering one SUPPRESSES Node's default
+// terminate-on-interrupt for every module that imports this, which is a semantic
+// change no test asked for. Handling it correctly means re-raising with the right
+// exit code, and that belongs in a runner, not in a fifteen-line helper.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

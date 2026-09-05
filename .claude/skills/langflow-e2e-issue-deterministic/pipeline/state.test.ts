@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { initState, saveState, loadState, statePath, ensureStep } from './state.ts'
+import { makeTempDir } from '../../../../scripts/lib/tmp-dir.mjs'
 
 beforeEach(() => {
   process.env.PIPELINE_STATE_DIR = makeTempDir('pipe-')
@@ -45,7 +46,6 @@ test('ensureStep creates once and increments nothing', () => {
 import {
   spineFor, completeStep, escalateToDebug, setType, abortState, metricsOf,
 } from './state.ts'
-import { makeTempDir } from '../../../../scripts/lib/tmp-dir.ts'
 
 test('spine for new-spec is the full base spine', () => {
   assert.deepEqual(spineFor('new-spec'), [

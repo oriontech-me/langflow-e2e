@@ -29,7 +29,6 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import {
@@ -40,7 +39,7 @@ import {
   type TrackedResponse,
 } from "./track-created-flows";
 import { resetAttributedFlows } from "./token-attribution";
-import { makeTempDir } from "../../../scripts/lib/tmp-dir";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 // One mechanism, not two (round-1 review): a per-test reset line is a line
 // someone forgets when adding test number ten, and a test reusing an

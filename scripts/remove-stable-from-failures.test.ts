@@ -27,7 +27,7 @@ import * as os from "os";
 import * as path from "path";
 import { collectHardFailures, lastFailureError } from "./remove-stable-from-failures";
 import { classifyInfraError } from "./lib/infra-signatures";
-import { makeTempDir } from "./lib/tmp-dir";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = path.join(__dirname, "remove-stable-from-failures.ts");
 

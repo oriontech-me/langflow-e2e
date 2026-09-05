@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
-import { makeTempDir } from "./scripts/lib/tmp-dir";
+import { makeTempDir } from "./scripts/lib/tmp-dir.mjs";
 
 const REPO_ROOT = __dirname;
 /** The local CLI entrypoint. NOT `npx`, which downloads from the registry when the
