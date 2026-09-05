@@ -1518,6 +1518,24 @@ phase_verdict() {
     err "INCOMPLETE report — a shard blob is missing."
     failed=1
   fi
+  # Independent of the chain above, because it asks a different question: the report
+  # can be perfectly readable and the ANALYSIS of it still fail. Making the payload
+  # build fail-soft — so that a failed merge reaches publish at all — opened that
+  # door, and it has to be closed here rather than there.
+  #
+  # Measured: a report whose `stats` the integrity guard accepts and whose `suites`
+  # the payload builder cannot walk (the two read different fields) used to abort the
+  # run at the build. Fail-soft alone turned that into "Green run." — no QA Platform
+  # record, no totals, every number downstream missing, and the day reported as clean.
+  # Silent green is the one verdict this lane cannot afford (#1012).
+  #
+  # Not said when the merge failed: there the absent payload is the consequence and
+  # the branch above already names the cause.
+  if [ "${PAYLOAD_OK:-true}" = "false" ] && [ "${MERGE_OK:-true}" = "true" ]; then
+    err "the run payload could NOT be built from a report the guards ACCEPTED — this run has no analysis, no totals and no QA Platform record."
+    err "Triage: the report itself is readable, so start from scripts/build-run-payload.mjs against $RUN_DIR/results.json, not from the shards."
+    failed=1
+  fi
   if [ "${TEST_JOB_FAILED:-0}" = "1" ]; then
     err "at least one shard had a failing test."
     failed=1

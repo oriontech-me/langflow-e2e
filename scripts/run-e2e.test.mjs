@@ -1118,3 +1118,44 @@ test("a failed merge still reaches PUBLISH, and the issue and the message name t
   assert.match(out, /could not MERGE its shard reports/, "the Slack headline, from SLACK_DRY_RUN");
   assert.doesNotMatch(out, /executed ZERO tests/, "no surface may say nothing ran on a run whose every shard finished");
 });
+
+test("a payload the guards accepted but the builder could not produce is not a green day", () => {
+  // The hole that making the payload build fail-soft opened, and the reason the
+  // verdict has to answer for it rather than the publish phase.
+  //
+  // check-run-integrity.mjs reads `stats`; build-run-payload.mjs walks `suites`. A
+  // report where the first is fine and the second is not therefore passes every guard
+  // and still cannot be analysed. Before the fail-soft that aborted the run — loud,
+  // and at least visible. After it, and with nothing here, the run printed
+  // "Green run." and exited 0: no totals, no QA Platform record, and the notifiers
+  // silent because the day looked clean. That is #1012's failure pointed a third way.
+  const dir = makeTempDir("payload-fail-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(
+    join(dir, "results.json"),
+    JSON.stringify({ stats: { expected: 300, unexpected: 0, flaky: 0, skipped: 5 }, errors: [], suites: 42 }),
+  );
+
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
+      "RUN_EMPTY=false RUN_PARTIAL=false RUN_UNREADABLE=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
+      "RUN_TESTS=305 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
+      "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
+      "phase_publish",
+      'echo "REACHED_AFTER_PUBLISH"',
+      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
+    ].join("\n"),
+  );
+  const out = r.stdout + r.stderr;
+
+  // Still fail-soft: the phase must not abort, or the merge fix is undone.
+  assert.match(out, /REACHED_AFTER_PUBLISH/);
+  assert.match(out, /payload build FAILED/);
+
+  // And still red, which is the property this test exists for.
+  assert.match(out, /EXIT=1/, "a run that cannot be analysed must not report success");
+  assert.doesNotMatch(r.stdout, /Green run/);
+  assert.match(r.stderr, /could NOT be built from a report the guards ACCEPTED/);
+});
