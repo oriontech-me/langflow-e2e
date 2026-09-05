@@ -1340,39 +1340,51 @@ phase_publish() {
   # report into totals and failures, and the Slack notifier reads it rather than
   # carrying a second parser that can disagree with the first.
   #
-  # FAIL-SOFT, and this is the line that made the merge fix incomplete. This script
-  # exits 1 when there is no results.json (build-run-payload.mjs), and it was the one
-  # step in this phase without a `|| warn` — so under `set -euo pipefail` a failed
-  # merge still killed main() here, one phase after phase_merge stopped aborting, and
-  # with the same result: no issue, no Slack message, no verdict. Worse than before,
-  # in fact: run-metadata.json now exists, so the watchdog's "finished without
-  # run-metadata.json" case stops firing while publish still dies.
+  # SKIPPED when there is no report to analyse, rather than made fail-soft. This is
+  # the line that made the merge fix incomplete: the script exits 1 with no
+  # results.json and it was the one step in this phase without a `|| warn`, so under
+  # `set -euo pipefail` a failed merge still killed main() here — one phase after
+  # phase_merge stopped aborting, and with the same result: no issue, no Slack
+  # message, no verdict. Worse than before, in fact: run-metadata.json now exists, so
+  # the watchdog's "finished without run-metadata.json" case stops firing while
+  # publish still dies. (#1726)
+  #
+  # SKIPPING rather than softening, because the two differ everywhere else. A
+  # fail-soft `|| warn` tolerates EVERY payload failure, including one on a report
+  # the guards were happy with — and that run then reported "Green run." with no
+  # totals and no QA Platform record, which is #1012's failure pointed a third way.
+  # Skipping changes behaviour only where there is nothing to build from; a build
+  # that runs and fails still aborts, loudly, exactly as it always has. The condition
+  # is the cause and the observation of it: the merge failed, or the guards could not
+  # read what it produced.
   #
   # The notifier is already written for an absent payload ("reporting what the guards
   # saw instead"), and on the day the merge fails the guards' verdict is exactly what
-  # has to reach a human. (#1726)
-  log "Building the run payload"
+  # has to reach a human.
   local stable_count total_count
-  PAYLOAD_OK=true
-  stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
-  total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
+  PAYLOAD_BUILT=false
+  if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
+    warn "no readable report — the run payload is NOT built, and the notifiers report what the guards saw instead."
+  else
+    log "Building the run payload"
+    stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
+    total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
 
-  PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
-  WORKFLOW="$WORKFLOW_ID" \
-  GITHUB_RUN_ID="$RUN_ID" \
-  RUN_URL="$REPORT_URL" \
-  LANGFLOW_VERSION="$LANGFLOW_VERSION" \
-  STABLE_COUNT="$stable_count" \
-  TOTAL_COUNT="$total_count" \
-  EVIDENCE_URL="$REPORT_URL" \
-    node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json" \
-    || { PAYLOAD_OK=false; warn "the payload build FAILED — the notifiers report what the guards saw instead."; }
-  if [ "$PAYLOAD_OK" = "true" ]; then
+    PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
+    WORKFLOW="$WORKFLOW_ID" \
+    GITHUB_RUN_ID="$RUN_ID" \
+    RUN_URL="$REPORT_URL" \
+    LANGFLOW_VERSION="$LANGFLOW_VERSION" \
+    STABLE_COUNT="$stable_count" \
+    TOTAL_COUNT="$total_count" \
+    EVIDENCE_URL="$REPORT_URL" \
+      node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
+    PAYLOAD_BUILT=true
     info "payload: $RUN_DIR/payload.json"
   fi
 
   if [ "$POST_QA_PLATFORM" = "1" ]; then
-    if [ "${PAYLOAD_OK:-true}" != "true" ]; then
+    if [ "$PAYLOAD_BUILT" != "true" ]; then
       warn "there is no payload to POST — the QA Platform record is skipped for this run."
     elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
@@ -1519,36 +1531,6 @@ phase_verdict() {
     failed=1
   elif [ "${SHARD_COMPLETE:-true}" = "false" ]; then
     err "INCOMPLETE report — a shard blob is missing."
-    failed=1
-  fi
-  # Independent of the chain above, because it asks a different question: the report
-  # can be perfectly readable and the ANALYSIS of it still fail. Making the payload
-  # build fail-soft — so that a failed merge reaches publish at all — opened that
-  # door, and it has to be closed here rather than there.
-  #
-  # Measured: a report whose `stats` the integrity guard accepts and whose `suites`
-  # the payload builder cannot walk (the two read different fields) used to abort the
-  # run at the build. Fail-soft alone turned that into "Green run." — no QA Platform
-  # record, no totals, every number downstream missing, and the day reported as clean.
-  # Silent green is the one verdict this lane cannot afford (#1012).
-  #
-  # It fires ONLY when every other guard was happy, and that is not a refinement —
-  # without it the sentence is false. With the merge fine and no results.json at all,
-  # the empty branch above correctly says "ZERO tests executed, find out why nothing
-  # ran" and this one answered underneath it with "a report the guards ACCEPTED" and
-  # "the report itself is readable". Two contradictory triage instructions in one
-  # verdict, the second of them wrong on both counts — the exact defect this PR
-  # exists to remove, reintroduced two commits after removing it.
-  #
-  # Every excluded case is already red with its cause named, and there the absent
-  # payload is the consequence rather than the finding. What is left is the case that
-  # would otherwise be green, which is the only one that needed a branch.
-  if [ "${PAYLOAD_OK:-true}" = "false" ] \
-    && [ "${MERGE_OK:-true}" = "true" ] \
-    && [ "${RUN_EMPTY:-true}" = "false" ] \
-    && [ "${RUN_PARTIAL:-false}" = "false" ]; then
-    err "the run payload could NOT be built from a report the guards ACCEPTED — this run has no analysis, no totals and no QA Platform record."
-    err "Triage: the report itself is readable, so start from scripts/build-run-payload.mjs against $RUN_DIR/results.json, not from the shards."
     failed=1
   fi
   if [ "${TEST_JOB_FAILED:-0}" = "1" ]; then

@@ -1102,7 +1102,7 @@ test("a failed merge still reaches PUBLISH, and the issue and the message name t
 
   // 1. The run gets past publish at all.
   assert.match(out, /REACHED_AFTER_PUBLISH/, "phase_publish must not abort — the notifiers and the verdict are downstream of it");
-  assert.match(out, /payload build FAILED/, "and it must SAY the payload could not be built, rather than pass over it");
+  assert.match(out, /the run payload is NOT built/, "and it must SAY the payload was skipped, rather than pass over it");
 
   // 2. The verdict is red, and names the merge rather than an empty run.
   assert.match(out, /EXIT=1/);
@@ -1121,17 +1121,17 @@ test("a failed merge still reaches PUBLISH, and the issue and the message name t
   assert.doesNotMatch(out, /executed ZERO tests/, "no surface may say nothing ran on a run whose every shard finished");
 });
 
-test("a payload the guards accepted but the builder could not produce is not a green day", () => {
-  // The hole that making the payload build fail-soft opened, and the reason the
-  // verdict has to answer for it rather than the publish phase.
+test("a payload failure on a report the guards accepted still ABORTS, loudly", () => {
+  // The property that replaces a verdict branch, and the reason the build is skipped
+  // rather than made fail-soft.
   //
   // check-run-integrity.mjs reads `stats`; build-run-payload.mjs walks `suites`. A
-  // report where the first is fine and the second is not therefore passes every guard
-  // and still cannot be analysed. Before the fail-soft that aborted the run — loud,
-  // and at least visible. After it, and with nothing here, the run printed
-  // "Green run." and exited 0: no totals, no QA Platform record, and the notifiers
-  // silent because the day looked clean. That is #1012's failure pointed a third way.
-  const dir = makeTempDir("payload-fail-");
+  // report where the first is fine and the second is not passes every guard and
+  // still cannot be analysed. A blanket `|| warn` would tolerate it and the run
+  // would print "Green run." with no totals and no QA Platform record — #1012's
+  // failure pointed a third way. Skipping only when there is nothing to build from
+  // leaves this case exactly as it always was: dead at the build, which is loud.
+  const dir = makeTempDir("payload-abort-");
   mkdirSync(join(dir, "logs"), { recursive: true });
   mkdirSync(join(dir, "all-tokens"), { recursive: true });
   writeFileSync(
@@ -1142,53 +1142,47 @@ test("a payload the guards accepted but the builder could not produce is not a g
   const r = sourced(
     [
       `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
-      "RUN_EMPTY=false RUN_PARTIAL=false RUN_UNREADABLE=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
+      "MERGE_OK=true RUN_EMPTY=false RUN_UNREADABLE=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
       "RUN_TESTS=305 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
       "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
       "phase_publish",
       'echo "REACHED_AFTER_PUBLISH"',
-      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
     ].join("\n"),
   );
   const out = r.stdout + r.stderr;
 
-  // Still fail-soft: the phase must not abort, or the merge fix is undone.
-  assert.match(out, /REACHED_AFTER_PUBLISH/);
-  assert.match(out, /payload build FAILED/);
-
-  // And still red, which is the property this test exists for.
-  assert.match(out, /EXIT=1/, "a run that cannot be analysed must not report success");
-  assert.doesNotMatch(r.stdout, /Green run/);
-  assert.match(r.stderr, /could NOT be built from a report the guards ACCEPTED/);
+  assert.doesNotMatch(out, /REACHED_AFTER_PUBLISH/, "a run nobody can analyse must not walk past the failure");
+  assert.doesNotMatch(out, /Green run/);
+  assert.match(out, /build-run-payload\.mjs/, "and the abort has to name where it happened");
 });
 
-test("the payload verdict stays quiet when the guards already rejected the report", () => {
-  // The branch above must not answer a question another branch already answered, and
-  // here it cannot answer it truthfully at all: with the merge fine and no
-  // results.json, the guards report the run empty and unreadable, and a line saying
-  // "a report the guards ACCEPTED" / "the report itself is readable" is false twice
-  // over — printed directly beneath the empty branch saying the opposite.
-  //
-  // Contradicting itself inside one verdict is the defect this whole PR is about.
-  const dir = makeTempDir("payload-quiet-");
-  mkdirSync(join(dir, "logs"), { recursive: true });
-  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+test("the payload is skipped, not attempted, when the guards could not read the report", () => {
+  // The other side of the same decision. `RUN_UNREADABLE` is the observation and
+  // `MERGE_OK` the cause; either is enough, and neither may abort the phase, because
+  // the issue, the Slack message and the verdict are all downstream of here.
+  for (const state of [
+    "MERGE_OK=false RUN_UNREADABLE=true",
+    "MERGE_OK=true RUN_UNREADABLE=true",
+  ]) {
+    const dir = makeTempDir("payload-skip-");
+    mkdirSync(join(dir, "logs"), { recursive: true });
+    mkdirSync(join(dir, "all-tokens"), { recursive: true });
 
-  const r = sourced(
-    [
-      `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
-      "MERGE_OK=true RUN_EMPTY=true RUN_UNREADABLE=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
-      "RUN_TESTS=0 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
-      "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
-      "phase_publish",
-      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
-    ].join("\n"),
-  );
+    const r = sourced(
+      [
+        `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
+        `${state} RUN_EMPTY=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0`,
+        "RUN_TESTS=0 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
+        "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
+        "phase_publish",
+        'echo "REACHED_AFTER_PUBLISH"',
+      ].join("\n"),
+    );
+    const out = r.stdout + r.stderr;
 
-  // Still red, and still red for the RIGHT reason — the one branch that can say
-  // something true about this run.
-  assert.match(r.stdout + r.stderr, /EXIT=1/);
-  assert.match(r.stderr, /ZERO tests executed/);
-  assert.doesNotMatch(r.stderr, /guards ACCEPTED/, "the guards rejected it — saying otherwise contradicts the line above");
-  assert.doesNotMatch(r.stderr, /the report itself is readable/, "there is no report at all");
+    assert.match(out, /REACHED_AFTER_PUBLISH/, `${state}: publish must complete — the verdict is downstream`);
+    assert.match(out, /the run payload is NOT built/, `${state}: and it must say so`);
+    assert.doesNotMatch(out, /\[payload\] no /, `${state}: the builder must not have been run at all`);
+    assert.equal(existsSync(join(dir, "payload.json")), false, `${state}: no empty file left behind either`);
+  }
 });
