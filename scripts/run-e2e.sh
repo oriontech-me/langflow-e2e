@@ -1205,12 +1205,35 @@ phase_merge() {
     info "$found/$SHARD_TOTAL blobs present"
   fi
 
-  PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/results.json" \
-  PLAYWRIGHT_HTML_REPORT="$RUN_DIR/playwright-report" \
-    npx playwright merge-reports --reporter=html,json "$RUN_DIR/all-blobs" > /dev/null
+  # -c is not optional above one shard, and the reason is the per-shard working copy.
+  # Each shard runs from its OWN copy of the tree (prepare_shard_workdir, because
+  # collect-models writes into it), so Playwright records four different `testDir`
+  # values and merge-reports refuses to combine them. The merge config names where the
+  # tests actually live, so the merged report's paths are the repository's rather than
+  # a per-shard copy's. See playwright.merge.config.ts. (#1726)
+  local merge_log="$RUN_DIR/logs/merge.log"
+  MERGE_OK=true
+  if ! PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/results.json" \
+       PLAYWRIGHT_HTML_REPORT="$RUN_DIR/playwright-report" \
+       npx playwright merge-reports --reporter=html,json \
+         -c "$REPO_DIR/playwright.merge.config.ts" "$RUN_DIR/all-blobs" > "$merge_log" 2>&1; then
+    # NAMED, not left to `set -e`. Aborting here spent the whole test time and then
+    # died at the last phase without a word: no verdict, nothing appended, and — since
+    # phase_publish never ran — no Slack message either. The day ended in silence.
+    #
+    # It does not return. Guard 2 below is written for exactly this state ("there is
+    # no readable report"), and letting it run is what turns a merge failure into a
+    # red verdict that still reaches publish. Aborting bypassed the guard that exists
+    # for the case. (#1726)
+    MERGE_OK=false
+    err "merge-reports FAILED with $found/$SHARD_TOTAL blob(s) present, so this run has NO merged report."
+    err "The shards ran; what failed is combining them. Last lines of $merge_log:"
+    tail -n 15 "$merge_log" >&2 || true
+  fi
 
   # Guard 2 — does the report contain RESULTS? A valid, empty blob passes guard 1 and
-  # reaches triage looking benign (#1012).
+  # reaches triage looking benign (#1012). It also answers for a merge that failed
+  # outright: no results.json is "unreadable", never green.
   PLAYWRIGHT_JSON="$RUN_DIR/results.json" GITHUB_OUTPUT="$outputs" \
     node scripts/check-run-integrity.mjs || true
   RUN_EMPTY="$(gh_out "$outputs" empty)";     RUN_EMPTY="${RUN_EMPTY:-true}"
@@ -1268,6 +1291,15 @@ phase_merge() {
 
   # Both versions in one place, because the whole point of this lane is comparing a
   # verdict with the CI's and neither number is guessable afterwards.
+  #
+  # merge_ok rides along for the same reason. Without it a run whose four shards all
+  # passed but whose merge failed is byte-identical here to a run where nothing ran —
+  # both carry tests_total 0 — and this file is the run's only record of which one it
+  # was once the terminal is closed. Nothing reads it yet: `grep -rl run-metadata`
+  # finds this script and its test and nothing else, so this is evidence for a human
+  # and for the stage that will compare the lanes, not a field with a consumer today.
+  # Stated rather than implied, because "the comparator reads it" would be a reason
+  # that is not true yet. (#1726)
   node -e '
     const fs = require("fs");
     const [out, ...kv] = process.argv.slice(1);
@@ -1290,7 +1322,8 @@ phase_merge() {
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
-    tests_total "${RUN_TESTS:-0}"
+    tests_total "${RUN_TESTS:-0}" \
+    merge_ok "${MERGE_OK:-true}"
 
   info "tests: ${RUN_TESTS:-0} | top-level errors: ${RUN_ERRORS:-0} | empty: $RUN_EMPTY | partial: $RUN_PARTIAL"
   info "Langflow: ${LANGFLOW_VERSION:-<unknown>}"
@@ -1306,24 +1339,54 @@ phase_publish() {
   # Built ALWAYS, even with every POST disabled: it is the only analysis of the merged
   # report into totals and failures, and the Slack notifier reads it rather than
   # carrying a second parser that can disagree with the first.
-  log "Building the run payload"
+  #
+  # SKIPPED when there is no report to analyse, rather than made fail-soft. This is
+  # the line that made the merge fix incomplete: the script exits 1 with no
+  # results.json and it was the one step in this phase without a `|| warn`, so under
+  # `set -euo pipefail` a failed merge still killed main() here — one phase after
+  # phase_merge stopped aborting, and with the same result: no issue, no Slack
+  # message, no verdict. Worse than before, in fact: run-metadata.json now exists, so
+  # the watchdog's "finished without run-metadata.json" case stops firing while
+  # publish still dies. (#1726)
+  #
+  # SKIPPING rather than softening, because the two differ everywhere else. A
+  # fail-soft `|| warn` tolerates EVERY payload failure, including one on a report
+  # the guards were happy with — and that run then reported "Green run." with no
+  # totals and no QA Platform record, which is #1012's failure pointed a third way.
+  # Skipping changes behaviour only where there is nothing to build from; a build
+  # that runs and fails still aborts, loudly, exactly as it always has. The condition
+  # is the cause and the observation of it: the merge failed, or the guards could not
+  # read what it produced.
+  #
+  # The notifier is already written for an absent payload ("reporting what the guards
+  # saw instead"), and on the day the merge fails the guards' verdict is exactly what
+  # has to reach a human.
   local stable_count total_count
-  stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
-  total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
+  PAYLOAD_BUILT=false
+  if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
+    warn "no readable report — the run payload is NOT built, and the notifiers report what the guards saw instead."
+  else
+    log "Building the run payload"
+    stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
+    total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
 
-  PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
-  WORKFLOW="$WORKFLOW_ID" \
-  GITHUB_RUN_ID="$RUN_ID" \
-  RUN_URL="$REPORT_URL" \
-  LANGFLOW_VERSION="$LANGFLOW_VERSION" \
-  STABLE_COUNT="$stable_count" \
-  TOTAL_COUNT="$total_count" \
-  EVIDENCE_URL="$REPORT_URL" \
-    node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
-  info "payload: $RUN_DIR/payload.json"
+    PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
+    WORKFLOW="$WORKFLOW_ID" \
+    GITHUB_RUN_ID="$RUN_ID" \
+    RUN_URL="$REPORT_URL" \
+    LANGFLOW_VERSION="$LANGFLOW_VERSION" \
+    STABLE_COUNT="$stable_count" \
+    TOTAL_COUNT="$total_count" \
+    EVIDENCE_URL="$REPORT_URL" \
+      node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
+    PAYLOAD_BUILT=true
+    info "payload: $RUN_DIR/payload.json"
+  fi
 
   if [ "$POST_QA_PLATFORM" = "1" ]; then
-    if [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
+    if [ "$PAYLOAD_BUILT" != "true" ]; then
+      warn "there is no payload to POST — the QA Platform record is skipped for this run."
+    elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
       local code
@@ -1393,6 +1456,7 @@ phase_publish() {
     HISTORY_FILE="$LEDGER_HISTORY" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
+    LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
@@ -1404,16 +1468,24 @@ phase_publish() {
   if [ "$CREATE_ISSUE" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Opening the failure issue"
+    # MERGE_OK travels with the guards' flags, and it has to. A failed merge sets
+    # RUN_EMPTY and RUN_UNREADABLE true, and both consumers keyed only off those —
+    # so the issue's title said "executed ZERO tests" and its body said "find why
+    # nothing ran, not which test broke" on a run whose every shard had finished.
+    # That is the sentence phase_verdict was changed to stop saying; the change only
+    # reaches a reader if it reaches the surfaces a reader opens. (#1726)
     RUN_ID="$RUN_ID" RUN_DIR="$RUN_DIR" \
     RUN_EMPTY="$RUN_EMPTY" RUN_UNREADABLE="$RUN_UNREADABLE" RUN_PARTIAL="$RUN_PARTIAL" \
+    MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
       node scripts/create-failure-issue.mjs || warn "issue creation failed (does not fail the run)."
   fi
 
   # Same condition as the issue, deliberately: the message and the issue are two views
-  # of one verdict and must not disagree. Fail-soft — a notifier is never allowed to be
-  # the reason a run reports failure.
+  # of one verdict and must not disagree — which is why MERGE_OK is passed to both, or
+  # the two views would have disagreed with the verdict and agreed with each other.
+  # Fail-soft — a notifier is never allowed to be the reason a run reports failure.
   if [ "$NOTIFY_SLACK" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Notifying Slack"
@@ -1421,6 +1493,7 @@ phase_publish() {
     [ -f "$RUN_DIR/issue-url.txt" ] && issue_url="$(cat "$RUN_DIR/issue-url.txt")" || true
     PAYLOAD_JSON="$RUN_DIR/payload.json" \
     RUN_EMPTY="$RUN_EMPTY" RUN_PARTIAL="$RUN_PARTIAL" RUN_UNREADABLE="$RUN_UNREADABLE" \
+    MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_TESTS="$RUN_TESTS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" \
     LIVENESS_MEASURED="$LIVENESS_MEASURED" LIVENESS_WEDGED="$LIVENESS_WEDGED" \
     LIVENESS_OUTAGES="$LIVENESS_OUTAGES" LIVENESS_DOWN_SECONDS="$LIVENESS_DOWN_SECONDS" \
@@ -1441,7 +1514,15 @@ phase_verdict() {
   info "metadata: $RUN_DIR/run-metadata.json"
 
   local failed=0
-  if [ "${RUN_EMPTY:-true}" = "true" ]; then
+  # Ordered before the empty branch on purpose. A failed merge leaves no report, so
+  # guard 2 reports it as empty — and "ZERO tests executed, find out why nothing ran"
+  # would then be a true sentence pointing at the wrong repair. The shards ran; what
+  # failed was combining them, and that is a different day's work. (#1726)
+  if [ "${MERGE_OK:-true}" = "false" ]; then
+    err "the shards RAN and the MERGE failed — there is no report to read, and the tests are not what broke."
+    err "Triage: read $RUN_DIR/logs/merge.log; the blobs are in $RUN_DIR/all-blobs and can be merged again by hand."
+    failed=1
+  elif [ "${RUN_EMPTY:-true}" = "true" ]; then
     err "ZERO tests executed — an infrastructure abort, not a test failure. Triage: find out why nothing ran, not which test broke."
     [ -n "${RUN_FIRST_ERROR:-}" ] && err "first error: $RUN_FIRST_ERROR"
     failed=1

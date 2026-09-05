@@ -24,12 +24,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+
 import { fileURLToPath } from "node:url";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 import { readServiceEnv, CLASSIFICATION } from "./lib/vm-env-parity.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -122,7 +123,7 @@ test("an unreadable report defaults to empty, not to green", () => {
 });
 
 test("gh_out reads plain and heredoc values, which the outage report needs", () => {
-  const dir = mkdtempSync(join(tmpdir(), "run-e2e-test-"));
+  const dir = makeTempDir("run-e2e-test-");
   const file = join(dir, "outputs.txt");
   writeFileSync(file, ["empty=false", "summary_md<<EOF_MD", "| shard | down |", "| 1 | 4s |", "EOF_MD", "partial=true"].join("\n") + "\n");
   const r = sourced(`gh_out ${JSON.stringify(file)} empty; echo; gh_out ${JSON.stringify(file)} summary_md; echo; gh_out ${JSON.stringify(file)} partial`);
@@ -293,7 +294,6 @@ test("pragmas that are not a JSON object stop the run", () => {
     assert.match(r.stderr, /LANGFLOW_SQLITE_PRAGMAS/);
   }
 });
-
 
 test("the mirrored values cross the ssh boundary, which a default alone does not", () => {
   // The failure mode this catches LOOKS fixed: the values are set here, the shell that
@@ -677,7 +677,7 @@ test("a ledger inside the clone is refused, however the path is spelled", () => 
   // The one way this change defeats its own purpose. Each of these writes into the
   // working tree, and the cost is paid the NEXT morning, by a `git pull --ff-only`
   // that refuses for a reason nobody is watching at 08:00.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-refuse-"));
+  const tmp = makeTempDir("ledger-refuse-");
   const sneaky = join(tmp, "looks-outside");
   symlinkSync(join(REPO_ROOT, "reports"), sneaky);
   const cases = [
@@ -704,7 +704,7 @@ test("preflight CREATES the ledger it accepts, which is the path every night tak
   // ledger costs one variable instead of an hour. Every other preflight test is a
   // REFUSAL, so the branch that actually runs was pinned by nothing: deleting the
   // `mkdir` and the `-w` check outright left the file green.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-ok-"));
+  const tmp = makeTempDir("ledger-ok-");
   try {
     const dir = join(tmp, "state", "langflow-e2e");
     const r = preflightLedger({ LEDGER_DIR: dir });
@@ -719,7 +719,7 @@ test("preflight CREATES the ledger it accepts, which is the path every night tak
 });
 
 test("a ledger directory that exists and cannot be written is refused", { skip: process.getuid?.() === 0 ? "root writes anywhere, so -w cannot be exercised" : false }, () => {
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-dir-"));
+  const tmp = makeTempDir("ledger-ro-dir-");
   try {
     const dir = join(tmp, "locked");
     mkdirSync(dir, { mode: 0o500 });
@@ -843,7 +843,7 @@ test("the ledger is seeded once from the Actions series, and an existing one is 
   // Day zero is not free: the durations file is what balances the matrix and the token
   // summary's anomaly baseline is a median over recent entries, and both answer badly
   // from three lines — badly in the direction of looking fine.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-seed-"));
+  const tmp = makeTempDir("ledger-seed-");
   try {
     const tracked = join(tmp, "tracked.jsonl");
     const ledger = join(tmp, "ledger.jsonl");
@@ -877,7 +877,7 @@ test("a seed that cannot be copied warns, and does not take the day's verdict wi
   // phase_publish runs under `set -e`, so a bare `cp` failing here would abort the
   // whole phase — after the run, before the verdict. The series is worth less than the
   // day it would cost, and every other step in that phase already says so.
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-"));
+  const tmp = makeTempDir("ledger-ro-");
   try {
     const tracked = join(tmp, "tracked.jsonl");
     writeFileSync(tracked, "a line\n");
@@ -903,7 +903,7 @@ test("asking for the ledger's durations and finding none is said out loud", () =
   assert.equal(missing.stdout.trim(), tracked, "a missing table must not become an empty argument");
   assert.match(missing.stderr, /USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet/);
 
-  const tmp = mkdtempSync(join(tmpdir(), "ledger-dur-"));
+  const tmp = makeTempDir("ledger-dur-");
   try {
     writeFileSync(join(tmp, "spec-durations.json"), "{}\n");
     const present = sourced(`durations_table`, { USE_LEDGER_DURATIONS: "1", LEDGER_DIR: tmp });
@@ -943,4 +943,246 @@ test("the matrix still balances on the tracked durations while both dailies run"
   // is the product of this etapa; the switch belongs to the one after it.
   const r = sourced(`echo "$USE_LEDGER_DURATIONS"`);
   assert.equal(r.stdout.trim(), "0");
+});
+
+// ---------------------------------------------------------------------------
+// Merging shard reports above one shard (#1726)
+// ---------------------------------------------------------------------------
+//
+// The defect these pin: every run of this lane had been SHARDS=1, where there is one
+// blob, one `testDir` and nothing to reconcile. At two or more, each shard reports
+// from its own working copy, the recorded paths differ, and merge-reports refuses —
+// after the whole test time is already spent, and under `set -e`, silently.
+
+test("the merge passes a config, because per-shard working copies give per-shard testDirs", () => {
+  const script = readFileSync(SCRIPT, "utf8");
+  const merge = script.slice(script.indexOf("phase_merge() {"), script.indexOf("phase_publish() {"));
+  assert.ok(merge.length > 0, "could not isolate phase_merge");
+  // Comments stripped: this file explains the flag at length right above the call, and
+  // a check that a comment mentions it would pass with the flag itself removed.
+  const code = merge.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  assert.match(code, /merge-reports/);
+  assert.match(code, /-c "\$REPO_DIR\/playwright\.merge\.config\.ts"/);
+});
+
+test("the merge config points at the same testDir the suite config does", () => {
+  // Duplicated on purpose (importing the full config would evaluate it for a step that
+  // runs after every test). Drift would not fail loudly — it would relabel every path
+  // in the merged report — so the drift is what gets pinned.
+  //
+  // RESOLVED, not compared as a literal. Playwright resolves `testDir` against the
+  // directory of the config file that declares it, so two files can carry the same
+  // "./tests" string and still name two different trees the moment one of them moves.
+  // The string is not the property under test; the directory it lands on is.
+  const testDirOf = (f) => {
+    const abs = join(REPO_ROOT, f);
+    const literal = readFileSync(abs, "utf8").match(/testDir:\s*"([^"]+)"/)?.[1];
+    return literal === undefined ? undefined : resolve(dirname(abs), literal);
+  };
+  const suite = testDirOf("playwright.config.ts");
+  assert.ok(suite, "playwright.config.ts declares no testDir");
+  assert.equal(testDirOf("playwright.merge.config.ts"), suite);
+});
+
+test("a failed merge is NAMED and does not abort the run, so guard 2 still classifies it", () => {
+  const dir = makeTempDir("merge-fail-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  writeFileSync(join(dir, "all-blobs", "shard-1.zip"), "");
+  // A stub npx that fails the way merge-reports fails: a message, then non-zero.
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "npx"),
+    "#!/usr/bin/env bash\necho 'Error: Blob reports being merged were recorded with different test directories' >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+
+  // NO `set +e` here, and that is the point of the test. Shell options are global,
+  // not per-function: disabling errexit around the call disables the very mechanism
+  // under test, and a phase_merge that DOES abort a real run would still reach the
+  // echo and pass every assertion below. Under `set -e` an abort is observable as the
+  // absence of the marker, which is the only honest way to observe it.
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1`,
+      // The version dimension is neutralised: phase_merge reads it after guard 2, and
+      // under `set -u` an unset expectation would abort this harness for a reason that
+      // is not what is under test. The version states have their own tests.
+      "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
+      "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      "phase_merge",
+      'echo "REACHED_AFTER_MERGE MERGE_OK=$MERGE_OK"',
+    ].join("\n"),
+    { PATH: `${bin}:${process.env.PATH}` },
+  );
+
+  assert.match(r.stdout + r.stderr, /REACHED_AFTER_MERGE/, "the phase must not abort — guard 2 has to run");
+  assert.match(r.stdout + r.stderr, /MERGE_OK=false/);
+  assert.match(r.stderr, /merge-reports FAILED/);
+  assert.match(r.stderr, /different test directories/, "the underlying error has to reach the log");
+
+  // The failure has to survive the terminal. run-metadata.json is the run's record,
+  // and without this field a run whose four shards all passed is byte-identical there
+  // to one where nothing ran — both `tests_total` zero — which is the conflation
+  // phase_verdict was changed to remove. No consumer reads it yet; it is evidence
+  // kept for the stage that will compare the lanes, and saying otherwise would claim
+  // a reader that does not exist.
+  const meta = JSON.parse(readFileSync(join(dir, "run-metadata.json"), "utf8"));
+  assert.equal(meta.merge_ok, "false");
+  assert.equal(meta.tests_total, "0", "the guard sees no report, which is exactly why merge_ok has to be there");
+});
+
+test("a failed merge fails the verdict, and does not call it 'zero tests executed'", () => {
+  // The distinction is the point: a merge failure leaves no report, so guard 2 marks
+  // the run empty — and the empty branch tells triage to find out why nothing ran,
+  // which is the wrong repair for a run whose shards all finished.
+  const r = sourced(
+    [
+      "MERGE_OK=false RUN_EMPTY=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
+      "RUN_TESTS=0 RUN_ERRORS=0 RUN_DIR=/tmp/does-not-matter TARGET_VERSION_MATCH=yes",
+      // `set +e` around this ONE call and no wider, the same way the verdict() helper
+      // does it: phase_verdict is expected to return non-zero here, so errexit has to
+      // be off for it and on for everything else.
+      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
+    ].join("\n"),
+  );
+  assert.match(r.stdout + r.stderr, /EXIT=1/);
+  assert.match(r.stderr, /the shards RAN and the MERGE failed/);
+  assert.doesNotMatch(r.stderr, /ZERO tests executed/);
+});
+
+test("a failed merge still reaches PUBLISH, and the issue and the message name the merge", () => {
+  // The property the whole failure path exists for, and the one nothing covered:
+  // main() is `phase_merge; phase_publish; phase_verdict`, so a phase_merge that no
+  // longer aborts buys nothing if phase_publish aborts one line later. It did —
+  // build-run-payload.mjs exits 1 with no results.json and was the only step in that
+  // phase without a `|| warn` — which left the run exactly where it had been: no
+  // issue, no Slack message, no verdict, and now WITH run-metadata.json, so the
+  // watchdog's "finished without run-metadata.json" alarm stopped firing too.
+  //
+  // The three phases are therefore driven in main()'s own order, with both notifiers
+  // ON and in dry-run so their rendered text can be read without posting anything.
+  const dir = makeTempDir("merge-fail-e2e-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  writeFileSync(join(dir, "all-blobs", "shard-1.zip"), "");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "npx"),
+    "#!/usr/bin/env bash\necho 'Error: Blob reports being merged were recorded with different test directories' >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0`,
+      "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
+      "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      "TARGET_VERSION_MATCH=yes",
+      "phase_merge",
+      "phase_publish",
+      'echo "REACHED_AFTER_PUBLISH"',
+      'set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"',
+    ].join("\n"),
+    {
+      PATH: `${bin}:${process.env.PATH}`,
+      // The two surfaces a human actually opens, turned on and pointed nowhere.
+      CREATE_ISSUE: "1",
+      NOTIFY_SLACK: "1",
+      ISSUE_DRY_RUN: "1",
+      SLACK_DRY_RUN: "1",
+      // Nothing is recorded: this is a smoke, not a run.
+      KEEP_LEDGER: "0",
+      POST_QA_PLATFORM: "0",
+    },
+  );
+  const out = r.stdout + r.stderr;
+
+  // 1. The run gets past publish at all.
+  assert.match(out, /REACHED_AFTER_PUBLISH/, "phase_publish must not abort — the notifiers and the verdict are downstream of it");
+  assert.match(out, /the run payload is NOT built/, "and it must SAY the payload was skipped, rather than pass over it");
+
+  // 2. The verdict is red, and names the merge rather than an empty run.
+  assert.match(out, /EXIT=1/);
+  assert.match(r.stderr, /the shards RAN and the MERGE failed/);
+
+  // 3. The two published surfaces agree with the verdict. This is the half that used
+  //    to disagree: both key off RUN_EMPTY/RUN_UNREADABLE, which a failed merge sets
+  //    true, so they announced "ZERO tests executed" on a day every shard finished.
+  const issue = readFileSync(join(dir, "issue-body.md"), "utf8");
+  assert.match(issue, /could not MERGE its shard reports/, "the issue title is what gets scanned in the list");
+  assert.match(issue, /The shards RAN — the MERGE failed/);
+  assert.doesNotMatch(issue, /ZERO tests/);
+  assert.doesNotMatch(issue, /find why nothing ran/);
+
+  assert.match(out, /could not MERGE its shard reports/, "the Slack headline, from SLACK_DRY_RUN");
+  assert.doesNotMatch(out, /executed ZERO tests/, "no surface may say nothing ran on a run whose every shard finished");
+});
+
+test("a payload failure on a report the guards accepted still ABORTS, loudly", () => {
+  // The property that replaces a verdict branch, and the reason the build is skipped
+  // rather than made fail-soft.
+  //
+  // check-run-integrity.mjs reads `stats`; build-run-payload.mjs walks `suites`. A
+  // report where the first is fine and the second is not passes every guard and
+  // still cannot be analysed. A blanket `|| warn` would tolerate it and the run
+  // would print "Green run." with no totals and no QA Platform record — #1012's
+  // failure pointed a third way. Skipping only when there is nothing to build from
+  // leaves this case exactly as it always was: dead at the build, which is loud.
+  const dir = makeTempDir("payload-abort-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(
+    join(dir, "results.json"),
+    JSON.stringify({ stats: { expected: 300, unexpected: 0, flaky: 0, skipped: 5 }, errors: [], suites: 42 }),
+  );
+
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
+      "MERGE_OK=true RUN_EMPTY=false RUN_UNREADABLE=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
+      "RUN_TESTS=305 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
+      "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
+      "phase_publish",
+      'echo "REACHED_AFTER_PUBLISH"',
+    ].join("\n"),
+  );
+  const out = r.stdout + r.stderr;
+
+  assert.doesNotMatch(out, /REACHED_AFTER_PUBLISH/, "a run nobody can analyse must not walk past the failure");
+  assert.doesNotMatch(out, /Green run/);
+  assert.match(out, /build-run-payload\.mjs/, "and the abort has to name where it happened");
+});
+
+test("the payload is skipped, not attempted, when the guards could not read the report", () => {
+  // The other side of the same decision. `RUN_UNREADABLE` is the observation and
+  // `MERGE_OK` the cause; either is enough, and neither may abort the phase, because
+  // the issue, the Slack message and the verdict are all downstream of here.
+  for (const state of [
+    "MERGE_OK=false RUN_UNREADABLE=true",
+    "MERGE_OK=true RUN_UNREADABLE=true",
+  ]) {
+    const dir = makeTempDir("payload-skip-");
+    mkdirSync(join(dir, "logs"), { recursive: true });
+    mkdirSync(join(dir, "all-tokens"), { recursive: true });
+
+    const r = sourced(
+      [
+        `RUN_DIR=${JSON.stringify(dir)} KEEP_LEDGER=0 LANGFLOW_VERSION=1.11.0.dev1`,
+        `${state} RUN_EMPTY=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0`,
+        "RUN_TESTS=0 RUN_ERRORS=0 RUN_FIRST_ERROR= TARGET_VERSION_MATCH=yes",
+        "LIVENESS_MEASURED=false LIVENESS_WEDGED=false LIVENESS_OUTAGES=0 LIVENESS_DOWN_SECONDS=0 LIVENESS_MD=",
+        "phase_publish",
+        'echo "REACHED_AFTER_PUBLISH"',
+      ].join("\n"),
+    );
+    const out = r.stdout + r.stderr;
+
+    assert.match(out, /REACHED_AFTER_PUBLISH/, `${state}: publish must complete — the verdict is downstream`);
+    assert.match(out, /the run payload is NOT built/, `${state}: and it must say so`);
+    assert.doesNotMatch(out, /\[payload\] no /, `${state}: the builder must not have been run at all`);
+    assert.equal(existsSync(join(dir, "payload.json")), false, `${state}: no empty file left behind either`);
+  }
 });

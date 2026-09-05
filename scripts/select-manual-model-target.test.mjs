@@ -18,7 +18,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import {
   AUTO,
@@ -27,6 +26,7 @@ import {
   readModelsFile,
   selectManualModelTarget,
 } from "./select-manual-model-target.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = path.join(import.meta.dirname, "select-manual-model-target.mjs");
 const RUN_E2E = path.join(
@@ -528,7 +528,7 @@ test("the Docker job passes every provider key it can pin to into run-e2e", () =
 // ─── the file readers ────────────────────────────────────────────────────────
 
 test("readModelsFile reports a missing file rather than throwing", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manual-target-"));
+  const dir = makeTempDir("manual-target-");
   try {
     assert.deepEqual(readModelsFile(path.join(dir, "absent.json")), {
       models: null,
@@ -542,7 +542,7 @@ test("readModelsFile reports a missing file rather than throwing", () => {
 // ─── the CLI boundary: exit codes and what reaches GITHUB_ENV ────────────────
 
 function runCli(args, { providers, models, env = {} } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manual-target-cli-"));
+  const dir = makeTempDir("manual-target-cli-");
   const providersFile = path.join(dir, "providers.json");
   const modelsFile = path.join(dir, "models.json");
   const write = (file, value) => {

@@ -10,7 +10,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -43,6 +42,7 @@ import {
   renderIssueBody,
   renderIssueTitle,
 } from "./watch-upstream-areas.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -612,7 +612,7 @@ test("the CLI exits 2 — could not decide — for an unusable root or a bad fla
 
 /** A checkout satisfying the whole table — every monitored path and every classified lfx child. */
 function buildCheckoutFixture(prefix) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const root = makeTempDir(prefix);
   for (const area of AREAS) {
     for (const p of area.paths) {
       const rel = p.replace(/\/$/, "");
@@ -663,7 +663,7 @@ test("the guard writes its verdict BEFORE it exits 1 — that is the whole carri
   // leak the first, which is how this file already leaks elsewhere.
   let root;
   let cleanRoot;
-  const verdictPath = path.join(os.tmpdir(), `watcher-verdict-${process.pid}.json`);
+  const verdictPath = path.join(makeTempDir("watcher-verdict-file-"), "guard-verdict.json");
   try {
     root = buildCheckoutFixture("watcher-verdict-");
     cleanRoot = buildCheckoutFixture("watcher-verdict-ok-");
@@ -706,7 +706,7 @@ test("the guard writes its verdict BEFORE it exits 1 — that is the whole carri
 });
 
 test("the sweep carries the guard's verdict into the body, and says so when it has none", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-sweep-"));
+  const dir = makeTempDir("watcher-sweep-");
   const verdictPath = path.join(dir, "guard-verdict.json");
   const outputPath = path.join(dir, "github-output.txt");
   // The path the workflow takes: on Actions $GITHUB_OUTPUT is always set, so the
@@ -753,7 +753,7 @@ test("the sweep carries the guard's verdict into the body, and says so when it h
 });
 
 test("a symlinked lfx subtree is classified, not skipped", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-link-"));
+  const root = makeTempDir("watcher-link-");
   try {
     const lfx = path.join(root, LFX_ROOT);
     fs.mkdirSync(path.join(lfx, "graph"), { recursive: true });
@@ -1378,7 +1378,7 @@ test("checkDocDeps does not count a release ref that IS the trunk as a second si
 
 /** A throwaway upstream: one trunk branch, one release line, one file apart. */
 function upstreamFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-upstream-"));
+  const root = makeTempDir("watcher-upstream-");
   const run = (...args) =>
     spawnSync("git", args, {
       cwd: root,
@@ -1419,7 +1419,7 @@ function upstreamFixture() {
  * the real docs. The script is dependency-free ESM, so a copy runs as-is.
  */
 function docsFixture(markdown) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-docs-"));
+  const home = makeTempDir("watcher-docs-");
   fs.mkdirSync(path.join(home, "scripts"));
   fs.mkdirSync(path.join(home, "docs", "area"), { recursive: true });
   fs.copyFileSync(
@@ -1634,7 +1634,7 @@ test("the fetch step, AS WRITTEN IN THE YAML, fails loudly when it cannot reach 
   // A `--root` with no git repository at all makes the lookup fail on all three
   // attempts, which is the state the step must never turn into an empty ref list.
   const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-noremote-"));
+  const home = makeTempDir("watcher-noremote-");
   fs.mkdirSync(path.join(home, "scripts"));
   fs.mkdirSync(path.join(home, "langflow-upstream"));
   fs.copyFileSync(
@@ -1669,7 +1669,7 @@ test("the fetch step fails loudly when a ref is advertised but cannot be fetched
   // an object the remote does not have, which is what a transient upstream
   // failure looks like from here.
   const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-badref-"));
+  const home = makeTempDir("watcher-badref-");
   fs.mkdirSync(path.join(home, "scripts"));
   fs.copyFileSync(
     path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"),

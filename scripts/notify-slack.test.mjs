@@ -20,11 +20,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+
 import { createServer } from "node:http";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NOTIFIER = join(HERE, "notify-slack.mjs");
@@ -54,7 +55,7 @@ const GREEN_PAYLOAD = {
   failures: [],
 };
 
-const dir = mkdtempSync(join(tmpdir(), "notify-slack-"));
+const dir = makeTempDir("notify-slack-");
 const payloadPath = join(dir, "payload.json");
 writeFileSync(payloadPath, JSON.stringify(PAYLOAD), "utf8");
 const greenPayloadPath = join(dir, "payload-green.json");
@@ -196,7 +197,26 @@ test("a Workflow Builder post always carries all three declared variables", () =
   assert.equal(typeof body.links, "string");
 });
 
-test("the headline names the right one of the three verdict shapes", () => {
+test("a failed MERGE outranks `empty`, so the message never says nothing ran", () => {
+  // Same inputs as an empty run, because a failed merge IS one as far as the guards
+  // can see: no report to read, so empty and unreadable both true. MERGE_OK is the
+  // only thing that tells the two apart, and this message is one of the two surfaces
+  // anyone reads at 06:00 — the verdict on stderr is the one nobody opens (#1726).
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const merged = render({ SLACK_WEBHOOK_URL: url, RUN_EMPTY: "true", RUN_UNREADABLE: "true", MERGE_OK: "false" });
+  assert.match(merged.body.headline, /could not MERGE its shard reports/);
+  assert.doesNotMatch(merged.body.headline, /ZERO tests/, "every shard ran");
+  assert.match(merged.body.body, /The shards RAN and the merge FAILED/);
+  assert.match(merged.body.body, /unread, not zero/);
+  assert.doesNotMatch(merged.body.body, /find why nothing ran/);
+  assert.match(merged.body.body, /merge\.log/, "the message points at the log that holds the reason");
+
+  // The message and the issue are two views of one verdict: same rank, same claim.
+  const stillEmpty = render({ SLACK_WEBHOOK_URL: url, RUN_EMPTY: "true", RUN_UNREADABLE: "true" });
+  assert.match(stillEmpty.body.headline, /ZERO tests/, "absent MERGE_OK is a working merge");
+});
+
+test("the headline names the right one of the four verdict shapes", () => {
   const url = "https://hooks.slack.com/triggers/E1/2/abc";
   const empty = render({ SLACK_WEBHOOK_URL: url, RUN_EMPTY: "true", RUN_ERRORS: "4" });
   assert.match(empty.body.headline, /ZERO tests/);

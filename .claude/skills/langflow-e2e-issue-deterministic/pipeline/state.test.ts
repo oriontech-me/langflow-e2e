@@ -2,11 +2,11 @@ import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
 import { initState, saveState, loadState, statePath, ensureStep } from './state.ts'
+import { makeTempDir } from '../../../../scripts/lib/tmp-dir.mjs'
 
 beforeEach(() => {
-  process.env.PIPELINE_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pipe-'))
+  process.env.PIPELINE_STATE_DIR = makeTempDir('pipe-')
 })
 
 test('initState starts at INTAKE with version 1', () => {

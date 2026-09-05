@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
@@ -14,6 +13,7 @@ import {
   weighting,
   UNKNOWN_QUANTILE,
 } from "./partition-shards.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const CLI = path.join(import.meta.dirname, "partition-shards.mjs");
 
@@ -310,7 +310,7 @@ const listReport = (files) => ({
 
 /** Run `matrix` in a scratch dir over the given files; returns { out, stderr }. */
 const runMatrix = (durArg, files) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "partition-shards-"));
+  const dir = makeTempDir("partition-shards-");
   try {
     for (const [name, body] of Object.entries(files))
       fs.writeFileSync(path.join(dir, name), JSON.stringify(body));
