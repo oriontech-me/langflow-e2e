@@ -1,5 +1,14 @@
 import type { Page, Response } from "@playwright/test";
+import { waitForAttributedResponse } from "../other/response-barrier";
 import { retryAfterMs } from "./login-request";
+
+/**
+ * Budget for the login response. Unchanged since the helper was written, and
+ * deliberately not widened by #1713: the outages that expire it lasted 92s and
+ * 96s, so a barrier long enough to outlast one would report a green run through
+ * a broken backend.
+ */
+const LOGIN_RESPONSE_TIMEOUT_MS = 30000;
 
 /**
  * Fills the login form, submits, and absorbs the endpoint's per-IP rate limit.
@@ -14,8 +23,14 @@ import { retryAfterMs } from "./login-request";
  * keeps its values. Any other status is the caller's verdict: 200 callers gate
  * on the workspace, 401 callers on the error toast, and neither is hidden.
  *
- * The response is captured via `waitForResponse` registered BEFORE the click,
- * so the status read cannot race the navigation that a 200 triggers.
+ * The response is captured via a `waitForResponse` registered BEFORE the click,
+ * so the status read cannot race the navigation that a 200 triggers — and it is
+ * ATTRIBUTED (#1713): a bare wait fails as `page.waitForResponse: Timeout
+ * 30000ms exceeded`, which cannot say whether the backend accepted the POST and
+ * never answered or the login form stopped issuing it. On timeout the barrier
+ * probes `/api/v1/version` and names the state it observed; see
+ * `helpers/other/response-barrier.ts` for the measurement and for why
+ * `page.waitForResponse: Timeout` must not be added to the infra-signature list.
  *
  * Returns the final HTTP status, for callers that want to assert it directly.
  */
@@ -38,11 +53,16 @@ export async function signInThroughForm(
   });
 
   const submitOnce = async (): Promise<Response> => {
-    const responsePromise = page.waitForResponse(
+    const responsePromise = waitForAttributedResponse(
+      page,
       (response) =>
         new URL(response.url()).pathname.endsWith("/api/v1/login") &&
         response.request().method() === "POST",
-      { timeout: 30000 },
+      {
+        observable: "POST /api/v1/login",
+        timeoutMs: LOGIN_RESPONSE_TIMEOUT_MS,
+        surface: "login",
+      },
     );
     await page.getByRole("button", { name: "Sign In" }).click();
     return responsePromise;

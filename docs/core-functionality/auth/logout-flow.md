@@ -1,6 +1,6 @@
 # Logout flow
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev33`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev2`)
 
 ---
 
@@ -53,6 +53,20 @@ credentials.
 - After **Logout**, the login form (`sign in to langflow`) is visible and
   `mainpage_title` is hidden.
 - Direct navigation to `/` and a reload after logout both stay on the login page.
+- **The `POST /api/v1/login` wait is ATTRIBUTED, not bare** (#1713). The 30 s
+  budget is unchanged — only the failure path is. A bare `waitForResponse` fails
+  as `TimeoutError: page.waitForResponse: Timeout 30000ms exceeded while waiting
+  for event "response"`, a string that cannot tell apart the only two states that
+  produce it: a backend that accepted the POST and never answered, or a login
+  form that stopped issuing it. On timeout the helper probes `/api/v1/version`
+  and reports which state it observed — the contract
+  `helpers/other/page-entry-barrier.ts` already applies to entry selectors
+  (#1262/#1265): an unreachable or non-2xx backend carries
+  `[backend-unreachable]` and embeds the probe's own transport error, which the
+  existing `api-request-timeout` signature matches with **no new entry added**; a
+  **healthy** probe deliberately gets no prefix, so a frontend that stops sending
+  the POST still costs the tag; a probe that could not run reads UNKNOWN, never
+  clean (#1012).
 
 ---
 
@@ -64,7 +78,8 @@ credentials.
   through the 429-absorbing helper: `POST /api/v1/login` is limited to 5/min
   per client IP (fixed window, counted before authentication), and this
   file's three logins used to be the ones that met a window exhausted by
-  the auth specs running before it.
+  the auth specs running before it. Since #1713 the same helper also
+  ATTRIBUTES the response wait — see Notes.
 - `src/frontend/src/pages/MainPage/components/header/**` — renders
   `data-testid="mainpage_title"`, the post-login landing assertion.
 - `src/backend/base/langflow/api/v1/login.py` — `/api/v1/login` and
@@ -86,6 +101,13 @@ credentials.
 
 ## Notes *(optional)*
 
+- **The shared login wait is attributed (#1713).** The first test in this file
+  flaked in the 2026-09-04 daily under the same signature as
+  `login-invalid-credentials.spec.ts` — the same `waitForResponse`, in the same
+  helper, inside a measured 92 s shard-1 outage. It is not separately
+  quarantined and needs no change of its own: the attribution lands in
+  `tests/helpers/auth/sign-in-through-form.ts`, the single call site all three
+  logins in this file go through.
 - **Legacy default password (issue #510).** Since nightly `1.11.0.dev29`, a
   superuser password equal to the legacy default `langflow` is rejected under
   `LANGFLOW_AUTO_LOGIN=true` (a random bootstrap password is generated instead, so a
