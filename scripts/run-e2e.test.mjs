@@ -146,18 +146,33 @@ test("writing back to the repository is absent, not merely switched off", () => 
   // missing. Pinned by absence rather than by a default, because a variable set to
   // zero reads as "implemented, disabled" and invites someone to flip it on a machine
   // that has no write credentials and no review.
-  // Comments AND the insides of double-quoted strings are stripped first, for the
-  // reason #1716 paid for and then one layer over. A comment that merely SPELLS the
-  // thing under test fails a correct file — the paragraph explaining why
-  // COMMIT_HISTORY was removed is exactly such a comment. And so is a `warn` that
-  // TELLS AN OPERATOR to run `git -C <clone> checkout …  # cycle parity, not the
-  // commit`: that line is this script asking a human to move a clone, not this script
-  // writing to a repository, and widening the pattern below is what made it look like
-  // one. Stripping the quotes keeps the widening without buying a false positive.
+  // Two kinds of line are dropped before matching, and WHICH two is the whole
+  // difficulty here.
+  //
+  // Comments, for the reason #1716 paid for: a comment that merely SPELLS the thing
+  // under test fails a correct file, and the paragraph explaining why COMMIT_HISTORY
+  // was removed is exactly such a comment.
+  //
+  // And lines that only EMIT A MESSAGE, because `warn "git -C <clone> checkout … #
+  // cycle parity, not the commit"` is this script asking a human to move a clone, not
+  // this script writing to a repository — measured, it is the ONLY line in the file
+  // the widened pattern hits.
+  //
+  // What was here first, and was wrong: stripping the insides of every double-quoted
+  // string. In this file a double-quoted string is very often code that RUNS —
+  // `target_ssh "…"` is the dominant idiom, and `eval "git -C … add -A && … commit"`
+  // sailed past the pin with the whole suite green. That trade bought one spelling
+  // (`git -C`) and sold a closer one, on the axis this script actually uses to reach
+  // the far side of an ssh.
+  //
+  // The residual, named rather than hidden: a line that BEGINS with an emitter and
+  // then also invokes git (`echo x; git push`) is exempt. Nothing here is shaped that
+  // way, and the alternative re-opens the hole above.
+  const EMITS_ONLY = /^(warn|info|die|err|echo|printf)\b/;
   const code = readFileSync(SCRIPT, "utf8")
     .split("\n")
     .filter((l) => !l.trim().startsWith("#"))
-    .map((l) => l.replace(/"[^"]*"/g, '""'))
+    .filter((l) => !EMITS_ONLY.test(l.trim().replace(/^\|\|\s*/, "")))
     .join("\n");
   // `git\s+(commit|…)` missed every spelling with a flag in between, and `git -C` is
   // not exotic here — it is how a script that operates on a clone BY PATH is written,
@@ -695,7 +710,9 @@ test("preflight CREATES the ledger it accepts, which is the path every night tak
     const r = preflightLedger({ LEDGER_DIR: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(dir), true, "preflight has to create the directory it accepted");
-    assert.match(r.stdout, new RegExp(`ledger: ${dir}`), "and say where it is — the log is the only record at 08:00");
+    // `includes`, not a RegExp: the assertion has no reason to be a pattern, and a
+    // tmp path interpolated into one is a path character away from a surprise.
+    assert.ok(r.stdout.includes(`ledger: ${dir}`), "and say where it is — the log is the only record at 08:00");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

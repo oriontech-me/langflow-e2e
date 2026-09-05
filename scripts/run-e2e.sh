@@ -291,12 +291,18 @@ require_bool() {
   esac
 }
 
-# The same guard for this script's own 0/1 switches. Applied to the ledger pair and not
-# to the publication switches on purpose: a typo'd CREATE_ISSUE=yes leaves that switch
-# OFF, which is the safe direction, while a typo'd KEEP_LEDGER=yes walks past the `die`
-# that exists precisely because a scheduled run keeping no series is indistinguishable,
-# months later, from a machine that was down — it lands in the `else` and says so in a
-# log line nobody reads.
+# The same guard for this script's own 0/1 switches. The rule is which DIRECTION a typo
+# falls in: a typo'd CREATE_ISSUE=yes leaves that switch OFF, which is the safe
+# direction, while a typo'd KEEP_LEDGER=yes walks past the `die` that exists precisely
+# because a scheduled run keeping no series is indistinguishable, months later, from a
+# machine that was down — it lands in the `else` and says so in a log line nobody reads.
+#
+# The ledger pair is NOT the complete set that rule selects, and saying so here rather
+# than letting the two calls below imply otherwise. Four more fall the unsafe way and
+# are deferred to #1725: DRY_RUN (a typo'd `yes` runs the whole suite on the VM instead
+# of stopping after the partition), REQUIRE_TARGET_VERSION (enforcement silently off,
+# on a flag whose own error text argues an unperformed check is not a weaker guarantee
+# but none), and CHECK_TARGET_VERSION / PREPARE_TARGET, which have the same shape.
 require_flag() {
   case "$2" in
     0 | 1) ;;
