@@ -10,6 +10,10 @@
 //   GITHUB_SERVER_URL         e.g. https://github.com (provided by Actions)
 //   GITHUB_REPOSITORY         e.g. owner/repo (provided by Actions)
 //   LANGFLOW_IMAGE            Full image ref including tag, e.g. langflowai/langflow-nightly:latest
+//   LANGFLOW_VERSION          Optional. The RESOLVED version the run actually tested,
+//                             e.g. 1.13.0.dev3. Recorded because LANGFLOW_IMAGE is a
+//                             moving tag: two rows both saying ":latest" prove nothing
+//                             about whether they tested the same product.
 //   LIVENESS_DIR              Optional. Directory holding the per-shard
 //                             backend-liveness.json summaries. When set AND at
 //                             least one summary is found, the entry carries the
@@ -25,6 +29,7 @@
 //   "run_id": "...",
 //   "run_url": "...",
 //   "langflow_image": "...",
+//   "langflow_version": "..." | null,           // optional, see below
 //   "duration_ms": 0,
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
 //   "failures": [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
@@ -47,6 +52,13 @@
 //   measured into `liveness-N` artifacts that expire after 7 days, so #1077's
 //   before/after had no durable series to compare against. Recording only; no
 //   gate reads it. See scripts/lib/backend-history.mjs.
+//   `langflow_version` (optional, additive to schema v1) is the resolved version
+//   string the run tested, as opposed to the tag it asked for. It exists for the
+//   two-lane comparison of the VM migration: the Actions daily and the VM daily each
+//   append here, and a comparison between rows that tested DIFFERENT Langflows
+//   describes the product's changelog rather than the difference between the two
+//   environments. Without this field the comparator can only declare version parity
+//   UNVERIFIED, which is honest and useless. Rows written before it lack it.
 //   `param` (optional, additive to schema v1) is the parameterization label a
 //   model-parameterized spec carries on its describe title (e.g.
 //   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
@@ -273,6 +285,7 @@ const entry = {
   run_id: runId,
   run_url: runUrl,
   langflow_image: process.env.LANGFLOW_IMAGE || null,
+  langflow_version: process.env.LANGFLOW_VERSION || null,
   duration_ms: Math.round(report?.stats?.duration ?? 0),
   totals,
   failures,

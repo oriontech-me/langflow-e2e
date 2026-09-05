@@ -1393,6 +1393,7 @@ phase_publish() {
     HISTORY_FILE="$LEDGER_HISTORY" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
+    LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."

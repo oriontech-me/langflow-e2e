@@ -61,7 +61,7 @@ function report(specs) {
 }
 
 /** Run the appender over `rep` and return the single JSONL entry it wrote. */
-function append(rep) {
+function append(rep, envOver = {}) {
   const dir = mkdtempSync(join(tmpdir(), "history-"));
   const reportPath = join(dir, "results.json");
   const historyPath = join(dir, "history.jsonl");
@@ -76,6 +76,7 @@ function append(rep) {
       GITHUB_SERVER_URL: "https://github.com",
       GITHUB_REPOSITORY: "o/r",
       LANGFLOW_IMAGE: "img:tag",
+      ...envOver,
     },
     encoding: "utf8",
   });
@@ -223,4 +224,27 @@ test("totals and the entry shape are unchanged by the added field", () => {
   for (const e of [...entry.failures, ...entry.flaky]) {
     assert.ok("infra_signature" in e, "every failure and flake carries the field, so absent means pre-#1310");
   }
+});
+
+
+// The resolved version, and why it is worth a test of its own. LANGFLOW_IMAGE is a
+// moving tag: two rows both saying ":latest" are two different products on two
+// different days. The VM migration's step 14 compares an Actions row against a VM row,
+// and a comparison across different Langflows describes the product's changelog rather
+// than the difference between the environments -- so the comparator BLOCKS on a
+// mismatch, and it can only do that if the version is on the row.
+test("the resolved Langflow version is recorded next to the image tag", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION: "1.13.0.dev3",
+  });
+  assert.equal(entry.langflow_version, "1.13.0.dev3");
+  assert.equal(entry.langflow_image, "img:tag", "the tag stays, because it records what was ASKED for");
+});
+
+test("an absent version is null, never omitted, so a reader can tell 'unknown' from 'not recorded'", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION: "",
+  });
+  assert.equal(entry.langflow_version, null);
+  assert.ok("langflow_version" in entry);
 });
