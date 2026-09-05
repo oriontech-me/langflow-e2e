@@ -291,6 +291,24 @@ require_bool() {
   esac
 }
 
+# The same guard for this script's own 0/1 switches. Applied to the ledger pair and not
+# to the publication switches on purpose: a typo'd CREATE_ISSUE=yes leaves that switch
+# OFF, which is the safe direction, while a typo'd KEEP_LEDGER=yes walks past the `die`
+# that exists precisely because a scheduled run keeping no series is indistinguishable,
+# months later, from a machine that was down — it lands in the `else` and says so in a
+# log line nobody reads.
+require_flag() {
+  case "$2" in
+    0 | 1) ;;
+    *) echo "$1 must be exactly '0' or '1', got: '$2'" >&2; exit 1 ;;
+  esac
+}
+
+# Validated here rather than beside the assignments, which run before this function
+# exists.
+require_flag KEEP_LEDGER "$KEEP_LEDGER"
+require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
+
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
 # specs assert against a traced instance. Both starters default it OFF — right for a
 # developer's own instance, wrong for the lane that has to match CI. Measured, not

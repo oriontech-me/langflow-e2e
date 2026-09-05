@@ -674,6 +674,28 @@ test("a ledger inside the clone is refused, however the path is spelled", () => 
   }
 });
 
+test("a KEEP_LEDGER that is neither 0 nor 1 stops the run instead of keeping nothing", () => {
+  // Anything but "1" fell through to the `else`, which is the one branch that does not
+  // die — so a typo'd truthy walked past the very `die` that exists because a scheduled
+  // run quietly keeping no series is indistinguishable, months later, from a machine
+  // that was down. Same class require_bool was added to this file for.
+  // "" is absent from this list on purpose: `${KEEP_LEDGER:-1}` treats empty as unset,
+  // which is the file's convention everywhere and means the DEFAULT, not a bad value.
+  for (const value of ["yes", "true", "0.", "1 ", "01"]) {
+    const r = sourced(`echo REACHED`, { KEEP_LEDGER: value });
+    assert.equal(r.status, 1, `KEEP_LEDGER=${JSON.stringify(value)} was accepted`);
+    assert.match(r.stderr, /KEEP_LEDGER must be exactly '0' or '1'/);
+  }
+  const ok = sourced(`echo REACHED`, { KEEP_LEDGER: "0" });
+  assert.match(ok.stdout, /REACHED/);
+});
+
+test("USE_LEDGER_DURATIONS is validated the same way", () => {
+  const r = sourced(`echo REACHED`, { USE_LEDGER_DURATIONS: "true" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /USE_LEDGER_DURATIONS must be exactly '0' or '1'/);
+});
+
 test("the three series paths are derived, and the environment cannot move them", () => {
   // They used to be overridable, and that was a hole straight through the placement
   // guard: a legal LEDGER_DIR with LEDGER_HISTORY pointing at the tracked file passed
