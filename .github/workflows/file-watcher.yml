@@ -98,7 +98,7 @@ jobs:
         if: always() && steps.detect.outcome != 'skipped'
         env:
           WINDOW_COMMITS: ${{ steps.detect.outputs.window_commits }}
-          HAS_CHANGES: ${{ steps.detect.outputs.has_changes }}
+          AREAS_CHANGED: ${{ steps.detect.outputs.areas_changed }}
           GUARD_OUTCOME: ${{ steps.guard.outcome }}
           SINCE: ${{ inputs.since || '24 hours ago' }}
         run: |
@@ -109,7 +109,7 @@ jobs:
             echo "|---|---|"
             echo "| Window | \`${SINCE}\` |"
             echo "| Upstream commits in window (repo-wide) | ${WINDOW_COMMITS:-unknown} |"
-            echo "| Areas changed | ${HAS_CHANGES:-unknown} |"
+            echo "| Areas changed | ${AREAS_CHANGED:-unknown} |"
             echo "| Path guard | ${GUARD_OUTCOME:-unknown} |"
           } >> "$GITHUB_STEP_SUMMARY"
 

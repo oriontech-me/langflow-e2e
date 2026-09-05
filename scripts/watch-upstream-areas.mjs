@@ -1564,6 +1564,10 @@ function runDetect(root, since, verdictPath) {
       process.env.GITHUB_OUTPUT,
       [
         `has_changes=${changed.length > 0}`,
+        // `has_changes` GATES issue creation and stays a boolean. The count is a
+        // separate output because the job summary reports it, and a summary row
+        // labelled "areas changed" carrying `true` says less than it appears to.
+        `areas_changed=${changed.length}`,
         `window_commits=${window.count}`,
         `title=[Test Review] Langflow source changed on ${today} — validate affected tests`,
         `body<<${BODY_DELIMITER}`,

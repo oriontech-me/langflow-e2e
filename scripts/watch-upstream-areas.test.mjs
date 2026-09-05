@@ -432,6 +432,7 @@ test("file-watcher.yml runs both modes and consumes every output this script emi
   // `window_commits` was an output nothing read. An unread output is where a
   // rename goes unnoticed, so the summary consumes it.
   assert.match(yml, /steps\.detect\.outputs\.window_commits/);
+  assert.match(yml, /steps\.detect\.outputs\.areas_changed/);
 });
 
 // ---------- the window ----------
@@ -486,11 +487,30 @@ test("parseArgs accepts both --flag value and --flag=value", () => {
 
 // ---------- the CLI contract ----------
 
-function runCli(args) {
+function runCli(args, env = {}) {
   const result = spawnSync(process.execPath, [path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"), ...args], {
     encoding: "utf8",
+    env: { ...process.env, ...env },
   });
   return { code: result.status, out: result.stdout, err: result.stderr };
+}
+
+/**
+ * The `body` value out of a `$GITHUB_OUTPUT` file.
+ *
+ * The sweep writes the report to stdout ONLY when `$GITHUB_OUTPUT` is unset, and
+ * on Actions it never is — so a test asserting on stdout passes locally and fails
+ * on CI for a reason that has nothing to do with the behaviour. Reading the real
+ * output file instead exercises the path the workflow actually takes, in both
+ * environments.
+ */
+function readOutputBody(outputPath) {
+  const lines = fs.readFileSync(outputPath, "utf8").split("\n");
+  const start = lines.indexOf(`body<<${BODY_DELIMITER}`);
+  assert.notEqual(start, -1, "no body block in $GITHUB_OUTPUT");
+  const end = lines.indexOf(BODY_DELIMITER, start + 1);
+  assert.notEqual(end, -1, "the body block was never closed");
+  return lines.slice(start + 1, end).join("\n");
 }
 
 test("the CLI exits 2 — could not decide — for an unusable root or a bad flag", () => {
@@ -581,9 +601,19 @@ test("the guard writes its verdict BEFORE it exits 1 — that is the whole carri
   }
 });
 
-test("the sweep prints the guard's verdict, and says so when it has none", () => {
+test("the sweep carries the guard's verdict into the body, and says so when it has none", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-sweep-"));
   const verdictPath = path.join(dir, "guard-verdict.json");
+  const outputPath = path.join(dir, "github-output.txt");
+  // The path the workflow takes: on Actions $GITHUB_OUTPUT is always set, so the
+  // report never reaches stdout. Asserting on stdout here passed locally and
+  // failed on CI (run 33946765588) for a reason unrelated to the behaviour.
+  const sweep = (args) => {
+    fs.writeFileSync(outputPath, "");
+    const result = runCli(["--mode=detect", "--root", REPO_ROOT, ...args], { GITHUB_OUTPUT: outputPath });
+    return { ...result, body: readOutputBody(outputPath) };
+  };
+
   try {
     fs.writeFileSync(
       verdictPath,
@@ -600,21 +630,19 @@ test("the sweep prints the guard's verdict, and says so when it has none", () =>
 
     // REPO_ROOT is a git repo, so the sweep runs for real; none of the monitored
     // paths exist here, so it reports zero areas and the body is the caveat.
-    const withVerdict = runCli(["--mode=detect", "--root", REPO_ROOT, "--verdict", verdictPath]);
+    const withVerdict = sweep(["--verdict", verdictPath]);
     assert.equal(withVerdict.code, 0);
-    assert.match(withVerdict.out, /\*\*Path guard:\*\* ❌ 1 monitored path\(s\) missing/);
-    assert.match(withVerdict.out, /\| MCP Server \|/);
+    assert.match(withVerdict.body, /\*\*Path guard:\*\* ❌ 1 monitored path\(s\) missing/);
+    assert.match(withVerdict.body, /\| MCP Server \|/);
     assert.match(withVerdict.err, /::warning::the path guard's verdict is "failed"/);
 
     // Declaring the flag asserts a guard ran: a file that is not there is
     // "unavailable", never silence.
     fs.rmSync(verdictPath);
-    const gone = runCli(["--mode=detect", "--root", REPO_ROOT, "--verdict", verdictPath]);
-    assert.match(gone.out, /\*\*Path guard:\*\* ⚠️ verdict unavailable/);
+    assert.match(sweep(["--verdict", verdictPath]).body, /\*\*Path guard:\*\* ⚠️ verdict unavailable/);
 
     // No flag at all is the local run — still stated, never omitted.
-    const none = runCli(["--mode=detect", "--root", REPO_ROOT]);
-    assert.match(none.out, /\*\*Path guard:\*\* ⚠️ not run/);
+    assert.match(sweep([]).body, /\*\*Path guard:\*\* ⚠️ not run/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
