@@ -476,7 +476,7 @@ ledger_active() {
 # creating anything: a rejected ledger must not leave its own directory behind inside
 # the clone as the trace of the check that rejected it.
 ledger_dir_is_outside_repo() {
-  local dir="$1" probe="$1" rest="" real repo
+  local probe="$1" rest="" real repo
   while [ ! -d "$probe" ]; do
     case "$probe" in
       */*) rest="/${probe##*/}$rest"; probe="${probe%/*}"; [ -n "$probe" ] || probe="/" ;;

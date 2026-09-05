@@ -39,7 +39,8 @@ comment so a reader of a number finds its limits in the same place:
   summary call does not write **here**, all the same: while both dailies run, the Actions one
   owns this file, and a second line a day for the same `@stable` sweep would double-count the
   trend and halve the anomaly window. It writes its own series to a **ledger outside the clone**
-  (`LEDGER_DIR`, default `$XDG_STATE_HOME/langflow-e2e`), one file per series with the same
+  (`LEDGER_DIR`, defaulting to `$XDG_STATE_HOME/langflow-e2e` and, when that is unset,
+  `$HOME/.local/state/langflow-e2e`), one file per series with the same
   schemas as the three here, and every line it writes carries `workflow: "daily-stable-vm"` — so
   when the two are merged, which era a row came from is still readable. Outside the clone because
   `reports/` is tracked: a line written here by the VM lane is an uncommitted change that the
