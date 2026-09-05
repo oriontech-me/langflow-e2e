@@ -160,9 +160,16 @@ KEEP_LEDGER="${KEEP_LEDGER:-1}"
 # looks in.
 LEDGER_HOME="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
 LEDGER_DIR="${LEDGER_DIR:-${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}}"
-LEDGER_HISTORY="${LEDGER_HISTORY:-${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}}"
-LEDGER_TOKENS="${LEDGER_TOKENS:-${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}}"
-LEDGER_DURATIONS="${LEDGER_DURATIONS:-${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}}"
+# DERIVED, never taken from the environment. As overridable variables they were a hole
+# straight through the guard above: `LEDGER_DIR` pointing somewhere legal and
+# `LEDGER_HISTORY` pointing at reports/daily-history.jsonl passed preflight with exit 0
+# and then handed the tracked file to the appender — the dirty tree this whole change
+# exists to prevent, reached through a variable the script itself exposed. Checking
+# their parents too would have closed it; deriving them removes the state instead, and
+# LEDGER_DIR is the one knob a machine ever needs.
+LEDGER_HISTORY="${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}"
+LEDGER_TOKENS="${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}"
+LEDGER_DURATIONS="${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}"
 # The READ side, and it stays off here on purpose. While both dailies run, the product
 # is a comparison, and a matrix balanced by VM-measured durations puts specs on
 # different shards than the Actions lane does — so a failure's neighbours differ for a
@@ -283,6 +290,30 @@ require_bool() {
     *) echo "$1 must be exactly 'true' or 'false', got: '$2'" >&2; exit 1 ;;
   esac
 }
+
+# The same guard for this script's own 0/1 switches. The rule is which DIRECTION a typo
+# falls in: a typo'd CREATE_ISSUE=yes leaves that switch OFF, which is the safe
+# direction, while a typo'd KEEP_LEDGER=yes walks past the `die` that exists precisely
+# because a scheduled run keeping no series is indistinguishable, months later, from a
+# machine that was down — it lands in the `else` and says so in a log line nobody reads.
+#
+# The ledger pair is NOT the complete set that rule selects, and saying so here rather
+# than letting the two calls below imply otherwise. Four more fall the unsafe way and
+# are deferred to #1725: DRY_RUN (a typo'd `yes` runs the whole suite on the VM instead
+# of stopping after the partition), REQUIRE_TARGET_VERSION (enforcement silently off,
+# on a flag whose own error text argues an unperformed check is not a weaker guarantee
+# but none), and CHECK_TARGET_VERSION / PREPARE_TARGET, which have the same shape.
+require_flag() {
+  case "$2" in
+    0 | 1) ;;
+    *) echo "$1 must be exactly '0' or '1', got: '$2'" >&2; exit 1 ;;
+  esac
+}
+
+# Validated here rather than beside the assignments, which run before this function
+# exists.
+require_flag KEEP_LEDGER "$KEEP_LEDGER"
+require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
 
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
 # specs assert against a traced instance. Both starters default it OFF — right for a

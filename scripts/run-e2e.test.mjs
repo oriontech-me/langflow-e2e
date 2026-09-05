@@ -146,14 +146,39 @@ test("writing back to the repository is absent, not merely switched off", () => 
   // missing. Pinned by absence rather than by a default, because a variable set to
   // zero reads as "implemented, disabled" and invites someone to flip it on a machine
   // that has no write credentials and no review.
-  // Comments are stripped first, for the reason #1716 paid for: a comment that merely
-  // SPELLS the thing under test fails a correct file, and the paragraph explaining why
-  // COMMIT_HISTORY was removed is exactly such a comment.
+  // Two kinds of line are dropped before matching, and WHICH two is the whole
+  // difficulty here.
+  //
+  // Comments, for the reason #1716 paid for: a comment that merely SPELLS the thing
+  // under test fails a correct file, and the paragraph explaining why COMMIT_HISTORY
+  // was removed is exactly such a comment.
+  //
+  // And lines that only EMIT A MESSAGE, because `warn "git -C <clone> checkout … #
+  // cycle parity, not the commit"` is this script asking a human to move a clone, not
+  // this script writing to a repository — measured, it is the ONLY line in the file
+  // the widened pattern hits.
+  //
+  // What was here first, and was wrong: stripping the insides of every double-quoted
+  // string. In this file a double-quoted string is very often code that RUNS —
+  // `target_ssh "…"` is the dominant idiom, and `eval "git -C … add -A && … commit"`
+  // sailed past the pin with the whole suite green. That trade bought one spelling
+  // (`git -C`) and sold a closer one, on the axis this script actually uses to reach
+  // the far side of an ssh.
+  //
+  // The residual, named rather than hidden: a line that BEGINS with an emitter and
+  // then also invokes git (`echo x; git push`) is exempt. Nothing here is shaped that
+  // way, and the alternative re-opens the hole above.
+  const EMITS_ONLY = /^(warn|info|die|err|echo|printf)\b/;
   const code = readFileSync(SCRIPT, "utf8")
     .split("\n")
     .filter((l) => !l.trim().startsWith("#"))
+    .filter((l) => !EMITS_ONLY.test(l.trim().replace(/^\|\|\s*/, "")))
     .join("\n");
-  const writes = code.split("\n").filter((l) => /\bgit\s+(commit|push|add)\b/.test(l));
+  // `git\s+(commit|…)` missed every spelling with a flag in between, and `git -C` is
+  // not exotic here — it is how a script that operates on a clone BY PATH is written,
+  // which is what the later etapa's commit will be. `git -C "$REPO_DIR" add -A` passed
+  // the old pattern untouched.
+  const writes = code.split("\n").filter((l) => /\bgit\b[^\n]*\b(commit|push|add)\b/.test(l));
   assert.deepEqual(writes, [], "this lane must not write to the repository");
   assert.doesNotMatch(code, /COMMIT_HISTORY/, "the switch is gone, not renamed");
 });
@@ -672,6 +697,79 @@ test("a ledger inside the clone is refused, however the path is spelled", () => 
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("preflight CREATES the ledger it accepts, which is the path every night takes", () => {
+  // The whole argument for checking here rather than at publish is that an unusable
+  // ledger costs one variable instead of an hour. Every other preflight test is a
+  // REFUSAL, so the branch that actually runs was pinned by nothing: deleting the
+  // `mkdir` and the `-w` check outright left the file green.
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-ok-"));
+  try {
+    const dir = join(tmp, "state", "langflow-e2e");
+    const r = preflightLedger({ LEDGER_DIR: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(dir), true, "preflight has to create the directory it accepted");
+    // `includes`, not a RegExp: the assertion has no reason to be a pattern, and a
+    // tmp path interpolated into one is a path character away from a surprise.
+    assert.ok(r.stdout.includes(`ledger: ${dir}`), "and say where it is — the log is the only record at 08:00");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a ledger directory that exists and cannot be written is refused", { skip: process.getuid?.() === 0 ? "root writes anywhere, so -w cannot be exercised" : false }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), "ledger-ro-dir-"));
+  try {
+    const dir = join(tmp, "locked");
+    mkdirSync(dir, { mode: 0o500 });
+    const r = preflightLedger({ LEDGER_DIR: dir });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /not writable/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("the three series paths are derived, and the environment cannot move them", () => {
+  // They used to be overridable, and that was a hole straight through the placement
+  // guard: a legal LEDGER_DIR with LEDGER_HISTORY pointing at the tracked file passed
+  // preflight with exit 0 and then handed reports/daily-history.jsonl to the appender.
+  // The publish-phase test could not catch it either — it reads the script text, and
+  // the script text says "$LEDGER_HISTORY".
+  const r = sourced(`echo "$LEDGER_HISTORY"; echo "$LEDGER_TOKENS"; echo "$LEDGER_DURATIONS"`, {
+    LEDGER_DIR: "/tmp/led",
+    LEDGER_HISTORY: join(REPO_ROOT, "reports/daily-history.jsonl"),
+    LEDGER_TOKENS: join(REPO_ROOT, "reports/token-history.jsonl"),
+    LEDGER_DURATIONS: join(REPO_ROOT, "reports/spec-durations.json"),
+  });
+  assert.deepEqual(r.stdout.trim().split("\n"), [
+    "/tmp/led/daily-history.jsonl",
+    "/tmp/led/token-history.jsonl",
+    "/tmp/led/spec-durations.json",
+  ]);
+});
+
+test("a KEEP_LEDGER that is neither 0 nor 1 stops the run instead of keeping nothing", () => {
+  // Anything but "1" fell through to the `else`, which is the one branch that does not
+  // die — so a typo'd truthy walked past the very `die` that exists because a scheduled
+  // run quietly keeping no series is indistinguishable, months later, from a machine
+  // that was down. Same class require_bool was added to this file for.
+  // "" is absent from this list on purpose: `${KEEP_LEDGER:-1}` treats empty as unset,
+  // which is the file's convention everywhere and means the DEFAULT, not a bad value.
+  for (const value of ["yes", "true", "0.", "1 ", "01"]) {
+    const r = sourced(`echo REACHED`, { KEEP_LEDGER: value });
+    assert.equal(r.status, 1, `KEEP_LEDGER=${JSON.stringify(value)} was accepted`);
+    assert.match(r.stderr, /KEEP_LEDGER must be exactly '0' or '1'/);
+  }
+  const ok = sourced(`echo REACHED`, { KEEP_LEDGER: "0" });
+  assert.match(ok.stdout, /REACHED/);
+});
+
+test("USE_LEDGER_DURATIONS is validated the same way", () => {
+  const r = sourced(`echo REACHED`, { USE_LEDGER_DURATIONS: "true" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /USE_LEDGER_DURATIONS must be exactly '0' or '1'/);
 });
 
 test("preflight refuses a ledger inside the clone, and creates nothing on the way out", () => {
