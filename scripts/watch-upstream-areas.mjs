@@ -1083,7 +1083,9 @@ export function parseGuardVerdict(text) {
   });
 
   if (text === null || text === undefined || String(text).trim() === "") {
-    return unknown("the guard wrote no verdict — it could not read the checkout at all (exit 2), or it never ran");
+    return unknown(
+      "the guard wrote no verdict — it could not read the checkout, or the lfx record no longer describes it, or it never ran",
+    );
   }
 
   let parsed;
@@ -1104,11 +1106,32 @@ export function parseGuardVerdict(text) {
     return unknown("the guard's verdict carries no `missing` or no `unclassified` list");
   }
 
+  // Element shape, not just container shape. The renderer dereferences `m.area`
+  // and `m.path`, so a `[null]` here used to reach it as a TypeError thrown out
+  // of runDetect — which fails closed, but by aborting the sweep instead of
+  // saying what it could not read. Same rule `catalogVerdict` holds: the pure
+  // function cannot throw. Dropping the bad entries silently would be worse
+  // still — an all-malformed list would then read as `ok`, the one verdict this
+  // reader must never invent — so ANY unreadable element makes the whole verdict
+  // unknown, with the count named.
+  const stale = Array.isArray(parsed.stale) ? parsed.stale : [];
+  const badMissing = parsed.missing.filter(
+    (m) => !m || typeof m !== "object" || typeof m.area !== "string" || typeof m.path !== "string",
+  ).length;
+  const badKeys =
+    parsed.unclassified.filter((k) => typeof k !== "string").length +
+    stale.filter((k) => typeof k !== "string").length;
+  if (badMissing > 0 || badKeys > 0) {
+    return unknown(
+      `the guard's verdict holds ${badMissing + badKeys} entry/entries in a shape this reader cannot read`,
+    );
+  }
+
   return {
     status: parsed.missing.length > 0 || parsed.unclassified.length > 0 ? "failed" : "ok",
     missing: parsed.missing,
     unclassified: parsed.unclassified,
-    stale: Array.isArray(parsed.stale) ? parsed.stale : [],
+    stale,
     checkedPaths: typeof parsed.checkedPaths === "number" ? parsed.checkedPaths : null,
     areaCount: typeof parsed.areaCount === "number" ? parsed.areaCount : null,
   };
@@ -1138,6 +1161,25 @@ export function renderGuardLine(guard) {
       ? "every monitored path exists in the checkout"
       : `all ${guard.checkedPaths} monitored path(s) across ${guard.areaCount} area(s) exist in the checkout`;
   return `**Path guard:** ✅ ${scope}.`;
+}
+
+/**
+ * The one consumer of `stale`.
+ *
+ * It is deliberately NOT part of the failed-guard section: a classification entry
+ * whose subtree vanished is table rot, not a coverage hole (`findLfxDrift`
+ * reports it as a warning and does not fail the guard), and a vanished WATCHED
+ * subtree is already in `missing`. But carrying the field with no renderer is the
+ * same defect `window_commits` was — a payload nobody reads is where a rename
+ * goes unnoticed — so it is surfaced where the person who maintains the table is.
+ */
+export function renderStaleNote(guard) {
+  if (!guard || guard.stale.length === 0) return [];
+  return [
+    `**Table drift:** ${guard.stale.length} \`LFX_CLASSIFICATION\` entry/entries name a subtree that no longer exists upstream: ${guard.stale
+      .map((k) => `\`${cell(k)}\``)
+      .join(", ")} — drop or repoint them in \`scripts/watch-upstream-areas.mjs\`. Not a coverage hole on its own.`,
+  ];
 }
 
 /**
@@ -1172,6 +1214,34 @@ export function renderGuardSection(guard) {
 }
 
 /**
+ * The issue title.
+ *
+ * A guard failure SUPPRESSES commits — a sweep over a path that is not there
+ * finds nothing — so the run it caveats can legitimately report zero areas, and
+ * `file-watcher.yml` therefore opens the issue on the guard's verdict as well as
+ * on `has_changes`. "Langflow source changed" would then be the one sentence on
+ * the issue that is not true, on the issue whose entire subject is that the sweep
+ * was incomplete.
+ */
+export function renderIssueTitle({ today, areas, guard }) {
+  if (sweptNothingButFailed({ areas, guard })) {
+    return `[Test Review] The upstream watcher could not evaluate every area on ${today}`;
+  }
+  return `[Test Review] Langflow source changed on ${today} — validate affected tests`;
+}
+
+/**
+ * Zero areas AND a guard that did not come back clean: the issue exists because
+ * the sweep is incomplete, not because upstream changed. Shared by the title and
+ * the heading so the two cannot drift — a heading reading "Langflow source
+ * changes detected" under a title saying the opposite is the same false claim,
+ * one line down.
+ */
+function sweptNothingButFailed({ areas, guard }) {
+  return areas.length === 0 && Boolean(guard) && guard.status !== "ok";
+}
+
+/**
  * The revalidation issue body.
  *
  * Rendered here rather than in the workflow so it is covered by
@@ -1180,13 +1250,16 @@ export function renderGuardSection(guard) {
  */
 export function renderIssueBody({ since, areas, today, window, guard }) {
   return [
-    "## Langflow source changes detected — test review required",
+    sweptNothingButFailed({ areas, guard })
+      ? "## The upstream watcher could not evaluate every area — this sweep is incomplete"
+      : "## Langflow source changes detected — test review required",
     "",
     `**Date:** ${today}`,
     `**Window:** \`${since}\`` +
       (window ? ` — ${window.count} upstream commit(s) repo-wide; newest in checkout: \`${window.newest}\`` : ""),
     "**Source:** [langflow-ai/langflow](https://github.com/langflow-ai/langflow)",
     renderGuardLine(guard),
+    ...renderStaleNote(guard),
     "",
     ...renderGuardSection(guard),
     "### Changed areas, affected tags and checklist sections",
@@ -1569,7 +1642,7 @@ function runDetect(root, since, verdictPath) {
         // labelled "areas changed" carrying `true` says less than it appears to.
         `areas_changed=${changed.length}`,
         `window_commits=${window.count}`,
-        `title=[Test Review] Langflow source changed on ${today} — validate affected tests`,
+        `title=${renderIssueTitle({ today, areas: changed, guard })}`,
         `body<<${BODY_DELIMITER}`,
         body,
         BODY_DELIMITER,
@@ -1668,6 +1741,20 @@ function main(argv) {
   if (mode !== "check" && mode !== "detect" && mode !== "check-docs" && mode !== "release-ref") {
     process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
     process.exit(2);
+  }
+  // Declaring `--verdict` on a check means THIS run owns that file. Every path
+  // that writes no verdict — the unusable `--root` rejected just below (exit 2),
+  // the fail-closed throw out of `findLfxDrift` (exit 1) — relies on the file
+  // being ABSENT to be read as "unavailable". On a fresh runner it always is; on
+  // a reused workspace a previous run's verdict would be served as this run's,
+  // which is the one thing a fail-closed reader cannot detect. Cleared here
+  // rather than inside runCheck because the root check aborts before it.
+  if (mode === "check" && verdict) {
+    try {
+      fs.rmSync(verdict, { force: true });
+    } catch (error) {
+      process.stderr.write(`::warning::could not clear a previous guard verdict at "${verdict}" (${error.message}).\n`);
+    }
   }
   // An unusable --root is "could not decide" (exit 2), never a table that
   // disagrees with the checkout (exit 1) — otherwise a typo'd path prints 88

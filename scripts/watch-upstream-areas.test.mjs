@@ -41,6 +41,7 @@ import {
   pickReleaseBranches,
   renderGuardLine,
   renderIssueBody,
+  renderIssueTitle,
 } from "./watch-upstream-areas.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -348,6 +349,88 @@ test("an area name carrying a pipe cannot shred the guard's own table", () => {
   assert.equal(row.replace(/\\\|/g, "").split("|").length - 1, 3);
 });
 
+test("a verdict whose ELEMENTS are malformed is unknown, not a throw and not a row", () => {
+  // The renderer dereferences m.area / m.path. Before the element check, `[null]`
+  // reached it and threw a TypeError out of the sweep, and `[{}]` rendered
+  // `| undefined | `undefined` |` — a verdict-shaped row saying nothing.
+  for (const missing of [[null], ["oops"], [{}], [{ area: "A" }], [{ area: 1, path: 2 }]]) {
+    const verdict = parseGuardVerdict(JSON.stringify({ version: 1, missing, unclassified: [] }));
+    assert.equal(verdict.status, "unknown");
+    assert.match(verdict.reason, /shape this reader cannot read/);
+    // …and the renderer survives it, because unknown carries empty lists.
+    assert.doesNotThrow(() => renderIssueBody({ ...RENDER_ARGS, guard: verdict }));
+    assert.doesNotMatch(renderIssueBody({ ...RENDER_ARGS, guard: verdict }), /undefined/);
+  }
+  // Dropping the bad entries instead would let an ALL-malformed list read as ok,
+  // which is the one verdict this reader must never invent.
+  assert.equal(parseGuardVerdict(JSON.stringify({ version: 1, missing: [null], unclassified: [] })).status, "unknown");
+  assert.equal(parseGuardVerdict(JSON.stringify({ version: 1, missing: [], unclassified: [7] })).status, "unknown");
+  assert.equal(
+    parseGuardVerdict(JSON.stringify({ version: 1, missing: [], unclassified: [], stale: [null] })).status,
+    "unknown",
+  );
+});
+
+test("a stale classification entry is surfaced in the body, without failing the sweep", () => {
+  // `stale` was carried in the payload and read by no renderer — the same defect
+  // `window_commits` was. It is a note, not a caveat: a vanished out-of-scope
+  // subtree is table rot, and a vanished WATCHED one is already in `missing`.
+  const guard = parseGuardVerdict(
+    JSON.stringify(
+      buildGuardVerdict({ missing: [], unclassified: [], stale: ["base/mcp"], checkedPaths: 88, areaCount: 14 }),
+    ),
+  );
+  const body = renderIssueBody({ ...RENDER_ARGS, guard });
+  assert.equal(guard.status, "ok");
+  assert.match(body, /\*\*Path guard:\*\* ✅/);
+  assert.match(body, /\*\*Table drift:\*\* 1 `LFX_CLASSIFICATION` entry\/entries[^\n]*`base\/mcp`/);
+  assert.doesNotMatch(body, /Path guard failed/);
+
+  // No stale entries, no line — a note that always fires is a note nobody reads.
+  const clean = parseGuardVerdict(
+    JSON.stringify(buildGuardVerdict({ missing: [], unclassified: [], stale: [], checkedPaths: 88, areaCount: 14 })),
+  );
+  assert.doesNotMatch(renderIssueBody({ ...RENDER_ARGS, guard: clean }), /Table drift/);
+});
+
+test("a zero-area sweep behind a failed guard is retitled, because nothing changed", () => {
+  // The event #1182 is about can be the ONLY thing that happened: a deleted path
+  // suppresses its own area's commits, so the guard fails on a quiet day. The
+  // issue is opened on the verdict, and must not then claim a source change.
+  const failed = parseGuardVerdict(JSON.stringify(FAILED_VERDICT));
+  assert.match(
+    renderIssueTitle({ today: "2026-07-30", areas: [], guard: failed }),
+    /could not evaluate every area on 2026-07-30/,
+  );
+  // The heading is the same claim one line down, so it moves with the title.
+  assert.match(
+    renderIssueBody({ ...RENDER_ARGS, areas: [], guard: failed }),
+    /^## The upstream watcher could not evaluate every area/m,
+  );
+  assert.match(renderIssueBody({ ...RENDER_ARGS, guard: failed }), /^## Langflow source changes detected/m);
+  assert.match(
+    renderIssueTitle({ today: "2026-07-30", areas: [], guard: parseGuardVerdict("{ truncated") }),
+    /could not evaluate every area/,
+  );
+  // Areas DID change: the sweep is the subject, the guard is the caveat.
+  assert.match(
+    renderIssueTitle({ today: "2026-07-30", areas: RENDER_ARGS.areas, guard: failed }),
+    /Langflow source changed on 2026-07-30/,
+  );
+  // No guard, or a clean one: unchanged from before this issue.
+  assert.match(renderIssueTitle({ today: "2026-07-30", areas: [], guard: undefined }), /Langflow source changed/);
+  assert.match(
+    renderIssueTitle({
+      today: "2026-07-30",
+      areas: [],
+      guard: parseGuardVerdict(
+        JSON.stringify(buildGuardVerdict({ missing: [], unclassified: [], stale: [], checkedPaths: 1, areaCount: 1 })),
+      ),
+    }),
+    /Langflow source changed/,
+  );
+});
+
 test("renderGuardLine never claims a count it was not given", () => {
   const line = renderGuardLine({ status: "ok", missing: [], unclassified: [], checkedPaths: null, areaCount: null });
   assert.match(line, /every monitored path exists in the checkout/);
@@ -427,8 +510,11 @@ test("file-watcher.yml runs both modes and consumes every output this script emi
   // The guard's verdict has to reach the sweep, or the issue body is written
   // without it and the caveat #1182 adds can never fire (both sides, same file).
   assert.match(yml, /--mode=check[^\n]*--verdict guard-verdict\.json/);
-  assert.match(yml, /--verdict guard-verdict\.json/g);
   assert.equal((yml.match(/--verdict guard-verdict\.json/g) || []).length, 2, "both modes must name the same file");
+  // A deleted path suppresses its own area's commits, so the guard can fail on a
+  // day the sweep honestly reports zero areas. Gating issue creation on
+  // `has_changes` alone drops the caveat in exactly that case.
+  assert.match(yml, /has_changes == 'true' \|\| steps\.guard\.outcome == 'failure'/);
   // `window_commits` was an output nothing read. An unread output is where a
   // rename goes unnoticed, so the summary consumes it.
   assert.match(yml, /steps\.detect\.outputs\.window_commits/);
@@ -573,10 +659,14 @@ test("the guard writes its verdict BEFORE it exits 1 — that is the whole carri
   // If the file only appeared on a clean run, the report would gain a caveat in
   // exactly the case where it does not need one, and stay silent in the case
   // #1182 is about.
-  const root = buildCheckoutFixture("watcher-verdict-");
-  const cleanRoot = buildCheckoutFixture("watcher-verdict-ok-");
-  const verdictPath = path.join(root, "guard-verdict.json");
+  // Both fixtures are built INSIDE the try: a throw in the second would otherwise
+  // leak the first, which is how this file already leaks elsewhere.
+  let root;
+  let cleanRoot;
+  const verdictPath = path.join(os.tmpdir(), `watcher-verdict-${process.pid}.json`);
   try {
+    root = buildCheckoutFixture("watcher-verdict-");
+    cleanRoot = buildCheckoutFixture("watcher-verdict-ok-");
     fs.rmSync(path.join(root, LFX_ROOT, "base/mcp"), { recursive: true });
 
     const failed = runCli(["--mode=check", "--root", root, "--verdict", verdictPath]);
@@ -595,9 +685,23 @@ test("the guard writes its verdict BEFORE it exits 1 — that is the whole carri
     const clean = runCli(["--mode=check", "--root", cleanRoot, "--verdict", verdictPath]);
     assert.equal(clean.code, 0);
     assert.equal(parseGuardVerdict(fs.readFileSync(verdictPath, "utf8")).status, "ok");
+
+    // A run that cannot decide (exit 2) must leave NO verdict behind. On a reused
+    // workspace the previous run's file would otherwise be served as this run's,
+    // and a fail-closed reader cannot tell a stale verdict from a fresh one.
+    const undecidable = runCli([
+      "--mode=check",
+      "--root",
+      path.join(REPO_ROOT, "no-such-checkout"),
+      "--verdict",
+      verdictPath,
+    ]);
+    assert.equal(undecidable.code, 2);
+    assert.equal(fs.existsSync(verdictPath), false);
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(cleanRoot, { recursive: true, force: true });
+    fs.rmSync(verdictPath, { force: true });
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+    if (cleanRoot) fs.rmSync(cleanRoot, { recursive: true, force: true });
   }
 });
 
