@@ -1205,12 +1205,35 @@ phase_merge() {
     info "$found/$SHARD_TOTAL blobs present"
   fi
 
-  PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/results.json" \
-  PLAYWRIGHT_HTML_REPORT="$RUN_DIR/playwright-report" \
-    npx playwright merge-reports --reporter=html,json "$RUN_DIR/all-blobs" > /dev/null
+  # -c is not optional above one shard, and the reason is the per-shard working copy.
+  # Each shard runs from its OWN copy of the tree (prepare_shard_workdir, because
+  # collect-models writes into it), so Playwright records four different `testDir`
+  # values and merge-reports refuses to combine them. The merge config names where the
+  # tests actually live, so the merged report's paths are the repository's rather than
+  # a per-shard copy's. See playwright.merge.config.ts. (#1726)
+  local merge_log="$RUN_DIR/logs/merge.log"
+  MERGE_OK=true
+  if ! PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/results.json" \
+       PLAYWRIGHT_HTML_REPORT="$RUN_DIR/playwright-report" \
+       npx playwright merge-reports --reporter=html,json \
+         -c "$REPO_DIR/playwright.merge.config.ts" "$RUN_DIR/all-blobs" > "$merge_log" 2>&1; then
+    # NAMED, not left to `set -e`. Aborting here spent the whole test time and then
+    # died at the last phase without a word: no verdict, nothing appended, and — since
+    # phase_publish never ran — no Slack message either. The day ended in silence.
+    #
+    # It does not return. Guard 2 below is written for exactly this state ("there is
+    # no readable report"), and letting it run is what turns a merge failure into a
+    # red verdict that still reaches publish. Aborting bypassed the guard that exists
+    # for the case. (#1726)
+    MERGE_OK=false
+    err "merge-reports FAILED with $found/$SHARD_TOTAL blob(s) present, so this run has NO merged report."
+    err "The shards ran; what failed is combining them. Last lines of $merge_log:"
+    tail -n 15 "$merge_log" >&2 || true
+  fi
 
   # Guard 2 — does the report contain RESULTS? A valid, empty blob passes guard 1 and
-  # reaches triage looking benign (#1012).
+  # reaches triage looking benign (#1012). It also answers for a merge that failed
+  # outright: no results.json is "unreadable", never green.
   PLAYWRIGHT_JSON="$RUN_DIR/results.json" GITHUB_OUTPUT="$outputs" \
     node scripts/check-run-integrity.mjs || true
   RUN_EMPTY="$(gh_out "$outputs" empty)";     RUN_EMPTY="${RUN_EMPTY:-true}"
@@ -1442,7 +1465,15 @@ phase_verdict() {
   info "metadata: $RUN_DIR/run-metadata.json"
 
   local failed=0
-  if [ "${RUN_EMPTY:-true}" = "true" ]; then
+  # Ordered before the empty branch on purpose. A failed merge leaves no report, so
+  # guard 2 reports it as empty — and "ZERO tests executed, find out why nothing ran"
+  # would then be a true sentence pointing at the wrong repair. The shards ran; what
+  # failed was combining them, and that is a different day's work. (#1726)
+  if [ "${MERGE_OK:-true}" = "false" ]; then
+    err "the shards RAN and the MERGE failed — there is no report to read, and the tests are not what broke."
+    err "Triage: read $RUN_DIR/logs/merge.log; the blobs are in $RUN_DIR/all-blobs and can be merged again by hand."
+    failed=1
+  elif [ "${RUN_EMPTY:-true}" = "true" ]; then
     err "ZERO tests executed — an infrastructure abort, not a test failure. Triage: find out why nothing ran, not which test broke."
     [ -n "${RUN_FIRST_ERROR:-}" ] && err "first error: $RUN_FIRST_ERROR"
     failed=1

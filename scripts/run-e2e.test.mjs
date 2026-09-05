@@ -944,3 +944,86 @@ test("the matrix still balances on the tracked durations while both dailies run"
   const r = sourced(`echo "$USE_LEDGER_DURATIONS"`);
   assert.equal(r.stdout.trim(), "0");
 });
+
+// ---------------------------------------------------------------------------
+// Merging shard reports above one shard (#1726)
+// ---------------------------------------------------------------------------
+//
+// The defect these pin: every run of this lane had been SHARDS=1, where there is one
+// blob, one `testDir` and nothing to reconcile. At two or more, each shard reports
+// from its own working copy, the recorded paths differ, and merge-reports refuses —
+// after the whole test time is already spent, and under `set -e`, silently.
+
+test("the merge passes a config, because per-shard working copies give per-shard testDirs", () => {
+  const script = readFileSync(SCRIPT, "utf8");
+  const merge = script.slice(script.indexOf("phase_merge() {"), script.indexOf("phase_publish() {"));
+  assert.ok(merge.length > 0, "could not isolate phase_merge");
+  // Comments stripped: this file explains the flag at length right above the call, and
+  // a check that a comment mentions it would pass with the flag itself removed.
+  const code = merge.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  assert.match(code, /merge-reports/);
+  assert.match(code, /-c "\$REPO_DIR\/playwright\.merge\.config\.ts"/);
+});
+
+test("the merge config points at the same testDir the suite config does", () => {
+  // Duplicated on purpose (importing the full config would evaluate it for a step that
+  // runs after every test). Drift would not fail loudly — it would relabel every path
+  // in the merged report — so the drift is what gets pinned.
+  const read = (f) => readFileSync(join(REPO_ROOT, f), "utf8").match(/testDir:\s*"([^"]+)"/)?.[1];
+  const suite = read("playwright.config.ts");
+  assert.ok(suite, "playwright.config.ts declares no testDir");
+  assert.equal(read("playwright.merge.config.ts"), suite);
+});
+
+test("a failed merge is NAMED and does not abort the run, so guard 2 still classifies it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "merge-fail-"));
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  writeFileSync(join(dir, "all-blobs", "shard-1.zip"), "");
+  // A stub npx that fails the way merge-reports fails: a message, then non-zero.
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "npx"),
+    "#!/usr/bin/env bash\necho 'Error: Blob reports being merged were recorded with different test directories' >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+
+  const r = sourced(
+    [
+      "set +e",
+      `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1`,
+      // The version dimension is neutralised: phase_merge reads it after guard 2, and
+      // under `set -u` an unset expectation would abort this harness for a reason that
+      // is not what is under test. The version states have their own tests.
+      "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
+      "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      "phase_merge",
+      'echo "AFTER_PHASE=$? MERGE_OK=$MERGE_OK"',
+    ].join("\n"),
+    { PATH: `${bin}:${process.env.PATH}` },
+  );
+
+  assert.match(r.stdout + r.stderr, /AFTER_PHASE=0/, "the phase must not abort — guard 2 has to run");
+  assert.match(r.stdout + r.stderr, /MERGE_OK=false/);
+  assert.match(r.stderr, /merge-reports FAILED/);
+  assert.match(r.stderr, /different test directories/, "the underlying error has to reach the log");
+});
+
+test("a failed merge fails the verdict, and does not call it 'zero tests executed'", () => {
+  // The distinction is the point: a merge failure leaves no report, so guard 2 marks
+  // the run empty — and the empty branch tells triage to find out why nothing ran,
+  // which is the wrong repair for a run whose shards all finished.
+  const r = sourced(
+    [
+      "set +e",
+      "MERGE_OK=false RUN_EMPTY=true RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0",
+      "RUN_TESTS=0 RUN_ERRORS=0 RUN_DIR=/tmp/does-not-matter TARGET_VERSION_MATCH=yes",
+      "phase_verdict",
+      'echo "EXIT=$?"',
+    ].join("\n"),
+  );
+  assert.match(r.stdout + r.stderr, /EXIT=1/);
+  assert.match(r.stderr, /the shards RAN and the MERGE failed/);
+  assert.doesNotMatch(r.stderr, /ZERO tests executed/);
+});
