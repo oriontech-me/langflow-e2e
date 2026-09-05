@@ -96,7 +96,7 @@ test("a different page gets its own seed", async () => {
   assert.equal(second.initScripts.length, 1);
 });
 
-test("the canvas budget is separate from, and longer than, the writable budget", () => {
+test("the canvas budget is separate from, and longer than, the permissions gate", () => {
   // A RELATION between two independently-editable constants, not a restatement of
   // either. They answer different questions: "nothing is on screen yet" (document
   // load + flow fetch + first render) versus "the editor is up and the permission

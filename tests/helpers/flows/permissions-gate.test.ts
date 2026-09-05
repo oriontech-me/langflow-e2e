@@ -42,6 +42,21 @@ const HEADER_LOCATOR = String.raw`(?:getByTestId\(\s*["'\`]menu_bar_display["'\`
 /** `.first()`, `.nth(0)` and friends between the locator and the assertion. */
 const LOCATOR_CHAIN = String.raw`\s*(?:\.\s*\w+\s*\([^()]*\)\s*)*`;
 
+/**
+ * The two spellings of "wait until this button is usable".
+ *
+ * `not.toBeDisabled` is not hypothetical: `mcp-server.spec.ts` already waits on
+ * `stdio-tab` that way, twice. A guard hardcoding `toBeEnabled` goes GREEN on a
+ * diverged call site written in the other idiom — measured, by rewriting the
+ * existing `open-flow-settings.ts` gate as `not.toBeDisabled({ timeout: 30000 })`:
+ * the sweep found 0 gates in that file and reported no offender.
+ *
+ * `toBeDisabled` and `not.toBeEnabled` are deliberately NOT here. They assert the
+ * opposite — a flow the user cannot write — which is a legitimate different
+ * question and none of this budget's business.
+ */
+const USABLE_ASSERTION = String.raw`(?:toBeEnabled|not\s*\.\s*toBeDisabled)`;
+
 /** 1-indexed line of an offset, for a message that points somewhere. */
 function lineOf(code: string, index: number): number {
   return code.slice(0, index).split("\n").length;
@@ -86,13 +101,27 @@ export interface Gate {
  * the variable form in `open-flow-settings.ts`, which assigns the locator first
  * because it clicks the same button two lines later. A guard matching only the
  * inline form would bless the one file the issue was opened from.
+ *
+ * KNOWN LIMITS, and every one of them fails to the SAFE side — a missed offender
+ * is recoverable, a guard that cries wolf gets deleted rather than fixed:
+ *
+ *  - a locator returned by a helper or a Page Object method, rather than resolved
+ *    at the call site;
+ *  - an assignment without `const`/`let`/`var` on the same statement;
+ *  - an options object containing a call (`{ timeout: f(1) }`) — the outer `\)`
+ *    would close early;
+ *  - arithmetic on the constant (`{ timeout: PERMISSIONS_GATE_TIMEOUT_MS * 2 }`)
+ *    reads as compliant, because the test is that the name appears.
+ *
+ * None is in the tree today. Adding one would be a reason to widen this, not a
+ * reason to have widened it in advance.
  */
 export function findEnabledGates(source: string): Gate[] {
   const code = stripComments(source);
   const gates: Gate[] = [];
 
   const inline = new RegExp(
-    `${HEADER_LOCATOR}${LOCATOR_CHAIN}\\)${LOCATOR_CHAIN}\\.\\s*toBeEnabled\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
+    `${HEADER_LOCATOR}${LOCATOR_CHAIN}\\)${LOCATOR_CHAIN}\\.\\s*${USABLE_ASSERTION}\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
     "g",
   );
   for (const match of code.matchAll(inline)) {
@@ -106,7 +135,7 @@ export function findEnabledGates(source: string): Gate[] {
   for (const declaration of code.matchAll(assigned)) {
     const name = declaration[1];
     const viaVariable = new RegExp(
-      `expect\\(\\s*${name}${LOCATOR_CHAIN}\\)${LOCATOR_CHAIN}\\.\\s*toBeEnabled\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
+      `expect(?:\\.\\s*soft)?\\(\\s*${name}${LOCATOR_CHAIN}\\)${LOCATOR_CHAIN}\\.\\s*${USABLE_ASSERTION}\\s*\\(([^()]*(?:\\{[^{}]*\\})?[^()]*)\\)`,
       "g",
     );
     for (const use of code.matchAll(viaVariable)) {
@@ -120,7 +149,14 @@ export function findEnabledGates(source: string): Gate[] {
 /** A gate is compliant when it names the shared constant as its timeout. */
 export function gateComplaint(gate: Gate): string | null {
   if (!/\btimeout\s*:/.test(gate.options)) {
-    return `line ${gate.line}: no explicit timeout — the gate would fall back to Playwright's 5 s expect default, which is under the measured p95 of the query it waits on`;
+    // NOT "5 s is too short for the measured p95" — it is not, and saying so
+    // would be a justification the measurement 40 lines away refutes, which is
+    // how an exemption stops being believed (#1084). The objection is that a bare
+    // gate silently inherits a GLOBAL default this budget does not own: ~1.3× the
+    // observed max query latency instead of ~8×, and a number that moves the day
+    // someone sets `expect.timeout` in `playwright.config.ts` for unrelated
+    // reasons.
+    return `line ${gate.line}: no explicit timeout — the gate inherits Playwright's global 5 s expect default (~1.3× the measured max of the query it waits on, against ~8× here), and moves whenever that default does`;
   }
   if (!/\btimeout\s*:\s*PERMISSIONS_GATE_TIMEOUT_MS\b/.test(gate.options)) {
     return `line ${gate.line}: timeout is not PERMISSIONS_GATE_TIMEOUT_MS (${gate.options})`;
@@ -142,16 +178,32 @@ function suiteFiles(dir: string = TESTS_ROOT): string[] {
   return out;
 }
 
+/**
+ * The two files that must always carry a gate, one per spelling.
+ *
+ * A bare count was the first floor here and it was wrong in both directions: it
+ * did not catch losing a site to an idiom the matcher missed, and it would have
+ * REDDENED the obvious next refactor — folding the two spec-level gates into
+ * `setupBlankFlow`, which is what #1108's principle pushes toward. These two are
+ * the entry points #1222 is about, they exercise the inline and the variable
+ * spelling respectively, and removing either is a change that should come here.
+ */
+const CANONICAL_GATE_FILES = [
+  "helpers/flows/open-flow-by-id.ts",
+  "helpers/flows/open-flow-settings.ts",
+];
+
 test("every menu_bar_display enabled-gate in the suite names the one constant", () => {
   const offenders: string[] = [];
-  let gateCount = 0;
+  const filesWithGates = new Set<string>();
 
   for (const file of suiteFiles()) {
+    const relative = file.slice(TESTS_ROOT.length + 1);
     for (const gate of findEnabledGates(readFileSync(file, "utf8"))) {
-      gateCount += 1;
+      filesWithGates.add(relative);
       const complaint = gateComplaint(gate);
       if (complaint) {
-        offenders.push(`${file.slice(TESTS_ROOT.length + 1)} — ${complaint}`);
+        offenders.push(`${relative} — ${complaint}`);
       }
     }
   }
@@ -163,13 +215,14 @@ test("every menu_bar_display enabled-gate in the suite names the one constant", 
   );
 
   // A sweep that finds nothing passes, and would keep passing after the testid is
-  // renamed — the guard's own failure mode. Five call sites exist today; the floor
-  // is deliberately below that so removing one is not a red, while removing them
-  // all (or breaking the matcher) is.
-  assert.ok(
-    gateCount >= 4,
-    `only ${gateCount} enabled-gate(s) found — the matcher no longer sees the call sites it guards`,
-  );
+  // renamed or the matcher rots — the guard's own failure mode, and the one it
+  // cannot report because it looks exactly like compliance.
+  for (const file of CANONICAL_GATE_FILES) {
+    assert.ok(
+      filesWithGates.has(file),
+      `no gate found in ${file} — the matcher no longer sees a call site it is supposed to guard, or that gate moved (which belongs in CANONICAL_GATE_FILES)`,
+    );
+  }
 });
 
 test("the guard sees both spellings, and reads the timeout out of each", () => {
@@ -189,6 +242,43 @@ test("the guard sees both spellings, and reads the timeout out of each", () => {
     `await expect(page.getByTestId("menu_bar_display").first()).toBeEnabled({ timeout: PERMISSIONS_GATE_TIMEOUT_MS });`,
   );
   assert.equal(chained.length, 1);
+});
+
+test("`not.toBeDisabled` is the same gate, and the guard sees it", () => {
+  // Not hypothetical: `mcp-server.spec.ts` waits on `stdio-tab` this way twice.
+  // A guard hardcoding `toBeEnabled` went GREEN on the diverged call site — I
+  // rewrote the real `open-flow-settings.ts` gate in this idiom with a literal
+  // 30000 and the sweep reported nothing at all.
+  const inline = findEnabledGates(
+    `await expect(page.getByTestId("menu_bar_display")).not.toBeDisabled({ timeout: 30000 });`,
+  );
+  assert.equal(inline.length, 1);
+  assert.match(gateComplaint(inline[0]) ?? "", /not PERMISSIONS_GATE_TIMEOUT_MS/);
+
+  const variable = findEnabledGates(
+    `const headerButton = page.getByTestId("menu_bar_display");\nawait expect(headerButton).not.toBeDisabled({ timeout: PERMISSIONS_GATE_TIMEOUT_MS });`,
+  );
+  assert.equal(variable.length, 1);
+  assert.equal(gateComplaint(variable[0]), null);
+
+  // `expect.soft` is 21 uses deep in this suite; the variable form used to miss it.
+  const soft = findEnabledGates(
+    `const headerButton = page.getByTestId("menu_bar_display");\nawait expect.soft(headerButton).toBeEnabled({ timeout: 30000 });`,
+  );
+  assert.equal(soft.length, 1);
+  assert.match(gateComplaint(soft[0]) ?? "", /not PERMISSIONS_GATE_TIMEOUT_MS/);
+});
+
+test("asserting the button is NOT usable is a different question, and is left alone", () => {
+  // A spec that observes a read-only flow asserts exactly this, and it is none of
+  // this budget's business — firing on it would make the guard wrong about the one
+  // case #1214's `requireWritable: false` exists for.
+  for (const source of [
+    `await expect(page.getByTestId("menu_bar_display")).toBeDisabled({ timeout: 5000 });`,
+    `await expect(page.getByTestId("menu_bar_display")).not.toBeEnabled({ timeout: 5000 });`,
+  ]) {
+    assert.deepEqual(findEnabledGates(source), []);
+  }
 });
 
 test("the guard rejects the two ways the divergence comes back", () => {

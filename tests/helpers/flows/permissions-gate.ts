@@ -28,9 +28,11 @@
 //
 // THE MEASUREMENT
 //
-// Measured 2026-09-05 against Langflow **1.12.0**, 6 parallel lanes × 8 flow
-// opens = 48 samples, on a developer machine sharing one backend — the saturated
-// local burst #1222 asks for. Two quantities, because they are not the same one:
+// Measured 2026-09-05 against a Langflow reporting **1.12.0** (`GET
+// /api/v1/version`, `main_version` 1.12.0 — a released build, not a `.devNN`
+// nightly), 6 parallel lanes × 8 flow opens = 48 samples, on a developer machine
+// sharing one backend — the saturated local burst #1222 asks for. Two quantities,
+// because they are not the same one:
 //
 //   POST /api/v1/authz/me/permissions   min 205 ms   p50 808 ms   p95 2623 ms   max 3770 ms
 //   the gate (canvas visible → enabled) min   2 ms   p50  14 ms   p95 1919 ms   max 2939 ms
@@ -38,6 +40,25 @@
 // The gate is usually already satisfied when it is reached — p50 14 ms — because
 // the canvas render outlasts the query. The tail is what the budget is for, and
 // under saturation it is seconds, not tens of seconds.
+//
+// The parallelism is doing the work, and that is the figure that makes the burst
+// worth running rather than one lane: at ONE lane, 6 opens, the same instrument
+// reads query max 235 ms and gate max 65 ms — 16× and 45× lighter than the
+// saturated tails above.
+//
+// HOW TO RE-RUN IT
+//
+// A throwaway spec under `tests/`, deleted afterwards rather than committed —
+// nothing selects a `@measure` tag, and a test that never runs in any lane is its
+// own problem (#1010). Per iteration: create a blank flow through `createFlow`,
+// `seedAssistantDiscovered`, `page.goto('/flow/{id}')`, then record (a)
+// `request.timing().responseEnd` from a `page.on("requestfinished")` filtered to
+// `/api/v1/authz/me/permissions`, and (b) the wall-clock between
+// `canvas_controls_dropdown` becoming visible and `menu_bar_display` becoming
+// enabled, both asserted with a budget far above anything expected so the
+// measurement is never truncated by its own timeout. Delete the created flows in a
+// `finally`. Drive it with `--workers=6 --repeat-each=6 --retries=0`; workers
+// alone do not fan out a single test.
 //
 // WHY 30 s AND NOT 15 s, GIVEN BOTH CLEAR THE MEASUREMENT
 //
@@ -85,5 +106,13 @@
  * The full argument, and the measurement behind the number, are at the top of
  * this file. Changing it changes five call sites at once — that is the point —
  * so change it with a measurement, not with an argument.
+ *
+ * One ceiling exists and is not obvious from here: `open-flow-by-id.test.ts`
+ * asserts `CANVAS_TIMEOUT_MS > PERMISSIONS_GATE_TIMEOUT_MS` and pins the canvas
+ * budget at 100 s, so raising this past 100 s fails the unit lane. That is an
+ * ORDERING claim about that entry's two budgets — "nothing is on screen yet" must
+ * outlast "the editor is up and the query has not answered" — and 100 s is ~34×
+ * the largest gate wait ever measured, so the ceiling is not near. Worth knowing
+ * before the next measurement, not worth designing around.
  */
 export const PERMISSIONS_GATE_TIMEOUT_MS = 30000;
