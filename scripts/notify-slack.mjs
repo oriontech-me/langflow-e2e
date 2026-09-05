@@ -4,9 +4,13 @@
 // ## Why a script and not a curl in the runner
 //
 // Same reason `create-failure-issue.mjs` is a script: the message is a DECISION,
-// not a template. A run can be bad in three mutually exclusive ways, and saying
+// not a template. A run can be bad in four mutually exclusive ways, and saying
 // the wrong one is worse than saying nothing —
 //
+//   - MERGE failed: every shard ran and combining their blobs is what broke, so
+//     there is no report to read. It looks exactly like the shape below — empty and
+//     unreadable — and telling a reader to "find why nothing ran" would send them
+//     after a run that ran in full (#1726).
 //   - ZERO tests executed: an infra abort. A message reading "3 tests failed"
 //     when nothing ran points triage at specs instead of at the backend (#1012).
 //   - PARTIAL: a shard died before running its slice, so the totals are
@@ -15,10 +19,10 @@
 //   - Per-test failures: the normal red day, and the only one where a failure
 //     list means anything.
 //
-// It deliberately mirrors the three shapes of the GitHub issue: the Slack message
+// It deliberately mirrors the four shapes of the GitHub issue: the Slack message
 // and the issue are two views of one verdict, and they must never disagree.
 //
-// A FOURTH shape exists here and has no counterpart in the issue, because the two
+// A FIFTH shape exists here and has no counterpart in the issue, because the two
 // scripts stand in different places: the issue is rendered from inputs the caller
 // hands it, while this one READS the run's numbers off disk and can therefore fail
 // to. That is `unknown` — announced, never rendered as zero.
@@ -63,6 +67,8 @@
 //   SLACK_TIMEOUT_MS    per-request deadline (default 15000)
 //   PAYLOAD_JSON        path to the run payload (default: payload.json)
 //   RUN_EMPTY / RUN_PARTIAL / RUN_UNREADABLE / RUN_ERRORS / RUN_TESTS / RUN_FIRST_ERROR
+//   MERGE_OK             "false" = the shards ran and merging them failed (#1726).
+//                        Absent = the caller does not track it, i.e. a working merge.
 //   LIVENESS_MEASURED / LIVENESS_WEDGED / LIVENESS_OUTAGES / LIVENESS_DOWN_SECONDS
 //   ISSUE_URL           the triage issue this run opened, if any
 //   REPORT_URL          where the Playwright report lives
@@ -125,6 +131,7 @@ if (existsSync(payloadPath)) {
 const empty = env.RUN_EMPTY === "true";
 const partial = env.RUN_PARTIAL === "true";
 const unreadable = env.RUN_UNREADABLE === "true";
+const mergeFailed = env.MERGE_OK === "false";
 const reportErrors = env.RUN_ERRORS || "0";
 const firstError = env.RUN_FIRST_ERROR || "";
 const testsTotal = env.RUN_TESTS || "0";
@@ -138,20 +145,32 @@ const runId = run.run_id || env.RUN_ID || "local";
 const host = env.VM_HOSTNAME || env.HOSTNAME || "the QA VM";
 
 // ---------------------------------------------------------------------------
-// The shapes — the three of create-failure-issue.mjs, in its order and for its
+// The shapes — the four of create-failure-issue.mjs, in its order and for its
 // reasons, plus `unknown` for a payload this script could not read.
 // ---------------------------------------------------------------------------
 
-// A fourth outcome, and it is NOT one of the three: the run's own numbers could
+// A fifth outcome, and it is NOT one of the four: the run's own numbers could
 // not be read at all. Kept separate because "unknown" and "zero" are different
 // sentences — see the headline below.
 const failedCount = totals.failed;
 const countKnown = failedCount !== undefined && failedCount !== null;
 const verdictUnknown = !countKnown && failures.length === 0;
 
-const shape = empty ? "empty" : partial ? "partial" : verdictUnknown ? "unknown" : "failures";
+// `merge_failed` leads, exactly as it does in the issue. A failed merge leaves no
+// report, so the integrity guard reports the run empty and unreadable and this
+// message would have headlined "executed ZERO tests" on a day when every shard
+// finished — pointing triage at the backend instead of at the merge step (#1726).
+const shape = mergeFailed
+  ? "merge_failed"
+  : empty
+    ? "empty"
+    : partial
+      ? "partial"
+      : verdictUnknown
+        ? "unknown"
+        : "failures";
 
-// A GREEN day is not one of the three shapes, and this script has to say so
+// A GREEN day is not one of the four shapes, and this script has to say so
 // itself. Its header claims it "fires on the SAME condition as the triage issue",
 // but that condition lives in the caller — and the caller is the runner, the one
 // piece still being written. Without this, a run that is neither empty nor partial
@@ -227,6 +246,7 @@ const fence = (s) => (rich ? "```\n" + s + "\n```" : s);
 const linkTo = (url, label) => (rich ? `<${url}|${label}>` : `${label}: ${url}`);
 
 const headline = {
+  merge_failed: `⚠️ Daily @stable could not MERGE its shard reports — ${date}`,
   empty: `⚠️ Daily @stable executed ZERO tests — ${date}`,
   partial: `⚠️ Daily @stable was PARTIAL — a shard never ran — ${date}`,
   // Never "failed — 0 test(s)". That sentence is read as "zero tests failed", i.e.
@@ -237,6 +257,11 @@ const headline = {
 }[shape];
 
 const diagnosis = {
+  merge_failed: [
+    `${bold("The shards RAN and the merge FAILED")} — every shard finished and wrote its blob; combining them into one report is what broke.`,
+    `There is no merged report, so any number here is ${bold("unread, not zero")}, and no spec is implicated — the failure happened after every test had finished.`,
+    `${bold("Triage the merge step")}: read the run's ${code("logs/merge.log")}. The blobs are kept under ${code("all-blobs/")} and can be merged again by hand.`,
+  ].join("\n"),
   empty: [
     unreadable
       ? `${bold("The merged report was missing or unparseable")} — the run produced no readable result at all.`

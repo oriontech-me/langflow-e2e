@@ -73,7 +73,32 @@ test("the Actions body is byte-for-byte what the inline workflow block rendered"
   );
 });
 
-test("the three verdict shapes get three titles, and an empty run never claims tests failed", () => {
+test("a failed MERGE outranks `empty`, and never says nothing ran", () => {
+  // The two are indistinguishable in the inputs on purpose — that is the defect. A
+  // merge that fails leaves no report, so the integrity guard reports the run empty
+  // AND unreadable, and every one of those flags is true here too. What separates
+  // them is MERGE_OK, and if the shape did not lead, this issue would tell whoever
+  // opens it at 06:00 to find out why nothing ran on a day everything did (#1726).
+  const merged = renderIssue({ ...VM, mergeFailed: true, empty: true, unreadable: true, runErrors: "0" });
+  assert.match(merged.title, /could not MERGE its shard reports/);
+  assert.doesNotMatch(merged.title, /ZERO tests/, "every shard ran — the title is what gets scanned in the list");
+  assert.match(merged.body, /The shards RAN — the MERGE failed/);
+  assert.match(merged.body, /unread, not zero/, "the zeros above it are unread numbers, not a measurement");
+  assert.doesNotMatch(merged.body, /find why nothing ran/, "that is the true sentence pointing at the wrong repair");
+  assert.match(merged.body, /logs\/merge\.log/, "the VM lane names the log a human can open");
+  assert.match(merged.body, /all-blobs/, "and the blobs, which can be merged again by hand");
+
+  // On Actions the same shape names the step and the artifacts instead of paths.
+  const onActions = renderIssue({ ...ACTIONS, mergeFailed: true, empty: true, unreadable: true });
+  assert.match(onActions.body, /`Merge blob reports` step log/);
+
+  // Absent means a working merge: the Actions lane never passes the flag, and its
+  // empty-run body must not have moved.
+  const stillEmpty = renderIssue({ ...ACTIONS, empty: true, unreadable: true });
+  assert.match(stillEmpty.title, /executed ZERO tests/);
+});
+
+test("the four verdict shapes get four titles, and an empty run never claims tests failed", () => {
   const empty = renderIssue({ ...ACTIONS, empty: true, runErrors: "4" });
   assert.match(empty.title, /executed ZERO tests/);
   assert.doesNotMatch(empty.title, /tests failed/, "an empty run must not claim tests failed");
