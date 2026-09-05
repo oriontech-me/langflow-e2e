@@ -68,13 +68,55 @@ export function parseHistory(text) {
  * both lanes failed the same test.
  */
 export function testKey(entry) {
-  return [entry?.file ?? "", entry?.test ?? "", entry?.param ?? ""].join("");
+  // The separator is written as an ESCAPE, not as the literal control character it
+  // used to be. The behaviour is the same; what changes is that the source now shows
+  // it. Two reviewers spent time on that byte -- one cleared it after checking, one
+  // read the rendered diff, saw `join("")` and filed a collision that does not exist.
+  // A separator nobody can see is a separator nobody can verify.
+  //
+  // It has to be SOME separator: joined with nothing, a test "runs agent" with no
+  // param and a test "runs" with param "agent" in one file key identically, and
+  // `indexOutcomes` would overwrite one with the other -- reporting a genuine
+  // one-sided failure as agreement.
+  return [entry?.file ?? "", entry?.test ?? "", entry?.param ?? ""].join("\u0001");
 }
 
 /** Human-facing name for a keyed test. */
 export function describeTest(entry) {
   const param = entry?.param ? ` [${entry.param}]` : "";
   return `${entry?.file ?? "<no file>"} :: ${entry?.test ?? "<no title>"}${param}`;
+}
+
+/**
+ * Merge several history files into one entry list.
+ *
+ * THE TWO LANES DO NOT SHARE A FILE, and assuming they did was a real defect.
+ * `reports/daily-history.jsonl` is tracked and the Actions daily commits its row back
+ * to main every morning; the VM writes to a ledger OUTSIDE the clone, because a line
+ * written into the tracked file would leave the tree dirty and break the wrapper's
+ * next `git pull --ff-only`. `ledger_seed()` copies the tracked file into the ledger
+ * EXACTLY ONCE (`if [ -e "$ledger" ]; then return 0`), so the ledger is a superset for
+ * one moment and drifts apart forever after: Actions rows frozen at seed time, VM rows
+ * accumulating.
+ *
+ * Read either file alone and no recent day has both lanes. The comparator would then
+ * either block claiming "the Actions lane has nothing to compare against" on a morning
+ * Actions ran perfectly, or -- worse -- find the seed day, compare it, and exit 0 with
+ * a confident verdict about a week-old day.
+ *
+ * Rows are deduplicated on `workflow|date|run_id`, because the seeded copy and the
+ * tracked original are the same row: without it every seeded day would report "more
+ * than one row for this date".
+ */
+export function mergeEntries(sources) {
+  const byKey = new Map();
+  for (const { entries = [] } of sources) {
+    for (const e of entries) {
+      if (!e || typeof e !== "object") continue;
+      byKey.set(`${e.workflow ?? ""}|${e.date ?? ""}|${e.run_id ?? ""}`, e);
+    }
+  }
+  return [...byKey.values()];
 }
 
 /**
@@ -134,6 +176,9 @@ export function compareRuns({
   date,
   ciExtra = 0,
   vmExtra = 0,
+  // Every date the series holds, so a comparison of a day that is NOT the newest one
+  // can say so instead of answering a question the reader did not ask.
+  datesAvailable = [],
   // The ids the rows were selected by. Taken as arguments rather than read off the
   // constants, because a caller that overrode --ci-workflow / --vm-workflow would
   // otherwise be told a row is missing under a name it never asked for.
@@ -188,18 +233,21 @@ export function compareRuns({
     );
   }
 
-  // Everything above is a blocker, and a blocked comparison returns NO list - not even
-  // for a caller reading `--json` instead of the report. The text output already
-  // refuses to print one; leaving the array populated would let the two surfaces tell
-  // different stories about the same run, and the machine-readable one would be the
-  // one telling the fiction.
-  if (blockers.length) {
-    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, comparable: false };
-  }
-
   if (ciExtra || vmExtra) {
     warnings.push(
       `more than one row for this date (Actions +${ciExtra}, VM +${vmExtra}); the last append of each lane was used.`,
+    );
+  }
+
+  // Staleness. The header carries the date, but a reader running this after last
+  // night's run is looking for TODAY, and a silently older answer reads as today's.
+  // It happens with nothing broken: the VM's history append is non-blocking (`|| warn`
+  // in run-e2e.sh), so a run that produced a verdict can still leave no row.
+  const newest = datesAvailable.at(-1);
+  if (newest && date && newest !== date) {
+    warnings.push(
+      `this is NOT the newest day in the series - ${newest} has a row, but not from both lanes. ` +
+        `What follows is ${date}.`,
     );
   }
 
@@ -241,6 +289,18 @@ export function compareRuns({
           `backend, so they are not attributable to the spec that reported them.`,
       );
     }
+  }
+
+  // Decided here, not earlier, and that placement is the point: a blocked day still
+  // has to report that the two lanes skipped different numbers of tests, because that
+  // is what tells the reader whether re-running with --allow-version-mismatch buys
+  // anything. Every warning above is computed before this returns.
+  //
+  // A blocked comparison returns NO list - not even to a caller reading `--json`.
+  // Leaving the array populated would let the two surfaces tell different stories
+  // about one run, and the machine-readable one would be the fiction.
+  if (blockers.length) {
+    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, comparable: false };
   }
 
   const divergences = [];
@@ -301,12 +361,12 @@ const KIND_LABEL = {
 };
 
 /** Render the comparison for a person reading it in a terminal at 09:00. */
-export function renderReport(result, { source } = {}) {
+export function renderReport(result, { sources = [] } = {}) {
   const L = [];
   const { date, ci, vm, blockers, warnings, divergences, agreed } = result;
 
   L.push(`Lane verdict comparison - ${date ?? "no date"}`);
-  if (source) L.push(`history: ${source}`);
+  for (const s of sources) L.push(`history: ${s}`);
 
   const line = (label, row) =>
     row

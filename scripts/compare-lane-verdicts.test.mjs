@@ -30,13 +30,14 @@ import { fileURLToPath } from "node:url";
 
 import {
   parseHistory,
+  mergeEntries,
   testKey,
   selectRuns,
   indexOutcomes,
   compareRuns,
   renderReport,
 } from "./lib/lane-verdict-diff.mjs";
-import { parseArgs, defaultHistoryPath } from "./compare-lane-verdicts.mjs";
+import { parseArgs, defaultHistorySources } from "./compare-lane-verdicts.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, "compare-lane-verdicts.mjs");
@@ -307,10 +308,14 @@ test("an unknown option is refused rather than ignored", () => {
   assert.throws(() => parseArgs(["--compare-everything"]), /unknown option/);
 });
 
-test("the default history path prefers the ledger when it exists", () => {
+test("the default sources are the ledger AND the tracked file, in that order", () => {
   const env = { XDG_STATE_HOME: "/state", HOME: "/home/x" };
-  assert.equal(defaultHistoryPath(env, () => true), "/state/langflow-e2e/daily-history.jsonl");
-  assert.match(defaultHistoryPath(env, () => false), /reports\/daily-history\.jsonl$/);
+  const both = defaultHistorySources(env, () => true);
+  assert.equal(both[0], "/state/langflow-e2e/daily-history.jsonl");
+  assert.match(both[1], /reports\/daily-history\.jsonl$/);
+  // With no ledger, the tracked file alone -- and it is still NAMED when absent, so
+  // the error can say which path was wrong instead of "nothing was found".
+  assert.equal(defaultHistorySources(env, () => false).length, 1);
 });
 
 const runCli = (args, history) => {
@@ -348,7 +353,7 @@ test("CLI --json emits the classified result and names the history it read", () 
   assert.equal(res.status, 0);
   const parsed = JSON.parse(res.stdout);
   assert.equal(parsed.divergences[0].kind, "vm-only-failed");
-  assert.match(parsed.source, /daily-history\.jsonl$/);
+  assert.match(parsed.sources[0], /daily-history\.jsonl$/);
 });
 
 test("CLI prints the history path it used, so reading the wrong series is visible", () => {
@@ -467,11 +472,11 @@ test("a dev-level difference is NOT quietly demoted: it blocks like any other mi
 
 test("LEDGER_DIR wins over XDG_STATE_HOME, because a machine that sets it writes only there", () => {
   const env = { LEDGER_DIR: "/ledger", XDG_STATE_HOME: "/state", HOME: "/home/x" };
-  assert.equal(defaultHistoryPath(env, () => true), "/ledger/daily-history.jsonl");
+  assert.equal(defaultHistorySources(env, () => true)[0], "/ledger/daily-history.jsonl");
   assert.equal(
-    defaultHistoryPath(env, (p) => p.startsWith("/state")),
+    defaultHistorySources(env, (p) => !p.startsWith("/ledger"))[0],
     "/state/langflow-e2e/daily-history.jsonl",
-    "an unset-but-declared LEDGER_DIR must not shadow a ledger that exists",
+    "a declared-but-absent LEDGER_DIR must not shadow a ledger that exists",
   );
 });
 
@@ -480,4 +485,113 @@ test("--json stays parseable when the history file is missing", () => {
   assert.equal(res.status, 1);
   const parsed = JSON.parse(res.stdout);
   assert.match(parsed.error, /no history at/);
+});
+
+// ---------------------------------------------------------------------------
+// The two lanes do not share a file (independent review, round 2)
+// ---------------------------------------------------------------------------
+//
+// The shape of the defect, because a test that only checks "merge works" would not
+// have caught it: `ledger_seed()` copies the tracked file into the ledger EXACTLY
+// once, and the Actions daily keeps committing rows into the tracked file forever
+// after. So the ledger holds Actions rows frozen at seed time plus every VM row, and
+// the tracked file holds Actions rows only. Read either alone and the newest day with
+// both lanes is the seed day — which the tool would compare, and exit 0 over.
+
+const dated = (workflow, date, over = {}) => row(workflow, { date, run_id: `${workflow}-${date}`, ...over });
+
+test("a ledger frozen at seed time plus a live tracked file still compares TODAY", () => {
+  const ledger = [
+    dated("daily-stable", "2026-09-01"), // seeded copy, frozen here
+    dated("daily-stable-vm", "2026-09-01"),
+    dated("daily-stable-vm", "2026-09-07"), // the VM keeps writing
+  ];
+  const tracked = [
+    dated("daily-stable", "2026-09-01"), // same row as the seeded copy
+    dated("daily-stable", "2026-09-07"), // Actions keeps committing
+  ];
+
+  const ledgerOnly = selectRuns(ledger);
+  assert.equal(ledgerOnly.date, "2026-09-01", "the defect: the ledger alone only ever agrees on the seed day");
+
+  const merged = selectRuns(mergeEntries([{ entries: ledger }, { entries: tracked }]));
+  assert.equal(merged.date, "2026-09-07");
+  assert.ok(merged.ci && merged.vm);
+});
+
+test("the seeded copy and the tracked original are ONE row, not a duplicate re-run", () => {
+  const one = dated("daily-stable", "2026-09-01");
+  const merged = mergeEntries([{ entries: [one] }, { entries: [{ ...one }] }]);
+  assert.equal(merged.length, 1);
+  const picked = selectRuns(merged, { date: "2026-09-01" });
+  assert.equal(picked.ciExtra, 0, "without dedupe every seeded day would claim a re-run");
+});
+
+test("two genuinely different runs on one day are both kept", () => {
+  const merged = mergeEntries([
+    { entries: [dated("daily-stable", "2026-09-07", { run_id: "first" })] },
+    { entries: [dated("daily-stable", "2026-09-07", { run_id: "second" })] },
+  ]);
+  assert.equal(merged.length, 2);
+});
+
+test("comparing a day that is not the newest in the series says so", () => {
+  const entries = [
+    dated("daily-stable", "2026-09-07"),
+    dated("daily-stable-vm", "2026-09-07"),
+    dated("daily-stable", "2026-09-08"), // today ran on one lane only
+  ];
+  const picked = selectRuns(entries);
+  assert.equal(picked.date, "2026-09-07");
+  const result = compareRuns({ ...picked, ci: row("daily-stable"), vm: row("daily-stable-vm") });
+  assert.match(result.warnings.join(" "), /NOT the newest day/);
+  assert.match(renderReport(result), /NOT the newest day/);
+});
+
+test("a blocked day still reports every narrowing fact, not just the version one", () => {
+  // The reader needs the skip delta precisely when the day is blocked: it is what says
+  // whether re-running with --allow-version-mismatch buys anything.
+  const result = compare(
+    row("daily-stable", { langflow_version: "1.13.0.dev3", totals: { passed: 10, failed: 0, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { langflow_version: "1.12.0", totals: { passed: 8, failed: 0, flaky: 0, skipped: 13 } }),
+  );
+  assert.equal(result.comparable, false);
+  assert.match(result.warnings.join(" "), /SKIPPED different numbers/);
+  assert.match(renderReport(result), /SKIPPED different numbers/);
+});
+
+test("the test key separates its components, so a title and a param cannot collide", () => {
+  const a = testKey({ file: "a.spec.ts", test: "runs agent", param: null });
+  const b = testKey({ file: "a.spec.ts", test: "runs", param: "agent" });
+  assert.notEqual(a, b);
+});
+
+test("CLI accepts --history twice and merges both files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lane-merge-"));
+  const one = join(dir, "ledger.jsonl");
+  const two = join(dir, "tracked.jsonl");
+  writeFileSync(one, JSON.stringify(dated("daily-stable-vm", "2026-09-07")) + "\n");
+  writeFileSync(two, JSON.stringify(dated("daily-stable", "2026-09-07")) + "\n");
+  const res = spawnSync(process.execPath, [CLI, "--history", one, "--history", two], { encoding: "utf8" });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /history: .*ledger\.jsonl/);
+  assert.match(res.stdout, /history: .*tracked\.jsonl/);
+});
+
+test("one missing source is skipped with a warning, not fatal, while the other is read", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lane-partial-"));
+  const present = join(dir, "present.jsonl");
+  writeFileSync(
+    present,
+    [dated("daily-stable", "2026-09-07"), dated("daily-stable-vm", "2026-09-07")]
+      .map((e) => JSON.stringify(e))
+      .join("\n") + "\n",
+  );
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "--history", join(dir, "gone.jsonl"), "--history", present],
+    { encoding: "utf8" },
+  );
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stderr, /no history at .*gone\.jsonl, skipped/);
 });
