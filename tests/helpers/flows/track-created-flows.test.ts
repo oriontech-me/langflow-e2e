@@ -40,6 +40,7 @@ import {
   type TrackedResponse,
 } from "./track-created-flows";
 import { resetAttributedFlows } from "./token-attribution";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir";
 
 // One mechanism, not two (round-1 review): a per-test reset line is a line
 // someone forgets when adding test number ten, and a test reusing an
@@ -590,7 +591,7 @@ test("settle() drains the queue, so a later cleanup does not re-await it", async
 // ─── Token attribution sidecar (#1197) ───────────────────────────────────────
 
 test("cleanup records token attribution BEFORE deleting", async (t) => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
+  const out = path.join(makeTempDir("tracker-attrib-"), "a.jsonl");
   const order: string[] = [];
   const { page, emit } = fakePage();
   const tracker = trackCreatedFlows(page);
@@ -651,7 +652,7 @@ test("with neither an explicit attribution NOR an ambient test, nothing is attri
 });
 
 test("a throwing attribution never fails the cleanup", async (t) => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
+  const out = path.join(makeTempDir("tracker-attrib-"), "a.jsonl");
   const { page, emit } = fakePage();
   const tracker = trackCreatedFlows(page);
   emit(creationResponse("f1"));
@@ -674,7 +675,7 @@ test("the attribution GET carries the same bearer the deletes use, not just cook
   // Measured against a real Langflow (langflowai/langflow-nightly 1.12.0.dev10):
   // an unauthenticated `GET /monitor/traces` answers 403. Pinning this so the
   // sidecar cannot silently regress back to running on cookies alone.
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
+  const out = path.join(makeTempDir("tracker-attrib-"), "a.jsonl");
   const { page, emit } = fakePage();
   const tracker = trackCreatedFlows(page);
   emit(creationResponse("f1"));
@@ -704,7 +705,7 @@ test("the attribution GET carries the same bearer the deletes use, not just cook
 // §1.1: the 30 specs using this helper pass no `attribution` today, and two of
 // 180 pass one. Deriving it is what arms the other 28 without touching them.
 test("cleanup() attributes without being asked, deriving from the ambient test (§1.1)", async (t) => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-derived-")), "a.jsonl");
+  const out = path.join(makeTempDir("tracker-derived-"), "a.jsonl");
   process.env.TOKENS_ATTRIB = out;
   t.after(() => delete process.env.TOKENS_ATTRIB);
 
@@ -744,7 +745,7 @@ test("cleanup() attributes without being asked, deriving from the ambient test (
 // unchanged, and an explicit value must WIN -- a spec with a reason to override
 // still has one.
 test("an explicit attribution still takes precedence over the derived one (§1.1)", async (t) => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-explicit-")), "a.jsonl");
+  const out = path.join(makeTempDir("tracker-explicit-"), "a.jsonl");
   process.env.TOKENS_ATTRIB = out;
   t.after(() => delete process.env.TOKENS_ATTRIB);
 
@@ -781,7 +782,7 @@ test("an explicit attribution still takes precedence over the derived one (§1.1
 // trace must produce ONE line -- a second would be a plausible number, twice as
 // large, with nothing marking it.
 test("one trace produces exactly one line, through cleanup AND deleteFlow (§2.1)", async (t) => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-once-")), "a.jsonl");
+  const out = path.join(makeTempDir("tracker-once-"), "a.jsonl");
   process.env.TOKENS_ATTRIB = out;
   t.after(() => delete process.env.TOKENS_ATTRIB);
 

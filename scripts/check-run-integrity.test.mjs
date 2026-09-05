@@ -3,8 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,6 +14,7 @@ import {
   errorSignatures,
   testsTotal,
 } from "./check-run-integrity.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-run-integrity.mjs", import.meta.url));
 
@@ -242,7 +243,7 @@ test("the CLI writes its outputs even when its own path needs URL escaping", () 
   // single space is enough): main() never ran, the step exited 0 with NO outputs,
   // and the workflow's gate then saw `empty=""` — so the run went green on an
   // empty report, the exact failure this guard exists to remove.
-  const dir = mkdtempSync(join(tmpdir(), "run integrity "));
+  const dir = makeTempDir("run integrity ");
   const reportPath = join(dir, "results.json");
   writeFileSync(reportPath, JSON.stringify(emptyRun));
 
@@ -273,7 +274,7 @@ test("the CLI reports partial=true for a run where only some shards aborted", ()
   // End-to-end through the real entrypoint, not just analyze(): the workflow
   // reads these as step outputs, so a verdict that never reaches $GITHUB_OUTPUT
   // is a verdict the run cannot gate on.
-  const dir = mkdtempSync(join(tmpdir(), "run integrity partial "));
+  const dir = makeTempDir("run integrity partial ");
   const reportPath = join(dir, "results.json");
   writeFileSync(
     reportPath,
@@ -294,7 +295,7 @@ test("the CLI reports partial=true for a run where only some shards aborted", ()
 test("a missing report is reported as unreadable, not merely empty", () => {
   // The two need different triage: "the merge produced nothing" points at the
   // merge step and the blob artifacts, "zero tests" points at the shard aborts.
-  const dir = mkdtempSync(join(tmpdir(), "run integrity "));
+  const dir = makeTempDir("run integrity ");
   const { outputs } = runCli({ reportPath: join(dir, "does-not-exist.json"), dir });
   assert.equal(outputs.empty, "true");
   assert.equal(outputs.unreadable, "true");
@@ -302,7 +303,7 @@ test("a missing report is reported as unreadable, not merely empty", () => {
 });
 
 test("a healthy report yields empty=false, which is what un-gates the mutating steps", () => {
-  const dir = mkdtempSync(join(tmpdir(), "run integrity "));
+  const dir = makeTempDir("run integrity ");
   const reportPath = join(dir, "results.json");
   writeFileSync(reportPath, JSON.stringify(healthyRun));
 

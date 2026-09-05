@@ -24,6 +24,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { selectPrModelTarget, readProvidersFile } from "./select-pr-model-target.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "select-pr-model-target.mjs");
@@ -126,7 +127,7 @@ test("a missing providers.json is a state, not a crash", () => {
 test("CLI writes BOTH env vars or neither — never MODEL_TEST_PROVIDER alone", () => {
   // The pair invariant, asserted end-to-end: MODEL_TEST_PROVIDER on its own is
   // not a narrower run, it is the whole 41-model catalog.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr-model-target-"));
+  const dir = makeTempDir("pr-model-target-");
   const providersFile = path.join(dir, "providers.json");
   const githubEnv = path.join(dir, "github_env");
   fs.writeFileSync(providersFile, JSON.stringify(PROVIDERS));
@@ -157,7 +158,7 @@ test("CLI writes BOTH env vars or neither — never MODEL_TEST_PROVIDER alone", 
 });
 
 test("CLI exits 2 on an unreadable payload, 0 on a legitimate no-pin", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr-model-target-"));
+  const dir = makeTempDir("pr-model-target-");
   const bad = path.join(dir, "providers.json");
   fs.writeFileSync(bad, '{"openai": "gpt-4o-mini"}');
 

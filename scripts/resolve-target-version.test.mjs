@@ -20,11 +20,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
 import { resolveTargetVersion, compareVersions } from "./resolve-target-version.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, "resolve-target-version.mjs");
@@ -259,7 +260,7 @@ test("a missing version on either side is UNKNOWN, never a pass", () => {
 });
 
 test("the CLI prints JSON and exits 0, or exits 1 with the decision still readable", () => {
-  const dir = mkdtempSync(join(tmpdir(), "resolve-target-version-test-"));
+  const dir = makeTempDir("resolve-target-version-test-");
   const good = join(dir, "good.txt");
   const bad = join(dir, "bad.txt");
   writeFileSync(good, refs([[sha(1), "refs/heads/release-1.13.0"]]));

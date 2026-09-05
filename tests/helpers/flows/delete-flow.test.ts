@@ -18,6 +18,7 @@ import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import { deleteFlow } from "./delete-flow";
 import { resetAttributedFlows } from "./token-attribution";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir";
 
 // One mechanism, not two (round-1 review): a per-test reset line is a line
 // someone forgets when adding test number ten, and four of the tests below
@@ -31,7 +32,7 @@ beforeEach(() => {
 });
 
 function tmpFile(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "delflow-")), "token-attrib.jsonl");
+  return path.join(makeTempDir("delflow-"), "token-attrib.jsonl");
 }
 
 /** A request whose DELETE succeeds and whose monitor GETs return one trace. */

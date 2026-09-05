@@ -4,11 +4,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import http from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseProbes, summarizeProbes } from "./watch-backend.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-backend.mjs", import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -110,7 +111,7 @@ test("summarizeProbes reports an empty log as NOT measured", () => {
 });
 
 test("--summarize writes a shard-labelled summary carrying the shard's spec list", () => {
-  const dir = mkdtempSync(join(tmpdir(), "liveness-"));
+  const dir = makeTempDir("liveness-");
   const jsonl = join(dir, "probes.jsonl");
   const out = join(dir, "summary.json");
   writeFileSync(jsonl, probeLog + "\n");
@@ -137,7 +138,7 @@ test("--summarize writes a shard-labelled summary carrying the shard's spec list
 });
 
 test("--summarize on a missing probe log writes an UNMEASURED summary and exits 0", () => {
-  const dir = mkdtempSync(join(tmpdir(), "liveness-"));
+  const dir = makeTempDir("liveness-");
   const out = join(dir, "summary.json");
   const stdout = execFileSync(process.execPath, [SCRIPT, "--summarize"], {
     encoding: "utf8",
@@ -154,7 +155,7 @@ test("--summarize on a missing probe log writes an UNMEASURED summary and exits 
 // mechanism rests on — a wedged backend accepts nothing and the probe must
 // record a failure rather than hang.
 test("the recorder records an outage while the target is gone", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "liveness-"));
+  const dir = makeTempDir("liveness-");
   const jsonl = join(dir, "probes.jsonl");
   const summaryPath = join(dir, "summary.json");
 

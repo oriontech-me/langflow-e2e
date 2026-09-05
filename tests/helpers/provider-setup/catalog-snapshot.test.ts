@@ -28,6 +28,7 @@ import {
 import { resolveGeminiModel } from "./resolve-gemini-model";
 import { resolveGptModel } from "./resolve-gpt-model";
 import { resolveTestTargets } from "./test-targets";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir";
 
 const OPENAI_ONLY = [{ provider: "openai", model: "gpt-4o-mini" }];
 const WITH_GOOGLE = [
@@ -37,7 +38,7 @@ const WITH_GOOGLE = [
 
 /** A temp file standing in for `models.json`, seeded with `records`. */
 function tempCatalog(records: unknown, name = "models.json"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-snapshot-"));
+  const dir = makeTempDir("catalog-snapshot-");
   const file = path.join(dir, name);
   fs.writeFileSync(file, JSON.stringify(records));
   return file;
@@ -125,7 +126,7 @@ test("an absent catalog freezes the EMPTY one, not nothing", () => {
 test("an unreadable catalog is reported, and still freezes the empty one", () => {
   const env: NodeJS.ProcessEnv = {};
   // A directory reads as EISDIR — exists, cannot be read.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-snapshot-"));
+  const dir = makeTempDir("catalog-snapshot-");
   const verdict = freezeModelCatalog(env, dir);
   assert.equal(verdict.kind, "unreadable");
   assert.match(verdict.reason ?? "", /EISDIR|EPERM|EACCES/);
@@ -135,7 +136,7 @@ test("an unreadable catalog is reported, and still freezes the empty one", () =>
 test("a malformed catalog is frozen VERBATIM so the readers still fail loud", () => {
   // Parsing here would move #1035's deliberate throw into globalSetup, where it would
   // abort the whole run instead of failing at the one place that must decide.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-snapshot-"));
+  const dir = makeTempDir("catalog-snapshot-");
   const file = path.join(dir, "models.json");
   fs.writeFileSync(file, "{ not json");
   const env: NodeJS.ProcessEnv = {};

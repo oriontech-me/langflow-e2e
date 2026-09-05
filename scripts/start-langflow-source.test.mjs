@@ -23,10 +23,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const START = join(HERE, "start-langflow-source.sh");
@@ -90,7 +91,7 @@ function runScript({
   withUv = true,
   stamp = null,
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "start-langflow-source-test-"));
+  const dir = makeTempDir("start-langflow-source-test-");
   const bin = join(dir, "bin");
   // uv lives in its own directory so `withUv: false` can drop it from PATH without
   // also dropping the real mkdir/rm/tail/sleep the script needs to run at all.

@@ -23,8 +23,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, readFileSync } from "node:fs";
+
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,7 @@ import {
   renderReport,
 } from "./lib/lane-verdict-diff.mjs";
 import { parseArgs, defaultHistorySources } from "./compare-lane-verdicts.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, "compare-lane-verdicts.mjs");
@@ -319,7 +320,7 @@ test("the default sources are the ledger AND the tracked file, in that order", (
 });
 
 const runCli = (args, history) => {
-  const dir = mkdtempSync(join(tmpdir(), "lane-diff-"));
+  const dir = makeTempDir("lane-diff-");
   const file = join(dir, "daily-history.jsonl");
   writeFileSync(file, history.map((e) => JSON.stringify(e)).join("\n") + "\n");
   return spawnSync(process.execPath, [CLI, "--history", file, ...args], { encoding: "utf8" });
@@ -567,7 +568,7 @@ test("the test key separates its components, so a title and a param cannot colli
 });
 
 test("CLI accepts --history twice and merges both files", () => {
-  const dir = mkdtempSync(join(tmpdir(), "lane-merge-"));
+  const dir = makeTempDir("lane-merge-");
   const one = join(dir, "ledger.jsonl");
   const two = join(dir, "tracked.jsonl");
   writeFileSync(one, JSON.stringify(dated("daily-stable-vm", "2026-09-07")) + "\n");
@@ -579,7 +580,7 @@ test("CLI accepts --history twice and merges both files", () => {
 });
 
 test("one missing source is skipped with a warning, not fatal, while the other is read", () => {
-  const dir = mkdtempSync(join(tmpdir(), "lane-partial-"));
+  const dir = makeTempDir("lane-partial-");
   const present = join(dir, "present.jsonl");
   writeFileSync(
     present,

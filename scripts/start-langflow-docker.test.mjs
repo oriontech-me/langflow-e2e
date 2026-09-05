@@ -15,10 +15,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./start-langflow-docker.sh", import.meta.url));
 
@@ -31,7 +32,7 @@ const SCRIPT = fileURLToPath(new URL("./start-langflow-docker.sh", import.meta.u
  * does not sit through the 120 s readiness loop.
  */
 function runScript({ args = [], env = {}, pullFails = false, localCopy = true } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "start-langflow-test-"));
+  const dir = makeTempDir("start-langflow-test-");
   const log = join(dir, "docker.log");
 
   writeFileSync(

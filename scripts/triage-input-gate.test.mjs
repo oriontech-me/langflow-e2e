@@ -21,6 +21,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { decideTriageInput, readReportOrThrow } from "./triage-input-gate.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "triage-input-gate.mjs");
@@ -104,7 +105,7 @@ test("present-but-unparseable throws instead of returning a verdict", () => {
 });
 
 test("CLI: skip path writes should_run_agent=false, warns, and summarises", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "triage-gate-"));
+  const dir = makeTempDir("triage-gate-");
   const results = path.join(dir, "results.json");
   const out = path.join(dir, "github_output");
   const summary = path.join(dir, "github_step_summary");
@@ -134,7 +135,7 @@ test("CLI: skip path writes should_run_agent=false, warns, and summarises", () =
 });
 
 test("CLI: usable path writes should_run_agent=true; unparseable exits 2", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "triage-gate-"));
+  const dir = makeTempDir("triage-gate-");
   const results = path.join(dir, "results.json");
   const out = path.join(dir, "github_output");
   fs.writeFileSync(results, JSON.stringify(healthy));

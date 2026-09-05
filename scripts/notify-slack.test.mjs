@@ -20,11 +20,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+
 import { createServer } from "node:http";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NOTIFIER = join(HERE, "notify-slack.mjs");
@@ -54,7 +55,7 @@ const GREEN_PAYLOAD = {
   failures: [],
 };
 
-const dir = mkdtempSync(join(tmpdir(), "notify-slack-"));
+const dir = makeTempDir("notify-slack-");
 const payloadPath = join(dir, "payload.json");
 writeFileSync(payloadPath, JSON.stringify(PAYLOAD), "utf8");
 const greenPayloadPath = join(dir, "payload-green.json");

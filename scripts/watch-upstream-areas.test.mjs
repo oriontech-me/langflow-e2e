@@ -39,6 +39,7 @@ import {
   pickReleaseBranches,
   renderIssueBody,
 } from "./watch-upstream-areas.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -365,7 +366,7 @@ test("the CLI exits 2 — could not decide — for an unusable root or a bad fla
 
 test("the CLI exits 1 and names the path when the checkout contradicts the table", () => {
   // A tree with the lfx layout but one monitored path deliberately absent.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-cli-"));
+  const root = makeTempDir("watcher-cli-");
   try {
     for (const area of AREAS) {
       for (const p of area.paths) {
@@ -404,7 +405,7 @@ test("the CLI exits 1 and names the path when the checkout contradicts the table
 });
 
 test("a symlinked lfx subtree is classified, not skipped", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-link-"));
+  const root = makeTempDir("watcher-link-");
   try {
     const lfx = path.join(root, LFX_ROOT);
     fs.mkdirSync(path.join(lfx, "graph"), { recursive: true });
@@ -1029,7 +1030,7 @@ test("checkDocDeps does not count a release ref that IS the trunk as a second si
 
 /** A throwaway upstream: one trunk branch, one release line, one file apart. */
 function upstreamFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-upstream-"));
+  const root = makeTempDir("watcher-upstream-");
   const run = (...args) =>
     spawnSync("git", args, {
       cwd: root,
@@ -1070,7 +1071,7 @@ function upstreamFixture() {
  * the real docs. The script is dependency-free ESM, so a copy runs as-is.
  */
 function docsFixture(markdown) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-docs-"));
+  const home = makeTempDir("watcher-docs-");
   fs.mkdirSync(path.join(home, "scripts"));
   fs.mkdirSync(path.join(home, "docs", "area"), { recursive: true });
   fs.copyFileSync(
@@ -1285,7 +1286,7 @@ test("the fetch step, AS WRITTEN IN THE YAML, fails loudly when it cannot reach 
   // A `--root` with no git repository at all makes the lookup fail on all three
   // attempts, which is the state the step must never turn into an empty ref list.
   const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-noremote-"));
+  const home = makeTempDir("watcher-noremote-");
   fs.mkdirSync(path.join(home, "scripts"));
   fs.mkdirSync(path.join(home, "langflow-upstream"));
   fs.copyFileSync(
@@ -1320,7 +1321,7 @@ test("the fetch step fails loudly when a ref is advertised but cannot be fetched
   // an object the remote does not have, which is what a transient upstream
   // failure looks like from here.
   const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-badref-"));
+  const home = makeTempDir("watcher-badref-");
   fs.mkdirSync(path.join(home, "scripts"));
   fs.copyFileSync(
     path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"),

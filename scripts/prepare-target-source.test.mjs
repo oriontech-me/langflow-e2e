@@ -28,10 +28,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, "prepare-target-source.sh");
@@ -56,7 +57,7 @@ function setup({
   withUv = true,
   makeMode = "ok", // ok | fail-deps | fail-frontend | ok-without-assets
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "prepare-target-source-test-"));
+  const dir = makeTempDir("prepare-target-source-test-");
   const bin = join(dir, "bin");
   const npmBin = join(dir, "npm-bin");
   const uvBin = join(dir, "uv-bin");

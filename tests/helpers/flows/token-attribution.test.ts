@@ -22,9 +22,10 @@ import os from "node:os";
 import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import { recordTokenAttribution, resetAttributedFlows } from "./token-attribution";
+import { makeTempDir } from "../../../scripts/lib/tmp-dir";
 
 function tmpFile(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "attrib-")), "token-attrib.jsonl");
+  return path.join(makeTempDir("attrib-"), "token-attrib.jsonl");
 }
 
 // The JSONL file now carries TWO record shapes (§4.3, fix round 2): one line per

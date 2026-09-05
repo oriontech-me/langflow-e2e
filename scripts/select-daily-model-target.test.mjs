@@ -16,12 +16,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import {
   rotationSlot,
   selectDailyModelTarget,
 } from "./select-daily-model-target.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = path.join(import.meta.dirname, "select-daily-model-target.mjs");
 
@@ -222,7 +222,7 @@ test("an unparseable --date throws", () => {
 // ─── The CLI boundary: the pair invariant and the exit codes ─────────────────
 
 function runCli(args, { providers, env = {} } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "daily-target-"));
+  const dir = makeTempDir("daily-target-");
   const file = path.join(dir, "providers.json");
   if (providers !== undefined) {
     fs.writeFileSync(

@@ -7,13 +7,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+;
+
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";
 import { collectOnce, parseAttribLines, parseProbeLines, poll, splitAttribRecords, summarize } from "./watch-tokens.mjs";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -157,7 +158,7 @@ test("parseProbeLines skips a torn last line", () => {
 // every platform node's fs targets, appendFileSync on a directory throws
 // (EISDIR/EPERM), which is the same failure family as a disk going away.
 test("an append failure is logged and the loop is not stopped", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "tokens-out-"));
+  const dir = makeTempDir("tokens-out-");
   const traces = [{ id: "t1", flowId: "f1", startTime: "x", status: "ok", totalTokens: 88 }];
   const { fetchImpl } = fakeBackend({ traces, detail: { t1: { spans: SPANS } } });
   const logs = [];
@@ -193,7 +194,7 @@ test("poll logs each unauthorized tick and names the streak in its final line", 
     fetchImpl,
     env: {
       TOKENS_BASE_URL: "http://x",
-      TOKENS_OUT: join(mkdtempSync(join(tmpdir(), "tokens-auth-")), "probes.jsonl"),
+      TOKENS_OUT: join(makeTempDir("tokens-auth-"), "probes.jsonl"),
       TOKENS_INTERVAL_MS: "5",
       TOKENS_MAX_SECONDS: "0.05",
     },
@@ -220,7 +221,7 @@ test("poll logs each unauthorized tick and names the streak in its final line", 
 // internals directly — the wrapping is defense-in-depth for an unexpected
 // throw, matching watch-backend.mjs's own untested catch branch in main().
 test("the entry point exits 0 when run directly, even against an unreachable backend", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "tokens-entry-"));
+  const dir = makeTempDir("tokens-entry-");
   const out = join(dir, "probes.jsonl");
   const child = spawn(process.execPath, [SCRIPT], {
     env: {
