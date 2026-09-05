@@ -1435,16 +1435,24 @@ phase_publish() {
   if [ "$CREATE_ISSUE" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Opening the failure issue"
+    # MERGE_OK travels with the guards' flags, and it has to. A failed merge sets
+    # RUN_EMPTY and RUN_UNREADABLE true, and both consumers keyed only off those —
+    # so the issue's title said "executed ZERO tests" and its body said "find why
+    # nothing ran, not which test broke" on a run whose every shard had finished.
+    # That is the sentence phase_verdict was changed to stop saying; the change only
+    # reaches a reader if it reaches the surfaces a reader opens. (#1726)
     RUN_ID="$RUN_ID" RUN_DIR="$RUN_DIR" \
     RUN_EMPTY="$RUN_EMPTY" RUN_UNREADABLE="$RUN_UNREADABLE" RUN_PARTIAL="$RUN_PARTIAL" \
+    MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
       node scripts/create-failure-issue.mjs || warn "issue creation failed (does not fail the run)."
   fi
 
   # Same condition as the issue, deliberately: the message and the issue are two views
-  # of one verdict and must not disagree. Fail-soft — a notifier is never allowed to be
-  # the reason a run reports failure.
+  # of one verdict and must not disagree — which is why MERGE_OK is passed to both, or
+  # the two views would have disagreed with the verdict and agreed with each other.
+  # Fail-soft — a notifier is never allowed to be the reason a run reports failure.
   if [ "$NOTIFY_SLACK" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Notifying Slack"
@@ -1452,6 +1460,7 @@ phase_publish() {
     [ -f "$RUN_DIR/issue-url.txt" ] && issue_url="$(cat "$RUN_DIR/issue-url.txt")" || true
     PAYLOAD_JSON="$RUN_DIR/payload.json" \
     RUN_EMPTY="$RUN_EMPTY" RUN_PARTIAL="$RUN_PARTIAL" RUN_UNREADABLE="$RUN_UNREADABLE" \
+    MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_TESTS="$RUN_TESTS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" \
     LIVENESS_MEASURED="$LIVENESS_MEASURED" LIVENESS_WEDGED="$LIVENESS_WEDGED" \
     LIVENESS_OUTAGES="$LIVENESS_OUTAGES" LIVENESS_DOWN_SECONDS="$LIVENESS_DOWN_SECONDS" \
