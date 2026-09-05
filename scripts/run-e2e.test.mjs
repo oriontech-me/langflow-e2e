@@ -674,6 +674,25 @@ test("a ledger inside the clone is refused, however the path is spelled", () => 
   }
 });
 
+test("the three series paths are derived, and the environment cannot move them", () => {
+  // They used to be overridable, and that was a hole straight through the placement
+  // guard: a legal LEDGER_DIR with LEDGER_HISTORY pointing at the tracked file passed
+  // preflight with exit 0 and then handed reports/daily-history.jsonl to the appender.
+  // The publish-phase test could not catch it either — it reads the script text, and
+  // the script text says "$LEDGER_HISTORY".
+  const r = sourced(`echo "$LEDGER_HISTORY"; echo "$LEDGER_TOKENS"; echo "$LEDGER_DURATIONS"`, {
+    LEDGER_DIR: "/tmp/led",
+    LEDGER_HISTORY: join(REPO_ROOT, "reports/daily-history.jsonl"),
+    LEDGER_TOKENS: join(REPO_ROOT, "reports/token-history.jsonl"),
+    LEDGER_DURATIONS: join(REPO_ROOT, "reports/spec-durations.json"),
+  });
+  assert.deepEqual(r.stdout.trim().split("\n"), [
+    "/tmp/led/daily-history.jsonl",
+    "/tmp/led/token-history.jsonl",
+    "/tmp/led/spec-durations.json",
+  ]);
+});
+
 test("preflight refuses a ledger inside the clone, and creates nothing on the way out", () => {
   const inside = join(REPO_ROOT, "runs/ledger-should-not-exist");
   const r = preflightLedger({ LEDGER_DIR: inside });

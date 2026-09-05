@@ -160,9 +160,16 @@ KEEP_LEDGER="${KEEP_LEDGER:-1}"
 # looks in.
 LEDGER_HOME="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
 LEDGER_DIR="${LEDGER_DIR:-${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}}"
-LEDGER_HISTORY="${LEDGER_HISTORY:-${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}}"
-LEDGER_TOKENS="${LEDGER_TOKENS:-${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}}"
-LEDGER_DURATIONS="${LEDGER_DURATIONS:-${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}}"
+# DERIVED, never taken from the environment. As overridable variables they were a hole
+# straight through the guard above: `LEDGER_DIR` pointing somewhere legal and
+# `LEDGER_HISTORY` pointing at reports/daily-history.jsonl passed preflight with exit 0
+# and then handed the tracked file to the appender — the dirty tree this whole change
+# exists to prevent, reached through a variable the script itself exposed. Checking
+# their parents too would have closed it; deriving them removes the state instead, and
+# LEDGER_DIR is the one knob a machine ever needs.
+LEDGER_HISTORY="${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}"
+LEDGER_TOKENS="${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}"
+LEDGER_DURATIONS="${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}"
 # The READ side, and it stays off here on purpose. While both dailies run, the product
 # is a comparison, and a matrix balanced by VM-measured durations puts specs on
 # different shards than the Actions lane does — so a failure's neighbours differ for a
