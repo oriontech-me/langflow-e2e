@@ -20,7 +20,10 @@ Most component families moved out of `lfx.components.*` into **per-vendor
 distributions** (`lfx_openai`, `lfx_anthropic`, `lfx_google`, …) plus an aggregate
 `lfx-bundles` package. The old import paths still exist as shims, which re-point at
 the installed distribution and raise a `ModuleNotFoundError` when it is absent. The
-shims are **deleted at M4** (see *The M4 deadline* — it has no published date).
+shims are **deleted at M4** (see *The M4 deadline* — no published date; upstream's own
+stated shape puts it at 1.14 at the earliest, and on today's tip probably a minor
+later than that. That is a floor derived from a stated intent, not an estimate and
+not a commitment).
 
 **There are two kinds of shim, and the distinction changes the diagnosis:**
 
@@ -52,11 +55,22 @@ cut from, **not** `main`:
 | Categories in `GET /api/v1/all` | **36** (20 vendor + 16 core) |
 | Component types in `GET /api/v1/all` | **189** |
 
-**The ref matters, and getting it wrong is easy:** on `origin/main` the split is
-**78 / 28**, because `cassandra` became a shim on the release line only
-(2026-07-30) and has not merged back. The nightly is cut from `release-1.12.0`, so
-that is the ref to compare against; the running **image** is the final authority,
-and the *How to re-measure* section reads it directly.
+**The ref matters, and getting it wrong is easy — but the ref that differs has
+changed, so re-read this before quoting it.** The `cassandra` split that used to
+make `origin/main` read **78 / 28** against the release line's 77 / 27 **has merged
+back** (`c3bfdb7d03`, *"back-merge release-1.12.0 into main (fast-forward only)"*,
+#14652, 2026-08-18). Re-measured 2026-09-05:
+
+| ref | `lfx-bundles-shim` | `lfx-compat-shim` | total `components/*` | core |
+|---|---|---|---|---|
+| `origin/release-1.12.0` | 77 | 2 | 106 | 27 |
+| `origin/main` | 77 | 2 | 106 | 27 |
+| `origin/release-1.13.0` | **78** | 2 | **107** | 27 |
+
+So `main` and the 1.12 line now agree, and the line that differs is
+`release-1.13.0`. The nightly is cut from a release line, so that is still the ref
+to compare against; the running **image** is the final authority, and the
+*How to re-measure* section reads it directly.
 
 **The rule that matters**, stated in the direction that actually holds — the
 biconditional is false and the honest form is two measured claims:
@@ -235,25 +249,42 @@ duplicated. The exclusion is right either way, but the stronger claim is false.
 
 ## Hardcoded `lfx/components/...` paths and the M4 expiry
 
-Measured across the whole repo (`*.ts`, `*.md`, `*.mjs`) with the grep in
-*How to re-measure*: **29 occurrences across 21 files, and none of them points at a
-shim.** They resolve to six families:
+Re-measured 2026-09-05 across the whole repo (`*.ts`, `*.md`, `*.mjs`) with the
+grep in *How to re-measure*: **61 occurrences across 46 files, and none of them
+points at a shim.** They resolve to ten families:
 
-| Family | Occurrences | Core on `release-1.12.0` |
+| Family | Occurrences | Real directory on `release-1.13.0` |
 |---|---|---|
-| `models_and_agents` | 8 | yes |
-| `input_output` | 7 | yes |
+| `models_and_agents` | 21 | yes |
+| `input_output` | 15 | yes |
 | `processing` | 7 | yes |
-| `flow_controls` | 4 | yes |
-| `data_source` | 2 | yes |
+| `flow_controls` | 6 | yes |
+| `data_source` | 6 | yes |
+| `utilities` | 2 | yes (43 lines) |
+| `prototypes` | 1 | yes (35 lines) |
+| `agentics` | 1 | yes (48 lines) |
 | `agents` | 1 | **no — does not exist**, see below |
+| `volcengine` | 1 | **no — and it is not one of ours**: this file quoting #14790 below, which is a statement that the shim was deliberately *not* added. Counted because the grep counts prose, and named because a silent 61st row is how a real one hides |
 
-The 29th is this file quoting the bad path below as an example, which the grep
-counts; the 28 the first version of this section reported was the same measurement
-before that example was written down. Either way the conclusion is the one that
-matters and it is unchanged: **the M4 shim deletion breaks zero of our recorded
-paths today.** #1040 assumed otherwise ("anything of ours that reaches
-`lfx.components.*` directly breaks silently at that point") — measured, it does not.
+**The count roughly doubled and the conclusion did not**, which is the part worth
+carrying: the growth is #1298/#1314's doc-path sweep writing *correct* paths where
+docs previously carried dead or absent ones, not new coupling to the shim layer.
+Three families are new to this table (`utilities`, `prototypes`, `agentics`) and
+all three are real directories with real content, not shims. So it still holds:
+**the M4 shim deletion breaks zero of our recorded paths today.** #1040 assumed
+otherwise ("anything of ours that reaches `lfx.components.*` directly breaks
+silently at that point") — measured twice now, it does not.
+
+**Two rows are this file talking about itself**, and that is worth naming rather
+than netting out: `agents` and `volcengine` have exactly one occurrence each, and
+both of them are this document quoting a path in order to say it does *not*
+resolve. The grep cannot tell a dependency from a quotation, so the honest
+form is to count them and mark them, never to subtract them quietly — a silent
+subtraction is indistinguishable from a miscount the next time someone re-runs it.
+
+A number in this section goes stale on its own, without anything being wrong: it
+counts *our* prose, so every doc that names a component path moves it. Re-run the
+grep rather than trusting the figure — the conclusion is the durable part.
 **Re-measure when M4 gets a date**, since core families keep moving.
 
 ### The dead paths this did find — 20 of them, not one
@@ -307,35 +338,216 @@ as `--mode=check` itself, which is what this section predicted: `check` scans th
 diff (#980) — a path in a doc the PR changed fails, a pre-existing one is reported
 as a `::warning::` — and since #1574 it resolves against `origin/main` **plus the
 two release lines the nightly is cut from**, naming in a `::notice::` any path that
-resolves on only some of them. Measured 2026-08-25: 502 paths, zero unresolved —
-spread over the **145** docs that declare any, out of 261 scanned (1 exempt). The
-guard's own line reads `from 261 doc(s)` because that is what it read, not what
-declared; 116 of them name no path at all.
+resolves on only some of them. Re-measured 2026-09-05: **589 paths, zero
+unresolved, and zero `::notice::`** — spread over the **178** docs that declare any,
+out of 294 scanned (1 exempt). The guard's own line reads `from 294 doc(s)` because
+that is what it read, not what declared; 116 of them name no path at all. The one
+path that used to resolve on `release-1.12.0` only now resolves everywhere, which is
+the same back-merge recorded above.
+
+**Which refs it resolves against is derived and rotates, so name it by rule and not
+by ref.** `pickReleaseBranches()` returns the newest branch of each of the two
+newest release *lines*, and on 2026-09-05 that is `release-1.13.0` +
+**`release-1.12.1`**, not `release-1.12.0` — the exact rotation the script's own
+comment predicted would "vanish silently". It had **already happened** when the
+measurement above was taken: 1.12.1 was cut on **2026-09-01**, the day `v1.12.0`
+shipped (its first commit past `main` is the version bump; the 09-04 date is only
+its tip). The verdict is unchanged on
+either pair (re-run with both: 589 / zero / zero), which is the point of deriving
+them; but a doc that records `release-1.12.0` as *the* second ref is recording a
+snapshot of a moving value. Print the current pair with
+`--mode=release-ref` rather than quoting one.
 
 ---
 
 ## The M4 deadline
 
-**There is no published date, and this was searched for rather than assumed.** `M4`
-appears in **79 files** on `origin/release-1.12.0`, and **none of them carries a
-date**: the 77 bundle-shim `__init__.py` docstrings ("removed once the deprecation
-window closes (M4)"), `lfx/base/datastax/__init__.py`, and two scripts —
-`scripts/ci/check_components_frozen.py` ("the M4 shim cleanup later removes those
-dirs") and `scripts/migrate/consolidate_bundles.py`, which is the generator that
-writes those docstrings in the first place. So the label is machinery, not a plan.
-It is absent from:
+**There is no published date and no target release. Asked of every public source
+rather than assumed, and the search is recorded below so nobody repeats it
+(#1297).** What upstream *has* stated is M4's **shape**, and that is enough to
+derive a floor — which turns out to be the useful half.
 
-- every `.md` on `origin/release-1.12.0`, including `BUNDLE_API.md`, the migration's
-  own design document — which *does* discuss M1 and M2, making the silence on M4
-  informative rather than merely absent;
-- any `\bM[0-9]\b` token in upstream markdown;
-- upstream issues and PRs mentioning `lfx-bundles` with a deprecation date;
-- upstream **milestones** — `langflow-ai/langflow` has none.
+### What M4 is, in upstream's own words
 
-So the deadline cannot be turned into a date from the repository. Getting one
-requires **asking the Langflow team** — tracked as #1297, and not something this
-suite can resolve on its own. Until then, treat M4 as "not
-before the next minor" and rely on the drift detector rather than the calendar.
+Four PR bodies carry an `M4` token. Two of them say what M4 *is*, and both come
+from the Phase A stack — merged into their stack branches on **2026-06-11**, and
+reaching a release line on 2026-06-23 with #13563 (which is a different date from
+a different PR, and running `gh pr view 13568` will show you so):
+
+- [langflow-ai/langflow#13568](https://github.com/langflow-ai/langflow/pull/13568),
+  under *"Deliberately deferred (follow-ups, not in Phase A's 10-PR plan)"*:
+
+  > `M4: shim removal (one loud deprecation minor first), locale-extractor lfx_bundles walk`
+
+  and, earlier in the same body: *"**Deprecation warnings deliberately deferred to
+  M4** (a warning would fire on every `pip install langflow` boot today)."*
+
+- [langflow-ai/langflow#13577](https://github.com/langflow-ai/langflow/pull/13577):
+
+  > "**Decision: deprecation warnings are NOT warranted now.** The surface is
+  > small, the shims are contract-tested, and a warning would fire on every
+  > `pip install langflow` boot […]. Revisit at **M4 (shim removal)** — one loud
+  > minor release before removal is the right shape."
+
+Neither names a date or a release number. Both are worded as *revisit later*, not
+as *scheduled for X*.
+
+The other two matter for a different reason, and the more recent one is the one to
+know about:
+
+- [#13567](https://github.com/langflow-ai/langflow/pull/13567) (same stack): *"Removals
+  are allowed, so the M4 shim cleanup (which only shrinks the set) never trips it"* —
+  about `check_components_frozen.py`, not about timing.
+- [#14790](https://github.com/langflow-ai/langflow/pull/14790) — **open**, created
+  2026-08-27, by an external contributor, and therefore the **most recent public M4
+  statement**, two and a half months after the Phase A ones: *"No
+  `src/lfx/components/volcengine` shim — that layer is the deprecation path being
+  removed at M4, and #14549 didn't add one either."*
+
+**#14790 says something about the shape of the risk, and the tree then contradicts
+it — which is the finding, not the quote.** Read alone it suggests new bundles now
+ship with **no shim at all** (true of #14549, OrcaRouter, merged 2026-08-16, which
+added no `components/` directory), so the M4 surface would be frozen and only
+shrinking, and shims are indeed already deleted piecemeal outside M4
+(`f28337bf8f`, *"remove stale vllm component shim"*, 2026-06-30).
+
+**Measured, that is false, and the counterexample is the very tip this section
+measures.** `release-1.13.0` carries **78** bundle shims against 1.12's 77, and the
+78th is `plivo` — added by `a43ed6fbca` = [#14396](https://github.com/langflow-ai/langflow/pull/14396)
+(merged 2026-09-03, *after* #14549), with a full `lfx-bundles-shim` `__init__.py`,
+and by **amending upstream's own freeze baseline**: `scripts/ci/frozen_component_dirs.txt`
+had not been touched since #13563 (2026-06-23) and #14396 appends `plivo` to it.
+
+That kills the inference twice over. The evidence for "new bundles ship without a
+shim" is two cases — #14549, merged, and #14790, still open — against one merged
+case that plainly did ship one, #14396. That is a habit at best, not a policy, and
+not something to plan a deletion surface around. And `check_components_frozen.py`
+cannot be read as the enforcement, because by its own docstring it is an
+**additions-only gate against its committed baseline**: it does not forbid a new
+in-tree shim, it only requires that the baseline be updated, which is exactly what
+#14396 did. So M4's surface is **not** frozen; it grew by one on the newest line
+two days before this was written. Re-count it, do not assume the direction:
+
+```bash
+diff <(git show origin/release-1.12.0:scripts/ci/frozen_component_dirs.txt) \
+     <(git show origin/release-1.13.0:scripts/ci/frozen_component_dirs.txt)
+```
+
+So the claim that survives is the narrow one: **no issue or PR discusses removal
+*timing*.** "The only two public statements about M4" was the first version of this
+section and it was wrong — `gh search prs --repo langflow-ai/langflow "M4"` returns
+**17** hits, of which **five** carry a `\bM4\b` token: the four above plus #11983
+(*traces v0*), whose *"chore: address M4"* / *"address M5"* commit lines belong to a
+different internal M-sequence entirely. Recorded rather than dropped, so the next
+person who runs the search and sees five does not think they ran it differently.
+#14790 is the first hit.
+
+### The floor that follows, and it is not close
+
+M4 needs **a loud deprecation minor first**, by upstream's own statement. So a
+minor whose shims are silent is neither the removal minor nor the one before it.
+
+Measured 2026-09-05 on `origin/release-1.13.0` (tip `a43ed6fbca`) — the newest line
+in development, with `v1.12.0` released 2026-09-01: **78 `lfx-bundles-shim`
+directories under `components/`** — 79 counting the one outside it,
+`lfx/base/datastax/` — **and not one of them emits a `DeprecationWarning`.**
+(The token appears 3 times in 2 files under `components/`, all unrelated:
+`agentics/helpers/model_config.py:70`, and LangChain's own
+`LangChainDeprecationWarning` imported and then *suppressed* in
+`tools/__init__.py`. There is no central warn path either — zero `warnings.warn`
+under `lfx/interface/` or `lfx/extension/` — so the claim is stronger than "no
+warning in the shims".)
+
+So the loud minor has not shipped, and on today's tip it is not 1.13 either.
+**M4 should not land before 1.14, and on the current tip more likely not before
+1.15** — *should*, not *cannot*, and the next two paragraphs are why.
+
+**The floor has two soft joints, and only naming one of them is how it gets quoted
+as a bound.** First, *"one loud minor release before removal is the right shape"*
+was a **stated intent in June 2026, not a commitment** — nothing forces the warning
+into a *minor* rather than a patch. Second, and symmetrically, nothing forces the
+**removal** into a minor either: a warning in 1.13.x followed by a deletion in
+1.13.y would satisfy upstream's stated shape and land M4 before 1.14, and this file
+already records a shim deleted outside M4 entirely (`f28337bf8f`). The floor is
+therefore exactly as binding as upstream's own stated plan and no more, and the
+form to rely on is the one that names no version at all: **not before the release
+that follows whichever release first warns** — and nothing has warned yet.
+Upstream's recent minor cadence is 44 and 40 days (`v1.10.0` 2026-06-09 →
+`v1.11.0` 07-23 → `v1.12.0` 09-01), which would put 1.14 around late November 2026
+— a *projection from cadence*, never a date upstream gave, and it must not be
+quoted as one.
+
+### Why the label cannot be resolved from public sources at all
+
+`M1`–`M4` are defined in a document that is **not in the repository**: the
+*"Bundle Separation: Developer Guide"*, cited by section number from code —
+`scripts/migrate/check_router_trust.py:4` (the Extension-System trust boundary) and
+`src/lfx/src/lfx/extension/init_template.py:68` (*"§2: richer templates …"*) — and
+tied to Jira `LE-1017`. No file matching it exists on any ref. That is why the
+four-milestone plan is legible in the code and nowhere in the docs.
+
+The label entered the tree in **`7896b9f7f17a`** (2026-06-23) =
+[#13563](https://github.com/langflow-ai/langflow/pull/13563), *"feat(bundles):
+metapackage split (Phase A)"* — whose own body calls the epic **"Phase A"** and
+carries no milestone table. The docstrings are generated by
+`scripts/migrate/consolidate_bundles.py` (`_shim_source()`), which hardcodes
+*"removed once the deprecation window closes (M4)."* The label is machinery, not a
+plan.
+
+### The negatives — searched, empty, so do not search them again
+
+| Where | Result |
+|---|---|
+| `git log --all -S "M4" -- '*.md' '*.mdx'` upstream | **empty** — no markdown file, in any revision on any fetched ref, has ever contained `M4`. `*.mdx` is in the pathspec deliberately: git's `*.md` does **not** match it, and the entire docs site is `.mdx`. The control matters as much as the result — the same command with `M1` is **non-empty** (`cc009c9133` and others, via `M1_DOGFOOD_CHECKLIST.md`), which is what proves the pickaxe does find M-tokens in markdown rather than proving nothing. Together they kill the plausible "an earlier `BUNDLE_API.md` listed M3/M4 before being trimmed" hypothesis |
+| `BUNDLE_API.md`, 15 revisions on `origin/main` back to `cc009c9133` | `M1` only (line 179, the DuckDuckGo proof-of-delivery gate); no `M2`/`M3` definition exists anywhere either |
+| `src/bundles/PORTING.md`, `NIGHTLY.md`, `lfx-bundles/README.md` | no deprecation window, no removal release |
+| `docs/docs/**` (the docs-site source) | zero hits for `shim` anywhere; the `bundles-*.mdx` pages (77 on `main`/`release-1.12.0`, 78 on `release-1.13.0`) deprecate individual *components*, never the import paths |
+| `gh search issues` / `gh search prs` — `M4`, `lfx-bundles`, `shim`, `deprecation window`, `consolidate_bundles`, `check_components_frozen`, `bundle migration milestone` | the Phase A stack (#13043, #13563–#13580) **plus #14790**, which is outside that range and is the search's first hit; **no issue or PR discusses removal timing** |
+| every comment thread on #13563, #13568, #13577 (both the `pulls/` and `issues/` endpoints) | **zero** matches for `M4`, `deprecation window`, `shim removal`, `loud deprecation` — nobody has ever asked in-thread |
+| GitHub **Discussions** (703, enabled — searched via GraphQL, see the trap below) | `M4` → **1 hit, unrelated** (#10282, *"Freeze button not working in 1.6.4"* — a fuzzy match, recorded as 1 rather than 0 so the next person does not think they ran it differently); `shim deprecation` → 0; `lfx-bundles` → #14592 only, about getting a bundle onto the official list |
+| `gh release list` + the `v1.11.0` / `v1.12.0` bodies | auto-generated PR lists; no deprecation statement |
+| `gh api repos/langflow-ai/langflow/milestones?state=all` | `[]` — the repo uses no GitHub milestones at all |
+
+Two traps this search hit, both of which produce a confident wrong answer:
+
+- **REST cannot answer "does any discussion mention M4", and the reason is not the
+  one you would guess.** `gh api repos/langflow-ai/langflow/discussions` works fine
+  — `HTTP 200`, a page of 30. What it has no notion of is **text search**, so
+  answering the question through REST means paginating all 703. `search(type:
+  DISCUSSION)` in GraphQL is the route. (An earlier version of this note claimed
+  the REST endpoint returned nothing on a repo whose Discussions are on. It does
+  not, and a documented trap that is itself false is worse than no note — so this
+  one is written from the response, not from the memory of one.)
+- **"Bundle separation concludes in 1.12" is not an M4 date.** The current release
+  notes (`docs/docs/Support/release-notes.mdx`) say exactly that, but the sentence
+  is about which provider bundles the default `uv pip install langflow` ships, and
+  it goes on to promise *"existing component class names remain compatible"*.
+  Reading it as the shim-removal date inverts its meaning.
+
+One gap, stated rather than papered over: upstream's `projectsV2` boards were
+**not** reachable (the token lacks `read:project`). If a public roadmap board
+exists, that is the one place this sweep did not look.
+
+### If a date is wanted, this is where to ask
+
+No upstream thread on the question exists, so there is nothing to subscribe to. In
+order of directness:
+
+1. A comment on [#13568](https://github.com/langflow-ai/langflow/pull/13568) —
+   where the `M4: shim removal (one loud deprecation minor first)` follow-up line
+   lives; its author owns the whole bundle-separation stack.
+2. A new **Q&A discussion**:
+   `https://github.com/langflow-ai/langflow/discussions/new?category=q-a`.
+
+### What to do until then
+
+Treat M4 as **"not before 1.14, and not on a published schedule"**, and rely on the
+drift detector rather than the calendar — `globalSetup`'s catalog comparison names
+a vanished family at the gate, which is the mechanism that actually protects the
+suite. The measurement to re-run when a date does appear is *Hardcoded
+`lfx/components/...` paths and the M4 expiry* **above**: today it reports **61
+occurrences, zero of them pointing at a shim**, so the deletion breaks none of our
+recorded paths.
 
 ---
 
@@ -363,13 +575,15 @@ docker exec langflow-e2e-runner python -c '
 import importlib.metadata as m
 print(sorted({d.metadata["Name"] for d in m.distributions() if (d.metadata["Name"] or "").startswith("lfx")}))'
 
-# the same split from the SOURCE, per ref — note release-1.12.0 and main disagree
+# the same split from the SOURCE, per ref — substitute the ref, and check more than
+# one: main and release-1.12.0 agree since the 08-18 back-merge, release-1.13.0 does not
 cd <langflow-clone> && git ls-tree origin/release-1.12.0:src/lfx/src/lfx/components \
   | awk '$2=="tree"{print $4}' | sort > /tmp/dirs.txt
 git grep -l "lfx-bundles-shim\|lfx-compat-shim" origin/release-1.12.0 \
   -- 'src/lfx/src/lfx/components/*/__init__.py' \
   | sed 's|.*components/||; s|/__init__.py||' | sort > /tmp/shims.txt
 wc -l /tmp/dirs.txt /tmp/shims.txt          # 106 dirs, 79 shims -> 27 core
+                                            # release-1.13.0: 107 / 80 -> 27 (plivo, #14396)
 comm -23 /tmp/dirs.txt /tmp/shims.txt       # the core directories
 
 # the catalog, and the accepted baseline
@@ -410,3 +624,7 @@ grep -rn "src/lfx/components/" --include="*.md" . | grep -v node_modules | grep 
   distributions are not installed in the nightly, so those `@stable` specs were
   skipping on every daily. First concrete casualty.
 - **#1040** — this file, the drift detector, and the measurements above.
+- **#1297** — the M4 answer: no published date and no target release, the negatives
+  recorded so the search is not repeated, and the floor that follows from upstream's
+  stated shape. Also the first re-measurement of every count here, which is where
+  the `plivo` counterexample to "the shim surface only shrinks" came from.
