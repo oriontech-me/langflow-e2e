@@ -7,6 +7,17 @@ import { openFlowSettings } from "./open-flow-settings";
 // nightly backend load the flow-settings modal re-renders when an in-flight
 // autosave response lands, and 3s was not enough headroom for the inputs to
 // stabilise or for `save-flow-settings` to become enabled.
+//
+// #1222 asked whether this should still be the same number as the header gate,
+// now that the gate no longer lives inside `renameFlow`. **It should not, and it
+// no longer is.** The permissions gate moved into `openFlowSettings` in #1215 and
+// is now `PERMISSIONS_GATE_TIMEOUT_MS` (30 s, measured — see
+// `permissions-gate.ts`); this budget covers the modal's INPUTS after it opened,
+// which is what #357 sized it for. The two were only ever the same number because
+// the gate inherited this one's value, and that provenance is exactly what made
+// the divergence look principled. They are independent now, and this one stays at
+// 15 s because nothing about the modal changed — lowering or raising it wants its
+// own evidence, not this issue's.
 const MODAL_TIMEOUT = 15000;
 
 // One re-apply is enough in practice: the clobbering autosave belongs to the

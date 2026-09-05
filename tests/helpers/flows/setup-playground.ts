@@ -4,6 +4,7 @@ import { adjustScreenView } from "../ui/adjust-screen-view";
 import { getAuthToken } from "../auth/get-auth-token";
 import { zoomOut } from "../ui/zoom-out";
 import { deleteFlow } from "./delete-flow";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
 
 /** Empty graph payload — what the SPA posts when the "Blank Flow" card is picked. */
 const BLANK_FLOW_DATA = {
@@ -195,7 +196,7 @@ export async function setupPlayground(page: Page): Promise<string> {
     // same expression (`FlowMenu` → `useIsFlowReadOnly(currentFlow?.id)`), so
     // its enabled state is an exact observable for "the add will register".
     await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
-      timeout: 30000,
+      timeout: PERMISSIONS_GATE_TIMEOUT_MS,
     });
 
     // The flow editor sidebar mounts after the flow payload resolves; wait for

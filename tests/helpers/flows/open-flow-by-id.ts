@@ -47,6 +47,12 @@ import {
   type SeedablePage,
   seedAssistantDiscovered,
 } from "../ui/assistant-onboarding";
+// The header-writability budget is NOT defined here since #1222: five call sites
+// wait on the same button, and two of the five diverged the moment two PRs landed
+// in parallel. Imported, never re-exported — a second import path is how a
+// converged constant grows a second identity again. The value, the burst it was
+// measured on and the case for 30 s over 15 s live in `permissions-gate.ts`.
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
 
 // Re-exported rather than redefined: the seed moved to
 // `helpers/ui/assistant-onboarding.ts` when #1220 gave it seven more callers, none
@@ -70,25 +76,15 @@ export {
  *
  * Raising the other two costs only how long a doomed entry takes to say so, and
  * that cost is bounded: this gate plus the writable gate below are SERIAL, so a
- * dead entry spends at most `CANVAS_TIMEOUT_MS + WRITABLE_TIMEOUT_MS` (130 s)
- * before failing — comfortably inside the suite's 5-minute per-test timeout, so
- * the failure still lands on this assertion with its own message rather than as
- * an unattributed test-level timeout.
+ * dead entry spends at most `CANVAS_TIMEOUT_MS + PERMISSIONS_GATE_TIMEOUT_MS`
+ * (130 s) before failing — comfortably inside the suite's 5-minute per-test
+ * timeout, so the failure still lands on this assertion with its own message
+ * rather than as an unattributed test-level timeout.
  *
  * Lowering it is a measurement, not an opinion: it wants entry durations from a
  * saturated daily, which the repo does not record today.
  */
 export const CANVAS_TIMEOUT_MS = 100000;
-
-/**
- * How long the flow header may stay disabled before the entry is called broken.
- *
- * Separate from the canvas budget on purpose: by the time this runs the editor is
- * already on screen, so the only thing outstanding is
- * `POST /api/v1/authz/me/permissions`. Charging it the canvas window would hide a
- * permission map that genuinely denies `write` behind a minute of waiting.
- */
-export const WRITABLE_TIMEOUT_MS = 30000;
 
 /**
  * The `Page` surface this helper's navigation half needs. Narrow, so the unit lane
@@ -154,7 +150,7 @@ export async function openFlowById(
 
   if (requireWritable) {
     await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
-      timeout: WRITABLE_TIMEOUT_MS,
+      timeout: PERMISSIONS_GATE_TIMEOUT_MS,
     });
   }
 }
