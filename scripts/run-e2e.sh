@@ -1294,9 +1294,12 @@ phase_merge() {
   #
   # merge_ok rides along for the same reason. Without it a run whose four shards all
   # passed but whose merge failed is byte-identical here to a run where nothing ran —
-  # both carry tests_total 0 — and this file is what stage 1's comparison and the
-  # history actually read. The distinction phase_verdict draws would end at the
-  # terminal. (#1726)
+  # both carry tests_total 0 — and this file is the run's only record of which one it
+  # was once the terminal is closed. Nothing reads it yet: `grep -rl run-metadata`
+  # finds this script and its test and nothing else, so this is evidence for a human
+  # and for the stage that will compare the lanes, not a field with a consumer today.
+  # Stated rather than implied, because "the comparator reads it" would be a reason
+  # that is not true yet. (#1726)
   node -e '
     const fs = require("fs");
     const [out, ...kv] = process.argv.slice(1);
