@@ -30,9 +30,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
 import {
   CANVAS_TIMEOUT_MS,
-  WRITABLE_TIMEOUT_MS,
   navigateToFlow,
   type NavigablePage,
 } from "./open-flow-by-id";
@@ -103,9 +103,14 @@ test("the canvas budget is separate from, and longer than, the writable budget",
   // query has not answered". Inverting them would hide a permission map that
   // genuinely denies `write` behind the longer wait, and the migration this helper
   // performed is exactly the moment someone edits one budget and not the other.
+  //
+  // Since #1222 the right-hand side is shared with four other call sites, which
+  // makes this the one place the relation is still checkable — and it is an
+  // INEQUALITY between the two budgets of this same entry, not the equality pin to
+  // an unrelated third constant that #1221 removed and #1222 forbids re-adding.
   assert.ok(
-    CANVAS_TIMEOUT_MS > WRITABLE_TIMEOUT_MS,
-    `canvas ${CANVAS_TIMEOUT_MS}ms must exceed writable ${WRITABLE_TIMEOUT_MS}ms`,
+    CANVAS_TIMEOUT_MS > PERMISSIONS_GATE_TIMEOUT_MS,
+    `canvas ${CANVAS_TIMEOUT_MS}ms must exceed the permissions gate ${PERMISSIONS_GATE_TIMEOUT_MS}ms`,
   );
   // The floor is the largest budget any of the three migrated copies carried: the
   // helper unified them by taking the MAX, because none was ever measured and

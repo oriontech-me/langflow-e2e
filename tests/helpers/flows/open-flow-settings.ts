@@ -34,26 +34,25 @@
 // copies diverge rather than after.
 
 import { type Page, expect } from "@playwright/test";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
 
 /**
- * How long the header may stay disabled before the open is called broken.
+ * How long the editor may take to put the header on screen at all.
  *
- * 15 s, which is what `renameFlow` used for this gate when it was inline — so no
- * caller's failure latency changes here. Stated without pretending it is measured:
- * the number comes from `MODAL_TIMEOUT`, sized in #357 for the flow-settings
- * modal's INPUTS, not for the effective-permissions query this waits on. Nobody
- * has measured that query under the daily's parallel load.
+ * Kept at 15 s and kept LOCAL, which is the half of #1222 that is easy to miss:
+ * this budget and the permissions gate below were one constant doing two jobs,
+ * and they answer different questions. An absent `flow_name` means the editor
+ * never mounted — the caller has not landed on the canvas — while a header that
+ * is present but disabled means the permissions query has not answered. The
+ * second is now `PERMISSIONS_GATE_TIMEOUT_MS`, shared with the four other places
+ * that wait on the same button; this one has no siblings to converge with, and
+ * changing it would be a behaviour change #1222 did not ask for.
  *
- * The same gate on the same button exists in FOUR other places at 30 s —
- * `open-flow-by-id.ts` (#1214), `setup-playground.ts`,
- * `api-request-component-regression.spec.ts` and `output-modal-copy-button.spec.ts`
- * — so this is a five-way divergence, not a two-way one. Converging them is
- * **#1222**, deliberately not resolved here: picking a number for five call sites
- * is a decision with its own evidence, and doing it inside a fix for the swallowed
- * click would bury it. It is also deliberately not pinned by a test — an assertion
- * tying this constant to another would make #1222 fail the unit lane.
+ * Still not measured, and still not pretending to be: 15 s comes from
+ * `rename-flow.ts`'s `MODAL_TIMEOUT` (#357, sized for the modal's inputs). What
+ * changed is that it no longer stands in for a wait that HAS been measured.
  */
-export const HEADER_ENABLED_TIMEOUT_MS = 15000;
+export const HEADER_PRESENT_TIMEOUT_MS = 15000;
 
 /**
  * Open the flow-settings popover from the editor header.
@@ -74,12 +73,12 @@ export async function openFlowSettings(page: Page): Promise<void> {
   // Assert the header first: its absence means the editor never mounted, which is
   // a very different failure from a header that is present but disabled.
   await expect(page.getByTestId("flow_name")).toBeVisible({
-    timeout: HEADER_ENABLED_TIMEOUT_MS,
+    timeout: HEADER_PRESENT_TIMEOUT_MS,
   });
 
   const headerButton = page.getByTestId("menu_bar_display");
   await expect(headerButton).toBeEnabled({
-    timeout: HEADER_ENABLED_TIMEOUT_MS,
+    timeout: PERMISSIONS_GATE_TIMEOUT_MS,
   });
   await headerButton.hover();
   await headerButton.click();

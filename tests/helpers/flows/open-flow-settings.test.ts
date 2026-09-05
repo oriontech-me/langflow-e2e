@@ -28,7 +28,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { HEADER_ENABLED_TIMEOUT_MS } from "./open-flow-settings";
+import { HEADER_PRESENT_TIMEOUT_MS } from "./open-flow-settings";
 
 /** The suite root, resolved from this file rather than from `process.cwd()`. */
 const TESTS_ROOT = join(__dirname, "..", "..");
@@ -255,17 +255,20 @@ test("the helper drives the button, and gates on it being enabled", () => {
   assert.deepEqual(findSpanInteractions(code), []);
 });
 
-test("the header budget is a positive, bounded wait", () => {
-  // Deliberately NOT pinned to `rename-flow.ts`'s `MODAL_TIMEOUT` by parsing its
-  // source. That coupling read as provenance it does not have — `MODAL_TIMEOUT`
-  // was sized in #357 for the modal's inputs, not for the permissions query this
-  // gate waits on — and it would have cemented a divergence: the sibling gate in
-  // `open-flow-by-id.ts` (#1214) waits 30 s on the SAME button. Converging the two
-  // is tracked separately; pinning one to a third constant here would have made
-  // that convergence fail the unit lane.
-  assert.ok(HEADER_ENABLED_TIMEOUT_MS > 0);
+test("the header-present budget is a positive, bounded wait", () => {
+  // Still deliberately NOT pinned to `rename-flow.ts`'s `MODAL_TIMEOUT` by parsing
+  // its source. That coupling read as provenance it does not have, and #1221
+  // removed it precisely so #1222 could converge the permissions gate without
+  // failing the unit lane.
+  //
+  // What this constant covers narrowed in #1222: it is now the "the editor put a
+  // header on screen at all" wait only. The enabled gate it used to share a number
+  // with is `PERMISSIONS_GATE_TIMEOUT_MS`, measured and shared with four other
+  // sites — and the two are now different numbers, which is what makes their
+  // independence visible rather than asserted.
+  assert.ok(HEADER_PRESENT_TIMEOUT_MS > 0);
   assert.ok(
-    HEADER_ENABLED_TIMEOUT_MS <= 30000,
-    "a header that never enables must fail well inside the per-test timeout",
+    HEADER_PRESENT_TIMEOUT_MS <= 30000,
+    "a header that never appears must fail well inside the per-test timeout",
   );
 });
