@@ -348,8 +348,11 @@ the same back-merge recorded above.
 **Which refs it resolves against is derived and rotates, so name it by rule and not
 by ref.** `pickReleaseBranches()` returns the newest branch of each of the two
 newest release *lines*, and on 2026-09-05 that is `release-1.13.0` +
-**`release-1.12.1`** (cut 2026-09-04), not `release-1.12.0` — the exact rotation the
-script's own comment predicted would "vanish silently". The verdict is unchanged on
+**`release-1.12.1`**, not `release-1.12.0` — the exact rotation the script's own
+comment predicted would "vanish silently". It had **already happened** when the
+measurement above was taken: 1.12.1 was cut on **2026-09-01**, the day `v1.12.0`
+shipped (its first commit past `main` is the version bump; the 09-04 date is only
+its tip). The verdict is unchanged on
 either pair (re-run with both: 589 / zero / zero), which is the point of deriving
 them; but a doc that records `release-1.12.0` as *the* second ref is recording a
 snapshot of a moving value. Print the current pair with
@@ -423,7 +426,7 @@ cannot be read as the enforcement, because by its own docstring it is an
 **additions-only gate against its committed baseline**: it does not forbid a new
 in-tree shim, it only requires that the baseline be updated, which is exactly what
 #14396 did. So M4's surface is **not** frozen; it grew by one on the newest line
-three days before this was written. Re-count it, do not assume the direction:
+two days before this was written. Re-count it, do not assume the direction:
 
 ```bash
 diff <(git show origin/release-1.12.0:scripts/ci/frozen_component_dirs.txt) \
