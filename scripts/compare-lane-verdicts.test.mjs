@@ -367,7 +367,7 @@ test("CLI prints the history path it used, so reading the wrong series is visibl
 //
 // Both reads are SCOPED to the step that appends history, and that is the point of
 // them rather than a detail: daily-stable.yml already sets LANGFLOW_VERSION in the
-// payload step further down, so a file-wide grep would stay green with the history
+// payload step ABOVE it, so a file-wide grep would stay green with the history
 // step carrying nothing (the shadowing shape of #1717, one file over).
 
 function blockAfter(text, startPattern, endPattern) {
@@ -390,4 +390,94 @@ test("run-e2e.sh passes the resolved version to the history appender", () => {
   const sh = readFileSync(join(HERE, "run-e2e.sh"), "utf8");
   const block = blockAfter(sh, /HISTORY_FILE="\$LEDGER_HISTORY"/, /append-weekly-history\.mjs/);
   assert.match(block, /LANGFLOW_VERSION=/);
+});
+
+// ---------------------------------------------------------------------------
+// Review follow-ups (PR 1728)
+// ---------------------------------------------------------------------------
+
+test("a flake BOTH lanes saw gets its own heading, not the 'failed on both' one", () => {
+  // The 33 tests before this one only ever built `agreed-failed`, so one heading over
+  // both buckets stayed green while the report told a reader that a retry was a hard
+  // failure on both lanes.
+  const result = compare(
+    row("daily-stable", { flaky: [fail()], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+    row("daily-stable-vm", { flaky: [fail()], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+  );
+  assert.equal(result.agreed.length, 1);
+  assert.equal(result.agreed[0].kind, "agreed-flaky");
+  const text = renderReport(result);
+  assert.match(text, /Failed on BOTH lanes[^\n]*: 0/);
+  assert.match(text, /Flaky on BOTH lanes[^\n]*: 1/);
+});
+
+test("the missing-row blocker names the workflow id the caller actually asked for", () => {
+  const result = compareRuns({ ci: row("daily-stable"), vm: null, date: "2026-09-07", vmWorkflow: "daily-stable-vm-canary" });
+  assert.match(result.blockers.join(" "), /daily-stable-vm-canary/);
+  assert.doesNotMatch(result.blockers.join(" "), /daily-stable-vm row/);
+});
+
+test("the unverified-version warning names the lane that is actually missing it", () => {
+  const noCi = compare(row("daily-stable", { langflow_version: null }), row("daily-stable-vm"));
+  assert.match(noCi.warnings.join(" "), /the Actions row does not carry/);
+  const noVm = compare(row("daily-stable"), row("daily-stable-vm", { langflow_version: null }));
+  assert.match(noVm.warnings.join(" "), /the VM row does not carry/);
+});
+
+test("warnings survive a blocker in the TEXT report, as they already did in the object", () => {
+  const result = compare(
+    row("daily-stable", { langflow_version: null }),
+    row("daily-stable-vm", { langflow_version: null, run_errors: ["globalSetup failed"] }),
+  );
+  assert.equal(result.comparable, false);
+  assert.match(result.warnings.join(" "), /UNVERIFIED/);
+  assert.match(renderReport(result), /UNVERIFIED/);
+});
+
+test("--allow-version-mismatch compares anyway, and stamps both surfaces", () => {
+  const rows = [
+    row("daily-stable", { langflow_version: "1.13.0.dev3" }),
+    row("daily-stable-vm", {
+      langflow_version: "1.13.0.dev4",
+      failures: [fail()],
+      totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 },
+    }),
+  ];
+  const blocked = compareRuns({ ci: rows[0], vm: rows[1], date: "2026-09-07" });
+  assert.equal(blocked.comparable, false);
+
+  const allowed = compareRuns({ ci: rows[0], vm: rows[1], date: "2026-09-07", allowVersionMismatch: true });
+  assert.equal(allowed.comparable, true);
+  assert.equal(allowed.divergences.length, 1);
+  assert.deepEqual(allowed.versionMismatch, { ci: "1.13.0.dev3", vm: "1.13.0.dev4", allowed: true });
+  assert.match(renderReport(allowed), /VERSION MISMATCH ACCEPTED/);
+
+  const cli = runCli(["--allow-version-mismatch", "--json"], rows);
+  assert.equal(cli.status, 0);
+  assert.equal(JSON.parse(cli.stdout).versionMismatch.allowed, true);
+});
+
+test("a dev-level difference is NOT quietly demoted: it blocks like any other mismatch", () => {
+  const result = compare(
+    row("daily-stable", { langflow_version: "1.13.0.dev3" }),
+    row("daily-stable-vm", { langflow_version: "1.13.0.dev4" }),
+  );
+  assert.equal(result.comparable, false, "dev3 vs dev4 is a day of commits on the release branch");
+});
+
+test("LEDGER_DIR wins over XDG_STATE_HOME, because a machine that sets it writes only there", () => {
+  const env = { LEDGER_DIR: "/ledger", XDG_STATE_HOME: "/state", HOME: "/home/x" };
+  assert.equal(defaultHistoryPath(env, () => true), "/ledger/daily-history.jsonl");
+  assert.equal(
+    defaultHistoryPath(env, (p) => p.startsWith("/state")),
+    "/state/langflow-e2e/daily-history.jsonl",
+    "an unset-but-declared LEDGER_DIR must not shadow a ledger that exists",
+  );
+});
+
+test("--json stays parseable when the history file is missing", () => {
+  const res = spawnSync(process.execPath, [CLI, "--history", "/nonexistent/history.jsonl", "--json"], { encoding: "utf8" });
+  assert.equal(res.status, 1);
+  const parsed = JSON.parse(res.stdout);
+  assert.match(parsed.error, /no history at/);
 });

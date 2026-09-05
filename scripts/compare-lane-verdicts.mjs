@@ -20,6 +20,10 @@
 //   --date <YYYY-MM-DD>  Compare that day instead of the newest complete one.
 //   --ci-workflow / --vm-workflow  Override the two `workflow` ids.
 //   --json             Emit the full result as JSON instead of the readable report.
+//   --allow-version-mismatch
+//                      Compare anyway when the two lanes tested different Langflow
+//                      versions. The report and the JSON are STAMPED with the
+//                      mismatch, because the list then contains product differences.
 //
 // Exit codes - a divergence is the EXPECTED product here, so it is not an error:
 //   0  a comparison was produced (with or without divergences)
@@ -48,9 +52,16 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
  * and the tracked file is the fallback for a laptop that has no ledger at all.
  */
 export function defaultHistoryPath(env = process.env, exists = existsSync) {
+  // LEDGER_DIR first, and not as a courtesy: run-e2e.sh calls it "the one knob a
+  // machine ever needs", so a machine that sets it writes the VM rows there and
+  // nowhere else. Deriving only from XDG_STATE_HOME would send this tool to the
+  // clone's tracked file - Actions rows alone - and it would block with "no
+  // daily-stable-vm row" on a machine whose VM rows exist.
+  const candidates = [];
+  if (env.LEDGER_DIR) candidates.push(join(env.LEDGER_DIR, "daily-history.jsonl"));
   const home = env.XDG_STATE_HOME || (env.HOME ? join(env.HOME, ".local", "state") : null);
-  const ledger = home ? join(home, "langflow-e2e", "daily-history.jsonl") : null;
-  if (ledger && exists(ledger)) return ledger;
+  if (home) candidates.push(join(home, "langflow-e2e", "daily-history.jsonl"));
+  for (const c of candidates) if (exists(c)) return c;
   return join(REPO_ROOT, "reports", "daily-history.jsonl");
 }
 
@@ -61,6 +72,7 @@ export function parseArgs(argv) {
     ciWorkflow: DEFAULT_CI_WORKFLOW,
     vmWorkflow: DEFAULT_VM_WORKFLOW,
     json: false,
+    allowVersionMismatch: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -74,6 +86,7 @@ export function parseArgs(argv) {
     else if (a === "--ci-workflow") opts.ciWorkflow = need();
     else if (a === "--vm-workflow") opts.vmWorkflow = need();
     else if (a === "--json") opts.json = true;
+    else if (a === "--allow-version-mismatch") opts.allowVersionMismatch = true;
     else if (a === "--help" || a === "-h") opts.help = true;
     else throw new Error(`unknown option: ${a}`);
   }
@@ -96,13 +109,22 @@ function main(argv) {
     return 0;
   }
 
+  // A --json caller gets JSON on every path it can reach, including the ones that
+  // fail. Exiting 1 with prose on stdout hands a machine consumer nothing it can
+  // parse, and "the output was empty" is the least useful way to learn a path is
+  // wrong.
+  const failure = (message, extra = {}) => {
+    if (opts.json) process.stdout.write(JSON.stringify({ error: message, ...extra }, null, 2) + "\n");
+    process.stderr.write(message + "\n");
+    return 1;
+  };
+
   const path = opts.history || defaultHistoryPath();
   if (!existsSync(path)) {
-    process.stderr.write(
-      `no history at ${path}\n` +
-        `Pass --history, or run this on the machine that keeps the ledger.\n`,
+    return failure(
+      `no history at ${path} - pass --history, or run this on the machine that keeps the ledger.`,
+      { source: path },
     );
-    return 1;
   }
 
   const { entries, bad } = parseHistory(readFileSync(path, "utf8"));
@@ -117,13 +139,15 @@ function main(argv) {
   });
 
   if (!selected.date) {
-    process.stderr.write(
-      `${path} holds no row for either lane (${opts.ciWorkflow}, ${opts.vmWorkflow}).\n`,
-    );
-    return 1;
+    return failure(`${path} holds no row for either lane (${opts.ciWorkflow}, ${opts.vmWorkflow}).`, { source: path });
   }
 
-  const result = compareRuns(selected);
+  const result = compareRuns({
+    ...selected,
+    ciWorkflow: opts.ciWorkflow,
+    vmWorkflow: opts.vmWorkflow,
+    allowVersionMismatch: opts.allowVersionMismatch,
+  });
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({ source: path, ...result }, null, 2) + "\n");

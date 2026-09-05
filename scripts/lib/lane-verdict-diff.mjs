@@ -32,7 +32,10 @@
 // below it would be fiction: a lane missing for the day, a lane that reported
 // top-level run errors (globalSetup died, so its verdict is not a verdict), or two
 // different Langflow versions - which turns the list into the product's changelog,
-// the exact failure step 14 is built to avoid.
+// the exact failure step 14 is built to avoid. That last one has a per-invocation
+// escape hatch (`allowVersionMismatch`), because the day it fires is often a day
+// somebody wants to look at; taking it STAMPS the result and the report rather than
+// quietly softening the blocker into a warning.
 //
 // A WARNING means the comparison stands but is narrower than it looks.
 
@@ -125,13 +128,26 @@ const shardsOf = (row) => row?.backend?.shard_total ?? null;
  * failing, and leaving it out would make the day look like it had fewer findings
  * than it did while hiding the one bucket that needs no environment work at all.
  */
-export function compareRuns({ ci, vm, date, ciExtra = 0, vmExtra = 0 }) {
+export function compareRuns({
+  ci,
+  vm,
+  date,
+  ciExtra = 0,
+  vmExtra = 0,
+  // The ids the rows were selected by. Taken as arguments rather than read off the
+  // constants, because a caller that overrode --ci-workflow / --vm-workflow would
+  // otherwise be told a row is missing under a name it never asked for.
+  ciWorkflow = DEFAULT_CI_WORKFLOW,
+  vmWorkflow = DEFAULT_VM_WORKFLOW,
+  allowVersionMismatch = false,
+} = {}) {
   const blockers = [];
   const warnings = [];
+  let versionMismatch = null;
 
-  if (!ci) blockers.push(`no ${DEFAULT_CI_WORKFLOW} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
-  if (!vm) blockers.push(`no ${DEFAULT_VM_WORKFLOW} row for ${date ?? "that date"} - the VM lane did not record a run.`);
-  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], comparable: false };
+  if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
+  if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the VM lane did not record a run.`);
+  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, comparable: false };
 
   for (const [label, row] of [["Actions", ci], ["VM", vm]]) {
     const errs = row.run_errors ?? [];
@@ -146,12 +162,26 @@ export function compareRuns({ ci, vm, date, ciExtra = 0, vmExtra = 0 }) {
   const ciVersion = ci.langflow_version ?? null;
   const vmVersion = vm.langflow_version ?? null;
   if (ciVersion && vmVersion && ciVersion !== vmVersion) {
-    blockers.push(
+    versionMismatch = { ci: ciVersion, vm: vmVersion, allowed: allowVersionMismatch };
+    const what =
       `the lanes tested DIFFERENT Langflow versions - Actions ${ciVersion}, VM ${vmVersion}. ` +
-        `Every product change between those two would land in this list as an environment difference.`,
-    );
+      `Every product change between those two lands in this list as an environment difference.`;
+    // The escape hatch exists because the day this fires is often a day somebody wants
+    // to look at: `:latest` can move between the Actions pull and the VM's resolution,
+    // and refusing outright would throw the whole day away. It is per-invocation and
+    // STAMPED - the mismatch stays on the object and at the head of the report - so the
+    // caveat cannot be lost between running the tool and reading it. A dev-level
+    // difference is NOT quietly demoted to a warning: 1.13.0.dev3 against dev4 is a day
+    // of commits on the release branch, which is exactly the confusion being guarded.
+    if (allowVersionMismatch) warnings.push(`VERSION MISMATCH ACCEPTED (--allow-version-mismatch): ${what}`);
+    else blockers.push(what);
   } else if (!ciVersion || !vmVersion) {
-    const missing = !ciVersion && !vmVersion ? "neither row carries" : !ciVersion ? "the Actions row carries" : "the VM row carries";
+    const missing =
+      !ciVersion && !vmVersion
+        ? "neither row carries"
+        : !ciVersion
+          ? "the Actions row does not carry"
+          : "the VM row does not carry";
     warnings.push(
       `version parity UNVERIFIED: ${missing} a langflow_version. Rows written before that field existed ` +
         `lack it; the comparison below assumes a parity it cannot show.`,
@@ -164,7 +194,7 @@ export function compareRuns({ ci, vm, date, ciExtra = 0, vmExtra = 0 }) {
   // different stories about the same run, and the machine-readable one would be the
   // one telling the fiction.
   if (blockers.length) {
-    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], comparable: false };
+    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, comparable: false };
   }
 
   if (ciExtra || vmExtra) {
@@ -259,7 +289,7 @@ export function compareRuns({ ci, vm, date, ciExtra = 0, vmExtra = 0 }) {
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { date, ci, vm, blockers, warnings, divergences, agreed, comparable: blockers.length === 0 };
+  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, comparable: blockers.length === 0 };
 }
 
 const KIND_LABEL = {
@@ -287,17 +317,34 @@ export function renderReport(result, { source } = {}) {
   L.push(line("Actions", ci));
   L.push(line("VM", vm));
 
+  // The stamp rides at the head, not buried in the warning list: a report produced
+  // across two different products has to say so where it cannot be scrolled past.
+  if (result.versionMismatch?.allowed) {
+    L.push(
+      "",
+      `!! VERSION MISMATCH ACCEPTED - Actions ${result.versionMismatch.ci} vs VM ${result.versionMismatch.vm}.`,
+      "   Product differences between those two are in the list below.",
+    );
+  }
+
+  const pushWarnings = () => {
+    if (!warnings.length) return;
+    L.push("", "Narrowed by:");
+    for (const w of warnings) L.push(`  - ${w}`);
+  };
+
   if (blockers.length) {
     L.push("", "NOT COMPARABLE:");
     for (const b of blockers) L.push(`  - ${b}`);
+    // Warnings are printed here too. Dropping them under a blocker would make the text
+    // and the JSON tell different stories about one run, which is the asymmetry this
+    // file refuses everywhere else.
+    pushWarnings();
     L.push("", "No divergence list is produced: it would describe something other than the environment.");
     return L.join("\n");
   }
 
-  if (warnings.length) {
-    L.push("", "Narrowed by:");
-    for (const w of warnings) L.push(`  - ${w}`);
-  }
+  pushWarnings();
 
   L.push("", `Divergences: ${divergences.length}`);
   if (!divergences.length) {
@@ -316,8 +363,15 @@ export function renderReport(result, { source } = {}) {
     }
   }
 
-  L.push("", `Failed on BOTH lanes (the product, not the environment): ${agreed.length}`);
-  for (const a of agreed) L.push(`  ${a.name}`);
+  // Split by kind. A flake both lanes saw is NOT a failure both lanes saw, and one
+  // heading over both makes a reader at 09:00 count a retry as a hard failure - the
+  // "looks right while being wrong" shape this file is written against.
+  const agreedFailed = agreed.filter((a) => a.kind === "agreed-failed");
+  const agreedFlaky = agreed.filter((a) => a.kind === "agreed-flaky");
+  L.push("", `Failed on BOTH lanes (the product, not the environment): ${agreedFailed.length}`);
+  for (const a of agreedFailed) L.push(`  ${a.name}`);
+  L.push("", `Flaky on BOTH lanes (unstable in both, not a lane difference): ${agreedFlaky.length}`);
+  for (const a of agreedFlaky) L.push(`  ${a.name}`);
 
   L.push(
     "",
