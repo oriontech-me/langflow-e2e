@@ -1262,6 +1262,12 @@ jobs:
           HISTORY_FILE: reports/daily-history.jsonl
           WORKFLOW: daily-stable
           LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          # The RESOLVED version, next to the tag that asked for it. The VM daily
+          # appends to this same series, and comparing two rows that tested different
+          # Langflows would file the product's changelog as an environment difference
+          # (step 14 of the VM migration). The tag alone cannot tell them apart:
+          # `:latest` on two different days is two different products.
+          LANGFLOW_VERSION: ${{ needs.test.outputs.langflow_version }}
           # In-run backend liveness, persisted on the history line (#1077). The
           # same directory the outage reporter above reads, so the row and the
           # umbrella section describe the run with the same numbers. The wedge is
