@@ -110,14 +110,19 @@ pair per run:
 | Pre-fix (unmodified spec), CI | `openai` / `gpt-4o-mini` | 3 | 3/3 clean |
 | Pre-fix (unmodified spec), CI | `google` / `gemini-3.5-flash` | 3 | 3/3 clean |
 | Post-fix, local `1.12.0.dev39` | `google` / `gemini-3.5-flash` | 3 | 3/3 clean, `flaky=0 skipped=0` |
-| Post-#1380 refactor, local `1.13.0.dev4` | `openai` / `gpt-4o-mini` | 1 | 2/2 clean, `flaky=0 skipped=0` |
 
-10 runs, 20 tests, zero failures (the last is the #1380 helper extraction, a
-pure refactor — its force-fails are recorded in that PR, not here). **`anthropic` could not be measured at all** — the
+9 runs, 18 tests, zero failures. **`anthropic` could not be measured at all** — the
 key is out of credit in CI as well as locally (`Your credit balance is too low`;
 three `provider=anthropic` dispatches exited 1 at *Resolve the run's provider
 selection*), so the one recorded non-compliance (2026-08-13,
 `claude-haiku-4-5`, a single daily) is currently unreproducible.
+
+**Deliberately not in the table above:** the #1380 helper extraction (PR #1738)
+re-ran the pair once on `1.13.0.dev4` / `openai` / `gpt-4o-mini` — 2/2 clean,
+`flaky=0 skipped=0`, which is what `Last validated` above records. It is a
+pure-refactor smoke run, not a compliance measurement and not on `manual.yml`,
+and its force-fails live on that PR. Folding it into the count would inflate the
+evidence that justifies the `@stable` restoration with a run of a different kind.
 
 **Residual risk, stated rather than implied.** `daily-stable.yml`'s weekday
 rotation advances past an inactive provider, so anthropic (Tue/Fri) does not run
