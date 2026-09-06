@@ -50,19 +50,33 @@ jobs:
       # annotations land here, the report is still produced, and the job is failed
       # at the end by "Enforce the path guard" — coverage first, strictness kept
       # (the trade-off `Collect models` makes on the daily, #980/#570).
+      #
+      # `--verdict` carries the outcome to the sweep, which prints it ABOVE the
+      # area table (#1182). The annotations below are in the job log; the person
+      # acting on the issue is not.
       - name: Guard the monitored paths against the checkout
         id: guard
         continue-on-error: true
-        run: node scripts/watch-upstream-areas.mjs --mode=check --root langflow-upstream
+        run: node scripts/watch-upstream-areas.mjs --mode=check --root langflow-upstream --verdict guard-verdict.json
 
       - name: Detect changes in monitored paths
         id: detect
         env:
           SINCE: ${{ inputs.since || '24 hours ago' }}
-        run: node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "$SINCE"
+        run: |
+          node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream \
+            --since "$SINCE" --verdict guard-verdict.json
 
+      # `has_changes` alone would drop the issue in exactly the case #1182 is
+      # about: a monitored path that upstream deleted SUPPRESSES that area's
+      # commits, so the guard can fail on a day where nothing else changed and the
+      # sweep honestly reports zero areas. The verdict would then live only in the
+      # job log and the step summary — the two places the issue says the reader is
+      # not. The body renders cleanly with zero areas (the guard section, then an
+      # empty table), and `renderIssueTitle` retitles it so the issue does not
+      # claim a change that did not happen.
       - name: Create review issue if changes detected
-        if: steps.detect.outputs.has_changes == 'true'
+        if: steps.detect.outputs.has_changes == 'true' || steps.guard.outcome == 'failure'
         uses: actions/github-script@v9
         env:
           # Read through the environment, never interpolated into the script body:
@@ -83,6 +97,35 @@ jobs:
               // decided on.
               labels: ['needs-triage', 'automated'],
             });
+
+      # `window_commits` is the sweep's own denominator: "0 areas changed" over a
+      # window that selected no commits at all says nothing about the areas. It
+      # used to be written to $GITHUB_OUTPUT and read by nobody, so a drift in the
+      # name would have been invisible — the summary is what makes it consumed.
+      - name: Summarise the sweep
+        if: always() && steps.detect.outcome != 'skipped'
+        env:
+          WINDOW_COMMITS: ${{ steps.detect.outputs.window_commits }}
+          AREAS_CHANGED: ${{ steps.detect.outputs.areas_changed }}
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          SINCE: ${{ inputs.since || '24 hours ago' }}
+        run: |
+          # `since` is a dispatch input rendered into a markdown table: a `|`
+          # breaks the row and a newline (reachable through the API, not the UI)
+          # injects arbitrary markdown. The step is `always()`, so it prints the
+          # raw value even when `assertValidSince` already rejected it — which is
+          # exactly when the value is hostile.
+          SAFE_SINCE=$(printf '%s' "$SINCE" | tr '\n\r' '  ' | sed 's/|/\\|/g')
+          {
+            echo "### Upstream sweep"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Window | \`${SAFE_SINCE}\` |"
+            echo "| Upstream commits in window (repo-wide) | ${WINDOW_COMMITS:-unknown} |"
+            echo "| Areas changed | ${AREAS_CHANGED:-unknown} |"
+            echo "| Path guard | ${GUARD_OUTCOME:-unknown} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The guard's verdict decides the job, but only after the report exists.
       - name: Enforce the path guard
