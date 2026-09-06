@@ -1,6 +1,6 @@
 # Agent Max Iterations — agent stops at the configured limit
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev39`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev4`)
 
 ---
 
@@ -110,8 +110,10 @@ pair per run:
 | Pre-fix (unmodified spec), CI | `openai` / `gpt-4o-mini` | 3 | 3/3 clean |
 | Pre-fix (unmodified spec), CI | `google` / `gemini-3.5-flash` | 3 | 3/3 clean |
 | Post-fix, local `1.12.0.dev39` | `google` / `gemini-3.5-flash` | 3 | 3/3 clean, `flaky=0 skipped=0` |
+| Post-#1380 refactor, local `1.13.0.dev4` | `openai` / `gpt-4o-mini` | 1 | 2/2 clean, `flaky=0 skipped=0` |
 
-9 runs, 18 tests, zero failures. **`anthropic` could not be measured at all** — the
+10 runs, 20 tests, zero failures (the last is the #1380 helper extraction, a
+pure refactor — its force-fails are recorded in that PR, not here). **`anthropic` could not be measured at all** — the
 key is out of credit in CI as well as locally (`Your credit balance is too low`;
 three `provider=anthropic` dispatches exited 1 at *Resolve the run's provider
 selection*), so the one recorded non-compliance (2026-08-13,
@@ -156,8 +158,16 @@ Shared setup per test (identical except `max_iterations`):
 - Set the Agent Instructions (`textarea_str_system_prompt`) to force use of the
   URL fetch tool for any URL question, so the agent **attempts a tool call** —
   which needs more than one model call — instead of answering in one shot.
-- Open the Agent node inspector (`parameters-button`); set
-  `int_int_max_iterations`; close (`inspection-panel-close`).
+- Set `max_iterations` through the shared helper
+  `tests/helpers/ui/set-agent-max-iterations.ts`: it selects the Agent node,
+  opens the inspector (`parameters-button`), exposes the advanced field on the
+  node body (`inspector-add-max_iterations`), closes the panel
+  (`inspection-panel-close`), fills `int_int_max_iterations` **and asserts the
+  field holds the value**. The read-back is part of the contract: a fill that
+  silently no-ops would leave the template default (15) in place and this spec
+  would then assert its limit message against a cap it never set. The helper is
+  shared with `agent-multi-tool-selection.spec.ts`, which drove the same four
+  handles as a copy until #1380.
 - Set the task on the **ChatInput node** (`textarea_str_input_value`) and
   `waitForFlowSaveSettled` (the Playground prompt pre-fills from the node —
   typing into the Playground races an async default re-injection; see
@@ -320,8 +330,10 @@ model that does loop — 15 graph steps instead of 45.
 
 - If the terminal message wording changes from `Model call limits exceeded: run
   limit (N/N)`.
-- If the Agent node field testids change (`int_int_max_iterations`,
-  `inspector-add-max_iterations`, `textarea_str_system_prompt`).
+- If the Agent node field testids change: `int_int_max_iterations` and
+  `inspector-add-max_iterations`, both owned by
+  `tests/helpers/ui/set-agent-max-iterations.ts` since #1380, or
+  `textarea_str_system_prompt`.
 - If the Simple Agent template or its URL fetch tool is renamed/rewired — the
   template ships **two** tools (`URLComponent` and `UnifiedWebSearch`, both wired
   to the Agent's `tools` handle), and the asserted step name comes from the URL

@@ -3,10 +3,7 @@ import path from "path";
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import {
-  closeAdvancedOptions,
-  openAdvancedOptions,
-} from "../../../../helpers/ui/open-advanced-options";
+import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
@@ -76,9 +73,57 @@ const SYSTEM_PROMPT =
 const SYSTEM_PROMPT_SEQUENCE =
   "Use the connected tools to complete the task. You may call multiple tools in " +
   "sequence as the task requires; never answer from memory and never refuse.";
-// Iteration budget for the sequence test only (#1378). Empirical -- see
-// setMaxIterations for the measurements, and for why it bounds the blast radius
-// without making this test deterministic.
+// Iteration budget for the sequence test (Test 3) only, and the reason it exists
+// (#1378). Test 3 is the only one whose instruction permits an open-ended
+// sequence, and the agent does not reliably converge on it: when it doesn't, it
+// keeps calling perform_search, and every such call injects the Web Search
+// component's whole result set. That component caps nothing -- it scrapes each
+// DuckDuckGo hit's full page text (measured on 1.12.0.dev20: 10 results, 182,316
+// chars ~= 45.6k tokens in ONE call; upstream langflow-ai/langflow#14469). Since
+// the conversation is re-sent every turn, a non-converging run grows without
+// bound and the provider rejects it: #1378 recorded requests of
+// 206,881/206,902/271,317 tokens in CI and 5,060,863 locally, after which the run
+// returns no reply at all.
+//
+// Not a rate-limit tier problem: the local org allows 4M TPM (20x CI's 200k) and
+// blew through it anyway, and no model's context window holds 5M tokens. A
+// bigger tier or a wider model buys nothing; bounding the iteration count does.
+//
+// What this cap DOES and DOES NOT do -- read this before trusting it. It bounds
+// the worst case (the 5,060,863-token run above cost ~2 min of wall clock and
+// real money); it does NOT make this test deterministic. Measured on
+// 1.12.0.dev20 / gpt-4o-mini, --retries=0:
+//
+//     max_iterations   pass rate
+//     15 (default)     4/5
+//     8 (this value)   5/6   <- same rate within noise, smaller blast radius
+//     4                0/2
+//
+// 4 fails for a DIFFERENT reason and that asymmetry is why the cap cannot be
+// tightened into a fix: max_iterations=4 sets a LangGraph recursion_limit of 13,
+// the agent hits it ("Recursion limit of 13 reached without hitting a stop
+// condition"), and a run that stops that way persists no AI message at all -- so
+// the sequence assert fails on absent data rather than wrong data.
+//
+// UPSTREAM CAP LANDED (2026-08-13) -- langflow-ai/langflow#14489 bounded the
+// component (max_results=5, max_content_length=2000). It reached the nightly in
+// 1.12.0.dev25, NOT dev24: that image was cut before the merge-back, so reading
+// the fix on release-1.12.0 says nothing about the image you are running --
+// grep max_results in the INSTALLED wheel instead. Measured on dev25, same
+// query: 5 results / 10,000 chars ~= 2.5k tokens, a 17.9x reduction. That kills
+// the argument this comment used to make (that ONE search call was itself
+// unbounded -- 15,857 / 53,714 / 78,848 tokens across three queries -- so no
+// iteration cap could ever guarantee the test): a call now has a hard ceiling,
+// and 15 iterations accumulate ~37k tokens of search payload, inside both the
+// 128k window and CI's 200k TPM.
+//
+// The cap still stays at 8. Measured on dev25 / gpt-4o-mini, --retries=0:
+// 7/7 at 8 and 4/4 at 15, which is NOT evidence that it is dispensable -- the
+// same day, 10/10 passed on dev24 with the component still unbounded, so this
+// environment (a 4M TPM org) did not reproduce the failure and the two arms
+// cannot discriminate. It costs nothing and it is still what stops a
+// non-converging agent from running 15 turns.
+// Re-measure before changing this number -- do not re-derive it on paper.
 const MAX_ITERATIONS_SEQUENCE = "8";
 
 // Flows created by each test are tracked here and deleted by id in
@@ -141,74 +186,6 @@ async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
   await field.click();
   await field.fill(prompt);
   await field.blur();
-}
-
-// Cap the Agent's max_iterations (test 3 only). This test is the only one whose
-// instruction permits an open-ended sequence, and the agent does not reliably
-// converge on it: when it doesn't, it keeps calling perform_search, and every
-// such call injects the Web Search component's whole result set. That component
-// caps nothing -- it scrapes each DuckDuckGo hit's full page text (measured on
-// 1.12.0.dev20: 10 results, 182,316 chars ~= 45.6k tokens in ONE call; upstream
-// langflow-ai/langflow#14469). Since the conversation is re-sent every turn, a
-// non-converging run grows without bound and the provider rejects it: #1378
-// recorded requests of 206,881/206,902/271,317 tokens in CI and 5,060,863
-// locally, after which the run returns no reply at all.
-//
-// Not a rate-limit tier problem: the local org allows 4M TPM (20x CI's 200k) and
-// blew through it anyway, and no model's context window holds 5M tokens. A
-// bigger tier or a wider model buys nothing; bounding the iteration count does.
-//
-// What this cap DOES and DOES NOT do -- read this before trusting it. It bounds
-// the worst case (the 5,060,863-token run above cost ~2 min of wall clock and
-// real money); it does NOT make this test deterministic. Measured on
-// 1.12.0.dev20 / gpt-4o-mini, --retries=0:
-//
-//     max_iterations   pass rate
-//     15 (default)     4/5
-//     8 (this value)   5/6   <- same rate within noise, smaller blast radius
-//     4                0/2
-//
-// 4 fails for a DIFFERENT reason and that asymmetry is why the cap cannot be
-// tightened into a fix: max_iterations=4 sets a LangGraph recursion_limit of 13,
-// the agent hits it ("Recursion limit of 13 reached without hitting a stop
-// condition"), and a run that stops that way persists no AI message at all -- so
-// the sequence assert fails on absent data rather than wrong data.
-//
-// UPSTREAM CAP LANDED (2026-08-13) -- langflow-ai/langflow#14489 bounded the
-// component (max_results=5, max_content_length=2000). It reached the nightly in
-// 1.12.0.dev25, NOT dev24: that image was cut before the merge-back, so reading
-// the fix on release-1.12.0 says nothing about the image you are running --
-// grep max_results in the INSTALLED wheel instead. Measured on dev25, same
-// query: 5 results / 10,000 chars ~= 2.5k tokens, a 17.9x reduction. That kills
-// the argument this comment used to make (that ONE search call was itself
-// unbounded -- 15,857 / 53,714 / 78,848 tokens across three queries -- so no
-// iteration cap could ever guarantee the test): a call now has a hard ceiling,
-// and 15 iterations accumulate ~37k tokens of search payload, inside both the
-// 128k window and CI's 200k TPM.
-//
-// The cap still stays at 8. Measured on dev25 / gpt-4o-mini, --retries=0:
-// 7/7 at 8 and 4/4 at 15, which is NOT evidence that it is dispensable -- the
-// same day, 10/10 passed on dev24 with the component still unbounded, so this
-// environment (a 4M TPM org) did not reproduce the failure and the two arms
-// cannot discriminate. It costs nothing and it is still what stops a
-// non-converging agent from running 15 turns.
-// Re-measure before changing this number -- do not re-derive it on paper.
-//
-// max_iterations is an advanced field: expose it on the node body via the
-// inspector, then fill it -- the same handles agent-max-iterations.spec.ts uses.
-async function setMaxIterations(page: Page, maxIterations: string): Promise<void> {
-  await page.locator('[data-testid^="rf__node-Agent"]').first().click();
-  await openAdvancedOptions(page);
-  await page.getByTestId("inspector-add-max_iterations").click();
-  await closeAdvancedOptions(page);
-  const maxIter = page.getByTestId("int_int_max_iterations");
-  await expect(maxIter).toBeVisible({ timeout: 15000 });
-  await maxIter.scrollIntoViewIfNeeded();
-  await maxIter.fill(maxIterations);
-  await maxIter.blur();
-  // The cap is load-bearing, not cosmetic: a fill that silently no-ops leaves
-  // the default 15 in place and re-opens #1378 on a run that still looks green.
-  await expect(maxIter).toHaveValue(maxIterations, { timeout: 10000 });
 }
 
 // Set the task on the ChatInput node (the Playground prompt pre-fills from it;
@@ -533,8 +510,8 @@ for (const { label, options, skipReason } of targets) {
           // Bound the run BEFORE it starts: this is the only test whose
           // instruction permits an open-ended sequence, so it is the only one
           // that can accumulate Web Search payloads past the model's context
-          // window (#1378 — see setMaxIterations).
-          await setMaxIterations(page, MAX_ITERATIONS_SEQUENCE);
+          // window (#1378 — see MAX_ITERATIONS_SEQUENCE).
+          await setAgentMaxIterations(page, MAX_ITERATIONS_SEQUENCE);
           await setChatInputText(page, task);
           await waitForFlowSaveSettled(page);
         });
