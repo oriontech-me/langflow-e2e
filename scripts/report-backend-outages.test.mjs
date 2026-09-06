@@ -310,10 +310,15 @@ test("the CLI reports NOT MEASURED when no liveness artifact was downloaded", ()
   assert.match(outputs, /^wedged=false$/m);
 });
 
-// The load-bearing contract: the merge job's `Auto-remove @stable from hard
-// failures` and `Create issue on failure` steps have no always(), so ANY red step
-// before them skips the umbrella issue. A malformed summary must therefore
-// degrade, never exit non-zero.
+// The load-bearing contract: the merge job's `Auto-remove @stable from hard failures`
+// has no always(), so ANY red step before it silently skips the tag removal. A
+// malformed summary must therefore degrade, never exit non-zero.
+//
+// `Create issue on failure` was in this list until #1176 gave it `always()` — the same
+// trap cost the umbrella issue on a total shard abort, where a failed `Merge blob
+// reports` skipped the step outright. The guarantee below is unchanged and still
+// wanted: it is what keeps a diagnostic from reddening a step, and the auto-removal
+// still depends on it.
 test("the CLI exits 0 on a malformed summary instead of failing the merge job", () => {
   const dir = makeTempDir("liveness-report-");
   const liveness = join(dir, "all-liveness");

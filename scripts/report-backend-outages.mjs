@@ -32,8 +32,10 @@
 // "Never fails the run" is ENFORCED, not merely intended: the entry point below
 // swallows every throw, and the workflow step carries continue-on-error. Both
 // halves matter, because the merge job's `Auto-remove @stable from hard failures`
-// and `Create issue on failure` steps have no always() — a red step here would
-// skip the umbrella issue this reporter is meant to improve.
+// step has no always() — a red step here would skip the tag removal this reporter
+// is meant to inform. (`Create issue on failure` was in that list too, until #1176
+// gave it always(); the guarantee is unchanged, the umbrella just no longer needs
+// it.)
 //
 // Inputs (env):
 //   LIVENESS_DIR      directory of per-shard summary JSONs (default all-liveness)
@@ -382,12 +384,11 @@ if (isMainModule()) {
   } catch (err) {
     // A diagnostic must never be the reason a step goes red — same contract as
     // scripts/watch-backend.mjs. Here the stakes are higher than losing the
-    // section: the merge job's `Auto-remove @stable from hard failures` and
-    // `Create issue on failure` steps carry no always(), so they run under the
-    // implicit success() of every step before them. A throw here would SKIP the
-    // umbrella issue on a red daily — this reporter exists to make that issue
-    // more useful, not to delete it. The step also carries continue-on-error as
-    // a second layer.
+    // section: the merge job's `Auto-remove @stable from hard failures` step
+    // carries no always(), so it runs under the implicit success() of every step
+    // before it. A throw here would SKIP the tag removal on a red daily. The step
+    // also carries continue-on-error as a second layer. (`Create issue on failure`
+    // was in the same position until #1176 gave it always().)
     console.log(`[liveness] reporter error (ignored): ${err?.stack || err}`);
   }
 }
