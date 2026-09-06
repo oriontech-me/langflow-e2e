@@ -65,13 +65,16 @@
 //   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
 //   dataset to group failures by provider variant (#899).
 //   `report_missing` (optional, additive to schema v1, #1176) marks a line written
-//   with NO Playwright report at all — every shard aborted before producing a blob,
-//   so nothing was left to merge. Present only in that case; its absence is the
-//   normal state. The line still carries zero totals and is selected by the same
-//   "executed NO test at all" query as any other infra abort; this field is what
+//   with NO merged Playwright report at all. Present only in that case; its absence
+//   is the normal state. The line still carries zero totals and is selected by the
+//   same "executed NO test at all" query as any other infra abort; this field is what
 //   separates "there was no report" from "the report reported errors", which are
-//   different diagnoses. Its `run_errors[0]` is SYNTHESIZED by this script rather
-//   than read from the report, which is the only place that happens.
+//   different diagnoses. It does NOT say which abort produced it — every shard dying
+//   before its blob, and a merge failing on blobs that were written (#1726), both
+//   land here, and only the first means no test ran. The blob count that tells them
+//   apart lives in the merge job's `shardguard` step, which is where the umbrella
+//   issue reads it. Its `run_errors[0]` is SYNTHESIZED by this script rather than
+//   read from the report, which is the only place that happens.
 //   `run_errors` (optional, additive to schema v1) carries the TOP-LEVEL report
 //   errors — globalSetup / worker-level failures that stopped tests from running
 //   at all. Omitted when there are none, so its presence is itself the signal
@@ -278,8 +281,16 @@ const runUrl = repo ? `${serverUrl}/${repo}/actions/runs/${runId}` : null;
 // aborted in the globalSetup preflight and the history line said 0/0/0/0 with
 // no reason attached). Additive and optional — omitted when there are none, so
 // schema v1 readers are unaffected.
+// The synthesized reason says only what this script MEASURED: that no merged report
+// exists at `reportPath`. It deliberately does NOT claim the shards produced nothing —
+// two different aborts land here and the wording used to assert the first: every shard
+// dying before its blob, and every shard finishing while `merge-reports` fails on the
+// blobs they wrote (#1726). Naming the wrong one is the exact miscue #1726 had to fix
+// in the umbrella issue's own title. The distinction IS available upstream — the
+// `shardguard` step counts the blobs and `create-failure-issue.mjs` renders the two
+// shapes apart — so it is read there, not guessed here.
 const runErrors = reportMissing
-  ? [`Playwright JSON absent at ${reportPath} — no shard produced a report (infra abort)`]
+  ? [`Playwright JSON absent at ${reportPath} — no merged report was produced (infra abort)`]
   : (report?.errors || []).map((e) => errorSignature(e)).filter(Boolean);
 
 // In-run backend liveness (#1077). Built from the same per-shard summaries the

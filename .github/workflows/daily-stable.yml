@@ -860,12 +860,15 @@ jobs:
       # a lead and not a verdict. The only thing that crosses over is the `wedged`
       # output, passed to the auto-remove action to word its exemption.
       #
-      # continue-on-error: the two steps that follow and matter most on a red day
-      # — `Auto-remove @stable from hard failures` and `Create issue on failure` —
-      # carry NO always(), so they run under the implicit success() of every step
-      # before them. A throw in this diagnostic would therefore SKIP the umbrella
-      # issue it exists to improve. The script swallows its own errors too; this is
-      # the second layer, for the case the failure is the `node` invocation itself.
+      # continue-on-error: `Auto-remove @stable from hard failures` below carries NO
+      # always(), so it runs under the implicit success() of every step before it. A
+      # throw in this diagnostic would therefore skip the tag removal it exists to
+      # inform. The script swallows its own errors too; this is the second layer, for
+      # the case the failure is the `node` invocation itself.
+      #
+      # `Create issue on failure` was in that list until #1176 gave it `always()`. The
+      # guarantee is still wanted — a diagnostic must not redden a step — but the
+      # umbrella no longer depends on it.
       - name: Report mid-run backend outages
         id: liveness
         if: always()

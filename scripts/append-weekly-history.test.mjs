@@ -296,7 +296,24 @@ test("#1176 the entry carries its own reason, so the abort is not silent", () =>
   const entry = appendWithNoReport();
   assert.ok(Array.isArray(entry.run_errors) && entry.run_errors.length === 1);
   assert.match(entry.run_errors[0], /absent/i);
+  assert.match(entry.run_errors[0], /no merged report/i);
   assert.match(entry.run_errors[0], /infra abort/i);
+});
+
+test("#1176 the synthesized reason claims only what the appender measured", () => {
+  // The reason is written by this script, not read from a report, so it is the one
+  // string here that can assert something nobody checked. Two different aborts leave
+  // no results.json — every shard dying before its blob, and `merge-reports` failing
+  // on blobs the shards DID write (#1726) — and only the first means no test ran. The
+  // appender cannot see blobs, so a reason phrased over shards would be a guess that
+  // reads as a measurement: exactly the miscue #1726 had to fix in the umbrella
+  // issue's own title. The blob count lives in the merge job's `shardguard` step.
+  const entry = appendWithNoReport();
+  assert.doesNotMatch(
+    entry.run_errors[0],
+    /shard/i,
+    "the appender never counted shards, so the reason must not speak for them",
+  );
 });
 
 test("#1176 the entry is selected by the README's existing zero-test query", () => {
