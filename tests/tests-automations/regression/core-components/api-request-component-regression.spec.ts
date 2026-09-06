@@ -7,6 +7,7 @@ import {
 } from "../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { PERMISSIONS_GATE_TIMEOUT_MS } from "../../../helpers/flows/permissions-gate";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { tableFieldTrigger } from "../../../helpers/ui/table-field-trigger";
 import { watchNodeRefresh } from "../../../helpers/ui/watch-node-refresh";
@@ -114,7 +115,7 @@ async function addApiRequestComponent(page: Page): Promise<string> {
   // dropped with no error and the node-count assertions fail without naming the
   // cause.
   await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
-    timeout: 30000,
+    timeout: PERMISSIONS_GATE_TIMEOUT_MS,
   });
   await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
     timeout: 30000,

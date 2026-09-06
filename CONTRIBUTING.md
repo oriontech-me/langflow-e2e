@@ -100,7 +100,7 @@ Use `docs/TEST-SPEC-TEMPLATE.md` as a base. The mandatory sections are: **What t
 
 In the **Last validated** field, record the Langflow release cycle in which the test was developed or last reviewed (e.g.: `Langflow 1.10.x`). Validate preferably against the `langflowai/langflow-nightly:latest` image, which tracks the release branch under development. If the nightly is unstable, use the corresponding release branch (`release-1.x.x`) directly. In both cases, the field should reflect the cycle, not the exact build.
 
-> The **External dependencies** section lists files from the upstream Langflow repository that, if changed, could break the test. It is read by `file-watcher.yml` to determine which tests need review when Langflow changes. Fill it in carefully.
+> The **External dependencies** section lists files from the upstream Langflow repository that, if changed, could break the test. It is parsed by `scripts/impacted-tests.ts` (`adaptive-impacted.yml` — itself `disabled_manually` today, see below), which maps a changed upstream path to the specs whose docs name it — by prefix, so a path that resolves to nothing makes the spec unselectable the day that lane is revived. It is **not** what `file-watcher.yml` reads: the watcher's coverage is the hand-maintained area table in `scripts/watch-upstream-areas.mjs`, so adding a path here does **not** make the watcher see it. Every path here is resolved against upstream on each PR by the **Spec-doc dependency paths** job (#1298), so fill it in carefully.
 
 ---
 
@@ -653,6 +653,41 @@ matches the impacted-specs pathspec (`:(glob)tests/**/*.spec.ts`) and fires the 
 That spec was migrated into `scripts/remove-stable-from-failures.test.ts` and deleted; if
 you find another, migrate it rather than adding to it.
 
+### Temp directories
+
+**Never call `mkdtempSync` (or `mkdtemp`) in a unit test.** Use the helper:
+
+```ts
+import { makeTempDir } from "./lib/tmp-dir.mjs";   // path relative to your test file
+
+const dir = makeTempDir("my-fixture-");            // same prefix you would have passed
+```
+
+It is `fs.mkdtempSync(path.join(os.tmpdir(), prefix))` plus the removal: the directory is
+registered on creation and swept on process exit, and `node --test` gives each test file
+its own child process, so "process exit" means "this file is done". You register nothing
+and cannot forget.
+
+The rule is a rule because 25 of the 36 files that called `mkdtempSync` directly never
+cleaned up, and all 25 looked fine in review — **26 403 directories, 1.4 GB**, measured in
+one developer's `$TMPDIR` (issue #1732). CI never showed it: runners are ephemeral, so
+every lane was green and stayed green while the entire cost landed on whoever runs the
+lanes locally and repeatedly, which is the person iterating on the code they cover.
+`scripts/lib/tmp-dir.test.mjs` now fails the PR when a test file names either function.
+
+Two limits, both deliberate:
+
+- **Ctrl-C still leaks.** `exit` does not fire for `SIGINT`, and registering a `SIGINT`
+  listener would *suppress* Node's default terminate-on-interrupt for every module that
+  imports the helper — a semantic change no test asked for.
+- **It is not for production code**, which legitimately creates directories that must
+  outlive the process. Import it there only when the lifetime really is the process
+  (`pipeline/cli.ts` does, for a downloaded artifact it reads once).
+
+Because the helper is ESM and the `test:units` lane is CommonJS, importing it goes through
+`require(esm)` — which is why `package.json` declares `"engines": {"node": ">=20.19"}`. The
+guard checks that floor against every `node-version` pin in `.github/`, per job.
+
 ### Running them
 
 ```bash
@@ -673,7 +708,9 @@ node --require ts-node/register --test --test-name-pattern "guard trips" scripts
 ### The runner, and why this one
 
 `node --test` with **ts-node's CommonJS require hook**. No new dependency, no second
-runner to keep current, and it works on the Node 20 that `pr-validation.yml` pins. A
+runner to keep current, and it works on the Node 20 that `pr-validation.yml` pins —
+**20.19 or newer**, since the hook reaches `scripts/lib/tmp-dir.mjs` through
+`require(esm)` (see *Temp directories* above). A
 type error in the test file fails it too, so `tsc` and the runner agree.
 
 Two consequences worth knowing before you fight them:

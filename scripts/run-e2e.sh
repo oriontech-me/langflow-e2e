@@ -24,9 +24,11 @@
 #     services.go-httpbin               |   start-echo-source.sh     on the TARGET host
 #     actions/upload-artifact           |   copies into $RUN_DIR
 #   job `merge`                         | phase_merge + phase_publish
+#     "Append daily history"            |   the same appenders, writing to the LEDGER
+#     "Commit daily history"            |   nothing — see difference 6
 #   "Fail scheduled run on ..."         | phase_verdict
 #
-# ## The five differences that matter
+# ## The six differences that matter
 #
 # 1. TWO MACHINES, NOT ONE. Playwright runs here (the runner host); Langflow, the
 #    echo endpoint and Ollama run on the TARGET host, driven over
@@ -60,11 +62,20 @@
 #    acted on. The code paths exist and are off by default; they turn on when the
 #    webhook and the secrets exist.
 #
+# 6. THE THREE SERIES ARE WRITTEN, NOT COMMITTED. daily-history.jsonl,
+#    token-history.jsonl and spec-durations.json are appended to a LEDGER outside the
+#    clone rather than to `reports/`, and no commit happens here at all. Writing inside
+#    the clone would leave the tree dirty, and the wrapper's `git pull --ff-only` then
+#    refuses the next morning — the protection working exactly as designed, against
+#    us. Committing them back is a later etapa's job and is absent code today, not a
+#    switch set to zero: a switch reads as implemented and disabled.
+#
 # ## Usage
 #
 #   TARGET_SSH=<ssh-alias> ./scripts/run-e2e.sh              # 4 shards
 #   TARGET_SSH=<alias> SHARDS=2 ./scripts/run-e2e.sh
 #   TARGET_SSH=<alias> DRY_RUN=1 ./scripts/run-e2e.sh        # preflight + partition only
+#   TARGET_SSH=<alias> KEEP_LEDGER=0 ./scripts/run-e2e.sh    # a smoke: record nothing
 #
 # The target host is never named in this repository: it is internal topology, and it
 # lives in the destination wiki. TARGET_SSH is required and has no default.
@@ -110,8 +121,6 @@ WITH_OLLAMA="${WITH_OLLAMA:-1}"
 CREATE_ISSUE="${CREATE_ISSUE:-0}"
 NOTIFY_SLACK="${NOTIFY_SLACK:-0}"
 POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
-COMMIT_HISTORY="${COMMIT_HISTORY:-0}"
-REFRESH_DURATIONS="${REFRESH_DURATIONS:-0}"
 
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUNS_ROOT="${RUNS_ROOT:-$REPO_DIR/runs}"
@@ -121,6 +130,54 @@ RUN_URL_BASE="${RUN_URL_BASE:-file://$RUNS_ROOT}"
 REPORT_URL="$RUN_URL_BASE/$RUN_ID/playwright-report/index.html"
 EVENT_NAME="${EVENT_NAME:-schedule}"
 WORKFLOW_ID="${WORKFLOW_ID:-daily-stable-vm}"
+
+# ---------------------------------------------------------------------------
+# THE LEDGER — the three series this lane has to keep
+# ---------------------------------------------------------------------------
+# reports/daily-history.jsonl, reports/token-history.jsonl and
+# reports/spec-durations.json only grow because the Actions daily writes them, and the
+# next etapa turns that daily off. Nothing else appends, so the gap would run from
+# there to the day this lane commits: build-triage-dataset.mjs would read a base that
+# starts partial, and the shard matrix — which balances by measured duration — would
+# degrade with it, both for a reason no run reports. This lane starts keeping the three
+# now, while the Actions series is still complete enough to seed from.
+#
+# OUTSIDE the clone, and that is not a preference. `reports/` is tracked, so a run that
+# writes there leaves the tree dirty and the wrapper's next `git pull --ff-only`
+# refuses — and that refusal is a guarantee worth keeping, not an obstacle: it is what
+# stops a machine from silently discarding local work. So the series moves, not the
+# protection. ledger_dir_is_outside_repo() checks it rather than trusting the default,
+# because the cost of getting it wrong is paid once a day, quietly, by the pull.
+#
+# WORKFLOW_ID above is what keeps the two eras apart inside one file: every line this
+# lane writes carries `daily-stable-vm`, so the Actions rows stay distinguishable after
+# the two series are merged.
+KEEP_LEDGER="${KEEP_LEDGER:-1}"
+# `$XDG_STATE_HOME` is the right shelf for this: state that must survive between runs,
+# is not a cache (losing it loses history), and is not config. Empty rather than a
+# fallback path when neither variable is set — an unwritable ledger is refused in
+# preflight, where it costs a variable, instead of guessed at into a directory nobody
+# looks in.
+LEDGER_HOME="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
+LEDGER_DIR="${LEDGER_DIR:-${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}}"
+# DERIVED, never taken from the environment. As overridable variables they were a hole
+# straight through the guard above: `LEDGER_DIR` pointing somewhere legal and
+# `LEDGER_HISTORY` pointing at reports/daily-history.jsonl passed preflight with exit 0
+# and then handed the tracked file to the appender — the dirty tree this whole change
+# exists to prevent, reached through a variable the script itself exposed. Checking
+# their parents too would have closed it; deriving them removes the state instead, and
+# LEDGER_DIR is the one knob a machine ever needs.
+LEDGER_HISTORY="${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}"
+LEDGER_TOKENS="${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}"
+LEDGER_DURATIONS="${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}"
+# The READ side, and it stays off here on purpose. While both dailies run, the product
+# is a comparison, and a matrix balanced by VM-measured durations puts specs on
+# different shards than the Actions lane does — so a failure's neighbours differ for a
+# reason that has nothing to do with the product. It turns on when the Actions daily
+# stops and the comparison is over. (Step 11 may want it earlier, with SHARDS above 1
+# and the comparison narrowed on purpose; that is a measurement decision, not a
+# default.)
+USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
 
 # Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
 # `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
@@ -195,6 +252,115 @@ export PATH="$HOME/.local/bin:$PATH"
 export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE="${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ubuntu24.04-x64}"
 
 # ---------------------------------------------------------------------------
+# THE DAILY'S SERVICE ENVIRONMENT, MIRRORED
+# ---------------------------------------------------------------------------
+# daily-stable.yml configures the instance under test through its service `env:` block.
+# Everything there that is right for ANY local instance already lives in the starters;
+# what is chosen FOR THIS LANE belongs here, in the file whose declared job is
+# mirroring that workflow. The split is not a preference: the starters' env blocks are
+# asserted identical to start-langflow-pip.sh's precisely so a spec cannot tell which
+# starter brought its instance up, and a lane-specific value written there would either
+# break that assertion or defeat its purpose (#1716's relocation).
+#
+# How these actually arrive, stated precisely because the first draft of this comment
+# was wrong and the error was load-bearing. Each is passed as a `VAR=value` prefix on
+# the remote `bash -s`, which puts it in THAT shell's environment, and the starter
+# inherits it. The starter does not need to name them — but if it DOES name one with a
+# literal, its own `uv run` prefix assignment REPLACES the inherited value for that name
+# instead of adding to it, and what this file sends never reaches the server. Nothing
+# turns red when that happens: it is the silent half of #1717, one layer down. So the
+# rule is checked rather than trusted — scripts/check-vm-env-parity.mjs refuses a
+# mirrored name that start-langflow-source.sh's launch block sets to anything other than
+# `${NAME:-…}`, which is the shape that lets the caller's value win.
+#
+# Every value is overridable, and an override is how a MACHINE records a measured
+# exception — the qa VM overrides tracing while #1720 is open, with the reason written
+# beside it. What is pinned here is the DEFAULT: scripts/check-vm-env-parity.mjs fails
+# when the workflow gains a service variable this file neither carries nor classifies,
+# and run-e2e.test.mjs reads each default OUT OF the workflow instead of out of a copy,
+# so a value changed there cannot leave this one behind (#1717).
+
+# Rejecting a value that is neither `true` nor `false` instead of passing it through:
+# these flags read anything that is not "true" as false, so `0`, `FALSE` or a value
+# carrying a space would go in silently and invert the setting with nothing said —
+# #1714's failure class, arriving through the caller rather than through a file.
+require_bool() {
+  case "$2" in
+    true | false) ;;
+    *) echo "$1 must be exactly 'true' or 'false', got: '$2'" >&2; exit 1 ;;
+  esac
+}
+
+# The same guard for this script's own 0/1 switches. The rule is which DIRECTION a typo
+# falls in: a typo'd CREATE_ISSUE=yes leaves that switch OFF, which is the safe
+# direction, while a typo'd KEEP_LEDGER=yes walks past the `die` that exists precisely
+# because a scheduled run keeping no series is indistinguishable, months later, from a
+# machine that was down — it lands in the `else` and says so in a log line nobody reads.
+#
+# The ledger pair is NOT the complete set that rule selects, and saying so here rather
+# than letting the two calls below imply otherwise. Four more fall the unsafe way and
+# are deferred to #1725: DRY_RUN (a typo'd `yes` runs the whole suite on the VM instead
+# of stopping after the partition), REQUIRE_TARGET_VERSION (enforcement silently off,
+# on a flag whose own error text argues an unperformed check is not a weaker guarantee
+# but none), and CHECK_TARGET_VERSION / PREPARE_TARGET, which have the same shape.
+require_flag() {
+  case "$2" in
+    0 | 1) ;;
+    *) echo "$1 must be exactly '0' or '1', got: '$2'" >&2; exit 1 ;;
+  esac
+}
+
+# Validated here rather than beside the assignments, which run before this function
+# exists.
+require_flag KEEP_LEDGER "$KEEP_LEDGER"
+require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
+
+# Tracing ON, because daily-stable.yml runs with it on and the traces/observability
+# specs assert against a traced instance. Both starters default it OFF — right for a
+# developer's own instance, wrong for the lane that has to match CI. Measured, not
+# assumed: on 2026-09-04 nine @stable specs failed on the VM while the same day's
+# Actions daily was green, for no reason other than this variable (#1714).
+LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-false}"
+require_bool LANGFLOW_DEACTIVATE_TRACING "$LANGFLOW_DEACTIVATE_TRACING"
+
+# Caps what ONE wedge costs (#1048). The value is a heartbeat watchdog on the event
+# loop, not a per-request deadline, and a wedged worker never recovers on its own. Not
+# a starter default: 120 is chosen for THIS lane's load, and a developer's instance has
+# no reason to inherit it. Read daily-stable.yml's comment before changing it — it
+# records why the product's own docs argue for the opposite and are wrong.
+LANGFLOW_WORKER_TIMEOUT="${LANGFLOW_WORKER_TIMEOUT:-120}"
+case "$LANGFLOW_WORKER_TIMEOUT" in
+  '' | *[!0-9]*) echo "LANGFLOW_WORKER_TIMEOUT must be a positive integer of seconds, got: '$LANGFLOW_WORKER_TIMEOUT'" >&2; exit 1 ;;
+esac
+[ "$LANGFLOW_WORKER_TIMEOUT" -gt 0 ] || { echo "LANGFLOW_WORKER_TIMEOUT must be greater than zero." >&2; exit 1; }
+
+# The workflow sets this to OVERRIDE a default the nightly image bakes in (`false`, a
+# security default). A source instance bakes in nothing, so the two lanes agree today
+# for DIFFERENT REASONS — measured on 2026-09-04, the custom-component specs pass 8/8
+# on the VM without it. Mirrored anyway, and that is exactly #1717's point: latent
+# agreement is the half of this class no run can report, because the day the product
+# default moves, only one lane notices.
+LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}"
+require_bool LANGFLOW_ALLOW_CUSTOM_COMPONENTS "$LANGFLOW_ALLOW_CUSTOM_COMPONENTS"
+
+# `foreign_keys: ON`. The dict replaces the product default wholesale, so the default
+# pragmas are repeated here rather than merged. This is the SILENT half of #1717: with
+# SQLite foreign keys off, a cascade/orphan defect (upstream #13955, the span -> trace
+# FK) leaves the raw DELETE "succeeding" with orphaned rows, so traces-delete-cascade
+# passes on the VM and fails on Actions. This lane's entire product is the comparison
+# between those two verdicts, so this one cannot be found by running anything: it
+# produces agreement, not failure.
+DEFAULT_SQLITE_PRAGMAS='{"synchronous": "NORMAL", "journal_mode": "WAL", "busy_timeout": 30000, "foreign_keys": "ON"}'
+LANGFLOW_SQLITE_PRAGMAS="${LANGFLOW_SQLITE_PRAGMAS:-$DEFAULT_SQLITE_PRAGMAS}"
+# Parseability, not content. Malformed JSON is never intentional and Langflow falls
+# back to its own defaults without saying so — this variable's failure mode arriving
+# through the caller. WHICH pragmas are set stays the operator's call, for the same
+# reason the tracing override is: a machine may need a measured exception, and it
+# records the reason where it makes it.
+node -e 'const v=process.argv[1];let p;try{p=JSON.parse(v)}catch(e){console.error("LANGFLOW_SQLITE_PRAGMAS is not valid JSON ("+e.message+"): "+v);process.exit(1)}if(p===null||typeof p!=="object"||Array.isArray(p)){console.error("LANGFLOW_SQLITE_PRAGMAS must be a JSON object, got: "+v);process.exit(1)}' \
+  "$LANGFLOW_SQLITE_PRAGMAS"
+
+# ---------------------------------------------------------------------------
 # UTILITIES
 # ---------------------------------------------------------------------------
 
@@ -206,6 +372,39 @@ die()  { err "$*"; exit 1; }
 
 # shellcheck disable=SC2086
 target_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"; }
+
+# Shell-quote a value for the shell on the OTHER side of ssh. ssh joins its arguments
+# with spaces and hands ONE string to a shell over there, so anything unquoted is
+# re-split on arrival. Every mirrored value used to be a bare word and survived that;
+# LANGFLOW_SQLITE_PRAGMAS is a JSON object, and unquoted it would set the variable to
+# `{"synchronous":` and feed the remaining five words to `bash -s` as arguments.
+# Single quotes, closed and reopened around each embedded one (`'\''`) — the POSIX
+# form, so it does not depend on the login shell ssh happens to start over there, and
+# it stays readable in a log. `printf %q` round-trips too, but its output is
+# bash-specific and unreadable at a glance.
+#
+# Written with sed rather than `${1//\'/…}` because the parameter-expansion form is
+# what the first version used and it was WRONG: inside double quotes the backslashes
+# are consumed twice, and it produced `'it\'\\'\'s'`, which does not parse at all. No
+# mirrored value carries a quote today — this would arrive the day someone overrides
+# one from a wrapper, and the failure would be a syntax error in a remote command
+# nobody ever printed.
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# The environment the target's shell must carry for its instance to match the one
+# daily-stable.yml's service brings up — see THE DAILY'S SERVICE ENVIRONMENT above for
+# why each value lives here and not in the starter.
+#
+# A function rather than a string spelled into the ssh line, so the unit tests can read
+# exactly what would be sent, quoting included, without a machine to send it to. The
+# trailing space is part of the contract: the caller concatenates.
+mirrored_target_env() {
+  printf '%s' \
+    "LANGFLOW_DEACTIVATE_TRACING=$(shq "$LANGFLOW_DEACTIVATE_TRACING") " \
+    "LANGFLOW_WORKER_TIMEOUT=$(shq "$LANGFLOW_WORKER_TIMEOUT") " \
+    "LANGFLOW_ALLOW_CUSTOM_COMPONENTS=$(shq "$LANGFLOW_ALLOW_CUSTOM_COMPONENTS") " \
+    "LANGFLOW_SQLITE_PRAGMAS=$(shq "$LANGFLOW_SQLITE_PRAGMAS") "
+}
 
 # Should this run place the target's clone, and if not, why not?
 #
@@ -281,6 +480,123 @@ gh_out() {
     }
     if (value !== null) process.stdout.write(value);
   ' "$file" "$key"
+}
+
+# --- The ledger ------------------------------------------------------------------
+
+# Does THIS run keep the three series? Asked in three places, answered once.
+#
+# `schedule` mirrors the workflow, where all three steps carry
+# `if: github.event_name == 'schedule'`, and the reason is the one #1183 already
+# states for the token series: a manual run's scope is whatever grep was typed, while
+# every reader of these files assumes one full @stable sweep per entry. Such a line
+# does not read as noise — it reads as a bad day, and the anomaly baseline moves with
+# it. KEEP_LEDGER=0 is for the runs that ARE schedule-shaped and still must not be
+# recorded, a smoke through the real systemd unit being exactly that.
+ledger_active() {
+  [ "$KEEP_LEDGER" = "1" ] && [ "$EVENT_NAME" = "schedule" ] && [ -n "$LEDGER_DIR" ]
+}
+
+# Refuses a ledger inside the clone, which is the one way this change could defeat its
+# own purpose. Both sides go through `pwd -P`, so a symlink pointing back into the
+# working tree is caught too — the question is where the bytes land, not how the path
+# is spelled.
+#
+# It answers for a path that does not exist yet, by resolving the nearest ancestor that
+# does and carrying the remainder back on. That is what lets preflight refuse BEFORE
+# creating anything: a rejected ledger must not leave its own directory behind inside
+# the clone as the trace of the check that rejected it.
+ledger_dir_is_outside_repo() {
+  local probe="$1" rest="" real repo
+  while [ ! -d "$probe" ]; do
+    case "$probe" in
+      */*) rest="/${probe##*/}$rest"; probe="${probe%/*}"; [ -n "$probe" ] || probe="/" ;;
+      # No slash left: a relative path, and this script runs from $REPO_DIR.
+      *)   rest="/$probe$rest"; probe="."; break ;;
+    esac
+  done
+  real="$(cd "$probe" && pwd -P)$rest"
+  repo="$(cd "$REPO_DIR" && pwd -P)"
+  case "$real/" in "$repo"/*) return 1 ;; *) return 0 ;; esac
+}
+
+# The Actions series is what this one continues, so a ledger file that does not exist
+# yet is seeded from the tracked one instead of starting empty. Day zero is not free:
+# the durations file is what balances the matrix, and the token summary's anomaly
+# baseline is a median over recent entries — both answer badly from three lines, and
+# answer badly in the direction of looking fine. One-way and once; after the copy the
+# tracked file is never read again, and it is never written.
+ledger_seed() {
+  local ledger="$1" tracked="$2"
+  [ -n "$ledger" ] || return 0
+  if [ -e "$ledger" ]; then return 0; fi
+  if [ ! -f "$tracked" ]; then return 0; fi
+  # Fail-soft, like every other step in phase_publish. A seed that cannot be copied
+  # costs this series its baseline and nothing else, while aborting would take the
+  # day's verdict down with it — the run has already happened, and the verdict is what
+  # this lane exists to produce.
+  if cp "$tracked" "$ledger"; then
+    info "ledger: seeded ${ledger##*/} from $tracked"
+  else
+    warn "could not seed ${ledger##*/} from $tracked — this series starts from nothing."
+  fi
+  return 0
+}
+
+# Settles the ledger BEFORE the run rather than at publish time, and split out of
+# phase_preflight so the decision is testable without ssh. A ledger that cannot be
+# written is a day of data lost, and if the first write is also the first check the
+# loss is found at 08:50, after the whole hour has been spent — while here it is still
+# the cheapest failure in this script to fix, one variable.
+preflight_ledger() {
+  if ledger_active; then
+    # Placement is settled before creation, so a refused ledger leaves nothing behind.
+    ledger_dir_is_outside_repo "$LEDGER_DIR" \
+      || die "LEDGER_DIR ($LEDGER_DIR) is inside the clone. The three series live outside it precisely so that a run cannot leave the tree dirty — and a dirty tree is what the wrapper's next \`git pull --ff-only\` refuses, every morning, without saying why."
+    mkdir -p "$LEDGER_DIR" || die "cannot create the ledger directory ($LEDGER_DIR)."
+    [ -w "$LEDGER_DIR" ] || die "the ledger directory is not writable ($LEDGER_DIR)."
+    info "ledger: $LEDGER_DIR"
+  elif [ "$KEEP_LEDGER" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then
+    # Reached only with LEDGER_DIR empty, which means neither XDG_STATE_HOME nor HOME
+    # was set — the systemd shape of #1715, where what a unit inherits is not what a
+    # login shell has. Fatal rather than a warning: a scheduled run that quietly keeps
+    # no series is indistinguishable, months later, from a machine that was down.
+    die "LEDGER_DIR is unset and neither XDG_STATE_HOME nor HOME is set, so this run has nowhere to keep the three series. Set LEDGER_DIR, or KEEP_LEDGER=0 for a run that must not be recorded."
+  else
+    info "ledger: not kept for this run (KEEP_LEDGER=$KEEP_LEDGER, event=$EVENT_NAME)"
+  fi
+}
+
+# Which duration table balances the matrix. A switch that is ON and finds nothing must
+# say so: falling back in silence is how a run comes to be balanced by numbers nobody
+# chose, and the symptom — shards of uneven length — looks like the suite's own drift.
+durations_table() {
+  if [ "$USE_LEDGER_DURATIONS" = "1" ]; then
+    if [ -n "$LEDGER_DURATIONS" ] && [ -f "$LEDGER_DURATIONS" ]; then
+      printf '%s\n' "$LEDGER_DURATIONS"
+      return 0
+    fi
+    warn "USE_LEDGER_DURATIONS=1 but the ledger has no durations table yet (${LEDGER_DURATIONS:-<no ledger>}) — this run balances on the tracked one instead."
+  fi
+  printf '%s\n' "reports/spec-durations.json"
+}
+
+# Where this run's spend line goes, as one KEY=VALUE per line. A function so the
+# composition is testable rather than read: the two outcomes are mutually exclusive by
+# construction, and neither label can be dropped while the history path is set.
+#
+# WORKFLOW, because without it the summarizer writes `workflow: "unknown"`, which reads
+# as an Actions row that lost its label rather than as a VM one. GITHUB_RUN_ID because
+# the summarizer takes the run's identity from the environment, which in Actions is
+# simply there and here is not: a smoke found the spend row landing with
+# `run_id: null` while the history row for the SAME run carried the id, and a row that
+# cannot be joined back to its run is dropped by every consumer that groups by run.
+tokens_history_env() {
+  if ledger_active; then
+    printf '%s\n' "TOKENS_HISTORY=$LEDGER_TOKENS" "WORKFLOW=$WORKFLOW_ID" "GITHUB_RUN_ID=$RUN_ID"
+  else
+    printf '%s\n' "TOKENS_SUPPRESS_HISTORY=1"
+  fi
 }
 
 HELD_SESSIONS=()
@@ -393,6 +709,8 @@ phase_preflight() {
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
   info "run dir: $RUN_DIR"
+
+  preflight_ledger
 
   # The suite this run executes, recorded before anything else can move it. Without a
   # repository on the target this is also the only record of which starter version ran
@@ -633,8 +951,18 @@ phase_prep() {
   # stderr precisely because of this (#1024).
   npx playwright test --grep "@stable" --list --reporter=json > "$RUN_DIR/stable-list.json"
 
+  # Which timings balance the matrix. The TRACKED file while both dailies run: the
+  # product of this etapa is a comparison, and a matrix balanced by VM-measured
+  # durations puts specs on different shards than the Actions lane does, so a failure's
+  # neighbours — and the load its backend was under — differ for a reason that has
+  # nothing to do with the product. The ledger's own timings take over with
+  # USE_LEDGER_DURATIONS, which is the next etapa's switch to throw.
+  local durations
+  durations="$(durations_table)"
+  info "durations: $durations"
+
   node scripts/partition-shards.mjs matrix \
-    "$RUN_DIR/stable-list.json" reports/spec-durations.json "$SHARDS" > "$RUN_DIR/matrix.json"
+    "$RUN_DIR/stable-list.json" "$durations" "$SHARDS" > "$RUN_DIR/matrix.json"
 
   SHARD_TOTAL="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).shard_total" "$RUN_DIR/matrix.json")"
   info "$SHARD_TOTAL shard(s)"
@@ -659,7 +987,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED ${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
@@ -877,12 +1205,35 @@ phase_merge() {
     info "$found/$SHARD_TOTAL blobs present"
   fi
 
-  PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/results.json" \
-  PLAYWRIGHT_HTML_REPORT="$RUN_DIR/playwright-report" \
-    npx playwright merge-reports --reporter=html,json "$RUN_DIR/all-blobs" > /dev/null
+  # -c is not optional above one shard, and the reason is the per-shard working copy.
+  # Each shard runs from its OWN copy of the tree (prepare_shard_workdir, because
+  # collect-models writes into it), so Playwright records four different `testDir`
+  # values and merge-reports refuses to combine them. The merge config names where the
+  # tests actually live, so the merged report's paths are the repository's rather than
+  # a per-shard copy's. See playwright.merge.config.ts. (#1726)
+  local merge_log="$RUN_DIR/logs/merge.log"
+  MERGE_OK=true
+  if ! PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/results.json" \
+       PLAYWRIGHT_HTML_REPORT="$RUN_DIR/playwright-report" \
+       npx playwright merge-reports --reporter=html,json \
+         -c "$REPO_DIR/playwright.merge.config.ts" "$RUN_DIR/all-blobs" > "$merge_log" 2>&1; then
+    # NAMED, not left to `set -e`. Aborting here spent the whole test time and then
+    # died at the last phase without a word: no verdict, nothing appended, and — since
+    # phase_publish never ran — no Slack message either. The day ended in silence.
+    #
+    # It does not return. Guard 2 below is written for exactly this state ("there is
+    # no readable report"), and letting it run is what turns a merge failure into a
+    # red verdict that still reaches publish. Aborting bypassed the guard that exists
+    # for the case. (#1726)
+    MERGE_OK=false
+    err "merge-reports FAILED with $found/$SHARD_TOTAL blob(s) present, so this run has NO merged report."
+    err "The shards ran; what failed is combining them. Last lines of $merge_log:"
+    tail -n 15 "$merge_log" >&2 || true
+  fi
 
   # Guard 2 — does the report contain RESULTS? A valid, empty blob passes guard 1 and
-  # reaches triage looking benign (#1012).
+  # reaches triage looking benign (#1012). It also answers for a merge that failed
+  # outright: no results.json is "unreadable", never green.
   PLAYWRIGHT_JSON="$RUN_DIR/results.json" GITHUB_OUTPUT="$outputs" \
     node scripts/check-run-integrity.mjs || true
   RUN_EMPTY="$(gh_out "$outputs" empty)";     RUN_EMPTY="${RUN_EMPTY:-true}"
@@ -940,6 +1291,15 @@ phase_merge() {
 
   # Both versions in one place, because the whole point of this lane is comparing a
   # verdict with the CI's and neither number is guessable afterwards.
+  #
+  # merge_ok rides along for the same reason. Without it a run whose four shards all
+  # passed but whose merge failed is byte-identical here to a run where nothing ran —
+  # both carry tests_total 0 — and this file is the run's only record of which one it
+  # was once the terminal is closed. Nothing reads it yet: `grep -rl run-metadata`
+  # finds this script and its test and nothing else, so this is evidence for a human
+  # and for the stage that will compare the lanes, not a field with a consumer today.
+  # Stated rather than implied, because "the comparator reads it" would be a reason
+  # that is not true yet. (#1726)
   node -e '
     const fs = require("fs");
     const [out, ...kv] = process.argv.slice(1);
@@ -962,7 +1322,8 @@ phase_merge() {
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
-    tests_total "${RUN_TESTS:-0}"
+    tests_total "${RUN_TESTS:-0}" \
+    merge_ok "${MERGE_OK:-true}"
 
   info "tests: ${RUN_TESTS:-0} | top-level errors: ${RUN_ERRORS:-0} | empty: $RUN_EMPTY | partial: $RUN_PARTIAL"
   info "Langflow: ${LANGFLOW_VERSION:-<unknown>}"
@@ -978,24 +1339,54 @@ phase_publish() {
   # Built ALWAYS, even with every POST disabled: it is the only analysis of the merged
   # report into totals and failures, and the Slack notifier reads it rather than
   # carrying a second parser that can disagree with the first.
-  log "Building the run payload"
+  #
+  # SKIPPED when there is no report to analyse, rather than made fail-soft. This is
+  # the line that made the merge fix incomplete: the script exits 1 with no
+  # results.json and it was the one step in this phase without a `|| warn`, so under
+  # `set -euo pipefail` a failed merge still killed main() here — one phase after
+  # phase_merge stopped aborting, and with the same result: no issue, no Slack
+  # message, no verdict. Worse than before, in fact: run-metadata.json now exists, so
+  # the watchdog's "finished without run-metadata.json" case stops firing while
+  # publish still dies. (#1726)
+  #
+  # SKIPPING rather than softening, because the two differ everywhere else. A
+  # fail-soft `|| warn` tolerates EVERY payload failure, including one on a report
+  # the guards were happy with — and that run then reported "Green run." with no
+  # totals and no QA Platform record, which is #1012's failure pointed a third way.
+  # Skipping changes behaviour only where there is nothing to build from; a build
+  # that runs and fails still aborts, loudly, exactly as it always has. The condition
+  # is the cause and the observation of it: the merge failed, or the guards could not
+  # read what it produced.
+  #
+  # The notifier is already written for an absent payload ("reporting what the guards
+  # saw instead"), and on the day the merge fails the guards' verdict is exactly what
+  # has to reach a human.
   local stable_count total_count
-  stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
-  total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
+  PAYLOAD_BUILT=false
+  if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
+    warn "no readable report — the run payload is NOT built, and the notifiers report what the guards saw instead."
+  else
+    log "Building the run payload"
+    stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
+    total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
 
-  PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
-  WORKFLOW="$WORKFLOW_ID" \
-  GITHUB_RUN_ID="$RUN_ID" \
-  RUN_URL="$REPORT_URL" \
-  LANGFLOW_VERSION="$LANGFLOW_VERSION" \
-  STABLE_COUNT="$stable_count" \
-  TOTAL_COUNT="$total_count" \
-  EVIDENCE_URL="$REPORT_URL" \
-    node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
-  info "payload: $RUN_DIR/payload.json"
+    PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
+    WORKFLOW="$WORKFLOW_ID" \
+    GITHUB_RUN_ID="$RUN_ID" \
+    RUN_URL="$REPORT_URL" \
+    LANGFLOW_VERSION="$LANGFLOW_VERSION" \
+    STABLE_COUNT="$stable_count" \
+    TOTAL_COUNT="$total_count" \
+    EVIDENCE_URL="$REPORT_URL" \
+      node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
+    PAYLOAD_BUILT=true
+    info "payload: $RUN_DIR/payload.json"
+  fi
 
   if [ "$POST_QA_PLATFORM" = "1" ]; then
-    if [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
+    if [ "$PAYLOAD_BUILT" != "true" ]; then
+      warn "there is no payload to POST — the QA Platform record is skipped for this run."
+    elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
       local code
@@ -1011,25 +1402,63 @@ phase_publish() {
     fi
   fi
 
-  if [ "$REFRESH_DURATIONS" = "1" ] && [ "$RUN_EMPTY" = "false" ] && [ "$RUN_PARTIAL" = "false" ]; then
-    log "Refreshing reports/spec-durations.json"
+  # The durations series. Empty and partial are excluded for the workflow's own reason:
+  # `extract` merges onto what it is given, and a sweep that ran a fraction of the
+  # specs would rewrite the balance of the whole matrix from a fraction of the evidence.
+  if ledger_active && [ "$RUN_EMPTY" = "false" ] && [ "$RUN_PARTIAL" = "false" ]; then
+    log "Recording the spec durations"
+    ledger_seed "$LEDGER_DURATIONS" reports/spec-durations.json
     local next="$RUN_DIR/spec-durations.next.json"
-    if node scripts/partition-shards.mjs extract "$RUN_DIR/results.json" reports/spec-durations.json > "$next"; then
-      mv "$next" reports/spec-durations.json
+    # The PREVIOUS file is the ledger's own, never the tracked one: reading the tracked
+    # copy every day would re-merge Actions timings into this lane's series forever and
+    # the VM's own numbers would never take over.
+    if node scripts/partition-shards.mjs extract "$RUN_DIR/results.json" "$LEDGER_DURATIONS" > "$next"; then
+      mv "$next" "$LEDGER_DURATIONS" || warn "could not replace $LEDGER_DURATIONS — the table is left as it was."
     else
-      warn "duration extraction FAILED — spec-durations.json is left as it was (#1252)."
+      warn "duration extraction FAILED — $LEDGER_DURATIONS is left as it was (#1252)."
     fi
   fi
 
-  TOKENS_DIR="$RUN_DIR/all-tokens" node scripts/watch-tokens.mjs --summarize \
+  # The spend series. It was suppressed until now for a reason that has since been
+  # removed, not because this lane has nothing to record: the summarizer's default
+  # target is reports/token-history.jsonl, tracked, inside a clone this run does not
+  # own, and the line it appends is an uncommitted change the next `git pull --ff-only`
+  # refuses every morning. Pointed at the ledger it is neither, and #1183's argument
+  # turns around — that one excludes the PR and manual lanes because their scope is not
+  # the daily's sweep, and this lane's scope IS the daily's sweep. What must not happen
+  # is the two ending up in one series, and WORKFLOW is what prevents it: without it
+  # the summarizer writes `workflow: "unknown"`, which is indistinguishable from an
+  # Actions row that lost its label.
+  if ledger_active; then
+    ledger_seed "$LEDGER_TOKENS" reports/token-history.jsonl
+  fi
+  local tokens_env=() kv
+  while IFS= read -r kv; do tokens_env+=("$kv"); done < <(tokens_history_env)
+  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+    node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 
-  if [ "$COMMIT_HISTORY" = "1" ] && [ "$EVENT_NAME" = "schedule" ]; then
+  # The run series — one line per scheduled sweep, and the switch that used to gate it
+  # was named for something this script does not do. COMMIT_HISTORY implied a commit;
+  # the code under it only ever wrote a file, so the append was being held back by a
+  # decision that belonged to a later etapa, and the series it feeds would have had a
+  # hole exactly as wide as the wait. Committing is what stays behind, and it stays
+  # behind as absent code rather than as a switch set to zero.
+  #
+  # LIVENESS_DIR and SHARD_TOTAL are passed for the same reason the workflow passes
+  # them: without the expected count a shard that died before writing its summary
+  # vanishes from the row instead of reading as a gap (#1012), and the wedge this lane
+  # is measuring (#1720) is exactly what those fields carry.
+  if ledger_active; then
     log "Recording the daily history"
+    ledger_seed "$LEDGER_HISTORY" reports/daily-history.jsonl
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
-    HISTORY_FILE=reports/daily-history.jsonl \
+    HISTORY_FILE="$LEDGER_HISTORY" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
+    LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
+    LIVENESS_DIR="$RUN_DIR/all-liveness" \
+    SHARD_TOTAL="${SHARD_TOTAL:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 
@@ -1039,16 +1468,24 @@ phase_publish() {
   if [ "$CREATE_ISSUE" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Opening the failure issue"
+    # MERGE_OK travels with the guards' flags, and it has to. A failed merge sets
+    # RUN_EMPTY and RUN_UNREADABLE true, and both consumers keyed only off those —
+    # so the issue's title said "executed ZERO tests" and its body said "find why
+    # nothing ran, not which test broke" on a run whose every shard had finished.
+    # That is the sentence phase_verdict was changed to stop saying; the change only
+    # reaches a reader if it reaches the surfaces a reader opens. (#1726)
     RUN_ID="$RUN_ID" RUN_DIR="$RUN_DIR" \
     RUN_EMPTY="$RUN_EMPTY" RUN_UNREADABLE="$RUN_UNREADABLE" RUN_PARTIAL="$RUN_PARTIAL" \
+    MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
       node scripts/create-failure-issue.mjs || warn "issue creation failed (does not fail the run)."
   fi
 
   # Same condition as the issue, deliberately: the message and the issue are two views
-  # of one verdict and must not disagree. Fail-soft — a notifier is never allowed to be
-  # the reason a run reports failure.
+  # of one verdict and must not disagree — which is why MERGE_OK is passed to both, or
+  # the two views would have disagreed with the verdict and agreed with each other.
+  # Fail-soft — a notifier is never allowed to be the reason a run reports failure.
   if [ "$NOTIFY_SLACK" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Notifying Slack"
@@ -1056,6 +1493,7 @@ phase_publish() {
     [ -f "$RUN_DIR/issue-url.txt" ] && issue_url="$(cat "$RUN_DIR/issue-url.txt")" || true
     PAYLOAD_JSON="$RUN_DIR/payload.json" \
     RUN_EMPTY="$RUN_EMPTY" RUN_PARTIAL="$RUN_PARTIAL" RUN_UNREADABLE="$RUN_UNREADABLE" \
+    MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_TESTS="$RUN_TESTS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" \
     LIVENESS_MEASURED="$LIVENESS_MEASURED" LIVENESS_WEDGED="$LIVENESS_WEDGED" \
     LIVENESS_OUTAGES="$LIVENESS_OUTAGES" LIVENESS_DOWN_SECONDS="$LIVENESS_DOWN_SECONDS" \
@@ -1076,7 +1514,15 @@ phase_verdict() {
   info "metadata: $RUN_DIR/run-metadata.json"
 
   local failed=0
-  if [ "${RUN_EMPTY:-true}" = "true" ]; then
+  # Ordered before the empty branch on purpose. A failed merge leaves no report, so
+  # guard 2 reports it as empty — and "ZERO tests executed, find out why nothing ran"
+  # would then be a true sentence pointing at the wrong repair. The shards ran; what
+  # failed was combining them, and that is a different day's work. (#1726)
+  if [ "${MERGE_OK:-true}" = "false" ]; then
+    err "the shards RAN and the MERGE failed — there is no report to read, and the tests are not what broke."
+    err "Triage: read $RUN_DIR/logs/merge.log; the blobs are in $RUN_DIR/all-blobs and can be merged again by hand."
+    failed=1
+  elif [ "${RUN_EMPTY:-true}" = "true" ]; then
     err "ZERO tests executed — an infrastructure abort, not a test failure. Triage: find out why nothing ran, not which test broke."
     [ -n "${RUN_FIRST_ERROR:-}" ] && err "first error: $RUN_FIRST_ERROR"
     failed=1

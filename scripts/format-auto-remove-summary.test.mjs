@@ -14,14 +14,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "format-auto-remove-summary.mjs");
 
 function render(result) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fmt-1031-"));
+  const dir = makeTempDir("fmt-1031-");
   try {
     const file = path.join(dir, "auto-remove-result.json");
     fs.writeFileSync(file, JSON.stringify(result));

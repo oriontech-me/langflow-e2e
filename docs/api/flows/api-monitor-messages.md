@@ -88,3 +88,17 @@ The spec runs **6 independent tests** against `GET /api/v1/monitor/messages` via
 - `src/backend/base/langflow/services/database/models/message/model.py` — message schema (`id`, `session_id`, `flow_id`, `timestamp`, `sender`, `text`); renaming/removing a field breaks the required-fields assertion.
 - `src/backend/base/langflow/services/auth/utils.py` — provides `get_current_active_user` used by the monitor router; changes here can shift the unauthenticated 401/403 boundary.
 - `src/backend/base/langflow/api/utils/__init__.py` — exposes `DbSession` and `custom_params` consumed by the monitor router; query-param parsing changes can affect filter behavior.
+
+---
+
+## Coverage declarations (#1700)
+
+Since the API coverage gauge landed (#1692, `docs/api/api-surface-coverage-gauge.md`),
+every test in this spec **declares** `GET /api/v1/monitor/messages` through the
+`apiCoverage` fixture — including the unauthenticated one, which issues the call and
+asserts the refusal. No assertion changed. A declaration the test never issues fails
+it, so the declaration cannot be wrong silently, and the operation now counts in
+`npm run api:coverage`, where it counted for nothing despite six tests driving it as a
+contract since the spec was written. The rest of the family — the write surface,
+sessions, builds, transactions, traces and the `shared/*` twins — lives in
+`docs/api/monitor/`.

@@ -23,10 +23,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const START = join(HERE, "start-langflow-source.sh");
@@ -90,7 +91,7 @@ function runScript({
   withUv = true,
   stamp = null,
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "start-langflow-source-test-"));
+  const dir = makeTempDir("start-langflow-source-test-");
   const bin = join(dir, "bin");
   // uv lives in its own directory so `withUv: false` can drop it from PATH without
   // also dropping the real mkdir/rm/tail/sleep the script needs to run at all.
@@ -440,6 +441,31 @@ test("a process that ignores SIGTERM is escalated, not left as an orphan", () =>
   // refused over a process that does not exist.
   assert.equal(r.pidFileExists, false);
   r.cleanup();
+});
+
+test("tracing is the caller's to set, and its default is not moved", () => {
+  // The scheduled lane needs tracing ON (daily-stable.yml runs it on, and the traces
+  // specs assert against a traced instance); a developer's own instance does not, which
+  // is what #1300/#1183 decided. So the value has to be a parameter — and the default
+  // has to STAY put, because the env-block parity test below is what keeps a spec from
+  // being able to tell which starter brought its instance up (#1714).
+  // The pip starter's value is READ, not repeated: the claim being made is that the two
+  // agree, and a hardcoded `true` here would keep passing after pip changed. That is the
+  // same "read from that file" the env-block parity test below uses.
+  // Anchored to the start of a line, because the pip starter's own COMMENT spells the
+  // same assignment two lines above the real one — an unanchored match reads the prose
+  // and keeps passing after the setting changes. Found by mutation: flipping pip's real
+  // value left this test green.
+  const pipDefault = readFileSync(PIP_START, "utf8").match(/^LANGFLOW_DEACTIVATE_TRACING=(\w+)/m)?.[1];
+  assert.ok(pipDefault, "could not read the pip starter's tracing value");
+
+  const off = runScript();
+  assert.match(off.langflowEnv, new RegExp(`^LANGFLOW_DEACTIVATE_TRACING=${pipDefault}$`, "m"));
+  off.cleanup();
+
+  const on = runScript({ env: { LANGFLOW_DEACTIVATE_TRACING: "false" } });
+  assert.match(on.langflowEnv, /^LANGFLOW_DEACTIVATE_TRACING=false$/m);
+  on.cleanup();
 });
 
 test("the environment block matches the pip starter's, read from that file", () => {

@@ -251,3 +251,20 @@ one UI listing check. The UI move affordance *is* automatable; dragging
 - `src/backend/base/langflow/api/v1/mappers/deployments/sync.py` — `retry_project_operation_on_deployment_guard` wraps the whole delete in a nested transaction and decides which failures are retried; widening it to cover `OperationalError` is the likely shape of the #965 fix, and would flip test 3 back to green.
 - `src/backend/base/langflow/api/v1/flows.py` — exposes `PATCH /api/v1/flows/{id}`; the move-flow test depends on `folder_id` being an accepted, persisted field on this endpoint.
 - `src/backend/base/langflow/services/database/models/flow/model.py` — flow schema including the `folder_id` foreign key; renaming/removing it breaks the move assertion.
+
+## API coverage gauge — adoption (#1707)
+
+The four tests declare, through the `apiCoverage` fixture, the operations they already
+drive and assert: `POST /api/v1/projects/`, `GET /api/v1/projects/`,
+`DELETE /api/v1/projects/{project_id}`, and — in the move test —
+`POST /api/v1/flows/`, `PATCH /api/v1/flows/{flow_id}`, `GET /api/v1/flows/{flow_id}`.
+The declaration is verified against what the fixture recorded, so a test that stopped
+issuing one of them fails rather than silently keeping the credit.
+
+This file **samples** the projects contract; it is not the family's coverage. The full
+contract lives in `docs/api/projects/api-projects-crud.md` (create/read/update/delete,
+the paginated envelope, the `PUT`/`PATCH` asymmetry, the cascade) and
+`docs/api/projects/api-projects-transfer.md` (download/upload), and the seven-redirect
+`/api/v1/folders` alias this file is named after — but never asserts — in
+`docs/api/projects/api-folders-alias-redirects.md`. Gauge, definitions and denominator:
+`docs/api/api-surface-coverage-gauge.md`.

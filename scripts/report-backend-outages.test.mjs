@@ -3,8 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,6 +15,7 @@ import {
   outputLines,
   renderSection,
 } from "./report-backend-outages.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./report-backend-outages.mjs", import.meta.url));
 
@@ -252,7 +253,7 @@ test("outputLines cannot be closed early by rendered markdown", () => {
 });
 
 test("the CLI aggregates a directory of shard summaries and writes step outputs", () => {
-  const dir = mkdtempSync(join(tmpdir(), "liveness-report-"));
+  const dir = makeTempDir("liveness-report-");
   const liveness = join(dir, "all-liveness");
   // Nested one level, the way download-artifact lays artifacts out without
   // merge-multiple — the reader has to cope with both.
@@ -290,7 +291,7 @@ test("the CLI aggregates a directory of shard summaries and writes step outputs"
 });
 
 test("the CLI reports NOT MEASURED when no liveness artifact was downloaded", () => {
-  const dir = mkdtempSync(join(tmpdir(), "liveness-report-"));
+  const dir = makeTempDir("liveness-report-");
   const outputPath = join(dir, "gh-output");
   writeFileSync(outputPath, "");
   const stdout = execFileSync(process.execPath, [SCRIPT], {
@@ -319,7 +320,7 @@ test("the CLI reports NOT MEASURED when no liveness artifact was downloaded", ()
 // wanted: it is what keeps a diagnostic from reddening a step, and the auto-removal
 // still depends on it.
 test("the CLI exits 0 on a malformed summary instead of failing the merge job", () => {
-  const dir = mkdtempSync(join(tmpdir(), "liveness-report-"));
+  const dir = makeTempDir("liveness-report-");
   const liveness = join(dir, "all-liveness");
   mkdirSync(liveness, { recursive: true });
   // `files` as a string, not an array — enough to throw inside attribute().

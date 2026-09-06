@@ -5,13 +5,15 @@
 //
 // ## Why it is a script and not `gh issue create` in bash
 //
-// The body is DECISION LOGIC, not a template: three mutually exclusive shapes
-// (zero tests / partial / per-test), each with its own title, its own triage
-// instruction, and its own reason for existing. Reproducing that with bash
-// heredocs is where the shapes quietly drift apart — and the shape is the whole
-// point. An empty run rendered as a per-test day reads like a clean triage on a
-// report that saw nothing (#1012); a partial run rendered as a normal day reports
-// UNDER-COUNTED totals as if they were the day's numbers (#1058).
+// The body is DECISION LOGIC, not a template: four mutually exclusive shapes
+// (failed merge / zero tests / partial / per-test), each with its own title, its
+// own triage instruction, and its own reason for existing. Reproducing that with
+// bash heredocs is where the shapes quietly drift apart — and the shape is the
+// whole point. An empty run rendered as a per-test day reads like a clean triage on
+// a report that saw nothing (#1012); a partial run rendered as a normal day reports
+// UNDER-COUNTED totals as if they were the day's numbers (#1058); and a run whose
+// merge failed, rendered as an empty one, sends triage after a run that ran in
+// full (#1726).
 //
 // ## Why it is ONE copy and not two
 //
@@ -49,6 +51,7 @@
 //   IMAGE, RUN_ID, RUN_DIR, RUN_URL (set on Actions, absent on the VM)
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
+//   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
 //   ISSUE_CC   (default the QA roster; set to "" to open the issue without a /cc)
@@ -80,7 +83,7 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
 
 /**
  * Render the issue's title and body. PURE — no env, no clock, no I/O — so the
- * three shapes and the two lanes are testable without creating anything. The one
+ * four shapes and the two lanes are testable without creating anything. The one
  * thing this script does that cannot be undone is open an issue, so the decision
  * that picks the shape must be reachable without reaching that.
  */
@@ -96,6 +99,7 @@ export function renderIssue({
   empty = false,
   unreadable = false,
   partial = false,
+  mergeFailed = false,
   runErrors = "0",
   firstError = "",
   runTests = "0",
@@ -106,13 +110,35 @@ export function renderIssue({
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // Three shapes, most specific first.
+  // Four shapes, most specific first.
+  // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
+  //    because a failed merge leaves no report and the integrity guard therefore
+  //    reports the run as empty and unreadable. "Find why nothing ran" is then a
+  //    true sentence pointing at the wrong repair: everything ran.
   // 1. ZERO tests executed (#1012): there is no per-test evidence to triage, so
   //    say so instead of rendering the auto-removal line, which reads as a clean
   //    triage on an empty report.
   // 2. The auto-remove step acted — show what it did.
   // 3. Neither (it errored, or a guard skipped it) — manual triage.
-  const section = empty
+  const mergeFailedSection = [
+    "### ⚠️ The shards RAN — the MERGE failed",
+    "",
+    "Every shard finished and wrote its blob. What failed is combining them into one",
+    "report, so this run has **no merged report at all** — which is why the totals above",
+    "are zeros. They are **unread, not zero**, and no spec is implicated: the failure",
+    "happened after every test had already finished.",
+    ...(firstError ? ["", "```", firstError, "```"] : []),
+    "",
+    onActions
+      ? "**Triage this as the merge step**: start from the `Merge blob reports` step log and the per-shard blob artifacts. The blobs are intact and can be merged again by hand."
+      : `**Triage this as the merge step**: start from \`${join(runDir, "logs/merge.log")}\`. The blobs are kept under \`${join(runDir, "all-blobs")}\` and can be merged again by hand.`,
+    "Known cause of this shape: per-shard working copies recording different `testDir`",
+    "values, which `merge-reports` refuses to combine — #1726.",
+  ];
+
+  const section = mergeFailed
+    ? mergeFailedSection
+    : empty
     ? [
         "### ⚠️ ZERO tests executed — infra abort, not a per-test failure",
         "",
@@ -174,8 +200,11 @@ export function renderIssue({
   const livenessSection = liveness.trim() ? [liveness.trim(), ""] : [];
 
   // The title is what gets scanned in the issue list, so an empty run must not
-  // claim that tests failed — none ran.
-  const title = empty
+  // claim that tests failed — none ran. Nor may a failed merge claim that nothing
+  // ran: every shard did, and the title is the only part most people read (#1726).
+  const title = mergeFailed
+    ? `[Daily Failure] @stable run could not MERGE its shard reports on ${today} (${image})`
+    : empty
     ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
     : partial
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
@@ -298,6 +327,9 @@ async function main() {
     empty: env.RUN_EMPTY === "true",
     unreadable: env.RUN_UNREADABLE === "true",
     partial: env.RUN_PARTIAL === "true",
+    // Absent means "the caller does not track it", which is a working merge — the
+    // Actions lane never passes it, and it has never had this failure mode.
+    mergeFailed: env.MERGE_OK === "false",
     runErrors: env.RUN_ERRORS || "0",
     firstError: env.RUN_FIRST_ERROR || "",
     runTests: env.RUN_TESTS || "0",

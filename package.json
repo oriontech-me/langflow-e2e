@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Langflow E2E regression test suite (Playwright)",
   "private": true,
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "test": "npx playwright test",
     "test:core": "npx playwright test tests/core/",
@@ -10,6 +13,7 @@
     "test:features": "npx playwright test tests/core/features/ tests/extended/features/",
     "test:integrations": "npx playwright test tests/core/integrations/",
     "test:unit": "npx playwright test tests/core/unit/",
+    "lanes:compare": "node scripts/compare-lane-verdicts.mjs",
     "test:scripts": "files=$(find scripts .claude/skills -name '*.test.mjs' -not -path '*/node_modules/*' | sort); [ -n \"$files\" ] || { echo 'no *.test.mjs found — the scripts unit lane would silently pass' >&2; exit 1; }; node --test $files",
     "test:units": "files=$( { find . -maxdepth 1 -name '*.test.ts'; find scripts tests -name '*.test.ts' -not -path '*/node_modules/*'; } | sort); [ -n \"$files\" ] || { echo 'no *.test.ts found — the TypeScript unit lane would silently pass' >&2; exit 1; }; node --require ts-node/register --test $files",
     "test:pipeline": "files=$(find .claude/skills -name '*.test.ts' -not -path '*/node_modules/*' | sort); [ -n \"$files\" ] || { echo 'no *.test.ts found under .claude/skills — the pipeline unit lane would silently pass' >&2; exit 1; }; npx tsc --noEmit -p .claude/skills/langflow-e2e-issue-deterministic/pipeline/tsconfig.json && npx tsx --test $files",

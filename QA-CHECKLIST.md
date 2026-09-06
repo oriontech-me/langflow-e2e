@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-03
+> **Last updated:** 2026-09-05
 
 ---
 
@@ -169,6 +169,63 @@
 - [x] Unknown version ids answer `404` with two **different** messages (`"Version entry not found"` on GET, `"Version entry <id> not found"` on DELETE), each pinned as measured → `api/flows/api-flows-versions.spec.ts`
 - [x] `POST /api/v1/flows/batch/` creates every flow in `{"flows": [...]}` (`201` list, each readable by id), refuses a duplicate name `409 "Name must be unique"`, accepts `[]` as `201 []`, and **without the trailing slash answers `405`** — the trap the file's first version fell into → `api/flows/api-flows-batch.spec.ts`
 - [~] `GET /api/v1/flows/?page=1&size=2` returns a plain array of **every** flow — `page`/`size` are ignored on `1.13.0.dev0`. The former "pagination" test asserted `length >= 0` on that array and could not fail; dropped rather than pinned, since asserting either behaviour would defend a defect or invent one. Recorded here so the finding is not lost.
+
+#### 1.12 Monitor API — the whole family, as a contract (1.13)
+
+> Third family of the API coverage gauge (#1700, after `files` § 1.10 and `flows` § 1.11): `/api/v1/monitor`, **20 operations**, every contract measured before being asserted. Rows come from an LLM-free run of the Chat Input → Chat Output fixture through `POST /api/v1/run/{id}` with an **API key** (under auto-login the bearer alone answers `403` there). Two premises the issue had wrong or open are settled here: **none of the four deletes is an instance-wide wipe** (`DELETE messages` and `DELETE messages/sessions` take id lists in the body; `DELETE builds` and `DELETE traces` require `?flow_id`, `422` without) — so nothing is `@destructive`; and **`shared/*` is the namespace a user's conversations with a PUBLIC flow land in through the public execution path**, which under `LANGFLOW_AUTO_LOGIN=true` (every OSS lane) is written under the `client_id` principal and never under the user's — the positive path is unreachable here and asserted as a closed contract instead. Spec docs under `docs/api/monitor/`; `npm run api:coverage` reads `/api/v1/monitor 20/20`.
+
+- [x] A run persists messages readable by `flow_id`, by `session_id` + `sender=User` (exactly the two user turns), newest-first with `order=DESC&limit=1`, and the session appears in `GET messages/sessions?flow_id=` → `api/monitor/api-monitor-messages-lifecycle.spec.ts`
+- [x] `PUT /api/v1/monitor/messages/{id}` edits the text and flags **`edit: true`**, `GET` agrees, and an unknown id answers `404 "Message not found"` → `api/monitor/api-monitor-messages-lifecycle.spec.ts`
+- [x] `PATCH …/messages/session/{old}?new_session_id=` returns the **moved list** under the new session, the old session reads `[]`, and an unknown session answers `404 "No messages found with the given session ID"` → `api/monitor/api-monitor-messages-lifecycle.spec.ts`
+- [x] Deletes are **scoped, asserted on what survived**: `DELETE messages [id]` removes that message and leaves its session's other row; an unknown id is a no-op `204`; `DELETE messages/session/{id}` leaves the other session; `DELETE messages/sessions [id]` answers `{"message":"Messages deleted successfully for 1 session","deleted_count":1}` → `api/monitor/api-monitor-messages-lifecycle.spec.ts`
+- [x] `transactions` and `builds` **require `flow_id`** (`422 loc ["query","flow_id"]`): transactions page one item per vertex build with `status: "success"`, builds are keyed by vertex id, `DELETE builds?flow_id=` empties the map to `{"vertex_builds": {}}`; `job_queue` reports `backend` and a non-negative `active_jobs` → `api/monitor/api-monitor-messages-lifecycle.spec.ts`
+- [x] A run emits a trace listed under the flow (`status: "ok"`, `sessionId`, `input.input_value`, `totalTokens: 0`), kept by `status=ok`, whose detail adds `endTime` and the span tree; `DELETE traces/{id}` → `204` then `404 "Trace not found"`, the same `404` on both verbs for an unknown id. **Fails, never skips, when a run emits no trace** — the shape `LANGFLOW_DEACTIVATE_TRACING=true` produces → `api/monitor/api-monitor-traces.spec.ts`
+- [x] `DELETE /api/v1/monitor/traces` without `flow_id` is refused `422` **and removes nothing**; with `flow_id` the flow's traces read `{"traces":[],"total":0,"pages":0}` afterwards → `api/monitor/api-monitor-traces.spec.ts`
+- [x] Every `shared/*` read requires `source_flow_id` (`422` on `loc ["query","source_flow_id"]`, `uuid_parsing` on a non-UUID) and reads `[]` for an owned or unknown source flow → `api/monitor/api-monitor-shared.spec.ts`
+- [x] The `shared/*` write surface refuses what is not there — `PUT` → `404 "Message not found"`, `PATCH session` → `404 "No messages found with the given session ID"`, `DELETE session` → idempotent `204` — and each answers `422` without `source_flow_id` → `api/monitor/api-monitor-shared.spec.ts`
+- [ ] `shared/*` positive path — a user's own rows from running a public flow, readable through `GET messages/shared?source_flow_id=` — needs an instance with `LANGFLOW_AUTO_LOGIN=false` (the public build uses the `client_id` principal under auto-login, measured on `1.13.0.dev0`); no OSS lane runs that configuration today.
+
+#### 1.13 Projects API and the folders alias — the whole family, as a contract (1.13)
+
+> Fourth family of the API coverage gauge (#1707, after `files` § 1.10, `flows` § 1.11 and `monitor` § 1.12): `/api/v1/projects` (**8 operations**) plus `/api/v1/folders` (**7 more**, hidden from `/openapi.json` and therefore invisible to any schema-derived count), every contract measured before being asserted. Keyless — a project and a trivial flow are the whole fixture. Two findings drive the design: **`PUT` and `PATCH` differ in what they REQUIRE, not in what they do** (`PUT` without `name` is `422`; both merge the rest), and **the two sibling importers disagree** — `POST /api/v1/flows/upload/` upserts by id while `POST /api/v1/projects/upload/` refuses the same collision with `422`. Names in these specs are deliberately short: a project's derived MCP server name is `lf-${sanitize_mcp_name(name)[:26]}` and must be unique per user, so two names sharing their first 26 characters are refused `409` (#1409). Spec docs under `docs/api/projects/`; `npm run api:coverage` reads `/api/v1/projects 8/8` and `/api/v1/folders 7/7`.
+
+- [x] A project is created (`201`, exact key set, no `flows`), appears in `GET /api/v1/projects/` as a row that additionally carries `is_owner` / `owner_username`, reads back by id with its `flows`, and answers a **different envelope** (`{folder, flows}`) when the same read is paginated with `page`/`size` → `api/projects/api-projects-crud.spec.ts`
+- [x] `DELETE /api/v1/projects/{id}` answers a bare `204` (the assertion that surfaced LE-2020), **cascades to the flows inside** (the flow then reads `404`), and the same id answers `404 "Project not found"` on a second call → `api/projects/api-projects-crud.spec.ts`
+- [x] `PATCH` with only a description keeps the name; `PUT` without a `name` is refused `422` on `loc ["body","name"]`; `PUT` with a name merges — the description survives it → `api/projects/api-projects-crud.spec.ts`
+- [x] A duplicate name is accepted and suffixed `"<name> (1)"` with the rest of the body stored as sent; a body with no `name` is `422` on the field; an unknown id is `404 "Project not found"` → `api/projects/api-projects-crud.spec.ts`
+- [x] `GET /api/v1/projects/download/{id}` refuses an **empty** project (`404 "No flows found in project"`) and returns a **ZIP** (asserted by magic bytes — the endpoint sets no `Content-Type`) once it holds a flow → `api/projects/api-projects-transfer.spec.ts`
+- [x] `POST /api/v1/projects/upload/` refuses an archive whose flow ids still exist (`422`, the id named in `detail`), imports it once they are gone (`201` returning the **flows**, the flow keeping its original id, into a project **named after the uploaded file**), and answers `400 "Invalid JSON file…"` for a part that is not an archive → `api/projects/api-projects-transfer.spec.ts`
+- [x] All **seven** `/api/v1/folders` routes are `307` redirects onto the exact twin path (asserted with `maxRedirects: 0` and an exact `location`, never a substring), the `DELETE` alias deletes nothing by itself, the read alias forwards its hand-built query string (`is_component=True&is_flow=True&search=&page=&size=`), the absent `PUT` answers `405`, and one followed `POST` lands on `201` — proof the `307` preserved method and body where a `302` would not → `api/projects/api-folders-alias-redirects.spec.ts`
+- [x] The pre-existing `api/flows/api-folders-crud.spec.ts` adopts the gauge: its four tests declare the projects and flows operations they already drive and assert → `api/flows/api-folders-crud.spec.ts`
+
+#### 1.14 Models API — the catalog and the selection write surface (1.13)
+
+> Fifth family of the API coverage gauge (#1709, after `files` § 1.10, `flows` § 1.11, `monitor` § 1.12 and `projects` § 1.13): `/api/v1/models` (**11 operations**) plus `/api/v1/model_options` (**2**), **all 13 hidden from `/openapi.json`** — the surface this suite's own infrastructure reads (`scripts/collect-models.*`, every provider resolver) and which nothing asserted. Three findings drive the design: the three provider lists are a **strict hierarchy** (`/models` ⊂ `/providers` ⊂ `/provider-descriptors`, measured 9 ⊂ 11 ⊂ 14 — asserted as subset relations, never as counts, #1040); the state these endpoints write is **per user**, not instance-global, so the write spec acts as a **throwaway user** it creates and deletes rather than being `@destructive`; and `POST /models/validate-provider` answers **`200` with the verdict in the body**, so a status-only assertion would certify a dead credential. Spec docs under `docs/api/models/`; `npm run api:coverage` reads `/api/v1/models 11/11` and `/api/v1/model_options 2/2`.
+
+- [x] The three provider lists are a strict hierarchy and each has its own shape: `/models` rows carry the twelve fields the resolvers read (a **required superset** — `ibm-watsonx` adds `aliases`, `openrouter` a `base_url`), `/providers` is display-name strings, `/provider-descriptors` is exactly `{provider_id, display_name, provider}`; `openai` is in all three and its `num_models` equals its `models` length → `api/models/api-models-catalog.spec.ts`
+- [x] `provider-variable-mapping` is keyed by **display name** and names the variable each provider's key is stored under (`OpenAI` → `OPENAI_API_KEY`, `required`, `is_secret`) → `api/models/api-models-catalog.spec.ts`
+- [x] `enabled_providers.provider_status` is keyed by the same names `/providers` returns (set equality, not a count) and every value is a boolean; `enabled_models` is `{provider: {model_id: boolean}}`; `default_model` answers one envelope per `model_type` (`null`, or a `{model_name, provider, model_type}` triple); `model_options/{language,embedding}` answer a list of option rows — **empty only when nothing is configured**, so the shape is asserted and the emptiness is not (asserting `[]` reddened the PR lane, which configures providers) → `api/models/api-models-catalog.spec.ts`
+- [x] `POST /models/validate-provider` with a wrong key is **`200 {"valid": false, "error": …}`** — the verdict in the body; an unknown provider is `404 "Model provider not found"`; `provider: ""` and a missing `variables` are `422` on their own field → `api/models/api-models-selection.spec.ts`
+- [x] The default model round-trips **per user** — set as a throwaway user, the shared superuser still reads `null` at the same moment — and **only its provider is validated**: a model name no provider serves is accepted and persists. `model_type: "nope"` is `422`, an unknown provider `404`, and a garbage `model_type` on the **read** silently answers the **embedding** slot → `api/models/api-models-selection.spec.ts`
+- [x] `DELETE /models/default_model` answers **`200 {"default_model": null}`** (not `204`) and clears **only** the `model_type` it names → `api/models/api-models-selection.spec.ts`
+- [x] `POST /models/enabled_models` refuses a single object (`422 list_type`), stores a **disabled set** namespaced `provider::model_id`, records **nothing** when enabling on an unconfigured provider, and never moves the derived `GET enabled_models` flag — which is computed from the provider's configured state, not from the stored sets; the write is invisible to the shared superuser → `api/models/api-models-selection.spec.ts`
+- [ ] A **valid** `validate-provider` verdict (`valid: true`) — needs a funded provider key; every credential assertion in this family is deliberately a negative, so no lane spends on it today.
+
+#### 1.15 Instance, validation and auth API — the single-operation tail (1.13)
+
+> Sixth item of the API coverage gauge (#1710, after `files` § 1.10, `flows` § 1.11, `monitor` § 1.12, `projects` § 1.13 and `models` § 1.14), and the one that closes the long tail rather than a family: **18 operations across 16 route groups** — instance identity and health, the validators, and the session/token lifecycle. Six were already driven and merely undeclared (`version`, `health_check`, `all`, `auto_login`, `custom_component`, and `login` — the last covered by a real assertion here rather than by the fallback path of a helper). Three findings drive the design: **`GET /api/v1/config` answers two different bodies** (`type: "public"`, 12 keys, anonymous vs `type: "full"`, 35 keys, authenticated); **`POST /api/v1/logout` does not invalidate the access token**; and **`POST /api/v1/refresh` is cookie-driven**, so which context issues the call decides between `200` and `401`. Spec docs under `docs/api/instance/` and `docs/api/auth/`; the gauge reads `1/1` for each of the sixteen groups and `2/2` for `validate` and `custom_component`. Suite total **102 / 204 (50%)**.
+
+- [x] `/healthz` is **deep-equal** to `/health_check` (`{chat, db, status}`) while `/health` is a shallower `{status}` — the three are not synonyms, and a `/healthz` that went shallow would weaken every gate polling it → `api/instance/api-instance-identity.spec.ts`
+- [x] `GET /api/v1/version` answers **unauthenticated** and a credential changes nothing (deep-equal bodies), while `GET /api/v1/config` answers `type: "public"` (12 keys) anonymously and `type: "full"` (35) with a credential — the public key set is a strict subset and `blocked_component_types`, `custom_component_admin_only`, `webhook_auth_enable`, `hide_logout_button`, `auto_saving` stay **withheld** (named, not counted); no flag value is asserted, since they differ per lane by design → `api/instance/api-instance-identity.spec.ts`
+- [x] `GET /api/v1/all` and `GET /api/v1/starter-projects/` are `403` from a context with no credential and `200` with one; the catalog assertion pins the two traps (`component_display_names` is a metadata map, categories are keyed by display name) without duplicating the drift guard → `api/instance/api-instance-identity.spec.ts`
+- [x] `GET /logs` and `GET /logs-stream` are `403` without a credential and **`501 "Log retrieval is disabled"`** with one — `LANGFLOW_LOG_RETRIEVER_BUFFER_SIZE` defaults to `0`, so the SSE hazard does not arise, and an instance that enables the buffer fails here with the flag named → `api/instance/api-instance-identity.spec.ts`
+- [x] `POST /api/v1/validate/code` answers **`200` for a syntax error** with the verdict inside `function` (a status-only check would call a compile error valid), and `422` for a body without `code` → `api/instance/api-validation-endpoints.spec.ts`
+- [x] `POST /api/v1/validate/prompt` **short-circuits** without a `frontend_node` (`input_variables: []`, `frontend_node: null` — the template is not parsed) and, given the real `Prompt Template` node from `GET /api/v1/all`, returns `input_variables: ["who"]` **and a template that gained the `who` field** — both branches in one test → `api/instance/api-validation-endpoints.spec.ts`
+- [x] `POST /api/v1/custom_component` describes the component (`{data, type}`, the declared input in `data.template`) and `POST /api/v1/custom_component/update` answers a template with the submitted code echoed in `template.code.value` → `api/instance/api-validation-endpoints.spec.ts`
+- [x] `GET /api/v1/session` answers **`200` unauthenticated** (`authenticated: false`) and `200` with a credential (`authenticated: true`, a named user) — same envelope, different content → `api/auth/api-session-auth-lifecycle.spec.ts`
+- [x] `POST /api/v1/login` takes a **form** body (`200` with the three token fields, and the token really works), refuses an empty one with `422`, and is issued **exactly once** in the file — OSS rate-limits it at 5/min per IP on a fixed window → `api/auth/api-session-auth-lifecycle.spec.ts`
+- [x] `POST /api/v1/logout` answers `200` and **the same access token still works afterwards** (logout clears cookies, not tokens); `POST /api/v1/refresh` answers `200` with a fresh token triple from a context holding `refresh_token_lf` and `401` for a bare bearer. Both run on a **throwaway** `auto_login` token, so no other spec's session is touched → `api/auth/api-session-auth-lifecycle.spec.ts`
+- [x] The pre-existing `api/flows/api-version.spec.ts`, `api/flows/api-health-check.spec.ts` and `api/flows/api-custom-component-creation.spec.ts` adopt the gauge: they declare the operations they already drive and assert (including `GET /api/v1/auto_login`, driven by the local token helper; the `login` **fallback** in that helper is deliberately not declared, since it only fires when `auto_login` fails) → `api/flows/api-custom-component-creation.spec.ts`
 
 #### 1.9 Serving End-User Identity — inert by default (1.12)
 
@@ -1391,7 +1448,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 63 | 55 | 5 | 3 | 0 |
+| `api/flows/` — REST API | 100 | 90 | 5 | 3 | 2 |
 | `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
@@ -1414,7 +1471,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **617** | **483 (78%)** | **53 (9%)** | **18 (3%)** | **63 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **654** | **518 (79%)** | **53 (8%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1430,11 +1487,16 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 563 `test()` calls carrying the `@stable` tag, distributed across 215 spec
+> 593 `test()` calls carrying the `@stable` tag, distributed across 226 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
+
+#### api/auth/
+- [x] the session probe answers anonymous and authenticated alike, and says which → `api-session-auth-lifecycle.spec.ts`
+- [x] login takes a form body and refuses an empty one → `api-session-auth-lifecycle.spec.ts`
+- [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
@@ -1518,6 +1580,40 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+
+#### api/instance/
+- [x] the three health routes are not synonyms of each other → `api-instance-identity.spec.ts`
+- [x] version and config answer unauthenticated, the catalog and starter projects do not → `api-instance-identity.spec.ts`
+- [x] log retrieval is disabled by default, and is not public either → `api-instance-identity.spec.ts`
+- [x] code validation answers 200 for broken code, with the verdict in the body → `api-validation-endpoints.spec.ts`
+- [x] prompt validation extracts variables only when it is given a node → `api-validation-endpoints.spec.ts`
+- [x] a custom component is described, and a field update echoes the code back → `api-validation-endpoints.spec.ts`
+
+#### api/models/
+- [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
+- [x] the enabled and default reads hold their shape whether or not a provider is configured → `api-models-catalog.spec.ts`
+- [x] validating a provider answers 200 with the verdict in the body → `api-models-selection.spec.ts`
+- [x] the default model is per user, scoped by model_type, and only its provider is validated → `api-models-selection.spec.ts`
+- [x] the enabled_models write stores a DISABLED set, and it is per user → `api-models-selection.spec.ts`
+
+#### api/monitor/
+- [x] a run persists messages readable by flow, session and sender → `api-monitor-messages-lifecycle.spec.ts`
+- [x] a message can be edited in place, and the edit is flagged → `api-monitor-messages-lifecycle.spec.ts`
+- [x] renaming a session moves every message and empties the old one → `api-monitor-messages-lifecycle.spec.ts`
+- [x] deletes are scoped: by message id, by session, by session list → `api-monitor-messages-lifecycle.spec.ts`
+- [x] builds, transactions and the job queue → `api-monitor-messages-lifecycle.spec.ts`
+- [x] every shared endpoint requires source_flow_id and reads an empty namespace → `api-monitor-shared.spec.ts`
+- [x] the shared write surface refuses what is not there, and never without the parameter → `api-monitor-shared.spec.ts`
+- [x] a run emits a trace that can be listed, filtered, read and deleted by id → `api-monitor-traces.spec.ts`
+- [x] the bulk delete is scoped to a flow → `api-monitor-traces.spec.ts`
+
+#### api/projects/
+- [x] every folders route is a 307 onto its projects twin, and the alias has no PUT → `api-folders-alias-redirects.spec.ts`
+- [x] a project is created, listed, read with its flows and deleted by id → `api-projects-crud.spec.ts`
+- [x] PATCH is partial, PUT merges but refuses a body without a name → `api-projects-crud.spec.ts`
+- [x] a duplicate name is suffixed and the required field is enforced → `api-projects-crud.spec.ts`
+- [x] download refuses an empty project and returns a ZIP for a populated one → `api-projects-transfer.spec.ts`
+- [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
 
 #### core-components/
 - [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
@@ -1755,6 +1851,7 @@
 - [x] page opens with its description and the available provider count → `model-provider-modal-actions.spec.ts`
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
+- [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
@@ -2043,7 +2140,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 5 | 0 |
+| `api/flows/` — REST API | 5 | 2 |
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
