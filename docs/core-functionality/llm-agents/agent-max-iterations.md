@@ -170,9 +170,10 @@ Shared setup per test (identical except `max_iterations`):
   (`inspection-panel-close`), fills `int_int_max_iterations` **and asserts the
   field holds the value**. The read-back is part of the contract: a fill that
   silently no-ops would leave the template default (15) in place and this spec
-  would then assert its limit message against a cap it never set. It proves the
-  field ACCEPTED the value, not that the value survived the add-autosave — see
-  #1739. The helper is
+  would then assert its limit message against a cap it never set. The value it reads is the
+  value the run executes — the Playground posts the client store's graph, not
+  the persisted flow — and the add-then-fill sequence was measured non-racy on
+  `1.13.0.dev4` (#1739). The helper is
   shared with `agent-multi-tool-selection.spec.ts`, which drove the same four
   handles as a copy until #1380.
 - Set the task on the **ChatInput node** (`textarea_str_input_value`) and
