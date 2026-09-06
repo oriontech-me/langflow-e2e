@@ -7,6 +7,10 @@ import * as path from "node:path";
 import * as dotenv from "dotenv";
 import { getAuthToken } from "./helpers/auth/get-auth-token";
 import {
+  describeAutosaveInterval,
+  publishAutosaveInterval,
+} from "./helpers/flows/autosave-interval";
+import {
   degradeProviders,
   providersForEnvKeys,
   readProviderHealth,
@@ -456,11 +460,57 @@ function freezeCatalog(): void {
   );
 }
 
+/**
+ * Resolve the flow autosave debounce for this run and publish it (#1741).
+ *
+ * The number is `GET /api/v1/config.auto_saving_interval`, and it is neither the
+ * 300 ms `SAVE_DEBOUNCE_TIME` upstream's frontend constant names nor a value we
+ * can pin: this repo has measured 1000 and, on `1.13.0.dev4`, 2000. Every
+ * save-timing helper derives its deadline from it, so it is read once here, from
+ * the instance actually under test, and inherited by the forked workers through
+ * the environment — the same channel and the same reason as the frozen model
+ * catalog above.
+ *
+ * Never fatal, and never silently defaulted: a run that cannot read it says so
+ * and the consumers use a documented fallback that is larger than any interval
+ * upstream has shipped (#1012 — an unknown value is unknown, not clean).
+ * Authenticates explicitly, because the endpoint answers 200 with a PUBLIC
+ * payload that omits the field entirely — the failure mode is a resolved-looking
+ * `undefined`, not an error.
+ */
+async function resolveAutosaveInterval(ctx: APIRequestContext): Promise<void> {
+  try {
+    const auth = await getAuthToken(ctx).catch(() => "");
+    const res = await ctx.get("/api/v1/config", {
+      headers: auth ? { Authorization: auth } : undefined,
+      timeout: 15000,
+    });
+    if (!res.ok()) throw new Error(`HTTP ${res.status()}`);
+    const body = (await res.json()) as { auto_saving_interval?: unknown };
+    const interval = body.auto_saving_interval;
+    if (typeof interval !== "number" || !Number.isInteger(interval) || interval <= 0) {
+      throw new Error(
+        `auto_saving_interval is ${JSON.stringify(interval)} ` +
+          `(an unauthenticated read returns the public payload, which omits it)`,
+      );
+    }
+    publishAutosaveInterval(interval);
+    console.log(`[preflight] ${describeAutosaveInterval(interval)}`);
+  } catch (e) {
+    publishAutosaveInterval(null);
+    console.warn(
+      `[preflight] WARNING: could not read the flow autosave debounce ` +
+        `(${String(e)}). ${describeAutosaveInterval(null)}.`,
+    );
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   freezeCatalog();
   const ctx = await playwrightRequest.newContext({ baseURL: BASE_URL });
   try {
     await assertBackendHealthy(ctx);
+    await resolveAutosaveInterval(ctx);
     if (truthy(process.env.PREFLIGHT_SKIP_CREDENTIALS)) {
       console.log(
         "[preflight] PREFLIGHT_SKIP_CREDENTIALS set — skipping the credential check (credential-importing run).",
