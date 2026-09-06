@@ -1,6 +1,6 @@
 # Agent multi-tool selection — correct tool per prompt
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev4`)
 
 ---
 
@@ -192,11 +192,14 @@ describe with two tests:
 3. Seed a task that makes the second tool depend on the first's result:
    *"First fetch `${FETCH_URL}` and read its exact slideshow title. Then search
    the web for that title and summarize one result. (probe `<nonce>`)"*.
-4. **Cap `max_iterations` at 8** on the Agent node (advanced field, exposed via
-   the inspector — same handles `agent-max-iterations.spec.ts` uses), and assert
-   the field actually holds that value. This is load-bearing, not tuning: a cap
-   that silently fails to apply leaves the default 15 and re-opens #1378 on a
-   run that still looks green. See the note below.
+4. **Cap `max_iterations` at 8** on the Agent node through the shared helper
+   `tests/helpers/ui/set-agent-max-iterations.ts` (advanced field, exposed via
+   the inspector — the same four handles `agent-max-iterations.spec.ts` drives,
+   a copy in both specs until #1380 extracted it). The helper asserts the field
+   actually holds the value, and that read-back is load-bearing, not tuning: a
+   cap that silently fails to apply leaves the default 15 and re-opens #1378 on
+   a run that still looks green. It proves the field ACCEPTED the value, not
+   that the value survived the add-autosave — see #1739. See the note below.
 5. Open the Playground, send, wait for the run to finish (Stop button hidden).
 6. **Sequence assert (API):** poll `GET /api/v1/monitor/messages` — nonce-keyed
    session lookup (same as tests 1–2); collect the **ordered** list of

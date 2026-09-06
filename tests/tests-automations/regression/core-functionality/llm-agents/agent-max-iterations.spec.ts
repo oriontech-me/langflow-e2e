@@ -6,10 +6,7 @@ import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../.
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import {
-  closeAdvancedOptions,
-  openAdvancedOptions,
-} from "../../../../helpers/ui/open-advanced-options";
+import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -99,6 +96,7 @@ const TARGET_URL = `${ECHO_BASE}/uuid`;
 // a bare announcement is compliant.
 const SYSTEM_PROMPT =
   "You have web tools. Your FIRST action MUST be a tool call — never reply with text before you have called a tool. To answer any question about a URL you MUST call the URL fetch tool. Never guess or invent responses.";
+// The template's URL tool (default) is the forcer — no extra tool needs enabling.
 const TASK = `Fetch ${TARGET_URL} and tell me the exact "uuid" value it returns.`;
 const LIMIT_MESSAGE = /model call limits exceeded/i;
 // The value only the fetch can supply — guards the causal control against a
@@ -227,23 +225,6 @@ async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
   await field.blur();
 }
 
-// Open the Agent Controls dialog, set max_iterations, and close. The template's
-// URL tool (default) is the forcer — no extra tool needs enabling.
-async function setMaxIterations(page: Page, maxIterations: string): Promise<void> {
-  // dev49: max_iterations is an advanced field — expose it on the node body via
-  // the inspector (replaces the old Controls dialog / edit-button-modal), then
-  // fill it on the body.
-  await page.locator('[data-testid^="rf__node-Agent"]').first().click();
-  await openAdvancedOptions(page);
-  await page.getByTestId("inspector-add-max_iterations").click();
-  await closeAdvancedOptions(page);
-  const maxIter = page.getByTestId("int_int_max_iterations");
-  await expect(maxIter).toBeVisible({ timeout: 15000 });
-  await maxIter.scrollIntoViewIfNeeded();
-  await maxIter.fill(maxIterations);
-  await maxIter.blur();
-}
-
 // Set the task on the ChatInput node (the Playground prompt pre-fills from it;
 // typing into the Playground races an async default re-injection).
 async function setChatInputText(page: Page, text: string): Promise<void> {
@@ -307,7 +288,7 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("force a tool call, cap max_iterations at 1, set the task", async () => {
           await setSystemPrompt(page, SYSTEM_PROMPT);
-          await setMaxIterations(page, "1");
+          await setAgentMaxIterations(page, "1");
           await setChatInputText(page, TASK);
           await waitForFlowSaveSettled(page);
         });
@@ -341,7 +322,7 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("force a tool call, allow a high max_iterations, set the task", async () => {
           await setSystemPrompt(page, SYSTEM_PROMPT);
-          await setMaxIterations(page, HIGH_LIMIT);
+          await setAgentMaxIterations(page, HIGH_LIMIT);
           await setChatInputText(page, TASK);
           await waitForFlowSaveSettled(page);
         });
