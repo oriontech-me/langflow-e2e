@@ -19,8 +19,34 @@ import type { Page, Request } from "@playwright/test";
  * or a rename that is reverted to the pre-rename name (issue #995).
  *
  * Resolves once **no flow-save PATCH is in flight** and none has completed for
- * `quietMs` (chosen comfortably above the 300 ms autosave debounce), or after
- * `timeout` as a safety cap so a quiet flow never hangs the caller.
+ * `quietMs`, or after `timeout` as a safety cap so a quiet flow never hangs the
+ * caller.
+ *
+ * ## What it does NOT do, and why the header used to imply otherwise (#1741)
+ *
+ * This is a DRAIN, not a proof that your edit was saved. The quiet window arms
+ * immediately when nothing is in flight, so called right after an edit it
+ * returns having tracked no request at all — the save is still only SCHEDULED.
+ * The header used to justify `quietMs = 700` as "comfortably above the 300 ms
+ * autosave debounce", and that is wrong twice over: 300 ms is
+ * `SAVE_DEBOUNCE_TIME`, merely the store's pre-fetch default, while the
+ * effective delay is `GET /api/v1/config.auto_saving_interval` — measured
+ * **1000** in `SimpleAgentTemplatePage.ts` and **2000** on `1.13.0.dev4`. Both
+ * exceed the window, so the barrier expires first, by design of the numbers
+ * rather than by accident of load.
+ *
+ * Measured 3/3 on `1.13.0.dev4`: called after two node-body fills it returned
+ * ~1.0 s later with ZERO patches sent and the database still holding the
+ * pre-edit value. Two other call sites had already measured the same gap
+ * independently (`SimpleAgentTemplatePage.ts`, which rejected this helper as a
+ * fix for exactly this reason, and `general-bugs-save-changes-on-node.spec.ts`,
+ * which replaced it with a server-side gate).
+ *
+ * **If the next assertion depends on the edit having reached the server** — a
+ * reload, a navigation away, an API read of the flow — use `watchFlowSave(page)`
+ * instead: arm it before the edit and await it after, and it FAILS when no save
+ * appears rather than reporting a silence it cannot interpret. This helper stays
+ * the right tool for draining traffic you did not cause.
  *
  * Tracking requests — not just responses — is what makes this a barrier rather
  * than a silence probe (issue #995). The response-only version armed its quiet

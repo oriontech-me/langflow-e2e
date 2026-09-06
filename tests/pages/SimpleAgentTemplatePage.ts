@@ -37,11 +37,14 @@ export interface LoadSimpleAgentOptions {
  *    cannot work from here: it is attached AFTER the model click, and the rebind
  *    chain is a 300 ms `mutateTemplate` debounce → `POST
  *    /api/v1/custom_component/update` → the editor's autosave debounce, which is
- *    `GET /api/v1/config.auto_saving_interval` and answers **1000** on the running
- *    nightly (the 300 ms in `wait-for-flow-save-settled.ts` is only the store's
- *    pre-fetch default). The earliest `PATCH /api/v1/flows/{id}` is therefore
- *    ~1.3 s + a round trip away, while the helper's quiet window is 700 ms with
- *    nothing in flight at attach time — so it expires first. Measured locally: it
+ *    `GET /api/v1/config.auto_saving_interval` and answered **1000** on the nightly
+ *    when this was measured — **2000** on `1.13.0.dev4`, so the margin below is
+ *    the old, smaller one and the conclusion only got safer (#1741; the 300 ms in
+ *    `wait-for-flow-save-settled.ts` is only the store's pre-fetch default, and
+ *    the run-scoped value now comes from `helpers/flows/autosave-interval.ts`).
+ *    The earliest `PATCH /api/v1/flows/{id}` is therefore ~1.3 s + a round trip
+ *    away, while the helper's quiet window is 700 ms with nothing in flight at
+ *    attach time — so it expires first. Measured locally: it
  *    resolved at ~0.7 s on a settle that completed at 1.5 s, having tracked no
  *    request at all. Under load it degenerates into a 700 ms sleep.
  *  - **Waiting on the refresh POST itself** (armable in `load()` before the setup
