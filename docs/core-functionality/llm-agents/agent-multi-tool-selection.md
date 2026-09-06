@@ -198,8 +198,10 @@ describe with two tests:
    a copy in both specs until #1380 extracted it). The helper asserts the field
    actually holds the value, and that read-back is load-bearing, not tuning: a
    cap that silently fails to apply leaves the default 15 and re-opens #1378 on
-   a run that still looks green. It proves the field ACCEPTED the value, not
-   that the value survived the add-autosave — see #1739. See the note below.
+   a run that still looks green. The value it reads is the value the run
+   executes — the Playground posts the client store's graph, not the persisted
+   flow — and the add-then-fill sequence was measured non-racy on `1.13.0.dev4`
+   (#1739). See the note below.
 5. Open the Playground, send, wait for the run to finish (Stop button hidden).
 6. **Sequence assert (API):** poll `GET /api/v1/monitor/messages` — nonce-keyed
    session lookup (same as tests 1–2); collect the **ordered** list of
