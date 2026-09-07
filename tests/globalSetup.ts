@@ -7,6 +7,10 @@ import * as path from "node:path";
 import * as dotenv from "dotenv";
 import { getAuthToken } from "./helpers/auth/get-auth-token";
 import {
+  describeAutosaveInterval,
+  publishAutosaveInterval,
+} from "./helpers/flows/autosave-interval";
+import {
   degradeProviders,
   providersForEnvKeys,
   readProviderHealth,
@@ -381,7 +385,13 @@ async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
     // never happens, and every CI lane's `Collect models` step would have warned
     // "could not read the component catalog" on every run. A warning that always
     // fires is the noise #1084 was raised about.
-    const auth = await getAuthToken(ctx).catch(() => "");
+    // Not `.catch(() => "")`: `getAuthToken` throws only when the backend never
+    // answered its retry budget, and its header forbids degrading that into the
+    // empty token (#1086). Swallowed, a wedged backend was reported here as
+    // "could not read the component catalog (HTTP 403)" — the authentication
+    // story, not the outage. The explicit authentication this comment is about
+    // is unaffected.
+    const auth = await getAuthToken(ctx);
     const res = await ctx.get("/api/v1/all", {
       headers: auth ? { Authorization: auth } : undefined,
       timeout: 30000,
@@ -456,11 +466,82 @@ function freezeCatalog(): void {
   );
 }
 
+/**
+ * Resolve the flow autosave debounce for this run and publish it (#1741).
+ *
+ * The number is `GET /api/v1/config.auto_saving_interval`, and it is neither the
+ * 300 ms `SAVE_DEBOUNCE_TIME` upstream's frontend constant names nor a value we
+ * can pin: this repo has measured 1000 and, on `1.13.0.dev4`, 2000. Every
+ * save-timing helper derives its deadline from it, so it is read once here, from
+ * the instance actually under test, and inherited by the forked workers through
+ * the environment — the same channel and the same reason as the frozen model
+ * catalog above.
+ *
+ * Never fatal, and never silently defaulted: a run that cannot read it says so
+ * and the consumers use a documented fallback that is larger than any interval
+ * upstream has shipped (#1012 — an unknown value is unknown, not clean).
+ * Authenticates explicitly, because the endpoint answers 200 with a PUBLIC
+ * payload that omits the field entirely — the failure mode is a resolved-looking
+ * `undefined`, not an error.
+ */
+async function resolveAutosaveInterval(ctx: APIRequestContext): Promise<void> {
+  try {
+    // NOT `.catch(() => "")`. `getAuthToken` returns "" for an environment
+    // without auth and THROWS only when the backend never answered its retry
+    // budget — its own header forbids degrading that into the empty token,
+    // because the caller then proceeds unauthenticated and fails somewhere far
+    // less diagnosable (#1086). Swallowed here, a wedged backend would be
+    // reported below as "the public payload omits the field", which is a true
+    // sentence about the wrong cause.
+    const auth = await getAuthToken(ctx);
+    const res = await ctx.get("/api/v1/config", {
+      headers: auth ? { Authorization: auth } : undefined,
+      timeout: 15000,
+    });
+    if (!res.ok()) throw new Error(`HTTP ${res.status()}`);
+    const body = (await res.json()) as {
+      auto_saving?: unknown;
+      auto_saving_interval?: unknown;
+    };
+    // The same payload says whether autosave runs AT ALL, and an instance with
+    // it off still reports a plausible interval — so publishing the number
+    // without this check prints a confident debounce for a backend that will
+    // never issue a PATCH, and every save-dependent call site then fails
+    // blaming the node-dirty state. Knowable at the gate, so named at the gate
+    // (#1012). `auto-save-off.spec.ts` is the lane that runs this way.
+    if (body.auto_saving === false) {
+      publishAutosaveInterval(null);
+      console.warn(
+        "[preflight] WARNING: flow autosave is DISABLED on this instance " +
+          "(auto_saving=false). No PATCH /api/v1/flows/{id} will be issued by an " +
+          "edit, so anything waiting on a save will time out by design.",
+      );
+      return;
+    }
+    const interval = body.auto_saving_interval;
+    if (typeof interval !== "number" || !Number.isInteger(interval) || interval <= 0) {
+      throw new Error(
+        `auto_saving_interval is ${JSON.stringify(interval)} ` +
+          `(an unauthenticated read returns the public payload, which omits it)`,
+      );
+    }
+    publishAutosaveInterval(interval);
+    console.log(`[preflight] ${describeAutosaveInterval(interval)}`);
+  } catch (e) {
+    publishAutosaveInterval(null);
+    console.warn(
+      `[preflight] WARNING: could not read the flow autosave debounce ` +
+        `(${String(e)}). ${describeAutosaveInterval(null)}.`,
+    );
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   freezeCatalog();
   const ctx = await playwrightRequest.newContext({ baseURL: BASE_URL });
   try {
     await assertBackendHealthy(ctx);
+    await resolveAutosaveInterval(ctx);
     if (truthy(process.env.PREFLIGHT_SKIP_CREDENTIALS)) {
       console.log(
         "[preflight] PREFLIGHT_SKIP_CREDENTIALS set — skipping the credential check (credential-importing run).",
