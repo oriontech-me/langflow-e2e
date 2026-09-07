@@ -1316,11 +1316,33 @@ phase_merge() {
   # and for the stage that will compare the lanes, not a field with a consumer today.
   # Stated rather than implied, because "the comparator reads it" would be a reason
   # that is not true yet. (#1726)
+  #
+  # The EFFECTIVE value of everything this file carries to the target — what was in
+  # force, not the default it pins. On 2026-09-07 the instance under test ran with
+  # tracing OFF against the workflow's `false`; the exception was an export in the
+  # wrapper on the qa VM, deliberate and documented there, and it explained 16 of that
+  # day's 20 divergences. Establishing that took a shell on the machine, because
+  # nothing the run itself produced named the value actually used (#1748).
+  #
+  # A machine may hold a measured exception — that is how a VM records one. What it
+  # may not do is hold it invisibly: scripts/check-vm-env-parity.mjs reads files in
+  # this repository, so an override that lives outside every clone is outside its
+  # reach by construction, and the run's own artifact is the only place that can
+  # answer for it.
+  local mirrored_kv=() name
+  # shellcheck disable=SC2086  # deliberate word splitting: the list holds names, never values
+  for name in $MIRRORED_TARGET_VARS; do mirrored_kv+=("$name" "${!name}"); done
+
   node -e '
     const fs = require("fs");
-    const [out, ...kv] = process.argv.slice(1);
+    const args = process.argv.slice(1);
+    const at = args.indexOf("--mirrored");
+    const [out, ...kv] = at === -1 ? args : args.slice(0, at);
+    const mirrored = at === -1 ? [] : args.slice(at + 1);
     const o = {};
     for (let i = 0; i < kv.length; i += 2) o[kv[i]] = kv[i + 1];
+    o.mirrored_target_env = {};
+    for (let i = 0; i < mirrored.length; i += 2) o.mirrored_target_env[mirrored[i]] = mirrored[i + 1];
     fs.writeFileSync(out, JSON.stringify(o, null, 2) + "\n");
   ' "$RUN_DIR/run-metadata.json" \
     run_id "$RUN_ID" \
@@ -1339,10 +1361,15 @@ phase_merge() {
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}" \
-    merge_ok "${MERGE_OK:-true}"
+    merge_ok "${MERGE_OK:-true}" \
+    --mirrored "${mirrored_kv[@]}"
 
   info "tests: ${RUN_TESTS:-0} | top-level errors: ${RUN_ERRORS:-0} | empty: $RUN_EMPTY | partial: $RUN_PARTIAL"
   info "Langflow: ${LANGFLOW_VERSION:-<unknown>}"
+  # The same values in the log, quoted exactly as they were sent. The metadata is the
+  # durable record; this line is for whoever is reading the run's output at 08:00 and
+  # wondering why a family went red.
+  info "target env: $(mirrored_target_env)"
 }
 
 # ---------------------------------------------------------------------------

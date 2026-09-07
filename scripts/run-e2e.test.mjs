@@ -1033,6 +1033,88 @@ test("a failed merge is NAMED and does not abort the run, so guard 2 still class
   assert.equal(meta.tests_total, "0", "the guard sees no report, which is exactly why merge_ok has to be there");
 });
 
+/**
+ * Runs phase_merge with `env` in force and returns the run-metadata.json it wrote.
+ *
+ * The merge is stubbed to FAIL, which is the cheapest way to reach the metadata write
+ * without a real four-shard report — and it costs nothing here, because the values
+ * under test are composed from this script's own variables, not from anything the
+ * merge produces. That a failed merge still writes the file is itself pinned above.
+ */
+function metadataFrom(env) {
+  const dir = makeTempDir("mirrored-meta-e2e-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-blobs"), { recursive: true });
+  writeFileSync(join(dir, "all-blobs", "shard-1.zip"), "");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "npx"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1`,
+      "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
+      "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      "phase_merge",
+    ].join("\n"),
+    { PATH: `${bin}:${process.env.PATH}`, ...env },
+  );
+  const file = join(dir, "run-metadata.json");
+  assert.ok(existsSync(file), `phase_merge wrote no metadata\n${r.stdout}\n${r.stderr}`);
+  return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr };
+}
+
+test("the metadata records the mirrored values that were IN FORCE, not the defaults", () => {
+  // The property #1748 exists for. On 2026-09-07 the instance under test ran with
+  // tracing OFF against the workflow's `false`; the override was an export in the
+  // wrapper on the qa VM — deliberate, documented there, and outside every clone, so
+  // check-vm-env-parity.mjs cannot reach it by construction. It explained 16 of that
+  // day's 20 divergences, and establishing that took a shell on the machine, because
+  // nothing the run itself produced named the value actually used.
+  //
+  // The override arrives through the ENVIRONMENT, which is how the real one arrives.
+  // And the assertion is against the OVERRIDDEN value on purpose: asserting the
+  // default is what would pass against the very bug this test is written for.
+  const { meta } = metadataFrom({ LANGFLOW_DEACTIVATE_TRACING: "true", LANGFLOW_WORKER_TIMEOUT: "45" });
+
+  assert.equal(meta.mirrored_target_env.LANGFLOW_DEACTIVATE_TRACING, "true");
+  assert.equal(meta.mirrored_target_env.LANGFLOW_WORKER_TIMEOUT, "45");
+
+  // What makes those two a DIVERGENCE rather than two strings, read out of the
+  // workflow rather than copied — the same rule the rest of this file follows.
+  assert.equal(evaluateWorkflowValue(DECLARED.get("LANGFLOW_DEACTIVATE_TRACING"), {}), "false");
+  assert.notEqual(meta.mirrored_target_env.LANGFLOW_DEACTIVATE_TRACING, "false");
+
+  // Untouched names still record the default, or the record would only describe the
+  // half someone overrode.
+  assert.equal(
+    meta.mirrored_target_env.LANGFLOW_SQLITE_PRAGMAS,
+    evaluateWorkflowValue(DECLARED.get("LANGFLOW_SQLITE_PRAGMAS"), {}),
+  );
+});
+
+test("every mirrored name reaches the metadata, because one list feeds both", () => {
+  // The drift the issue asked for a guard against, closed by construction instead:
+  // mirrored_target_env() and this record both loop MIRRORED_TARGET_VARS, so a
+  // variable cannot be carried to the target without being recorded, and a guard
+  // between two enumerations has nothing left to report.
+  //
+  // Driven by the classification rather than a list here, so the next variable to be
+  // mirrored is covered on the day it is classified — the same derivation the parity
+  // tests above use.
+  const { meta } = metadataFrom(BLANKED);
+  assert.deepEqual(Object.keys(meta.mirrored_target_env).sort(), [...MIRRORED].sort());
+});
+
+test("the run's own log names the environment it sent, quoted as it was sent", () => {
+  // The durable record is the metadata; this line is for whoever is reading the log at
+  // 08:00 and wondering why a family went red. It prints the COMPOSER's own output
+  // rather than a second rendering of the same values, so it cannot describe an
+  // environment other than the one that crossed the ssh boundary.
+  const { stdout, stderr } = metadataFrom({ ...BLANKED, LANGFLOW_DEACTIVATE_TRACING: "true" });
+  assert.match(stdout + stderr, /target env:.*LANGFLOW_DEACTIVATE_TRACING='true'/);
+});
+
 test("a failed merge fails the verdict, and does not call it 'zero tests executed'", () => {
   // The distinction is the point: a merge failure leaves no report, so guard 2 marks
   // the run empty — and the empty branch tells triage to find out why nothing ran,
