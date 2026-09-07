@@ -75,14 +75,14 @@ test("resolves once a save issued after arming has completed", async () => {
   let req: ReturnType<typeof f.request>;
   setTimeout(() => (req = f.request()), 20);
   setTimeout(() => f.finished(req!), 60);
-  await watch.settled({ timeout: 2000 });
+  await watch.settled({ issueTimeout: 2000, completionTimeout: 2000 });
 });
 
 test("does NOT resolve on silence — the whole point of the primitive", async () => {
   const f = fakePage();
   const watch = watchFlowSave(f.page);
   await assert.rejects(
-    () => watch.settled({ timeout: 200 }),
+    () => watch.settled({ issueTimeout: 200, completionTimeout: 200 }),
     /no flow-save PATCH was issued within 200 ms/,
   );
 });
@@ -93,7 +93,7 @@ test("waits for the save to COMPLETE, not merely to be issued", async () => {
   const req = f.request();
   const started = Date.now();
   setTimeout(() => f.finished(req), 150);
-  await watch.settled({ timeout: 2000 });
+  await watch.settled({ issueTimeout: 2000, completionTimeout: 2000 });
   assert.ok(
     Date.now() - started >= 140,
     `must not return before the response settles (waited ${Date.now() - started} ms)`,
@@ -105,14 +105,14 @@ test("a failed save settles it too — a rejected PATCH is not a pending one", a
   const watch = watchFlowSave(f.page);
   const req = f.request();
   setTimeout(() => f.failed(req), 20);
-  await watch.settled({ timeout: 2000 });
+  await watch.settled({ issueTimeout: 2000, completionTimeout: 2000 });
 });
 
 test("reports the in-flight count when a save never completes", async () => {
   const f = fakePage();
   const watch = watchFlowSave(f.page);
   f.request();
-  await assert.rejects(() => watch.settled({ timeout: 200 }), /still in flight/);
+  await assert.rejects(() => watch.settled({ issueTimeout: 200, completionTimeout: 200 }), /still in flight/);
 });
 
 test("ignores traffic that is not a flow save", async () => {
@@ -123,7 +123,7 @@ test("ignores traffic that is not a flow save", async () => {
   // The path is matched on the PATHNAME: a build asset quoting the prefix in its
   // query string must not count.
   f.request("http://localhost:7860/assets/index.js?x=/api/v1/flows/abc");
-  await assert.rejects(() => watch.settled({ timeout: 150 }), /no flow-save PATCH/);
+  await assert.rejects(() => watch.settled({ issueTimeout: 150, completionTimeout: 150 }), /no flow-save PATCH/);
 });
 
 test("detaches its listeners on every exit path", async () => {
@@ -132,12 +132,12 @@ test("detaches its listeners on every exit path", async () => {
   assert.equal(ok.listeners, 3);
   const okReq = ok.request();
   setTimeout(() => ok.finished(okReq), 10);
-  await watch.settled({ timeout: 2000 });
+  await watch.settled({ issueTimeout: 2000, completionTimeout: 2000 });
   assert.equal(ok.listeners, 0, "resolved path must detach");
 
   const bad = fakePage();
   const failing = watchFlowSave(bad.page);
-  await assert.rejects(() => failing.settled({ timeout: 100 }));
+  await assert.rejects(() => failing.settled({ issueTimeout: 100, completionTimeout: 100 }));
   assert.equal(bad.listeners, 0, "timeout path must detach");
 
   const aborted = fakePage();
@@ -150,8 +150,8 @@ test("is single-use: a second settled() throws instead of resolving blind", asyn
   const watch = watchFlowSave(f.page);
   const req = f.request();
   setTimeout(() => f.finished(req), 10);
-  await watch.settled({ timeout: 2000 });
-  await assert.rejects(() => watch.settled({ timeout: 100 }), /single-use/);
+  await watch.settled({ issueTimeout: 2000, completionTimeout: 2000 });
+  await assert.rejects(() => watch.settled({ issueTimeout: 100, completionTimeout: 100 }), /single-use/);
 });
 
 test("dispose is idempotent and safe after settled()", async () => {
@@ -159,7 +159,7 @@ test("dispose is idempotent and safe after settled()", async () => {
   const watch = watchFlowSave(f.page);
   const req = f.request();
   setTimeout(() => f.finished(req), 10);
-  await watch.settled({ timeout: 2000 });
+  await watch.settled({ issueTimeout: 2000, completionTimeout: 2000 });
   watch.dispose();
   watch.dispose();
   assert.equal(f.listeners, 0);
@@ -176,7 +176,7 @@ test("a save in flight BEFORE arming cannot release the watch (#1742 review)", a
   const mine = f.request();
   f.settleUnobserved();
   let released = false;
-  const settled = watch.settled({ timeout: 3000 }).then(() => (released = true));
+  const settled = watch.settled({ issueTimeout: 3000, completionTimeout: 3000 }).then(() => (released = true));
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(released, false, "must not release while the observed save is open");
   f.finished(mine);
@@ -190,11 +190,46 @@ test("two concurrent saves: both must complete", async () => {
   const first = f.request();
   const second = f.request();
   let released = false;
-  const settled = watch.settled({ timeout: 3000 }).then(() => (released = true));
+  const settled = watch.settled({ issueTimeout: 3000, completionTimeout: 3000 }).then(() => (released = true));
   f.finished(first);
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(released, false, "one of two settling is not enough");
   f.finished(second);
   await settled;
   assert.equal(released, true);
+});
+
+test("a save that already completed is honoured even with the budget spent (#1742 review)", async () => {
+  // The condition must be evaluated at least once, BEFORE the clock is
+  // consulted. The `while (Date.now() < deadline)` version this replaces
+  // discarded a save that completed during its final sleep and threw
+  // "1 issued but 0 still in flight" — a message that disproves itself. Budgets
+  // of 0 reproduce that ordering deterministically, with no clock race.
+  const f = fakePage();
+  const watch = watchFlowSave(f.page);
+  const req = f.request();
+  f.finished(req);
+  await watch.settled({ issueTimeout: 0, completionTimeout: 0 });
+});
+
+test("the issuance and completion budgets are independent", async () => {
+  // An issued-but-slow save must not be reported as "never issued": the two
+  // failures have different causes (a follow-on mutation restarting the trailing
+  // debounce vs a slow backend) and the error has to say which.
+  const f = fakePage();
+  const watch = watchFlowSave(f.page);
+  const req = f.request();
+  const settled = watch.settled({ issueTimeout: 0, completionTimeout: 1000 });
+  setTimeout(() => f.finished(req), 120);
+  await settled;
+});
+
+test("a disposed watch says so, instead of blaming re-use (#1742 review)", async () => {
+  const f = fakePage();
+  const watch = watchFlowSave(f.page);
+  watch.dispose();
+  await assert.rejects(
+    () => watch.settled({ issueTimeout: 100, completionTimeout: 100 }),
+    /disposed before settled\(\) was called/,
+  );
 });

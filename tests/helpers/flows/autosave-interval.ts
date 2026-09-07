@@ -69,6 +69,37 @@ export function readAutosaveIntervalMs(
 }
 
 /**
+ * How long to allow a save to COMPLETE once it has been issued.
+ *
+ * Deliberately separate from the issuance budget below, and deliberately
+ * generous. They are different failures: a save that is late to be *issued* is
+ * usually a follow-on mutation restarting the trailing debounce, while a save
+ * that is late to *complete* is a slow backend. Folding them into one budget
+ * makes a healthy-but-slow round trip indistinguishable from an edit that never
+ * marked the node dirty, and reports the wrong one. Over-waiting costs a slow
+ * red on a run that is already failing; under-waiting costs a red on a healthy
+ * save — and the first call sites to migrate are `@stable` specs in the daily,
+ * where a hard failure removes the tag by unreviewed commit.
+ */
+export const SAVE_COMPLETION_BUDGET_MS = 10000;
+
+/**
+ * How long the editor must be quiet before NO save can still be pending.
+ *
+ * The gap `waitForFlowSaveSettled` leaves open is a save that is scheduled but
+ * not yet issued, and the only window that closes it is one longer than the
+ * debounce itself. Callers that must start from a clean slate — including
+ * anything arming `watchFlowSave` after an earlier mutation — pass this as that
+ * helper's `quietMs`.
+ */
+export function pendingSaveQuietMs(
+  intervalMs: number | null = readAutosaveIntervalMs(),
+  { slackMs = 500 }: { slackMs?: number } = {},
+): number {
+  return (intervalMs ?? AUTOSAVE_INTERVAL_FALLBACK_MS) + slackMs;
+}
+
+/**
  * How long to allow for a save that an edit has just scheduled to be ISSUED.
  *
  * The debounce is trailing and restarted by every flow mutation, so the earliest

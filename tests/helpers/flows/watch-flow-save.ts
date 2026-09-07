@@ -1,11 +1,15 @@
 import type { Page, Request } from "@playwright/test";
 import {
   describeAutosaveInterval,
+  SAVE_COMPLETION_BUDGET_MS,
   saveScheduledDeadlineMs,
 } from "./autosave-interval";
 
 /** A flow autosave is a `PATCH` on this path prefix. */
 const FLOWS_PATH_PREFIX = "/api/v1/flows/";
+
+/** Poll spacing. Each turn is a traced Playwright call, so it is not free. */
+const POLL_INTERVAL_MS = 50;
 
 /**
  * Anchored on the PATHNAME, never on a substring of the whole URL — the repo has
@@ -34,7 +38,19 @@ export interface FlowSaveWatch {
    * listeners are detached on the way out, so a second call could never observe
    * a request and would resolve on a save it did not see.
    */
-  settled(opts?: { timeout?: number }): Promise<void>;
+  settled(opts?: {
+    /**
+     * Budget for the save to be ISSUED. Defaults to one debounce plus slack,
+     * derived from the instance.
+     */
+    issueTimeout?: number;
+    /**
+     * Budget for an issued save to COMPLETE, on top of `issueTimeout`. Two
+     * budgets rather than one because they fail for different reasons and the
+     * error has to say which.
+     */
+    completionTimeout?: number;
+  }): Promise<void>;
   /**
    * Detach without waiting. Only needed on the abort path — if the edit between
    * `watchFlowSave(page)` and `settled()` throws, the listeners would otherwise
@@ -73,6 +89,24 @@ export interface FlowSaveWatch {
  * Use `waitForFlowSaveSettled` when you are draining traffic you did not cause;
  * use this when the next assertion depends on the edit having reached the
  * server — a reload, a navigation away, or an API read of the flow.
+ *
+ * ## Precondition: arm it from a quiescent editor
+ *
+ * This watch resolves on the first save it OBSERVES, and it cannot know which
+ * mutation produced it. A save already SCHEDULED when it was armed — an earlier
+ * interaction's pending debounce — is issued after arming and therefore counts,
+ * even though it carries pre-edit state. The identity `Set` closes the
+ * in-flight case; nothing closes the scheduled one from inside, because a
+ * pending debounce is invisible until it fires.
+ *
+ * It matters most where the watcher is most useful: when the edit did NOT mark
+ * the node dirty (a `fill()` on a controlled input does not), a prior pending
+ * save satisfies the watch and the test passes instead of naming the cause.
+ *
+ * So arm it when the editor is quiet. After an earlier mutation, drain first
+ * with a window longer than the debounce — `waitForFlowSaveSettled(page,
+ * { quietMs: pendingSaveQuietMs() })`, which is exactly the window that helper's
+ * 700 ms default is too short to be (#1741).
  */
 export function watchFlowSave(page: Page): FlowSaveWatch {
   /**
@@ -91,6 +125,11 @@ export function watchFlowSave(page: Page): FlowSaveWatch {
   const pending = new Set<Request>();
   let started = 0;
   let attached = true;
+  // Separate from `attached` on purpose: conflating them reports a DISPOSED
+  // watch as a re-used one, which is the wrong diagnosis on the documented abort
+  // path (dispose() in a catch, then settled() awaited). The sibling
+  // `watchNodeRefresh` keeps the same two flags for the same reason.
+  let spent = false;
 
   const onRequest = (req: Request) => {
     if (!isFlowSave(req)) return;
@@ -117,27 +156,49 @@ export function watchFlowSave(page: Page): FlowSaveWatch {
 
   return {
     dispose,
-    async settled({ timeout = saveScheduledDeadlineMs() } = {}) {
-      if (!attached) {
+    async settled({
+      issueTimeout = saveScheduledDeadlineMs(),
+      completionTimeout = SAVE_COMPLETION_BUDGET_MS,
+    } = {}) {
+      if (spent) {
         throw new Error(
           "watchFlowSave: settled() is single-use — arm a new watch per edit.",
         );
       }
-      const deadline = Date.now() + timeout;
-      try {
-        while (Date.now() < deadline) {
-          if (started > 0 && pending.size === 0) return;
-          await page.waitForTimeout(50);
-        }
+      if (!attached) {
         throw new Error(
-          started === 0
-            ? `watchFlowSave: no flow-save PATCH was issued within ${timeout} ms ` +
-              `(${describeAutosaveInterval()}). The edit did not reach the server — ` +
-              `it may not have marked the node dirty (a fill() on a controlled input ` +
-              `does not), or the flow is read-only.`
-            : `watchFlowSave: ${started} flow-save PATCH(es) issued but ${pending.size} ` +
-              `still in flight after ${timeout} ms.`,
+          "watchFlowSave: this watch was disposed before settled() was called.",
         );
+      }
+      spent = true;
+      const issueDeadline = Date.now() + issueTimeout;
+      const overallDeadline = issueDeadline + completionTimeout;
+      try {
+        // The condition is tested BEFORE either deadline, every turn, which is
+        // what keeps a save that completed during the last sleep from being
+        // discarded — the loop would otherwise exit on the clock and throw
+        // `1 issued but 0 still in flight`, a message that disproves itself.
+        // Same ordering as the sibling `watchNodeRefresh`.
+        for (;;) {
+          if (started > 0 && pending.size === 0) return;
+          const now = Date.now();
+          if (started === 0 && now >= issueDeadline) {
+            throw new Error(
+              `watchFlowSave: no flow-save PATCH was issued within ${issueTimeout} ms ` +
+                `(${describeAutosaveInterval()}). The edit did not reach the server — ` +
+                `it may not have marked the node dirty (a fill() on a controlled input ` +
+                `does not), the flow is read-only, or autosave is disabled on this ` +
+                `instance.`,
+            );
+          }
+          if (now >= overallDeadline) {
+            throw new Error(
+              `watchFlowSave: ${started} flow-save PATCH(es) issued but ${pending.size} ` +
+                `still in flight ${completionTimeout} ms after the last one started.`,
+            );
+          }
+          await page.waitForTimeout(POLL_INTERVAL_MS);
+        }
       } finally {
         dispose();
       }
