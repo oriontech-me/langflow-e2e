@@ -258,9 +258,21 @@ test.describe("Memory Chatbot Regression", () => {
     },
   );
 
+  // `@stable` restored (#1504). It was auto-removed by the 2026-08-14 daily
+  // (`f6f4c39`, run 31786538844) on `TimeoutError: locator.click: Timeout
+  // 20000ms exceeded` — the sr-only "N of M" counter 1.12.0.dev26 added to each
+  // picker option, which defeated every anchored matcher (#1459 / #1461).
+  // `setupLanguageModelOpenAI`, reached here through `openConfiguredPlayground`,
+  // has read options by IDENTITY through `model-option.ts` since `8cab90f`, and
+  // this spec carries no option matcher of its own — unlike
+  // `memory-base-registration`, the third sibling of that triage, whose matcher
+  // was spec-local and needed its own change (#1460 / #1618). Re-validated on
+  // nightly 1.13.0.dev5: 4/4 clean at `--retries=0`, force-fail confirmed on the
+  // `/Alice/i` assertion, which returned "Your name is Alice. How can I help you
+  // today?" — so the second turn really is recalling the name, not echoing it.
   test(
     "message history context retention suite",
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       // Real OpenAI completions drive the whole suite, so gate on provider
       // HEALTH, not on the env var alone — a drained key would block the backend
