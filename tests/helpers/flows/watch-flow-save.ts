@@ -75,22 +75,32 @@ export interface FlowSaveWatch {
  * server — a reload, a navigation away, or an API read of the flow.
  */
 export function watchFlowSave(page: Page): FlowSaveWatch {
-  let inFlight = 0;
+  /**
+   * The saves this watch actually OBSERVED start, by request identity.
+   *
+   * Identity, not a counter, and that is the whole correctness argument. A PATCH
+   * already in flight when the watch was armed settles here too, and a counter
+   * cannot tell it apart from the one the caller's edit triggered: an older save
+   * finishing while the new one is still open would decrement the count to zero
+   * and release the watch on a save that had not completed — the exact early
+   * return this primitive exists to prevent, reintroduced inside it. Playwright
+   * emits the same `Request` object on `request` and on
+   * `requestfinished`/`requestfailed`, so membership answers it exactly:
+   * unobserved settles are not in the set and are ignored.
+   */
+  const pending = new Set<Request>();
   let started = 0;
-  let settledCount = 0;
   let attached = true;
 
   const onRequest = (req: Request) => {
     if (!isFlowSave(req)) return;
     started++;
-    inFlight++;
+    pending.add(req);
   };
   const onSettled = (req: Request) => {
-    if (!isFlowSave(req)) return;
-    // Clamp: a PATCH already in flight when this watch was armed would settle
-    // here without ever having been counted as started.
-    inFlight = Math.max(0, inFlight - 1);
-    settledCount++;
+    // No `isFlowSave` test needed: only saves were ever added, and `delete`
+    // reports whether this request was one of them.
+    pending.delete(req);
   };
 
   page.on("request", onRequest);
@@ -116,7 +126,7 @@ export function watchFlowSave(page: Page): FlowSaveWatch {
       const deadline = Date.now() + timeout;
       try {
         while (Date.now() < deadline) {
-          if (started > 0 && inFlight === 0 && settledCount >= started) return;
+          if (started > 0 && pending.size === 0) return;
           await page.waitForTimeout(50);
         }
         throw new Error(
@@ -125,7 +135,7 @@ export function watchFlowSave(page: Page): FlowSaveWatch {
               `(${describeAutosaveInterval()}). The edit did not reach the server — ` +
               `it may not have marked the node dirty (a fill() on a controlled input ` +
               `does not), or the flow is read-only.`
-            : `watchFlowSave: ${started} flow-save PATCH(es) issued but ${inFlight} ` +
+            : `watchFlowSave: ${started} flow-save PATCH(es) issued but ${pending.size} ` +
               `still in flight after ${timeout} ms.`,
         );
       } finally {
