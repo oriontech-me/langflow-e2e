@@ -385,7 +385,13 @@ async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
     // never happens, and every CI lane's `Collect models` step would have warned
     // "could not read the component catalog" on every run. A warning that always
     // fires is the noise #1084 was raised about.
-    const auth = await getAuthToken(ctx).catch(() => "");
+    // Not `.catch(() => "")`: `getAuthToken` throws only when the backend never
+    // answered its retry budget, and its header forbids degrading that into the
+    // empty token (#1086). Swallowed, a wedged backend was reported here as
+    // "could not read the component catalog (HTTP 403)" — the authentication
+    // story, not the outage. The explicit authentication this comment is about
+    // is unaffected.
+    const auth = await getAuthToken(ctx);
     const res = await ctx.get("/api/v1/all", {
       headers: auth ? { Authorization: auth } : undefined,
       timeout: 30000,
@@ -493,7 +499,25 @@ async function resolveAutosaveInterval(ctx: APIRequestContext): Promise<void> {
       timeout: 15000,
     });
     if (!res.ok()) throw new Error(`HTTP ${res.status()}`);
-    const body = (await res.json()) as { auto_saving_interval?: unknown };
+    const body = (await res.json()) as {
+      auto_saving?: unknown;
+      auto_saving_interval?: unknown;
+    };
+    // The same payload says whether autosave runs AT ALL, and an instance with
+    // it off still reports a plausible interval — so publishing the number
+    // without this check prints a confident debounce for a backend that will
+    // never issue a PATCH, and every save-dependent call site then fails
+    // blaming the node-dirty state. Knowable at the gate, so named at the gate
+    // (#1012). `auto-save-off.spec.ts` is the lane that runs this way.
+    if (body.auto_saving === false) {
+      publishAutosaveInterval(null);
+      console.warn(
+        "[preflight] WARNING: flow autosave is DISABLED on this instance " +
+          "(auto_saving=false). No PATCH /api/v1/flows/{id} will be issued by an " +
+          "edit, so anything waiting on a save will time out by design.",
+      );
+      return;
+    }
     const interval = body.auto_saving_interval;
     if (typeof interval !== "number" || !Number.isInteger(interval) || interval <= 0) {
       throw new Error(
