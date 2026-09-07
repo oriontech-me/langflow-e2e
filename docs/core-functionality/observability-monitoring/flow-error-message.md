@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/observability-monitoring/flow-error-message.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev5`)
 
 ---
 
@@ -47,6 +47,18 @@ would not satisfy it.
 (`@observability`: user-facing error surfacing is the subject. `@components`:
 the error originates from a component's field validation. Created `@stable` by
 #695 after deterministic validation.)
+
+`@stable` was removed and the test wrapped as `test.fixme` at the triage of daily
+#1417 for the swallowed sidebar add, and its owner #1423 was then closed by a PR
+that lifted a different pair — leaving it off the daily with no live tracker,
+which is what **#1504** found. Both were restored by #1504 on nightly
+`1.13.0.dev5`: 12/12 at `--retries=0` with three workers driving one backend,
+plus a force-fail. The add here is still a bare fill + click rather than
+`addComponentFromSidebar`, deliberately: `langflow#14523` disables the affordance
+during the permission window, so a bare click waits it out
+(`docs/upstream-bugs/UPSTREAM-BUG-sidebar-add-permission-gate-dead-window.md` §9,
+where four other bare call sites were decided against rewiring for the same
+reason). If the class returns, moving this add onto the helper is the repair.
 
 ---
 
