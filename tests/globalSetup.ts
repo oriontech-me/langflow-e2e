@@ -480,7 +480,14 @@ function freezeCatalog(): void {
  */
 async function resolveAutosaveInterval(ctx: APIRequestContext): Promise<void> {
   try {
-    const auth = await getAuthToken(ctx).catch(() => "");
+    // NOT `.catch(() => "")`. `getAuthToken` returns "" for an environment
+    // without auth and THROWS only when the backend never answered its retry
+    // budget — its own header forbids degrading that into the empty token,
+    // because the caller then proceeds unauthenticated and fails somewhere far
+    // less diagnosable (#1086). Swallowed here, a wedged backend would be
+    // reported below as "the public payload omits the field", which is a true
+    // sentence about the wrong cause.
+    const auth = await getAuthToken(ctx);
     const res = await ctx.get("/api/v1/config", {
       headers: auth ? { Authorization: auth } : undefined,
       timeout: 15000,
