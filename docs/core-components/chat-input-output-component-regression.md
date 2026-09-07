@@ -1,6 +1,6 @@
 # Chat Input / Chat Output Components — Regression
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev30`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev5`)
 
 ---
 
@@ -25,9 +25,9 @@ If any of these tests fails, one of the two endpoints of the Playground is broke
 
 `@stable` `@regression` `@components`
 
-5 of the 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag is removed per-test only during weekly triage".
+All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag is removed per-test only during weekly triage".
 
-Test 1 is the exception: it is `test.fixme` and untagged, quarantined at the triage of daily #1417 for the swallowed sidebar **click** (the click lands and no node is placed). Lifting it is a deliverable of **#1423**, not of this spec's own work. Test 6's `@stable` was auto-removed by the daily workflow for #1468 and is restored here, re-validated on `1.12.0.dev30`.
+Test 1 was the one exception until **#1504**: it was `test.fixme` and untagged, quarantined at the triage of daily #1417 for the swallowed sidebar **click** (the click lands and no node is placed), and its owner #1423 was closed on 2026-08-17 by a PR that lifted a different pair, leaving the test off the daily with nobody watching. The quarantine is now lifted and `@stable` restored, on two independent grounds: the add routes through `addComponentFromSidebar`, which detects a dropped add and re-issues it (#1304), and the product defect underneath was fixed upstream in `langflow#14523` — the affordance is `disabled` while the permission window is open, so the click waits it out instead of being discarded (`docs/upstream-bugs/UPSTREAM-BUG-sidebar-add-permission-gate-dead-window.md` §9). Re-validated on `1.13.0.dev5`: 18/18 at `--retries=0` (6 on a quiet instance, 12 with three workers against one backend), on top of the 16/16 under four concurrent processes already recorded on #1423 at `1.12.0.dev30`. Test 6's `@stable` was auto-removed by the daily workflow for #1468 and restored on `1.12.0.dev30`.
 
 ---
 

@@ -1,6 +1,6 @@
 # Memory Chatbot — History and Memory Regression
 
-**Last validated:** Langflow 1.12.x (1.12.0.dev17)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev5`)
 
 ---
 
@@ -13,6 +13,22 @@ Validates the core behavior of the **Memory Chatbot** template: loading the flow
 ## Tags *(required)*
 
 `@stable` `@release` `@agents` `@playground`
+
+`@stable` was removed from the **context retention** test by the 2026-08-14
+daily's auto-removal (run 31786538844, commit `f6f4c39`) on
+`TimeoutError: locator.click: Timeout 20000ms exceeded`, and is **restored by
+#1504**. The cause was `1.12.0.dev26`'s per-option sr-only "N of M" counter,
+which defeated every anchored matcher (#1459 / #1461); `8cab90f` moved
+`setupLanguageModelOpenAI` — reached here through `openConfiguredPlayground` —
+onto `model-option.ts`, which resolves options by identity. This spec carries no
+option matcher of its own, unlike `memory-base-registration`, the third sibling
+of that triage, whose matcher was spec-local and needed its own change
+(#1460 / #1618). The tag was never put back because #1459 closed the same day
+with one sibling restored and this one not — the orphaned-removal class #1504
+audits. Re-validated on `1.13.0.dev5`: 4/4 at `--retries=0`, force-fail
+confirmed on the `/Alice/i` assertion, which returned "Your name is Alice. How
+can I help you today?" — so the second turn really recalls the name rather than
+echoing the first reply.
 
 ---
 

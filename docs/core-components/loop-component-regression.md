@@ -21,6 +21,14 @@ If any of these tests fails, the Loop component is broken in the product: either
 
 `@stable` `@release` `@components` `@templates` `@playground`
 
+**Test 3 is the exception and carries no tag**: it is `test.fixme`, quarantined
+because the image does not register the template it loads — the backend logs
+`Skipping starter project 'Research Translation Loop'; unavailable components:
+ArXivComponent` at startup, still true on nightly `1.13.0.dev5`. The lift is
+gated on the image, not on anything this spec can do. Its live owner is **#1744**;
+#1234, the original tracker, was closed on 2026-08-04 by its own quarantine commit
+with the lift outstanding (#1504).
+
 ---
 
 ## Step by step *(required)*

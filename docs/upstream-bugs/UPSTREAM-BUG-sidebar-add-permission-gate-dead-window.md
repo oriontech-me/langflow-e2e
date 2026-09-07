@@ -5,7 +5,7 @@
 | **Status** | **FIXED** — [langflow#14523](https://github.com/langflow-ai/langflow/pull/14523) *"gate the add component affordance on the pending permission check"*, merged into `release-1.12.0` on 2026-08-14. Verified on `1.12.0.dev30`, see §9 |
 | **Filed upstream** | **LE-2176** — https://datastax.jira.com/browse/LE-2176 (Done) |
 | **Sibling ticket** | **LE-2123** — same permission gate, different consumer (Global Variables grid). See `UPSTREAM-BUG-global-variables-permission-gate-dead-window.md` |
-| **Tracked in** | `oriontech-me/langflow-e2e#1301` (from daily triage `#1296`), repaired suite-side by PR `#1427`. Earlier surfaces of the same class: `#1304`, `#1335`; quarantined callers `#1365` / `#1423`, lifted 2026-08-17 (§9) |
+| **Tracked in** | `oriontech-me/langflow-e2e#1301` (from daily triage `#1296`), repaired suite-side by PR `#1427`. Earlier surfaces of the same class: `#1304`, `#1335`; quarantined callers `#1365`, lifted 2026-08-17 (§9), and `#1423`, whose own two tests were left quarantined when it closed and were lifted by `#1504` on 2026-09-07 |
 | **Component** | Langflow — frontend, flow editor / RBAC permissions |
 | **Surfaces** | `sidebar-custom-component-button`; `add-component-button-<x>` (Components and MCP tabs); drag-and-drop onto the canvas pane |
 | **Observed on** | `langflowai/langflow-nightly:latest` — `1.12.0.dev23`; the same class was measured on `dev17`, `dev18` and `dev19` |

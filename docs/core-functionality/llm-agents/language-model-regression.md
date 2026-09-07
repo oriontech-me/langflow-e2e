@@ -1,6 +1,6 @@
 # Language Model Component Regression
 
-**Last validated:** Langflow 1.12.x (dev30)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev5`)
 
 ---
 
@@ -50,6 +50,21 @@ removal was collateral: the attempt that set the recorded signature ran while
 the shard's backend was restarting after a gunicorn `WORKER TIMEOUT`, so the
 recorded error is a page-entry timeout, not this test's own observable — see
 Notes (#1262).
+
+`@stable` was removed from the **Google** test a third time by the 2026-08-14
+daily's auto-removal (run 31786538844, commit `f6f4c39`) on
+`MODEL_NOT_AVAILABLE: "gemini-flash-latest" not found in dropdown`, and is
+**restored by #1504**. The cause was `1.12.0.dev26`'s per-option sr-only
+"N of M" counter, which defeated every anchored matcher (#1459 / #1461); the
+repair landed in `8cab90f`, which moved `setupGoogle` onto `model-option.ts`
+and resolves options by identity (`data-value` → `data-testid`). This spec
+carries no option matcher of its own, so the shared fix covers it by
+construction — but the tag was never put back, because #1459 and #1461 were
+both closed the same day with one sibling restored and this one not, which is
+the orphaned-removal class #1504 audits. Re-validated on `1.13.0.dev5`: 4/4 at
+`--retries=0`, and the force-fail call log reads `unexpected value
+"gemini-flash-latest"` — the very model that could not be resolved on 08-14 now
+lands in the widget.
 
 ---
 
