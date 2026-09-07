@@ -360,6 +360,19 @@ LANGFLOW_SQLITE_PRAGMAS="${LANGFLOW_SQLITE_PRAGMAS:-$DEFAULT_SQLITE_PRAGMAS}"
 node -e 'const v=process.argv[1];let p;try{p=JSON.parse(v)}catch(e){console.error("LANGFLOW_SQLITE_PRAGMAS is not valid JSON ("+e.message+"): "+v);process.exit(1)}if(p===null||typeof p!=="object"||Array.isArray(p)){console.error("LANGFLOW_SQLITE_PRAGMAS must be a JSON object, got: "+v);process.exit(1)}' \
   "$LANGFLOW_SQLITE_PRAGMAS"
 
+# The names above, in ONE place. Two things read this list: mirrored_target_env(),
+# which composes the remote environment out of it, and phase_merge, which records what
+# each of them was actually set to. One list rather than two enumerations with a
+# guard between them — a guard would report the drift, and not having the drift is
+# better than reporting it. Adding a variable here is what carries it AND what records
+# it; there is no way to do one without the other.
+#
+# scripts/lib/vm-env-parity.mjs reads this list to answer "does the orchestrator carry
+# it", and pins that the function below still composes FROM it — so the list cannot
+# become a name nothing consumes, which is the failure that reading the function body
+# was protecting against.
+MIRRORED_TARGET_VARS="LANGFLOW_DEACTIVATE_TRACING LANGFLOW_WORKER_TIMEOUT LANGFLOW_ALLOW_CUSTOM_COMPONENTS LANGFLOW_SQLITE_PRAGMAS"
+
 # ---------------------------------------------------------------------------
 # UTILITIES
 # ---------------------------------------------------------------------------
@@ -399,11 +412,14 @@ shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # exactly what would be sent, quoting included, without a machine to send it to. The
 # trailing space is part of the contract: the caller concatenates.
 mirrored_target_env() {
-  printf '%s' \
-    "LANGFLOW_DEACTIVATE_TRACING=$(shq "$LANGFLOW_DEACTIVATE_TRACING") " \
-    "LANGFLOW_WORKER_TIMEOUT=$(shq "$LANGFLOW_WORKER_TIMEOUT") " \
-    "LANGFLOW_ALLOW_CUSTOM_COMPONENTS=$(shq "$LANGFLOW_ALLOW_CUSTOM_COMPONENTS") " \
-    "LANGFLOW_SQLITE_PRAGMAS=$(shq "$LANGFLOW_SQLITE_PRAGMAS") "
+  local name
+  # shellcheck disable=SC2086  # deliberate word splitting: the list holds names, never values
+  for name in $MIRRORED_TARGET_VARS; do
+    # Indirection rather than four literal lines, so this function and the run's
+    # metadata read the same list. Every name is set unconditionally above, so `set -u`
+    # has nothing to trip on.
+    printf '%s=%s ' "$name" "$(shq "${!name}")"
+  done
 }
 
 # Should this run place the target's clone, and if not, why not?

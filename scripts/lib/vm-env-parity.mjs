@@ -135,15 +135,32 @@ export function readStarterLaunchEnv(text) {
 /**
  * The names the orchestrator actually composes into the remote environment.
  *
- * Read out of `mirrored_target_env`'s BODY, not out of the whole file. "The file names
- * it somewhere" was the first version's test and it is not the property: a variable
- * mentioned in a string, or left behind in a stale branch, would satisfy it while
- * nothing reached the target.
+ * Read out of `MIRRORED_TARGET_VARS` — but only after checking that
+ * `mirrored_target_env()` still composes FROM that list. The two halves are the
+ * property together, and neither is it alone.
+ *
+ * The earlier version read the function's body, because "the file names it somewhere"
+ * is not the property: a variable mentioned in a string, or left behind in a stale
+ * branch, would satisfy that while nothing reached the target. That reasoning is
+ * unchanged; what changed is where the names live. #1748 made the list the single
+ * enumeration — the orchestrator's metadata records the same names it sends — and a
+ * list the function loops over IS the composition. A list it stopped looping over
+ * would be exactly the stale mention the old form refused, so that is what the shape
+ * check below refuses.
  */
 export function readMirroredNames(text) {
-  const body = stripComments(text).match(/mirrored_target_env\(\)\s*\{([\s\S]*?)\n\}/);
+  const stripped = stripComments(text);
+  const body = stripped.match(/mirrored_target_env\(\)\s*\{([\s\S]*?)\n\}/);
   if (!body) throw new Error("the orchestrator has no mirrored_target_env() function");
-  return new Set([...body[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)=\$\(shq /g)].map((m) => m[1]));
+  if (!/\$\{?MIRRORED_TARGET_VARS\b/.test(body[1]) || !/\$\{!\s*\w+\s*\}/.test(body[1])) {
+    throw new Error(
+      "mirrored_target_env() no longer composes MIRRORED_TARGET_VARS by indirection, " +
+        "so the list is no longer evidence that anything reaches the target",
+    );
+  }
+  const list = stripped.match(/^MIRRORED_TARGET_VARS="([^"]*)"/m);
+  if (!list) throw new Error("the orchestrator has no MIRRORED_TARGET_VARS list");
+  return new Set(list[1].split(/\s+/).filter(Boolean));
 }
 
 /**
