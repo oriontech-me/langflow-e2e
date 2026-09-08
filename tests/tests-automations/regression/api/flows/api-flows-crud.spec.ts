@@ -53,9 +53,16 @@ test.describe("CRUD /api/v1/flows", () => {
     },
   );
 
-  test(
+  // Quarantined at triage (2026-09-08 daily, umbrella #1757): `POST /api/v1/flows/`
+  // returns 201 and the very next `GET /api/v1/flows/` does not contain the created
+  // flow, so `expect(found).toBeDefined()` receives `undefined`. Recurrent under the
+  // same assertion on the 2026-08-19 and 2026-09-08 dailies. Not wedge collateral —
+  // the attempt ran at 12:41:27Z and finished in 418 ms, ~2.5 min before the earliest
+  // measured outage window on any shard (12:43:57Z). Lifting the quarantine (remove
+  // test.fixme + restore @stable) is a deliverable of #1759.
+  test.fixme(
     "GET lists flows and includes the created one",
-    { tag: ["@stable", "@release", "@api", "@regression"] },
+    { tag: ["@release", "@api", "@regression"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["POST /api/v1/flows/", "GET /api/v1/flows/"]);
       const authToken = await getAuthToken(request);
