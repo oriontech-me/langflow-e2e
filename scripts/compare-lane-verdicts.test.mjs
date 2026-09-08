@@ -344,6 +344,18 @@ test("an ANSI-wrapped assertion shell is still recognised as a shell", () => {
   assert.equal(isGenericSignature(wrapped), true);
 });
 
+test("the folded entry carries the tags of BOTH sides, not the CI side's empty array (Copilot, PR 1767)", () => {
+  // `??` falls through on null, not on `[]`, so a CI entry tagged `[]` erased tags the
+  // VM entry had. The lanes can sit one commit apart, which is how the two sides come
+  // to disagree about tags at all — PR 1745 restored `@stable` to four specs between
+  // two runs — and `--json` consumers filter on this field.
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: "Error: X", tags: [] })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("anthropic", { error_signature: "Error: X", tags: ["stable", "agents"] })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.deepEqual(result.divergences[0].tags, ["stable", "agents"]);
+});
+
 test("three one-sided entries for one spec do NOT fold: which pairs with which is a guess", () => {
   const result = compare(
     row("daily-stable", {

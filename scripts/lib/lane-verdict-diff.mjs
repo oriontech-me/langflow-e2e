@@ -199,7 +199,12 @@ export function pairCrossProvider(divergences) {
       test: ci.test ?? null,
       param: null,
       params: { ci: ciParam, vm: vmParam },
-      tags: ci.tags ?? vm.tags ?? [],
+      // The UNION, not the CI side. `??` falls through on null and not on `[]`, so a
+      // CI entry tagged `[]` used to erase tags the VM entry had — and the lanes can
+      // sit one commit apart, which is exactly how the two sides come to disagree
+      // about tags (PR 1745 restored `@stable` to four specs between two runs). This
+      // entry claims to describe the pair, and `--json` consumers filter on it.
+      tags: [...new Set([...(ci.tags ?? []), ...(vm.tags ?? [])])],
       ci: ci.ci,
       vm: vm.vm,
       kind: signaturesMatch ? "cross-provider-agreed" : "cross-provider-differs",
