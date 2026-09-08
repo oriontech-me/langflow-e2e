@@ -183,16 +183,33 @@ export function isGenericSignature(signature) {
  * cross-provider entry.
  *
  * Only an exact pair folds — one entry from each lane. Three or more one-sided entries
- * for one spec means a lane ran two parameterizations of it, and which pairs with which
- * is then a guess; the honest outcome is to leave them alone rather than invent a
+ * for one spec means SOME lane ran more than one parameterization, and which pairs with
+ * which is then a guess; the honest outcome is to leave them alone rather than invent a
  * pairing the row cannot support.
  *
- * The fold does NOT decide whether the provider was the cause. It produces two kinds:
+ * Exactly two is not a guarantee of the scheduled shape, and the limit is stated rather
+ * than assumed. On a run with the day's provider pinned, two entries ARE the two lanes'
+ * one variant each. Under `ALL_MODELS=true` or an explicit `MODEL_TEST_PROVIDER`,
+ * `resolveTestTargets` returns several targets, so two entries can also be both lanes
+ * failing a DIFFERENT variant — and folding then describes one pair where there were
+ * two findings. Nothing here can tell those apart: the row does not carry which
+ * provider the lane pinned, which is the field #1731 has to land before this can be
+ * checked. What the fold guarantees meanwhile is that nothing is lost — both params and
+ * both signatures are printed on the entry — and the two are ranked as INCONCLUSIVE,
+ * which is what two unexplained one-sided findings deserve anyway.
  *
- *  - `cross-provider-agreed`   same signature on both providers. The provider is
- *                              eliminated as the cause: this is the product. Ranked
- *                              first, because it is the strongest thing this file can
- *                              say and it must not be scrolled past.
+ * The fold does NOT decide whether the provider was the cause. It produces three kinds:
+ *
+ *  - `cross-provider-failed`   same signature, hard failure on at least one lane. The
+ *                              provider is eliminated as the cause: this is the
+ *                              product. Ranked first, and the only kind the head stamp
+ *                              promotes — and only when the match is CONFIRMABLE: not
+ *                              an assertion shell, and not a failure the harness could
+ *                              not attribute to the spec.
+ *  - `cross-provider-flaky`    same signature, but a retry passed on both. Never called
+ *                              a failure: this file already split `agreed` into
+ *                              failed/flaky because one heading over both makes a
+ *                              reader at 09:00 count a retry as a red.
  *  - `cross-provider-differs`  different signatures. INCONCLUSIVE, and the label says
  *                              so. The implication only runs one way — a
  *                              provider-independent cause makes both lanes break, but
@@ -693,9 +710,16 @@ export function renderReport(result, { sources = [] } = {}) {
   // "looks right while being wrong" shape this file is written against.
   const agreedFailed = agreed.filter((a) => a.kind === "agreed-failed");
   const agreedFlaky = agreed.filter((a) => a.kind === "agreed-flaky");
-  L.push("", `Failed on BOTH lanes (the product, not the environment): ${agreedFailed.length}`);
+  // The cross-provider pairs are counted HERE too, not only in the list above. These
+  // two lines are read as the day's product-defect tally, and leaving the pairs out of
+  // them would keep the very complaint this change was written against alive: a day
+  // whose only finding is a cross-provider pair ended with `Flaky on BOTH lanes: 0`.
+  const crossF = divergences.filter((d) => d.kind === "cross-provider-failed").length;
+  const crossK = divergences.filter((d) => d.kind === "cross-provider-flaky").length;
+  const alsoCross = (n) => (n ? ` (+${n} as cross-provider pair(s), listed above)` : "");
+  L.push("", `Failed on BOTH lanes (the product, not the environment): ${agreedFailed.length}${alsoCross(crossF)}`);
   for (const a of agreedFailed) L.push(`  ${a.name}`);
-  L.push("", `Flaky on BOTH lanes (unstable in both, not a lane difference): ${agreedFlaky.length}`);
+  L.push("", `Flaky on BOTH lanes (unstable in both, not a lane difference): ${agreedFlaky.length}${alsoCross(crossK)}`);
   for (const a of agreedFlaky) L.push(`  ${a.name}`);
 
   L.push(

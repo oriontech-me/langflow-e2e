@@ -467,6 +467,21 @@ test("a pair both lanes could not attribute to the spec is not the product eithe
   assert.match(text, /could not reach the backend/);
 });
 
+test("the foot-of-report tallies count the cross-provider pairs too", () => {
+  // Those two lines are read as the day's product-defect tally. A day whose only
+  // finding was a cross-provider pair used to end with `Flaky on BOTH lanes: 0` —
+  // the PR's own complaint, still true for anyone reading the tally.
+  const result = compare(
+    row("daily-stable", { flaky: [paramFail("google", { error_signature: "Error: boom" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+    row("daily-stable-vm", { flaky: [paramFail("anthropic", { error_signature: "Error: boom" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+  );
+  const text = renderReport(result);
+  assert.match(text, /Flaky on BOTH lanes[^\n]*: 0 \(\+1 as cross-provider pair\(s\), listed above\)/);
+  // And a day with none of them keeps the line clean.
+  const plain = compare(row("daily-stable"), row("daily-stable-vm"));
+  assert.match(renderReport(plain), /Flaky on BOTH lanes[^\n]*: 0\n/);
+});
+
 test("three one-sided entries for one spec do NOT fold: which pairs with which is a guess", () => {
   const result = compare(
     row("daily-stable", {
