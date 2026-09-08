@@ -1126,13 +1126,40 @@ test("every mirrored name reaches the metadata, because one list feeds both", ()
   assert.deepEqual(Object.keys(meta.mirrored_target_env).sort(), [...MIRRORED].sort());
 });
 
-test("the run's own log names the environment it sent, quoted as it was sent", () => {
-  // The durable record is the metadata; this line is for whoever is reading the log at
-  // 08:00 and wondering why a family went red. It prints the COMPOSER's own output
-  // rather than a second rendering of the same values, so it cannot describe an
-  // environment other than the one that crossed the ssh boundary.
-  const { stdout, stderr } = metadataFrom({ ...BLANKED, LANGFLOW_DEACTIVATE_TRACING: "true" });
-  assert.match(stdout + stderr, /target env:.*LANGFLOW_DEACTIVATE_TRACING='true'/);
+test("the log names the environment before anything that can abort the run", () => {
+  // The metadata is the durable record, and it is written in phase_merge — which a run
+  // that dies in prep or in a shard never reaches. A wrong mirrored value is one of the
+  // likelier reasons the backend never comes up, so the run that most needs the record
+  // is exactly the one that would produce none. The line therefore sits at the top of
+  // the FIRST phase, and this test drives an abort to prove it survives one.
+  //
+  // TARGET_SSH empty is the earliest die in the script, and it comes AFTER the line —
+  // so a green assertion here means the ordering holds, not merely that the line
+  // exists somewhere.
+  // No `set +e` and no exit code read: `die` calls `exit`, which leaves the sourcing
+  // shell outright, so the abort is observable as the ABSENCE of the marker — the same
+  // way the merge tests above observe one. A marker that printed would mean the run
+  // did not abort, and then this test would prove nothing.
+  const r = sourced('phase_preflight\necho "REACHED_AFTER_PREFLIGHT"', {
+    ...BLANKED,
+    LANGFLOW_DEACTIVATE_TRACING: "true",
+    TARGET_SSH: "",
+  });
+  const out = r.stdout + r.stderr;
+  assert.doesNotMatch(out, /REACHED_AFTER_PREFLIGHT/, "preflight had to abort for this test to mean anything");
+  assert.match(out, /TARGET_SSH is required/);
+
+  // Printed from the COMPOSER's own output rather than a second rendering of the same
+  // values, so it cannot describe an environment other than the one that is sent.
+  assert.match(out, /target env:.*LANGFLOW_DEACTIVATE_TRACING='true'/);
+
+  // And BEFORE the abort, which is the whole placement argument. Position, not
+  // presence: a line printed after the first die would satisfy the assertion above and
+  // still be missing from every run that fails early.
+  assert.ok(
+    out.indexOf("target env:") < out.indexOf("TARGET_SSH is required"),
+    "the environment has to be named before the first thing that can abort",
+  );
 });
 
 test("a failed merge fails the verdict, and does not call it 'zero tests executed'", () => {

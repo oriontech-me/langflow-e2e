@@ -709,6 +709,17 @@ phase_hygiene() {
 phase_preflight() {
   log "Preflight"
 
+  # The environment this lane will put on the instance under test, quoted exactly as it
+  # will be sent — printed from the composer itself, so it cannot describe an
+  # environment other than the one that crosses the ssh boundary.
+  #
+  # HERE, and not beside the metadata write in phase_merge, because a wrong mirrored
+  # value is one of the likelier reasons the backend never comes up — and a run that
+  # dies in prep or in a shard never reaches phase_merge. The run that most needs this
+  # record would be exactly the one that produced none. First line of the first phase
+  # costs nothing and survives every abort after it.
+  info "target env: $(mirrored_target_env)"
+
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives a second machine and will not guess its name."
   command -v node > /dev/null || die "node is not on PATH."
   command -v npm  > /dev/null || die "npm is not on PATH."
@@ -1374,10 +1385,6 @@ phase_merge() {
 
   info "tests: ${RUN_TESTS:-0} | top-level errors: ${RUN_ERRORS:-0} | empty: $RUN_EMPTY | partial: $RUN_PARTIAL"
   info "Langflow: ${LANGFLOW_VERSION:-<unknown>}"
-  # The same values in the log, quoted exactly as they were sent. The metadata is the
-  # durable record; this line is for whoever is reading the run's output at 08:00 and
-  # wondering why a family went red.
-  info "target env: $(mirrored_target_env)"
 }
 
 # ---------------------------------------------------------------------------
