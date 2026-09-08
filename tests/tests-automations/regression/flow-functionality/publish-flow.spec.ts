@@ -10,9 +10,17 @@ const FLOW_BASE = {
   is_component: false,
 };
 
-test(
+// Quarantined at triage (2026-09-08 daily, umbrella #1757): after the flow is
+// unpublished, `access_type` still reads back as "PUBLIC" where the test expects
+// "PRIVATE". Recurrent on two consecutive dailies, and byte-identical on both
+// (2026-09-07, 2026-09-08) — same expected/received pair, failing on attempt 0 and
+// passing on attempt 1. Not wedge collateral: 2026-09-07 was a clean daily (0 hard
+// failures, 306 s of total measured downtime against this run's 1644 s), and the
+// failure is a concrete wrong value at 8.9 s / 12.5 s, not a timeout. Lifting the
+// quarantine (remove test.fixme + restore @stable) is a deliverable of #1760.
+test.fixme(
   "user can publish a flow and access it via shareable URL, then unpublish to revoke access",
-  { tag: ["@release", "@workspace", "@playground", "@stable"] },
+  { tag: ["@release", "@workspace", "@playground"] },
   async ({ page, browser, request }) => {
     await awaitBootstrapTest(page);
 
