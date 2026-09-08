@@ -1487,7 +1487,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 595 `test()` calls carrying the `@stable` tag, distributed across 226 spec
+> 599 `test()` calls carrying the `@stable` tag, distributed across 227 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1640,6 +1640,7 @@
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
@@ -1839,11 +1840,13 @@
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
+- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
+- [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
@@ -1898,6 +1901,7 @@
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
+- [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
 - [x] Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind → `traces-delete-cascade.spec.ts`
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
