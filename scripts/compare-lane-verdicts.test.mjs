@@ -283,12 +283,38 @@ test("specKey drops the parameterization that testKey keeps", () => {
   assert.equal(specKey(paramFail("google")), specKey(paramFail("anthropic")));
 });
 
-test("paramProvider reads all three label shapes the corpus carries", () => {
+test("paramProvider reads the label shapes the corpus actually carries", () => {
+  // Counted, not assumed: 97 param-carrying entries over both series, 8 distinct
+  // labels, all `provider / model` except one `provider:openai (fallback)`. An earlier
+  // comment here claimed a bare `google` was one of the shapes — it appears ZERO times.
   assert.equal(paramProvider("google / gemini-3.5-flash"), "google");
-  assert.equal(paramProvider("google"), "google");
   assert.equal(paramProvider("provider:openai (fallback)"), "openai");
+  assert.equal(paramProvider("google"), "google"); // tolerated, not a documented input
   assert.equal(paramProvider(null), null);
   assert.equal(paramProvider(""), null);
+  // Names a MODEL, so it names no provider. Returning the whole string as one rendered
+  // `providers DIFFER (Actions openai, VM model:gpt-4o-mini)` — the overclaim again.
+  assert.equal(paramProvider("model:gpt-4o-mini"), null);
+});
+
+test("a side that names no provider is not reported as the SAME provider", () => {
+  // `providersDiffer` is false for two different reasons — equal, or one side unnamed —
+  // and the render collapsed both into "SAME provider (X)", printing `VM [no target]`
+  // and `SAME provider (google)` on adjacent lines over a row that never said google.
+  // It is also the only line in the block that touches cause.
+  const result = oneEach(
+    paramFail("google / gemini-3.5-flash", { error_signature: "Error: same" }),
+    paramFail(undefined, { error_signature: "Error: same" }),
+  );
+  const d = result.divergences[0];
+  assert.equal(d.crossTarget.providersKnown, false);
+  assert.equal(d.crossTarget.providersDiffer, false);
+  const text = renderReport(result);
+  assert.match(text, /one side does not name a provider \(Actions google, VM —\)/);
+  assert.match(text, /cannot be told from these two rows/);
+  assert.doesNotMatch(text, /SAME provider/);
+  // The --json surface was already right; the text has to agree with it.
+  assert.deepEqual(d.providers, { ci: "google", vm: null });
 });
 
 test("the same spec under two targets is ONE entry, not two one-sided ones", () => {
@@ -339,34 +365,49 @@ test("the fold NEVER stamps the head of the report, whatever it found", () => {
   }
 });
 
-test("a folded pair ranks WITH its severity, never above a genuine two-lane red", () => {
-  // Ranking the fold first was the promotion the cold review caught: a pair that
-  // hard-failed on one lane and flaked on the other outranked a real one-sided red.
-  const other = fail({ test: "traces are listed", file: "tests-automations/regression/api/monitor/api-monitor-traces.spec.ts" });
+test("a folded pair ranks below BOTH one-sided failures, not just one of them", () => {
+  // Half-pinned before: `-1` was caught but `0.5` — above `ci-only-failed`, which the
+  // docblock says it must never outrank — passed, because the fixture had no
+  // `ci-only-*` entry at all. Both sides now appear.
+  const vmOnly = fail({ test: "traces are listed", file: "tests-automations/regression/api/monitor/api-monitor-traces.spec.ts" });
+  const ciOnly = fail({ test: "a flow publishes", file: "tests-automations/regression/flow-functionality/publish-flow.spec.ts" });
   const result = compare(
     row("daily-stable", {
-      failures: [paramFail("google", { error_signature: "Error: same" })],
-      totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 },
+      failures: [ciOnly, paramFail("google", { error_signature: "Error: same" })],
+      totals: { passed: 8, failed: 2, flaky: 0, skipped: 2 },
     }),
     row("daily-stable-vm", {
-      failures: [other],
+      failures: [vmOnly],
       flaky: [paramFail("anthropic", { error_signature: "Error: same" })],
       totals: { passed: 8, failed: 1, flaky: 1, skipped: 2 },
     }),
   );
   assert.deepEqual(
     result.divergences.map((d) => d.kind),
-    ["vm-only-failed", "cross-target-failed"],
+    ["vm-only-failed", "ci-only-failed", "cross-target-failed"],
   );
 });
 
-test("a pair that only flaked on both targets is a flake, and ranks with the flakes", () => {
-  const result = oneEach(
-    paramFail("google", { error_signature: "Error: boom" }),
-    paramFail("anthropic", { error_signature: "Error: boom" }),
-    { passed: 9, failed: 0, flaky: 1, skipped: 2 },
+test("a flaky pair ranks with the flakes, below every hard failure", () => {
+  // The old fixture had exactly one divergence, so `divergences[0]` was that pair at
+  // ANY rank — `-99`, first in the whole report above every red, passed the test whose
+  // title said "ranks with the flakes".
+  const red = fail({ test: "traces are listed", file: "tests-automations/regression/api/monitor/api-monitor-traces.spec.ts" });
+  const result = compare(
+    row("daily-stable", {
+      flaky: [paramFail("google", { error_signature: "Error: boom" })],
+      totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 },
+    }),
+    row("daily-stable-vm", {
+      failures: [red],
+      flaky: [paramFail("anthropic", { error_signature: "Error: boom" })],
+      totals: { passed: 8, failed: 1, flaky: 1, skipped: 2 },
+    }),
   );
-  assert.equal(result.divergences[0].kind, "cross-target-flaky");
+  assert.deepEqual(
+    result.divergences.map((d) => d.kind),
+    ["vm-only-failed", "cross-target-flaky"],
+  );
   assert.match(renderReport(result), /a retry passed on both/);
 });
 
@@ -410,6 +451,37 @@ test("a locator assertion is a shell too - it is the suite's most frequent signa
   assert.equal(isGenericSignature("Error: expect(received).not.toBeNull()"), true);
   // Still not a shell: it names its own cause.
   assert.equal(isGenericSignature("Error: setupPlayground: a canvas edit never reached the database"), false);
+});
+
+test("the shell rule sees THROUGH the ANSI the rows actually carry", () => {
+  // Restored: the rewrite deleted this and nothing replaced it, leaving the only reason
+  // the shell caveat ever fires on real data unpinned. Counted over both series: 262 of
+  // 696 signatures are assertion shells and ALL 262 are ANSI-wrapped, so an
+  // un-normalized rule recognises exactly zero of them.
+  const esc = String.fromCharCode(27);
+  const wrapped = `Error: ${esc}[2mexpect(${esc}[22m${esc}[31mreceived${esc}[39m${esc}[2m).${esc}[22mtoBe${esc}[2m(${esc}[22mexpected)`;
+  assert.equal(isGenericSignature(wrapped), true);
+  assert.equal(isGenericSignature(`Error: ${esc}[2mexpect(locator).toBeVisible() failed`), true);
+});
+
+test("each lane's line carries THAT lane's status and signature", () => {
+  // Both were mirrorable without failing a test: every fixture gave the two sides the
+  // same signature, and the mixed-severity test that asserted the two statuses was
+  // deleted in the rewrite. "Both statuses printed" is named as a fact the entry
+  // renders, so it has to be pinned.
+  const result = compare(
+    row("daily-stable", {
+      failures: [paramFail("google", { error_signature: "Error: only Actions saw this" })],
+      totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 },
+    }),
+    row("daily-stable-vm", {
+      flaky: [paramFail("anthropic", { error_signature: "Error: only the VM saw this" })],
+      totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 },
+    }),
+  );
+  const text = renderReport(result);
+  assert.match(text, /Actions \[google\] failed: Error: only Actions saw this/);
+  assert.match(text, /VM\s+\[anthropic\] flaky: Error: only the VM saw this/);
 });
 
 test("'unknown' is the absence of a signature, so it never makes a pair agree", () => {

@@ -103,10 +103,13 @@ export function describeTest(entry) {
  * `agent-component-regression` suite flaked on BOTH lanes and the report printed
  * `Flaky on BOTH lanes: 0`. It held the evidence and could not say it.
  *
- * And the pairing is worth more than a corrected count: a failure that reproduces on
- * gemini AND on claude has ELIMINATED the provider as its cause, by construction.
- * Cross-provider agreement is STRONGER evidence of a product defect than agreement on
- * one provider — and the rotation already buys it, at no extra cost.
+ * What the pairing does NOT buy is a conclusion. This docblock used to argue that a
+ * failure reproducing on gemini and on claude "has ELIMINATED the provider as its
+ * cause, by construction" — and that argument outlived the code, which stopped drawing
+ * it. The inference is sound and unverifiable here, for the reason `pairCrossTarget`
+ * gives: the row never records which provider the lane PINNED, so the file cannot tell
+ * a two-provider pair from a two-model pair without being told. Read that docblock
+ * before reintroducing a claim on this one's authority.
  */
 export function specKey(entry) {
   // Same separator, same reason as testKey: joined with nothing, a file ending in a
@@ -182,10 +185,21 @@ export function isGenericSignature(signature) {
 /**
  * The provider named by a `param` label, or `null` when the label does not name one.
  *
- * The labels are written by `select-daily-model-target.mjs` and by the specs' own
- * target resolution, and the corpus carries three shapes: `google / gemini-3.5-flash`,
- * a bare `google`, and `provider:openai (fallback)` — the last from
- * `test-targets.ts` when the catalog was frozen empty.
+ * The labels are written by `select-daily-model-target.mjs` and by the specs' own target
+ * resolution. Counted over both series — 97 param-carrying entries, 8 distinct labels —
+ * every one is `provider / model` (`google / gemini-3.5-flash` 55, `openai / gpt-4o-mini`
+ * 13, `google / gemini-2.5-flash` 12, `google / gemini-flash-latest` 7,
+ * `anthropic / claude-haiku-4-5` 6, `anthropic / claude-sonnet-5` 2, `google / default` 1)
+ * except one `provider:openai (fallback)`, which `test-targets.ts` emits when the
+ * catalog was frozen empty. An earlier version of this comment claimed a bare `google`
+ * was one of the shapes; it appears ZERO times, and no `label:` in `test-targets.ts` can
+ * produce it. The bare branch below stays as tolerance, not as a documented input.
+ *
+ * `model:<id>` — `test-targets.ts` emits it when the target model is absent from the
+ * catalog — names no provider, and returning its whole string as one was the same
+ * overclaim this file spent three reviews removing: against `openai / gpt-4o-mini` it
+ * rendered `providers DIFFER (Actions openai, VM model:gpt-4o-mini)`. It answers `null`,
+ * which routes the pair to "cannot be told from these two rows".
  *
  * It exists because comparing the WHOLE label answers a different question than the
  * one the report was asking. Two labels differ whenever the MODEL differs, and the
@@ -201,6 +215,7 @@ export function paramProvider(param) {
   if (!bare) return null;
   const fallback = bare.match(/^provider:([A-Za-z0-9_-]+)/);
   if (fallback) return fallback[1];
+  if (/^model:/.test(bare)) return null;
   const head = bare.split("/")[0].trim();
   return head || null;
 }
@@ -282,10 +297,15 @@ export function pairCrossTarget(divergences) {
     // narrowing block printed above the list already reports the per-lane counts.
     const infraCi = Boolean(ci.ci?.infra);
     const infraVm = Boolean(vm.vm?.infra);
-    // A FACT about the two labels, not a licence to conclude anything from it.
+    // FACTS about the two labels, not a licence to conclude anything from them. THREE
+    // states, not two: `providersDiffer` is false both when the providers are equal and
+    // when a side names none, and the render used to collapse those into "SAME
+    // provider" — printing `VM [no target]` and `SAME provider (google)` on adjacent
+    // lines, over a row that never said it ran google.
     const ciProvider = paramProvider(ciParam);
     const vmProvider = paramProvider(vmParam);
-    const providersDiffer = Boolean(ciProvider) && Boolean(vmProvider) && ciProvider !== vmProvider;
+    const providersKnown = Boolean(ciProvider) && Boolean(vmProvider);
+    const providersDiffer = providersKnown && ciProvider !== vmProvider;
 
     folded.add(ci);
     folded.add(vm);
@@ -317,6 +337,7 @@ export function pairCrossTarget(divergences) {
         generic,
         infraCi,
         infraVm,
+        providersKnown,
         providersDiffer,
       },
     });
@@ -682,11 +703,19 @@ export function renderReport(result, { sources = [] } = {}) {
         const x = d.crossTarget ?? {};
         L.push(`      Actions [${d.params.ci ?? "no target"}] ${d.ci?.status ?? "?"}: ${d.ci?.error ?? "(no signature)"}`);
         L.push(`      VM      [${d.params.vm ?? "no target"}] ${d.vm?.status ?? "?"}: ${d.vm?.error ?? "(no signature)"}`);
-        L.push(
-          x.providersDiffer
-            ? `      providers DIFFER (Actions ${d.providers?.ci}, VM ${d.providers?.vm})`
-            : `      SAME provider (${d.providers?.ci ?? d.providers?.vm ?? "unnamed"}), different target — the provider is NOT ruled out`,
-        );
+        if (!x.providersKnown) {
+          // The honest third state. Saying "same" here would assert a provider for a
+          // row that never named one, and this is the only line in the block that
+          // touches cause at all.
+          L.push(
+            `      one side does not name a provider (Actions ${d.providers?.ci ?? "—"}, VM ${d.providers?.vm ?? "—"}):`,
+            "      whether the provider differs cannot be told from these two rows",
+          );
+        } else if (x.providersDiffer) {
+          L.push(`      providers DIFFER (Actions ${d.providers?.ci}, VM ${d.providers?.vm})`);
+        } else {
+          L.push(`      SAME provider (${d.providers?.ci}), different target — the provider is NOT ruled out`);
+        }
         if (x.signaturesMatch) {
           L.push(
             x.generic
