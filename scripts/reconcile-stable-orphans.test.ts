@@ -525,9 +525,21 @@ test("a `never` OBSERVED inside a shallow window is still `never`", () => {
 });
 
 test("isShallowRepository answers for the repository the walk actually reads", () => {
-  // A full checkout must not report shallow, or every row becomes UNKNOWN and
-  // the report says nothing on the one clone shape that can answer.
-  assert.equal(isShallowRepository(), false);
+  // Asserted against git's own marker file rather than against a constant: this
+  // lane's own checkout IS shallow (`pr-validation.yml` clones at the default
+  // depth), so `assert.equal(…, false)` would be an environment-dependent
+  // assertion that passes locally and reddens every PR — which is exactly how
+  // the first version of this test failed.
+  const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+  }).trim();
+  const marker = path.resolve(REPO_ROOT, commonDir, "shallow");
+  assert.equal(
+    isShallowRepository(),
+    fs.existsSync(marker),
+    "the verdict must track git's own shallow marker, in either direction",
+  );
 });
 
 test("a longer basename that CONTAINS this spec's does not own its removal", () => {
