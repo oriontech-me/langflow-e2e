@@ -82,6 +82,8 @@ let server: http.Server;
 let origin: string;
 /** Responses left deliberately open by `?mode=hang`, ended in `afterAll`. */
 const hanging = new Set<http.ServerResponse>();
+/** Responses whose HEADERS are deliberately withheld by `?mode=slowheaders`. */
+const slowHeaders = new Set<http.ServerResponse>();
 
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -92,6 +94,23 @@ test.beforeAll(async () => {
       return;
     }
     if (path === "/api/v2/workflows") {
+      if (query.includes("mode=slowheaders")) {
+        // Request accepted, response headers NOT sent yet — a backend still
+        // thinking. The capture only learns of a stream at `responseReceived`,
+        // so this run is invisible to it, and counting only open streams called
+        // it decided (#1452).
+        slowHeaders.add(res);
+        return;
+      }
+      if (query.includes("mode=500")) {
+        // A run that never streamed at all: nothing to capture, and the HTTP
+        // channel does not fail tests (#1084) — so this is the state that used
+        // to read back as a perfectly clean run (#1452). Before the SSE header,
+        // deliberately: a 500 does not carry one.
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: "boom before the stream" }));
+        return;
+      }
       res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
       if (query.includes("mode=outage")) {
         // A drained provider key, verbatim from the 2026-09-02 daily. The SAME
@@ -128,6 +147,8 @@ test.afterAll(async () => {
   // purpose — so end them first or this hook is the hang.
   for (const res of hanging) res.end();
   hanging.clear();
+  for (const res of slowHeaders) res.end();
+  slowHeaders.clear();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
@@ -316,6 +337,15 @@ test.describe("fixture flow-error gate", () => {
       expect(report.failures).toHaveLength(0);
       expect(report.unevaluatedTotal).toBe(0);
       expect(report.pending).toBe(0);
+      // This is what gives the test teeth, and it was added because the review
+      // measured that without it the test passed under every mutation it was
+      // meant to catch — `clean` is vacuously true when NOTHING was evaluated,
+      // so "the accessor never saw the stream" and "the run was healthy" were
+      // the same assertion.
+      expect(
+        report.evaluated,
+        "the run produced no verdict at all — a clean report here means nothing",
+      ).toBe(1);
       // The half a unit test cannot reach: a real CDP session had to attach for
       // the v2 surface to be watched at all, and without it every other
       // assertion here would be vacuous.
@@ -412,6 +442,83 @@ test.describe("fixture flow-error gate", () => {
         report.failures,
         "the accessor judged a stream that was still open, taking the teardown's verdict with it",
       ).toHaveLength(0);
+    },
+  );
+
+  test(
+    "flowErrorReport(): a v1 verdict still in flight is not clean",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The v2 capture is settled before the accessor answers; the v1 read is
+      // deliberately untracked, because attaching anything to that promise
+      // downgrades the gate to teardown-only (measured, 238 ms -> 10 249 ms). So
+      // v1 verdicts are counted IN FLIGHT instead. Without that counter the
+      // accessor answered `clean` on a v1 error the fixture logged milliseconds
+      // later — confirmed by probe during review, and this is its guard.
+      (page as PageWithErrorHooks).allowFlowErrors();
+      await page.goto(`${origin}/`);
+      await page.evaluate(runRequest("/api/v1/build/abc/flow"));
+
+      const report = await (page as PageWithErrorHooks).flowErrorReport();
+      expect(
+        report.clean,
+        "a v1 flow error read back as clean — the verdict was one continuation away",
+      ).toBe(false);
+      // Either state is correct and both are honest: the read may have completed
+      // (a failure) or still be resolving (pending). What must never happen is
+      // neither.
+      expect(
+        report.failures.length + report.pending,
+        report.summary,
+      ).toBeGreaterThan(0);
+    },
+  );
+
+  test(
+    "flowErrorReport(): a run whose headers have not arrived is not clean",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The third undecided state, and the one no count saw: the request is out,
+      // the response has no headers yet, so the capture has not registered a
+      // stream and `open` is empty. Confirmed by probe during review that this
+      // read back as clean with `pending: 0`.
+      await page.goto(`${origin}/`);
+      await page.evaluate(() => {
+        void fetch("/api/v2/workflows?mode=slowheaders", { method: "POST" });
+      });
+      // Long enough for `requestWillBeSent`, short enough that no headers exist.
+      await page.waitForTimeout(700);
+
+      const report = await (page as PageWithErrorHooks).flowErrorReport();
+      expect(report.pending, report.summary).toBeGreaterThan(0);
+      expect(
+        report.clean,
+        "a run the backend has not answered yet read back as clean",
+      ).toBe(false);
+      expect(report.evaluated).toBe(0);
+    },
+  );
+
+  test(
+    "flowErrorReport(): a run that answered non-2xx is not clean",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // No stream exists, so nothing is captured, and an HTTP error never fails
+      // a test on its own (#1084) — which made this the worst false-clean of the
+      // set: the run crashed before it could stream and the report said every
+      // run was evaluated and fine.
+      (page as PageWithErrorHooks).allowHttpErrors();
+      await page.goto(`${origin}/`);
+      await page.evaluate(runRequest("/api/v2/workflows?mode=500"));
+
+      const report = await (page as PageWithErrorHooks).flowErrorReport();
+      expect(
+        report.clean,
+        "a run that answered 500 read back as clean — it never streamed at all",
+      ).toBe(false);
+      expect(report.failures, "a non-2xx run is not a flow error").toHaveLength(0);
+      expect(report.evaluated).toBe(0);
+      expect(report.summary).toContain("non-2xx");
     },
   );
 });

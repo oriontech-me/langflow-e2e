@@ -5,12 +5,15 @@
  *
  * The fixture's flow-error gate fails a test on a verdict it *reached* — v1
  * since #1162, v2 since #1165 (`f3bdd864`). What it cannot do is fail a test on
- * a verdict it never reached, and there are four such paths: a body that timed
- * out, a stream the page cancelled, a v2 surface with no CDP session, and a
- * provider outage — the last one downgraded on purpose, because failing on a
- * drained key would strip `@stable` in an unreviewed commit (#1165). All four
- * are counted and printed as *"this test's flow-error verdict is unknown, not
- * clean"*, and then the test passes anyway.
+ * a verdict it never reached. Several paths do that — a body that timed out, one
+ * it could not read at all (an unreadable content type), a stream the page
+ * cancelled, an empty body, a v2 surface with no CDP session, and a provider
+ * outage, the last downgraded on purpose because failing on a drained key would
+ * strip `@stable` in an unreviewed commit (#1165). Read the set out of
+ * `countUnevaluated`'s call sites rather than from a number here: this comment
+ * shipped saying "four", which was the count of CATEGORIES and not of paths.
+ * Every one of them is counted and printed as *"this test's flow-error verdict
+ * is unknown, not clean"*, and then the test passes anyway.
  *
  * That is the right default for 200-plus specs that merely happen to drive a
  * run. It is the wrong default for a spec whose whole contract is *"the run did
@@ -28,9 +31,24 @@
  * WHAT IT IS NOT
  *
  * Not a hatch and not affected by one. `page.allowFlowErrors()` suppresses the
- * gate; it does not empty this report. A spec that tolerates one deliberate
- * failure can still assert that a *later* run came back clean, which is exactly
- * what the hatch makes impossible today (it is per-test, not per-run).
+ * gate; it does not empty this report, so a hatched spec can still find out what
+ * actually happened.
+ *
+ * It is also NOT per-run. Every count is cumulative for the whole test, and the
+ * first draft of this comment claimed otherwise — that a spec tolerating one
+ * deliberate failure could assert a *later* run came back clean. It cannot:
+ * `clean` stays false for the rest of the test once anything has failed
+ * (confirmed by probe during review, against the very sentence that promised
+ * it). A spec that needs a per-run window takes TWO reports and compares them:
+ *
+ *     const before = await page.flowErrorReport();
+ *     … drive the run …
+ *     const after = await page.flowErrorReport();
+ *     expect(after.failures.length).toBe(before.failures.length);
+ *     expect(after.evaluated, "the run produced no verdict at all")
+ *       .toBeGreaterThan(before.evaluated);
+ *
+ * which is why `evaluated` and the raw arrays are exposed and not just `clean`.
  *
  * Kept pure and separate from `fixtures.ts` for the reason `catalogVerdict` is:
  * a verdict that decides whether a test passes has to be unit-testable without
@@ -53,6 +71,18 @@ export interface FlowErrorReport {
   /** Flow-error verdicts reached so far, v1 and v2 alike. */
   failures: FlowErrorFailure[];
   /**
+   * Run streams the fixture reached a CONCLUSION about — failed or clean.
+   *
+   * `clean` says nothing happened wrong; this says something happened at all.
+   * The two are different assertions and the gap between them is a real failure
+   * mode: with no run at all — a send that never fired, a run that moved to an
+   * endpoint `runStreamSurface()` does not classify — every count is zero and
+   * `clean` is vacuously true. A spec adopting this accessor as its gate should
+   * assert `evaluated > 0` alongside it. A provider outage does not count:
+   * it is a conclusion about the account, not about Langflow.
+   */
+  evaluated: number;
+  /**
    * Run streams that produced NO verdict, by reason, sorted by reason.
    *
    * Sorted rather than in insertion order: the order these arrive in is the
@@ -64,13 +94,18 @@ export interface FlowErrorReport {
   /** Sum of `unevaluated[].count` — one unread stream is enough to void a verdict. */
   unevaluatedTotal: number;
   /**
-   * v2 run streams still open at the moment of the call.
+   * Runs with no verdict yet, on either surface, at the moment of the call.
    *
-   * Their verdict is not in yet, so it is neither a failure nor an unevaluated
-   * run — it is simply not decided, and it therefore blocks `clean` too. A spec
-   * seeing this should wait for its own run to finish (the Stop button hidden,
-   * the reply rendered) and ask again; the report deliberately does NOT wait,
-   * because nothing here can know whether a given stream is ever going to close.
+   * Their verdict is not in, so it is neither a failure nor an unevaluated run —
+   * it is simply not decided, and it therefore blocks `clean` too. A spec seeing
+   * this should wait for its own run to finish (the Stop button hidden, the reply
+   * rendered) and ask again; the report deliberately does NOT wait, because
+   * nothing here can know whether a given stream is ever going to close.
+   *
+   * Normalised to 0 when the caller hands over something that is not a
+   * non-negative integer — `clean` refuses that input (see below), but the FIELD
+   * is a count and reads 0, so do not test `pending` to detect it; test `clean`
+   * or read `summary`.
    */
   pending: number;
   /**
@@ -98,6 +133,7 @@ export interface FlowErrorReportInput {
   /** Reason -> count, as the fixture accumulates it. */
   unevaluated: ReadonlyMap<string, number>;
   pending: number;
+  evaluated: number;
   v2Watched: boolean;
 }
 
@@ -114,7 +150,10 @@ export function buildFlowErrorReport(
   const failures = input.failures.map(({ url, message }) => ({ url, message }));
   const unevaluated = [...input.unevaluated.entries()]
     .map(([reason, count]) => ({ reason, count }))
-    .sort((a, b) => a.reason.localeCompare(b.reason));
+    // Deliberately not `localeCompare`: that reads the runtime's default locale,
+    // and this repo already treats an env-dependent assertion as a hazard. The
+    // reasons are ASCII, so a plain comparison is both stable and enough.
+    .sort((a, b) => (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0));
   const unevaluatedTotal = unevaluated.reduce((sum, e) => sum + e.count, 0);
   // `openStreams()` is a `Map.size`, so anything but a non-negative integer is a
   // bug in the caller rather than a state of the run — and it is reported as
@@ -132,6 +171,7 @@ export function buildFlowErrorReport(
 
   const shape = {
     failures,
+    evaluated: Math.max(0, Math.trunc(input.evaluated)) || 0,
     unevaluated,
     unevaluatedTotal,
     pending,
@@ -146,7 +186,13 @@ function summarize(
   pendingValid: boolean,
 ): string {
   if (report.clean) {
-    return "every run stream in this test was evaluated and none carried a flow error";
+    // The vacuous case is a CLEAN verdict, so it cannot be reported as a
+    // reason-for-not-clean — it has to be said here or nowhere. A spec asserting
+    // only `clean` would otherwise read this line on a test where no run ever
+    // happened.
+    return report.evaluated === 0
+      ? "no run stream in this test produced a verdict at all — nothing failed, and nothing ran either; assert `evaluated > 0` if a run was expected"
+      : `every run stream in this test was evaluated (${report.evaluated}) and none carried a flow error`;
   }
 
   const parts: string[] = [];

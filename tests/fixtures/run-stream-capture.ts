@@ -43,6 +43,43 @@
 import type { CDPSession, Page } from "@playwright/test";
 import { runStreamSurface } from "./flow-error-policy";
 
+/**
+ * How long `settle()` may spend waiting for verdicts that are still resolving.
+ *
+ * Each pending item is one CDP round-trip, so this is a backstop against a send
+ * that never answers rather than a budget anyone expects to spend. Exceeding it
+ * is not an error state: the residual keeps counting in `pendingStreams()`, so
+ * a caller is told the verdict is undecided instead of being handed a clean one.
+ */
+const SETTLE_BUDGET_MS = 2_000;
+/**
+ * The same, at teardown. Larger because this is the last chance any verdict
+ * gets — after it the session is detached and the bytes are gone — and nothing
+ * is waiting on the result but the test's own summary.
+ */
+const DRAIN_BUDGET_MS = 5_000;
+
+/** Resolve when `work` settles or the deadline passes, whichever is first. */
+async function withDeadline(
+  work: Promise<unknown>,
+  deadline: number,
+): Promise<void> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, remaining);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface CapturedStream {
   url: string;
   body: string;
@@ -70,15 +107,35 @@ export interface RunStreamCapture {
    * Bounded by construction: each pending item is one round-trip, never a wait on
    * the network.
    */
-  settle: () => Promise<void>;
+  settle: (budgetMs?: number) => Promise<void>;
   /**
-   * How many v2 run streams are open right now.
+   * How many v2 runs have NO verdict yet — for any of the three reasons there
+   * are, which is the part that took a review to get right (#1452).
    *
-   * Their verdict is not decided yet, which is different from failed and
-   * different from unevaluated — a caller rendering a clean verdict while one is
-   * in flight would be reporting on a run that has not finished.
+   * Not just the open streams. A run counts as undecided while:
+   *
+   *   - its response headers have not arrived (`requestWillBeSent` seen,
+   *     `responseReceived` not) — a backend still thinking about the request;
+   *   - its stream is open and receiving;
+   *   - its stream has CLOSED but the body is still resolving. `finish()`
+   *     removes the entry from `open` BEFORE tracking the continuation, so
+   *     counting only `open` reported such a run as decided while its verdict
+   *     was one CDP round-trip away — invisible, and exactly the false-clean
+   *     this accessor exists to prevent.
+   *
+   * A caller rendering a clean verdict while any of the three is true would be
+   * reporting on a run that has not finished.
    */
-  openStreams: () => number;
+  pendingStreams: () => number;
+  /**
+   * v2 runs whose response was NOT 200, so no stream was ever captured.
+   *
+   * The capture ignores them by design — there is nothing to read — but they are
+   * not nothing: a run that answered 500 crashed harder than one that streamed
+   * an error, and an HTTP error never fails a test on its own (#1084). Counting
+   * them lets the report call such a run unevaluated instead of clean.
+   */
+  nonOkRuns: () => number;
   /**
    * False when no CDP session could be opened, so NOTHING on the v2 path was
    * watched. The caller must say so rather than render a clean verdict — an
@@ -91,7 +148,8 @@ export interface RunStreamCapture {
 const INERT: RunStreamCapture = {
   drain: async () => [],
   settle: async () => {},
-  openStreams: () => 0,
+  pendingStreams: () => 0,
+  nonOkRuns: () => 0,
   available: false,
 };
 
@@ -129,6 +187,8 @@ export async function attachRunStreamCapture(
   /** `finish` is async (it may fall back to a CDP round-trip); teardown must not
    *  render its verdict while one of those is still resolving. */
   const settling = new Set<Promise<void>>();
+  /** v2 runs that answered non-200, so no stream exists to judge (#1452). */
+  let nonOk = 0;
 
   const track = (work: Promise<void>) => {
     settling.add(work);
@@ -182,7 +242,14 @@ export async function attachRunStreamCapture(
   session.on("Network.responseReceived", (event) => {
     const request = requests.get(event.requestId);
     requests.delete(event.requestId);
-    if (!request || event.response.status !== 200) return;
+    if (!request) return;
+    if (event.response.status !== 200) {
+      // No stream to capture, and not a non-event either: this run produced no
+      // verdict at all, and the fixture's HTTP channel never fails a test on its
+      // own (#1084). Counted so the report can say so (#1452).
+      nonOk += 1;
+      return;
+    }
 
     // The entry is registered synchronously, before the enable round-trip: this
     // handler cannot be async without `dataReceived` racing ahead of it.
@@ -216,8 +283,18 @@ export async function attachRunStreamCapture(
     entry.chunks.push(Buffer.from(event.data, "base64"));
   });
 
-  session.on("Network.loadingFinished", (event) => finish(event.requestId, true));
-  session.on("Network.loadingFailed", (event) => finish(event.requestId, false));
+  session.on("Network.loadingFinished", (event) => {
+    requests.delete(event.requestId);
+    finish(event.requestId, true);
+  });
+  session.on("Network.loadingFailed", (event) => {
+    // Dropped from `requests` too, not only from `open`: a request that dies
+    // BEFORE `responseReceived` never had an entry in `open`, and leaving it in
+    // `requests` would count it as undecided for the rest of the test — a
+    // `pending` that never comes down, so `clean` could never be true again.
+    requests.delete(event.requestId);
+    finish(event.requestId, false);
+  });
 
   /**
    * Drain `settling` until it stays empty. One `allSettled` is not enough: a
@@ -228,21 +305,30 @@ export async function attachRunStreamCapture(
    * reached is not an error state: whatever is left is simply still pending, and
    * `openStreams()` says so.
    */
-  const settle = async (): Promise<void> => {
+  const settle = async (budgetMs = SETTLE_BUDGET_MS): Promise<void> => {
+    const deadline = Date.now() + budgetMs;
     for (let pass = 0; pass < 5 && settling.size > 0; pass++) {
-      await Promise.allSettled([...settling]);
+      if (Date.now() >= deadline) break;
+      // Raced against the remaining budget, because "bounded by construction" is
+      // bounded in ROUND TRIPS, not in time: a CDP send that never answers would
+      // otherwise hold the caller to the 5-minute test timeout, where the v1 read
+      // next door gives up after 2 s. Giving up here is safe precisely because
+      // whatever is left still counts in `pendingStreams()` — the residual is
+      // reported, never assumed settled.
+      await withDeadline(Promise.allSettled([...settling]), deadline);
     }
   };
 
   return {
     available: true,
     settle,
-    openStreams: () => open.size,
+    pendingStreams: () => open.size + settling.size + requests.size,
+    nonOkRuns: () => nonOk,
     drain: async () => {
       // Streams that finished while the test was ending may still be resolving
       // their body. Awaiting them here is bounded by construction — each is one
       // CDP round-trip, not a wait on the network.
-      await settle();
+      await settle(DRAIN_BUDGET_MS);
 
       const remaining: CapturedStream[] = [];
       for (const [requestId, entry] of open) {

@@ -18,14 +18,48 @@ const CLEAN = {
   failures: [],
   unevaluated: new Map<string, number>(),
   pending: 0,
+  evaluated: 1,
   v2Watched: true,
 };
 
-test("a watched run with no verdicts is clean", () => {
+test("a watched run with a verdict and no failure is clean", () => {
   const report = buildFlowErrorReport(CLEAN);
   assert.equal(report.clean, true);
   assert.equal(report.unevaluatedTotal, 0);
   assert.match(report.summary, /none carried a flow error/);
+});
+
+test("clean with NO run at all says so — the vacuous case (#1092's shape)", () => {
+  // `clean` is deliberately still true: nothing failed. What would make a spec
+  // adopting it as a gate useless is that this state is indistinguishable from a
+  // healthy run — a send that never fired, or a run over an endpoint
+  // `runStreamSurface()` does not classify. So the summary has to carry it, and
+  // `evaluated` has to be readable.
+  const report = buildFlowErrorReport({ ...CLEAN, evaluated: 0 });
+  assert.equal(report.clean, true);
+  assert.equal(report.evaluated, 0);
+  assert.match(report.summary, /nothing ran either/);
+  assert.match(report.summary, /evaluated > 0/);
+});
+
+test("evaluated is carried through and normalised", () => {
+  assert.equal(buildFlowErrorReport({ ...CLEAN, evaluated: 3 }).evaluated, 3);
+  assert.equal(buildFlowErrorReport({ ...CLEAN, evaluated: -2 }).evaluated, 0);
+  assert.equal(buildFlowErrorReport({ ...CLEAN, evaluated: Number.NaN }).evaluated, 0);
+});
+
+test("a non-2xx run is unevaluated, not clean", () => {
+  // The worst false-clean the review found: `POST /api/v2/workflows` answering
+  // 500 produces no stream to capture, and an HTTP error never fails a test on
+  // its own (#1084) — so the hardest possible crash used to read back as the
+  // absence of one. The fixture funnels it in as an unevaluated reason.
+  const report = buildFlowErrorReport({
+    ...CLEAN,
+    unevaluated: new Map([["run answered non-2xx (no stream to judge)", 1]]),
+  });
+  assert.equal(report.clean, false);
+  assert.equal(report.failures.length, 0);
+  assert.match(report.summary, /non-2xx/);
 });
 
 test("a reached flow-error verdict is not clean, and the summary names it", () => {
@@ -157,32 +191,20 @@ test("a nonsensical pending count cannot buy a clean verdict", () => {
       `pending=${pending} produced a clean verdict — an uninterpretable count must not read as "no runs in flight"`,
     );
     assert.match(report.summary, /not a non-negative integer/);
+    assert.equal(
+      report.pending,
+      0,
+      "the FIELD is normalised to 0 — `clean` and `summary` are what carry the refusal, and the docs must not tell a caller to test `pending`",
+    );
   }
 });
 
-// Structural, and it pins an ABSENCE rather than a spelling: the accessor must
-// not be reachable through the same `allow*` bypass as the gate. A hatch that
-// also emptied the report would make `expect(report.clean).toBe(true)` pass on a
-// test that had declared it tolerates failures — the exact shape of assertion
-// that looks strongest and asserts least.
-test("the accessor does not consult allowFlowErrors", () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, "fixtures.ts"),
-    "utf8",
-  );
-  const start = source.indexOf("(page as any).flowErrorReport = async");
-  assert.ok(start > 0, "the accessor is gone or was renamed — update this guard");
-  const body = source.slice(start, source.indexOf("};", start));
-  assert.ok(
-    !body.includes("allowFlowErrors"),
-    "the report is gated on a hatch — it must report what happened, not what the test tolerates",
-  );
-  assert.ok(
-    body.includes("runStreamCapture.settle()"),
-    "the accessor stopped settling closed streams — it would race the verdict it is asked for",
-  );
-  assert.ok(
-    !body.includes("runStreamCapture.drain()"),
-    "the accessor drains the capture — that judges streams still open on a partial body and steals the teardown's verdict",
-  );
-});
+// NOT pinned here, on purpose. An earlier draft grepped `fixtures.ts` for the
+// accessor's body to assert it does not consult `allowFlowErrors`, calls
+// `settle()` and does not call `drain()`. All three are already pinned
+// BEHAVIOURALLY in `flow-error-gate.spec.ts` (each fails under the mutation it
+// exists to catch — measured), and #1226 is the standing lesson that a guard
+// pinning a spelling passes the mutations it was written for: moving the filter
+// into a helper turns it green while the defect stands. It was also brittle in
+// its own right — it sliced the body to the first `};`, which any object literal
+// would have cut short.
