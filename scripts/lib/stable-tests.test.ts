@@ -15,9 +15,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "path";
 import {
+  LANE_TAGS,
   REGRESSION_ROOT,
+  collectDeclaredTests,
   collectStableTests,
   parseDeclaredCounts,
+  parseDeclaredTests,
   parseStableTests,
 } from "./stable-tests";
 
@@ -267,4 +270,91 @@ test("test.describe and test.skip are not counted as declared tests", () => {
     });
   `);
   assert.deepEqual(c, { total: 1, enterprise: 0, oss: 1 });
+});
+
+// ─── parseDeclaredTests — the orphan reconciler's input (#1746) ──────────────
+//
+// The complement of the `@stable` parser above: the reconciler needs the tests
+// that DO NOT carry the tag, so "no tag array at all" has to come back as a row
+// rather than as an absence, and `test.fixme` has to come back at all.
+
+function declaredIn(source: string) {
+  return parseDeclaredTests(SPEC, source);
+}
+
+test("a declared test with no tag option at all is returned, not skipped", () => {
+  const out = declaredIn(`
+    test("an untagged test", async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].tags, []);
+  assert.equal(out[0].stable, false);
+  assert.equal(out[0].fixme, false);
+});
+
+test("the declaring form of test.fixme is a declared test, and is marked", () => {
+  // Rule 3 of #1746: `@stable` removal and `test.fixme` are applied together at
+  // flake quarantine but separately at hard-failure auto-removal, and "runs
+  // nowhere at all" is the worse of the two states.
+  const out = declaredIn(`
+    test.fixme("a quarantined test", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, true);
+  assert.equal(out[0].title, "a quarantined test");
+});
+
+test("an in-body test.fixme() call is not mistaken for a declaration", () => {
+  const out = declaredIn(`
+    test("a test that skips itself", { tag: ["@regression"] }, async ({ page }) => {
+      test.fixme();
+      test.fixme(true, "a reason");
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, false, "the declaration is a plain test()");
+});
+
+test("@stable inherited from a describe block marks the child tests stable", () => {
+  // Playwright applies a suite tag to every test inside and the daily's
+  // `--grep "@stable"` honours it, so such a test IS in the daily. Reading it
+  // as an absence would report a false orphan — the opposite decision from
+  // `parseStableTests`, which warns because Phase 0 lists tests individually.
+  const out = declaredIn(`
+    test.describe("a suite", { tag: ["@stable"] }, () => {
+      test("a child", { tag: ["@components"] }, async ({ page }) => {});
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].stable, true);
+  assert.deepEqual(out[0].tags, ["@components"]);
+});
+
+test("an unreadable tag option is flagged rather than read as untagged", () => {
+  const out = declaredIn(`
+    test("a test", { tag: TAGS }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].unparseableTags, true);
+  assert.equal(out[0].stable, false);
+});
+
+test("the lane selectors are the three that are never combined with @stable", () => {
+  assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving"]);
+});
+
+test("collectDeclaredTests covers every @stable test the Phase 0 parser finds", () => {
+  // The two parsers answer different questions over the same tree; if the
+  // broader one ever missed a declaration the narrower one sees, the
+  // reconciler would silently stop scanning part of the suite.
+  const declared = collectDeclaredTests();
+  const key = (p: string, t: string) => `${p}::${t}`;
+  const seen = new Set(declared.map((d) => key(d.relativePath, d.title)));
+  for (const s of collectStableTests().tests) {
+    assert.ok(
+      seen.has(key(s.relativePath, s.title)),
+      `${s.relativePath} — "${s.title}" is visible to both parsers`,
+    );
+  }
+  assert.ok(declared.length >= collectStableTests().tests.length);
 });

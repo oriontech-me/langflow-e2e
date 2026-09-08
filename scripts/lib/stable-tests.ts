@@ -323,3 +323,123 @@ export function collectDeclaredCounts(): DeclaredCounts {
   }
   return acc;
 }
+
+// ─── Declared tests with their tags (the orphan reconciler's input) ──────────
+
+/**
+ * Lane selectors, not severities. `tests/fixtures/lane.ts` grep-inverts each of
+ * these out of every run that does not opt into its lane, and none of them is
+ * ever combined with `@stable` because no scheduled lane exists for them
+ * (#1010). A test that carries one is therefore out of the daily BY DESIGN —
+ * the orphan reconciler must not read that as an unowned removal.
+ */
+export const LANE_TAGS = ["@destructive", "@enterprise", "@serving"] as const;
+
+export interface DeclaredTest {
+  /** Title as written in the declaring call's first argument. */
+  title: string;
+  /** Path under `regression/`, e.g. `core-components/loop-component-regression.spec.ts`. */
+  relativePath: string;
+  /** 1-based source line of the declaring call. */
+  line: number;
+  /** Tags on the test itself, in source order. */
+  tags: string[];
+  /**
+   * True when `@stable` reaches this test at all — on its own `tag` array or
+   * inherited from an enclosing `test.describe`. Playwright's `--grep "@stable"`
+   * honours the inherited form, so the daily really does run such a test; the
+   * reconciler asks "is this test in the daily", which is that question and not
+   * "is `@stable` written on this line".
+   */
+  stable: boolean;
+  /** Declared as `test.fixme(...)` — skipped before its body runs, on every lane. */
+  fixme: boolean;
+  /** A `tag` option existed but could not be read as an inline array of literals. */
+  unparseableTags: boolean;
+}
+
+/** Match `test.fixme(...)` used as a DECLARING call (title + options + body). */
+function isFixmeDeclaration(call: ts.CallExpression): boolean {
+  return (
+    ts.isPropertyAccessExpression(call.expression) &&
+    ts.isIdentifier(call.expression.expression) &&
+    call.expression.expression.text === "test" &&
+    call.expression.name.text === "fixme" &&
+    call.arguments.length >= 2 &&
+    literalText(call.arguments[0]) !== null
+  );
+}
+
+/**
+ * Every declared test in one spec's SOURCE TEXT — `test(...)` and the declaring
+ * form of `test.fixme(...)` alike — with the tags that reach it.
+ *
+ * Deliberately broader than `parseStableTests()`, which only ever needed the
+ * `@stable` subset for the checklist blocks. The reconciler needs the
+ * complement (a test WITHOUT `@stable`), so "no tag array at all" has to come
+ * back as a row rather than as an absence.
+ */
+export function parseDeclaredTests(filePath: string, text: string): DeclaredTest[] {
+  const source = ts.createSourceFile(
+    filePath,
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
+  const relativePath = path
+    .relative(REGRESSION_ROOT, filePath)
+    .split(path.sep)
+    .join("/");
+
+  const out: DeclaredTest[] = [];
+
+  function visit(node: ts.Node, inheritedStable: boolean): void {
+    let childrenInherit = inheritedStable;
+
+    if (ts.isCallExpression(node)) {
+      if (isDescribeCall(node) && node.arguments.length >= 2) {
+        const { tags } = readTagsArray(node.arguments[1]);
+        if (tags?.includes(STABLE_TAG)) childrenInherit = true;
+      } else if (isPlainTestCall(node) || isFixmeDeclaration(node)) {
+        const title = literalText(node.arguments[0]);
+        if (title !== null) {
+          const { tags, unparseable } =
+            node.arguments.length >= 2
+              ? readTagsArray(node.arguments[1])
+              : { tags: null, unparseable: false };
+          const { line } = source.getLineAndCharacterOfPosition(
+            node.getStart(source),
+          );
+          out.push({
+            title,
+            relativePath,
+            line: line + 1,
+            tags: tags ?? [],
+            stable: inheritedStable || !!tags?.includes(STABLE_TAG),
+            fixme: isFixmeDeclaration(node),
+            unparseableTags: unparseable,
+          });
+        }
+      }
+    }
+
+    ts.forEachChild(node, (child) => visit(child, childrenInherit));
+  }
+
+  visit(source, false);
+  return out;
+}
+
+/** The same across every spec under `regression/`, sorted by path then line. */
+export function collectDeclaredTests(): DeclaredTest[] {
+  const all: DeclaredTest[] = [];
+  for (const file of walkSpecs(REGRESSION_ROOT)) {
+    all.push(...parseDeclaredTests(file, fs.readFileSync(file, "utf-8")));
+  }
+  all.sort((a, b) =>
+    a.relativePath !== b.relativePath
+      ? a.relativePath.localeCompare(b.relativePath)
+      : a.line - b.line,
+  );
+  return all;
+}

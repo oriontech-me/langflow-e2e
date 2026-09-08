@@ -893,6 +893,61 @@ The dedicated issue spun out of the triage must be **clear and agnostic**:
 
 The spec doc is **not updated** during this cycle — the auto-removal commit, the dedicated issue, and the restoration PR are the traceability record.
 
+### The reconciler — a removal nobody owns is found mechanically (#1746)
+
+Restoration being manual is the whole risk in the paragraph above: the removal
+is automatic and lands on `main` without review, while putting the tag back is
+a checkbox on an issue. Close that issue with the checkbox unticked and the test
+is out of the daily forever, with nobody holding it. That has happened three
+recorded times — #974 (8 tests, reconciled by hand), #1504 (5 tests, reconciled
+by hand) and #1460, which was caught only because a human happened to read the
+call sites while working an unrelated PR.
+
+`.github/workflows/stable-orphan-reconcile.yml` runs the audit instead
+(Mondays 09:00 UTC, plus `workflow_dispatch`). Locally:
+
+```bash
+npx ts-node scripts/reconcile-stable-orphans.ts            # full run, needs `gh`
+npx ts-node scripts/reconcile-stable-orphans.ts --no-trackers   # offline: history only
+```
+
+It parses every declared test, keeps the ones **without** `@stable`, walks that
+spec's git history until it finds a revision where the **same title** carried the
+tag — which dates the removal and names the commit — and then asks whether any
+**open** issue names the spec. A removal with no open tracker is an **orphan**.
+
+**How to resolve a row.** Three ways, and they are not interchangeable:
+
+| Situation | What to do |
+|---|---|
+| The test is fixed | Restore `@stable` (and remove `test.fixme` if present). This is the deliverable of the dedicated issue. |
+| The work is real but not done | Make sure an **open** issue names the spec file. The reconciler reads live state, so reopening one is enough. |
+| The absence is permanent and deliberate | Declare it in `scripts/lib/stable-orphan-exemptions.json`, with a reason and a ref. |
+
+**Declarations are verified in both directions** (#1084's lesson): if the test
+carries `@stable` again, is renamed, gains a lane tag that already keeps it out
+of the daily, or turns out never to have carried `@stable` at all, the
+declaration is reported as **expired** rather than honoured silently. Only a
+permanent decision belongs there — `groq` / `mistral` are the seed entries,
+because those components are not bundled in the tested image
+(`docs/component-distribution-policy.md`, #1039). A temporary absence needs an
+open issue, not a declaration.
+
+Three properties worth knowing before reading a report:
+
+- **`@stable` missing and `test.fixme` are two different states**, and the report
+  says which. The tag alone takes a test out of the daily; `test.fixme` takes it
+  out of *everything*, including the PR impacted-specs lane (#871 / #1054).
+- **Undecidable is never clean** (#1012). A history that cannot be walked, a
+  shallow clone, a `tag` option the parser cannot read, or a failed issue
+  lookup is reported as `UNKNOWN` with the reason named — never omitted, and
+  never resolved as "no orphan".
+- **It is not a PR gate.** A pre-existing orphan is not the PR author's fault,
+  and failing on it would redden unrelated PRs until someone does an audit
+  (#980's coverage-first trade). The output is an issue kept current under a
+  fixed title, which closes itself when there is nothing left to reconcile.
+
+
 ### Regression Ledger — record every confirmed regression
 
 `REGRESSIONS.md` (repo root) is the curated registry of the real Langflow
