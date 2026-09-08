@@ -1,6 +1,6 @@
 # Agent tool name — invalid name blocks execution with a clear error
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
