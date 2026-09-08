@@ -114,6 +114,38 @@ export function specKey(entry) {
   return [entry?.file ?? "", entry?.test ?? ""].join("\u0001");
 }
 
+/** SGR escapes, as an escape rather than the literal byte — same rule as the key's separator. */
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/**
+ * The comparable form of a signature, or `null` when there is nothing to compare.
+ *
+ * Two strings that LOOK present must not be compared, and both were reachable:
+ *
+ *  - **`"unknown"`.** It is what `append-weekly-history.mjs` records when a failure
+ *    carries no message at all (`firstFailedSignature || "unknown"`), and that file's
+ *    own comment already says what it is: *"`unknown` is not a signature but the
+ *    absence of one: triage's recurrence rule matches on it, so message-less failures
+ *    clustered together across unrelated specs"*. It fixed that for its own selection;
+ *    comparing it here reintroduced it one file over. **15 of the 764 signatures in
+ *    `reports/daily-history.jsonl` are `unknown`** — two message-less failures of one
+ *    spec folded to `cross-provider-failed`, rank 0, headlined as the product.
+ *  - **the SGR escapes.** 255 of those 764 rows carry them, and the colorization is
+ *    environment-derived: nothing in this repo sets `FORCE_COLOR` or `NO_COLOR`, and
+ *    supports-color keys on `GITHUB_ACTIONS`, which the VM does not have. Comparing
+ *    raw strings would make one failure, colorized on one lane and plain on the other,
+ *    read as two different causes — the exact false negative this pairing exists to
+ *    remove. Both series carry escapes at the same rate today, so this is a latent
+ *    inversion rather than an observed one; normalizing costs nothing and removes it.
+ */
+export function comparableSignature(signature) {
+  const bare = String(signature ?? "")
+    .replace(ANSI, "")
+    .trim();
+  if (!bare || bare === "unknown") return null;
+  return bare;
+}
+
 /**
  * Does this signature carry a cause, or is it an assertion shell?
  *
@@ -129,10 +161,8 @@ export function specKey(entry) {
  * naming its URL — carries a cause and is not a shell.
  */
 export function isGenericSignature(signature) {
-  if (!signature) return false;
-  const bare = String(signature)
-    .replace(/\u001b\[[0-9;]*m/g, "")
-    .trim();
+  const bare = comparableSignature(signature);
+  if (!bare) return false;
   return /^Error:\s*expect\(received\)\s*\.\s*(not\s*\.\s*)?[A-Za-z]+\s*\(/.test(bare);
 }
 
@@ -191,9 +221,10 @@ export function pairCrossProvider(divergences) {
     if (ciParam === vmParam) continue;
     if (!ciParam && !vmParam) continue;
 
-    const ciErr = ci.ci?.error ?? null;
-    const vmErr = vm.vm?.error ?? null;
-    const signaturesMatch = Boolean(ciErr) && Boolean(vmErr) && ciErr === vmErr;
+    // Normalized on BOTH sides before the equality, never raw: see comparableSignature.
+    const ciErr = comparableSignature(ci.ci?.error);
+    const vmErr = comparableSignature(vm.vm?.error);
+    const signaturesMatch = Boolean(ciErr) && ciErr === vmErr;
     const generic = signaturesMatch && isGenericSignature(ciErr);
 
     folded.add(ci);

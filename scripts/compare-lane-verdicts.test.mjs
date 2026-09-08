@@ -34,6 +34,7 @@ import {
   testKey,
   specKey,
   isGenericSignature,
+  comparableSignature,
   selectRuns,
   indexOutcomes,
   compareRuns,
@@ -342,6 +343,37 @@ test("an ANSI-wrapped assertion shell is still recognised as a shell", () => {
   // every real row through as if it carried a cause.
   const wrapped = "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22mexpected)";
   assert.equal(isGenericSignature(wrapped), true);
+});
+
+test("'unknown' is the absence of a signature, so it never makes a pair agree", () => {
+  // `append-weekly-history.mjs` writes `unknown` when a failure carries no message,
+  // and its own comment says triage already clustered unrelated specs by matching on
+  // it. 15 of the 764 signatures in reports/daily-history.jsonl are `unknown`, so two
+  // message-less failures of one spec used to fold as the report's strongest claim.
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: "unknown" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("anthropic", { error_signature: "unknown" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences[0].kind, "cross-provider-differs");
+  assert.equal(result.divergences[0].crossProvider.signaturesMatch, false);
+  assert.equal(comparableSignature("unknown"), null);
+  assert.doesNotMatch(renderReport(result), /FAILED the same way/);
+});
+
+test("colorization on one lane only does not split one cause into two", () => {
+  // 255 of the 764 rows carry SGR escapes, and the colorization is environment-derived
+  // — nothing here sets FORCE_COLOR/NO_COLOR and supports-color keys on
+  // GITHUB_ACTIONS, which the VM does not have. Comparing raw strings would invert the
+  // fold into the very false negative it exists to remove.
+  const esc = String.fromCharCode(27);
+  const colorized = `Error: ${esc}[2mexpect(received)${esc}[22m.toBe(expected)`;
+  const plain = "Error: expect(received).toBe(expected)";
+  assert.equal(comparableSignature(colorized), plain);
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: colorized })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("anthropic", { error_signature: plain })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences[0].crossProvider.signaturesMatch, true);
 });
 
 test("a pair that only FLAKED on both providers is never stamped as a failure (Copilot, PR 1767)", () => {
