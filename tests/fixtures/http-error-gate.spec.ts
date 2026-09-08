@@ -69,6 +69,26 @@ const DECLARED: KnownHttpDefect = {
 const OTHER_PATH = "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc";
 
 /**
+ * The #1432 probes: a monitored 400 with NO body, and one with a body.
+ *
+ * MEASURED HERE, and it is the finding rather than a detail — Chromium does not
+ * keep a zero-length response body, so `response.text()` on the first one
+ * **rejects** with `Protocol error (Network.getResponseBody): No data found for
+ * resource with given identifier`. It does not resolve to `""`. So the branch
+ * the fixture used to swallow in silence is not an exotic one: it is what a
+ * bodyless error response does every time.
+ *
+ * That makes this the likeliest explanation for #1424's shape — four `400 POST
+ * /api/v1/variables/` occurrences across three dailies, none of them carrying a
+ * body in the logs, while every `500` in the same runs does (a `500` here
+ * carries `{"detail": …}`, which Chromium keeps). The unit lane still covers
+ * the `""` branch, because `response.text()` resolving empty is reachable
+ * through other transports and the two must stay distinguishable in the entry.
+ */
+const EMPTY_BODY_PATH = "/api/v1/variables/empty-body";
+const WITH_BODY_PATH = "/api/v1/variables/with-body";
+
+/**
  * How long `?mode=slow` withholds its response.
  *
  * Long enough that the test body has certainly returned — so the `response` event
@@ -83,6 +103,16 @@ let origin: string;
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
     const [path, query = ""] = (req.url ?? "").split("?");
+    if (path === EMPTY_BODY_PATH) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end();
+      return;
+    }
+    if (path === WITH_BODY_PATH) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ detail: "value is not a valid string" }));
+      return;
+    }
     if (path === DECLARED_PATH || path === OTHER_PATH) {
       // `mode=500` answers the DECLARED path with an undeclared status, which is
       // the narrowing case: a new defect wearing the known one's URL.
@@ -300,6 +330,69 @@ test.describe("fixture declared-known-defect hatch", () => {
         await page.evaluate(() => document.body.textContent),
         "the probe page did not load, so the test would have failed for the wrong reason",
       ).toContain("http gate probe");
+    },
+  );
+
+  // ─── #1432: an unread body is unknown, not absent ─────────────────────────
+
+  test(
+    "an error whose body cannot be read says so, with the reason",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // What the unit lane cannot reach: that the decision is actually WIRED to
+      // the fixture's log, on the transport the suite really uses. Before #1432
+      // this branch assigned a sentinel to the entry and printed NOTHING, so a
+      // `🚨 Backend Error` line was followed by silence — indistinguishable from
+      // an error whose body was empty, with the reason discarded along with it.
+      //
+      // A bodyless 400 is the probe because that is what Chromium refuses to
+      // hand over (see EMPTY_BODY_PATH), so this is the real shape rather than a
+      // contrived one.
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, EMPTY_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log, "the error itself was still reported").toContain(
+        "🚨 Backend Error",
+      );
+      expect(
+        log,
+        "the unreadable body printed nothing, or printed it without a reason — that is the defect #1432 is about",
+      ).toMatch(/Response: <could not be read: .+>/);
+      expect(
+        log,
+        "the reason must name the failure, not a fixed sentinel",
+      ).toContain("getResponseBody");
+      expect(
+        log,
+        "the pre-#1432 sentinel is gone from the log — it said nothing about why",
+      ).not.toContain("Could not read response");
+    },
+  );
+
+  test(
+    "an error that DOES carry a body still prints it",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The contrast that makes the line above meaningful: the two outcomes are
+      // different text, so a reader can tell "the backend said this" from "we
+      // could not ask".
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, WITH_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log).toContain(
+        'Response: {"detail":"value is not a valid string"}',
+      );
+      expect(log).not.toMatch(/Response: <could not be read/);
     },
   );
 });
