@@ -1080,7 +1080,11 @@ test("the metadata records the mirrored values that were IN FORCE, not the defau
   // The override arrives through the ENVIRONMENT, which is how the real one arrives.
   // And the assertion is against the OVERRIDDEN value on purpose: asserting the
   // default is what would pass against the very bug this test is written for.
-  const { meta } = metadataFrom({ LANGFLOW_DEACTIVATE_TRACING: "true", LANGFLOW_WORKER_TIMEOUT: "45" });
+  // BLANKED first, for the reason its own definition gives: `sourced()` forwards
+  // process.env, so a mirrored name exported in the shell running these tests would
+  // answer for the default asserted below — and on the qa VM one of them IS exported,
+  // which is the situation this test is about.
+  const { meta } = metadataFrom({ ...BLANKED, LANGFLOW_DEACTIVATE_TRACING: "true", LANGFLOW_WORKER_TIMEOUT: "45" });
 
   assert.equal(meta.mirrored_target_env.LANGFLOW_DEACTIVATE_TRACING, "true");
   assert.equal(meta.mirrored_target_env.LANGFLOW_WORKER_TIMEOUT, "45");
