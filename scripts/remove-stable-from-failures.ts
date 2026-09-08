@@ -325,8 +325,23 @@ export function collectHardFailures(reportFile: string): Failure[] {
   }
   const failures: Failure[] = [];
   const bases = candidateBases(report);
-  const resolveFile = (spec: any): string => {
-    const f = spec?.file || spec?.location?.file || "";
+  /**
+   * The spec path as the REPORT spells it, with the enclosing suite's `file` as
+   * a fallback.
+   *
+   * The fallback matches `collectAttempts()` in `report-backend-outages.mjs`,
+   * and since #1589 that symmetry is load-bearing: the two walk the same merged
+   * report and their results are joined on this string, so a spec one of them
+   * can name and the other cannot would leave the corroboration matching
+   * nothing — silently, since an unmatched attempt reads as "no outage
+   * overlapped it". Playwright's JSON reporter always emits `spec.file`, so
+   * this is a divergence closed rather than a bug fixed; the point is that it
+   * can no longer open.
+   */
+  const rawSpecPath = (spec: any, inheritedFile: string): string =>
+    spec?.file || spec?.location?.file || inheritedFile || "";
+  const resolveFile = (spec: any, inheritedFile: string): string => {
+    const f = rawSpecPath(spec, inheritedFile);
     if (!f) return "";
     if (path.isAbsolute(f)) return f;
     for (const base of bases) {
@@ -337,16 +352,17 @@ export function collectHardFailures(reportFile: string): Failure[] {
     // testDir) so the downstream "spec file not found" skip is meaningful.
     return path.resolve(path.join(REPO_ROOT, "tests"), f);
   };
-  const visit = (node: any): void => {
+  const visit = (node: any, inheritedFile: string): void => {
+    const nodeFile = node?.file || inheritedFile;
     for (const spec of node.specs || []) {
-      const file = resolveFile(spec);
+      const file = resolveFile(spec, nodeFile);
       const line = spec?.line || spec?.location?.line || 0;
       for (const t of spec.tests || []) {
         if (t.status === "unexpected") {
           failures.push({
             title: spec.title,
             file,
-            specPath: normalizeSpecPath(spec?.file || spec?.location?.file || ""),
+            specPath: normalizeSpecPath(rawSpecPath(spec, nodeFile)),
             line,
             error: lastFailureError(t),
             earlierAttempts: earlierFailedAttempts(t),
@@ -355,9 +371,9 @@ export function collectHardFailures(reportFile: string): Failure[] {
         }
       }
     }
-    for (const child of node.suites || []) visit(child);
+    for (const child of node.suites || []) visit(child, nodeFile);
   };
-  for (const s of report.suites || []) visit(s);
+  for (const s of report.suites || []) visit(s, s?.file || "");
   return failures;
 }
 

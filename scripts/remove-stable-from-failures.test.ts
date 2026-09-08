@@ -1420,3 +1420,48 @@ test("the workflow writes the corroboration file where the action reads it", () 
   assert.ok(read, "daily-stable.yml still hands the path to the auto-remove action");
   assert.equal(written, read, "the writer and the reader name the same file");
 });
+
+test("a spec with no `file` of its own inherits the suite's, like the outage reporter does", () => {
+  // The two walkers read the same merged report and their results are joined on
+  // this string, so a spec one can name and the other cannot leaves the
+  // corroboration matching nothing — silently, because an unmatched attempt
+  // reads as "no outage overlapped it". `collectAttempts()` has always
+  // inherited; this one did not.
+  const dir = makeTempDir("autoremove-inherit-");
+  try {
+    const reportPath = path.join(dir, "results.json");
+    fs.writeFileSync(
+      reportPath,
+      JSON.stringify({
+        config: { rootDir: dir },
+        suites: [
+          {
+            title: "outer",
+            file: "inherited.spec.ts",
+            suites: [
+              {
+                title: "inner",
+                specs: [
+                  {
+                    title: "t",
+                    line: 4,
+                    tests: [
+                      {
+                        status: "unexpected",
+                        results: [{ status: "failed", error: { message: PRODUCT_ERROR } }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const [failure] = collectHardFailures(reportPath);
+    assert.equal(failure.specPath, "inherited.spec.ts");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
