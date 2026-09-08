@@ -88,6 +88,265 @@ export function describeTest(entry) {
 }
 
 /**
+ * The identity of a SPEC across the two lanes, with the parameterization dropped.
+ *
+ * `testKey` is right for the diff and wrong for one question. The day's provider is
+ * resolved AT RUN TIME by `select-daily-model-target.mjs`, which walks forward from the
+ * weekday's slot past whatever `collect-models` probed inactive. So the two lanes can
+ * pin DIFFERENT providers on the same morning — and did on 2026-09-08: Actions landed
+ * on google and the VM on anthropic, because the shared Anthropic balance drained
+ * between 08:04 and 12:41. Every provider-parametrized spec then carries a different
+ * `param` on each side, keys as two identities, and lands in the report as two
+ * one-sided differences.
+ *
+ * That is a FALSE NEGATIVE in the class this comparator exists to find. On that day the
+ * `agent-component-regression` suite flaked on BOTH lanes and the report printed
+ * `Flaky on BOTH lanes: 0`. It held the evidence and could not say it.
+ *
+ * What the pairing does NOT buy is a conclusion. This docblock used to argue that a
+ * failure reproducing on gemini and on claude "has ELIMINATED the provider as its
+ * cause, by construction" — and that argument outlived the code, which stopped drawing
+ * it. The inference is sound and unverifiable here, for the reason `pairCrossTarget`
+ * gives: the row never records which provider the lane PINNED, so the file cannot tell
+ * a two-provider pair from a two-model pair without being told. Read that docblock
+ * before reintroducing a claim on this one's authority.
+ */
+export function specKey(entry) {
+  // Same separator, same reason as testKey: joined with nothing, a file ending in a
+  // title's first characters could collide with another pair.
+  return [entry?.file ?? "", entry?.test ?? ""].join("\u0001");
+}
+
+/** SGR escapes, as an escape rather than the literal byte — same rule as the key's separator. */
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/**
+ * The comparable form of a signature, or `null` when there is nothing to compare.
+ *
+ * Two strings that LOOK present must not be compared, and both were reachable:
+ *
+ *  - **`"unknown"`.** It is what `append-weekly-history.mjs` records when a failure
+ *    carries no message at all (`firstFailedSignature || "unknown"`), and that file's
+ *    own comment already says what it is: *"`unknown` is not a signature but the
+ *    absence of one: triage's recurrence rule matches on it, so message-less failures
+ *    clustered together across unrelated specs"*. It fixed that for its own selection;
+ *    comparing it here reintroduced it one file over. **15 of the 764 signatures in
+ *    `reports/daily-history.jsonl` are `unknown`** — two message-less failures of one
+ *    spec folded as a matching pair and was headlined as the product, back when the
+ *    fold still drew conclusions.
+ *  - **the SGR escapes.** 255 of those 764 rows carry them, and the colorization is
+ *    environment-derived: nothing in this repo sets `FORCE_COLOR` or `NO_COLOR`, and
+ *    supports-color keys on `GITHUB_ACTIONS`, which the VM does not have. Comparing
+ *    raw strings would make one failure, colorized on one lane and plain on the other,
+ *    read as two different causes — the exact false negative this pairing exists to
+ *    remove. Both series carry escapes at the same rate today, so this is a latent
+ *    inversion rather than an observed one; normalizing costs nothing and removes it.
+ */
+export function comparableSignature(signature) {
+  const bare = String(signature ?? "")
+    .replace(ANSI, "")
+    .trim();
+  if (!bare || bare === "unknown") return null;
+  return bare;
+}
+
+/**
+ * Does this signature carry a cause, or is it an assertion shell?
+ *
+ * `expect(received).toBe(expected)` is the most generic string this suite produces and
+ * establishes NOTHING about same-causeness on its own (#1626). Triage settles recurrence
+ * by reading the expected/received pair out of `results.json`; a history row carries
+ * only the signature. So a match between two shells is a LEAD and has to say so — #1759,
+ * filed the same week, rests its entire "why these are one cause" section on the pair
+ * and explicitly not on the signature.
+ *
+ * Deliberately narrow: an `Error: expect(...)` prefix and nothing else. Anything with a
+ * message of its own — the guards naming #751, the tracing precondition, a timeout
+ * naming its URL — carries a cause and is not a shell.
+ */
+export function isGenericSignature(signature) {
+  const bare = comparableSignature(signature);
+  if (!bare) return false;
+  // ANY subject, not just `received`. Requiring `expect(received)` covered the
+  // MINORITY: measured over both series, `expect(locator)` shells are 158 of 764
+  // signatures against 97 for `expect(received)`, and `expect(locator).toBeVisible()
+  // failed` alone is 115 — the single most frequent signature the suite produces. A
+  // pair agreeing only on "some locator was not visible" was taking the head stamp
+  // with no LEAD caveat, which is the false confidence this guard exists to prevent,
+  // on the dominant shell class of an e2e suite.
+  //
+  // Checked against the corpus rather than reasoned: of the 115 DISTINCT signatures in
+  // the two series, this matches 21 and every one of them is a bare matcher; nothing
+  // carrying a message of its own matches, and no signature starting with `expect(`
+  // escapes it.
+  return /^Error:\s*expect\([^)]*\)\s*\.\s*(not\s*\.\s*)?[A-Za-z]+\s*\(/.test(bare);
+}
+
+/**
+ * The provider named by a `param` label, or `null` when the label does not name one.
+ *
+ * The labels are written by `select-daily-model-target.mjs` and by the specs' own target
+ * resolution. Counted over both series — 97 param-carrying entries, 8 distinct labels —
+ * every one is `provider / model` (`google / gemini-3.5-flash` 55, `openai / gpt-4o-mini`
+ * 13, `google / gemini-2.5-flash` 12, `google / gemini-flash-latest` 7,
+ * `anthropic / claude-haiku-4-5` 6, `anthropic / claude-sonnet-5` 2, `google / default` 1)
+ * except one `provider:openai (fallback)`, which `test-targets.ts` emits when the
+ * catalog was frozen empty. An earlier version of this comment claimed a bare `google`
+ * was one of the shapes; it appears ZERO times, and no `label:` in `test-targets.ts` can
+ * produce it. The bare branch below stays as tolerance, not as a documented input.
+ *
+ * `model:<id>` — `test-targets.ts` emits it when the target model is absent from the
+ * catalog — names no provider, and returning its whole string as one was the same
+ * overclaim this file spent three reviews removing: against `openai / gpt-4o-mini` it
+ * rendered `providers DIFFER (Actions openai, VM model:gpt-4o-mini)`. It answers `null`,
+ * which routes the pair to "cannot be told from these two rows".
+ *
+ * It exists because comparing the WHOLE label answers a different question than the
+ * one the report was asking. Two labels differ whenever the MODEL differs, and the
+ * model differs routinely: google shows four distinct labels across the series, nine
+ * specs have been recorded under two different google models, and one 2026-09-08 smoke
+ * on the VM settled `gemini-2.5-flash` while the Actions lane of the same morning
+ * pinned `gemini-3.5-flash` — same provider, same catalog size, different key. Every
+ * conclusion this file used to draw from a fold said "different providers"; on those
+ * pairs it was false.
+ */
+export function paramProvider(param) {
+  const bare = String(param ?? "").trim();
+  if (!bare) return null;
+  const fallback = bare.match(/^provider:([A-Za-z0-9_-]+)/);
+  if (fallback) return fallback[1];
+  if (/^model:/.test(bare)) return null;
+  const head = bare.split("/")[0].trim();
+  return head || null;
+}
+
+/**
+ * Fold one-sided differences that are the SAME spec under different targets into one
+ * entry.
+ *
+ * Only an exact pair folds — one entry from each lane. Three or more one-sided entries
+ * for one spec means some lane ran more than one parameterization, and which pairs with
+ * which is then a guess; the honest outcome is to leave them alone.
+ *
+ * ## What the fold establishes, and what it does not
+ *
+ * It establishes ONE thing: these two lines are the same spec, and the report should
+ * show them side by side instead of as two unrelated one-sided differences. That was a
+ * real false negative — on 2026-09-08 `agent-component-regression` was in both lanes'
+ * lists and the report printed `Flaky on BOTH lanes: 0`.
+ *
+ * It establishes NOTHING about cause, and this file stopped claiming otherwise. Three
+ * review rounds found sixteen defects in this function and every one was in what the
+ * fold CLAIMED, none in the folding: the report asserted "the provider is eliminated
+ * as the cause" over pairs that shared a provider, over signatures that were assertion
+ * shells, over failures the harness could not attribute to the spec, and over a hard
+ * failure paired with a retry. The pattern is the design, not the wording: the claim
+ * needs facts the row does not carry — which provider the lane PINNED, and whether the
+ * lane ran one variant or several.
+ *
+ * So the entry now reports and the reader concludes. It carries the facts —
+ * `providersDiffer`, `signaturesMatch`, `generic`, `infra`, both targets, both statuses
+ * and both signatures — and the report prints them without a verdict, a ranking above
+ * the one-sided failures, or a head stamp.
+ *
+ * **The conclusion is deferred, not abandoned.** "A failure reproducing on gemini AND
+ * on claude has eliminated the provider" is a sound inference; it is simply not
+ * checkable from a row that never says which provider was pinned. When that field
+ * lands (it waits on #1731, whose matrix-output path would otherwise record the
+ * provider of whichever shard finished last), the claim can come back as something the
+ * file can verify rather than assume.
+ *
+ * Two kinds, split by severity only, because a retry that passed is not a red — the
+ * distinction `agreed-failed`/`agreed-flaky` already exists in this file for the same
+ * reason:
+ *
+ *  - `cross-target-failed`  hard failure on at least one lane. Ranked with the
+ *                           one-sided failures, never above them.
+ *  - `cross-target-flaky`   both lanes retried and passed. Ranked with the flakes.
+ */
+export function pairCrossTarget(divergences) {
+  const ONE_SIDED = /^(ci|vm)-only-(failed|flaky)$/;
+  const groups = new Map();
+  for (const d of divergences) {
+    if (!ONE_SIDED.test(d.kind)) continue;
+    const k = specKey(d);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(d);
+  }
+
+  const folded = new Set();
+  const pairs = [];
+  for (const group of groups.values()) {
+    if (group.length !== 2) continue;
+    const ci = group.find((d) => d.kind.startsWith("ci-"));
+    const vm = group.find((d) => d.kind.startsWith("vm-"));
+    if (!ci || !vm) continue; // both from the same lane: not a pair
+    const ciParam = ci.param ?? null;
+    const vmParam = vm.param ?? null;
+    // Identical labels cannot key differently, so this is defensive only: the exact
+    // diff would already have had them as one entry.
+    if (ciParam === vmParam) continue;
+
+    // Normalized on BOTH sides before the equality, never raw: see comparableSignature.
+    const ciErr = comparableSignature(ci.ci?.error);
+    const vmErr = comparableSignature(vm.vm?.error);
+    const signaturesMatch = Boolean(ciErr) && ciErr === vmErr;
+    const generic = signaturesMatch && isGenericSignature(ciErr);
+    // OR, and the rendered text names WHICH side rather than asserting both: one-sided
+    // is the ordinary case (2026-09-07: one on Actions against five on the VM), and the
+    // narrowing block printed above the list already reports the per-lane counts.
+    const infraCi = Boolean(ci.ci?.infra);
+    const infraVm = Boolean(vm.vm?.infra);
+    // FACTS about the two labels, not a licence to conclude anything from them. THREE
+    // states, not two: `providersDiffer` is false both when the providers are equal and
+    // when a side names none, and the render used to collapse those into "SAME
+    // provider" — printing `VM [no target]` and `SAME provider (google)` on adjacent
+    // lines, over a row that never said it ran google.
+    const ciProvider = paramProvider(ciParam);
+    const vmProvider = paramProvider(vmParam);
+    const providersKnown = Boolean(ciProvider) && Boolean(vmProvider);
+    const providersDiffer = providersKnown && ciProvider !== vmProvider;
+
+    folded.add(ci);
+    folded.add(vm);
+    pairs.push({
+      // NOTE for `--json` consumers: a folded row is shaped differently from every
+      // other divergence. `key` is a 2-segment specKey (not the 3-segment testKey),
+      // `param` is null because there are two, and the labels live in `params`.
+      key: specKey(ci),
+      name: describeTest({ file: ci.file, test: ci.test }),
+      file: ci.file ?? null,
+      test: ci.test ?? null,
+      param: null,
+      params: { ci: ciParam, vm: vmParam },
+      providers: { ci: ciProvider, vm: vmProvider },
+      // The UNION, not the CI side. `??` falls through on null and not on `[]`, so a
+      // CI entry tagged `[]` used to erase tags the VM entry had — and the lanes can
+      // sit one commit apart, which is exactly how the two sides come to disagree
+      // about tags (PR 1745 restored `@stable` to four specs between two runs). This
+      // entry describes the pair, and `--json` consumers filter on it.
+      tags: [...new Set([...(ci.tags ?? []), ...(vm.tags ?? [])])],
+      ci: ci.ci,
+      vm: vm.vm,
+      kind:
+        ci.ci?.status === "failed" || vm.vm?.status === "failed"
+          ? "cross-target-failed"
+          : "cross-target-flaky",
+      crossTarget: {
+        signaturesMatch,
+        generic,
+        infraCi,
+        infraVm,
+        providersKnown,
+        providersDiffer,
+      },
+    });
+  }
+
+  return [...divergences.filter((d) => !folded.has(d)), ...pairs];
+}
+
+/**
  * Merge several history files into one entry list.
  *
  * THE TWO LANES DO NOT SHARE A FILE, and assuming they did was a real defect.
@@ -339,12 +598,23 @@ export function compareRuns({
     divergences.push({ ...common, kind: `${only}-only-${status}` });
   }
 
+  // Fold the provider-split pairs BEFORE ranking, so the strongest entry the day can
+  // produce is ranked as what it is instead of as two one-sided flakes.
+  const paired = pairCrossTarget(divergences);
+  divergences.length = 0;
+  divergences.push(...paired);
+
+  // A folded pair ranks WITH the severity it has, never above it. Ranking it first was
+  // the promotion the cold review caught: a pair that hard-failed on one lane and
+  // flaked on the other outranked a genuine two-lane red.
   const rank = {
     "vm-only-failed": 0,
     "ci-only-failed": 1,
-    "severity-differs": 2,
-    "vm-only-flaky": 3,
-    "ci-only-flaky": 4,
+    "cross-target-failed": 2,
+    "severity-differs": 3,
+    "vm-only-flaky": 4,
+    "ci-only-flaky": 5,
+    "cross-target-flaky": 6,
   };
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
@@ -353,6 +623,8 @@ export function compareRuns({
 }
 
 const KIND_LABEL = {
+  "cross-target-failed": "same spec on both lanes under DIFFERENT targets, hard failure on at least one lane",
+  "cross-target-flaky": "same spec on both lanes under DIFFERENT targets, a retry passed on both",
   "vm-only-failed": "FAILED on the VM only",
   "ci-only-failed": "FAILED on Actions only",
   "severity-differs": "failed on one lane, flaky on the other",
@@ -387,6 +659,12 @@ export function renderReport(result, { sources = [] } = {}) {
     );
   }
 
+  // NO head stamp for the folded pairs, deliberately. The version mismatch earns one
+  // because it is a fact about the run; a fold is an observation whose meaning depends
+  // on facts the row does not carry, and a stamp is exactly the surface that cannot be
+  // qualified. Three rounds of review found the stamp asserting what the entry beneath
+  // it declined to assert.
+
   const pushWarnings = () => {
     if (!warnings.length) return;
     L.push("", "Narrowed by:");
@@ -417,6 +695,43 @@ export function renderReport(result, { sources = [] } = {}) {
         L.push(`  ${KIND_LABEL[kind] ?? kind}:`);
       }
       L.push(`    ${d.name}`);
+      if (d.kind.startsWith("cross-target")) {
+        // Facts only, every one of them read off the two rows: both targets, both
+        // statuses, both signatures, and what the two labels have in common. No line
+        // here concludes anything about cause — see pairCrossTarget's docblock for why
+        // this file stopped trying.
+        const x = d.crossTarget ?? {};
+        L.push(`      Actions [${d.params.ci ?? "no target"}] ${d.ci?.status ?? "?"}: ${d.ci?.error ?? "(no signature)"}`);
+        L.push(`      VM      [${d.params.vm ?? "no target"}] ${d.vm?.status ?? "?"}: ${d.vm?.error ?? "(no signature)"}`);
+        if (!x.providersKnown) {
+          // The honest third state. Saying "same" here would assert a provider for a
+          // row that never named one, and this is the only line in the block that
+          // touches cause at all.
+          L.push(
+            `      one side does not name a provider (Actions ${d.providers?.ci ?? "—"}, VM ${d.providers?.vm ?? "—"}):`,
+            "      whether the provider differs cannot be told from these two rows",
+          );
+        } else if (x.providersDiffer) {
+          L.push(`      providers DIFFER (Actions ${d.providers?.ci}, VM ${d.providers?.vm})`);
+        } else {
+          L.push(`      SAME provider (${d.providers?.ci}), different target — the provider is NOT ruled out`);
+        }
+        if (x.signaturesMatch) {
+          L.push(
+            x.generic
+              ? "      signatures match, but the shared one is an assertion shell: it names no cause (#1626)"
+              : "      signatures match",
+          );
+        } else {
+          L.push("      signatures do NOT match (or one is absent)");
+        }
+        if (x.infraCi || x.infraVm) {
+          const which = x.infraCi && x.infraVm ? "both lanes" : x.infraCi ? "Actions" : "the VM";
+          L.push(`      an infra_signature is present on ${which}: the harness could not reach the backend there,`);
+          L.push("      so that side's signature is not attributable to this spec (see the narrowing above)");
+        }
+        continue;
+      }
       const err = d.vm?.error ?? d.ci?.error;
       if (err) L.push(`      ${err}`);
       if (d.kind === "severity-differs") L.push(`      Actions: ${d.ci.status} | VM: ${d.vm.status}`);
@@ -432,6 +747,18 @@ export function renderReport(result, { sources = [] } = {}) {
   for (const a of agreedFailed) L.push(`  ${a.name}`);
   L.push("", `Flaky on BOTH lanes (unstable in both, not a lane difference): ${agreedFlaky.length}`);
   for (const a of agreedFlaky) L.push(`  ${a.name}`);
+
+  // A line of their own rather than a `+N` on the two above. Those two tallies mean
+  // "the same test id, on both lanes" and adding pairs to them was how an infra pair
+  // and an assertion-shell pair ended up counted under "the product, not the
+  // environment". But the count cannot be absent either: a day whose only finding is a
+  // pair used to end with two zeroes and no mention of it.
+  const crossPairs = divergences.filter((d) => d.kind.startsWith("cross-target"));
+  L.push(
+    "",
+    `Same spec, DIFFERENT targets (counted in neither tally above): ${crossPairs.length}`,
+  );
+  for (const d of crossPairs) L.push(`  ${d.name}`);
 
   L.push(
     "",
