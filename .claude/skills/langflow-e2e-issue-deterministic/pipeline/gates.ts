@@ -182,9 +182,27 @@ const RESTORE_STABLE_RE = /restore\s+`?@stable|@stable\b[^.\n]{0,40}\brestor/i
  * Only the issue body arms this gate: an issue that never quarantined anything
  * is unaffected, and the `@stable` half only fires when the body asks for the
  * tag back (utility specs legitimately carry no `@stable`).
+ *
+ * `verdict` is the DEBUG verdict, and `langflow-regression` exempts the `@stable`
+ * half — never the `test.fixme` half (#1759). The dedicated-issue template
+ * carries two deliverables that contradict each other under a product verdict:
+ * *"remove `test.fixme` and restore `@stable`"* and *"if the root cause is a
+ * product (Langflow) regression … `@stable` is restored — not on a test-side
+ * mute"*. The second is a condition on the first, and this gate read only the
+ * first, so a confirmed product defect could not close VALIDATE without doing
+ * precisely what the body forbids: putting a test that fails on a live defect
+ * back into the daily. #1759/`LE-2552` was the first issue to reach that state.
+ *
+ * The scope matters as much as the exemption. `test.fixme` must still come off:
+ * a muted test reports in NO context, and while a product defect is live that
+ * report is the only thing saying it is still there. Exempting the whole gate
+ * would let a product verdict ship a permanently muted test — worse than the
+ * hole this gate was added to close.
  */
 export function checkQuarantineLifted(
-  issueBody: string, files: Array<{ file: string; entries: TestEntry[] }>,
+  issueBody: string,
+  files: Array<{ file: string; entries: TestEntry[] }>,
+  verdict?: string,
 ): string[] {
   if (!QUARANTINE_RE.test(issueBody)) return []
   const problems: string[] = []
@@ -210,7 +228,7 @@ export function checkQuarantineLifted(
       problems.push(`quarantine not lifted: test.fixme still on "${e.title}" in ${file}`)
     }
   }
-  if (RESTORE_STABLE_RE.test(issueBody)) {
+  if (RESTORE_STABLE_RE.test(issueBody) && verdict !== 'langflow-regression') {
     for (const { file, entries } of files) {
       for (const e of entries) {
         if (!issueBody.includes(e.title)) continue
@@ -398,14 +416,44 @@ export function checkCiVerdict(
   return []
 }
 
+/**
+ * `verdict` inverts the closing requirement for a `langflow-regression` (#1759).
+ *
+ * The dedicated-issue deliverable is explicit: *"this issue stays **open** until
+ * the upstream fix lands in `langflowai/langflow-nightly:latest`, is re-validated
+ * there, and `@stable` is restored"*. `Closes #NNN` closes it at merge and drops
+ * the tracking of an upstream ticket that is still open — so under that verdict a
+ * NON-closing reference is required and `Closes` is itself the defect. Accepting
+ * both would let the wrong one through in silence, which is the outcome that
+ * matters here. The house already writes it this way by hand: PR #1761,
+ * *"Tracked by #1759 — this PR does not fix it, and does not close that issue."*
+ */
+export const NON_CLOSING_REF_RE = (issue: number) =>
+  new RegExp(`(?:Refs|Tracked by|Part of|Relates to)\\s+#${issue}\\b`, 'i')
+
 export function checkPrReadiness(e: {
   branch: string; prBody: string; issue: number; isWave: boolean; labels: string[]
+  verdict?: string
 }): string[] {
   const problems: string[] = []
   if (!BRANCH_RE.test(e.branch)) {
     problems.push(`branch "${e.branch}" does not match type/issue-NNN-desc`)
   }
-  if (!new RegExp(`Closes #${e.issue}\\b`).test(e.prBody)) {
+  const closes = new RegExp(`Closes #${e.issue}\\b`).test(e.prBody)
+  if (e.verdict === 'langflow-regression') {
+    if (closes) {
+      problems.push(
+        `PR body says "Closes #${e.issue}", but a langflow-regression issue must `
+        + `stay open until the upstream fix lands and is re-validated — reference it `
+        + `without closing it ("Refs #${e.issue}" / "Tracked by #${e.issue}")`,
+      )
+    } else if (!NON_CLOSING_REF_RE(e.issue).test(e.prBody)) {
+      problems.push(
+        `PR body must reference #${e.issue} without closing it `
+        + `("Refs #${e.issue}" / "Tracked by #${e.issue}" / "Part of #${e.issue}")`,
+      )
+    }
+  } else if (!closes) {
     problems.push(`PR body missing "Closes #${e.issue}"`)
   }
   if (e.isWave && !e.labels.includes('roadmap')) {

@@ -121,6 +121,60 @@ test('PR readiness checks branch, Closes line, roadmap label for wave issues', (
   assert.equal(bad.length, 3)
 })
 
+// A `langflow-regression` issue must SURVIVE its own fix PR (#1759). Its
+// deliverable says so: "this issue stays open until the upstream fix lands in
+// langflowai/langflow-nightly:latest, is re-validated there, and @stable is
+// restored". `Closes #NNN` would close it at merge and drop the tracking of an
+// upstream ticket that is still open — so under that verdict the gate INVERTS:
+// a non-closing reference is required and `Closes` is the defect. The house
+// convention already does this by hand (PR #1761: "Tracked by #1759 — this PR
+// does not fix it, and does not close that issue").
+
+const REGRESSION = 'langflow-regression'
+
+test('a langflow-regression PR may reference the issue without closing it (#1759)', () => {
+  for (const ref of ['Refs #1759', 'Tracked by #1759', 'Part of #1759']) {
+    const problems = checkPrReadiness({
+      branch: 'fix/issue-1759-flows-crud', prBody: `${ref}\n## Problem`,
+      issue: 1759, isWave: false, labels: [], verdict: REGRESSION,
+    })
+    assert.deepEqual(problems, [], `"${ref}" should satisfy the gate under a product verdict`)
+  }
+})
+
+test('a langflow-regression PR is REFUSED for saying Closes (#1759)', () => {
+  // The load-bearing half. Merely accepting both forms would let the wrong one
+  // through silently, and the wrong one closes an issue tracking a live
+  // upstream defect.
+  const problems = checkPrReadiness({
+    branch: 'fix/issue-1759-flows-crud', prBody: 'Closes #1759\n## Problem',
+    issue: 1759, isWave: false, labels: [], verdict: REGRESSION,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /Closes #1759/)
+  assert.match(problems[0], /stay open|must not close|Refs/i)
+})
+
+test('a langflow-regression PR still needs SOME reference to its issue (#1759)', () => {
+  const problems = checkPrReadiness({
+    branch: 'fix/issue-1759-flows-crud', prBody: '## Problem\nno reference at all',
+    issue: 1759, isWave: false, labels: [], verdict: REGRESSION,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /1759/)
+})
+
+test('every other verdict still requires Closes (#1759)', () => {
+  for (const verdict of [undefined, 'test-defect', 'transient-saturation', 'product-changed']) {
+    const problems = checkPrReadiness({
+      branch: 'fix/issue-1759-flows-crud', prBody: 'Refs #1759\n## Problem',
+      issue: 1759, isWave: false, labels: [], verdict,
+    })
+    assert.equal(problems.length, 1, `verdict ${verdict} must still require Closes`)
+    assert.match(problems[0], /missing "Closes #1759"/)
+  }
+})
+
 // ---------- quarantine lift (#1082) ----------
 
 const QUARANTINE_BODY = `
@@ -192,6 +246,71 @@ test('checkQuarantineLifted passes once fixme is gone and @stable is back', () =
     ],
   }]
   assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files), [])
+})
+
+// A product verdict makes the `@stable` half of the deliverable UNREACHABLE, and
+// the issue template says so itself — two of its own checkboxes contradict each
+// other (#1759, measured on the real body):
+//
+//   "Quarantine lifted in the fix PR — remove `test.fixme` **and** restore `@stable`"
+//   "If the root cause is a **product (Langflow) regression**: ... `@stable` is
+//    restored — not on a test-side mute."
+//
+// The second is a condition on the first, and the gate read only the first. Under
+// `langflow-regression` the tag goes back when the UPSTREAM fix lands and is
+// re-validated, so demanding it in the fix PR asks for exactly the test-side mute
+// the body forbids — and would return a test that fails on a live product defect
+// to the daily.
+//
+// The exemption is SCOPED TO THE TAG. `test.fixme` still has to come off: a muted
+// test gives no signal in any context, and while the defect is live that signal is
+// the only thing saying it is still there. An exemption that silenced the whole
+// gate would let a product verdict ship a permanently muted test — strictly worse
+// than the bug this gate exists to prevent.
+
+test('checkQuarantineLifted does not demand @stable under a langflow-regression verdict (#1759)', () => {
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+  }]
+  assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files, 'langflow-regression'), [])
+})
+
+test('a langflow-regression verdict still demands the test.fixme comes off (#1759)', () => {
+  // The load-bearing half. If the verdict silenced the whole gate instead of just
+  // the tag, a product regression could ship a test muted in every context.
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '.fixme', tags: ['@regression'] }],
+  }]
+  const problems = checkQuarantineLifted(QUARANTINE_BODY, files, 'langflow-regression')
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /test\.fixme still on/)
+  assert.doesNotMatch(problems[0], /@stable/)
+})
+
+test('only a product verdict exempts the tag — every other verdict still demands it (#1759)', () => {
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+  }]
+  for (const verdict of ['test-defect', 'transient-saturation', 'cross-worker-wiper', 'product-changed', 'stale-confirmed-bug']) {
+    const problems = checkQuarantineLifted(QUARANTINE_BODY, files, verdict)
+    assert.equal(problems.length, 1, `verdict ${verdict} must still demand @stable`)
+    assert.match(problems[0], /@stable not restored/)
+  }
+})
+
+test('an absent verdict keeps the pre-#1759 behaviour', () => {
+  // Callers that pass nothing (and every phase other than VALIDATE) must be
+  // unaffected: no verdict is not a product verdict.
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+  }]
+  const problems = checkQuarantineLifted(QUARANTINE_BODY, files, undefined)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /@stable not restored/)
 })
 
 // ---------- symptom rows (#1082) ----------
