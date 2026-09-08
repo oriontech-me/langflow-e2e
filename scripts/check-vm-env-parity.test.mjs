@@ -56,13 +56,16 @@ const workflowWith = (envLines, tail = "") =>
     tail,
   ].join("\n");
 
-/** run-e2e.sh's composer, in the shape the reader expects. */
+/** run-e2e.sh's list and its composer, in the shape the reader expects. */
 const orchestratorWith = (names, extra = "") =>
   [
     extra,
+    `MIRRORED_TARGET_VARS="${names.join(" ")}"`,
     "mirrored_target_env() {",
-    "  printf '%s' \\",
-    ...names.map((n) => `    "${n}=$(shq "$${n}") " \\`),
+    "  local name",
+    "  for name in $MIRRORED_TARGET_VARS; do",
+    '    printf \'%s=%s \' "$name" "$(shq "${!name}")"',
+    "  done",
     "}",
   ].join("\n");
 
@@ -161,6 +164,28 @@ test("naming a mirrored variable outside the composer does not count as carrying
   const found = result.findings.find((f) => f.name === "LANGFLOW_DEACTIVATE_TRACING");
   assert.equal(found?.kind, "not-carried");
   assert.match(found.message, /mirrored_target_env\(\)/);
+});
+
+test("a list the composer stopped reading is refused, not believed", () => {
+  // The half of the property that moved when #1748 made MIRRORED_TARGET_VARS the single
+  // enumeration. Reading a list instead of the function body is only equivalent while
+  // the function composes FROM the list — the moment it does not, the list is precisely
+  // the stale mention the test above refuses, and believing it would report a variable
+  // as carried while nothing reached the target.
+  //
+  // Driven by a mutation of the real file rather than a fixture, because the fixture is
+  // what would be adjusted to match a broken source.
+  const real = readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8");
+  assert.ok(readMirroredNames(real).size >= 4, "the real file should still be readable");
+
+  const noLoop = real.replace(/for name in \$MIRRORED_TARGET_VARS; do/, "for name in LANGFLOW_DEACTIVATE_TRACING; do");
+  assert.notEqual(noLoop, real, "the mutation did not apply — the composer's loop was rewritten");
+  assert.throws(() => readMirroredNames(noLoop), /no longer composes MIRRORED_TARGET_VARS/);
+
+  // And the CLI-facing half: the guard reports it rather than crashing out of the lane.
+  const result = check(workflowWith(MINIMAL), { orchestrator: noLoop });
+  assert.equal(result.ok, false);
+  assert.equal(result.findings[0]?.kind, "unreadable");
 });
 
 test("a starter-carried variable its launch block does not set fails", () => {
