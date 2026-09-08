@@ -22,8 +22,11 @@ intrinsic — error *and* continuation happen in the same execution):
    to blocked IP address(es)…"`), asserted via the monitor API.
 2. **The agent handled it and continued** — the Playground shows a final AI
    reply starting with the instructed `TOOL_FAILED:` sentinel, and the run
-   produces **no flow error** (the fixture fails the test on any — no
-   `allowFlowErrors`).
+   produces **no flow error** (no `allowFlowErrors`, so a flow error the fixture
+   reaches a verdict on fails the test). Read with its limit: a run the fixture
+   could not read produces no verdict either way and is reported as
+   *unevaluated*, so the sentinel assert above — not the fixture — is what
+   carries this criterion on such a run (#1452).
 
 > **Error generator — deliberate use of SSRF protection.** The tool failure
 > is produced by asking the agent to fetch
@@ -104,8 +107,16 @@ machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.t
    the user message containing the nonce, take its `session_id`, find that
    session's AI message, and assert its `fetch_content` `tool_use` block's
    output contains `SSRF Protection`.
-7. No `allowFlowErrors`: any flow error fails the test via the fixture —
-   that IS the "handled without crashing" guarantee.
+7. No `allowFlowErrors`: a flow error the fixture reaches a verdict on fails
+   the test (v1, and v2 since #1165), which is most of the "handled without
+   crashing" guarantee — but not all of it, and the gap is worth knowing here
+   because this test's contract IS that guarantee. Four paths reach no verdict
+   at all (a cancelled stream, an unreadable body, an unwatched v2 surface) plus
+   the deliberate provider-outage downgrade; each is printed as *"unknown, not
+   clean"* and leaves the test green. `page.flowErrorReport()` closes that
+   (#1452) — `expect(report.clean, report.summary).toBe(true)` asserts a verdict
+   was REACHED and was clean. Adopting it here needs a validated run against a
+   live provider, so it is a follow-up rather than part of #1452.
 8. **Teardown:** `afterEach` deletes the Simple Agent flow created by
    `loadAgent()` by id via `DELETE /api/v1/flows/{id}` (id-scoped, #515 —
    never a global `cleanAllFlows`). Added in #992: `loadAgent()` discarded

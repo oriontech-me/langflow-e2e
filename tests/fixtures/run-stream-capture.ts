@@ -57,6 +57,29 @@ export interface RunStreamCapture {
    */
   drain: () => Promise<CapturedStream[]>;
   /**
+   * Wait for the verdicts of streams that have already CLOSED, without touching
+   * the ones still open and without detaching (#1452).
+   *
+   * `onStream` fires from an async continuation — a stream that hit
+   * `loadingFinished` may still be resolving its body one CDP round-trip later —
+   * so a caller asking "did this run produce a flow error?" mid-test would race
+   * it and read a verdict that had not landed. This is the half of `drain()` that
+   * is safe to call while the test is still running: it settles what is decided
+   * and leaves what is not.
+   *
+   * Bounded by construction: each pending item is one round-trip, never a wait on
+   * the network.
+   */
+  settle: () => Promise<void>;
+  /**
+   * How many v2 run streams are open right now.
+   *
+   * Their verdict is not decided yet, which is different from failed and
+   * different from unevaluated — a caller rendering a clean verdict while one is
+   * in flight would be reporting on a run that has not finished.
+   */
+  openStreams: () => number;
+  /**
    * False when no CDP session could be opened, so NOTHING on the v2 path was
    * watched. The caller must say so rather than render a clean verdict — an
    * unwatched surface is unknown, not clean (#1012).
@@ -67,6 +90,8 @@ export interface RunStreamCapture {
 /** A capture that never fires, for when CDP is unavailable (non-Chromium). */
 const INERT: RunStreamCapture = {
   drain: async () => [],
+  settle: async () => {},
+  openStreams: () => 0,
   available: false,
 };
 
@@ -194,13 +219,30 @@ export async function attachRunStreamCapture(
   session.on("Network.loadingFinished", (event) => finish(event.requestId, true));
   session.on("Network.loadingFailed", (event) => finish(event.requestId, false));
 
+  /**
+   * Drain `settling` until it stays empty. One `allSettled` is not enough: a
+   * body resolving during the await can call `finish` for the NEXT stream and
+   * re-populate the set, and that item would then be missed by a caller that
+   * asked once. Capped rather than looped to exhaustion — a page that keeps
+   * closing streams must not be able to hold a teardown open — and the cap being
+   * reached is not an error state: whatever is left is simply still pending, and
+   * `openStreams()` says so.
+   */
+  const settle = async (): Promise<void> => {
+    for (let pass = 0; pass < 5 && settling.size > 0; pass++) {
+      await Promise.allSettled([...settling]);
+    }
+  };
+
   return {
     available: true,
+    settle,
+    openStreams: () => open.size,
     drain: async () => {
       // Streams that finished while the test was ending may still be resolving
       // their body. Awaiting them here is bounded by construction — each is one
       // CDP round-trip, not a wait on the network.
-      await Promise.allSettled([...settling]);
+      await settle();
 
       const remaining: CapturedStream[] = [];
       for (const [requestId, entry] of open) {

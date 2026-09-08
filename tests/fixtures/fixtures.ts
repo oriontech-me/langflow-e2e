@@ -15,6 +15,10 @@ import {
   type CapturedStream,
 } from "./run-stream-capture";
 import {
+  buildFlowErrorReport,
+  type FlowErrorReport,
+} from "./flow-error-report";
+import {
   coverageTeardownError,
   installApiCoverage,
   writeCoverageRecord,
@@ -98,6 +102,28 @@ export type PageWithErrorHooks = Page & {
    * one of them looking stale.
    */
   expectKnownHttpError: (defect: KnownHttpDefect) => void;
+  /**
+   * Read the flow-error verdict this test has reached SO FAR (#1452).
+   *
+   * The gate above fails a test on a verdict it reached. This is how a spec asks
+   * about the verdicts it did NOT reach — a cancelled stream, an unreadable
+   * body, an unwatched v2 surface, a provider outage — all of which are printed
+   * as *"unknown, not clean"* and then leave the test green. For a spec whose
+   * contract is "the run did not crash", that silence is the assertion not
+   * happening, so:
+   *
+   * ```ts
+   * const report = await (page as PageWithErrorHooks).flowErrorReport();
+   * expect(report.clean, report.summary).toBe(true);
+   * ```
+   *
+   * Read-only, and NOT a hatch: `allowFlowErrors()` suppresses the gate, it does
+   * not empty this report. Call it AFTER the run has finished — a stream still
+   * open has no verdict yet and is reported as `pending`, which is not clean
+   * either; the accessor deliberately does not wait, because nothing here can
+   * know whether a given stream will ever close.
+   */
+  flowErrorReport: () => Promise<FlowErrorReport>;
 };
 
 // Extend test to log backend errors
@@ -255,7 +281,6 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       declaredDefects.push(defect);
       declaredDefectHits.set(defect, 0);
     };
-
     // Capture v2 run-stream bodies as they arrive. This is what makes the v2
     // verdict deterministic: the old `response.text()` path lost every run whose
     // stream outlived its test, which on the node-run path was all of them
@@ -264,6 +289,30 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       page,
       judgeCapturedStream,
     );
+
+    // Read-only view of the same accounting the teardown renders (#1452).
+    //
+    // The `settle()` is LOAD BEARING, and measured rather than assumed: with it
+    // removed, two of the four accessor tests in `flow-error-gate.spec.ts` fail
+    // 5 runs out of 5 — the v2 error and the provider outage both read back as a
+    // CLEAN run. `judgeCapturedStream` runs from an async continuation, so a
+    // stream that has already closed is still a CDP round-trip short of being
+    // counted, and an accessor that answers first reports the one thing it
+    // exists to prevent. Streams still OPEN are left alone: judging one early
+    // would spend its partial body on a verdict while the rest of the run was
+    // still arriving, and `drain()` in its place loses the teardown's verdict
+    // altogether (measured too — the pending test fails on it).
+    (page as any).flowErrorReport = async (): Promise<FlowErrorReport> => {
+      await runStreamCapture.settle();
+      return buildFlowErrorReport({
+        failures: errors
+          .filter((e) => e.type === "flow_error")
+          .map((e) => ({ url: e.url, message: e.responseBody ?? "" })),
+        unevaluated: unevaluatedStreams,
+        pending: runStreamCapture.openStreams(),
+        v2Watched: runStreamCapture.available,
+      });
+    };
 
     // Monitor API responses for errors
     page.on("response", async (response) => {

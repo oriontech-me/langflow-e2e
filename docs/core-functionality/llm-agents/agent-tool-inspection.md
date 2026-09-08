@@ -94,7 +94,11 @@ promotion is gated on the clean non-guarded baseline (#818), per issue #827.
 7. **Causal anchor:** the final AI message (`chat-message-AI-…`) contains the
    fetched slideshow title (`Sample Slide Show`) — ties the inspected call to a
    real execution that produced the answer.
-8. No `allowFlowErrors` — any flow error fails the test via the fixture.
+8. No `allowFlowErrors` — a flow error the fixture reaches a verdict on fails the test
+   (v1, and v2 since #1165). A run it could NOT read — a cancelled stream, a
+   provider outage — is reported as *unevaluated* and does not fail anything;
+   `page.flowErrorReport()` is how a spec asserts that guarantee for itself
+   (#1452, `CONTRIBUTING.md` step 5).
 
 ---
 

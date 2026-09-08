@@ -333,7 +333,31 @@ The base fixture prints backend errors automatically. Look for:
 
 - `🚨 Backend Error:` — unexpected HTTP error. **Logged, never fails the test** (#1084)
 - `🚨 Flow Error Detected` — silent failure in flow execution. **Fails the test** unless
-  the spec called `page.allowFlowErrors()`
+  the spec called `page.allowFlowErrors()` — on both run surfaces since #1165
+  (`POST /api/v2/workflows`, i.e. every Playground and agent run on 1.12.x, was staged
+  as advisory until then)
+- `⚠️  run stream(s) NOT evaluated` — the fixture could not reach a verdict for a run:
+  a cancelled stream, an unreadable body, no CDP session, or a **provider outage** (a
+  drained key, a quota — downgraded on purpose, since failing on it would strip `@stable`
+  in an unreviewed commit). **Nothing fails.** The verdict for that run is unknown, not
+  clean (#1012), so this line is a finding like the advisory HTTP one below it
+
+If your spec's contract IS "the run did not crash" — as `agent-tool-error-handling`'s is —
+the gate above is not enough on its own, because it can only fail on a verdict it reached.
+Assert the verdict directly (#1452):
+
+```typescript
+// PageWithErrorHooks is exported from tests/fixtures/fixtures.ts alongside `test`
+const report = await (page as PageWithErrorHooks).flowErrorReport();
+expect(report.clean, report.summary).toBe(true);
+```
+
+`clean` is true only when every run stream in the test was evaluated and none of them
+failed — an unevaluated run is not clean. Call it **after** the run has finished (a stream
+still open is reported as `pending`, which is not clean either; it does not wait, because
+nothing can know whether a given stream will close). It is read-only and NOT a hatch:
+`allowFlowErrors()` suppresses the gate, it does not empty the report, so a spec can
+tolerate one deliberate failure and still assert a later run came back clean.
 
 Because an HTTP error cannot fail a test, **this step is the only thing standing between a
 real backend 500 and a green run** — the fixture prints
