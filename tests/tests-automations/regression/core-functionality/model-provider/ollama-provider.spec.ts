@@ -241,11 +241,25 @@ test.describe("Ollama Provider", () => {
       // back to localhost), which is why no run could start. Guarded above and
       // below by `helpers/flows/node-config-guard.ts`.
       //
-      // `@stable` stays OFF until a `manual.yml` dispatch measures this green in
-      // the real CI environment — the mechanism fired on 2 of 26 dailies and
-      // cannot be reproduced locally at all (see the spec doc's Preconditions),
-      // so neither a local green nor a single CI green is admissible evidence.
-      tag: ["@regression", "@model-provider", "@components", "@playground"],
+      // `@stable` restored (#1302) on 40 `manual.yml` dispatches at
+      // `-f retries=0` against nightly 1.13.0.dev5, none of which reproduced
+      // the revert: 20 on `main` (19 green; the one red was the sidebar-reset
+      // class, fixed below and unrelated to this mechanism) and 20 on the
+      // hardened branch, 20/20 green with both tests executing — the playground
+      // step measuring 3 390-5 418 ms, median 4 358, against the 180 s budget.
+      // Read that as bounded rather than conclusive: this lane runs the file
+      // ALONE at one worker, while the daily runs it beside a full shard, so
+      // the contention the race needs is weaker here than where it fired. What
+      // makes restoration the right call anyway is that a persistent revert now
+      // fails in ~1 s naming both fields, not as a 180 s timeout three layers
+      // downstream, and the daily's own auto-removal is the backstop.
+      tag: [
+        "@stable",
+        "@regression",
+        "@model-provider",
+        "@components",
+        "@playground",
+      ],
     },
     async ({ page, request }) => {
       // Local CPU inference on a shared CI runner is far slower than on a dev

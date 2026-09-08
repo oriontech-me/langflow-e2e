@@ -1,6 +1,6 @@
 # Ollama provider — configure and execute a flow on the local instance
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -68,8 +68,8 @@ a selected local model no longer executes.
 ## Tags *(required)*
 
 Test 1: `@stable` `@model-provider` `@settings`
-Test 2: `@regression` `@model-provider` `@components` `@playground`
-— **`@stable` withheld again, see the #1302 gate below.**
+Test 2: `@stable` `@regression` `@model-provider` `@components` `@playground`
+— **restored, see the #1302 gate below.**
 
 `@stable` added after 4 clean `--retries=0` runs against the local Ollama
 (issue #498's "Done when"). In environments without a local Ollama, both
@@ -99,17 +99,59 @@ the shard, is simply far slower than the ~13 s this spec takes locally. So a
 local green says nothing about the daily, and `@stable` restored on local
 evidence alone would predictably redden it again for an unrelated reason.
 
-**Restoration gate for #1302 (the CURRENT one — the block below it is the
-satisfied #931 gate, kept for the record).** `@stable` was removed again and
-`test.fixme` added at triage on 2026-08-06 (#1296 → #1302). It is restored only
-on evidence from the **real CI environment**, because the failure mode is a
-flow-state race that a dev box cannot reproduce at all — worse than in #931's
-case, since this spec now cannot even RUN locally on an arm64 Mac (see
-*Preconditions → local reproduction*). The bar: a `manual.yml` dispatch on the
-branch, `-f test_grep="Ollama"`, `-f retries=0`, green across several
-consecutive runs, with the guard in place. A local green is not admissible
-evidence here and neither is a single CI green — the mechanism fired on 2 of 26
-dailies, so one run proves nothing about it.
+**Restoration gate for #1302 — SATISFIED 2026-09-08.** `@stable` was removed and
+`test.fixme` added at triage on 2026-08-06 (#1296 → #1302). The bar was evidence
+from the **real CI environment**, because the failure mode is a flow-state race
+a dev box cannot reproduce at all — worse than in #931's case, since this spec
+cannot even RUN locally on an arm64 Mac (see *Preconditions → local
+reproduction*): a `manual.yml` dispatch, `-f retries=0`, green across several
+consecutive runs, with the guard in place. Neither a local green nor a single CI
+green was admissible — the mechanism fired on 2 of 26 dailies.
+
+**Result — 40 dispatches at `-f retries=0` against nightly 1.13.0.dev5**, in two
+batches, none of which reproduced the revert:
+
+| Batch | Ref | Runs | Result |
+|---|---|---|---|
+| 1 | `main` (the #1347 guard, adds still hand-rolled) | 20 | 19 green; 1 red at `spec.ts:290` — a **different** mechanism, see below |
+| 2 | this branch (adds routed through the repaired helpers) | 20 | **20/20 green**, both tests executing in every run |
+
+Batch 2 measured, over the 20 runs of test 2:
+
+| Step | min | median | max |
+|---|---|---|---|
+| build the 3-node flow | 6 569 ms | 7 796 ms | 8 818 ms |
+| **execute through the Playground** | **3 390 ms** | **4 358 ms** | **5 418 ms** |
+| whole test | 11 964 ms | 14 170 ms | 15 684 ms |
+
+So the 180 s budget sits ~40× above the observed cost, which closes the issue's
+last deliverable in the negative: the budget was never the cause and needs no
+measured replacement. The id-scoped `DELETE /api/v1/flows/{id}` fired in all 20,
+and in the red run of batch 1 too.
+
+**The batch-1 red is recorded rather than absorbed**, because it is a different
+cause and reading it as this one would misattribute both. Run 34176993263 died
+at `spec.ts:290`, 30 s waiting for `input_outputChat Output` to be visible —
+before the Ollama node existed, so the guard was never reached. Its snapshot
+shows the sidebar search box **empty** (placeholder showing) with the category
+list back to its collapsed default: the typed term was wiped by the sidebar's
+own mount, the #1518/#1304 class, which an identical second fill repairs and a
+longer timeout cannot. All three of this spec's adds were hand-rolled and
+therefore bypassed that repair; they now go through
+`addComponentFromSidebar` / `dragComponentFromSidebar`. The build step's spread
+is the visible effect: 6.6-8.8 s across 20 runs, against a 125.8 s outlier and a
+30 s death in the 20 unhardened ones.
+
+**What this evidence does NOT establish, stated so it is not over-read.**
+`manual.yml` runs this file ALONE at one worker; the daily runs it beside a full
+shard, so the contention the race needs is weaker here than where it fired. 20
+consecutive greens therefore bound the rate loosely rather than prove the race
+gone — and the race is a product defect this suite does not control. Restoration
+is right anyway for two reasons that do not depend on the rate: a persistent
+revert now fails in ~1 s naming both fields it read, instead of as a 180 s
+`toHaveCount` timeout three layers downstream (which is how this got filed as a
+budget problem), and `daily-stable.yml`'s auto-removal is the backstop if it
+returns. Which write reverts the node is still unpinned — see the #1347 record.
 
 **Restoration gate — SATISFIED (#931, historical).** The bar was a green sequence in the real CI
 environment, not on a dev box, via `manual.yml` dispatched on the branch (it
