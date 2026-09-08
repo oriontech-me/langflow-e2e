@@ -355,8 +355,9 @@ export function checkVmEnvParity({
     const shadow = launch.assignments.get(name);
 
     if (entry.carrier === "orchestrator") {
-      // Composed into the remote environment — read out of the function, not out of
-      // the file, so a stale mention cannot answer for a live one.
+      // Composed into the remote environment — read out of MIRRORED_TARGET_VARS, and
+      // only after readMirroredNames has checked that the composer still loops it, so
+      // a stale mention cannot answer for a live one.
       if (!mirrored.has(name)) {
         findings.push({
           kind: "not-carried",
