@@ -19,6 +19,7 @@ import {
   checkSpecDoc, checkQaDiff, checkForceFailCoverage, checkNoMutationMarkers,
   checkPrReadiness, checkQuarantineLifted, checkDebugEvidence, checkBranchPurity,
   checkCiVerdict, symptomsOwnedElsewhere, checkFinalGreenCoverage, finalGreenTargets,
+  resolveClassification,
 } from './gates.ts'
 import { summarizeRunArtifact } from './artifacts.ts'
 import { instructionFor } from './instructions.ts'
@@ -372,11 +373,9 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
   const rec = s.steps[step]
 
   if (step === 'CLASSIFY') {
-    if (!s.type && typeof evidence.type === 'string') {
-      if (typeof evidence.justification !== 'string') problems.push('claude classification needs justification')
-      else setType(s, evidence.type as never, 'claude', evidence.justification)
-    }
-    if (!s.type && !evidence.type) problems.push('no type: heuristic failed and none supplied')
+    const decision = resolveClassification(s.type, evidence)
+    if (decision.set) setType(s, decision.set.type, 'claude', decision.set.justification)
+    problems.push(...decision.problems)
   }
 
   if (step === 'SPECIFY' && s.type === 'file-watcher') {
