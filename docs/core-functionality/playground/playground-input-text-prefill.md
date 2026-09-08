@@ -1,6 +1,6 @@
 # Playground — Input Text Pre-fill Behavior
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -146,3 +146,8 @@ References in this repository:
   steps
 - `page.unrouteAll({ behavior: "ignoreErrors" })` is called in `afterEach`
   to remove the interceptor between tests in the serial group
+- `setupPlayground` gates each canvas edit on the persisted graph before making
+  the next one, and `setupFlowWithPrefill` reloads the page right after — so
+  when that gate expires the failure text must say **which** exit fired: a read
+  that never completed (transport) and a read that came back stale are different
+  causes, and only the second is the autosave-overtake race of #988 (#1695)

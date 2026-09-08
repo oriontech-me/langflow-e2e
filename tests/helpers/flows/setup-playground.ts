@@ -4,7 +4,15 @@ import { adjustScreenView } from "../ui/adjust-screen-view";
 import { getAuthToken } from "../auth/get-auth-token";
 import { zoomOut } from "../ui/zoom-out";
 import { deleteFlow } from "./delete-flow";
+import {
+  describeCommitFailure,
+  type CommitProbeOutcome,
+} from "./graph-commit-failure";
 import { PERMISSIONS_GATE_TIMEOUT_MS } from "./permissions-gate";
+import {
+  watchAutosaveWrites,
+  type AutosaveWatcher,
+} from "./watch-autosave-writes";
 
 /** Empty graph payload — what the SPA posts when the "Blank Flow" card is picked. */
 const BLANK_FLOW_DATA = {
@@ -89,6 +97,20 @@ async function createBlankFlow(
 }
 
 /**
+ * A single probe's own budget, deliberately far below the gate's.
+ *
+ * Without it the read inherits the APIRequestContext default (30s) — longer
+ * than the whole gate — so a wedged backend produced ONE probe that
+ * `raceAgainstDeadline` cut mid-flight, discarding the error with it
+ * (playwright-core `utils/isomorphic/timeoutRunner.js`). The gate then reported
+ * "no successful read" with nothing to attribute it to. Bounded, the probe
+ * rejects on its own with `apiRequestContext.get: Timeout 5000ms exceeded`,
+ * which is both readable by a human and matched by `classifyInfraError`
+ * (#1695).
+ */
+const PROBE_TIMEOUT_MS = 5000;
+
+/**
  * Blocks until the persisted graph satisfies `expectation.matches`.
  *
  * Exists to serialise our canvas edits against the SPA's debounced autosave
@@ -106,6 +128,15 @@ async function createBlankFlow(
  * which says neither what was awaited nor how far the graph got — the same mute
  * failure this helper was rewritten to stop producing. So the last observed
  * state is captured on every probe and reported when the budget runs out.
+ *
+ * WHICH state it reports is load-bearing, and used not to be (#1695): the gate
+ * can expire for four disjoint reasons and printed one #988-shaped sentence for
+ * all of them. Freezing a healthy 1.13.0.dev5 backend at t=7.5s produced the
+ * stale-graph wording and the same freeze at t=8.0s produced "no successful
+ * read" — 500ms apart, no product defect in either — and the daily read the
+ * product-shaped sentence and auto-removed a `@stable` tag on it. The outcome
+ * is therefore tracked explicitly and the wording composed by
+ * `describeCommitFailure`, which has assertions on its output.
  */
 async function waitForGraphPersisted(
   page: Page,
@@ -115,32 +146,68 @@ async function waitForGraphPersisted(
     expected: string;
     matches: (data: { nodes?: unknown[]; edges?: unknown[] }) => boolean;
   },
+  autosave: AutosaveWatcher,
   // Deliberately tighter than the UI gates above: this polls a local API, so a
   // budget that stretches toward the 5-minute test timeout only delays the real
   // error. If the write has not landed in 15s it is not slow, it is lost.
   timeoutMs = 15000,
 ): Promise<void> {
-  const options = authorization
-    ? { headers: { Authorization: authorization } }
-    : undefined;
-  let lastSeen = "no successful read";
+  const options = {
+    ...(authorization ? { headers: { Authorization: authorization } } : {}),
+    timeout: PROBE_TIMEOUT_MS,
+  };
+  // Stays `no-read` until a probe actually comes back with a response — which
+  // is what makes that value mean "the instance never answered", instead of
+  // doubling as the label for a probe the deadline cut short.
+  let outcome: CommitProbeOutcome = { kind: "no-read" };
+  let transportError: string | undefined;
 
   try {
     await expect(async () => {
-      const res = await page.request.get(`/api/v1/flows/${flowId}`, options);
+      let res;
+      try {
+        res = await page.request.get(`/api/v1/flows/${flowId}`, options);
+      } catch (err) {
+        // Keep the REAL error: it is the only thing that tells a wedge from a
+        // product defect, and the exemption in
+        // `scripts/remove-stable-from-failures.ts` matches on it.
+        transportError = err instanceof Error ? err.message : String(err);
+        throw err;
+      }
       if (!res.ok()) {
-        lastSeen = `GET /api/v1/flows/{id} → ${res.status()} ${res.statusText()}`;
+        outcome = {
+          kind: "http-error",
+          status: res.status(),
+          statusText: res.statusText(),
+        };
       }
       expect(res.ok()).toBe(true);
-      const data = (await res.json())?.data ?? {};
-      lastSeen = `${data.nodes?.length ?? 0} node(s), ${data.edges?.length ?? 0} edge(s)`;
+      let data: { nodes?: unknown[]; edges?: unknown[] };
+      try {
+        data = (await res.json())?.data ?? {};
+      } catch (err) {
+        outcome = {
+          kind: "unreadable-body",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+        throw err;
+      }
+      outcome = {
+        kind: "graph",
+        nodes: data.nodes?.length ?? 0,
+        edges: data.edges?.length ?? 0,
+      };
       expect(expectation.matches(data)).toBe(true);
     }).toPass({ timeout: timeoutMs, intervals: [250, 500, 1000] });
   } catch {
     throw new Error(
-      `setupPlayground: a canvas edit never reached the database — expected ${expectation.expected}, ` +
-        `last saw ${lastSeen} after ${timeoutMs}ms. The usual cause is a stale autosave PATCH ` +
-        `committed after a newer one, which rolls the graph back for good (#988).`,
+      describeCommitFailure({
+        expected: expectation.expected,
+        timeoutMs,
+        outcome,
+        transportError,
+        autosave: autosave.evidence(),
+      }),
     );
   }
 }
@@ -168,6 +235,11 @@ export async function setupPlayground(page: Page): Promise<string> {
     name: flowName,
     authorization,
   } = await createBlankFlow(page);
+
+  // Attached before the first canvas edit and detached in `finally`: a stale
+  // graph read cannot say WHY it is stale, and the wire is the only place the
+  // answer exists (#1695).
+  const autosave = watchAutosaveWrites(page, flowId);
 
   try {
     await page.goto(`/flow/${flowId}`);
@@ -231,6 +303,7 @@ export async function setupPlayground(page: Page): Promise<string> {
       flowId,
       authorization,
       { expected: "1 node", matches: (data) => (data.nodes?.length ?? 0) === 1 },
+      autosave,
     );
 
     await zoomOut(page, 2);
@@ -257,6 +330,7 @@ export async function setupPlayground(page: Page): Promise<string> {
       flowId,
       authorization,
       { expected: "2 nodes", matches: (data) => (data.nodes?.length ?? 0) === 2 },
+      autosave,
     );
 
     await page
@@ -277,6 +351,7 @@ export async function setupPlayground(page: Page): Promise<string> {
       flowId,
       authorization,
       { expected: "1 edge", matches: (data) => (data.edges?.length ?? 0) >= 1 },
+      autosave,
     );
   } catch (err) {
     // Best-effort rollback of the created flow — swallow so the original
@@ -289,6 +364,10 @@ export async function setupPlayground(page: Page): Promise<string> {
       authorization ? { headers: { Authorization: authorization } } : undefined,
     ).catch(() => {});
     throw err;
+  } finally {
+    // 24 specs go through this helper, several of them more than once per test;
+    // a listener left attached would keep firing for the rest of the worker.
+    autosave.dispose();
   }
 
   return flowId;
