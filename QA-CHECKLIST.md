@@ -1487,7 +1487,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 599 `test()` calls carrying the `@stable` tag, distributed across 227 spec
+> 597 `test()` calls carrying the `@stable` tag, distributed across 227 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1521,7 +1521,6 @@
 - [x] POST /api/v1/custom_component without auth returns 401 or 403 → `api-custom-component-creation.spec.ts`
 - [x] batch create makes every flow in the list and refuses a duplicate name → `api-flows-batch.spec.ts`
 - [x] POST creates flow and returns ID → `api-flows-crud.spec.ts`
-- [x] GET lists flows and includes the created one → `api-flows-crud.spec.ts`
 - [x] GET by ID returns correct flow → `api-flows-crud.spec.ts`
 - [x] PATCH updates flow name and description → `api-flows-crud.spec.ts`
 - [x] DELETE removes flow and returns 200 → `api-flows-crud.spec.ts`
@@ -2020,7 +2019,6 @@
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
 - [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
-- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
