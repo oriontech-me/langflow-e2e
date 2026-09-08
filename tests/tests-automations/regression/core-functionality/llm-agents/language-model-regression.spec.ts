@@ -162,9 +162,19 @@ test.describe("Language Model Component Regression", () => {
     },
   );
 
+  // `@stable` restored (#1504). It was auto-removed by the 2026-08-14 daily
+  // (`f6f4c39`, run 31786538844) on `MODEL_NOT_AVAILABLE: "gemini-flash-latest"
+  // not found in dropdown` — the sr-only "N of M" counter 1.12.0.dev26 added to
+  // each picker option, which defeated every anchored matcher (#1459 / #1461).
+  // `setupGoogle` has resolved options by IDENTITY through `model-option.ts`
+  // since `8cab90f`, and this spec carries no option matcher of its own, so the
+  // shared fix covers it by construction. Re-validated on nightly 1.13.0.dev5:
+  // 4/4 clean at `--retries=0`, and the force-fail call log reads
+  // `unexpected value "gemini-flash-latest"` — the very model that could not be
+  // resolved on 08-14 now lands in the widget.
   test(
     "language model must respond with Google provider",
-    { tag: ["@release", "@components", "@model-provider"] },
+    { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
       const gate = providerSkipGate("google");
       test.skip(gate.skip, gate.reason);

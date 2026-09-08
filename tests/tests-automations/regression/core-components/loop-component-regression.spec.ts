@@ -165,9 +165,15 @@ test(
 // tag (#871/#1054), so tag removal alone left this reddening every PR that
 // touches a helper it imports — it did exactly that to #1279.
 //
+// Still true on nightly 1.13.0.dev5 (re-measured for #1504): the warning above is
+// in the startup log, `ArXivComponent` is absent from `GET /api/v1/all`, and
+// `GET /api/v1/flows/basic_examples/` lists 26 starter projects without this one.
+//
 // Lifting the quarantine (remove test.fixme + restore @stable) is a deliverable
-// of #1234, and gated on the component returning to the image — not on a
-// test-side change here.
+// of **#1744**, and gated on the component returning to the image — not on a
+// test-side change here. #1234, which this comment used to name, was closed on
+// 2026-08-04 by its own quarantine commit while the lift was still outstanding;
+// #1744 is the live owner (#1504).
 test.fixme(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
   { tag: ["@release", "@components", "@templates", "@playground"] },

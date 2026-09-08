@@ -125,14 +125,22 @@ async function runFlowAndOpenChatOutputInspection(page: Page): Promise<string> {
 // Test 1 — Chat Input rendering on canvas
 // =============================================================================
 
-// Quarantined at triage (daily #1417): recurrent flake — the sidebar
-// add-component click does not place the node, so `title-Chat Input` never
-// enters the DOM (`element(s) not found`, not "present but not visible").
-// Same signature on the 2026-07-17 and 08-11 dailies. Lifting the quarantine
-// (remove test.fixme + restore @stable) is a deliverable of #1423.
-test.fixme(
+// Quarantine LIFTED (#1504). It was quarantined at the triage of daily #1417 for
+// the swallowed sidebar add — the click landed and no node was placed, so
+// `title-Chat Input` never entered the DOM (`element(s) not found`, not "present
+// but not visible") on the 2026-07-17 and 08-11 dailies. Two things closed that,
+// and the second is why the first is trustworthy: the add now routes through
+// `addComponentFromSidebar`, which detects a dropped add and re-issues it (#1304),
+// and the product defect underneath was fixed upstream in langflow#14523 — the
+// affordance is `disabled` while the permission window is open, so Playwright's
+// actionability check waits it out instead of the click being discarded (measured
+// per build in docs/upstream-bugs/UPSTREAM-BUG-sidebar-add-permission-gate-dead-window.md
+// §9). Re-validated for #1504 on nightly 1.13.0.dev5: 18/18 (6 on a quiet
+// instance, 12 with three workers against one backend), on top of the 16/16 under
+// four concurrent processes recorded on #1423 at 1.12.0.dev30.
+test(
   "Chat Input component — renders on canvas with Message output handle and Input Text field",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addChatInputComponent(page);
 

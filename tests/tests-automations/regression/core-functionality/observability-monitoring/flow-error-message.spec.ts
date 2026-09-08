@@ -37,15 +37,27 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Quarantined at triage (daily #1417): recurrent flake — the sidebar
-// add-component click does not place the node, so `button_run_api request`
-// never enters the DOM (`element(s) not found`, not "present but not
-// visible"). Same signature on the 2026-07-16, 07-20 and 08-11 dailies.
-// Lifting the quarantine (remove test.fixme + restore @stable) is a
-// deliverable of #1423.
-test.fixme(
+// Quarantine LIFTED (#1504). It was quarantined at the triage of daily #1417 for
+// the swallowed sidebar add — the click landed and no node was placed, so
+// `button_run_api request` never entered the DOM (`element(s) not found`, not
+// "present but not visible") on the 2026-07-16, 07-20 and 08-11 dailies.
+//
+// The add below is still a BARE fill + click rather than `addComponentFromSidebar`,
+// and that is deliberate, not an omission. The product defect underneath was fixed
+// upstream in langflow#14523: the affordance is `disabled` while the permission
+// window is open, so a bare click now waits the window out via Playwright's
+// actionability check instead of being discarded. That measurement — per build,
+// `1.12.0.dev25` swallows and `1.12.0.dev30` lands — is in
+// docs/upstream-bugs/UPSTREAM-BUG-sidebar-add-permission-gate-dead-window.md §9,
+// which is also where four other bare call sites were decided against rewiring for
+// the same reason. If this class returns, that decision is the first thing to
+// revisit, and moving this add onto the helper is the repair.
+//
+// Re-validated for #1504 on nightly 1.13.0.dev5: 12/12 with three workers driving
+// one backend, plus a force-fail on the "URL cannot be empty" assertion.
+test(
   "a misconfigured flow surfaces an appropriate build-error message",
-  { tag: ["@release", "@components", "@observability"] },
+  { tag: ["@stable", "@release", "@components", "@observability"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     // The build failure below is intentional — without this the fixture's
