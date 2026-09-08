@@ -166,10 +166,12 @@ export function describeResponseBody(read: BodyRead): BodyOutcome {
 /**
  * The teardown counterpart, over every recorded HTTP error.
  *
- * The inline line above races the end of the test — the read is not awaited —
- * so an error observed late can leave the log with a `🚨` line and no
- * `Response:` line at all. This is where that becomes visible instead of
- * looking like a body nobody bothered to print.
+ * The inline line above races the end of the test. The read IS awaited inside
+ * the `page.on("response")` handler — what nothing awaits is the handler
+ * itself, so an error observed late can have its entry recorded (that part is
+ * synchronous) while the log never gets the `Response:` line under its `🚨`.
+ * This is where that becomes visible instead of looking like a body nobody
+ * bothered to print.
  *
  * Returns an empty array when every error carried a body, so the caller adds no
  * noise to the common case.

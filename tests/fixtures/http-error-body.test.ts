@@ -14,8 +14,8 @@
 // applied to the fixture that is itself the suite's evidence trail.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 import {
   BODY_PENDING,

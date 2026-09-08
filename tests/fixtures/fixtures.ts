@@ -366,9 +366,10 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
         // Every branch prints, including the failure (#1432). The catch this
         // replaces swallowed the reason along with the body, so an error whose
         // body could not be READ was indistinguishable in the log from one
-        // whose body was EMPTY — and the four `400 POST /api/v1/variables/`
-        // occurrences #1424 is still descriptive about are all of the first
-        // kind. An unread body is unknown, not absent (#1012).
+        // whose body was EMPTY. That is not a rare shape: Chromium does not
+        // retain a zero-length body, so `response.text()` REJECTS on any
+        // bodyless response rather than resolving to `""` (measured — see
+        // `http-error-body.ts`). An unread body is unknown, not absent (#1012).
         const outcome = describeResponseBody(
           await response
             .text()
