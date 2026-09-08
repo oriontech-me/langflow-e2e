@@ -20,8 +20,11 @@ export function instructionFor(s: PipelineState): string {
         s.type
           ? `Heuristic classification: ${s.type} (${s.classification?.justification}). Confirm it with the user.`
           : `No heuristic matched. Classify the issue yourself using the 6-type table in the langflow-e2e-issues skill and record a justification.`,
+        s.type
+          ? `If the heuristic is WRONG, do NOT confirm it — complete with {"type":"<correct type>","justification":"<why>"} instead; that overrides it and is recorded as such.`
+          : '',
         done('CLASSIFY', s.type ? '{"confirmed":true}' : '{"type":"<type>","justification":"<why>"}'),
-      ].join('\n')
+      ].filter(Boolean).join('\n')
 
     case 'SPECIFY': {
       if (s.type === 'file-watcher') {

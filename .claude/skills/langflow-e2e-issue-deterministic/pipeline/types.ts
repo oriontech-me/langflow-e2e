@@ -1,10 +1,16 @@
-export type IssueType =
-  | 'new-spec'
-  | 'validate-promote'
-  | 'daily-failure-triage'
-  | 'fix'
-  | 'community'
-  | 'file-watcher'
+// Runtime list, not a bare type union: the CLASSIFY gate accepts a type from
+// Claude and used to cast it with `as never`, so a typo set an unknown type and
+// `spineFor` silently fell through to BASE.
+export const ISSUE_TYPES = [
+  'new-spec',
+  'validate-promote',
+  'daily-failure-triage',
+  'fix',
+  'community',
+  'file-watcher',
+] as const
+
+export type IssueType = typeof ISSUE_TYPES[number]
 
 export type Phase =
   | 'INTAKE' | 'CLASSIFY' | 'SPECIFY' | 'PLAN' | 'DEBUG' | 'IMPLEMENT'

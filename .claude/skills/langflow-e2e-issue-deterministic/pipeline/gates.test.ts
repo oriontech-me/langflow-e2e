@@ -5,7 +5,7 @@ import {
   checkNoMutationMarkers, checkPrReadiness, BRANCH_RE,
   checkQuarantineLifted, extractSymptomRows, checkSymptomCoverage,
   symptomsOwnedElsewhere, checkDebugEvidence, checkBranchPurity, checkCiVerdict,
-  checkFinalGreenCoverage, finalGreenTargets,
+  checkFinalGreenCoverage, finalGreenTargets, resolveClassification,
 } from './gates.ts'
 import type { RunRecord } from './types.ts'
 
@@ -439,4 +439,64 @@ test('finalGreenTargets re-runs a file whose only record executed nothing', () =
   assert.deepEqual(
     finalGreenTargets(['a.spec.ts'], [empty('a.spec.ts')]).targets,
     ['a.spec.ts'])
+})
+
+// ---------------------------------------------------------------------------
+// resolveClassification — CLASSIFY gate decision (#1302)
+// ---------------------------------------------------------------------------
+
+test('resolveClassification records Claude\'s type when the heuristic found none', () => {
+  const d = resolveClassification(undefined, { type: 'fix', justification: 'dedicated daily issue' })
+  assert.deepEqual(d.problems, [])
+  assert.deepEqual(d.set, { type: 'fix', justification: 'dedicated daily issue' })
+})
+
+test('resolveClassification OVERRIDES a wrong heuristic and names what it replaced', () => {
+  const d = resolveClassification('daily-failure-triage', {
+    type: 'fix', justification: '[Daily #1296] is the dedicated title, not the umbrella',
+  })
+  assert.deepEqual(d.problems, [])
+  assert.equal(d.set?.type, 'fix')
+  assert.match(d.set!.justification, /overrides heuristic "daily-failure-triage"/)
+  assert.match(d.set!.justification, /dedicated title/)
+})
+
+test('resolveClassification treats a matching type as a confirmation, rewriting nothing', () => {
+  const d = resolveClassification('fix', { type: 'fix', justification: 'agreed' })
+  assert.deepEqual(d.problems, [])
+  assert.equal(d.set, undefined)
+})
+
+test('resolveClassification refuses an unknown type instead of casting it', () => {
+  const d = resolveClassification('fix', { type: 'flake-fix', justification: 'typo' })
+  assert.equal(d.set, undefined)
+  assert.equal(d.problems.length, 1)
+  assert.match(d.problems[0], /not a known issue type/)
+  assert.match(d.problems[0], /validate-promote/)
+})
+
+test('resolveClassification refuses a non-string type', () => {
+  const d = resolveClassification(undefined, { type: 7, justification: 'x' })
+  assert.equal(d.set, undefined)
+  assert.match(d.problems[0], /not a known issue type/)
+})
+
+test('resolveClassification requires a non-empty justification, override included', () => {
+  for (const justification of [undefined, '', '   ']) {
+    const d = resolveClassification('daily-failure-triage', { type: 'fix', justification })
+    assert.equal(d.set, undefined, `justification ${JSON.stringify(justification)} must not set a type`)
+    assert.deepEqual(d.problems, ['claude classification needs justification'])
+  }
+})
+
+test('resolveClassification passes a plain confirmation through untouched', () => {
+  const d = resolveClassification('new-spec', { confirmed: true } as Record<string, unknown>)
+  assert.deepEqual(d.problems, [])
+  assert.equal(d.set, undefined)
+})
+
+test('resolveClassification still fails when no heuristic ran and nothing was supplied', () => {
+  const d = resolveClassification(undefined, {})
+  assert.equal(d.set, undefined)
+  assert.deepEqual(d.problems, ['no type: heuristic failed and none supplied'])
 })

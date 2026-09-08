@@ -1,6 +1,48 @@
-import type { FFEntry, ReproRate, RunRecord, TestEntry } from './types.ts'
-import { VERDICTS } from './types.ts'
+import type { FFEntry, IssueType, ReproRate, RunRecord, TestEntry } from './types.ts'
+import { ISSUE_TYPES, VERDICTS } from './types.ts'
 import { countsAsClean } from './runners.ts'
+
+export interface ClassificationDecision {
+  /** What to record, or undefined when nothing changes (a plain confirmation). */
+  set?: { type: IssueType; justification: string }
+  problems: string[]
+}
+
+/**
+ * Decides what the CLASSIFY gate records, given the heuristic's verdict and the
+ * evidence Claude supplied. Pure so the override path is testable — it used to
+ * live inside `gateFor` as `if (!s.type && typeof evidence.type === 'string')`,
+ * which had two defects: a WRONG heuristic could not be corrected at all (the
+ * guard only fired when no type was set), and the supplied string was cast with
+ * `as never`, so a typo set an unknown type that `spineFor` then read as BASE.
+ */
+export function resolveClassification(
+  current: IssueType | undefined,
+  evidence: { type?: unknown; justification?: unknown },
+): ClassificationDecision {
+  const problems: string[] = []
+  const supplied = evidence.type
+
+  if (supplied === undefined) {
+    if (!current) problems.push('no type: heuristic failed and none supplied')
+    return { problems }
+  }
+  if (typeof supplied !== 'string' || !ISSUE_TYPES.includes(supplied as IssueType)) {
+    problems.push(`evidence.type ${JSON.stringify(supplied)} is not a known issue type (${ISSUE_TYPES.join(', ')})`)
+    return { problems }
+  }
+  const type = supplied as IssueType
+  const justification = typeof evidence.justification === 'string' ? evidence.justification.trim() : ''
+  if (!justification) {
+    problems.push('claude classification needs justification')
+    return { problems }
+  }
+  // Same type as the heuristic: a confirmation, nothing to rewrite.
+  if (current === type) return { problems }
+  // An override is auditable in the state file, so it names what it replaced.
+  const note = current ? `overrides heuristic "${current}": ${justification}` : justification
+  return { set: { type, justification: note }, problems }
+}
 
 export const SPEC_DOC_SECTIONS = [
   'What this test validates', 'Tags', 'Validation criterion', 'External dependencies',
