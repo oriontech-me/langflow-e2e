@@ -337,6 +337,18 @@ test("a shared signature that is only an assertion shell is a LEAD, not a confir
   assert.match(text, /expected\/received pair/);
 });
 
+test("a locator assertion is a shell too - it is the suite's most frequent signature", () => {
+  // Requiring `expect(received)` covered the minority: measured over both series,
+  // `expect(locator)` shells are 158 of 764 signatures against 97, and
+  // `expect(locator).toBeVisible() failed` alone is 115. A pair agreeing only on "some
+  // locator was not visible" was taking the head stamp with no caveat.
+  assert.equal(isGenericSignature("Error: expect(locator).toBeVisible() failed"), true);
+  assert.equal(isGenericSignature("Error: expect(locator).toHaveCount(expected) failed"), true);
+  assert.equal(isGenericSignature("Error: expect(locator).toHaveAttribute(expected) failed"), true);
+  // Still not a shell: it names its own cause.
+  assert.equal(isGenericSignature("Error: setupPlayground: a canvas edit never reached the database"), false);
+});
+
 test("an ANSI-wrapped assertion shell is still recognised as a shell", () => {
   // The rows carry raw escapes: the shells in reports/daily-history.jsonl look like
   // `Error: \u001b[2mexpect(\u001b[22m…`. Matching the plain string only would let

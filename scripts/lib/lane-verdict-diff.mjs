@@ -163,7 +163,19 @@ export function comparableSignature(signature) {
 export function isGenericSignature(signature) {
   const bare = comparableSignature(signature);
   if (!bare) return false;
-  return /^Error:\s*expect\(received\)\s*\.\s*(not\s*\.\s*)?[A-Za-z]+\s*\(/.test(bare);
+  // ANY subject, not just `received`. Requiring `expect(received)` covered the
+  // MINORITY: measured over both series, `expect(locator)` shells are 158 of 764
+  // signatures against 97 for `expect(received)`, and `expect(locator).toBeVisible()
+  // failed` alone is 115 — the single most frequent signature the suite produces. A
+  // pair agreeing only on "some locator was not visible" was taking the head stamp
+  // with no LEAD caveat, which is the false confidence this guard exists to prevent,
+  // on the dominant shell class of an e2e suite.
+  //
+  // Checked against the corpus rather than reasoned: of the 115 DISTINCT signatures in
+  // the two series, this matches 21 and every one of them is a bare matcher; nothing
+  // carrying a message of its own matches, and no signature starting with `expect(`
+  // escapes it.
+  return /^Error:\s*expect\([^)]*\)\s*\.\s*(not\s*\.\s*)?[A-Za-z]+\s*\(/.test(bare);
 }
 
 /**
