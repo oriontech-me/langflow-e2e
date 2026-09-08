@@ -21,6 +21,7 @@ import {
   GIT_LOG_FORMAT,
   ORPHAN_ISSUE_TITLE,
   buildTrackerIndex,
+  isShallowRepository,
   parseExemptions,
   parseGitLogRaw,
   readBlobs,
@@ -156,6 +157,7 @@ function deps(
   revisions: Revision[],
   contents: Record<string, string>,
   maxRevisions = 500,
+  shallow = false,
 ) {
   return {
     revisionsOf: () => revisions,
@@ -166,6 +168,7 @@ function deps(
           .map((s) => [s, contents[s]] as [string, string]),
       ),
     maxRevisions,
+    shallow,
   };
 }
 
@@ -274,6 +277,7 @@ test("a git failure is UNKNOWN for every title in that spec, with the reason", (
     },
     readBlobs: () => new Map(),
     maxRevisions: 500,
+    shallow: false,
   });
   for (const t of [TITLE, "another"]) {
     const v = out[historyKey(SPEC, t)];
@@ -470,4 +474,89 @@ test("the workflow takes the issue title from the script, never a second copy", 
     /outputs\.issue_title/,
     "the workflow reads the title the script emitted",
   );
+});
+
+// ─── Review findings, pinned ─────────────────────────────────────────────────
+
+test("a SHALLOW clone reports UNKNOWN, never `never` — the false-clean the check exists to prevent", () => {
+  // Measured on a real `git clone --depth 1` of this branch before the fix:
+  // "0 orphaned, 0 undecidable", both live orphans gone and both valid #1039
+  // declarations reported as expired. The revision cap cannot catch it — a
+  // truncated history runs out long before 500 revisions.
+  const revisions = [rev("c1", "2026-09-01T00:00:00Z", "the graft commit")];
+  const out = walkSpec(
+    SPEC,
+    [TITLE],
+    deps(
+      revisions,
+      { "blob-c1": specSource([{ title: TITLE, stable: false }]) },
+      500,
+      /* shallow */ true,
+    ),
+  );
+  const v = out[historyKey(SPEC, TITLE)];
+  assert.equal(v.kind, "unknown");
+  assert.match(v.kind === "unknown" ? v.reason : "", /SHALLOW clone/);
+  assert.match(v.kind === "unknown" ? v.reason : "", /fetch-depth: 0/);
+});
+
+test("a `never` OBSERVED inside a shallow window is still `never`", () => {
+  // The distinction is what keeps the fix from degrading every report on a
+  // shallow clone into noise: a title absent at a revision we actually READ
+  // means the test's whole life is inside the window, whatever the depth.
+  const revisions = [
+    rev("c2", "2026-09-01T00:00:00Z", "add the test, untagged"),
+    rev("c1", "2026-07-01T00:00:00Z", "the graft commit"),
+  ];
+  const out = walkSpec(
+    SPEC,
+    [TITLE],
+    deps(
+      revisions,
+      {
+        "blob-c2": specSource([{ title: TITLE, stable: false }]),
+        "blob-c1": specSource([{ title: "another test", stable: true }]),
+      },
+      500,
+      /* shallow */ true,
+    ),
+  );
+  assert.deepEqual(out[historyKey(SPEC, TITLE)], { kind: "never" });
+});
+
+test("isShallowRepository answers for the repository the walk actually reads", () => {
+  // A full checkout must not report shallow, or every row becomes UNKNOWN and
+  // the report says nothing on the one clone shape that can answer.
+  assert.equal(isShallowRepository(), false);
+});
+
+test("a longer basename that CONTAINS this spec's does not own its removal", () => {
+  // Three such pairs exist in this tree — `run-flow.spec.ts` inside
+  // `api-run-flow.spec.ts` is one of them, and `run-flow.spec.ts` is an orphan
+  // the reconciler reports today. A bare `includes` would silence it the day
+  // anyone files an issue about the longer spec.
+  const c = candidate({ relativePath: "flow-functionality/run-flow.spec.ts" });
+  const index = buildTrackerIndex(
+    [issue({ number: 48, body: "api-run-flow.spec.ts times out" })],
+    [c],
+  );
+  assert.deepEqual(index, {});
+});
+
+test("the same basename at a real path boundary still owns it", () => {
+  const c = candidate({ relativePath: "flow-functionality/run-flow.spec.ts" });
+  for (const body of [
+    "run-flow.spec.ts times out",
+    "see tests/tests-automations/regression/flow-functionality/run-flow.spec.ts",
+    "`run-flow.spec.ts` is quarantined",
+    "(run-flow.spec.ts)",
+  ]) {
+    const index = buildTrackerIndex([issue({ number: 49, body })], [c]);
+    assert.equal(
+      index[historyKey("flow-functionality/run-flow.spec.ts", TITLE)]?.[0]
+        ?.number,
+      49,
+      `"${body}" names the spec`,
+    );
+  }
 });

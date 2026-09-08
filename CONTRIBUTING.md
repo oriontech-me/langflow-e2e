@@ -936,12 +936,22 @@ open issue, not a declaration.
 Three properties worth knowing before reading a report:
 
 - **`@stable` missing and `test.fixme` are two different states**, and the report
-  says which. The tag alone takes a test out of the daily; `test.fixme` takes it
-  out of *everything*, including the PR impacted-specs lane (#871 / #1054).
+  says which. The tag alone takes a test out of the daily — it stays on the PR
+  impacted-specs lane, which selects by import graph and uses `@stable` only as
+  an ordering, so a spec quarantined by tag removal alone keeps going **red**
+  there (that is what #871 was raised about). `test.fixme` is what takes it out
+  of everything, and that is the worse state to find unowned.
 - **Undecidable is never clean** (#1012). A history that cannot be walked, a
-  shallow clone, a `tag` option the parser cannot read, or a failed issue
-  lookup is reported as `UNKNOWN` with the reason named — never omitted, and
-  never resolved as "no orphan".
+  `tag` option the parser cannot read, or a failed issue lookup is reported as
+  `UNKNOWN` with the reason named — never omitted, and never resolved as "no
+  orphan". A **shallow clone** is the case worth knowing: it runs out of history
+  long before any revision cap, so the check asks `git rev-parse
+  --is-shallow-repository` and reports every row it could not date rather than
+  inferring "never carried the tag" from an absence. Without that, a `--depth 1`
+  run reports **0 orphans and 0 undecidable** — and reports the two correct
+  #1039 declarations as expired, which is the report telling a human to delete
+  a right answer. An **unverifiable** declaration is therefore rendered apart
+  from an **expired** one.
 - **It is not a PR gate.** A pre-existing orphan is not the PR author's fault,
   and failing on it would redden unrelated PRs until someone does an audit
   (#980's coverage-first trade). The output is an issue kept current under a

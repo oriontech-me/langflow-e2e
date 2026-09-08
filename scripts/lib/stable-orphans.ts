@@ -24,12 +24,19 @@
  *    rather than on the tag's would have reported two false orphans.
  * 2. **Issues get reopened**, so the state is read live on every run and never
  *    cached in the repository.
- * 3. **Two states, not one.** `@stable` removal and `test.fixme` are applied
- *    together at flake quarantine but separately at hard-failure auto-removal
- *    (`32ac9a1` removed the tag; `4be67e9` added the fixme four weeks later).
- *    "Not in the daily" and "runs nowhere at all" are reported apart — the
- *    second is worse, and is what also makes the test invisible on the PR
- *    impacted-specs lane (#871 / #1054).
+ * 3. **Two states, not one.** `@stable` removal and `test.fixme` are applied by
+ *    different mechanisms — the daily strips the tag automatically, a human
+ *    adds the fixme in a quarantine PR — so a test can be off the daily with
+ *    the tag alone. (#1746 cites `32ac9a1` / `4be67e9` as "four weeks apart";
+ *    they are one day apart, 2026-08-03 and 2026-08-04, and the second names
+ *    the first in its own comment. The pair is a deliberate follow-up, not
+ *    drift — the rule stands on the two mechanisms being separate, not on that
+ *    gap.) "Not in the daily" and "runs nowhere at all" are reported apart,
+ *    because only the second also takes the test off the PR impacted-specs
+ *    lane: that lane selects by import graph and uses `@stable` as an ORDERING,
+ *    never as a filter, so removing the tag alone leaves the spec running and
+ *    RED there — which is what #871 was raised about, and why quarantine means
+ *    `test.fixme` as well.
  * 4. **Some absences are deliberate and permanent** (`groq` / `mistral` lost
  *    the tag in #1039 because the components are not bundled in the tested
  *    image). Those are declarable — and, per #1084's lesson, the declaration is
@@ -359,6 +366,11 @@ export function hasFindings(v: Verdict): boolean {
     v.orphaned.length > 0 ||
     v.unknown.length > 0 ||
     v.staleExemptions.length > 0 ||
+    // Redundant TODAY, and kept deliberately: an unverified exemption can only
+    // arise for a test that is also a candidate with an unknown history, so it
+    // always comes with a row in `v.unknown`. That is a property of how the two
+    // are populated, not of what they mean — the clause is here so a later
+    // change to either cannot make a declaration problem silent.
     v.unverifiedExemptions.length > 0
   );
 }
@@ -383,11 +395,26 @@ function reach(row: ReconcileRow): string {
   return row.fixme ? "**runs nowhere** (`test.fixme` too)" : "not in the daily";
 }
 
+/**
+ * The trackers, as links, with the STRENGTH of each claim spelled out.
+ *
+ * "An open issue names the file" is a generous criterion on purpose — a false
+ * "owned" costs one hidden row a human can still find, while a false "orphaned"
+ * costs the report its credibility. But generous means it really does catch
+ * issues that own no restore: on this tree #1743, a refactor issue, lists ten
+ * spec basenames as call sites and comes back as an owner of two removals. So a
+ * match on the file alone says so, and a tracker that quotes the test title is
+ * marked as the stronger one, rather than the two rendering identically.
+ */
 function trackerCell(row: ReconcileRow): string {
   if (row.trackers.length === 0) return "—";
   return row.trackers
-    .map((t) => `#${t.number}${t.matchedOn === "title" ? " (title)" : ""}`)
-    .join(", ");
+    .map(
+      (t) =>
+        `[#${t.number}](${t.url})` +
+        (t.matchedOn === "title" ? " — quotes the test" : " — names the file only"),
+    )
+    .join("<br>");
 }
 
 function removalCell(row: ReconcileRow): string {
@@ -407,7 +434,8 @@ export function renderReport(v: Verdict, opts: RenderOptions): string {
 
   lines.push(
     `**${v.orphaned.length} orphaned**, ${v.unknown.length} undecidable, ` +
-      `${v.staleExemptions.length + v.unverifiedExemptions.length} declaration problem(s), ` +
+      `${v.staleExemptions.length} expired declaration(s), ` +
+      `${v.unverifiedExemptions.length} unverifiable, ` +
       `${v.owned.length} owned, ${v.exempt.length} declared-exempt.`,
   );
   lines.push("");
@@ -434,30 +462,42 @@ export function renderReport(v: Verdict, opts: RenderOptions): string {
   if (v.unknown.length > 0) {
     lines.push("## Undecidable — reported, not assumed clean (#1012)");
     lines.push("");
-    lines.push("| Test | Spec | Why |");
-    lines.push("|---|---|---|");
+    lines.push("| Test | Spec | Trackers | Why |");
+    lines.push("|---|---|---|---|");
     for (const r of v.unknown) {
+      // The tracker column stays even here: a row undecidable for HISTORY
+      // reasons still has ownership that was looked up successfully, and
+      // dropping it makes the reader re-search GitHub for something the report
+      // already knew.
       lines.push(
-        `| ${esc(r.title)} | \`${r.relativePath}\`:${r.line} | ${esc(r.reason ?? "unspecified")} |`,
+        `| ${esc(r.title)} | \`${r.relativePath}\`:${r.line} | ${trackerCell(r)} | ${esc(r.reason ?? "unspecified")} |`,
       );
     }
     lines.push("");
   }
 
   if (v.staleExemptions.length > 0 || v.unverifiedExemptions.length > 0) {
-    lines.push("## Declarations whose justification no longer holds");
+    lines.push("## Declarations that expired, or could not be verified");
     lines.push("");
     lines.push(
       "Verified in both directions on purpose (#1084): a declared exemption that " +
         "stops being true has to surface, or this check grows the silent-expiry " +
-        `problem it exists to close. Edit \`${opts.exemptionsPath}\`.`,
+        `problem it exists to close. Edit \`${opts.exemptionsPath}\`. ` +
+        "**An UNVERIFIABLE row is not an expired one** — it says the run could " +
+        "not decide (a shallow clone is the usual cause), and deleting a " +
+        "declaration on the strength of it would remove a correct exemption.",
     );
     lines.push("");
     lines.push("| Spec | Test | Declared reason | Problem |");
     lines.push("|---|---|---|---|");
-    for (const p of [...v.staleExemptions, ...v.unverifiedExemptions]) {
+    for (const p of v.staleExemptions) {
       lines.push(
-        `| \`${p.exemption.spec}\` | ${esc(p.exemption.title)} | ${esc(p.exemption.reason)} | ${esc(p.reason)} |`,
+        `| \`${p.exemption.spec}\` | ${esc(p.exemption.title)} | ${esc(p.exemption.reason)} | **expired** — ${esc(p.reason)} |`,
+      );
+    }
+    for (const p of v.unverifiedExemptions) {
+      lines.push(
+        `| \`${p.exemption.spec}\` | ${esc(p.exemption.title)} | ${esc(p.exemption.reason)} | _unverifiable_ — ${esc(p.reason)} |`,
       );
     }
     lines.push("");

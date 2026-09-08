@@ -64,6 +64,16 @@ jobs:
           # than a false one.
           fetch-depth: 0
 
+      # Every other `npm ci` workflow here pins the toolchain; the two that do
+      # not both say why (the daily runs inside the Playwright image, which
+      # ships it). This job runs `ts-node` against the repo's pinned
+      # `typescript`, so it pins Node too rather than taking whatever
+      # `ubuntu-latest` rolls forward to.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
 
@@ -113,8 +123,22 @@ jobs:
       # report would empty out, and the finding would come back the run after —
       # an oscillation with no visible symptom. `reconcile-stable-orphans.test.ts`
       # pins that this file never carries a literal copy of the title.
+      # NOT run when the ISSUE LOOKUP itself failed. Every row is then
+      # `unknown` for the same reason — GitHub could not be asked — and
+      # refreshing rewrites the whole body, so a five-minute API outage would
+      # replace a standing list of real orphans (and any human notes on it) with
+      # a page that says less than last week's. The verdict is still in the job
+      # summary and the artifact, and the warning below says so; an outage
+      # decides nothing about ownership and must not destroy the report.
+      - name: Warn when the tracker lookup could not be made
+        if: always() && steps.reconcile.outputs.tracker_lookup_failed == 'true'
+        run: |
+          echo "::warning::The open-issue lookup failed, so ownership is undecided for every removal. The report issue was left untouched — see the job summary and the uploaded verdict."
+
       - name: Open or refresh the orphan report issue
-        if: always() && steps.reconcile.outputs.has_findings == 'true'
+        if: >-
+          always() && steps.reconcile.outputs.has_findings == 'true'
+          && steps.reconcile.outputs.tracker_lookup_failed == 'false'
         uses: actions/github-script@v9
         env:
           ORPHAN_TITLE: ${{ steps.reconcile.outputs.issue_title }}
@@ -172,7 +196,9 @@ jobs:
       # that were since restored is the same silent-expiry failure this check
       # exists to catch, pointed at its own output.
       - name: Close the report issue when there is nothing left to reconcile
-        if: always() && steps.reconcile.outputs.has_findings == 'false'
+        if: >-
+          always() && steps.reconcile.outputs.has_findings == 'false'
+          && steps.reconcile.outputs.tracker_lookup_failed == 'false'
         uses: actions/github-script@v9
         env:
           ORPHAN_TITLE: ${{ steps.reconcile.outputs.issue_title }}

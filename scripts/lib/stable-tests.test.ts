@@ -17,6 +17,7 @@ import * as path from "path";
 import {
   LANE_TAGS,
   REGRESSION_ROOT,
+  collectDeclaredCounts,
   collectDeclaredTests,
   collectStableTests,
   parseDeclaredCounts,
@@ -357,4 +358,55 @@ test("collectDeclaredTests covers every @stable test the Phase 0 parser finds", 
     );
   }
   assert.ok(declared.length >= collectStableTests().tests.length);
+});
+
+test("only test() and test.fixme() declare a test — test.step and friends do not", () => {
+  // A parser that accepts any `test.X("literal", …)` swallows every
+  // `test.step()` in the suite: measured, `collectDeclaredTests()` went from
+  // 815 rows to 2319 under exactly that mutation, and NOTHING in the unit lane
+  // noticed, because the only cross-parser assertion checks a superset.
+  const out = declaredIn(`
+    test("a real test", { tag: ["@regression"] }, async ({ page }) => {
+      await test.step("a step, not a test", async () => {});
+      await test.slow("also not a test", async () => {});
+    });
+    test.fixme("a quarantined test", { tag: ["@regression"] }, async () => {});
+    test.describe("a suite", { tag: ["@regression"] }, () => {});
+  `);
+  assert.deepEqual(
+    out.map((d) => d.title),
+    ["a real test", "a quarantined test"],
+  );
+});
+
+test("collectDeclaredTests counts exactly the declared tests, no more", () => {
+  // The upper bound is the assertion that dies under over-collection; the
+  // superset check above it survives one. `parseDeclaredCounts` counts plain
+  // `test()` calls only, so the two differ by the `test.fixme` declarations.
+  const declared = collectDeclaredTests();
+  const fixmes = declared.filter((d) => d.fixme).length;
+  assert.equal(declared.length, collectDeclaredCounts().total + fixmes);
+});
+
+test("a lane tag on a describe block reaches its child tests", () => {
+  // Symmetry with `@stable`: Playwright applies a suite tag to everything
+  // inside, so a suite hoisted to `@enterprise` would otherwise turn every test
+  // in it into an orphan candidate. Currently inert — no describe in the tree
+  // carries one — which is exactly when it is cheap to pin.
+  const out = declaredIn(`
+    test.describe("an enterprise suite", { tag: ["@enterprise"] }, () => {
+      test("a child", { tag: ["@authz"] }, async ({ page }) => {});
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].tags, ["@authz", "@enterprise"]);
+});
+
+test("an inherited lane tag is not duplicated when the test declares it too", () => {
+  const out = declaredIn(`
+    test.describe("a suite", { tag: ["@destructive"] }, () => {
+      test("a child", { tag: ["@destructive", "@api"] }, async ({ page }) => {});
+    });
+  `);
+  assert.deepEqual(out[0].tags, ["@destructive", "@api"]);
 });

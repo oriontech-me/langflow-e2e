@@ -342,7 +342,13 @@ export interface DeclaredTest {
   relativePath: string;
   /** 1-based source line of the declaring call. */
   line: number;
-  /** Tags on the test itself, in source order. */
+  /**
+   * Tags that reach the test: its own, in source order, plus any LANE tag
+   * inherited from an enclosing `test.describe`. Inheriting the lane tags
+   * matters for the same reason inheriting `@stable` does — Playwright applies
+   * a suite tag to every test inside, so a suite hoisted to `@enterprise` would
+   * otherwise turn every test in it into an orphan candidate.
+   */
   tags: string[];
   /**
    * True when `@stable` reaches this test at all — on its own `tag` array or
@@ -393,13 +399,22 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
 
   const out: DeclaredTest[] = [];
 
-  function visit(node: ts.Node, inheritedStable: boolean): void {
-    let childrenInherit = inheritedStable;
+  function visit(
+    node: ts.Node,
+    inheritedStable: boolean,
+    inheritedLane: string[],
+  ): void {
+    let childrenStable = inheritedStable;
+    let childrenLane = inheritedLane;
 
     if (ts.isCallExpression(node)) {
       if (isDescribeCall(node) && node.arguments.length >= 2) {
         const { tags } = readTagsArray(node.arguments[1]);
-        if (tags?.includes(STABLE_TAG)) childrenInherit = true;
+        if (tags?.includes(STABLE_TAG)) childrenStable = true;
+        const lane = (tags ?? []).filter((t) =>
+          (LANE_TAGS as readonly string[]).includes(t),
+        );
+        if (lane.length > 0) childrenLane = [...inheritedLane, ...lane];
       } else if (isPlainTestCall(node) || isFixmeDeclaration(node)) {
         const title = literalText(node.arguments[0]);
         if (title !== null) {
@@ -410,12 +425,13 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
           const { line } = source.getLineAndCharacterOfPosition(
             node.getStart(source),
           );
+          const own = tags ?? [];
           out.push({
             title,
             relativePath,
             line: line + 1,
-            tags: tags ?? [],
-            stable: inheritedStable || !!tags?.includes(STABLE_TAG),
+            tags: [...own, ...inheritedLane.filter((t) => !own.includes(t))],
+            stable: inheritedStable || own.includes(STABLE_TAG),
             fixme: isFixmeDeclaration(node),
             unparseableTags: unparseable,
           });
@@ -423,10 +439,12 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
       }
     }
 
-    ts.forEachChild(node, (child) => visit(child, childrenInherit));
+    ts.forEachChild(node, (child) =>
+      visit(child, childrenStable, childrenLane),
+    );
   }
 
-  visit(source, false);
+  visit(source, false, []);
   return out;
 }
 

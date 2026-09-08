@@ -45,6 +45,7 @@
  */
 
 import { execFileSync } from "child_process";
+import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -152,6 +153,17 @@ function git(args: string[]): string {
   });
 }
 
+/** `git rev-parse --is-shallow-repository`, defaulting to "assume truncated". */
+export function isShallowRepository(): boolean {
+  try {
+    return git(["rev-parse", "--is-shallow-repository"]).trim() === "true";
+  } catch {
+    // If git cannot say, the safe answer is the one that reports UNKNOWN rather
+    // than the one that reports a clean tree.
+    return true;
+  }
+}
+
 function revisionsOf(relativeToRepo: string): Revision[] {
   return parseGitLogRaw(
     git([
@@ -208,6 +220,20 @@ export interface WalkDeps {
   revisionsOf: (relativeToRepo: string) => Revision[];
   readBlobs: (shas: string[]) => Map<string, string>;
   maxRevisions: number;
+  /**
+   * Whether the repository's history is TRUNCATED (`git clone --depth N`).
+   *
+   * This is the one input that decides whether "the walk ran out of revisions"
+   * means `never` or `unknown`, and getting it from the revision cap alone is
+   * wrong in the direction that matters: a shallow clone runs out of history
+   * long before any cap, so every unresolved title falls out as `never`, which
+   * `reconcile()` counts and does not list. Measured on a `--depth 1` clone of
+   * this branch: **0 orphaned, 0 undecidable** — both real orphans gone, and
+   * both valid #1039 declarations reported as expired, telling a human to
+   * delete correct declarations. That is precisely the false-clean #1012
+   * forbids, produced by the check built to prevent it.
+   */
+  shallow: boolean;
 }
 
 /**
@@ -308,12 +334,24 @@ export function walkSpec(
   }
 
   for (const title of pending) {
+    // Exhausting the walk is the ONLY place `never` is concluded from an
+    // absence rather than from an observation, so it is the only place a
+    // truncated history can turn into a clean verdict. A `never` decided
+    // earlier — the title was absent at a revision we actually read — stays
+    // sound whatever the clone depth, because the test's whole life is then
+    // inside the window that was walked.
     result[key(title)] = capped
       ? {
           kind: "unknown",
           reason: `the walk hit the ${deps.maxRevisions}-revision cap without finding a revision where this title carried \`@stable\``,
         }
-      : { kind: "never" };
+      : deps.shallow
+        ? {
+            kind: "unknown",
+            reason:
+              "this repository is a SHALLOW clone, so the walk ran out of history rather than reaching the revision that introduced this title — whether it ever carried `@stable` cannot be decided here (clone with `fetch-depth: 0`)",
+          }
+        : { kind: "never" };
   }
 
   return result;
@@ -394,11 +432,22 @@ export function buildTrackerIndex(
 
   for (const test of candidates) {
     const basename = test.relativePath.split("/").pop() as string;
+    // A bare `includes` on the BASENAME matches inside a longer one, and this
+    // tree already contains three such pairs — `run-flow.spec.ts` inside
+    // `api-run-flow.spec.ts`, `starter-projects.spec.ts` inside
+    // `mcp-server-starter-projects.spec.ts`, `traces.spec.ts` inside
+    // `api-monitor-traces.spec.ts`. `run-flow.spec.ts` is one of the orphans
+    // this reports today, so the day someone opens an issue about
+    // `api-run-flow.spec.ts` that orphan would silently read as owned. The
+    // preceding character must not be one a filename can continue through.
+    const basenamePattern = new RegExp(
+      `(^|[^A-Za-z0-9_.\\-])${basename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    );
     const refs: TrackerRef[] = [];
     for (const issue of real) {
       const haystack = `${issue.title}\n${issue.body ?? ""}`;
       const namesFile =
-        haystack.includes(test.relativePath) || haystack.includes(basename);
+        haystack.includes(test.relativePath) || basenamePattern.test(haystack);
       if (!namesFile) continue;
       refs.push({
         number: issue.number,
@@ -478,11 +527,17 @@ export function run(argv: string[]): number {
     bySpec.set(c.relativePath, list);
   }
 
+  const shallow = isShallowRepository();
+  if (shallow) {
+    console.error(
+      "reconcile-stable-orphans: this is a SHALLOW clone — every removal that cannot be dated inside the truncated history is reported UNKNOWN, not clean. Re-run with `fetch-depth: 0` for a usable report.",
+    );
+  }
   const history: Record<string, HistoryVerdict> = {};
   for (const [spec, titles] of bySpec) {
     Object.assign(
       history,
-      walkSpec(spec, titles, { revisionsOf, readBlobs, maxRevisions }),
+      walkSpec(spec, titles, { revisionsOf, readBlobs, maxRevisions, shallow }),
     );
   }
 
@@ -526,13 +581,20 @@ export function run(argv: string[]): number {
     verdict.unverifiedExemptions.length;
 
   if (process.env.GITHUB_OUTPUT) {
-    const delimiter = "__ORPHANS_EOF__";
+    // Per-run, because the body carries repo-authored text (test titles,
+    // exemption reasons, `gh`'s first error line) and a fixed delimiter is one
+    // unlucky string away from truncating the report.
+    const delimiter = `__ORPHANS_EOF_${randomUUID().replace(/-/g, "")}__`;
     fs.appendFileSync(
       process.env.GITHUB_OUTPUT,
       [
         `orphan_count=${verdict.orphaned.length}`,
         `finding_count=${findings}`,
         `has_findings=${hasFindings(verdict)}`,
+        // The workflow uses this to leave a standing report ALONE rather than
+        // overwriting it with "we could not ask GitHub": an outage decides
+        // nothing about ownership, and a body rewrite is destructive.
+        `tracker_lookup_failed=${trackerLookupError ? "true" : "false"}`,
         `issue_title=${ORPHAN_ISSUE_TITLE}`,
         `summary_md<<${delimiter}`,
         markdown,
