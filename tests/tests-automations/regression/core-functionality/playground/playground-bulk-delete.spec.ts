@@ -14,8 +14,15 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
  *   session-selector.tsx — data-testid="session-{id}-checkbox" (dynamic)
  */
 
-test.describe.configure({ mode: "serial" });
-
+// No `mode: "serial"` on purpose (#1695). The three tests share nothing — each
+// builds its own flow through `setupPlayground`, creates its own sessions and
+// deletes its flow in `afterEach` — and serial mode made a failure in the first
+// one mark the other two `skipped` and restart the group on retry. On daily run
+// 33756085604 that spent the whole file's retry budget without ever measuring
+// them: the second test failed on its ONLY executed attempt (the daily then
+// auto-removed its `@stable`) and the third never ran at all, three attempts to
+// three skips. The daily's sharded lane sets `PW_SHARD_FILE_LEVEL=1`
+// (`fullyParallel: false`), so the file still runs one test at a time there.
 test.describe("Playground – Bulk Session Operations", () => {
   let createdFlowId: string | null = null;
 
@@ -65,7 +72,7 @@ test.describe("Playground – Bulk Session Operations", () => {
 
   test(
     "select-all-checkbox must select all non-default sessions",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
