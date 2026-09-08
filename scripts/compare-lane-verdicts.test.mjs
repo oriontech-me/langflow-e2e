@@ -433,6 +433,40 @@ test("the folded entry carries the tags of BOTH sides, not the CI side's empty a
   assert.deepEqual(result.divergences[0].tags, ["stable", "agents"]);
 });
 
+test("a shell pair is listed but NEVER headlined: the stamp cannot outrank the entry", () => {
+  // The stamp exists so it cannot be scrolled past, so it must not promote what the
+  // body refuses. It used to print "they are the product" above an entry whose own
+  // text read "a LEAD, not a confirmation".
+  const shell = "Error: expect(locator).toBeVisible() failed";
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: shell })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("anthropic", { error_signature: shell })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences[0].crossProvider.confirmable, false);
+  const text = renderReport(result);
+  assert.doesNotMatch(text, /they are the product/);
+  assert.match(text, /cannot carry the claim/);
+  assert.match(text, /LEAD, not a confirmation/);
+});
+
+test("a pair both lanes could not attribute to the spec is not the product either", () => {
+  // compareRuns already warns that an infra_signature means the harness could not
+  // reach the backend. 42 of the 764 entries carry one, and the same timeout string is
+  // 37 occurrences — a wedged container on one lane plus a blip on the other was
+  // taking rank 0 and the "product" stamp.
+  const sig = "TimeoutError: apiRequestContext.get: Timeout 20000ms exceeded.";
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: sig, infra_signature: "api-request-timeout" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("anthropic", { error_signature: sig, infra_signature: "api-request-timeout" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  const d = result.divergences[0];
+  assert.equal(d.crossProvider.infra, true);
+  assert.equal(d.crossProvider.confirmable, false);
+  const text = renderReport(result);
+  assert.doesNotMatch(text, /they are the product/);
+  assert.match(text, /could not reach the backend/);
+});
+
 test("three one-sided entries for one spec do NOT fold: which pairs with which is a guess", () => {
   const result = compare(
     row("daily-stable", {

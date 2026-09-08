@@ -238,6 +238,16 @@ export function pairCrossProvider(divergences) {
     const vmErr = comparableSignature(vm.vm?.error);
     const signaturesMatch = Boolean(ciErr) && ciErr === vmErr;
     const generic = signaturesMatch && isGenericSignature(ciErr);
+    // `compareRuns` already warns that a failure carrying an infra_signature means the
+    // harness could not reach the backend, "so they are not attributable to the spec
+    // that reported them". Two of those with one signature — the same timeout string
+    // is 37 occurrences, and 42 of 764 entries carry an infra_signature — folded to
+    // rank 0 and were headlined as the product: a wedged container on one lane plus a
+    // network blip on the other, sold as the strongest claim in the report.
+    const infra = Boolean(ci.ci?.infra || vm.vm?.infra);
+    // What the head stamp is allowed to promote: a match that names a cause AND is
+    // attributable to the spec. Everything else is listed, never headlined.
+    const confirmable = signaturesMatch && !generic && !infra;
 
     folded.add(ci);
     folded.add(vm);
@@ -261,7 +271,7 @@ export function pairCrossProvider(divergences) {
         : hardFailure(ci.ci, vm.vm)
           ? "cross-provider-failed"
           : "cross-provider-flaky",
-      crossProvider: { signaturesMatch, generic },
+      crossProvider: { signaturesMatch, generic, infra, confirmable },
     });
   }
 
@@ -586,11 +596,23 @@ export function renderReport(result, { sources = [] } = {}) {
   // make cannot live only inside a list a reader scrolls.
   const crossFailed = divergences.filter((d) => d.kind === "cross-provider-failed");
   const crossFlaky = divergences.filter((d) => d.kind === "cross-provider-flaky");
-  if (crossFailed.length) {
+  // The stamp exists so it CANNOT be scrolled past, which is exactly why it must not
+  // promote what the entry below it refuses: an unfiltered count headlined "the
+  // product" over a pair whose own body said "a LEAD, not a confirmation".
+  const headlined = crossFailed.filter((d) => d.crossProvider?.confirmable);
+  const qualified = crossFailed.filter((d) => !d.crossProvider?.confirmable);
+  if (headlined.length) {
     L.push(
       "",
-      `!! ${crossFailed.length} spec(s) FAILED the same way on both lanes under DIFFERENT providers.`,
+      `!! ${headlined.length} spec(s) FAILED the same way on both lanes under DIFFERENT providers.`,
       "   The provider is eliminated as the cause for those - read them first, they are the product.",
+    );
+  }
+  if (qualified.length) {
+    L.push(
+      "",
+      `!! ${qualified.length} more cross-provider pair(s) agree on a signature that cannot carry the claim -`,
+      "   an assertion shell, or a failure the harness could not attribute to the spec. Listed, not headlined.",
     );
   }
   // Its own line, and it never says "failed": both lanes retried and passed. Worth the
@@ -643,6 +665,11 @@ export function renderReport(result, { sources = [] } = {}) {
           L.push(
             "      the shared signature is an assertion shell, so this is a LEAD, not a confirmation (#1626):",
             "      read the expected/received pair out of each run's results.json before calling it one cause.",
+          );
+        } else if (d.crossProvider?.infra) {
+          L.push(
+            "      both sides carry an infra_signature: the harness could not reach the backend, so the",
+            "      shared signature is not attributable to this spec on either lane (see the narrowing above).",
           );
         } else if (d.crossProvider?.signaturesMatch) {
           L.push("      the provider is eliminated as the cause: it reproduced on both.");
