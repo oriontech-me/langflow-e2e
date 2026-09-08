@@ -877,6 +877,12 @@ jobs:
         env:
           LIVENESS_DIR: all-liveness
           PLAYWRIGHT_JSON: results.json
+          # #1589: the same per-shard, per-attempt overlap this step already
+          # computes for its `collateral_attempts` count, written out as
+          # identities so the `@stable` exemption can ask "did THIS attempt of
+          # THIS test overlap a measured outage on ITS shard". The merged report
+          # cannot answer that — it does not say which shard a test ran on.
+          OUTAGE_ATTEMPTS_OUT: outage-attempts.json
           # Without the expected count the reporter can only speak about shards
           # that uploaded data: "2 measured shard(s)" reads the same whether the
           # run had 2 shards or 4, so a shard whose job died before writing a
@@ -1385,6 +1391,13 @@ jobs:
           # report-backend-outages.mjs warns about ("must never be read as no
           # outage"), so unmeasured has to arrive as "" (unknown), not "false".
           backend_wedged: ${{ steps.liveness.outputs.measured == 'true' && steps.liveness.outputs.wedged || '' }}
+          # Corroboration for the widened, EARLIER-attempt half of the exemption
+          # (#1589). Unlike `backend_wedged` this one does decide, so it is
+          # deliberately fail-closed inside the script: the step above is
+          # `continue-on-error`, so this file may simply not exist, and when it
+          # does not the exemption falls back to exactly #1031's last-attempt
+          # rule rather than widening on an assumption.
+          outage_attempts: outage-attempts.json
 
       # Open the umbrella triage issue on failure — scheduled runs ONLY, aligned
       # with the history / auto-remove steps above. A manual dispatch is itself a

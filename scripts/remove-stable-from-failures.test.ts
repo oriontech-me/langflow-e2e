@@ -25,7 +25,16 @@ import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { collectHardFailures, lastFailureError } from "./remove-stable-from-failures";
+import {
+  attemptKey,
+  collectHardFailures,
+  earlierFailedAttempts,
+  lastFailureError,
+  normalizeSpecPath,
+} from "./remove-stable-from-failures";
+// The corroboration join is a string compare ACROSS two scripts in two
+// languages, so both read the ONE normaliser and this asserts they do.
+import { normalizeSpecPath as sharedNormalize } from "./lib/spec-path.mjs";
 import { classifyInfraError } from "./lib/infra-signatures";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
@@ -45,7 +54,21 @@ interface Result {
     signature: string;
     why: string;
     error: string;
+    via: "last-attempt" | "earlier-attempt";
+    attempt: number;
   }>;
+  disagreements: Array<{
+    file: string;
+    title: string;
+    line: number;
+    signature: string;
+    why: string;
+    attempt: number;
+    declined: string;
+    error: string;
+  }>;
+  corroborationMeasured: boolean;
+  corroborationUnavailable?: string;
   backendWedged: string;
 }
 
@@ -89,6 +112,18 @@ function runScript(opts: {
   reportBody?: string;
   /** The #1030 liveness verdict the action forwards; "" when unmeasured. */
   backendWedged?: string;
+  /**
+   * The collateral-attempt payload `report-backend-outages.mjs` writes (#1589),
+   * dropped into the temp dir and pointed at through `OUTAGE_ATTEMPTS`.
+   * `undefined` leaves the variable unset — the fail-closed path.
+   */
+  outageAttempts?: {
+    measured: boolean;
+    wedged?: boolean;
+    attempts: Array<{ file: string; title: string; retry: number }>;
+  };
+  /** Raw text for the corroboration file, for the malformed-input cases. */
+  outageAttemptsBody?: string;
 }): { result: Result; after: Record<string, string> } {
   const dir = makeTempDir("autoremove-");
   try {
@@ -133,6 +168,15 @@ function runScript(opts: {
       fs.writeFileSync(reportPath, JSON.stringify(report));
     }
 
+    let outageAttemptsPath = "";
+    if (opts.outageAttempts || opts.outageAttemptsBody !== undefined) {
+      outageAttemptsPath = path.join(dir, "outage-attempts.json");
+      fs.writeFileSync(
+        outageAttemptsPath,
+        opts.outageAttemptsBody ?? JSON.stringify(opts.outageAttempts),
+      );
+    }
+
     const stdout = execFileSync(
       process.execPath,
       ["--require", "ts-node/register", SCRIPT],
@@ -143,6 +187,7 @@ function runScript(opts: {
           PLAYWRIGHT_JSON: reportPath,
           MAX_AUTO_REMOVE: opts.maxAutoRemove ?? "5",
           BACKEND_WEDGED: opts.backendWedged ?? "",
+          OUTAGE_ATTEMPTS: outageAttemptsPath,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -862,4 +907,297 @@ test("end-to-end through the tests/-relative path: @stable out, @release kept", 
     assert.equal(after.includes("@stable"), false);
     assert.ok(after.includes("@release"));
   });
+});
+
+// ─── The attempt the exemption reads (#1589) ─────────────────────────────────
+//
+// Run 32827671203's shape, which is what this block exists for: shard 3 measured
+// 156 of 894 probes down across 15 outage windows as short as 6-8 s, so the
+// wedge CYCLED THROUGH the 30 s retry budget instead of burning it. Four of the
+// seven hard failures carried a transport-level signature on an earlier attempt
+// and lost it on the last — and the exemption, which reads only the last, scored
+// all seven as attributable while the umbrella's collateral block rendered empty.
+//
+// The rule that lands here is deliberately narrow: an earlier attempt exempts
+// ONLY with measured corroboration that the same attempt overlapped an outage on
+// its own shard. Every other path keeps #1031's behaviour exactly, so the removal
+// set can only ever shrink — the invariant #1031 pins.
+
+/** attempt 0 fails transport-level, attempt 1 fails with a product error. */
+function intermittentWedgeResults() {
+  return [
+    { status: "failed", retry: 0, error: { message: INFRA_ERROR } },
+    { status: "failed", retry: 1, error: { message: PRODUCT_ERROR } },
+  ];
+}
+
+test("an earlier transport-level attempt is exempt when a measured outage overlaps it", () => {
+  const { result, after } = runScript({
+    specs: { "fixture-1589-a.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-a.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: {
+      measured: true,
+      attempts: [{ file: "fixture-1589-a.spec.ts", title: "intermittent", retry: 0 }],
+    },
+  });
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].via, "earlier-attempt");
+  assert.equal(result.exempt[0].attempt, 0);
+  assert.equal(result.exempt[0].signature, "api-request-timeout");
+  assert.equal(result.attributableFailures, 0);
+  assert.deepEqual(result.disagreements, []);
+  assert.match(
+    after["fixture-1589-a.spec.ts"],
+    /tag: \["@stable"/,
+    "the tag stays — this is collateral, not per-test rot",
+  );
+});
+
+test("without corroboration the same failure stays attributable, and is NAMED", () => {
+  // Branch 3 of #1589, kept as the fallback rather than the answer: the rule
+  // does not widen, but the case is never silent again.
+  const { result, after } = runScript({
+    specs: { "fixture-1589-b.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-b.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: { measured: true, attempts: [] },
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.equal(result.attributableFailures, 1);
+  assert.equal(result.disagreements.length, 1);
+  assert.equal(result.disagreements[0].attempt, 0);
+  assert.equal(result.disagreements[0].signature, "api-request-timeout");
+  assert.match(result.disagreements[0].declined, /did not overlap any outage window/);
+  // The fixture carries a decoy `@stable` in a COMMENT, so the assertion has to
+  // be about the tag array, not about the string appearing in the file.
+  assert.doesNotMatch(
+    after["fixture-1589-b.spec.ts"],
+    /tag: \["@stable"/,
+    "the tag IS removed — reporting the disagreement is not exempting it",
+  );
+});
+
+test("corroboration for a DIFFERENT attempt of the same test does not exempt", () => {
+  // The join key is (spec, title, retry). Matching on the test alone would let
+  // an outage during another attempt launder the failing one.
+  const { result } = runScript({
+    specs: { "fixture-1589-c.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-c.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: {
+      measured: true,
+      attempts: [{ file: "fixture-1589-c.spec.ts", title: "intermittent", retry: 1 }],
+    },
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.equal(result.disagreements.length, 1);
+});
+
+test("corroboration for a different TEST in the same spec does not exempt", () => {
+  const { result } = runScript({
+    specs: { "fixture-1589-d.spec.ts": ["intermittent", "other"] },
+    failures: [
+      {
+        file: "fixture-1589-d.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: {
+      measured: true,
+      attempts: [{ file: "fixture-1589-d.spec.ts", title: "other", retry: 0 }],
+    },
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.equal(result.disagreements.length, 1);
+});
+
+test("an attempt with a PRODUCT error is not exempted however well corroborated", () => {
+  // The corroboration widens WHICH ATTEMPT may be read, never which signatures
+  // qualify. A measured outage does not make a `locator.click` timeout
+  // transport-level.
+  const { result, after } = runScript({
+    specs: { "fixture-1589-e.spec.ts": ["product"] },
+    failures: [
+      {
+        file: "fixture-1589-e.spec.ts",
+        title: "product",
+        results: [
+          { status: "failed", retry: 0, error: { message: PRODUCT_ERROR } },
+          { status: "failed", retry: 1, error: { message: PRODUCT_ERROR } },
+        ],
+      },
+    ],
+    outageAttempts: {
+      measured: true,
+      attempts: [
+        { file: "fixture-1589-e.spec.ts", title: "product", retry: 0 },
+        { file: "fixture-1589-e.spec.ts", title: "product", retry: 1 },
+      ],
+    },
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.deepEqual(result.disagreements, []);
+  assert.doesNotMatch(after["fixture-1589-e.spec.ts"], /tag: \["@stable"/);
+});
+
+test("the LAST-attempt exemption never depends on corroboration", () => {
+  // #1031's rule is untouched: a caller with no liveness step (weekly-stable)
+  // still gets it, on the very run where the backend state is least known.
+  const { result, after } = runScript({
+    specs: { "fixture-1589-f.spec.ts": ["sustained"] },
+    failures: [
+      {
+        file: "fixture-1589-f.spec.ts",
+        title: "sustained",
+        results: [
+          { status: "failed", retry: 0, error: { message: PRODUCT_ERROR } },
+          { status: "failed", retry: 1, error: { message: INFRA_ERROR } },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].via, "last-attempt");
+  assert.equal(result.corroborationMeasured, false);
+  assert.match(after["fixture-1589-f.spec.ts"], /tag: \["@stable"/);
+});
+
+test("no corroboration file at all is fail-closed, and says so", () => {
+  const { result } = runScript({
+    specs: { "fixture-1589-g.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-g.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.equal(result.disagreements.length, 1);
+  assert.match(result.disagreements[0].declined, /no corroboration file was provided/);
+  assert.match(result.corroborationUnavailable ?? "", /no corroboration file/);
+});
+
+test("a malformed corroboration file is fail-closed, and names the reason", () => {
+  // Reading it as "everything is corroborated" would widen auto-removal's reach
+  // on the one input nobody validates — the opposite of what #1031 asks.
+  const { result } = runScript({
+    specs: { "fixture-1589-h.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-h.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttemptsBody: "{ not json",
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.equal(result.disagreements.length, 1);
+  assert.match(result.corroborationUnavailable ?? "", /could not be read/);
+});
+
+test("an unmeasured run is reported as unmeasured, not as 'no outage overlapped'", () => {
+  // #1012: the absence of evidence and evidence of absence must not read alike.
+  const { result } = runScript({
+    specs: { "fixture-1589-i.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-i.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: { measured: false, attempts: [] },
+  });
+  assert.equal(result.corroborationMeasured, false);
+  assert.equal(result.disagreements.length, 1);
+  assert.match(result.disagreements[0].declined, /no shard produced liveness probes/);
+});
+
+test("the mass-failure guard still counts EVERY hard failure, exempt included", () => {
+  // #1031's invariant, re-pinned because #1589 changes what counts as exempt:
+  // netting the exempt ones out would make auto-removal strictly more
+  // aggressive than it is today.
+  const failures = Array.from({ length: 6 }, (_, i) => ({
+    file: "fixture-1589-j.spec.ts",
+    title: `t${i}`,
+    results: intermittentWedgeResults(),
+  }));
+  const { result, after } = runScript({
+    specs: { "fixture-1589-j.spec.ts": failures.map((f) => f.title) },
+    failures,
+    outageAttempts: {
+      measured: true,
+      attempts: failures.map((f) => ({ file: f.file, title: f.title, retry: 0 })),
+    },
+  });
+  assert.equal(result.status, "guard_tripped");
+  assert.equal(result.hardFailures, 6);
+  assert.equal(result.exempt.length, 6);
+  assert.equal(
+    (after["fixture-1589-j.spec.ts"].match(/tag: \["@stable"/g) || []).length,
+    6,
+  );
+});
+
+test("earlierFailedAttempts excludes the attempt lastFailureError reads", () => {
+  const testNode = {
+    results: [
+      { status: "failed", retry: 0, error: { message: INFRA_ERROR } },
+      { status: "failed", retry: 1, error: { message: PRODUCT_ERROR } },
+    ],
+  };
+  assert.equal(lastFailureError(testNode), PRODUCT_ERROR);
+  assert.deepEqual(earlierFailedAttempts(testNode), [
+    { retry: 0, error: INFRA_ERROR },
+  ]);
+});
+
+test("a skipped retry is not an attempt — it carries no error to classify", () => {
+  // The `test.describe.serial` abort shape (#1310): the real message sits on
+  // attempt 0 and the later result is a skipped attempt with nothing in it.
+  const testNode = {
+    results: [
+      { status: "failed", retry: 0, error: { message: INFRA_ERROR } },
+      { status: "skipped", retry: 1 },
+    ],
+  };
+  assert.equal(lastFailureError(testNode), INFRA_ERROR);
+  assert.deepEqual(
+    earlierFailedAttempts(testNode),
+    [],
+    "the only failed attempt IS the last one — it must not also be an earlier one",
+  );
+});
+
+test("the join key spells spec paths the way the outage reporter does", () => {
+  // The join is a string compare across two scripts in two languages; a
+  // near-miss here corroborates nothing and is invisible.
+  for (const spelling of ["./tests/a/b.spec.ts", "tests/a/b.spec.ts", "a/b.spec.ts"]) {
+    assert.equal(normalizeSpecPath(spelling), sharedNormalize(spelling));
+    assert.equal(normalizeSpecPath(spelling), "a/b.spec.ts");
+  }
+  assert.equal(
+    attemptKey("a/b.spec.ts", "t", 0),
+    ["a/b.spec.ts", "t", "0"].join("\u0000"),
+  );
 });

@@ -3,13 +3,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   MD_DELIMITER,
   attribute,
+  collateralPayload,
   collectAttempts,
   normalizeSpecPath,
   outputLines,
@@ -331,4 +332,99 @@ test("the CLI exits 0 on a malformed summary instead of failing the merge job", 
     env: { ...process.env, LIVENESS_DIR: liveness, PLAYWRIGHT_JSON: join(dir, "absent.json") },
   });
   assert.match(stdout, /reporter error \(ignored\)/);
+});
+
+// ─── Collateral attempt IDENTITIES, the exemption's corroboration (#1589) ────
+//
+// The count `collateral_attempts` was enough for a summary line, but the
+// `@stable` exemption has to ask a per-attempt question: "did THIS attempt of
+// THIS test overlap a measured outage on ITS OWN shard". Only this module can
+// answer it — the merged report never says which shard a test ran on, while a
+// shard summary's `files` list does.
+
+test("attribute carries the identity of every collateral attempt, not just its count", () => {
+  const agg = attribute([shard3, shard4], collectAttempts(report));
+  const s3 = agg.shards.find((s) => s.shard === "3");
+  assert.equal(s3.collateralIds.length, s3.collateral);
+  for (const id of s3.collateralIds) {
+    assert.equal(id.file, FILE_A);
+    assert.equal(typeof id.title, "string");
+    assert.equal(typeof id.retry, "number");
+  }
+  // The retries are distinguished: the exemption keys on (spec, title, retry),
+  // so collapsing two attempts of one test into one row would let an outage
+  // during attempt 0 corroborate attempt 1.
+  assert.deepEqual(
+    [...new Set(s3.collateralIds.map((i) => i.retry))].sort(),
+    [0, 1],
+  );
+  const s4 = agg.shards.find((s) => s.shard === "4");
+  assert.deepEqual(s4.collateralIds, [], "shard 4 had no outage to be collateral of");
+});
+
+test("collateralPayload carries `measured` so an empty list is readable", () => {
+  // #1012: "the recorder ran and nothing overlapped" is evidence; "no shard
+  // produced probes" is its absence. An empty `attempts` array alone cannot
+  // tell the consumer which one it is looking at.
+  const measuredButClean = collateralPayload(attribute([shard4], collectAttempts(report)));
+  assert.equal(measuredButClean.measured, true);
+  assert.deepEqual(measuredButClean.attempts, []);
+
+  const unmeasured = collateralPayload(attribute([], []));
+  assert.equal(unmeasured.measured, false);
+  assert.deepEqual(unmeasured.attempts, []);
+});
+
+test("collateralPayload dedups an attempt claimed by two shard summaries", () => {
+  // A re-run shard can upload a second summary listing the same files; the
+  // exemption only needs to know the attempt was corroborated once.
+  const twice = collateralPayload(
+    attribute([shard3, { ...shard3, shard: "3-rerun" }], collectAttempts(report)),
+  );
+  const keys = twice.attempts.map((a) => `${a.file}|${a.title}|${a.retry}`);
+  assert.deepEqual(keys, [...new Set(keys)]);
+});
+
+test("the CLI writes the corroboration file only when asked, and says what it wrote", () => {
+  const dir = makeTempDir("liveness-report-");
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(join(liveness, "liveness-3"), { recursive: true });
+  writeFileSync(join(liveness, "liveness-3", "backend-liveness.json"), JSON.stringify(shard3));
+  const reportPath = join(dir, "results.json");
+  writeFileSync(reportPath, JSON.stringify(report));
+  const attemptsPath = join(dir, "outage-attempts.json");
+
+  const stdout = execFileSync(process.execPath, [SCRIPT], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      LIVENESS_DIR: liveness,
+      PLAYWRIGHT_JSON: reportPath,
+      OUTAGE_ATTEMPTS_OUT: attemptsPath,
+    },
+  });
+  const payload = JSON.parse(readFileSync(attemptsPath, "utf8"));
+  assert.equal(payload.measured, true);
+  assert.equal(payload.wedged, true);
+  assert.equal(payload.attempts.length, 2);
+  assert.equal(payload.attempts[0].file, FILE_A);
+  assert.match(stdout, /wrote 2 corroborated collateral attempt\(s\)/);
+});
+
+test("without OUTAGE_ATTEMPTS_OUT the CLI writes no corroboration file at all", () => {
+  // The consumer is fail-closed on an absent file, so "not asked" must stay
+  // distinguishable from "asked and empty" — writing one unconditionally would
+  // make every caller look like it corroborated nothing.
+  const dir = makeTempDir("liveness-report-");
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(join(liveness, "liveness-3"), { recursive: true });
+  writeFileSync(join(liveness, "liveness-3", "backend-liveness.json"), JSON.stringify(shard3));
+  const reportPath = join(dir, "results.json");
+  writeFileSync(reportPath, JSON.stringify(report));
+
+  execFileSync(process.execPath, [SCRIPT], {
+    env: { ...process.env, LIVENESS_DIR: liveness, PLAYWRIGHT_JSON: reportPath },
+    stdio: "ignore",
+  });
+  assert.equal(existsSync(join(dir, "outage-attempts.json")), false);
 });

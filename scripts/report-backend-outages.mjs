@@ -67,16 +67,15 @@ const DEFAULT_MAX_WINDOWS = 12;
 // equal to it is dropped (see outputLines) so the value cannot be closed early
 // — the $GITHUB_OUTPUT equivalent of the injection guard in
 // scripts/check-run-integrity.mjs.
+import { normalizeSpecPath } from "./lib/spec-path.mjs";
+
 export const MD_DELIMITER = "LIVENESS_MD_EOF";
 
-// The merged report's spec paths are relative to Playwright's rootDir (`tests/`),
-// while matrix.files may carry either form depending on how the list was built.
-// Normalise both sides to the rootDir-relative shape.
-export function normalizeSpecPath(file) {
-  return String(file || "")
-    .replace(/^\.\//, "")
-    .replace(/^tests\//, "");
-}
+// Re-exported, not redefined: since #1589 this string is a join key shared with
+// `remove-stable-from-failures.ts`, so both read the one implementation in
+// `lib/spec-path.mjs`. Kept exported here because this module's own tests and
+// callers already import it from this path.
+export { normalizeSpecPath };
 
 export function readSummaries(dir) {
   let entries = [];
@@ -172,6 +171,16 @@ export function attribute(summaries, attempts) {
       failing: failing.length,
       collateral: collateral.length,
       collateralFiles: [...new Set(collateral.map((a) => a.file.split("/").pop()))].sort(),
+      // The IDENTITIES behind `collateral`, not just its size (#1589). The
+      // exemption in `remove-stable-from-failures.ts` needs to ask "did THIS
+      // attempt of THIS test overlap a measured outage on ITS OWN shard", and
+      // that question is only answerable here: the merged report does not say
+      // which shard a test ran on, while the shard summary's `files` list does.
+      collateralIds: collateral.map((a) => ({
+        file: a.file,
+        title: a.title,
+        retry: a.retry,
+      })),
     };
   });
 
@@ -185,6 +194,30 @@ export function attribute(summaries, attempts) {
     collateralAttempts: shards.reduce((acc, s) => acc + s.collateral, 0),
     blipsTotal: shards.reduce((acc, s) => acc + s.ignoredBlips, 0),
   };
+}
+
+/**
+ * The corroboration file the `@stable` exemption reads (#1589).
+ *
+ * `measured` travels with the list because an EMPTY list means two different
+ * things and the reader must not conflate them: "the recorder ran and no
+ * failing attempt overlapped an outage" is evidence, while "no shard produced
+ * probes" is the absence of evidence. Fail-closed on the second — the exemption
+ * simply keeps its pre-#1589 last-attempt behaviour — but it has to be able to
+ * tell (#1012).
+ */
+export function collateralPayload(agg) {
+  const attempts = [];
+  const seen = new Set();
+  for (const shard of agg.shards) {
+    for (const id of shard.collateralIds || []) {
+      const key = `${id.file}\u0000${id.title}\u0000${id.retry}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      attempts.push({ ...id, shard: shard.shard });
+    }
+  }
+  return { measured: agg.measured, wedged: agg.wedged, attempts };
 }
 
 const min = (seconds) => `${Math.round((seconds / 60) * 10) / 10} min`;
@@ -364,6 +397,19 @@ function main() {
   console.log(markdown);
   if (process.env.GITHUB_STEP_SUMMARY) {
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown + "\n");
+  }
+  // Corroboration for the `@stable` exemption (#1589), written only when a
+  // caller asks for it. It is a separate FILE rather than a step output because
+  // it is a list of attempt identities, not a scalar — and because the consumer
+  // is a TypeScript script in another step, which would otherwise have to parse
+  // a multi-line output value.
+  const attemptsOut = process.env.OUTAGE_ATTEMPTS_OUT;
+  if (attemptsOut) {
+    const payload = collateralPayload(agg);
+    fs.writeFileSync(attemptsOut, JSON.stringify(payload, null, 2) + "\n");
+    console.log(
+      `[liveness] wrote ${payload.attempts.length} corroborated collateral attempt(s) to ${attemptsOut} (measured=${payload.measured}).`,
+    );
   }
   writeOutputs(agg, markdown);
 }

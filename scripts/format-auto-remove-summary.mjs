@@ -44,7 +44,16 @@ if (exempt.length) {
   );
   lines.push("");
   for (const e of exempt) {
-    lines.push(`- \`${e.file}\` — ${e.title} _(${e.signature}: ${e.why})_`);
+    // #1589: say WHICH attempt carried the signature. An `earlier-attempt`
+    // exemption is a different claim from a `last-attempt` one — it only holds
+    // because the in-run recorder measured an outage overlapping that very
+    // attempt on its own shard — and reading the two as the same would hide
+    // that the widened branch fired at all.
+    const via =
+      e.via === "earlier-attempt"
+        ? ` _(attempt ${e.attempt}, corroborated by a measured outage overlapping it — #1589)_`
+        : "";
+    lines.push(`- \`${e.file}\` — ${e.title} _(${e.signature}: ${e.why})_${via}`);
     lines.push(`  \`${code(String(e.error).split("\n")[0])}\``);
   }
   lines.push("");
@@ -52,6 +61,31 @@ if (exempt.length) {
     "**Do not open a per-spec issue for these.** Triage the backend outage instead — start from the " +
       "backend liveness section above and the Langflow service container log (`WORKER TIMEOUT` ⇒ #1048).",
   );
+  lines.push("");
+}
+
+// #1589's cheap branch, kept as the fallback rather than as the answer: a hard
+// failure whose EARLIER attempt classified transport-level but which nothing
+// corroborated is still counted as attributable — and named here, because the
+// alternative is what run 32827671203 produced, an empty collateral block on a
+// day the recorder measured 17.4 % of probes down on the only red shard.
+const disagreements = Array.isArray(r.disagreements) ? r.disagreements : [];
+if (disagreements.length) {
+  lines.push(
+    `🕵️ **${disagreements.length} hard failure(s) carried a transport-level signature on an EARLIER attempt** ` +
+      "and were still counted as attributable, because the last attempt's error was not transport-level " +
+      "and nothing corroborated the earlier one (#1589). Look at these before clustering them as per-test rot: " +
+      "an intermittent wedge cycles through the retry budget instead of burning it, so the informative attempt " +
+      "is not always the last.",
+  );
+  lines.push("");
+  for (const d of disagreements) {
+    lines.push(
+      `- \`${d.file}\` — ${d.title} _(attempt ${d.attempt}: ${d.signature} — ${d.why})_`,
+    );
+    lines.push(`  declined: ${d.declined}`);
+    lines.push(`  \`${code(String(d.error).split("\n")[0])}\``);
+  }
   lines.push("");
 }
 

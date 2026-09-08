@@ -171,6 +171,7 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "attempts": 3,                         // total result entries (initial + retries)
       "error_signature": "...",              // first line of the last failed-result error
       "infra_signature": null,               // infra-signature id, or null — see below (#1310)
+      "infra_signature_any_attempt": null,   // same classifier over EVERY attempt — see below (#1589)
       "param": "google / gemini-2.5-flash"   // OPTIONAL: parameterization label from
                                              // the describe title, when the spec is
                                              // model-parameterized (#899). Omitted otherwise.
@@ -184,7 +185,8 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "tags": [...],
       "attempts": 2,                         // result entries; >1 means at least one retry happened
       "error_signature": "...",              // first line of the FIRST failed attempt (before the passing retry)
-      "infra_signature": null                // infra-signature id, or null — see below (#1310)
+      "infra_signature": null,               // infra-signature id, or null — see below (#1310)
+      "infra_signature_any_attempt": null    // same classifier over EVERY attempt — see below (#1589)
     }
   ],
   "run_errors": [                            // OPTIONAL: top-level report errors — see below.
@@ -236,6 +238,8 @@ The series is **not continuous**. Document any missing weeks here rather than ba
   - Written by both lanes: `daily-stable.yml` passes the resolved `needs.test.outputs.langflow_version`; `scripts/run-e2e.sh` passes the version it read off the served instance. A test in `scripts/compare-lane-verdicts.test.mjs` pins **both** writers, scoped to the appending step — `daily-stable.yml` sets the same variable in the payload step too, and a file-wide check would stay green with the history step carrying nothing.
   - **`null` means unknown, never parity.** Rows written before this field existed carry no version at all, and a reader must treat both cases as "cannot tell" — the comparator degrades to a stated `version parity UNVERIFIED` warning rather than assuming the lanes agreed.
 - `infra_signature` (additive to schema v1, #1310) is the id of the infra-signature the entry's error matched — `api-request-timeout`, `preflight-unreachable`, `connection-refused`, `connection-dropped`, `host-unresolvable` (`scripts/lib/infra-signature-patterns.json`) — or `null`. It answers one question: *was this the harness failing to reach the backend, rather than the spec failing?* A non-null value means the failure is **not attributable to the spec that reported it** — wedge collateral (#1030/#1031). `null` means "could be the spec's own", never "definitely is": the pattern list is deliberately narrow and excludes every signature a real regression also produces (`locator.click: Timeout`, `page.waitForSelector: Timeout`, `expect(...).toBeVisible()`).
+
+- `infra_signature_any_attempt` (additive to schema v1, #1589) runs the **same classifier over every failed attempt**, earliest match wins, and is `null` when none matched. `infra_signature` is unchanged — it still reads the attempt `remove-stable-from-failures.ts` reads, so the two files cannot drift about the same failure (#1310). This field exists because the last-attempt rule was chosen against a **sustained** wedge, where retries are burnt and the final attempt is the informative one; an **intermittent** wedge cycles through the retry budget instead, so a transport-level error can sit on attempt 0 and be gone by the last. On run 32827671203 that was **4 of 7** hard failures, every one recorded `infra_signature: null` — invisible to any later triage recomputing recurrence from this file. Read it as a **lead, never a verdict**: it carries no corroboration that the backend was actually down, which is exactly what separates it from the exemption decision (that lives in the run's auto-remove result, the only place with the per-attempt liveness overlap).
   - **It is classified here, at write time, not by whoever reads this file.** The classifier matches anywhere in the error message, while `error_signature` is line 1 only — and a wedge routinely surfaces as an assertion whose *cause* line carries the transport error (the `#751` credential guard being the usual wrapper in this suite). Both shapes occurred in run `30997773754`: `agent-context-id-isolation.spec.ts:512` had the transport error on line 1, `agent-context-id-continuity.spec.ts:405` had it three lines down. Only the second needs the full text, and only this script still has it.
   - Taken from the **same** result the entry's `error_signature` came from: the last failed attempt for `failures[]` (matching the exemption's "last error" wording and `scripts/remove-stable-from-failures.ts`), the first failed attempt for `flaky[]`.
   - **Rows written before #1310 omit the field entirely, and absent is not `null`.** The triage dataset falls back to classifying the stored `error_signature` for those and labels the result `error-signature-fallback`, because that answer is weaker; a row that carries the field is trusted as-is rather than re-derived downwards.
