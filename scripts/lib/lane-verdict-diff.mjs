@@ -171,6 +171,12 @@ export function pairCrossProvider(divergences) {
     groups.get(k).push(d);
   }
 
+  // A flake both lanes saw is NOT a failure both lanes saw. This file already split
+  // `agreed` into `agreed-failed`/`agreed-flaky` for that reason — one heading over
+  // both makes a reader at 09:00 count a retry as a hard failure — and the fold has
+  // to carry the same distinction or it reintroduces it one layer up.
+  const hardFailure = (a, b) => a?.status === "failed" || b?.status === "failed";
+
   const folded = new Set();
   const pairs = [];
   for (const group of groups.values()) {
@@ -207,7 +213,11 @@ export function pairCrossProvider(divergences) {
       tags: [...new Set([...(ci.tags ?? []), ...(vm.tags ?? [])])],
       ci: ci.ci,
       vm: vm.vm,
-      kind: signaturesMatch ? "cross-provider-agreed" : "cross-provider-differs",
+      kind: !signaturesMatch
+        ? "cross-provider-differs"
+        : hardFailure(ci.ci, vm.vm)
+          ? "cross-provider-failed"
+          : "cross-provider-flaky",
       crossProvider: { signaturesMatch, generic },
     });
   }
@@ -474,13 +484,16 @@ export function compareRuns({
   divergences.push(...paired);
 
   const rank = {
-    "cross-provider-agreed": 0,
+    "cross-provider-failed": 0,
     "vm-only-failed": 1,
     "ci-only-failed": 2,
     "severity-differs": 3,
     "cross-provider-differs": 4,
-    "vm-only-flaky": 5,
-    "ci-only-flaky": 6,
+    // Above the one-lane flakes — a flake reproduced on two providers says more than
+    // one lane's flake — and below every hard failure, which is the point.
+    "cross-provider-flaky": 5,
+    "vm-only-flaky": 6,
+    "ci-only-flaky": 7,
   };
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
@@ -489,8 +502,9 @@ export function compareRuns({
 }
 
 const KIND_LABEL = {
-  "cross-provider-agreed": "SAME signature on both lanes, on DIFFERENT providers (the product, not the provider)",
+  "cross-provider-failed": "SAME signature on both lanes, DIFFERENT providers, hard failure on at least one (the product, not the provider)",
   "cross-provider-differs": "same spec on both lanes, different providers AND different signatures (inconclusive)",
+  "cross-provider-flaky": "SAME signature on both lanes, DIFFERENT providers, but a RETRY passed on both (not a hard failure)",
   "vm-only-failed": "FAILED on the VM only",
   "ci-only-failed": "FAILED on Actions only",
   "severity-differs": "failed on one lane, flaky on the other",
@@ -527,12 +541,23 @@ export function renderReport(result, { sources = [] } = {}) {
 
   // Same reasoning as the version stamp above: the strongest statement the day can
   // make cannot live only inside a list a reader scrolls.
-  const crossAgreed = divergences.filter((d) => d.kind === "cross-provider-agreed");
-  if (crossAgreed.length) {
+  const crossFailed = divergences.filter((d) => d.kind === "cross-provider-failed");
+  const crossFlaky = divergences.filter((d) => d.kind === "cross-provider-flaky");
+  if (crossFailed.length) {
     L.push(
       "",
-      `!! ${crossAgreed.length} spec(s) failed the SAME way on both lanes under DIFFERENT providers.`,
+      `!! ${crossFailed.length} spec(s) FAILED the same way on both lanes under DIFFERENT providers.`,
       "   The provider is eliminated as the cause for those - read them first, they are the product.",
+    );
+  }
+  // Its own line, and it never says "failed": both lanes retried and passed. Worth the
+  // head because reproducing on two providers rules the provider out of the flake -
+  // not worth the word that would send triage looking for a red.
+  if (crossFlaky.length) {
+    L.push(
+      "",
+      `!! ${crossFlaky.length} spec(s) flaked the same way on both lanes under DIFFERENT providers.`,
+      "   A retry passed on both, so this is not a hard failure - but the provider is not the cause either.",
     );
   }
 

@@ -284,7 +284,7 @@ test("the same spec failing on two providers is ONE cross-provider entry, not tw
   );
   assert.equal(result.divergences.length, 1);
   const d = result.divergences[0];
-  assert.equal(d.kind, "cross-provider-agreed");
+  assert.equal(d.kind, "cross-provider-failed");
   assert.deepEqual(d.params, { ci: "google / gemini-3.5-flash", vm: "anthropic / claude-haiku-4-5" });
   assert.equal(d.crossProvider.signaturesMatch, true);
   // The name carries no param: the entry IS the pair, and naming one side would read
@@ -298,10 +298,10 @@ test("cross-provider agreement is stamped at the head, where it cannot be scroll
     row("daily-stable-vm", { failures: [paramFail("openai", { error_signature: "Error: X" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
   );
   const text = renderReport(result);
-  assert.match(text, /failed the SAME way on both lanes under DIFFERENT providers/);
+  assert.match(text, /FAILED the same way on both lanes under DIFFERENT providers/);
   assert.match(text, /provider is eliminated as the cause/);
   // Ranked first: the strongest statement of the day leads the list.
-  assert.equal(result.divergences[0].kind, "cross-provider-agreed");
+  assert.equal(result.divergences[0].kind, "cross-provider-failed");
 });
 
 test("different signatures across providers are INCONCLUSIVE, never 'provider-specific'", () => {
@@ -316,7 +316,7 @@ test("different signatures across providers are INCONCLUSIVE, never 'provider-sp
   assert.match(text, /do NOT establish that the provider is the cause/);
   // The head stamp belongs to agreement only — an inconclusive pair must not be
   // promoted into "the product".
-  assert.doesNotMatch(text, /failed the SAME way on both lanes/);
+  assert.doesNotMatch(text, /FAILED the same way on both lanes/);
 });
 
 test("a shared signature that is only an assertion shell is a LEAD, not a confirmation", () => {
@@ -342,6 +342,39 @@ test("an ANSI-wrapped assertion shell is still recognised as a shell", () => {
   // every real row through as if it carried a cause.
   const wrapped = "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22mexpected)";
   assert.equal(isGenericSignature(wrapped), true);
+});
+
+test("a pair that only FLAKED on both providers is never stamped as a failure (Copilot, PR 1767)", () => {
+  // The stamp used to say "failed the SAME way … they are the product" over two
+  // retries that passed. This file already split `agreed` into failed/flaky because
+  // one heading over both makes a reader at 09:00 count a retry as a hard failure;
+  // the fold reintroduced exactly that, one layer up. Reproduced before fixing.
+  const result = compare(
+    row("daily-stable", { flaky: [paramFail("google", { error_signature: "Error: boom" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+    row("daily-stable-vm", { flaky: [paramFail("anthropic", { error_signature: "Error: boom" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+  );
+  assert.equal(result.divergences.length, 1);
+  assert.equal(result.divergences[0].kind, "cross-provider-flaky");
+  const text = renderReport(result);
+  assert.doesNotMatch(text, /FAILED the same way/);
+  assert.match(text, /flaked the same way on both lanes under DIFFERENT providers/);
+  assert.match(text, /not a hard failure/);
+});
+
+test("a pair that failed on one lane and flaked on the other counts as a hard failure", () => {
+  // Mixed severity reaches the fold — both kinds are one-sided entries — and the side
+  // that failed is what decides. Silence about it would be the same overclaim pointed
+  // the other way: a real red ranked among the retries.
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: "Error: boom" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { flaky: [paramFail("anthropic", { error_signature: "Error: boom" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+  );
+  assert.equal(result.divergences[0].kind, "cross-provider-failed");
+  const text = renderReport(result);
+  assert.match(text, /FAILED the same way/);
+  // Both statuses printed: the reader has to be able to see it was mixed.
+  assert.match(text, /Actions \[google\] failed:/);
+  assert.match(text, /VM\s+\[anthropic\] flaky:/);
 });
 
 test("the folded entry carries the tags of BOTH sides, not the CI side's empty array (Copilot, PR 1767)", () => {
@@ -388,7 +421,7 @@ test("a spec parameterized on one lane only still folds, and the report names th
     row("daily-stable-vm", { failures: [paramFail(undefined, { error_signature: "Error: X" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
   );
   assert.equal(result.divergences.length, 1);
-  assert.equal(result.divergences[0].kind, "cross-provider-agreed");
+  assert.equal(result.divergences[0].kind, "cross-provider-failed");
   assert.match(renderReport(result), /VM\s+\[no param\]/);
 });
 
