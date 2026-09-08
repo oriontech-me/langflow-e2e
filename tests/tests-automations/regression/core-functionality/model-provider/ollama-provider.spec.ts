@@ -8,6 +8,10 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import {
+  addComponentFromSidebar,
+  dragComponentFromSidebar,
+} from "../../../../helpers/flows/add-component-from-sidebar";
 import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
 import {
   assertNodeConfigHeld,
@@ -286,24 +290,33 @@ test.describe("Ollama Provider", () => {
 
           await expect(page.getByTestId("sidebar-search-input")).toBeVisible({ timeout: 30000 });
 
-          await page.getByTestId("sidebar-search-input").fill("chat output");
-          await page.waitForSelector('[data-testid="input_outputChat Output"]', { timeout: 30000 });
-          await page.getByTestId("input_outputChat Output").hover();
-          await page.getByTestId("add-component-button-chat-output").click();
+          // All three adds go through the repaired helpers rather than a bare
+          // fill + waitForSelector (#1304/#1518/#1335). Measured while gating
+          // this test's `@stable` restoration: 1 of 15 consecutive `manual.yml`
+          // dispatches on 1.13.0.dev5 died here at 30 s waiting for
+          // `input_outputChat Output` to be visible, and the failure snapshot
+          // shows why it is not a slow sidebar — the search box was EMPTY and
+          // the category list back to its collapsed default, so the typed term
+          // was wiped by the sidebar's own mount and the entry never rendered.
+          // A second identical fill repairs that; a longer timeout cannot,
+          // because nothing is in flight to wait for.
+          await addComponentFromSidebar(
+            page,
+            "chat output",
+            "add-component-button-chat-output",
+          );
           await zoomOut(page, 2);
 
-          await page.getByTestId("sidebar-search-input").fill("chat input");
-          await page.waitForSelector('[data-testid="input_outputChat Input"]', { timeout: 30000 });
-          await page
-            .getByTestId("input_outputChat Input")
-            .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-              targetPosition: { x: 100, y: 100 },
-            });
+          // Dragged, not clicked, deliberately: dragging a component out of the
+          // sidebar is a gesture Langflow ships and the drop surface is swallowed
+          // independently of the click one (#1335).
+          await dragComponentFromSidebar(
+            page,
+            "chat input",
+            "input_outputChat Input",
+          );
 
-          await page.getByTestId("sidebar-search-input").fill("ollama");
-          await page.waitForSelector('[data-testid="ollamaOllama"]', { timeout: 30000 });
-          await page.getByTestId("ollamaOllama").hover();
-          await page.getByTestId("add-component-button-ollama").click();
+          await addComponentFromSidebar(page, "ollama", "add-component-button-ollama");
 
           await adjustScreenView(page);
           await expect(page.locator(".react-flow__node")).toHaveCount(3, { timeout: 10000 });
