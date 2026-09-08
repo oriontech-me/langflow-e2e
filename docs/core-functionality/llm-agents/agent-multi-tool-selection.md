@@ -394,9 +394,9 @@ tools in the wrong order, fails).
   reproduce it, and `langflow-ai/langflow#14489` makes the scenario much harder
   to reach from `dev25` on), and now backed by the fixture rather than standing
   alone. And the fixture gates a verdict it **reaches**: a run it could not read
-  — a cancelled stream, an unreadable body, an unwatched v2 surface, or the
-  deliberate provider-outage downgrade — is reported as *unevaluated* and fails
-  nothing. The accessor this paragraph used to call for now exists:
+  — a cancelled stream, an unreadable or empty body, an unwatched v2 surface, or
+  the deliberate provider-outage downgrade — is reported as *unevaluated* and
+  fails nothing. The accessor this paragraph used to call for now exists:
   `page.flowErrorReport()` (#1452), whose `clean` is true only when a verdict
   was reached for every run in the test and all of them were clean. Adopting it
   in this spec needs a validated run against a live provider, so it is a

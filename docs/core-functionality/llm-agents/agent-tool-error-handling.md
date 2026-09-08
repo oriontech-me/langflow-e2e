@@ -110,10 +110,10 @@ machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.t
 7. No `allowFlowErrors`: a flow error the fixture reaches a verdict on fails
    the test (v1, and v2 since #1165), which is most of the "handled without
    crashing" guarantee — but not all of it, and the gap is worth knowing here
-   because this test's contract IS that guarantee. Four paths reach no verdict
-   at all (a cancelled stream, an unreadable body, an unwatched v2 surface) plus
-   the deliberate provider-outage downgrade; each is printed as *"unknown, not
-   clean"* and leaves the test green. `page.flowErrorReport()` closes that
+   because this test's contract IS that guarantee. Several paths reach no
+   verdict at all — a cancelled stream, a body it could not read, an empty body,
+   an unwatched v2 surface, and the deliberate provider-outage downgrade — and
+   each is printed as *"unknown, not clean"* before leaving the test green. `page.flowErrorReport()` closes that
    (#1452) — `expect(report.clean, report.summary).toBe(true)` asserts a verdict
    was REACHED and was clean. Adopting it here needs a validated run against a
    live provider, so it is a follow-up rather than part of #1452.

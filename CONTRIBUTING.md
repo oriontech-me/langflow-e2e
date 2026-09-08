@@ -353,7 +353,10 @@ expect(report.clean, report.summary).toBe(true);
 ```
 
 `clean` is true only when every run stream in the test was evaluated and none of them
-failed — an unevaluated run is not clean. Call it **after** the run has finished (a stream
+failed — an unevaluated run is not clean. It also requires `v2Watched`, and that is the
+half worth knowing mid-test: with no CDP session the unevaluated count is still **empty**
+until teardown, so `v2Watched` is the only thing keeping the report from reading clean at
+the moment a spec asks. `summary` always names whichever reason applied. Call it **after** the run has finished (a stream
 still open is reported as `pending`, which is not clean either; it does not wait, because
 nothing can know whether a given stream will close). It is read-only and NOT a hatch:
 `allowFlowErrors()` suppresses the gate, it does not empty the report, so a spec can
