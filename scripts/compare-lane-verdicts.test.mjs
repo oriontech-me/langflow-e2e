@@ -32,6 +32,8 @@ import {
   parseHistory,
   mergeEntries,
   testKey,
+  specKey,
+  isGenericSignature,
   selectRuns,
   indexOutcomes,
   compareRuns,
@@ -243,6 +245,150 @@ test("VM-only failures sort above Actions-only ones, because they are the lane u
     result.divergences.map((d) => d.kind),
     ["vm-only-failed", "ci-only-failed"],
   );
+});
+
+// ---------------------------------------------------------------------------
+// The provider split (#1766)
+// ---------------------------------------------------------------------------
+// What these protect. The day's provider is resolved at RUN TIME, so the two lanes can
+// pin different ones on the same morning — on 2026-09-08 Actions landed on google and
+// the VM on anthropic, because the shared Anthropic balance drained between the two
+// runs. Keyed with the param, one spec then becomes two identities and a failure BOTH
+// lanes saw is reported as two one-sided differences: a false negative in the one class
+// this comparator exists to find. That morning the report printed
+// `Flaky on BOTH lanes: 0` while holding the evidence of a spec that flaked on both.
+//
+// The second thing they protect is the reading of the fold. Agreement across two
+// providers eliminates the provider as the cause. DISAGREEMENT establishes nothing —
+// the implication runs one way only — and a bucket that reads as "provider-specific,
+// dismissed" would turn this file into a way of losing defects.
+
+const paramFail = (param, over = {}) =>
+  fail({ test: "agent interaction suite", file: "tests-automations/regression/core-functionality/llm-agents/agent-component-regression.spec.ts", param, ...over });
+
+test("specKey drops the parameterization that testKey keeps", () => {
+  assert.notEqual(testKey(paramFail("google")), testKey(paramFail("anthropic")));
+  assert.equal(specKey(paramFail("google")), specKey(paramFail("anthropic")));
+});
+
+test("the same spec failing on two providers is ONE cross-provider entry, not two one-sided ones", () => {
+  const result = compare(
+    row("daily-stable", {
+      failures: [paramFail("google / gemini-3.5-flash", { error_signature: "Error: the agent never answered" })],
+      totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 },
+    }),
+    row("daily-stable-vm", {
+      failures: [paramFail("anthropic / claude-haiku-4-5", { error_signature: "Error: the agent never answered" })],
+      totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 },
+    }),
+  );
+  assert.equal(result.divergences.length, 1);
+  const d = result.divergences[0];
+  assert.equal(d.kind, "cross-provider-agreed");
+  assert.deepEqual(d.params, { ci: "google / gemini-3.5-flash", vm: "anthropic / claude-haiku-4-5" });
+  assert.equal(d.crossProvider.signaturesMatch, true);
+  // The name carries no param: the entry IS the pair, and naming one side would read
+  // as the other side being absent.
+  assert.doesNotMatch(d.name, /gemini|claude/);
+});
+
+test("cross-provider agreement is stamped at the head, where it cannot be scrolled past", () => {
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: "Error: X" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("openai", { error_signature: "Error: X" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  const text = renderReport(result);
+  assert.match(text, /failed the SAME way on both lanes under DIFFERENT providers/);
+  assert.match(text, /provider is eliminated as the cause/);
+  // Ranked first: the strongest statement of the day leads the list.
+  assert.equal(result.divergences[0].kind, "cross-provider-agreed");
+});
+
+test("different signatures across providers are INCONCLUSIVE, never 'provider-specific'", () => {
+  const result = compare(
+    row("daily-stable", { flaky: [paramFail("google", { error_signature: "Error: MODEL_TOGGLE_WRITE_STALLED" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+    row("daily-stable-vm", { flaky: [paramFail("anthropic", { error_signature: "Error: credential never settled" })], totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 } }),
+  );
+  assert.equal(result.divergences.length, 1);
+  assert.equal(result.divergences[0].kind, "cross-provider-differs");
+  const text = renderReport(result);
+  assert.match(text, /INCONCLUSIVE/);
+  assert.match(text, /do NOT establish that the provider is the cause/);
+  // The head stamp belongs to agreement only — an inconclusive pair must not be
+  // promoted into "the product".
+  assert.doesNotMatch(text, /failed the SAME way on both lanes/);
+});
+
+test("a shared signature that is only an assertion shell is a LEAD, not a confirmation", () => {
+  const shell = "Error: expect(received).toBe(expected) // Object.is equality";
+  assert.equal(isGenericSignature(shell), true);
+  assert.equal(isGenericSignature("Error: expect(received).not.toBeNull()"), true);
+  // Carries a cause of its own, so it is not a shell.
+  assert.equal(isGenericSignature("Error: Agent credential never settled (#751 guard)"), false);
+
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: shell })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail("openai", { error_signature: shell })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences[0].crossProvider.generic, true);
+  const text = renderReport(result);
+  assert.match(text, /LEAD, not a confirmation \(#1626\)/);
+  assert.match(text, /expected\/received pair/);
+});
+
+test("an ANSI-wrapped assertion shell is still recognised as a shell", () => {
+  // The rows carry raw escapes: the shells in reports/daily-history.jsonl look like
+  // `Error: \u001b[2mexpect(\u001b[22m…`. Matching the plain string only would let
+  // every real row through as if it carried a cause.
+  const wrapped = "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22mexpected)";
+  assert.equal(isGenericSignature(wrapped), true);
+});
+
+test("three one-sided entries for one spec do NOT fold: which pairs with which is a guess", () => {
+  const result = compare(
+    row("daily-stable", {
+      failures: [paramFail("google"), paramFail("openai")],
+      totals: { passed: 8, failed: 2, flaky: 0, skipped: 2 },
+    }),
+    row("daily-stable-vm", { failures: [paramFail("anthropic")], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences.length, 3);
+  assert.equal(result.divergences.filter((d) => d.kind.startsWith("cross-provider")).length, 0);
+});
+
+test("two one-sided entries from the SAME lane are not a pair", () => {
+  const result = compare(
+    row("daily-stable", {
+      failures: [paramFail("google"), paramFail("openai")],
+      totals: { passed: 8, failed: 2, flaky: 0, skipped: 2 },
+    }),
+    row("daily-stable-vm"),
+  );
+  assert.equal(result.divergences.length, 2);
+  assert.deepEqual(result.divergences.map((d) => d.kind), ["ci-only-failed", "ci-only-failed"]);
+});
+
+test("a spec parameterized on one lane only still folds, and the report names the empty side", () => {
+  // Real shape: the VM's catalog was frozen empty, so its variant carries no param
+  // while the Actions one does. Refusing to fold here would report the same spec twice.
+  const result = compare(
+    row("daily-stable", { failures: [paramFail("google", { error_signature: "Error: X" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [paramFail(undefined, { error_signature: "Error: X" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences.length, 1);
+  assert.equal(result.divergences[0].kind, "cross-provider-agreed");
+  assert.match(renderReport(result), /VM\s+\[no param\]/);
+});
+
+test("pairing leaves an unparameterized one-sided failure alone", () => {
+  // The traces family carries no param, and the VM fails all of it every day while
+  // Actions passes it. Folding anything there would erase divergence nº 4.
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", { failures: [fail()], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  assert.equal(result.divergences.length, 1);
+  assert.equal(result.divergences[0].kind, "vm-only-failed");
 });
 
 // ---------------------------------------------------------------------------

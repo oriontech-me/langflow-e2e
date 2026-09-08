@@ -88,6 +88,129 @@ export function describeTest(entry) {
 }
 
 /**
+ * The identity of a SPEC across the two lanes, with the parameterization dropped.
+ *
+ * `testKey` is right for the diff and wrong for one question. The day's provider is
+ * resolved AT RUN TIME by `select-daily-model-target.mjs`, which walks forward from the
+ * weekday's slot past whatever `collect-models` probed inactive. So the two lanes can
+ * pin DIFFERENT providers on the same morning — and did on 2026-09-08: Actions landed
+ * on google and the VM on anthropic, because the shared Anthropic balance drained
+ * between 08:04 and 12:41. Every provider-parametrized spec then carries a different
+ * `param` on each side, keys as two identities, and lands in the report as two
+ * one-sided differences.
+ *
+ * That is a FALSE NEGATIVE in the class this comparator exists to find. On that day the
+ * `agent-component-regression` suite flaked on BOTH lanes and the report printed
+ * `Flaky on BOTH lanes: 0`. It held the evidence and could not say it.
+ *
+ * And the pairing is worth more than a corrected count: a failure that reproduces on
+ * gemini AND on claude has ELIMINATED the provider as its cause, by construction.
+ * Cross-provider agreement is STRONGER evidence of a product defect than agreement on
+ * one provider — and the rotation already buys it, at no extra cost.
+ */
+export function specKey(entry) {
+  // Same separator, same reason as testKey: joined with nothing, a file ending in a
+  // title's first characters could collide with another pair.
+  return [entry?.file ?? "", entry?.test ?? ""].join("\u0001");
+}
+
+/**
+ * Does this signature carry a cause, or is it an assertion shell?
+ *
+ * `expect(received).toBe(expected)` is the most generic string this suite produces and
+ * establishes NOTHING about same-causeness on its own (#1626). Triage settles recurrence
+ * by reading the expected/received pair out of `results.json`; a history row carries
+ * only the signature. So a match between two shells is a LEAD and has to say so — #1759,
+ * filed the same week, rests its entire "why these are one cause" section on the pair
+ * and explicitly not on the signature.
+ *
+ * Deliberately narrow: an `Error: expect(...)` prefix and nothing else. Anything with a
+ * message of its own — the guards naming #751, the tracing precondition, a timeout
+ * naming its URL — carries a cause and is not a shell.
+ */
+export function isGenericSignature(signature) {
+  if (!signature) return false;
+  const bare = String(signature)
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .trim();
+  return /^Error:\s*expect\(received\)\s*\.\s*(not\s*\.\s*)?[A-Za-z]+\s*\(/.test(bare);
+}
+
+/**
+ * Fold one-sided differences that are the SAME spec on different providers into one
+ * cross-provider entry.
+ *
+ * Only an exact pair folds — one entry from each lane. Three or more one-sided entries
+ * for one spec means a lane ran two parameterizations of it, and which pairs with which
+ * is then a guess; the honest outcome is to leave them alone rather than invent a
+ * pairing the row cannot support.
+ *
+ * The fold does NOT decide whether the provider was the cause. It produces two kinds:
+ *
+ *  - `cross-provider-agreed`   same signature on both providers. The provider is
+ *                              eliminated as the cause: this is the product. Ranked
+ *                              first, because it is the strongest thing this file can
+ *                              say and it must not be scrolled past.
+ *  - `cross-provider-differs`  different signatures. INCONCLUSIVE, and the label says
+ *                              so. The implication only runs one way — a
+ *                              provider-independent cause makes both lanes break, but
+ *                              a provider-DEPENDENT surface does not follow from
+ *                              disagreement: providers differ in latency, tool-call
+ *                              format and response shape, so a genuine Langflow defect
+ *                              can surface on one and not the other. Reading this
+ *                              bucket as "provider-specific, dismissed" would turn the
+ *                              instrument into a way of losing defects.
+ */
+export function pairCrossProvider(divergences) {
+  const ONE_SIDED = /^(ci|vm)-only-(failed|flaky)$/;
+  const groups = new Map();
+  for (const d of divergences) {
+    if (!ONE_SIDED.test(d.kind)) continue;
+    const k = specKey(d);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(d);
+  }
+
+  const folded = new Set();
+  const pairs = [];
+  for (const group of groups.values()) {
+    if (group.length !== 2) continue;
+    const ci = group.find((d) => d.kind.startsWith("ci-"));
+    const vm = group.find((d) => d.kind.startsWith("vm-"));
+    if (!ci || !vm) continue; // both from the same lane: not a pair
+    const ciParam = ci.param ?? null;
+    const vmParam = vm.param ?? null;
+    // Identical params cannot key differently, so reaching here with both null would
+    // mean the exact diff already had them as one entry.
+    if (ciParam === vmParam) continue;
+    if (!ciParam && !vmParam) continue;
+
+    const ciErr = ci.ci?.error ?? null;
+    const vmErr = vm.vm?.error ?? null;
+    const signaturesMatch = Boolean(ciErr) && Boolean(vmErr) && ciErr === vmErr;
+    const generic = signaturesMatch && isGenericSignature(ciErr);
+
+    folded.add(ci);
+    folded.add(vm);
+    pairs.push({
+      key: specKey(ci),
+      name: describeTest({ file: ci.file, test: ci.test }),
+      file: ci.file ?? null,
+      test: ci.test ?? null,
+      param: null,
+      params: { ci: ciParam, vm: vmParam },
+      tags: ci.tags ?? vm.tags ?? [],
+      ci: ci.ci,
+      vm: vm.vm,
+      kind: signaturesMatch ? "cross-provider-agreed" : "cross-provider-differs",
+      crossProvider: { signaturesMatch, generic },
+    });
+  }
+
+  return [...divergences.filter((d) => !folded.has(d)), ...pairs];
+}
+
+/**
  * Merge several history files into one entry list.
  *
  * THE TWO LANES DO NOT SHARE A FILE, and assuming they did was a real defect.
@@ -339,12 +462,20 @@ export function compareRuns({
     divergences.push({ ...common, kind: `${only}-only-${status}` });
   }
 
+  // Fold the provider-split pairs BEFORE ranking, so the strongest entry the day can
+  // produce is ranked as what it is instead of as two one-sided flakes.
+  const paired = pairCrossProvider(divergences);
+  divergences.length = 0;
+  divergences.push(...paired);
+
   const rank = {
-    "vm-only-failed": 0,
-    "ci-only-failed": 1,
-    "severity-differs": 2,
-    "vm-only-flaky": 3,
-    "ci-only-flaky": 4,
+    "cross-provider-agreed": 0,
+    "vm-only-failed": 1,
+    "ci-only-failed": 2,
+    "severity-differs": 3,
+    "cross-provider-differs": 4,
+    "vm-only-flaky": 5,
+    "ci-only-flaky": 6,
   };
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
@@ -353,6 +484,8 @@ export function compareRuns({
 }
 
 const KIND_LABEL = {
+  "cross-provider-agreed": "SAME signature on both lanes, on DIFFERENT providers (the product, not the provider)",
+  "cross-provider-differs": "same spec on both lanes, different providers AND different signatures (inconclusive)",
   "vm-only-failed": "FAILED on the VM only",
   "ci-only-failed": "FAILED on Actions only",
   "severity-differs": "failed on one lane, flaky on the other",
@@ -387,6 +520,17 @@ export function renderReport(result, { sources = [] } = {}) {
     );
   }
 
+  // Same reasoning as the version stamp above: the strongest statement the day can
+  // make cannot live only inside a list a reader scrolls.
+  const crossAgreed = divergences.filter((d) => d.kind === "cross-provider-agreed");
+  if (crossAgreed.length) {
+    L.push(
+      "",
+      `!! ${crossAgreed.length} spec(s) failed the SAME way on both lanes under DIFFERENT providers.`,
+      "   The provider is eliminated as the cause for those - read them first, they are the product.",
+    );
+  }
+
   const pushWarnings = () => {
     if (!warnings.length) return;
     L.push("", "Narrowed by:");
@@ -417,6 +561,27 @@ export function renderReport(result, { sources = [] } = {}) {
         L.push(`  ${KIND_LABEL[kind] ?? kind}:`);
       }
       L.push(`    ${d.name}`);
+      if (d.kind.startsWith("cross-provider")) {
+        // Both sides always, and the provider named on each: the whole content of the
+        // entry is that these two runs are the same spec under different providers.
+        L.push(`      Actions [${d.params.ci ?? "no param"}] ${d.ci?.status ?? "?"}: ${d.ci?.error ?? "(no signature)"}`);
+        L.push(`      VM      [${d.params.vm ?? "no param"}] ${d.vm?.status ?? "?"}: ${d.vm?.error ?? "(no signature)"}`);
+        if (d.crossProvider?.generic) {
+          L.push(
+            "      the shared signature is an assertion shell, so this is a LEAD, not a confirmation (#1626):",
+            "      read the expected/received pair out of each run's results.json before calling it one cause.",
+          );
+        } else if (d.crossProvider?.signaturesMatch) {
+          L.push("      the provider is eliminated as the cause: it reproduced on both.");
+        } else {
+          L.push(
+            "      INCONCLUSIVE - different signatures do NOT establish that the provider is the cause;",
+            "      providers differ in latency, tool-call format and response shape, so one Langflow defect",
+            "      can surface on one and not the other.",
+          );
+        }
+        continue;
+      }
       const err = d.vm?.error ?? d.ci?.error;
       if (err) L.push(`      ${err}`);
       if (d.kind === "severity-differs") L.push(`      Actions: ${d.ci.status} | VM: ${d.vm.status}`);
