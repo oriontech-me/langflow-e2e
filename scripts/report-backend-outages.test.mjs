@@ -428,3 +428,50 @@ test("without OUTAGE_ATTEMPTS_OUT the CLI writes no corroboration file at all", 
   });
   assert.equal(existsSync(join(dir, "outage-attempts.json")), false);
 });
+
+test("collateralPayload says which SPECS were measured, not only whether any shard was", () => {
+  // `measured` is run-level. A consumer printing a per-shard sentence from it
+  // claims the recorder measured a shard that uploaded nothing, whenever some
+  // other shard did — the #1012 conflation this field exists to end.
+  const silentShard = { ...shard4, shard: "5", files: [FILE_B], measured: false };
+  const payload = collateralPayload(
+    attribute([shard3, silentShard], collectAttempts(report)),
+  );
+  assert.equal(payload.measured, true, "shard 3 did produce probes");
+  assert.equal(payload.specMeasured[FILE_A], true);
+  assert.equal(
+    payload.specMeasured[FILE_B],
+    false,
+    "the shard that ran FILE_B produced none, and the payload has to say so",
+  );
+  assert.equal(payload.reportRead, true);
+});
+
+test("a spec claimed by two shards counts as measured if EITHER measured it", () => {
+  const payload = collateralPayload(
+    attribute(
+      [
+        { ...shard3, shard: "6", files: [FILE_A], measured: false },
+        { ...shard3, files: [FILE_A] },
+      ],
+      collectAttempts(report),
+    ),
+  );
+  assert.equal(payload.specMeasured[FILE_A], true);
+});
+
+test("collateralPayload records whether the merged report was readable at all", () => {
+  // With no report there are zero attempts, so an empty list is the absence of
+  // a check rather than its result.
+  const payload = collateralPayload(attribute([shard3], collectAttempts(null)), {
+    reportRead: false,
+  });
+  assert.equal(payload.reportRead, false);
+  assert.deepEqual(payload.attempts, []);
+});
+
+test("each collateral attempt names the shard that measured it", () => {
+  const payload = collateralPayload(attribute([shard3], collectAttempts(report)));
+  assert.ok(payload.attempts.length > 0);
+  for (const a of payload.attempts) assert.equal(a.shard, "3");
+});

@@ -21,13 +21,25 @@
 //
 // #1031 settled the tag decision elsewhere for exactly that reason: it exempts a
 // failure from @stable auto-removal on its OWN error signature (a transport-level
-// error is never a product assertion — scripts/lib/infra-signatures.ts), not on
-// overlap with these windows. The only value that crosses over is the `wedged`
-// output, which the auto-remove action uses to word its exemption.
+// error is never a product assertion — scripts/lib/infra-signatures.ts), and the
+// LAST-attempt half of that rule still never looks at these windows.
 //
-// This step REPORTS. It never fails the run and never gates the @stable tag: a
-// missing artifact yields `measured=false`, which must never be read as "no
-// wedge happened" — the distinction a silent diagnostic would erase.
+// SINCE #1589 THAT IS NO LONGER THE WHOLE STORY, and reading the paragraph above
+// as "the overlap never gates a tag" is now wrong. The last-attempt rule was
+// chosen against a sustained wedge, which burns the retries; an intermittent one
+// cycles THROUGH them, and on run 32827671203 four of seven hard failures carried
+// a transport-level signature on an earlier attempt and lost it on the last. An
+// earlier attempt may now be exempted, and the ONLY thing that licenses it is a
+// measured overlap computed here — so two values cross over, not one: the
+// `wedged` output (wording), and `OUTAGE_ATTEMPTS_OUT`'s attempt list (deciding).
+// The coin-flip caveat above is why that half also requires the attempt's own
+// error to be transport-level: the overlap widens which attempt may be read, it
+// never makes a product assertion into a transport error.
+//
+// This step still REPORTS and never fails the run. What it must not do is let a
+// missing artifact read as "no wedge happened" — hence `measured`, `specMeasured`
+// and `reportRead` in the payload, so the consumer can tell an absent measurement
+// from a measured absence.
 //
 // "Never fails the run" is ENFORCED, not merely intended: the entry point below
 // swallows every throw, and the workflow step carries continue-on-error. Both
@@ -181,6 +193,12 @@ export function attribute(summaries, attempts) {
         title: a.title,
         retry: a.retry,
       })),
+      // The spec paths this shard claims. Carried so `collateralPayload` can
+      // say whether the shard that ran a given spec was measured at all —
+      // `measured` at the top level is "ANY shard produced probes", and a
+      // consumer that prints a per-shard sentence from it states
+      // evidence-of-absence over a shard nobody measured (#1589).
+      files: [...own],
     };
   });
 
@@ -199,17 +217,36 @@ export function attribute(summaries, attempts) {
 /**
  * The corroboration file the `@stable` exemption reads (#1589).
  *
- * `measured` travels with the list because an EMPTY list means two different
- * things and the reader must not conflate them: "the recorder ran and no
- * failing attempt overlapped an outage" is evidence, while "no shard produced
- * probes" is the absence of evidence. Fail-closed on the second — the exemption
- * simply keeps its pre-#1589 last-attempt behaviour — but it has to be able to
- * tell (#1012).
+ * An EMPTY attempt list means two different things and the reader must never
+ * conflate them: "the recorder ran and no failing attempt overlapped an outage"
+ * is evidence, while "nothing was measured" is its absence (#1012).
+ *
+ * `measured` alone cannot carry that distinction, and the first version of this
+ * function shipped believing it could. It is a RUN-level flag — "any shard
+ * produced probes" — while the consumer prints a per-SHARD sentence from it, so
+ * a run where shard 1 uploaded a clean summary and shard 2 uploaded nothing had
+ * the umbrella say "the recorder measured this shard and this attempt did not
+ * overlap any outage window" about a failure on the shard nobody measured. That
+ * is the exact conflation `daily-stable.yml`'s `backend_wedged` gate guards
+ * against one level up, and it is reachable: `Download shard liveness data` is
+ * `continue-on-error`.
+ *
+ * So `specMeasured` travels too: per spec path, whether the shard that CLAIMS
+ * it produced probes. A spec absent from that map is on no shard summary at
+ * all, which is a third state again. And `reportRead` says whether the merged
+ * report was even parseable — with `collectAttempts(null)` the overlap is not
+ * "found to be absent", it was never computed.
  */
-export function collateralPayload(agg) {
+export function collateralPayload(agg, { reportRead = true } = {}) {
   const attempts = [];
   const seen = new Set();
+  const specMeasured = {};
   for (const shard of agg.shards) {
+    for (const file of shard.files || []) {
+      // A spec claimed by two summaries counts as measured if EITHER measured
+      // it: the question is whether any probe covers it, not how many do.
+      specMeasured[file] = (specMeasured[file] ?? false) || shard.measured;
+    }
     for (const id of shard.collateralIds || []) {
       const key = `${id.file}\u0000${id.title}\u0000${id.retry}`;
       if (seen.has(key)) continue;
@@ -217,7 +254,13 @@ export function collateralPayload(agg) {
       attempts.push({ ...id, shard: shard.shard });
     }
   }
-  return { measured: agg.measured, wedged: agg.wedged, attempts };
+  return {
+    measured: agg.measured,
+    wedged: agg.wedged,
+    reportRead,
+    specMeasured,
+    attempts,
+  };
 }
 
 const min = (seconds) => `${Math.round((seconds / 60) * 10) / 10} min`;
@@ -405,7 +448,7 @@ function main() {
   // a multi-line output value.
   const attemptsOut = process.env.OUTAGE_ATTEMPTS_OUT;
   if (attemptsOut) {
-    const payload = collateralPayload(agg);
+    const payload = collateralPayload(agg, { reportRead: report !== null });
     fs.writeFileSync(attemptsOut, JSON.stringify(payload, null, 2) + "\n");
     console.log(
       `[liveness] wrote ${payload.attempts.length} corroborated collateral attempt(s) to ${attemptsOut} (measured=${payload.measured}).`,

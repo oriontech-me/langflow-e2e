@@ -116,6 +116,13 @@ interface Failure {
    * test that failed once.
    */
   earlierAttempts: AttemptError[];
+  /**
+   * `result.retry` of the attempt `error` came from. Read from the report
+   * rather than derived from `earlierAttempts.length` — the two differ whenever
+   * the report omits `retry` or interleaves a skipped result, and the JSDoc on
+   * `Exempt.attempt` promises a retry index, not a count.
+   */
+  lastAttemptRetry: number;
 }
 
 /** One failed attempt of a test: which retry it was, and its full error text. */
@@ -300,6 +307,14 @@ export function earlierFailedAttempts(test: any): AttemptError[] {
     .map((r) => ({ retry: Number(r?.retry) || 0, error: attemptErrorText(r) }));
 }
 
+/** `result.retry` of the attempt `lastFailureError` reads; 0 when there is none. */
+export function lastFailedAttemptRetry(test: any): number {
+  const results: any[] = Array.isArray(test?.results) ? test.results : [];
+  const failed = failedResults(test);
+  const lastFailed = failed[failed.length - 1] ?? results[results.length - 1];
+  return Number(lastFailed?.retry) || 0;
+}
+
 export function collectHardFailures(reportFile: string): Failure[] {
   if (!fs.existsSync(reportFile)) return [];
   let report: any;
@@ -335,6 +350,7 @@ export function collectHardFailures(reportFile: string): Failure[] {
             line,
             error: lastFailureError(t),
             earlierAttempts: earlierFailedAttempts(t),
+            lastAttemptRetry: lastFailedAttemptRetry(t),
           });
         }
       }
@@ -351,17 +367,37 @@ export { normalizeSpecPath };
 
 export interface Corroboration {
   /**
-   * Whether any shard produced liveness probes at all. FALSE is the absence of
-   * evidence, not evidence of absence, and the two must not read alike (#1012)
-   * — so an unmeasured run keeps the pre-#1589 last-attempt behaviour and says
-   * so, rather than declining the widened exemption as if it had checked.
+   * Whether ANY shard produced liveness probes. Run-level, so it can never
+   * justify a per-shard sentence on its own — that is what `specMeasured` is
+   * for. FALSE is the absence of evidence, not evidence of absence, and the two
+   * must not read alike (#1012).
    */
   measured: boolean;
+  /**
+   * Whether the merged report was parseable when the overlap was computed. With
+   * an unreadable report the reporter sees zero attempts, so an empty list is
+   * not "no attempt overlapped" — no attempt was ever examined.
+   */
+  reportRead: boolean;
+  /**
+   * Per spec path: did the shard that CLAIMS this spec produce probes? A spec
+   * missing from the map is on no shard summary at all, which is a third state
+   * and reported as such.
+   */
+  specMeasured: Record<string, boolean>;
   /** `${specPath}\u0000${title}\u0000${retry}` for every corroborated attempt. */
   keys: Set<string>;
   /** Set when the file could not be read at all; the reason, for the report. */
   unavailable?: string;
 }
+
+const NO_CORROBORATION = (unavailable: string): Corroboration => ({
+  measured: false,
+  reportRead: false,
+  specMeasured: {},
+  keys: new Set(),
+  unavailable,
+});
 
 export function attemptKey(specPath: string, title: string, retry: number): string {
   return `${specPath}\u0000${title}\u0000${retry}`;
@@ -377,28 +413,60 @@ export function attemptKey(specPath: string, title: string, retry: number): stri
  * never remove a tag that today's rule would keep — the invariant #1031 pins.
  */
 export function loadCorroboration(file: string | undefined): Corroboration {
-  if (!file) {
-    return { measured: false, keys: new Set(), unavailable: "no corroboration file was provided" };
-  }
+  if (!file) return NO_CORROBORATION("no corroboration file was provided");
   let parsed: any;
   try {
     parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (e) {
-    return {
-      measured: false,
-      keys: new Set(),
-      unavailable: `${file} could not be read (${(e as Error).message.split("\n")[0]})`,
-    };
+    return NO_CORROBORATION(
+      `${file} could not be read (${e instanceof Error ? e.message.split("\n")[0] : String(e)})`,
+    );
   }
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.attempts)) {
-    return { measured: false, keys: new Set(), unavailable: `${file} has no \`attempts\` array` };
+    return NO_CORROBORATION(`${file} has no \`attempts\` array`);
   }
   const keys = new Set<string>();
   for (const a of parsed.attempts) {
     if (!a || typeof a.file !== "string" || typeof a.title !== "string") continue;
     keys.add(attemptKey(normalizeSpecPath(a.file), a.title, Number(a.retry) || 0));
   }
-  return { measured: parsed.measured === true, keys };
+  const specMeasured: Record<string, boolean> = {};
+  const declared = parsed.specMeasured;
+  if (declared && typeof declared === "object" && !Array.isArray(declared)) {
+    for (const [spec, measured] of Object.entries(declared)) {
+      specMeasured[normalizeSpecPath(spec)] = measured === true;
+    }
+  }
+  return {
+    measured: parsed.measured === true,
+    // Absent on a payload written before this field existed. Treated as NOT
+    // read, so the reason falls back to the honest "could not be established"
+    // wording rather than claiming an overlap was checked.
+    reportRead: parsed.reportRead === true,
+    specMeasured,
+    keys,
+  };
+}
+
+/** Why the widened exemption was not extended to a classifying earlier attempt. */
+export function declinedReason(
+  corroboration: Corroboration,
+  specPath: string,
+): string {
+  if (corroboration.unavailable) {
+    return `no corroboration was available (${corroboration.unavailable})`;
+  }
+  if (!corroboration.reportRead) {
+    return "the liveness reporter could not read the merged report, so no attempt was examined for overlap at all";
+  }
+  const measured = corroboration.specMeasured[specPath];
+  if (measured === undefined) {
+    return "no shard summary claims this spec, so the backend state where it ran was never measured";
+  }
+  if (!measured) {
+    return "the shard that ran this spec produced no liveness probes, so nothing could corroborate it";
+  }
+  return "the recorder measured the shard that ran this spec, and this attempt did not overlap any outage window";
 }
 
 export interface Classification {
@@ -442,7 +510,7 @@ export function classifyFailures(
         why: last.why,
         error: truncateError(f.error),
         via: "last-attempt",
-        attempt: f.earlierAttempts.length,
+        attempt: f.lastAttemptRetry,
       });
       continue;
     }
@@ -476,14 +544,13 @@ export function classifyFailures(
       continue;
     }
 
-    // Declined, and named. The reason distinguishes "we measured and this
-    // attempt did not overlap an outage" from "nothing was measured" — the
-    // first is evidence against the widening, the second is its absence.
-    const declined = corroboration.unavailable
-      ? `no corroboration was available (${corroboration.unavailable})`
-      : corroboration.measured
-        ? "the in-run recorder measured this shard and this attempt did not overlap any outage window"
-        : "no shard produced liveness probes, so nothing could corroborate it";
+    // Declined, and named. The reason has to distinguish evidence AGAINST the
+    // widening from the absence of evidence, and it has to do so per SHARD:
+    // `measured` is run-level, so deriving the sentence from it claimed "the
+    // recorder measured this shard" over a shard that uploaded nothing, on a
+    // run where some other shard happened to report. That is the conflation
+    // #1012 forbids, produced by the field added to prevent it.
+    const declined = declinedReason(corroboration, f.specPath);
     const first = classified[0];
     out.attributable.push(f);
     out.disagreements.push({

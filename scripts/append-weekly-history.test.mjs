@@ -341,3 +341,77 @@ test("#1176 an ordinary run carries no report_missing marker", () => {
   const entry = append(report([{ title: "pass", status: "expected", results: [result("passed")] }]));
   assert.equal(entry.report_missing, undefined, "present only on a missing report");
 });
+
+// ─── infra_signature_any_attempt (#1589) ─────────────────────────────────────
+//
+// This writer had NO coverage at all: mutating `infraSignatureAnyAttempt` to
+// `return null`, and deleting the field from the flaky entry, both left the
+// whole lane green — on a committed, machine-owned JSONL that
+// `reports/README.md` documents.
+
+test("a hard failure records the earliest attempt that classified, not only the last", () => {
+  // The intermittent-wedge shape: attempt 0 is transport-level, the last is not.
+  // `infra_signature` stays last-attempt, so this file and
+  // `remove-stable-from-failures.ts` still agree about the attempt they read.
+  const entry = append(
+    report([
+      {
+        title: "t",
+        status: "unexpected",
+        results: [result("failed", TRANSPORT), result("failed", SPEC_ERROR)],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].infra_signature, null);
+  assert.equal(
+    entry.failures[0].infra_signature_any_attempt,
+    "api-request-timeout",
+  );
+});
+
+test("a failure with no transport-level attempt at all records null", () => {
+  const entry = append(
+    report([
+      {
+        title: "t",
+        status: "unexpected",
+        results: [result("failed", SPEC_ERROR), result("failed", SPEC_ERROR)],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].infra_signature_any_attempt, null);
+});
+
+test("a flaky entry carries the field too", () => {
+  // A separate call site: deleting it there left the lane green while half the
+  // rows silently lost the field.
+  const entry = append(
+    report([
+      {
+        title: "t",
+        status: "flaky",
+        results: [result("failed", TRANSPORT), result("passed")],
+      },
+    ]),
+  );
+  assert.equal(entry.flaky.length, 1);
+  assert.equal(
+    entry.flaky[0].infra_signature_any_attempt,
+    "api-request-timeout",
+  );
+});
+
+test("a passing attempt is never classified", () => {
+  // A `passed` result carries no failure to read; counting it would let a stray
+  // error field on a green attempt decide the row.
+  const entry = append(
+    report([
+      {
+        title: "t",
+        status: "unexpected",
+        results: [result("passed", TRANSPORT), result("failed", SPEC_ERROR)],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].infra_signature_any_attempt, null);
+});

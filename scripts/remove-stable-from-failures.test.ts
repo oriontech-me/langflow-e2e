@@ -120,6 +120,10 @@ function runScript(opts: {
   outageAttempts?: {
     measured: boolean;
     wedged?: boolean;
+    /** Whether the reporter could parse the merged report at all (#1589). */
+    reportRead?: boolean;
+    /** Per spec path: did the shard that claims it produce probes? */
+    specMeasured?: Record<string, boolean>;
     attempts: Array<{ file: string; title: string; retry: number }>;
   };
   /** Raw text for the corroboration file, for the malformed-input cases. */
@@ -943,6 +947,8 @@ test("an earlier transport-level attempt is exempt when a measured outage overla
     ],
     outageAttempts: {
       measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-a.spec.ts": true },
       attempts: [{ file: "fixture-1589-a.spec.ts", title: "intermittent", retry: 0 }],
     },
   });
@@ -971,14 +977,22 @@ test("without corroboration the same failure stays attributable, and is NAMED", 
         results: intermittentWedgeResults(),
       },
     ],
-    outageAttempts: { measured: true, attempts: [] },
+    outageAttempts: {
+      measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-b.spec.ts": true },
+      attempts: [],
+    },
   });
   assert.deepEqual(result.exempt, []);
   assert.equal(result.attributableFailures, 1);
   assert.equal(result.disagreements.length, 1);
   assert.equal(result.disagreements[0].attempt, 0);
   assert.equal(result.disagreements[0].signature, "api-request-timeout");
-  assert.match(result.disagreements[0].declined, /did not overlap any outage window/);
+  assert.match(
+    result.disagreements[0].declined,
+    /measured the shard that ran this spec, and this attempt did not overlap/,
+  );
   // The fixture carries a decoy `@stable` in a COMMENT, so the assertion has to
   // be about the tag array, not about the string appearing in the file.
   assert.doesNotMatch(
@@ -1002,6 +1016,8 @@ test("corroboration for a DIFFERENT attempt of the same test does not exempt", (
     ],
     outageAttempts: {
       measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-c.spec.ts": true },
       attempts: [{ file: "fixture-1589-c.spec.ts", title: "intermittent", retry: 1 }],
     },
   });
@@ -1021,6 +1037,8 @@ test("corroboration for a different TEST in the same spec does not exempt", () =
     ],
     outageAttempts: {
       measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-d.spec.ts": true },
       attempts: [{ file: "fixture-1589-d.spec.ts", title: "other", retry: 0 }],
     },
   });
@@ -1046,6 +1064,8 @@ test("an attempt with a PRODUCT error is not exempted however well corroborated"
     ],
     outageAttempts: {
       measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-e.spec.ts": true },
       attempts: [
         { file: "fixture-1589-e.spec.ts", title: "product", retry: 0 },
         { file: "fixture-1589-e.spec.ts", title: "product", retry: 1 },
@@ -1126,11 +1146,19 @@ test("an unmeasured run is reported as unmeasured, not as 'no outage overlapped'
         results: intermittentWedgeResults(),
       },
     ],
-    outageAttempts: { measured: false, attempts: [] },
+    outageAttempts: {
+      measured: false,
+      reportRead: true,
+      specMeasured: { "fixture-1589-i.spec.ts": false },
+      attempts: [],
+    },
   });
   assert.equal(result.corroborationMeasured, false);
   assert.equal(result.disagreements.length, 1);
-  assert.match(result.disagreements[0].declined, /no shard produced liveness probes/);
+  assert.match(
+    result.disagreements[0].declined,
+    /the shard that ran this spec produced no liveness probes/,
+  );
 });
 
 test("the mass-failure guard still counts EVERY hard failure, exempt included", () => {
@@ -1147,6 +1175,8 @@ test("the mass-failure guard still counts EVERY hard failure, exempt included", 
     failures,
     outageAttempts: {
       measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-j.spec.ts": true },
       attempts: failures.map((f) => ({ file: f.file, title: f.title, retry: 0 })),
     },
   });
@@ -1200,4 +1230,193 @@ test("the join key spells spec paths the way the outage reporter does", () => {
     attemptKey("a/b.spec.ts", "t", 0),
     ["a/b.spec.ts", "t", "0"].join("\u0000"),
   );
+});
+
+// ─── Review findings, pinned ─────────────────────────────────────────────────
+
+test("an UNMEASURED shard is never described as measured-and-clean", () => {
+  // The #1012 violation the review found and reproduced end to end: `measured`
+  // is RUN-level ("any shard produced probes"), so on a run where shard 1
+  // uploaded a clean summary and shard 2 uploaded nothing, a failure from shard
+  // 2 was declined with "the recorder measured this shard and this attempt did
+  // not overlap any outage window". The recorder never measured that shard.
+  const { result } = runScript({
+    specs: { "fixture-1589-k.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-k.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: {
+      measured: true, // …but that is some OTHER shard.
+      reportRead: true,
+      specMeasured: { "fixture-1589-k.spec.ts": false },
+      attempts: [],
+    },
+  });
+  assert.equal(result.disagreements.length, 1);
+  assert.match(
+    result.disagreements[0].declined,
+    /the shard that ran this spec produced no liveness probes/,
+  );
+  assert.doesNotMatch(result.disagreements[0].declined, /did not overlap/);
+});
+
+test("a spec on NO shard summary is a third state, not a measured one", () => {
+  const { result } = runScript({
+    specs: { "fixture-1589-l.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-l.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: {
+      measured: true,
+      reportRead: true,
+      specMeasured: { "some-other.spec.ts": true },
+      attempts: [],
+    },
+  });
+  assert.match(
+    result.disagreements[0].declined,
+    /no shard summary claims this spec/,
+  );
+});
+
+test("an unreadable merged report means no attempt was EXAMINED, not that none overlapped", () => {
+  // `collectAttempts(null)` yields zero attempts, so an empty list there is the
+  // absence of a check rather than its result.
+  const { result } = runScript({
+    specs: { "fixture-1589-m.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-m.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: { measured: true, reportRead: false, attempts: [] },
+  });
+  assert.match(
+    result.disagreements[0].declined,
+    /could not read the merged report, so no attempt was examined/,
+  );
+});
+
+test("a payload written before this field existed does not claim a check happened", () => {
+  // `reportRead` absent ⇒ treated as not read. A pre-#1589 artifact replayed by
+  // hand must not produce a sentence asserting an overlap was computed.
+  const { result } = runScript({
+    specs: { "fixture-1589-n.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-n.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: { measured: true, attempts: [] },
+  });
+  assert.match(result.disagreements[0].declined, /no attempt was examined/);
+});
+
+test("a STRUCTURALLY wrong corroboration file is fail-closed, like an unparseable one", () => {
+  // The `attempts` key present but not an array. The malformed branch was
+  // reachable only through `JSON.parse` throwing, so mutating this return to
+  // `{ measured: true, keys: new Set() }` left the whole suite green — and that
+  // mutation produces the false "measured and did not overlap" sentence.
+  const { result } = runScript({
+    specs: { "fixture-1589-o.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-o.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttemptsBody: JSON.stringify({ measured: true, attempts: "nope" }),
+  });
+  assert.deepEqual(result.exempt, []);
+  assert.equal(result.corroborationMeasured, false);
+  assert.match(result.corroborationUnavailable ?? "", /has no `attempts` array/);
+  assert.match(result.disagreements[0].declined, /no corroboration was available/);
+});
+
+test("the corroborated attempt is looked up at its OWN retry, not always at 0", () => {
+  // Two of run 32827671203's four cases carry the signature on attempt 1
+  // (`llm-invalid-api-key-ui.spec.ts:20` and `:88`). Hardcoding the lookup at
+  // attempt 0 kept every existing test green while silently dropping exactly
+  // those — every other case here puts the classifying attempt at retry 0.
+  const { result, after } = runScript({
+    specs: { "fixture-1589-p.spec.ts": ["late blip"] },
+    failures: [
+      {
+        file: "fixture-1589-p.spec.ts",
+        title: "late blip",
+        results: [
+          { status: "failed", retry: 0, error: { message: PRODUCT_ERROR } },
+          { status: "failed", retry: 1, error: { message: INFRA_ERROR } },
+          { status: "failed", retry: 2, error: { message: PRODUCT_ERROR } },
+        ],
+      },
+    ],
+    outageAttempts: {
+      measured: true,
+      reportRead: true,
+      specMeasured: { "fixture-1589-p.spec.ts": true },
+      attempts: [{ file: "fixture-1589-p.spec.ts", title: "late blip", retry: 1 }],
+    },
+  });
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].via, "earlier-attempt");
+  assert.equal(result.exempt[0].attempt, 1);
+  assert.match(after["fixture-1589-p.spec.ts"], /tag: \["@stable"/);
+});
+
+test("a last-attempt exemption reports the RETRY it happened on, not a count", () => {
+  // `Exempt.attempt` promises `result.retry`; deriving it from
+  // `earlierAttempts.length` diverges the moment the report omits `retry` or
+  // interleaves a skipped result.
+  const { result } = runScript({
+    specs: { "fixture-1589-q.spec.ts": ["sustained"] },
+    failures: [
+      {
+        file: "fixture-1589-q.spec.ts",
+        title: "sustained",
+        results: [
+          { status: "failed", retry: 0, error: { message: PRODUCT_ERROR } },
+          { status: "skipped", retry: 1 },
+          { status: "failed", retry: 2, error: { message: INFRA_ERROR } },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].via, "last-attempt");
+  assert.equal(
+    result.exempt[0].attempt,
+    2,
+    "the skipped result is not an attempt, so a count would say 1",
+  );
+});
+
+test("the workflow writes the corroboration file where the action reads it", () => {
+  // Two independent string literals that must agree, in two steps of the same
+  // job. If either is renamed the widened exemption goes dead and the umbrella
+  // prints "no corroboration file was provided" — which reads as an ordinary
+  // unmeasured day, not as a misconfiguration. The same argument the join key
+  // got, applied to the path.
+  const wf = fs.readFileSync(
+    path.join(__dirname, "..", ".github", "workflows", "daily-stable.yml"),
+    "utf-8",
+  );
+  const written = wf.match(/OUTAGE_ATTEMPTS_OUT:\s*(\S+)/)?.[1];
+  const read = wf.match(/outage_attempts:\s*(\S+)/)?.[1];
+  assert.ok(written, "daily-stable.yml still asks the reporter to write the file");
+  assert.ok(read, "daily-stable.yml still hands the path to the auto-remove action");
+  assert.equal(written, read, "the writer and the reader name the same file");
 });
