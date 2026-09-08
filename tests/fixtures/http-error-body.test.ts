@@ -14,6 +14,8 @@
 // applied to the fixture that is itself the suite's evidence trail.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "fs";
+import * as path from "path";
 
 import {
   BODY_PENDING,
@@ -162,4 +164,85 @@ test("missing bodies are grouped by reason and ordered by how often they happene
   assert.match(lines[0], /^ {3}⚠️ {2}3 of them carry NO body/);
   assert.match(lines[1], /2× common/);
   assert.match(lines[2], /1× rare/);
+});
+
+// ─── Review findings, pinned ─────────────────────────────────────────────────
+
+test("a message whose FIRST line is blank is not reported as no message at all", () => {
+  // `raw.split("\n")[0]` took the empty line and the fallback then claimed there
+  // was no message — losing the reason, which is the exact defect #1432 exists
+  // to fix, reintroduced inside the fix.
+  assert.equal(
+    readFailureReason(new Error("\nresponse.text: Target page closed")),
+    "response.text: Target page closed",
+  );
+  assert.equal(
+    readFailureReason(new Error("   \n\t\n  the real cause  ")),
+    "the real cause",
+  );
+});
+
+test("an error whose message getter THROWS does not throw out of the fixture", () => {
+  // The `catch (e)` this replaced never touched `e`. This function must not be
+  // the first thing able to throw from inside an async `response` handler that
+  // has no surrounding try — the handler is the evidence trail.
+  const evil = Object.create(Error.prototype) as Error;
+  Object.defineProperty(evil, "message", {
+    get() {
+      throw new Error("boom");
+    },
+  });
+  const out = describeResponseBody({ ok: false, error: evil });
+  assert.match(out.bodyUnavailable ?? "", /could not be inspected/);
+  assert.match(out.line, /could not be read/);
+});
+
+test("both real Chromium rejection messages survive intact", () => {
+  // Two different real strings, and the two halves of this change had been
+  // pinning one each without saying so: `#1168` measured "No resource with
+  // given identifier found" on a run stream, while a bodyless response gives
+  // "No data found for resource with given identifier". A redirect gives a
+  // third. All three must reach the log unmangled.
+  for (const message of [
+    "response.text: Protocol error (Network.getResponseBody): No resource with given identifier found",
+    "response.text: Protocol error (Network.getResponseBody): No data found for resource with given identifier",
+    "response.text: Response body is unavailable for redirect responses",
+  ]) {
+    assert.equal(readFailureReason(new Error(message)), message);
+  }
+});
+
+// ─── The fixture wiring, pinned structurally ─────────────────────────────────
+//
+// These two assert a SPELLING, not a behaviour, and #1226 is explicit that such
+// a guard passes mutations it should catch. They are here because the behaviour
+// they stand in for is unreachable from a test: the pending stamp is only ever
+// observable on a read that never settles, and the teardown summary prints
+// after every hook has run, which `http-error-gate.spec.ts` already records as
+// a structural limit of that file. Recorded as the weaker thing they are,
+// rather than left absent — before this, deleting either line left the whole
+// unit lane AND the gate spec green.
+
+test("the fixture stamps the pending reason before it attempts the read", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "fixtures.ts"),
+    "utf-8",
+  );
+  const stamp = source.indexOf("bodyUnavailable: BODY_PENDING");
+  const push = source.indexOf("errors.push(entry)");
+  const read = source.indexOf("describeResponseBody(");
+  assert.ok(stamp > 0, "the entry is stamped with a pending reason");
+  assert.ok(push > stamp, "the stamp is part of the entry, set before it is recorded");
+  assert.ok(
+    read > push,
+    "the read is still attempted AFTER the entry is recorded (#1084's undercount)",
+  );
+});
+
+test("the fixture feeds its recorded HTTP errors to the teardown summary", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "fixtures.ts"),
+    "utf-8",
+  );
+  assert.match(source, /summarizeMissingBodies\(httpErrors\)/);
 });

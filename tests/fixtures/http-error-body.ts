@@ -21,25 +21,29 @@
  * unread body is unknown rather than absent, applied to the fixture that is
  * itself the suite's evidence trail.
  *
- * It is not hypothetical. #1424 is open on *"the global-variable persist call
- * answers non-2xx while validate-provider succeeds"* and has had no cause
- * through three consecutive dailies (2026-08-10/11/12, `400 POST
- * /api/v1/variables/`). Not one of those four occurrences carries a body in the
- * logs, while every `500` in the same runs does — the status alone does not say
- * what the backend rejected, which is most of why the issue is still
- * descriptive.
+ * WHY IT WAS FILED, and what the record actually shows. #1432 was raised off
+ * #1424 — three consecutive dailies of `400 POST /api/v1/variables/` with, it
+ * said, no body in the logs. **That premise was wrong, and #1424 is closed**
+ * (root-caused 2026-08-12, fixed by PR #1441): two of those four `400`s did
+ * carry bodies, and a 2026-07-13 occurrence on the same endpoint printed
+ * `{"detail":"Invalid API key for OpenAI"}` in full. The causes were a
+ * create-vs-update race (#1431), a key with no credits, and an Azure endpoint
+ * answering past its 10 s validation timeout — none of them this. So nothing
+ * here is offered as an explanation of #1424; #1424's own close-out is what
+ * says this is still worth fixing, and on its own terms:
  *
- * MEASURED while building this, and it is the finding rather than a detail:
- * **Chromium does not retain a zero-length response body**, so `response.text()`
- * on a bodyless `400` REJECTS with `Protocol error (Network.getResponseBody): No
- * data found for resource with given identifier` — it does not resolve to `""`.
- * (Pinned behaviourally in `http-error-gate.spec.ts`.) The branch that used to
- * be swallowed in silence is therefore not an exotic one; it is what every
- * bodyless error response does, which is the likeliest explanation for #1424's
- * shape — the `500`s in those same runs carry `{"detail": …}`, which Chromium
- * keeps. The `""` branch below is still real and still distinguished: it is
- * reachable through other transports, and an entry that says "empty" must not be
- * confusable with one that says "we could not ask".
+ *   > #1432 is still worth fixing: it is the reason this took three dailies.
+ *
+ * MEASURED, and it is what the fix stands on: **Chromium does not retain a
+ * zero-length response body**, so `response.text()` REJECTS with `response.text:
+ * Protocol error (Network.getResponseBody): No data found for resource with
+ * given identifier` rather than resolving to `""`. Not specific to `400` —
+ * verified across 200 / 204 / 400 / 404 / 500, with an explicit
+ * `content-length: 0`, and with a gzip of the empty string; a redirect gives a
+ * third real message (`Response body is unavailable for redirect responses`).
+ * So the branch the fixture used to swallow in silence is not exotic: it is what
+ * every bodyless response does, and until now every one of them looked exactly
+ * like a body nobody printed.
  *
  * THREE states, not two. The fixture records the entry BEFORE reading the body
  * on purpose (the read is an `await` inside an async event handler and teardown
@@ -91,8 +95,28 @@ export interface BodyOutcome {
  * too — the catch that this replaces accepted anything.
  */
 export function readFailureReason(error: unknown): string {
-  const raw =
-    error instanceof Error
+  let raw: string;
+  try {
+    raw = rawReason(error);
+  } catch {
+    // A `message` getter that throws. Exotic — Playwright throws plain `Error`s
+    // — but this function replaced a `catch` that never touched `e` at all, so
+    // it must not be the first thing in the fixture able to throw from inside an
+    // async `response` handler that has no surrounding try.
+    raw = "the read failed with an error that could not be inspected";
+  }
+  // The first NON-BLANK line. `[0]` alone loses the whole message when the
+  // first line is empty (`new Error("\nreal message")`), and then the fallback
+  // below claims there was no message — the exact loss this exists to fix.
+  const firstLine = raw.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  if (!firstLine) return "the read failed with no message";
+  return firstLine.length > REASON_MAX
+    ? `${firstLine.slice(0, REASON_MAX)}…`
+    : firstLine;
+}
+
+function rawReason(error: unknown): string {
+  return error instanceof Error
       ? // A named subclass says something ("TimeoutError"); the generic `Error`
         // name says nothing, and printing it would be the empty line again with
         // extra steps.
@@ -110,11 +134,6 @@ export function readFailureReason(error: unknown): string {
                   return "a value that cannot be stringified";
                 }
               })();
-  const firstLine = raw.split("\n")[0].trim();
-  if (!firstLine) return "the read failed with no message";
-  return firstLine.length > REASON_MAX
-    ? `${firstLine.slice(0, REASON_MAX)}…`
-    : firstLine;
 }
 
 /**
@@ -132,6 +151,13 @@ export function describeResponseBody(read: BodyRead): BodyOutcome {
   if (read.body === "") {
     // Said out loud rather than printed as a bare `Response:` with nothing
     // after it, which reads exactly like a line that was cut short.
+    //
+    // Reachable on this very transport, and the case is worth naming because it
+    // is narrow: a body of **non-zero length that decodes to the empty string**.
+    // A 3-byte UTF-8 BOM does it — Chromium retains the bytes, `text()`
+    // resolves, and the result is `""`. A genuinely zero-length body rejects
+    // instead (see the header), so this branch and the one above are two
+    // different observations rather than two spellings of one.
     return { responseBody: "", line: "   Response: <empty body>" };
   }
   return { responseBody: read.body, line: `   Response: ${read.body}` };

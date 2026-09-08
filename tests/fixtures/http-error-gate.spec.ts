@@ -30,18 +30,32 @@
 // flow. The fixture only cares that the pathname contains `/api/` and the status
 // is 4xx/5xx.
 //
-// MEASURED COVERAGE, and one accepted gap. Eleven mutations of the production
+// MEASURED COVERAGE, and three accepted gaps. Fifteen mutations of the production
 // code were applied one at a time and run against `npm run test:units` plus this
-// file: ten are killed — matching on pathname alone, on status alone, by substring
+// file: twelve are killed — matching on pathname alone, on status alone, by substring
 // instead of equality, checking the declaration before `IGNORED`, keying the
 // stale check on `expectedStatus`, removing the stale throw, printing the gate
 // string in the `📌` line, never incrementing the hit counter, announcing on every
 // occurrence instead of the first, and removing the stale-declaration grace
-// period. The eleventh SURVIVES and is accepted: dropping the `else` so a declared
-// defect is *also* tallied in `ignoredByPolicy`. That only double-counts it inside
-// the `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count and no gate string
-// changes — so there is no behaviour to pin. Recorded rather than left unknown
-// (#1012's rule); if that breakdown ever becomes load-bearing, this is the gap.
+// period, plus (#1432) reverting the body read to the old inline try/catch,
+// printing a fixed sentinel instead of the reason, collapsing the empty and
+// unreadable lines into one, and printing `<empty body>` where the body should
+// go. THREE SURVIVE and are accepted, recorded rather than left unknown (#1012's
+// rule):
+//
+//   (a) dropping the `else` so a declared defect is *also* tallied in
+//       `ignoredByPolicy`. That only double-counts it inside the
+//       `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count, no gate string
+//       — so there is no behaviour to pin. If that breakdown ever becomes
+//       load-bearing, this is the gap.
+//   (b) deleting the `bodyUnavailable: BODY_PENDING` stamp. Only observable on a
+//       body read that never settles, which cannot be provoked here.
+//   (c) making `summarizeMissingBodies` return nothing. Its output prints during
+//       fixture teardown, after this body has returned — the same structural
+//       limit recorded below for the `📋 Found N` total.
+//
+// (b) and (c) are pinned by SPELLING in `http-error-body.test.ts`, which #1226
+// says is the weaker thing; that is stated there rather than dressed up.
 //
 // WHY `@stable` — the same reasoning as `flow-error-gate.spec.ts`, and it is load
 // bearing there too. `daily-stable.yml` selects with `--grep @stable` and is the
@@ -73,20 +87,28 @@ const OTHER_PATH = "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc";
  *
  * MEASURED HERE, and it is the finding rather than a detail — Chromium does not
  * keep a zero-length response body, so `response.text()` on the first one
- * **rejects** with `Protocol error (Network.getResponseBody): No data found for
- * resource with given identifier`. It does not resolve to `""`. So the branch
- * the fixture used to swallow in silence is not an exotic one: it is what a
- * bodyless error response does every time.
+ * **rejects** with `response.text: Protocol error (Network.getResponseBody): No
+ * data found for resource with given identifier`. It does not resolve to `""`.
+ * So the branch the fixture used to swallow in silence is not an exotic one: it
+ * is what every bodyless response does. Not specific to `400` either — the same
+ * holds at 200 / 204 / 404 / 500, with an explicit `content-length: 0`, and for
+ * a gzip of the empty string.
  *
- * That makes this the likeliest explanation for #1424's shape — four `400 POST
- * /api/v1/variables/` occurrences across three dailies, none of them carrying a
- * body in the logs, while every `500` in the same runs does (a `500` here
- * carries `{"detail": …}`, which Chromium keeps). The unit lane still covers
- * the `""` branch, because `response.text()` resolving empty is reachable
- * through other transports and the two must stay distinguishable in the entry.
+ * (It is NOT an explanation of #1424, and an earlier draft of this comment said
+ * it was. #1424 is closed — root-caused 2026-08-12, fixed by PR #1441 — and two
+ * of the four `400`s it cites did carry bodies. What justifies this fix is the
+ * measurement above, plus #1424's own close-out: "it is the reason this took
+ * three dailies".)
  */
 const EMPTY_BODY_PATH = "/api/v1/variables/empty-body";
 const WITH_BODY_PATH = "/api/v1/variables/with-body";
+/**
+ * A body of non-zero LENGTH that decodes to the empty STRING: a bare UTF-8 BOM.
+ * Chromium keeps the bytes, so `text()` resolves to `""` — which is what makes
+ * the `<empty body>` branch reachable on this transport rather than a
+ * hand-waved "some other transport".
+ */
+const BOM_BODY_PATH = "/api/v1/variables/bom-body";
 
 /**
  * How long `?mode=slow` withholds its response.
@@ -106,6 +128,11 @@ test.beforeAll(async () => {
     if (path === EMPTY_BODY_PATH) {
       res.writeHead(400, { "content-type": "application/json" });
       res.end();
+      return;
+    }
+    if (path === BOM_BODY_PATH) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(Buffer.from([0xef, 0xbb, 0xbf]));
       return;
     }
     if (path === WITH_BODY_PATH) {
@@ -371,6 +398,31 @@ test.describe("fixture declared-known-defect hatch", () => {
         log,
         "the pre-#1432 sentinel is gone from the log — it said nothing about why",
       ).not.toContain("Could not read response");
+    },
+  );
+
+  test(
+    "a body that is non-empty but decodes to nothing is announced as empty",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The `<empty body>` branch, on this transport rather than a hypothetical
+      // one: a bare UTF-8 BOM has length, so Chromium keeps it and `text()`
+      // resolves to `""`. That is the only way the two branches can be told
+      // apart in a real session, and without it the empty branch was reachable
+      // in the unit lane only.
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, BOM_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log).toContain("Response: <empty body>");
+      expect(
+        log,
+        "an empty body must not be reported as one that could not be read",
+      ).not.toMatch(/Response: <could not be read/);
     },
   );
 
