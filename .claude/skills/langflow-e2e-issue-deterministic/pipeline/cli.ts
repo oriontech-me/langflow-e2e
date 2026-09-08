@@ -435,9 +435,14 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
         problems.push(`need ${BURST} clean --retries=0 runs for ${target}; have ${greens.length}${voidNote} (run next again)`)
       }
     }
+    // The DEBUG verdict is passed in because a `langflow-regression` exempts the
+    // `@stable` half of the quarantine lift and nothing else does (#1759 — see
+    // checkQuarantineLifted). Read from the step record rather than recomputed:
+    // the verdict is the user's decision, already gated by DEBUG.
     problems.push(...checkQuarantineLifted(
       s.issueData?.body ?? '',
       touchedSpecFiles().map(f => ({ file: f, entries: enumerateTestEntries(fs.readFileSync(f, 'utf8')) })),
+      (s.steps?.DEBUG?.evidence as { verdict?: string } | undefined)?.verdict,
     ))
     if (ev.typecheck !== 0) problems.push(`typecheck exit=${ev.typecheck}`)
     if (ev.lint !== 0) problems.push(`lint exit=${ev.lint}`)
@@ -483,6 +488,9 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
           branch: gitCurrentBranch(), prBody: body, issue: s.issue,
           isWave: s.issueData?.milestone != null,
           labels: s.issueData?.labels ?? [],
+          // A product verdict inverts the closing requirement: the issue has to
+          // outlive its own fix PR (#1759 — see checkPrReadiness).
+          verdict: (s.steps?.DEBUG?.evidence as { verdict?: string } | undefined)?.verdict,
         }))
         // `evidence` is the payload being recorded by THIS call; `rec.evidence`
         // is what a previous attempt left behind. Reading the stale one meant a
