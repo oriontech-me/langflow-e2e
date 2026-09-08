@@ -1333,18 +1333,27 @@ phase_merge() {
   # shellcheck disable=SC2086  # deliberate word splitting: the list holds names, never values
   for name in $MIRRORED_TARGET_VARS; do mirrored_kv+=("$name" "${!name}"); done
 
+  # The mirrored pairs are COUNTED and come first, not marked off by a sentinel. A
+  # sentinel is a string the data could carry: langflow_prepared_reason below is parsed
+  # out of the preparer output on the OTHER machine, so its content is not this script
+  # to promise, and a value that happened to equal the marker would truncate the list
+  # and mis-key every field after it — writing a wrong file, silently. A count cannot
+  # collide with a value.
   node -e '
     const fs = require("fs");
-    const args = process.argv.slice(1);
-    const at = args.indexOf("--mirrored");
-    const [out, ...kv] = at === -1 ? args : args.slice(0, at);
-    const mirrored = at === -1 ? [] : args.slice(at + 1);
+    const [out, count, ...rest] = process.argv.slice(1);
+    const n = Number(count);
+    if (!Number.isInteger(n) || n < 0 || n > rest.length || n % 2 !== 0) {
+      throw new Error("mirrored pair count is not usable: " + count);
+    }
+    const mirrored = rest.slice(0, n);
+    const kv = rest.slice(n);
     const o = {};
     for (let i = 0; i < kv.length; i += 2) o[kv[i]] = kv[i + 1];
     o.mirrored_target_env = {};
     for (let i = 0; i < mirrored.length; i += 2) o.mirrored_target_env[mirrored[i]] = mirrored[i + 1];
     fs.writeFileSync(out, JSON.stringify(o, null, 2) + "\n");
-  ' "$RUN_DIR/run-metadata.json" \
+  ' "$RUN_DIR/run-metadata.json" "${#mirrored_kv[@]}" "${mirrored_kv[@]}" \
     run_id "$RUN_ID" \
     suite_sha "$(git rev-parse HEAD)" \
     suite_branch "$(git rev-parse --abbrev-ref HEAD)" \
@@ -1361,8 +1370,7 @@ phase_merge() {
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}" \
-    merge_ok "${MERGE_OK:-true}" \
-    --mirrored "${mirrored_kv[@]}"
+    merge_ok "${MERGE_OK:-true}"
 
   info "tests: ${RUN_TESTS:-0} | top-level errors: ${RUN_ERRORS:-0} | empty: $RUN_EMPTY | partial: $RUN_PARTIAL"
   info "Langflow: ${LANGFLOW_VERSION:-<unknown>}"

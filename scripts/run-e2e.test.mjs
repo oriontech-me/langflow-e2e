@@ -1040,8 +1040,12 @@ test("a failed merge is NAMED and does not abort the run, so guard 2 still class
  * without a real four-shard report — and it costs nothing here, because the values
  * under test are composed from this script's own variables, not from anything the
  * merge produces. That a failed merge still writes the file is itself pinned above.
+ *
+ * `after` is shell that runs AFTER the neutralising assignments below, for a caller
+ * that needs one of them to hold a value: those are plain assignments in the sourced
+ * body, so they beat anything handed in through `env`.
  */
-function metadataFrom(env) {
+function metadataFrom(env, after = "") {
   const dir = makeTempDir("mirrored-meta-e2e-");
   mkdirSync(join(dir, "logs"), { recursive: true });
   mkdirSync(join(dir, "all-blobs"), { recursive: true });
@@ -1055,6 +1059,7 @@ function metadataFrom(env) {
       `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1`,
       "CHECK_TARGET_VERSION=0 TARGET_EXPECTED_VERSION= TARGET_EXPECTED_REF= TARGET_EXPECTED_SHA=",
       "TARGET_RESOLUTION= TARGET_PREPARED_SHA= TARGET_REBUILT=no TARGET_REBUILD_REASON= TARGET_PREPARE_S=",
+      after,
       "phase_merge",
     ].join("\n"),
     { PATH: `${bin}:${process.env.PATH}`, ...env },
@@ -1091,6 +1096,21 @@ test("the metadata records the mirrored values that were IN FORCE, not the defau
     meta.mirrored_target_env.LANGFLOW_SQLITE_PRAGMAS,
     evaluateWorkflowValue(DECLARED.get("LANGFLOW_SQLITE_PRAGMAS"), {}),
   );
+});
+
+test("a metadata VALUE that looks like a delimiter does not shift the record", () => {
+  // The first version marked the mirrored pairs off with a `--mirrored` sentinel, and
+  // a sentinel is a string the data can carry: langflow_prepared_reason is parsed out
+  // of the preparer's output on the OTHER machine, so its content is not this script's
+  // to promise. A value equal to the marker truncated the key/value list and mis-keyed
+  // every field after it — writing a wrong file, with nothing said.
+  //
+  // Counted pairs cannot collide with a value, and this is the case that proves it.
+  const { meta } = metadataFrom(BLANKED, 'TARGET_REBUILD_REASON="--mirrored"');
+
+  assert.equal(meta.langflow_prepared_reason, "--mirrored");
+  assert.equal(meta.merge_ok, "false", "the fields AFTER the hostile value must still be themselves");
+  assert.deepEqual(Object.keys(meta.mirrored_target_env).sort(), [...MIRRORED].sort());
 });
 
 test("every mirrored name reaches the metadata, because one list feeds both", () => {
