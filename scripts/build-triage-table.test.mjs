@@ -6,7 +6,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   reportTotal, collectObservations, verdictFor, renderTable, renderJson,
-  unmatchedTitles, UNMATCHED_TITLE_CAP, rowsFor,
+  unmatchedTitles, UNMATCHED_TITLE_CAP, rowsFor, summarizeSignature,
+  SIGNATURE_MAX_CHARS, quarantineCell, signatureCell,
 } from "./build-triage-table.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
@@ -87,6 +88,187 @@ test("verdictFor: no observation is UNKNOWN, never clean", () => {
   const v = verdictFor([]);
   assert.equal(v.verdict, "unknown");
   assert.match(v.detail, /absent from every report/i);
+});
+
+// ── A1: all FOUR of Playwright's statuses ────────────────────────────────────
+//
+// `JSONReportTest.status` is exactly `'skipped' | 'expected' | 'unexpected' |
+// 'flaky'` (node_modules/playwright/types/testReporter.d.ts). Three were
+// handled; both gaps landed on the expensive side, because `hard-failure` is
+// the verdict the design's §3 routes to PARK — "file a product bug".
+
+test("verdictFor: a flaky observation is a retry, not a failure — measured 0/3 green -> hard-failure", () => {
+  // Before the fix: {verdict:"hard-failure", detail:"0/3 green"} — a test that
+  // passed every time it was retried, recorded as never having passed.
+  const v = verdictFor([{ status: "flaky" }, { status: "flaky" }, { status: "flaky" }]);
+  assert.equal(v.verdict, "flaky", "a retried pass is flaky, never a hard failure");
+  assert.match(v.detail, /passed on retry/, "the retry must be visible, not silently read as a failure");
+  assert.match(v.detail, /3 passed on retry/);
+});
+
+test("verdictFor: a flaky observation alongside a green one stays flaky and names the retry", () => {
+  const v = verdictFor([{ status: "expected" }, { status: "flaky" }, { status: "expected" }]);
+  assert.equal(v.verdict, "flaky", "a retry anywhere in the set disqualifies the green verdict");
+  assert.match(v.detail, /2\/3 green, 1 passed on retry/);
+});
+
+test("verdictFor: a skipped observation does not dilute the green ratio — measured 2/3 green -> flaky", () => {
+  // Before the fix: {verdict:"flaky", detail:"2/3 green"} — an investigation
+  // opened for a test that never once failed. A skip is the ABSENCE of an
+  // observation, so it leaves the ratio and is reported alongside it.
+  const v = verdictFor([{ status: "skipped" }, { status: "expected" }, { status: "expected" }]);
+  assert.equal(v.verdict, "green");
+  assert.equal(v.detail, "2/2 green, 1 skipped");
+});
+
+test("verdictFor: a skip alongside a real failure is still counted out of the ratio", () => {
+  const v = verdictFor([{ status: "skipped" }, { status: "unexpected" }, { status: "unexpected" }]);
+  assert.equal(v.verdict, "hard-failure");
+  assert.equal(v.detail, "0/2 green, 1 skipped");
+});
+
+test("verdictFor: a status outside Playwright's four is UNKNOWN with the value named", () => {
+  // The likeliest cause is reading `results[].status` (TestStatus: passed /
+  // failed / timedOut / skipped / interrupted) instead of `tests[].status`, so
+  // the offending value IS the diagnosis. Never a decided failure: an
+  // unmeasured thing is never clean, and equally never failed.
+  const v = verdictFor([{ status: "passed" }, { status: "passed" }, { status: "passed" }]);
+  assert.equal(v.verdict, "unknown");
+  assert.match(v.detail, /"passed"/, "the message must name the value it could not read");
+  assert.match(v.detail, /not decided either way/);
+});
+
+test("verdictFor: one unrecognised status among greens is undecided, not 2/3 green", () => {
+  const v = verdictFor([{ status: "expected" }, { status: "expected" }, { status: "interrupted" }]);
+  assert.equal(v.verdict, "unknown");
+  assert.match(v.detail, /"interrupted"/);
+  assert.match(v.detail, /1 of 3 observation\(s\)/);
+});
+
+// ── A2: the failure signature, and its stated truncation ─────────────────────
+
+test("summarizeSignature keeps the first line, strips ANSI, and caps the length", () => {
+  assert.equal(
+    summarizeSignature("[31mError: expect(locator).toBeVisible() failed[39m\n\nLocator: …\n  at foo"),
+    "Error: expect(locator).toBeVisible() failed",
+  );
+  // The bare `[2m` form, whose escape byte goes missing between the reporter
+  // and an artifact — shared stripAnsi handles both (infra-signatures.ts).
+  assert.equal(summarizeSignature("Error: [2mexpect([22mfoo)"), "Error: expect(foo)");
+  assert.equal(summarizeSignature(""), "");
+  assert.equal(summarizeSignature(undefined), "");
+  // An embedded newline would end the markdown row, so it can never survive.
+  assert.doesNotMatch(summarizeSignature("a\nb"), /\n/);
+
+  const long = summarizeSignature("x".repeat(SIGNATURE_MAX_CHARS + 50));
+  assert.equal(long.length, SIGNATURE_MAX_CHARS + 1, "capped, plus the ellipsis");
+  assert.ok(long.endsWith("…"), "a truncated signature must be distinguishable from a short one");
+});
+
+test("collectObservations reads the FIRST failing attempt's error, so a retried failure keeps its signature", () => {
+  // A `flaky` test's error lives on attempt 1; the retry that passed carries
+  // none, so reading the last result would blank the one verdict most in need
+  // of a signature.
+  const obs = collectObservations({
+    stats: { expected: 0, unexpected: 0, flaky: 1, skipped: 0 },
+    suites: [{
+      title: "file", file: "a/x.spec.ts", suites: [],
+      specs: [{
+        title: "a",
+        tests: [{
+          status: "flaky",
+          results: [
+            { status: "failed", error: { message: "Error: locator resolved to 2 elements\n  at line 3" }, stdout: [] },
+            { status: "passed", stdout: [] },
+          ],
+        }],
+      }],
+    }],
+  });
+  assert.equal(obs.get("a")[0].signature, "Error: locator resolved to 2 elements");
+});
+
+test("collectObservations falls back to errors[0] when the singular error is absent", () => {
+  const obs = collectObservations({
+    stats: { expected: 0, unexpected: 1, flaky: 0, skipped: 0 },
+    suites: [{
+      title: "file", file: "a/x.spec.ts", suites: [],
+      specs: [{
+        title: "a",
+        tests: [{ status: "unexpected", results: [{ status: "failed", errors: [{ message: "Timeout 300000ms exceeded." }], stdout: [] }] }],
+      }],
+    }],
+  });
+  assert.equal(obs.get("a")[0].signature, "Timeout 300000ms exceeded.");
+});
+
+test("rowsFor carries the quarantine marker off the baseline and the failure signature off the report", () => {
+  // The most misleading row this table can produce is `3/3 green` for a test
+  // that is `test.fixme` on main — the measurement unmutes the 7 quarantined
+  // declarations on a throwaway branch (design §2), so the verdict is real but
+  // the test runs nowhere until the modifier is removed for good.
+  const baseline = { specs: [{ relativePath: "a/x.spec.ts", tier: "T1", tests: [
+    { title: "muted but green", modifier: "fixme" },
+    { title: "plain and red", modifier: "" },
+  ] }] };
+  const byTitle = collectObservations({
+    stats: { expected: 1, unexpected: 1, flaky: 0, skipped: 0 },
+    suites: [{
+      title: "file", file: "a/x.spec.ts", suites: [],
+      specs: [
+        { title: "muted but green", tests: [{ status: "expected", results: [{ status: "passed", stdout: [] }] }] },
+        { title: "plain and red", tests: [{ status: "unexpected", results: [{ status: "failed", error: { message: "Error: nope" }, stdout: [] }] }] },
+      ],
+    }],
+  });
+
+  const rows = rowsFor(baseline, byTitle);
+  assert.deepEqual(rows.map((r) => [r.title, r.modifier, r.signature, r.signatureCount]), [
+    ["muted but green", "fixme", "", 0],
+    ["plain and red", "", "Error: nope", 1],
+  ]);
+
+  const md = renderTable(baseline, byTitle);
+  assert.match(md, /\| Quarantine \|/, "the rendered table must have the column, not just the row data");
+  assert.match(md, /\| `test\.fixme` \|/, "a quarantined test's row must say so");
+  assert.match(md, /Error: nope/, "the signature must reach the rendered table");
+  assert.deepEqual(renderJson(baseline, byTitle).rows, rows, "the sidecar carries both fields too");
+});
+
+test("rowsFor counts DISTINCT signatures, so a test failing two ways does not hide one", () => {
+  const baseline = { specs: [{ relativePath: "a/x.spec.ts", tier: "T2", tests: [{ title: "a", modifier: "" }] }] };
+  const mk = (message) => ({
+    stats: { expected: 0, unexpected: 1, flaky: 0, skipped: 0 },
+    suites: [{ title: "f", file: "a/x.spec.ts", suites: [], specs: [
+      { title: "a", tests: [{ status: "unexpected", results: [{ status: "failed", error: { message }, stdout: [] }] }] },
+    ] }],
+  });
+  const byTitle = collectObservations(mk("Error: first way"));
+  for (const [t, obs] of collectObservations(mk("Error: second way"))) {
+    byTitle.set(t, [...(byTitle.get(t) ?? []), ...obs]);
+  }
+  const [row] = rowsFor(baseline, byTitle);
+  assert.equal(row.signature, "Error: first way");
+  assert.equal(row.signatureCount, 2);
+  assert.equal(signatureCell(row), "Error: first way (+1 more distinct)");
+  assert.match(renderTable(baseline, byTitle), /\(\+1 more distinct\)/);
+});
+
+test("a pipe in a title or a signature is escaped, so the row cannot shift its columns", () => {
+  const baseline = { specs: [{ relativePath: "a/x.spec.ts", tier: "T2", tests: [{ title: "a|b", modifier: "" }] }] };
+  const byTitle = collectObservations({
+    stats: { expected: 0, unexpected: 1, flaky: 0, skipped: 0 },
+    suites: [{ title: "f", file: "a/x.spec.ts", suites: [], specs: [
+      { title: "a|b", tests: [{ status: "unexpected", results: [{ status: "failed", error: { message: "Error: got x|y" }, stdout: [] }] }] },
+    ] }],
+  });
+  const md = renderTable(baseline, byTitle);
+  assert.match(md, /a\\\|b/);
+  assert.match(md, /Error: got x\\\|y/);
+  // The DATA stays raw: the sidecar is read by a script, not by markdown.
+  assert.equal(rowsFor(baseline, byTitle)[0].signature, "Error: got x|y");
+  assert.equal(quarantineCell(""), "");
+  assert.equal(quarantineCell("skip"), "`test.skip`");
 });
 
 test("renderJson carries one machine-readable row per baseline test", () => {
@@ -230,7 +412,8 @@ test("rowsFor: the markdown and the JSON sidecar describe the same verdicts for 
   for (const row of rows) {
     const expectedFragment =
       `| ${row.tier} | \`${row.spec}\` | ${row.title.replace(/\|/g, "\\|")} ` +
-      `| ${row.detail} | ${row.backendErrors || ""} |`;
+      `| ${quarantineCell(row.modifier)} | ${row.detail} | ${row.backendErrors || ""} ` +
+      `| ${signatureCell(row)} |`;
     assert.ok(
       md.includes(expectedFragment),
       `expected the table to contain a row for "${row.title}": ${expectedFragment}\n---\n${md}`,
@@ -290,6 +473,60 @@ test("CLI: a report whose stats total is zero exits 2 and writes no output file"
   );
   assert.equal(existsSync(outPath), false, "an aborted run must not leave a markdown table behind");
   assert.equal(existsSync(outJsonPath), false, "an aborted run must not leave a JSON sidecar behind");
+});
+
+// A5: the likeliest first-dispatch failure. The runbook globs
+// `/tmp/triage/*/results.json`; under bash an unmatched glob stays LITERAL, so
+// a failed `gh run download` hands the pattern itself to `--report`. The
+// sibling `build-triage-grep.mjs --baseline missing.json` prints
+// `[triage-grep] ENOENT: no such file …`; this one printed a node stack.
+//
+// Asserting the exit code alone would be VACUOUS — node exits 1 on an uncaught
+// throw too — so this asserts the SHAPE: a named one-liner, and no stack frames.
+test("CLI: an unreadable --report is a named refusal, not a stack trace", () => {
+  const dir = makeTempDir("triage-table-cli-");
+  const baselinePath = join(dir, "baseline.json");
+  const outPath = join(dir, "out.md");
+  writeFileSync(baselinePath, JSON.stringify(smallBaseline));
+
+  let stderr = "";
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [SCRIPT, "--baseline", baselinePath, "--report", join(dir, "*", "results.json"), "--out", outPath],
+        { encoding: "utf-8", stdio: "pipe" },
+      ),
+    (error) => {
+      stderr = String(error.stderr ?? "");
+      return error.status === 1;
+    },
+  );
+  assert.match(stderr, /^\[triage-table\] ENOENT/m, "must name itself and the refusal, like the sibling does");
+  assert.doesNotMatch(stderr, /\n\s+at /, "a stack trace is what this replaces");
+  assert.equal(existsSync(outPath), false);
+});
+
+test("CLI: an unreadable --baseline is the same named refusal", () => {
+  const dir = makeTempDir("triage-table-cli-");
+  const reportPath = join(dir, "results.json");
+  writeFileSync(reportPath, JSON.stringify(report([spec("alpha", "expected")])));
+
+  let stderr = "";
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [SCRIPT, "--baseline", join(dir, "nope.json"), "--report", reportPath, "--out", join(dir, "out.md")],
+        { encoding: "utf-8", stdio: "pipe" },
+      ),
+    (error) => {
+      stderr = String(error.stderr ?? "");
+      return error.status === 1;
+    },
+  );
+  assert.match(stderr, /^\[triage-table\] ENOENT/m);
+  assert.doesNotMatch(stderr, /\n\s+at /);
 });
 
 test("CLI: a healthy run over more than one report exits 0 and writes both outputs", () => {
