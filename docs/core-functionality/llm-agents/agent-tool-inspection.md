@@ -62,7 +62,10 @@ for agent tool usage — if they break, tool calls become a black box.
 > (`ToolCallCard.tsx`). `mcp-client-agent.spec.ts` asserts the same two test
 > ids and its doc states the same premise as *"Proof #1"*; its comment also
 > repeats the wrong-accordion belief corrected below. Deliberately **not** fixed
-> here — different spec — and **no issue tracks it yet**.
+> here — different spec — and tracked by **#1793**, which also records the one
+> thing this PR could not measure: whether the MCPTools node's `tools_metadata`
+> actually carries an `echo` entry, i.e. whether its Proof #2 is a no-op or only
+> unsound in premise.
 
 Distinct from existing coverage: `agent-multi-tool-selection` asserts WHICH
 tool the agent picks and the ORDER of a two-tool sequence; `mcp-client-agent`
@@ -237,7 +240,7 @@ cleanup and the flow count grows.
   `agent-multi-tool-selection`).
 - MCP tools in the Playground (covered by `mcp-client-agent` — whose own
   tool-indicator assertion carries the premise corrected here; a separate spec,
-  deliberately not fixed in this PR, and not yet tracked by an issue).
+  deliberately not fixed in this PR, tracked by #1793).
 - The `button_open_actions` per-message actions button (message-level actions,
   not tool inspection).
 - Duration-value correctness (`duration` is captured but timing is

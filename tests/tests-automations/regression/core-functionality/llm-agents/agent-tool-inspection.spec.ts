@@ -51,7 +51,7 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * `tool_use` block persisted — the old layer 1 passed. `tool-status-done` is 0
  * on that run and exactly 1 on a real call. `mcp-client-agent.spec.ts` asserts
  * the same two test ids and its comment carries the same premise; that is a
- * separate spec and is deliberately NOT fixed here. No issue tracks it yet.
+ * separate spec and is deliberately NOT fixed here — tracked by #1793.
  *
  * Distinct from siblings: `agent-multi-tool-selection` asserts WHICH tool and
  * the ORDER of a sequence; `mcp-client-agent` asserts a tool indicator for MCP
