@@ -82,6 +82,32 @@ export function buildFragment(titles) {
   return `(?:${titles.join("|")})`;
 }
 
+/**
+ * Refuses (by throwing) when `baseline.titleCollisions` is non-empty.
+ *
+ * A recorded collision means two different tests in the underlying suite share
+ * the exact same title text, so an escaped-and-anchored title could still pull
+ * an out-of-scope test into the measurement -- no amount of anchoring on a
+ * single title string can tell two identically-titled tests apart. Extracted
+ * as its own pure function (rather than inlined in `main()`) so this refusal
+ * is unit-testable directly, the same way the other two mandated refusals
+ * already are via `shardTitles` and `buildFragment` -- `main()` is CLI-only
+ * glue and is not exercised by `node --test`.
+ *
+ * Returns the (empty) collision list when there is nothing to refuse.
+ */
+export function checkTitleCollisions(baseline, baselinePath = "the baseline") {
+  const collisions = baseline?.titleCollisions ?? [];
+  if (collisions.length) {
+    throw new Error(
+      `refusing: ${collisions.length} title collision(s) recorded in ` +
+        `${baselinePath}. A colliding title would pull an out-of-scope test into the measurement:\n  ` +
+        collisions.join("\n  "),
+    );
+  }
+  return collisions;
+}
+
 function arg(argv, name, fallback) {
   const hit = argv.find((a) => a.startsWith(`--${name}=`));
   if (hit) return hit.split("=").slice(1).join("=");
@@ -92,14 +118,7 @@ function arg(argv, name, fallback) {
 function main(argv) {
   const baselinePath = arg(argv, "baseline", "tests/assets/triage/inherited-backlog-baseline.json");
   const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
-  if ((baseline.titleCollisions ?? []).length) {
-    console.error(
-      `[triage-grep] refusing: ${baseline.titleCollisions.length} title collision(s) recorded in ` +
-        `${baselinePath}. A colliding title would pull an out-of-scope test into the measurement:\n  ` +
-        baseline.titleCollisions.join("\n  "),
-    );
-    return 1;
-  }
+  checkTitleCollisions(baseline, baselinePath);
   const titles = shardTitles(baselineTitles(baseline), arg(argv, "shards", "3"), arg(argv, "shard", "1"));
   process.stdout.write(`${buildFragment(titles.map(escapeTitle))}\n`);
   return 0;

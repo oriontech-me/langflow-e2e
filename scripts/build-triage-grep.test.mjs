@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { escapeTitle, baselineTitles, shardTitles, buildFragment } from "./build-triage-grep.mjs";
+import { escapeTitle, baselineTitles, shardTitles, buildFragment, checkTitleCollisions } from "./build-triage-grep.mjs";
 
 const baseline = {
   version: 1,
@@ -92,4 +92,30 @@ test("escapeTitle still matches the real test whose own title is exactly the sho
   // The legitimate target: flowPage.spec.ts's own (untitled-describe) test really is
   // titled just "save", followed only by its own tags.
   assert.ok(new RegExp(f).test("core-functionality/project-management/flowPage.spec.ts save @release"));
+});
+
+// checkTitleCollisions is the third mandated refusal (alongside shardTitles' rejection
+// of an out-of-range shard and buildFragment's rejection of an empty fragment). It used
+// to be inlined in main(), which is CLI-only -- reachable only via `node scripts/...`,
+// never via `node --test` -- so this behavior had nothing pinning it. Extracted into its
+// own pure function so main() has a single copy of the check to call, and so it can be
+// tested directly like the other two.
+test("checkTitleCollisions refuses when the baseline records a title collision, naming the reason and the titles", () => {
+  assert.throws(
+    () =>
+      checkTitleCollisions(
+        { titleCollisions: ["save", "load"] },
+        "tests/assets/triage/inherited-backlog-baseline.json",
+      ),
+    (err) =>
+      /2 title collision\(s\)/.test(err.message) &&
+      err.message.includes("tests/assets/triage/inherited-backlog-baseline.json") &&
+      err.message.includes("save") &&
+      err.message.includes("load"),
+  );
+});
+
+test("checkTitleCollisions does not refuse -- and returns the empty list -- when there are none", () => {
+  assert.deepEqual(checkTitleCollisions({ titleCollisions: [] }), []);
+  assert.deepEqual(checkTitleCollisions({}), []); // no field at all: same `?? []` guard main() used to inline
 });
