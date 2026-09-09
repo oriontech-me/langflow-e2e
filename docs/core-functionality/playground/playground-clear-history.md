@@ -73,7 +73,7 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 ## Preconditions *(optional)*
 
 - Langflow running and reachable at `PLAYWRIGHT_BASE_URL`
-- No pre-existing flows required; the setup creates a flow per test and `cleanAllFlows` removes it in `afterEach`
+- No pre-existing flows required; the setup creates a flow per test and `afterEach` deletes that one flow by id with `deleteFlow` — id-scoped, never a global sweep (see Notes)
 - No LLM or API key needed: ChatInput → ChatOutput acts as a synchronous echo
 
 ---
@@ -90,9 +90,15 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 - Tests run in `serial` mode because Test 2 asserts a session **count** in the
   playground sidebar, which a concurrent sibling on the same flow would perturb.
-  Cleanup is id-scoped — this file never calls `cleanAllFlows`, so it cannot
-  delete a parallel worker's flow (#465/#515). The earlier note claiming
-  `cleanAllFlows` was the reason for serial mode was stale.
+  Cleanup is id-scoped — `afterEach` deletes only the flow the test created,
+  with `deleteFlow` and an explicit bearer, so it cannot delete a parallel
+  worker's flow (#465/#515). Two earlier notes claimed `cleanAllFlows`: one
+  here as the reason for serial mode, one in Preconditions as the `afterEach`
+  mechanism. Both were stale, and the first correction landed **here only** —
+  a one-site fix for a two-site claim, which left the Preconditions copy
+  contradicting this paragraph in the same file. Sweep the whole file when
+  retracting a claim about the file. (#1772 has since retired the helper
+  outright, so the name has no implementation to go looking for.)
 - **Sidebar entry race (#1063).** Both tests previously built the flow through the
   home page → "New Flow" → templates modal → `blank-flow` path, and flaked because
   `FlowPage` mounts the whole `FlowSidebarComponent` inside a `display: none`
