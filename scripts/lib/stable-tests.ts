@@ -1,5 +1,6 @@
 /**
- * Shared source of truth for "which `test()` calls carry `@stable`".
+ * Shared source of truth for "which declaration carries which tags", and the
+ * `@stable` filter over it.
  *
  * Extracted from `scripts/stable-tests.ts` (the Phase 0 regenerator) so that the
  * checklist-coverage guard (`scripts/check-checklist-coverage.ts`) enforces the
@@ -13,6 +14,13 @@
  * #704"), and commented-out `{ tag: [...] }` lines. Only a real `test(...)` call
  * whose options object has an inline `tag` array containing the literal
  * `"@stable"` counts.
+ *
+ * `parseTaggedTests` / `collectTaggedTests` expose every tagged DECLARATION —
+ * `test(...)` and its modifiers (`.fixme`, `.skip`, `.only`, `.fail`, `.slow`) —
+ * with whatever tags and modifier it carries. `parseStableTests` /
+ * `collectStableTests` are a FILTER over that same walk, not a second one, so a
+ * future consumer that needs the wider population (e.g. a never-validated
+ * backlog) never has to keep a second AST walker in agreement with this one.
  */
 
 import * as fs from "fs";
@@ -134,17 +142,69 @@ function isDescribeCall(call: ts.CallExpression): boolean {
   return /^test\.describe\b/.test(call.expression.getText());
 }
 
-function parseStableTestsInFile(
+/** Match `test(...)` and its declaration modifiers — never `test.describe`, never `test.step`. */
+const DECLARATION_RE = /^test(?:\.(fixme|skip|only|fail|slow))?$/;
+
+export interface TaggedTest {
+  /** Title as written in the first argument (template `${...}` placeholders preserved). */
+  title: string;
+  /** Every literal string in the inline `tag: [...]` array, in source order. */
+  tags: string[];
+  /** "" for a plain `test(...)`; otherwise "fixme" | "skip" | "fail" | "only" | "slow". */
+  modifier: string;
+  /** Module path under `regression/`, e.g. `core-functionality/llm-agents`. */
+  modulePath: string;
+  /** Spec basename, e.g. `loop-component-regression.spec.ts`. */
+  specFile: string;
+  /** Path under `regression/`, e.g. `core-components/loop-component-regression.spec.ts`. */
+  relativePath: string;
+  /** 1-based source line of the declaration. */
+  line: number;
+}
+
+export interface CollectTaggedResult {
+  tests: TaggedTest[];
+  /** Non-fatal parse problems (e.g. a `tag` option that is not an inline array). */
+  warnings: string[];
+}
+
+/**
+ * Parse one spec's SOURCE TEXT for every DECLARATION that carries an inline
+ * `tag` array — `test(...)` and its modifiers (`.fixme`, `.skip`, `.only`,
+ * `.fail`, `.slow`) — regardless of which tags it carries. This is the ONE AST
+ * walk in the module; `parseStableTests` below is a filter over it rather than
+ * a second walker, which is the #985 drift this module exists to prevent.
+ *
+ * `filePath` is only used to derive the reported `modulePath` / `specFile` /
+ * `relativePath`, so it may point at a file that does not exist; it must still
+ * be an ABSOLUTE path under `REGRESSION_ROOT` for those to come out right —
+ * the same contract `parseStableTests` has always had.
+ *
+ * An in-body `test.skip(condition, message)` guard also has two arguments,
+ * exactly like a declaration's `(title, options)` — but its second argument is
+ * a string, not an object literal carrying a `tag` property, so `readTagsArray`
+ * reports "no tag array" rather than "unparseable" and it is silently not a
+ * declaration. Counting it as one would inflate the population by every
+ * provider guard in the suite (96 in `llm-agents` alone).
+ */
+export function parseTaggedTests(
   filePath: string,
-  source: ts.SourceFile,
-  warnings: string[],
-): StableTest[] {
-  const out: StableTest[] = [];
+  sourceText: string,
+): CollectTaggedResult {
+  const tests: TaggedTest[] = [];
+  const warnings: string[] = [];
   const relativePath = path
     .relative(REGRESSION_ROOT, filePath)
     .split(path.sep)
     .join("/");
   const modulePath = path.dirname(relativePath);
+  const specFile = path.basename(relativePath);
+  const source = ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
 
   function visit(node: ts.Node): void {
     // Playwright propagates a `test.describe` tag to every child test, and the
@@ -170,11 +230,11 @@ function parseStableTestsInFile(
         );
       }
     }
-    if (ts.isCallExpression(node) && isPlainTestCall(node)) {
-      const args = node.arguments;
-      if (args.length >= 2) {
-        const title = literalText(args[0]);
-        const { tags, unparseable } = readTagsArray(args[1]);
+    if (ts.isCallExpression(node)) {
+      const m = DECLARATION_RE.exec(node.expression.getText());
+      if (m && node.arguments.length >= 2) {
+        const title = literalText(node.arguments[0]);
+        const { tags, unparseable } = readTagsArray(node.arguments[1]);
         const { line } = source.getLineAndCharacterOfPosition(
           node.getStart(source),
         );
@@ -185,11 +245,15 @@ function parseStableTestsInFile(
               '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.',
           );
         }
-        if (title !== null && tags && tags.includes(STABLE_TAG)) {
-          out.push({
+        // A `tag` array is what makes this a DECLARATION rather than an in-body
+        // `test.skip(cond, msg)` guard, which also carries two arguments.
+        if (title !== null && tags) {
+          tests.push({
             title,
+            tags,
+            modifier: m[1] ?? "",
             modulePath,
-            specFile: path.basename(relativePath),
+            specFile,
             relativePath,
             line: line + 1,
           });
@@ -200,7 +264,26 @@ function parseStableTestsInFile(
   }
 
   visit(source);
-  return out;
+  return { tests, warnings };
+}
+
+/**
+ * Every tagged declaration across every spec under `regression/`, plus any
+ * non-fatal parse warnings. Files are walked in sorted (absolute-path) order
+ * so the result is deterministic across filesystems — POSIX does not
+ * guarantee `readdirSync` order — but that is the only ordering promise: a
+ * consumer that needs a specific key (e.g. `collectStableTests`'s
+ * module → spec → line) sorts its own filtered result.
+ */
+export function collectTaggedTests(): CollectTaggedResult {
+  const tests: TaggedTest[] = [];
+  const warnings: string[] = [];
+  for (const file of walkSpecs(REGRESSION_ROOT).sort()) {
+    const parsed = parseTaggedTests(file, fs.readFileSync(file, "utf-8"));
+    tests.push(...parsed.tests);
+    warnings.push(...parsed.warnings);
+  }
+  return { tests, warnings };
 }
 
 /**
@@ -208,19 +291,27 @@ function parseStableTestsInFile(
  * under `collectStableTests()`. `filePath` is only used to derive the reported
  * `modulePath` / `relativePath`, so it may point at a file that does not exist;
  * it must still be under `REGRESSION_ROOT` for those paths to come out right.
+ *
+ * A filter over `parseTaggedTests`: only a plain `test(...)` (no modifier —
+ * `.skip` / `.fixme` / `.only` / `.fail` / `.slow` never run in the daily as
+ * written, so counting one as validated coverage would overstate the release
+ * signal) whose tags include `@stable`.
  */
 export function parseStableTests(
   filePath: string,
   text: string,
 ): CollectResult {
-  const warnings: string[] = [];
-  const source = ts.createSourceFile(
-    filePath,
-    text,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-  );
-  return { tests: parseStableTestsInFile(filePath, source, warnings), warnings };
+  const { tests, warnings } = parseTaggedTests(filePath, text);
+  const stable: StableTest[] = tests
+    .filter((t) => t.modifier === "" && t.tags.includes(STABLE_TAG))
+    .map(({ title, modulePath, specFile, relativePath, line }) => ({
+      title,
+      modulePath,
+      specFile,
+      relativePath,
+      line,
+    }));
+  return { tests: stable, warnings };
 }
 
 /**

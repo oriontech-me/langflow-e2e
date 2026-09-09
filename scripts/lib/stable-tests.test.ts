@@ -23,11 +23,17 @@ import {
   parseDeclaredCounts,
   parseDeclaredTests,
   parseStableTests,
+  parseTaggedTests,
 } from "./stable-tests";
 
 // A path under REGRESSION_ROOT — it never has to exist, `parseStableTests`
 // only uses it to derive modulePath / specFile / relativePath.
 const SPEC = path.join(REGRESSION_ROOT, "core-components", "example.spec.ts");
+
+// Same idiom, for the `parseTaggedTests` cases below — a distinct path so the
+// expected `modulePath` / `specFile` / `relativePath` values are visibly tied
+// to this constant rather than reused from SPEC's `core-components/` value.
+const TAGGED_SPEC = path.join(REGRESSION_ROOT, "area", "x.spec.ts");
 
 function parse(source: string) {
   return parseStableTests(SPEC, source);
@@ -439,4 +445,65 @@ test("an inherited lane tag is not duplicated when the test declares it too", ()
     });
   `);
   assert.deepEqual(out[0].tags, ["@destructive", "@api"]);
+});
+
+// ─── parseTaggedTests — every tagged declaration, not only @stable ──────────
+//
+// The backlog predicate in a later task reads this directly instead of a
+// second AST walk (#985 would apply to this module just as much as to a
+// separate one). It must see every DECLARATION regardless of tag or modifier,
+// and it must not be fooled by an in-body `test.skip(cond, msg)` guard, which
+// has the same two-argument shape as a real declaration.
+
+test("parseTaggedTests reads a plain tagged declaration", () => {
+  const src = `test("a title", { tag: ["@release", "@api"] }, async () => {});`;
+  const { tests, warnings } = parseTaggedTests(TAGGED_SPEC, src);
+  assert.equal(warnings.length, 0);
+  assert.deepEqual(tests, [
+    {
+      title: "a title",
+      tags: ["@release", "@api"],
+      modifier: "",
+      modulePath: "area",
+      specFile: "x.spec.ts",
+      relativePath: "area/x.spec.ts",
+      line: 1,
+    },
+  ]);
+});
+
+test("parseTaggedTests records the modifier of a quarantined declaration", () => {
+  const src = `test.fixme("blocked", { tag: ["@release"] }, async () => {});`;
+  const { tests } = parseTaggedTests(TAGGED_SPEC, src);
+  assert.equal(tests.length, 1);
+  assert.equal(tests[0].modifier, "fixme");
+});
+
+// THE TRAP. `test.skip(condition, message)` inside a test body also has two
+// arguments, and counting it as a declaration inflates the population by the
+// number of provider guards -- 96 of them in llm-agents alone. The second
+// argument must be an object literal carrying an inline `tag` array.
+test("parseTaggedTests ignores an in-body test.skip guard", () => {
+  const src = [
+    `test("real", { tag: ["@release"] }, async ({ page }) => {`,
+    `  test.skip(!hasProviderEnvKeys("openai"), "no key");`,
+    `  test.fail();`,
+    `});`,
+  ].join("\n");
+  const { tests } = parseTaggedTests(TAGGED_SPEC, src);
+  assert.equal(tests.length, 1);
+  assert.equal(tests[0].title, "real");
+});
+
+test("parseTaggedTests warns on a tag array it cannot read", () => {
+  const src = `test("t", { tag: SHARED_TAGS }, async () => {});`;
+  const { tests, warnings } = parseTaggedTests(TAGGED_SPEC, src);
+  assert.equal(tests.length, 0);
+  assert.match(warnings[0], /not an inline array/);
+});
+
+test("parseTaggedTests preserves a template-literal title", () => {
+  const src = "test(`agent [${label}]`, { tag: [\"@release\"] }, async () => {});";
+  const { tests } = parseTaggedTests(TAGGED_SPEC, src);
+  assert.equal(tests[0].title, "agent [${label}]");
 });
