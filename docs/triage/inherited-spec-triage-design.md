@@ -138,10 +138,29 @@ holding an alternation over one third of the 92 test titles, `retries: 0`,
 `provider: auto`, targeting the OSS nightly image — the same image the daily
 runs. Red tests are then re-dispatched twice, for three observations each.
 
-Why the selector works with no repo change: the 92 titles are **unique** (zero
-collision with any out-of-scope test, zero template placeholders — measured), and
-the 55 files contain **no** `@stable` test, so a title-level selection is
-file-exact. Two of the titles contain regex metacharacters and are escaped.
+Why the selector works with no repo change — and the trap that "unique titles"
+hides. The 92 titles are unique among themselves (zero collision with any
+out-of-scope test's title, zero template placeholders), and the 55 files contain
+**no** `@stable` test. That is necessary and **not sufficient**, which cost Task 4
+a real fix: Playwright's `--grep` does not match a test's isolated title. It
+matches `TestCase._grepTitleWithTags()` — the file's relative path, every
+enclosing `describe` title, the test's own title and its tags, space-joined into
+one string. So a short title collides two further ways, both measured on this
+suite: as a substring of an unrelated **kebab-case file path** (`save` inside
+`save-flow-as-template.spec.ts`), and as the literal first word of an unrelated
+`describe("save component tests", …)`. Unanchored, the 92 titles selected
+**106** tests. `\b` does not close it either — `-` is a non-word character, so
+`\bsave\b` still matches at the letter/hyphen boundary inside a path.
+
+What closes it is anchoring on whitespace-or-string-edge (every segment
+Playwright joins is delimited by exactly one literal space, and neither a path
+nor a single word contains one internally) **plus** requiring the tail to be
+nothing but space-`@token` pairs to the end of the string — because after a
+test's own title only its own tags can follow, while after a describe title
+there is always more plain text. With both, the selection is set-exact: 92
+wanted, 92 selected, 0 missing, 0 extra, verified with `--list` and by
+comparing the selected titles against the baseline. Two of the titles also
+contain regex metacharacters and are escaped.
 
 Why three dispatches and not one: 92 tests at a 5-minute per-test worst case over
 2 workers is ≈230 minutes against this lane's 180-minute cap. A single dispatch
