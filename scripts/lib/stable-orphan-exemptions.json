@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Deliberate, PERMANENT absences of @stable, read by scripts/reconcile-stable-orphans.ts (#1746).",
+    "An entry silences exactly one test's removal, matched on (spec, title) — titles do not drift, line numbers do.",
+    "It is verified in BOTH directions (#1084's lesson): if the test carries @stable again, gains a lane tag that already keeps it out of the daily (#1010), is renamed, or turns out never to have carried @stable at all, the declaration is REPORTED as expired instead of being honoured silently — otherwise this check grows the exact silent-expiry problem it exists to close.",
+    "A TEMPORARY absence does not belong here. That is what an open issue naming the spec file is for: the reconciler treats any open tracker that names the file as an owner, so a quarantine with a live issue is already accounted for and needs no declaration."
+  ],
+  "exemptions": [
+    {
+      "spec": "core-functionality/model-provider/groq-provider.spec.ts",
+      "title": "the Groq component configures the API key and executes the flow",
+      "reason": "The Groq components are not bundled in the tested image — component availability is a packaging decision per image, and the standing answer lives in docs/component-distribution-policy.md rather than in a tracker. Restoring @stable would put a test that cannot pass into the daily.",
+      "ref": "#1039"
+    },
+    {
+      "spec": "core-functionality/model-provider/mistral-provider.spec.ts",
+      "title": "the MistralAI component configures the API key and executes the flow",
+      "reason": "The MistralAI components are not bundled in the tested image — the same packaging decision as Groq, recorded in docs/component-distribution-policy.md.",
+      "ref": "#1039"
+    }
+  ]
+}

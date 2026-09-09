@@ -323,3 +323,164 @@ export function collectDeclaredCounts(): DeclaredCounts {
   }
   return acc;
 }
+
+// ─── Declared tests with their tags (the orphan reconciler's input) ──────────
+
+/**
+ * Lane selectors, not severities. `tests/fixtures/lane.ts` grep-inverts each of
+ * these out of every run that does not opt into its lane, and none of them is
+ * ever combined with `@stable` because no scheduled lane exists for them
+ * (#1010). A test that carries one is therefore out of the daily BY DESIGN —
+ * the orphan reconciler must not read that as an unowned removal.
+ */
+export const LANE_TAGS = ["@destructive", "@enterprise", "@serving"] as const;
+
+export interface DeclaredTest {
+  /** Title as written in the declaring call's first argument. */
+  title: string;
+  /** Path under `regression/`, e.g. `core-components/loop-component-regression.spec.ts`. */
+  relativePath: string;
+  /** 1-based source line of the declaring call. */
+  line: number;
+  /**
+   * Tags that reach the test: its own, in source order, plus any LANE tag
+   * inherited from an enclosing `test.describe`. Inheriting the lane tags
+   * matters for the same reason inheriting `@stable` does — Playwright applies
+   * a suite tag to every test inside, so a suite hoisted to `@enterprise` would
+   * otherwise turn every test in it into an orphan candidate.
+   */
+  tags: string[];
+  /**
+   * True when `@stable` reaches this test at all — on its own `tag` array or
+   * inherited from an enclosing `test.describe`. Playwright's `--grep "@stable"`
+   * honours the inherited form, so the daily really does run such a test; the
+   * reconciler asks "is this test in the daily", which is that question and not
+   * "is `@stable` written on this line".
+   */
+  stable: boolean;
+  /**
+   * Declared with a modifier that skips it before its body runs, on every lane
+   * — `test.fixme(title, …)` or the declaring `test.skip(title, …)`.
+   */
+  fixme: boolean;
+  /** A `tag` option existed but could not be read as an inline array of literals. */
+  unparseableTags: boolean;
+}
+
+/**
+ * Match a DECLARING call that also skips the test before its body runs —
+ * `test.fixme(title, …)` and `test.skip(title, …)`.
+ *
+ * `test.skip` is in here for the reason the reconciler exists at all: without
+ * it, a test quarantined with `test.skip("title", …)` is not a row in the
+ * output — not an orphan, not owned, not UNKNOWN, simply absent, which is the
+ * silent-nonexistent-path shape (#1092) inside the check written to end it.
+ * There are none today, so this is latent rather than a live gap; that is why
+ * it is a parser rule and not a report.
+ *
+ * The MODIFIER form (`test.skip(condition, "reason")`, called from inside a
+ * test) cannot be confused with it: its first argument is a condition or an
+ * arrow function, never a string literal, and it is not the two-arg
+ * title-plus-body shape either.
+ */
+const DECLARING_SKIP_MODIFIERS = ["fixme", "skip"] as const;
+
+function isSkippedDeclaration(call: ts.CallExpression): boolean {
+  return (
+    ts.isPropertyAccessExpression(call.expression) &&
+    ts.isIdentifier(call.expression.expression) &&
+    call.expression.expression.text === "test" &&
+    (DECLARING_SKIP_MODIFIERS as readonly string[]).includes(
+      call.expression.name.text,
+    ) &&
+    call.arguments.length >= 2 &&
+    literalText(call.arguments[0]) !== null
+  );
+}
+
+/**
+ * Every declared test in one spec's SOURCE TEXT — `test(...)` and the declaring
+ * forms of `test.fixme(...)` / `test.skip(...)` alike — with the tags that
+ * reach it.
+ *
+ * Deliberately broader than `parseStableTests()`, which only ever needed the
+ * `@stable` subset for the checklist blocks. The reconciler needs the
+ * complement (a test WITHOUT `@stable`), so "no tag array at all" has to come
+ * back as a row rather than as an absence.
+ */
+export function parseDeclaredTests(filePath: string, text: string): DeclaredTest[] {
+  const source = ts.createSourceFile(
+    filePath,
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
+  const relativePath = path
+    .relative(REGRESSION_ROOT, filePath)
+    .split(path.sep)
+    .join("/");
+
+  const out: DeclaredTest[] = [];
+
+  function visit(
+    node: ts.Node,
+    inheritedStable: boolean,
+    inheritedLane: string[],
+  ): void {
+    let childrenStable = inheritedStable;
+    let childrenLane = inheritedLane;
+
+    if (ts.isCallExpression(node)) {
+      if (isDescribeCall(node) && node.arguments.length >= 2) {
+        const { tags } = readTagsArray(node.arguments[1]);
+        if (tags?.includes(STABLE_TAG)) childrenStable = true;
+        const lane = (tags ?? []).filter((t) =>
+          (LANE_TAGS as readonly string[]).includes(t),
+        );
+        if (lane.length > 0) childrenLane = [...inheritedLane, ...lane];
+      } else if (isPlainTestCall(node) || isSkippedDeclaration(node)) {
+        const title = literalText(node.arguments[0]);
+        if (title !== null) {
+          const { tags, unparseable } =
+            node.arguments.length >= 2
+              ? readTagsArray(node.arguments[1])
+              : { tags: null, unparseable: false };
+          const { line } = source.getLineAndCharacterOfPosition(
+            node.getStart(source),
+          );
+          const own = tags ?? [];
+          out.push({
+            title,
+            relativePath,
+            line: line + 1,
+            tags: [...own, ...inheritedLane.filter((t) => !own.includes(t))],
+            stable: inheritedStable || own.includes(STABLE_TAG),
+            fixme: isSkippedDeclaration(node),
+            unparseableTags: unparseable,
+          });
+        }
+      }
+    }
+
+    ts.forEachChild(node, (child) =>
+      visit(child, childrenStable, childrenLane),
+    );
+  }
+
+  visit(source, false, []);
+  return out;
+}
+
+/** The same across every spec under `regression/`, sorted by path then line. */
+export function collectDeclaredTests(): DeclaredTest[] {
+  const all: DeclaredTest[] = [];
+  for (const file of walkSpecs(REGRESSION_ROOT)) {
+    all.push(...parseDeclaredTests(file, fs.readFileSync(file, "utf-8")));
+  }
+  all.sort((a, b) =>
+    a.relativePath !== b.relativePath
+      ? a.relativePath.localeCompare(b.relativePath)
+      : a.line - b.line,
+  );
+  return all;
+}

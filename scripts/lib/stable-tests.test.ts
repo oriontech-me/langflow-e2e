@@ -15,9 +15,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "path";
 import {
+  LANE_TAGS,
   REGRESSION_ROOT,
+  collectDeclaredCounts,
+  collectDeclaredTests,
   collectStableTests,
   parseDeclaredCounts,
+  parseDeclaredTests,
   parseStableTests,
 } from "./stable-tests";
 
@@ -267,4 +271,172 @@ test("test.describe and test.skip are not counted as declared tests", () => {
     });
   `);
   assert.deepEqual(c, { total: 1, enterprise: 0, oss: 1 });
+});
+
+// ─── parseDeclaredTests — the orphan reconciler's input (#1746) ──────────────
+//
+// The complement of the `@stable` parser above: the reconciler needs the tests
+// that DO NOT carry the tag, so "no tag array at all" has to come back as a row
+// rather than as an absence, and `test.fixme` has to come back at all.
+
+function declaredIn(source: string) {
+  return parseDeclaredTests(SPEC, source);
+}
+
+test("a declared test with no tag option at all is returned, not skipped", () => {
+  const out = declaredIn(`
+    test("an untagged test", async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].tags, []);
+  assert.equal(out[0].stable, false);
+  assert.equal(out[0].fixme, false);
+});
+
+test("the declaring form of test.fixme is a declared test, and is marked", () => {
+  // Rule 3 of #1746: `@stable` removal and `test.fixme` are applied together at
+  // flake quarantine but separately at hard-failure auto-removal, and "runs
+  // nowhere at all" is the worse of the two states.
+  const out = declaredIn(`
+    test.fixme("a quarantined test", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, true);
+  assert.equal(out[0].title, "a quarantined test");
+});
+
+test("the declaring form of test.skip is a declared test too, and is marked", () => {
+  // Latent, not live: there are zero such declarations in the suite today. It
+  // is a parser rule rather than a report because the failure mode is silence —
+  // a test quarantined this way was not an orphan, not owned and not UNKNOWN,
+  // it was simply absent from the reconciler's output, which is the
+  // nonexistent-path shape (#1092) inside the check written to end it.
+  const out = declaredIn(`
+    test.skip("a test quarantined with skip", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, true, "it runs on no lane, same as test.fixme");
+  assert.equal(out[0].title, "a test quarantined with skip");
+});
+
+test("the MODIFIER form of test.skip is not mistaken for a declaration", () => {
+  // The form the suite actually uses — 8 call sites today, e.g.
+  // `model-provider-base-url-ssrf.spec.ts`. Its first argument is a condition or
+  // an arrow function, never a string literal, which is what separates the two.
+  const out = declaredIn(`
+    test("a test that skips itself", { tag: ["@regression"] }, async ({ page }) => {
+      test.skip();
+      test.skip(true, "a reason");
+      test.skip(process.env.X !== "1", "another reason");
+      test.skip(({ browserName }) => browserName === "firefox", "yet another");
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, false, "the declaration is a plain test()");
+});
+
+test("an in-body test.fixme() call is not mistaken for a declaration", () => {
+  const out = declaredIn(`
+    test("a test that skips itself", { tag: ["@regression"] }, async ({ page }) => {
+      test.fixme();
+      test.fixme(true, "a reason");
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, false, "the declaration is a plain test()");
+});
+
+test("@stable inherited from a describe block marks the child tests stable", () => {
+  // Playwright applies a suite tag to every test inside and the daily's
+  // `--grep "@stable"` honours it, so such a test IS in the daily. Reading it
+  // as an absence would report a false orphan — the opposite decision from
+  // `parseStableTests`, which warns because Phase 0 lists tests individually.
+  const out = declaredIn(`
+    test.describe("a suite", { tag: ["@stable"] }, () => {
+      test("a child", { tag: ["@components"] }, async ({ page }) => {});
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].stable, true);
+  assert.deepEqual(out[0].tags, ["@components"]);
+});
+
+test("an unreadable tag option is flagged rather than read as untagged", () => {
+  const out = declaredIn(`
+    test("a test", { tag: TAGS }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].unparseableTags, true);
+  assert.equal(out[0].stable, false);
+});
+
+test("the lane selectors are the three that are never combined with @stable", () => {
+  assert.deepEqual([...LANE_TAGS], ["@destructive", "@enterprise", "@serving"]);
+});
+
+test("collectDeclaredTests covers every @stable test the Phase 0 parser finds", () => {
+  // The two parsers answer different questions over the same tree; if the
+  // broader one ever missed a declaration the narrower one sees, the
+  // reconciler would silently stop scanning part of the suite.
+  const declared = collectDeclaredTests();
+  const key = (p: string, t: string) => `${p}::${t}`;
+  const seen = new Set(declared.map((d) => key(d.relativePath, d.title)));
+  for (const s of collectStableTests().tests) {
+    assert.ok(
+      seen.has(key(s.relativePath, s.title)),
+      `${s.relativePath} — "${s.title}" is visible to both parsers`,
+    );
+  }
+  assert.ok(declared.length >= collectStableTests().tests.length);
+});
+
+test("only test() and test.fixme() declare a test — test.step and friends do not", () => {
+  // A parser that accepts any `test.X("literal", …)` swallows every
+  // `test.step()` in the suite: measured, `collectDeclaredTests()` went from
+  // 815 rows to 2319 under exactly that mutation, and NOTHING in the unit lane
+  // noticed, because the only cross-parser assertion checks a superset.
+  const out = declaredIn(`
+    test("a real test", { tag: ["@regression"] }, async ({ page }) => {
+      await test.step("a step, not a test", async () => {});
+      await test.slow("also not a test", async () => {});
+    });
+    test.fixme("a quarantined test", { tag: ["@regression"] }, async () => {});
+    test.describe("a suite", { tag: ["@regression"] }, () => {});
+  `);
+  assert.deepEqual(
+    out.map((d) => d.title),
+    ["a real test", "a quarantined test"],
+  );
+});
+
+test("collectDeclaredTests counts exactly the declared tests, no more", () => {
+  // The upper bound is the assertion that dies under over-collection; the
+  // superset check above it survives one. `parseDeclaredCounts` counts plain
+  // `test()` calls only, so the two differ by the `test.fixme` declarations.
+  const declared = collectDeclaredTests();
+  const fixmes = declared.filter((d) => d.fixme).length;
+  assert.equal(declared.length, collectDeclaredCounts().total + fixmes);
+});
+
+test("a lane tag on a describe block reaches its child tests", () => {
+  // Symmetry with `@stable`: Playwright applies a suite tag to everything
+  // inside, so a suite hoisted to `@enterprise` would otherwise turn every test
+  // in it into an orphan candidate. Currently inert — no describe in the tree
+  // carries one — which is exactly when it is cheap to pin.
+  const out = declaredIn(`
+    test.describe("an enterprise suite", { tag: ["@enterprise"] }, () => {
+      test("a child", { tag: ["@authz"] }, async ({ page }) => {});
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].tags, ["@authz", "@enterprise"]);
+});
+
+test("an inherited lane tag is not duplicated when the test declares it too", () => {
+  const out = declaredIn(`
+    test.describe("a suite", { tag: ["@destructive"] }, () => {
+      test("a child", { tag: ["@destructive", "@api"] }, async ({ page }) => {});
+    });
+  `);
+  assert.deepEqual(out[0].tags, ["@destructive", "@api"]);
 });
