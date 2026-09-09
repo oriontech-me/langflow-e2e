@@ -18,7 +18,12 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * (`global_embed_content_requests_per_minute_per_base_model`, base model
  * `gemini-embedding`) answered the embedding call with 429 RESOURCE_EXHAUSTED.
  * Nothing failed the test on it, because the run is `POST /api/v2/workflows`,
- * whose flow-error verdict is ADVISORY by design (#1162 staging).
+ * whose flow-error verdict was ADVISORY by design at the time (#1162 staging).
+ * That verdict now fails the test (flipped in `f3bdd864`, PR #1691) — and this
+ * exact cause STILL would not, which is why the wait below is not made
+ * redundant by the flip: `RESOURCE_EXHAUSTED` matches the provider-outage
+ * patterns and is downgraded to *unevaluated* on purpose, since failing on a
+ * drained account is what would strip `@stable` unreviewed (#1165/#1452).
  *
  * **A failed run has TWO surfaces, and watching only one is how this defect
  * comes back.** Both measured on 1.12.0.dev44, and they are disjoint:

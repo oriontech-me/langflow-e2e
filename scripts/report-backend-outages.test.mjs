@@ -3,13 +3,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   MD_DELIMITER,
   attribute,
+  collateralPayload,
   collectAttempts,
   normalizeSpecPath,
   outputLines,
@@ -331,4 +332,186 @@ test("the CLI exits 0 on a malformed summary instead of failing the merge job", 
     env: { ...process.env, LIVENESS_DIR: liveness, PLAYWRIGHT_JSON: join(dir, "absent.json") },
   });
   assert.match(stdout, /reporter error \(ignored\)/);
+});
+
+// ─── Collateral attempt IDENTITIES, the exemption's corroboration (#1589) ────
+//
+// The count `collateral_attempts` was enough for a summary line, but the
+// `@stable` exemption has to ask a per-attempt question: "did THIS attempt of
+// THIS test overlap a measured outage on ITS OWN shard". Only this module can
+// answer it — the merged report never says which shard a test ran on, while a
+// shard summary's `files` list does.
+
+test("attribute carries the identity of every collateral attempt, not just its count", () => {
+  const agg = attribute([shard3, shard4], collectAttempts(report));
+  const s3 = agg.shards.find((s) => s.shard === "3");
+  assert.equal(s3.collateralIds.length, s3.collateral);
+  for (const id of s3.collateralIds) {
+    assert.equal(id.file, FILE_A);
+    assert.equal(typeof id.title, "string");
+    assert.equal(typeof id.retry, "number");
+  }
+  // The retries are distinguished: the exemption keys on (spec, title, retry),
+  // so collapsing two attempts of one test into one row would let an outage
+  // during attempt 0 corroborate attempt 1.
+  assert.deepEqual(
+    [...new Set(s3.collateralIds.map((i) => i.retry))].sort(),
+    [0, 1],
+  );
+  const s4 = agg.shards.find((s) => s.shard === "4");
+  assert.deepEqual(s4.collateralIds, [], "shard 4 had no outage to be collateral of");
+});
+
+test("collateralPayload carries `measured` so an empty list is readable", () => {
+  // #1012: "the recorder ran and nothing overlapped" is evidence; "no shard
+  // produced probes" is its absence. An empty `attempts` array alone cannot
+  // tell the consumer which one it is looking at.
+  const measuredButClean = collateralPayload(attribute([shard4], collectAttempts(report)));
+  assert.equal(measuredButClean.measured, true);
+  assert.deepEqual(measuredButClean.attempts, []);
+
+  const unmeasured = collateralPayload(attribute([], []));
+  assert.equal(unmeasured.measured, false);
+  assert.deepEqual(unmeasured.attempts, []);
+});
+
+test("collateralPayload dedups an attempt claimed by two shard summaries", () => {
+  // A re-run shard can upload a second summary listing the same files; the
+  // exemption only needs to know the attempt was corroborated once.
+  const twice = collateralPayload(
+    attribute([shard3, { ...shard3, shard: "3-rerun" }], collectAttempts(report)),
+  );
+  const keys = twice.attempts.map((a) => `${a.file}|${a.title}|${a.retry}`);
+  assert.deepEqual(keys, [...new Set(keys)]);
+});
+
+test("the CLI writes the corroboration file only when asked, and says what it wrote", () => {
+  const dir = makeTempDir("liveness-report-");
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(join(liveness, "liveness-3"), { recursive: true });
+  writeFileSync(join(liveness, "liveness-3", "backend-liveness.json"), JSON.stringify(shard3));
+  const reportPath = join(dir, "results.json");
+  writeFileSync(reportPath, JSON.stringify(report));
+  const attemptsPath = join(dir, "outage-attempts.json");
+
+  const stdout = execFileSync(process.execPath, [SCRIPT], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      LIVENESS_DIR: liveness,
+      PLAYWRIGHT_JSON: reportPath,
+      OUTAGE_ATTEMPTS_OUT: attemptsPath,
+    },
+  });
+  const payload = JSON.parse(readFileSync(attemptsPath, "utf8"));
+  assert.equal(payload.measured, true);
+  assert.equal(payload.wedged, true);
+  assert.equal(payload.attempts.length, 2);
+  assert.equal(payload.attempts[0].file, FILE_A);
+  assert.match(stdout, /wrote 2 corroborated collateral attempt\(s\)/);
+});
+
+test("without OUTAGE_ATTEMPTS_OUT the CLI writes no corroboration file at all", () => {
+  // The consumer is fail-closed on an absent file, so "not asked" must stay
+  // distinguishable from "asked and empty" — writing one unconditionally would
+  // make every caller look like it corroborated nothing.
+  const dir = makeTempDir("liveness-report-");
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(join(liveness, "liveness-3"), { recursive: true });
+  writeFileSync(join(liveness, "liveness-3", "backend-liveness.json"), JSON.stringify(shard3));
+  const reportPath = join(dir, "results.json");
+  writeFileSync(reportPath, JSON.stringify(report));
+
+  execFileSync(process.execPath, [SCRIPT], {
+    env: { ...process.env, LIVENESS_DIR: liveness, PLAYWRIGHT_JSON: reportPath },
+    stdio: "ignore",
+  });
+  assert.equal(existsSync(join(dir, "outage-attempts.json")), false);
+});
+
+test("collateralPayload says which SPECS were measured, not only whether any shard was", () => {
+  // `measured` is run-level. A consumer printing a per-shard sentence from it
+  // claims the recorder measured a shard that uploaded nothing, whenever some
+  // other shard did — the #1012 conflation this field exists to end.
+  const silentShard = { ...shard4, shard: "5", files: [FILE_B], measured: false };
+  const payload = collateralPayload(
+    attribute([shard3, silentShard], collectAttempts(report)),
+  );
+  assert.equal(payload.measured, true, "shard 3 did produce probes");
+  assert.equal(payload.specMeasured[FILE_A], true);
+  assert.equal(
+    payload.specMeasured[FILE_B],
+    false,
+    "the shard that ran FILE_B produced none, and the payload has to say so",
+  );
+  assert.equal(payload.reportRead, true);
+});
+
+test("a spec claimed by two shards counts as measured if EITHER measured it", () => {
+  const payload = collateralPayload(
+    attribute(
+      [
+        { ...shard3, shard: "6", files: [FILE_A], measured: false },
+        { ...shard3, files: [FILE_A] },
+      ],
+      collectAttempts(report),
+    ),
+  );
+  assert.equal(payload.specMeasured[FILE_A], true);
+});
+
+test("collateralPayload records whether the merged report was readable at all", () => {
+  // With no report there are zero attempts, so an empty list is the absence of
+  // a check rather than its result.
+  const payload = collateralPayload(attribute([shard3], collectAttempts(null)), {
+    reportRead: false,
+  });
+  assert.equal(payload.reportRead, false);
+  assert.deepEqual(payload.attempts, []);
+});
+
+test("each collateral attempt names the shard that measured it", () => {
+  const payload = collateralPayload(attribute([shard3], collectAttempts(report)));
+  assert.ok(payload.attempts.length > 0);
+  for (const a of payload.attempts) assert.equal(a.shard, "3");
+});
+
+test("an unwritable corroboration path costs the exemption, never the liveness outputs", () => {
+  // Ordering, pinned. The corroboration write is the newest thing in `main()`
+  // and the only one that writes to a caller-supplied path; ahead of
+  // `writeOutputs` a throw was swallowed by the top-level catch and took
+  // `backend_wedged` and the umbrella's whole liveness section with it —
+  // trading a report everyone reads for a file that fails closed anyway.
+  const dir = makeTempDir("liveness-report-");
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(liveness, { recursive: true });
+  writeFileSync(join(liveness, "backend-liveness.json"), JSON.stringify(shard3));
+  const outputPath = join(dir, "gh-output");
+  writeFileSync(outputPath, "");
+
+  const stdout = execFileSync(process.execPath, [SCRIPT], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      LIVENESS_DIR: liveness,
+      PLAYWRIGHT_JSON: join(dir, "absent.json"),
+      GITHUB_OUTPUT: outputPath,
+      GITHUB_STEP_SUMMARY: "",
+      // A directory that does not exist, so `writeFileSync` throws ENOENT.
+      OUTAGE_ATTEMPTS_OUT: join(dir, "no", "such", "dir", "attempts.json"),
+    },
+  });
+
+  assert.match(
+    stdout,
+    /::warning::.*could not write/,
+    "a failed write says so instead of leaving a missing file (#1012)",
+  );
+  const outputs = readFileSync(outputPath, "utf8");
+  assert.match(
+    outputs,
+    /^wedged=/m,
+    "the liveness outputs survive a failed corroboration write",
+  );
+  assert.match(outputs, /^measured=/m);
 });

@@ -33,6 +33,18 @@ inputs:
       summary claims the recorder measured no outage on a run it never measured.
     required: false
     default: ""
+  outage_attempts:
+    description: >-
+      Path to the collateral-attempt list `report-backend-outages.mjs` writes
+      (#1589): the failing attempts whose span overlapped a MEASURED outage
+      window on their own shard. It is what lets the exemption read an EARLIER
+      attempt — an intermittent wedge cycles through the retry budget instead of
+      burning it, so a transport-level signature on attempt 0 can be gone by the
+      last one. Optional and fail-closed: absent, unreadable or malformed means
+      the widened branch never fires and the rule is exactly #1031's, so this
+      can never remove a tag today's rule would keep.
+    required: false
+    default: ""
 
 outputs:
   status:
@@ -58,6 +70,7 @@ runs:
         PLAYWRIGHT_JSON: ${{ inputs.playwright_json }}
         MAX_AUTO_REMOVE: ${{ inputs.max_auto_remove }}
         BACKEND_WEDGED: ${{ inputs.backend_wedged }}
+        OUTAGE_ATTEMPTS: ${{ inputs.outage_attempts }}
       run: |
         set -euo pipefail
         npx ts-node scripts/remove-stable-from-failures.ts > auto-remove-result.json

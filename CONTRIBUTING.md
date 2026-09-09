@@ -333,7 +333,57 @@ The base fixture prints backend errors automatically. Look for:
 
 - `🚨 Backend Error:` — unexpected HTTP error. **Logged, never fails the test** (#1084)
 - `🚨 Flow Error Detected` — silent failure in flow execution. **Fails the test** unless
-  the spec called `page.allowFlowErrors()`
+  the spec called `page.allowFlowErrors()` — on both run surfaces since #1165
+  (`POST /api/v2/workflows`, i.e. every Playground and agent run on 1.12.x, was staged
+  as advisory until then)
+- `⚠️  run stream(s) NOT evaluated` — the fixture could not reach a verdict for a run:
+  a cancelled stream, an unreadable body, no CDP session, or a **provider outage** (a
+  drained key, a quota — downgraded on purpose, since failing on it would strip `@stable`
+  in an unreviewed commit). **Nothing fails.** The verdict for that run is unknown, not
+  clean (#1012), so this line is a finding like the advisory HTTP one below it
+
+If your spec's contract IS "the run did not crash" — as `agent-tool-error-handling`'s is —
+the gate above is not enough on its own, because it can only fail on a verdict it reached.
+Assert the verdict directly (#1452):
+
+```typescript
+// PageWithErrorHooks is exported from tests/fixtures/fixtures.ts alongside `test`
+const report = await (page as PageWithErrorHooks).flowErrorReport();
+expect(report.evaluated, "no run stream was accounted for at all").toBeGreaterThan(0);
+expect(report.clean, report.summary).toBe(true);
+```
+
+**Both lines, and the first one is the one that gets dropped.** `clean` is vacuously
+true when nothing was accounted for, so a spec asserting it alone keeps passing when the
+send never fired or the run moved to an endpoint `runStreamSurface()` does not classify —
+"the run was healthy" and "there was no run" become the same assertion, which is #1092's
+silent-nonexistent-path shape. `flow-error-gate.spec.ts` records the same lesson from the
+other side: its healthy-run test passed under every mutation it was meant to catch until
+`evaluated` was asserted.
+
+`clean` is true only when every run stream in the test was evaluated and none of them
+failed — an unevaluated run is not clean. It also requires `v2Watched`, and that is the
+half worth knowing mid-test: with no CDP session the unevaluated count is still **empty**
+until teardown, so `v2Watched` is the only thing keeping the report from reading clean at
+the moment a spec asks. `summary` always names whichever reason applied. Call it **after** the run has finished (a stream
+still open is reported as `pending`, which is not clean either; it does not wait, because
+nothing can know whether a given stream will close). It is read-only and NOT a hatch:
+`allowFlowErrors()` suppresses the gate, it does not empty the report, so a hatched spec
+can still find out what actually happened.
+
+**It is cumulative for the whole test, not per run.** Once anything has failed, `clean`
+stays false for the rest of the test — an earlier version of this paragraph said a spec
+could tolerate one deliberate failure and then assert a *later* run came back clean, and
+it cannot. A spec that needs a per-run window takes TWO reports and compares them:
+
+```typescript
+const before = await (page as PageWithErrorHooks).flowErrorReport();
+// … drive the run …
+const after = await (page as PageWithErrorHooks).flowErrorReport();
+expect(after.failures.length).toBe(before.failures.length);
+expect(after.evaluated, "the run produced no verdict at all")
+  .toBeGreaterThan(before.evaluated);
+```
 
 Because an HTTP error cannot fail a test, **this step is the only thing standing between a
 real backend 500 and a green run** — the fixture prints
@@ -834,6 +884,10 @@ Problem resolved → quarantine LIFTED via PR (remove test.fixme + restore
 
 > **Infra-signature exemption (wedge collateral).** A failure whose error is **transport-level** — the harness could not reach or talk to the backend — is not attributable to the spec that reported it. This holds for a **hard failure** (last error) and, since #1310, for a **flake** (first failed attempt) alike: the reason is the error, not the outcome, and a backend that stopped answering says nothing about the spec whichever way the retry went. It is collateral of a mid-run backend wedge (#1030/#1048), and `@stable` is left in place **regardless of the mass-failure guard**. The guard only ever covered the *wide* wedge (6+ failures); a wedge costing ≤5 tests used to strip their tags in an unreviewed commit — issue #1031.
 >
+> **Which ATTEMPT the exemption reads (#1589).** The base rule is the **last** failed attempt, and it is unchanged: retries are what a *sustained* wedge burns, so the final attempt is the one that decided the verdict, and that rule never depends on the liveness recorder — `weekly-stable.yml`, which has no recorder at all, still gets it. What #1589 added is a second, narrower rule for the *intermittent* wedge, which cycles **through** the retry budget instead of burning it: on run 32827671203 shard 3 measured **156 of 894 probes down** across 15 windows as short as 6–8 s, and **4 of 7** hard failures carried a transport-level signature on an earlier attempt and lost it on the last — one of them the barrier's own `[backend-unreachable]` marker. An **earlier** attempt now exempts too, but **only with corroboration**: the in-run recorder must have measured an outage window overlapping *that attempt* on *its own shard*. The overlap is computed where it already was — `report-backend-outages.mjs`, the only place that knows which shard a test ran on — and handed over as `outage-attempts.json`. Everything about this is fail-closed **in the reader, not merely in the producer**: an absent, unreadable or malformed file, a payload that does not itself claim BOTH that a shard was measured and that the merged report was read, or a run whose shards produced no probes, all fall back to exactly the last-attempt rule, so the removal set stays a **subset** of what the pre-#1031 script produced. That distinction is the whole point of stating it — today's producer cannot emit an attempt list without those claims, so for a while the guarantee held only because the other side happened to behave, which is the shape #1084 was raised about. Two properties to know when reading a report. The corroboration widens **which attempt may be read, never which signatures qualify** — a measured outage does not make a `locator.click` timeout transport-level. And an earlier attempt that classifies with **no** corroboration is *not* exempted and *not* silent: the umbrella names it under *"carried a transport-level signature on an EARLIER attempt"*, with the reason it was declined, which distinguishes "we measured and this attempt did not overlap an outage" from "nothing was measured at all". **One limitation to know before reading a corroborated exemption as proof:** the join key is `(spec path, test title, retry)`, and `spec.title` excludes the enclosing `describe`, so a spec parameterized over several providers produces duplicate `(file, title)` pairs in one run. On today's daily that cannot happen — #1185 pins one provider per weekday, and the 2026-09-09 report has 0 duplicates in 619 pairs — but a `manual.yml` dispatch with `provider=all-models` makes it live, and one parameterization's corroboration would then exempt another's. It errs in the lenient direction (a tag survives a day longer, the mistake #1031 already accepts as the cheaper one) rather than removing a tag it should keep, which is why it is recorded here instead of narrowing the key. The history file keeps the same split — `infra_signature` still reads the last attempt, matching this script, and `infra_signature_any_attempt` (additive, #1589) records the earliest attempt that classified, as a **lead rather than a verdict**, so a later triage recomputing recurrence can see the collateral the old field showed as `null`.
+>
+> Three alternatives were weighed and not taken. *Reading every attempt with no corroboration at all* would exempt a real regression that hit one transient blip on a retry — the exemption would start protecting product breakage, which is worse than the failure it fixes. *Requiring ≥2 attempts to classify* as the qualifier does not solve the motivating run: all four of its cases had exactly one. And *reporting the disagreement without ever widening* leaves the sub-threshold day exposed — with ≤5 hard failures the mass-failure guard does not trip, and the exemption is the only thing between an intermittently wedged shard and `@stable` being auto-removed from collateral with no review (2026-08-04, 08-13, 08-17 and 08-24 were all sub-threshold). That branch is kept, but as the **fallback** for an unmeasured run rather than as the answer.
+>
 > The exempting signatures live in `scripts/lib/infra-signature-patterns.json` — read by `infra-signatures.ts` for the auto-removal path and by `infra-signatures.mjs` for the triage path, two accessors over one list because CommonJS and ESM cannot share a code module here (#1310) — and the list is **deliberately narrow**: only errors that cannot be a product assertion under any reading (`apiRequestContext.*: Timeout`, the globalSetup `[preflight] … is not reachable`, `ECONNREFUSED`/`ECONNRESET`/`socket hang up`, `net::ERR_CONNECTION_*`, DNS failures). Signatures a wedge also produces but a real regression produces too — `locator.click: Timeout`, `page.waitForSelector: Timeout`, `expect(...).toBeVisible()` — are **not** on it, because exempting them would switch auto-removal off for most genuine breakage. Widening the list is a deliberate change, not a convenience: add a pattern only when it is transport-level, and add a case to `scripts/remove-stable-from-failures.test.ts` with it.
 >
 > **What this changes for triage.** The umbrella issue renders collateral in its own block, ahead of the removals. **Do not open a per-spec issue for a collateral failure** — triage the outage once for the run (start from the backend liveness section of the same issue, then the Langflow service container log; `WORKER TIMEOUT` ⇒ #1048). The tag is still in place, so there is nothing to restore. If the same spec keeps appearing as collateral across days while other specs do not, that is a signal about the *spec* (it hammers the backend hardest) and belongs on a dedicated issue about load, not about the assertion.
@@ -892,6 +946,71 @@ The dedicated issue spun out of the triage must be **clear and agnostic**:
 **When the root cause is a product (Langflow) regression:** record it explicitly in the dedicated issue and **do not close the issue on a test-side workaround**. The issue stays **open** until the upstream fix has landed in the `langflowai/langflow-nightly:latest` image (or the corresponding `release-1.x.x` branch), the behavior is re-validated against it, and `@stable` is restored. A product regression is only "done" when the product is fixed where the suite runs — not when the test is muted.
 
 The spec doc is **not updated** during this cycle — the auto-removal commit, the dedicated issue, and the restoration PR are the traceability record.
+
+### The reconciler — a removal nobody owns is found mechanically (#1746)
+
+Restoration being manual is the whole risk in the paragraph above: the removal
+is automatic and lands on `main` without review, while putting the tag back is
+a checkbox on an issue. Close that issue with the checkbox unticked and the test
+is out of the daily forever, with nobody holding it. That has happened three
+recorded times — #974 (8 tests, reconciled by hand), #1504 (5 tests, reconciled
+by hand) and #1460, which was caught only because a human happened to read the
+call sites while working an unrelated PR.
+
+`.github/workflows/stable-orphan-reconcile.yml` runs the audit instead
+(Mondays 09:00 UTC, plus `workflow_dispatch`). Locally:
+
+```bash
+npx ts-node scripts/reconcile-stable-orphans.ts            # full run, needs `gh`
+npx ts-node scripts/reconcile-stable-orphans.ts --no-trackers   # offline: history only
+```
+
+It parses every declared test, keeps the ones **without** `@stable`, walks that
+spec's git history until it finds a revision where the **same title** carried the
+tag — which dates the removal and names the commit — and then asks whether any
+**open** issue names the spec. A removal with no open tracker is an **orphan**.
+
+**How to resolve a row.** Three ways, and they are not interchangeable:
+
+| Situation | What to do |
+|---|---|
+| The test is fixed | Restore `@stable` (and remove `test.fixme` if present). This is the deliverable of the dedicated issue. |
+| The work is real but not done | Make sure an **open** issue names the spec file. The reconciler reads live state, so reopening one is enough. |
+| The absence is permanent and deliberate | Declare it in `scripts/lib/stable-orphan-exemptions.json`, with a reason and a ref. |
+
+**Declarations are verified in both directions** (#1084's lesson): if the test
+carries `@stable` again, is renamed, gains a lane tag that already keeps it out
+of the daily, or turns out never to have carried `@stable` at all, the
+declaration is reported as **expired** rather than honoured silently. Only a
+permanent decision belongs there — `groq` / `mistral` are the seed entries,
+because those components are not bundled in the tested image
+(`docs/component-distribution-policy.md`, #1039). A temporary absence needs an
+open issue, not a declaration.
+
+Three properties worth knowing before reading a report:
+
+- **`@stable` missing and `test.fixme` are two different states**, and the report
+  says which. The tag alone takes a test out of the daily — it stays on the PR
+  impacted-specs lane, which selects by import graph and uses `@stable` only as
+  an ordering, so a spec quarantined by tag removal alone keeps going **red**
+  there (that is what #871 was raised about). `test.fixme` is what takes it out
+  of everything, and that is the worse state to find unowned.
+- **Undecidable is never clean** (#1012). A history that cannot be walked, a
+  `tag` option the parser cannot read, or a failed issue lookup is reported as
+  `UNKNOWN` with the reason named — never omitted, and never resolved as "no
+  orphan". A **shallow clone** is the case worth knowing: it runs out of history
+  long before any revision cap, so the check asks `git rev-parse
+  --is-shallow-repository` and reports every row it could not date rather than
+  inferring "never carried the tag" from an absence. Without that, a `--depth 1`
+  run reports **0 orphans and 0 undecidable** — and reports the two correct
+  #1039 declarations as expired, which is the report telling a human to delete
+  a right answer. An **unverifiable** declaration is therefore rendered apart
+  from an **expired** one.
+- **It is not a PR gate.** A pre-existing orphan is not the PR author's fault,
+  and failing on it would redden unrelated PRs until someone does an audit
+  (#980's coverage-first trade). The output is an issue kept current under a
+  fixed title, which closes itself when there is nothing left to reconcile.
+
 
 ### Regression Ledger — record every confirmed regression
 

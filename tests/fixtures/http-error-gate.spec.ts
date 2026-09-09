@@ -30,18 +30,38 @@
 // flow. The fixture only cares that the pathname contains `/api/` and the status
 // is 4xx/5xx.
 //
-// MEASURED COVERAGE, and one accepted gap. Eleven mutations of the production
+// MEASURED COVERAGE, and one accepted gap. Sixteen mutations of the production
 // code were applied one at a time and run against `npm run test:units` plus this
-// file: ten are killed — matching on pathname alone, on status alone, by substring
+// file: fifteen are killed — matching on pathname alone, on status alone, by substring
 // instead of equality, checking the declaration before `IGNORED`, keying the
 // stale check on `expectedStatus`, removing the stale throw, printing the gate
 // string in the `📌` line, never incrementing the hit counter, announcing on every
 // occurrence instead of the first, and removing the stale-declaration grace
-// period. The eleventh SURVIVES and is accepted: dropping the `else` so a declared
-// defect is *also* tallied in `ignoredByPolicy`. That only double-counts it inside
-// the `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count and no gate string
-// changes — so there is no behaviour to pin. Recorded rather than left unknown
-// (#1012's rule); if that breakdown ever becomes load-bearing, this is the gap.
+// period, plus (#1432) reverting the body read to the old inline try/catch,
+// printing a fixed sentinel instead of the reason, collapsing the empty and
+// unreadable lines into one, printing `<empty body>` where the body should
+// go, deleting the `bodyUnavailable: BODY_PENDING` stamp, and making
+// `summarizeMissingBodies` return nothing. ONE SURVIVES and is accepted,
+// recorded rather than left unknown (#1012's rule):
+//
+//   (a) dropping the `else` so a declared defect is *also* tallied in
+//       `ignoredByPolicy`. That only double-counts it inside the
+//       `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count, no gate string
+//       — so there is no behaviour to pin. If that breakdown ever becomes
+//       load-bearing, this is the gap.
+//
+// An earlier version of this inventory named two more survivors — the
+// `BODY_PENDING` stamp and a `summarizeMissingBodies` returning nothing — and
+// BOTH were wrong: applied one at a time they fail one and two unit tests
+// respectively. What actually survived was neither, and it is the #1226 shape:
+// keeping the `for (const line of summarizeMissingBodies(httpErrors))` loop and
+// dropping the `console.log(line)` INSIDE it, because the summary prints during
+// fixture teardown, after this body has returned — the same structural limit
+// recorded below for the `📋 Found N` total. That one is now pinned by SPELLING
+// in `http-error-body.test.ts`, over the effect and not merely over the call,
+// which #1226 still says is the weaker thing; that is stated there rather than
+// dressed up. Recorded at length because a mutation inventory that overstates
+// its own gaps is as unreadable as one that understates them.
 //
 // WHY `@stable` — the same reasoning as `flow-error-gate.spec.ts`, and it is load
 // bearing there too. `daily-stable.yml` selects with `--grep @stable` and is the
@@ -69,6 +89,34 @@ const DECLARED: KnownHttpDefect = {
 const OTHER_PATH = "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc";
 
 /**
+ * The #1432 probes: a monitored 400 with NO body, and one with a body.
+ *
+ * MEASURED HERE, and it is the finding rather than a detail — Chromium does not
+ * keep a zero-length response body, so `response.text()` on the first one
+ * **rejects** with `response.text: Protocol error (Network.getResponseBody): No
+ * data found for resource with given identifier`. It does not resolve to `""`.
+ * So the branch the fixture used to swallow in silence is not an exotic one: it
+ * is what every bodyless response does. Not specific to `400` either — the same
+ * holds at 200 / 204 / 404 / 500, with an explicit `content-length: 0`, and for
+ * a gzip of the empty string.
+ *
+ * (It is NOT an explanation of #1424, and an earlier draft of this comment said
+ * it was. #1424 is closed — root-caused 2026-08-12, fixed by PR #1441 — and two
+ * of the four `400`s it cites did carry bodies. What justifies this fix is the
+ * measurement above, plus #1424's own close-out: "it is the reason this took
+ * three dailies".)
+ */
+const EMPTY_BODY_PATH = "/api/v1/variables/empty-body";
+const WITH_BODY_PATH = "/api/v1/variables/with-body";
+/**
+ * A body of non-zero LENGTH that decodes to the empty STRING: a bare UTF-8 BOM.
+ * Chromium keeps the bytes, so `text()` resolves to `""` — which is what makes
+ * the `<empty body>` branch reachable on this transport rather than a
+ * hand-waved "some other transport".
+ */
+const BOM_BODY_PATH = "/api/v1/variables/bom-body";
+
+/**
  * How long `?mode=slow` withholds its response.
  *
  * Long enough that the test body has certainly returned — so the `response` event
@@ -83,6 +131,21 @@ let origin: string;
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
     const [path, query = ""] = (req.url ?? "").split("?");
+    if (path === EMPTY_BODY_PATH) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end();
+      return;
+    }
+    if (path === BOM_BODY_PATH) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(Buffer.from([0xef, 0xbb, 0xbf]));
+      return;
+    }
+    if (path === WITH_BODY_PATH) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ detail: "value is not a valid string" }));
+      return;
+    }
     if (path === DECLARED_PATH || path === OTHER_PATH) {
       // `mode=500` answers the DECLARED path with an undeclared status, which is
       // the narrowing case: a new defect wearing the known one's URL.
@@ -300,6 +363,94 @@ test.describe("fixture declared-known-defect hatch", () => {
         await page.evaluate(() => document.body.textContent),
         "the probe page did not load, so the test would have failed for the wrong reason",
       ).toContain("http gate probe");
+    },
+  );
+
+  // ─── #1432: an unread body is unknown, not absent ─────────────────────────
+
+  test(
+    "an error whose body cannot be read says so, with the reason",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // What the unit lane cannot reach: that the decision is actually WIRED to
+      // the fixture's log, on the transport the suite really uses. Before #1432
+      // this branch assigned a sentinel to the entry and printed NOTHING, so a
+      // `🚨 Backend Error` line was followed by silence — indistinguishable from
+      // an error whose body was empty, with the reason discarded along with it.
+      //
+      // A bodyless 400 is the probe because that is what Chromium refuses to
+      // hand over (see EMPTY_BODY_PATH), so this is the real shape rather than a
+      // contrived one.
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, EMPTY_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log, "the error itself was still reported").toContain(
+        "🚨 Backend Error",
+      );
+      expect(
+        log,
+        "the unreadable body printed nothing, or printed it without a reason — that is the defect #1432 is about",
+      ).toMatch(/Response: <could not be read: .+>/);
+      expect(
+        log,
+        "the reason must name the failure, not a fixed sentinel",
+      ).toContain("getResponseBody");
+      expect(
+        log,
+        "the pre-#1432 sentinel is gone from the log — it said nothing about why",
+      ).not.toContain("Could not read response");
+    },
+  );
+
+  test(
+    "a body that is non-empty but decodes to nothing is announced as empty",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The `<empty body>` branch, on this transport rather than a hypothetical
+      // one: a bare UTF-8 BOM has length, so Chromium keeps it and `text()`
+      // resolves to `""`. That is the only way the two branches can be told
+      // apart in a real session, and without it the empty branch was reachable
+      // in the unit lane only.
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, BOM_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log).toContain("Response: <empty body>");
+      expect(
+        log,
+        "an empty body must not be reported as one that could not be read",
+      ).not.toMatch(/Response: <could not be read/);
+    },
+  );
+
+  test(
+    "an error that DOES carry a body still prints it",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The contrast that makes the line above meaningful: the two outcomes are
+      // different text, so a reader can tell "the backend said this" from "we
+      // could not ask".
+      const hooked = page as PageWithErrorHooks;
+
+      const log = await withCapturedLog(async () => {
+        await page.goto(`${origin}/`);
+        expect(await fetchFromPage(hooked, WITH_BODY_PATH)).toBe(400);
+        await page.waitForTimeout(1000);
+      });
+
+      expect(log).toContain(
+        'Response: {"detail":"value is not a valid string"}',
+      );
+      expect(log).not.toMatch(/Response: <could not be read/);
     },
   );
 });

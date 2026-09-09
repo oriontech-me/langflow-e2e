@@ -1488,7 +1488,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 598 `test()` calls carrying the `@stable` tag, distributed across 227 spec
+> 597 `test()` calls carrying the `@stable` tag, distributed across 227 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1541,7 +1541,6 @@
 - [x] PUT merges into the flow instead of replacing it → `api-flows-put-and-bulk-delete.spec.ts`
 - [x] bulk DELETE removes exactly the ids it is given → `api-flows-put-and-bulk-delete.spec.ts`
 - [x] bulk DELETE of an unknown id reports zero, not an error → `api-flows-put-and-bulk-delete.spec.ts`
-- [x] versions lifecycle: create, list, read, activate with auto-snapshot, delete → `api-flows-versions.spec.ts`
 - [x] unknown version ids are refused with distinct messages → `api-flows-versions.spec.ts`
 - [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
 - [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`

@@ -526,22 +526,24 @@ for (const { label, options, skipReason } of targets) {
         // carried one anyway and it was the line that failed on every context
         // blow-up, reporting "element(s) not found" instead of the real cause.
         //
-        // Know what removing it costs, because the obvious reading is wrong: the
-        // fixture does NOT fail this test on a crashed run. The Playground runs
-        // through POST /api/v2/workflows, where the flow-error verdict is
-        // ADVISORY by design -- the fixture itself prints "this does NOT fail the
-        // test yet" (#1165) -- and #1378's own evidence carries that exact line
-        // for this spec. `allowFlowErrors` is absent here, and on this surface
-        // that buys nothing.
+        // This paragraph used to say that removing the bubble assert left this
+        // test with NO gate on a crashed run, because the Playground runs through
+        // POST /api/v2/workflows and that verdict was ADVISORY by design (#1165).
+        // That is no longer true: v2 was flipped to failing in f3bdd864 (PR
+        // #1691), so `allowFlowErrors` being absent here does gate a crashed run,
+        // on this surface as on v1 (#1452).
         //
-        // So the ordered tool_use assert below is now the ONLY gate, and it reads
-        // data persisted BEFORE an overflow: a run that calls both tools and then
-        // dies could satisfy it. That is unmeasured rather than disproven -- an
-        // attempt to force the overflow on 1.12.0.dev20 did not reproduce it --
-        // and with #14489 bounding the payload from dev25 the scenario is much
-        // harder to reach, which is why it is a follow-up and not a blocker here.
-        // If it needs a gate, the honest one is a fixture accessor for the
-        // advisory verdict, not a proxy assert on the bubble.
+        // Two things survive the flip. The ordered tool_use assert still reads
+        // data persisted BEFORE an overflow, so a run that calls both tools and
+        // then dies could satisfy IT -- unmeasured rather than disproven (forcing
+        // the overflow on 1.12.0.dev20 did not reproduce it, and #14489 bounds the
+        // payload from dev25), but it is no longer the only gate. And the fixture
+        // gates a verdict it REACHES: a run it could not read -- a cancelled
+        // stream, an unreadable body, an unwatched v2 surface, or the deliberate
+        // provider-outage downgrade -- is reported as unevaluated and fails
+        // nothing. `page.flowErrorReport()` is how a spec asserts that a verdict
+        // was reached AND was clean; adopting it here needs a validated run
+        // against a live provider, so it stays a follow-up.
         await test.step("sequence: fetch_content is called before perform_search", async () => {
           await expectToolSequencePersisted(request, nonce, [URL_TOOL, SEARCH_TOOL]);
         });

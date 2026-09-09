@@ -133,8 +133,11 @@ test("allowAlreadyClear opts a caller out of the lost-selector guard", async () 
 test("the FAILED-build bar is refused by name, never dismissed", async () => {
   // It offers Retry + Dismiss and has no timer, so it satisfies the "will not leave
   // on its own" predicate — but dismissing it erases the only UI evidence of a
-  // failed run, and the v2 run-stream flow-error verdict is advisory on 1.12.x, so
-  // the spec could go green on a build that failed.
+  // failed run. The premise this used to rest on is gone (the v2 flow-error
+  // verdict was advisory on 1.12.x; it fails the test since `f3bdd864`), and the
+  // conclusion is not: the fixture only gates a verdict it REACHES, so a run
+  // whose stream it could not read — or one the provider refused — still leaves
+  // the spec green with the bar as the only evidence (#1452).
   const overlay = fakeOverlay({ timeline: [BUILD_FAILED_BAR] });
 
   await assert.rejects(

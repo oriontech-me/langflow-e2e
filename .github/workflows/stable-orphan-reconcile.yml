@@ -1,0 +1,239 @@
+# Reconcile `@stable` removals against their trackers (#1746).
+#
+# `@stable` removal is AUTOMATIC — `daily-stable.yml` strips the tag on a hard
+# failure and commits straight to `main` — while restoration is MANUAL and lives
+# as a checkbox on a dedicated issue. Nothing reconciled "tags currently
+# missing" against "open issues that own a restore", so an issue could close
+# with that checkbox unticked and the test would stay out of the daily forever
+# with nobody holding it. That has now happened three recorded times (#974,
+# #1504, and the #1460 case a human caught by accident while working an
+# unrelated PR), which is the argument for building the check rather than doing
+# the audit a fourth time.
+#
+# ─── Three decisions #1746 asked to be recorded ──────────────────────────────
+#
+# 1. NOT A PR GATE. A pre-existing orphan is not the PR author's fault, and
+#    failing on one would redden unrelated PRs until someone does an audit —
+#    #980's coverage-first trade. `pr-validation.yml` is untouched.
+#
+# 2. ITS OWN SCHEDULE, not a step in the daily. The daily merge job was the
+#    natural home on paper (it already reads the report, commits to `main` and
+#    opens issues), and it was rejected on one mechanical fact: this check walks
+#    each spec's git history, so it needs `fetch-depth: 0`, while every job in
+#    `daily-stable.yml` checks out shallow. Deepening the job that produces the
+#    release signal — and that commits `reports/daily-history.jsonl` back to
+#    `main` — to serve a report is the wrong risk, and the state this measures
+#    moves in weeks, not in days: a weekday cadence would re-render the same
+#    body five times to say the same thing. Weekly, plus dispatch.
+#
+# 3. WARNS, NEVER FAILS — but not by writing a log line. `mode=count` sat in the
+#    daily's prep log for weeks before anyone read it (#1252), so the output is
+#    an ISSUE, kept current under a fixed title. The job itself fails only when
+#    the RUN is broken (an unreadable declarations file, an empty spec parse):
+#    a check that cannot decide must not look like a check that found nothing
+#    (#1012).
+name: Reconcile @stable orphans
+
+on:
+  schedule:
+    # Mondays 09:00 UTC (06:00 BRT) — after the week's first daily has run.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: stable-orphan-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile @stable removals against open trackers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole point: the check dates each removal by walking the spec's
+          # history until a revision is found where the same TITLE carried
+          # `@stable`. A shallow clone cannot answer that, and — by design — it
+          # would not answer it wrongly either: every affected row would come
+          # back UNKNOWN with the reason named, which is a useless report rather
+          # than a false one.
+          fetch-depth: 0
+
+      # Every other `npm ci` workflow here pins the toolchain; the two that do
+      # not both say why (the daily runs inside the Playwright image, which
+      # ships it). This job runs `ts-node` against the repo's pinned
+      # `typescript`, so it pins Node too rather than taking whatever
+      # `ubuntu-latest` rolls forward to.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reconcile
+        id: reconcile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh api repos/{owner}/{repo}` resolves the placeholders from the git
+          # remote; naming the repo explicitly keeps it right if the checkout
+          # ever stops carrying one.
+          GH_REPO: ${{ github.repository }}
+          RUN_LABEL: >-
+            [`stable-orphan-reconcile`
+            #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        run: |
+          npx ts-node scripts/reconcile-stable-orphans.ts \
+            --markdown orphan-report.md \
+            --json orphan-report.json
+
+      - name: Publish the report to the job summary
+        if: always()
+        run: |
+          if [ -f orphan-report.md ]; then
+            cat orphan-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The reconciler produced no report — see the step above for why." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the machine-readable verdict
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stable-orphan-report-${{ github.run_id }}
+          path: |
+            orphan-report.md
+            orphan-report.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      # One issue, kept current — not one per run. A fixed title is the
+      # identity, and it comes from the script's own output rather than being
+      # spelled here: two spellings would be two identities, and the matcher
+      # inside the script excludes ITS OWN issue from the tracker search. If
+      # this workflow opened an issue under a different title, that exclusion
+      # would miss it, every orphan would read as "owned" on the next run, the
+      # report would empty out, and the finding would come back the run after —
+      # an oscillation with no visible symptom. `reconcile-stable-orphans.test.ts`
+      # pins that this file never carries a literal copy of the title.
+      # NOT run when the ISSUE LOOKUP itself failed. Every row is then
+      # `unknown` for the same reason — GitHub could not be asked — and
+      # refreshing rewrites the whole body, so a five-minute API outage would
+      # replace a standing list of real orphans (and any human notes on it) with
+      # a page that says less than last week's. The verdict is still in the job
+      # summary and the artifact, and the warning below says so; an outage
+      # decides nothing about ownership and must not destroy the report.
+      - name: Warn when the tracker lookup could not be made
+        if: always() && steps.reconcile.outputs.tracker_lookup_failed == 'true'
+        run: |
+          echo "::warning::The open-issue lookup failed, so ownership is undecided for every removal. The report issue was left untouched — see the job summary and the uploaded verdict."
+
+      - name: Open or refresh the orphan report issue
+        if: >-
+          always() && steps.reconcile.outputs.has_findings == 'true'
+          && steps.reconcile.outputs.tracker_lookup_failed == 'false'
+        uses: actions/github-script@v9
+        env:
+          ORPHAN_TITLE: ${{ steps.reconcile.outputs.issue_title }}
+          ORPHAN_BODY: ${{ steps.reconcile.outputs.summary_md }}
+        with:
+          script: |
+            const title = process.env.ORPHAN_TITLE;
+            const body = process.env.ORPHAN_BODY || '';
+            if (!title || !body.trim()) {
+              core.setFailed('The reconciler reported findings but emitted no title or body — refusing to open an empty issue.');
+              return;
+            }
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            // `!pull_request` because listForRepo returns PRs too.
+            const existing = open.find(i => i.title === title && !i.pull_request);
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.info(`Refreshed #${existing.number} with the current reconciliation.`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+              core.info(`Opened #${created.data.number}.`);
+              // The label is applied SEPARATELY and tolerantly: passing it to
+              // `create` makes the whole issue fail if the label has been
+              // renamed or deleted, and losing the report to a taxonomy change
+              // is a far worse outcome than an unlabelled issue.
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: created.data.number,
+                  labels: ['qa-infra'],
+                });
+              } catch (e) {
+                core.warning(`Opened #${created.data.number} but could not label it: ${e.message}`);
+              }
+            }
+
+      # The other half of "kept current": when the findings are gone, the issue
+      # says so and closes itself. Leaving a stale open issue describing orphans
+      # that were since restored is the same silent-expiry failure this check
+      # exists to catch, pointed at its own output.
+      - name: Close the report issue when there is nothing left to reconcile
+        if: >-
+          always() && steps.reconcile.outputs.has_findings == 'false'
+          && steps.reconcile.outputs.tracker_lookup_failed == 'false'
+        uses: actions/github-script@v9
+        env:
+          ORPHAN_TITLE: ${{ steps.reconcile.outputs.issue_title }}
+          ORPHAN_BODY: ${{ steps.reconcile.outputs.summary_md }}
+        with:
+          script: |
+            const title = process.env.ORPHAN_TITLE;
+            if (!title) return;
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = open.find(i => i.title === title && !i.pull_request);
+            if (!existing) {
+              core.info('Nothing to reconcile and no open report issue — nothing to do.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing.number,
+              body: [
+                'Every `@stable` removal now has an owner, a declaration, or the tag back.',
+                '',
+                process.env.ORPHAN_BODY || '',
+                '',
+                'Closing. A new finding opens a fresh issue rather than reopening this one, so the body always describes one reconciliation.',
+              ].join('\n'),
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing.number,
+              state: 'closed',
+            });
+            core.info(`Closed #${existing.number}.`);
