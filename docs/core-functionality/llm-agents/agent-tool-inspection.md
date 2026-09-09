@@ -131,7 +131,12 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
    `https://httpbin.org/json` — same env convention as
    `agent-multi-tool-selection`).
 4. Open the Playground (`playground-btn-flow-io`), send, wait for the run to
-   finish (Stop button hidden).
+   finish (Stop button hidden). No "expand the Steps accordion" step: the tool
+   card `collapses to header-only once the producer attaches a duration`
+   (`ToolCallCard.tsx`), so the trigger row carrying the status dot and the tool
+   name is always rendered — only the args/result body collapses. The spec
+   carried such a helper, inherited from 1.11; it was measured dead on 1.12.1
+   (it matches zero rows) and removed.
 5. **UI inspection assert:** a completed tool step is visible
    (`tool-status-done`), and the row that carries it names `fetch_content` —
    the Playground names the URL tool the agent used. Asserted in two steps on
@@ -159,6 +164,11 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
 
 - The Playground renders a completed tool step (`tool-status-done`) whose row
   names `fetch_content` after the run (UI names the tool actually used).
+  `done` is not the only terminal status — `toolStatus.ts` derives
+  `error | done | running` and `error` wins over a duration — so a tool that was
+  called and FAILED renders no `tool-status-done` and this assertion fails. That
+  is correct for this spec, which goes on to assert the fetched payload, and the
+  failure message names BOTH causes rather than claiming no tool was invoked.
 - The run's persisted `fetch_content` `tool_use` block carries `tool_input`
   with the prompt's exact URL AND `output` containing `Sample Slide Show`
   (the input and output are captured for inspection).

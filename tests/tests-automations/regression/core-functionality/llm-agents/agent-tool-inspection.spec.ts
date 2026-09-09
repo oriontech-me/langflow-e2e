@@ -160,25 +160,14 @@ async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   await waitForAgentToFinish(page);
 }
 
-// The Playground renders the per-run steps inside a collapsed "Steps"/"Finished"
-// accordion by default (chat-message.tsx, hideHeader=false — chevron click
-// required to reveal it). Best-effort expand every such row so the completed
-// tool step becomes visible; if already expanded the click is a no-op — the
-// chevron trigger is a `.cursor-pointer` in the header row.
-async function expandAgentSteps(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const rows = Array.from(
-      document.querySelectorAll<HTMLElement>("div.flex.items-center.justify-between"),
-    ).filter((row) => {
-      const text = row.textContent ?? "";
-      return text.includes("Finished") || text.includes("Steps");
-    });
-    for (const row of rows) {
-      row.querySelector<HTMLElement>(".cursor-pointer")?.click();
-    }
-  });
-}
-
+// NOTE — there is deliberately no "expand the Steps accordion" helper here.
+// The spec carried one (a best-effort click on every `.cursor-pointer` inside a
+// row reading "Finished"/"Steps"), inherited from the 1.11 surface, and it was
+// dead: measured on 1.12.1 it finds ZERO such rows, and `tool-status-done` is
+// already visible before it runs. `ToolCallCard.tsx` says why — the card
+// "collapses to header-only once the producer attaches a duration", so the
+// TRIGGER row carrying the status dot and the tool name is always rendered and
+// only the args/result BODY collapses. Removing the call: 2 runs, 2 passes.
 // Payload inspection (§6.5): the persisted `tool_use` block for THIS run
 // (nonce-keyed) must carry `tool_input` containing `inputNeedle` (the prompt's
 // exact URL — proves the captured input is the real arguments) AND `output`
@@ -274,18 +263,27 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("UI inspection: the completed step names the URL tool", async () => {
-          // Reveal the collapsed Steps accordion, then assert a COMPLETED tool
-          // step. `tool-status-done` is the only element in the Playground that
-          // an actual invocation creates: measured on 1.12.1, a run where the
-          // agent answered from memory renders ZERO of them, and a run that
-          // called the tool renders exactly one, in a row reading
-          // "FETCH CONTENT 834ms". Its parent carries the tool NAME without the
-          // duration, which is what the second assertion reads.
-          await expandAgentSteps(page);
+          // Assert a COMPLETED tool step. `tool-status-done` is the only element
+          // in the Playground that an actual invocation creates: measured on
+          // 1.12.1, a run where the agent answered from memory renders ZERO of
+          // them, and a run that called the tool renders exactly one, in a row
+          // reading "FETCH CONTENT 834ms". Its parent is the title cell, whose
+          // text is the tool NAME alone (no duration) — that is what the second
+          // assertion reads.
+          //
+          // `done` is not the only terminal status: `toolStatus.ts` derives
+          // `error` (which WINS over a duration) | `done` | `running`, so a tool
+          // that was called and FAILED renders `tool-status-error` and no
+          // `tool-status-done`. This spec requires a successful call — it goes
+          // on to assert the fetched payload — so failing there is right, but
+          // the message must not then claim no tool was invoked (#884: a wrong
+          // attribution costs more than a missing one).
           const completedToolSteps = page.getByTestId("tool-status-done").locator("xpath=..");
           await expect(
             completedToolSteps.first(),
-            "Playground must show a COMPLETED tool step — agent answered without invoking any tool",
+            "Playground must show a COMPLETED tool step (`tool-status-done`) — " +
+              "either the agent invoked no tool at all, or the call it made " +
+              "errored (`tool-status-error`, which wins over a duration)",
           ).toBeVisible({ timeout: 120000 });
           await expect(
             completedToolSteps.filter({ hasText: TOOL_STEP_LABEL }).first(),
