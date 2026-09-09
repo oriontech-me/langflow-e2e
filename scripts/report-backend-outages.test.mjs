@@ -475,3 +475,43 @@ test("each collateral attempt names the shard that measured it", () => {
   assert.ok(payload.attempts.length > 0);
   for (const a of payload.attempts) assert.equal(a.shard, "3");
 });
+
+test("an unwritable corroboration path costs the exemption, never the liveness outputs", () => {
+  // Ordering, pinned. The corroboration write is the newest thing in `main()`
+  // and the only one that writes to a caller-supplied path; ahead of
+  // `writeOutputs` a throw was swallowed by the top-level catch and took
+  // `backend_wedged` and the umbrella's whole liveness section with it —
+  // trading a report everyone reads for a file that fails closed anyway.
+  const dir = makeTempDir("liveness-report-");
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(liveness, { recursive: true });
+  writeFileSync(join(liveness, "backend-liveness.json"), JSON.stringify(shard3));
+  const outputPath = join(dir, "gh-output");
+  writeFileSync(outputPath, "");
+
+  const stdout = execFileSync(process.execPath, [SCRIPT], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      LIVENESS_DIR: liveness,
+      PLAYWRIGHT_JSON: join(dir, "absent.json"),
+      GITHUB_OUTPUT: outputPath,
+      GITHUB_STEP_SUMMARY: "",
+      // A directory that does not exist, so `writeFileSync` throws ENOENT.
+      OUTAGE_ATTEMPTS_OUT: join(dir, "no", "such", "dir", "attempts.json"),
+    },
+  });
+
+  assert.match(
+    stdout,
+    /::warning::.*could not write/,
+    "a failed write says so instead of leaving a missing file (#1012)",
+  );
+  const outputs = readFileSync(outputPath, "utf8");
+  assert.match(
+    outputs,
+    /^wedged=/m,
+    "the liveness outputs survive a failed corroboration write",
+  );
+  assert.match(outputs, /^measured=/m);
+});

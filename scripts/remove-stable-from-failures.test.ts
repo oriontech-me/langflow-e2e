@@ -1303,7 +1303,7 @@ test("an unreadable merged report means no attempt was EXAMINED, not that none o
   });
   assert.match(
     result.disagreements[0].declined,
-    /could not read the merged report, so no attempt was examined/,
+    /did not report reading the merged report, so no attempt was examined/,
   );
 });
 
@@ -1419,6 +1419,16 @@ test("the workflow writes the corroboration file where the action reads it", () 
   assert.ok(written, "daily-stable.yml still asks the reporter to write the file");
   assert.ok(read, "daily-stable.yml still hands the path to the auto-remove action");
   assert.equal(written, read, "the writer and the reader name the same file");
+
+  // And in that ORDER. A path agreement says nothing about which step runs
+  // first, and reordering them fails exactly the way a rename does — "no
+  // corroboration file was provided", indistinguishable from an ordinary
+  // unmeasured day (#1012). Both steps are in the merge job, so file position
+  // IS execution order.
+  assert.ok(
+    wf.indexOf("OUTAGE_ATTEMPTS_OUT:") < wf.indexOf("outage_attempts:"),
+    "the reporter writes the corroboration file BEFORE the action reads it",
+  );
 });
 
 test("a spec with no `file` of its own inherits the suite's, like the outage reporter does", () => {
@@ -1464,4 +1474,57 @@ test("a spec with no `file` of its own inherits the suite's, like the outage rep
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a payload that does not claim BOTH measured and reportRead corroborates nothing", () => {
+  // Today's producer cannot emit this — `measured: false` means no windows,
+  // which means no collateral attempts — so no real run changes. It is pinned
+  // because the documented guarantee ("a run whose shards produced no probes
+  // degrades to exactly the last-attempt rule") was a property of the PRODUCER
+  // and not of this reader: probed before the fix, a hand-built payload with
+  // `measured: false` and an attempt list EXEMPTED. A guarantee that holds only
+  // because the other side happens to behave is the shape #1084 was raised about.
+  const attempts = [
+    { file: "fixture-1589-r.spec.ts", title: "intermittent", retry: 0 },
+  ];
+  const specMeasured = { "fixture-1589-r.spec.ts": true };
+  for (const partial of [
+    { measured: false, reportRead: true },
+    { measured: true, reportRead: false },
+    { measured: false, reportRead: false },
+  ]) {
+    const { result } = runScript({
+      specs: { "fixture-1589-r.spec.ts": ["intermittent"] },
+      failures: [
+        {
+          file: "fixture-1589-r.spec.ts",
+          title: "intermittent",
+          results: intermittentWedgeResults(),
+        },
+      ],
+      outageAttempts: { ...partial, specMeasured, attempts },
+    });
+    assert.equal(
+      result.exempt.length,
+      0,
+      `exempted on ${JSON.stringify(partial)}`,
+    );
+    assert.equal(result.attributableFailures, 1);
+  }
+
+  // The control, without which this passes against a reader that ignores the
+  // file entirely: with both halves claimed, the same attempts DO corroborate.
+  const { result } = runScript({
+    specs: { "fixture-1589-r.spec.ts": ["intermittent"] },
+    failures: [
+      {
+        file: "fixture-1589-r.spec.ts",
+        title: "intermittent",
+        results: intermittentWedgeResults(),
+      },
+    ],
+    outageAttempts: { measured: true, reportRead: true, specMeasured, attempts },
+  });
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].via, "earlier-attempt");
 });

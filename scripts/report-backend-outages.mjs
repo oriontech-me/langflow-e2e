@@ -446,15 +446,33 @@ function main() {
   // it is a list of attempt identities, not a scalar — and because the consumer
   // is a TypeScript script in another step, which would otherwise have to parse
   // a multi-line output value.
+  //
+  // AFTER `writeOutputs`, and in its own try. This block is the newest thing in
+  // `main()` and the only one that writes to a caller-supplied path, so it is
+  // also the only one that can plausibly throw here (an unwritable path, a full
+  // disk). Ahead of `writeOutputs` a throw was swallowed by the top-level catch
+  // and took `backend_wedged` and the umbrella's whole liveness section with it
+  // — trading a report everyone reads for a corroboration file that fails
+  // closed anyway. The order encodes which of the two is load-bearing.
+  writeOutputs(agg, markdown);
+
   const attemptsOut = process.env.OUTAGE_ATTEMPTS_OUT;
   if (attemptsOut) {
-    const payload = collateralPayload(agg, { reportRead: report !== null });
-    fs.writeFileSync(attemptsOut, JSON.stringify(payload, null, 2) + "\n");
-    console.log(
-      `[liveness] wrote ${payload.attempts.length} corroborated collateral attempt(s) to ${attemptsOut} (measured=${payload.measured}).`,
-    );
+    try {
+      const payload = collateralPayload(agg, { reportRead: report !== null });
+      fs.writeFileSync(attemptsOut, JSON.stringify(payload, null, 2) + "\n");
+      console.log(
+        `[liveness] wrote ${payload.attempts.length} corroborated collateral attempt(s) to ${attemptsOut} (measured=${payload.measured}).`,
+      );
+    } catch (e) {
+      // Absent is the fail-closed state the consumer already handles, so this
+      // costs the widened exemption for the day and nothing else. Said out loud
+      // rather than left as a missing file (#1012).
+      console.log(
+        `::warning::[liveness] could not write ${attemptsOut} (${e.message}) — the @stable exemption falls back to the last-attempt rule for this run.`,
+      );
+    }
   }
-  writeOutputs(agg, markdown);
 }
 
 // See scripts/check-run-integrity.mjs for why both normalisations are required.

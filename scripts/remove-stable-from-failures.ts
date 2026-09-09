@@ -441,10 +441,26 @@ export function loadCorroboration(file: string | undefined): Corroboration {
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.attempts)) {
     return NO_CORROBORATION(`${file} has no \`attempts\` array`);
   }
+  const measured = parsed.measured === true;
+  // Absent on a payload written before this field existed. Treated as NOT read,
+  // so the reason falls back to the honest "could not be established" wording
+  // rather than claiming an overlap was checked.
+  const reportRead = parsed.reportRead === true;
   const keys = new Set<string>();
-  for (const a of parsed.attempts) {
-    if (!a || typeof a.file !== "string" || typeof a.title !== "string") continue;
-    keys.add(attemptKey(normalizeSpecPath(a.file), a.title, Number(a.retry) || 0));
+  // Only from a payload that says BOTH halves happened. Today's producer cannot
+  // emit attempts without them — `measured: false` means no windows, which means
+  // no collateral — so this changes nothing about any real run. It is here
+  // because the documented guarantee ("a run whose shards produced no probes
+  // degrades to exactly the last-attempt rule") was a property of the PRODUCER
+  // and not of this reader, and a guarantee that holds only because the other
+  // side happens to behave is the shape #1084 was raised about. Probed: a
+  // hand-built `{measured: false, reportRead: false, attempts: [...]}` used to
+  // EXEMPT.
+  if (measured && reportRead) {
+    for (const a of parsed.attempts) {
+      if (!a || typeof a.file !== "string" || typeof a.title !== "string") continue;
+      keys.add(attemptKey(normalizeSpecPath(a.file), a.title, Number(a.retry) || 0));
+    }
   }
   const specMeasured: Record<string, boolean> = {};
   const declared = parsed.specMeasured;
@@ -453,15 +469,7 @@ export function loadCorroboration(file: string | undefined): Corroboration {
       specMeasured[normalizeSpecPath(spec)] = measured === true;
     }
   }
-  return {
-    measured: parsed.measured === true,
-    // Absent on a payload written before this field existed. Treated as NOT
-    // read, so the reason falls back to the honest "could not be established"
-    // wording rather than claiming an overlap was checked.
-    reportRead: parsed.reportRead === true,
-    specMeasured,
-    keys,
-  };
+  return { measured, reportRead, specMeasured, keys };
 }
 
 /** Why the widened exemption was not extended to a classifying earlier attempt. */
@@ -473,7 +481,11 @@ export function declinedReason(
     return `no corroboration was available (${corroboration.unavailable})`;
   }
   if (!corroboration.reportRead) {
-    return "the liveness reporter could not read the merged report, so no attempt was examined for overlap at all";
+    // Worded as an ABSENCE of a report, not as an observed failure: the field is
+    // also absent on a payload written before #1589, where nothing failed and
+    // nothing was claimed. Saying "could not read" there would assert an event
+    // that did not happen — #1012's rule pointed at its own reason string.
+    return "the liveness reporter did not report reading the merged report, so no attempt was examined for overlap at all";
   }
   const measured = corroboration.specMeasured[specPath];
   if (measured === undefined) {
