@@ -6,7 +6,7 @@
 
 **Architecture:** One AST parser already exists for `@stable` (`scripts/lib/stable-tests.ts`); it is widened to return *every* tagged declaration, and a pure predicate module derives the backlog and its two tiers from that. Everything else is a thin shell over pure functions: a baseline writer, a `--grep` fragment builder, a report-to-table renderer, and an ownership guard. The measurement itself is **nine** `manual.yml` dispatches — three passes over three shards — whose JSON reports the renderer consumes.
 
-> ### ⚠️ Status, 2026-09-09: Tasks 1–7 are IMPLEMENTED; the code is the authority
+> ### ⚠️ Status, 2026-09-09: Tasks 1–6 are IMPLEMENTED; Task 7's runbook has NOT been run
 >
 > The design (`docs/triage/inherited-spec-triage-design.md`) is binding, and the
 > shipped code under `scripts/` is what actually ran. **Tasks 1, 2, 3, 4 and 6
@@ -15,6 +15,13 @@
 > by a measurement or a review, and the reasoning lives in the design plus the
 > functions' own docblocks. The blocks are marked stale rather than rewritten,
 > deliberately — a half-updated code block is worse than one honestly labelled.
+>
+> **Task 7 (the measurement) has NOT been run** — its deliverable
+> `docs/triage/inherited-spec-triage.md` does not exist, and its steps below are
+> **current**, not superseded: this is the one runbook the final fix wave rewrote
+> end to end (nine dispatches over three passes, `npm run triage:verify`, and the
+> red-only re-dispatch deleted). Running it needs CI and live provider
+> credentials, which is why it is not on this branch.
 >
 > **Tasks 8–9 (the ownership guard and its wiring) have NOT been implemented**
 > and their steps are current. Two things to carry into them: the runbook now
