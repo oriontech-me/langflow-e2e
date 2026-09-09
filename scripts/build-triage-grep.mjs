@@ -4,6 +4,7 @@
  * for a `manual.yml` dispatch (`test_grep`). Design: §2.
  *
  *   node scripts/build-triage-grep.mjs --shards 3 --shard 1
+ *   node scripts/build-triage-grep.mjs --verify          # every shard, set-exact
  *
  * `build-grep-filter.mjs` passes a single fragment VERBATIM, so everything the
  * selection needs has to be inside this string: the non-capturing group and the
@@ -11,6 +12,7 @@
  * where a dispatch silently ran 48 of 81 tests with nothing saying so.
  */
 import fs from "fs";
+import { execFileSync } from "node:child_process";
 
 const META = /[.*+?^${}()|[\]\\]/g;
 
@@ -100,8 +102,7 @@ export function buildFragment(titles) {
  *    until the final fix wave; the docstring here claimed to cover it, which is
  *    how it stayed invisible.
  *
- * Extracted
- * as its own pure function (rather than inlined in `main()`) so this refusal
+ * Extracted as its own pure function (rather than inlined in `main()`) so this refusal
  * is unit-testable directly, the same way the other two mandated refusals
  * already are via `shardTitles` and `buildFragment` -- `main()` is CLI-only
  * glue and is not exercised by `node --test`.
@@ -120,6 +121,112 @@ export function checkTitleCollisions(baseline, baselinePath = "the baseline") {
   return collisions;
 }
 
+// ─── --verify: the selection compared as a SET, not as a count ───────────────
+//
+// Ruling P14's own words are that "92 can be reached by dropping some and
+// adding others", so the controller verified SET-exactness — twice, by hand —
+// while both committed verification steps still prescribed the weaker check
+// ("the three counts sum to 92 with no shard at 0"). This mode is that
+// verification as one command, so the runbook stops asking for the check the
+// ruling refuted.
+//
+// The comparison is over `spec::title` PAIRS rather than titles, which is the
+// whole point: a title selected in the WRONG file shows up as one extra plus
+// one missing, where a title-only comparison would call it a match.
+
+/** Playwright's `rootDir` is `tests/`, so a listed file is prefixed with this. */
+const REGRESSION_PREFIX = "tests-automations/regression/";
+
+/** `spec::title`, the comparison key. Two tests can only collide on it if they collide. */
+export const pairKey = (spec, title) => `${spec}::${title}`;
+
+/**
+ * Every `{spec, title}` pair a `playwright test --list --reporter=json` report
+ * selected, with the spec path normalised to the baseline's own
+ * `relativePath` (relative to `regression/`, not to Playwright's `rootDir`).
+ *
+ * Deduped: a suite listed under more than one project yields the same pair
+ * once per project, and the question here is which TESTS were selected.
+ */
+export function listedPairs(listReport) {
+  const pairs = new Set();
+  const walk = (suites) => {
+    for (const suite of suites ?? []) {
+      for (const sp of suite.specs ?? []) {
+        const file = String(sp.file ?? suite.file ?? "");
+        const spec = file.startsWith(REGRESSION_PREFIX) ? file.slice(REGRESSION_PREFIX.length) : file;
+        pairs.add(pairKey(spec, sp.title));
+      }
+      walk(suite.suites);
+    }
+  };
+  walk(listReport?.suites);
+  return pairs;
+}
+
+/** Every `spec::title` the baseline declares — the WANTED set. */
+export function baselinePairs(baseline) {
+  const pairs = new Set();
+  for (const s of baseline?.specs ?? []) {
+    for (const t of s.tests ?? []) pairs.add(pairKey(s.relativePath, t.title));
+  }
+  return pairs;
+}
+
+/** How many missing/extra pairs to name before eliding, and printing the count. */
+export const VERIFY_NAME_CAP = 20;
+
+/**
+ * Compares what the shards selected against what the baseline wants.
+ *
+ * `perShard` is one selected-pair Set per shard, in shard order. A shard that
+ * selected NOTHING is called out on its own: an empty selection is a green
+ * `manual.yml` dispatch that measures nothing, and it can hide inside a correct
+ * total if another shard over-selects by the same amount — which is exactly the
+ * arithmetic the count check cannot see.
+ */
+export function verifySelection(baseline, perShard) {
+  const wanted = baselinePairs(baseline);
+  const selected = new Set(perShard.flatMap((s) => [...s]));
+  const missing = [...wanted].filter((p) => !selected.has(p)).sort();
+  const extra = [...selected].filter((p) => !wanted.has(p)).sort();
+  const counts = perShard.map((s) => s.size);
+  const emptyShards = counts.flatMap((n, i) => (n === 0 ? [i + 1] : []));
+  return {
+    ok: missing.length === 0 && extra.length === 0 && emptyShards.length === 0,
+    wanted: wanted.size,
+    selected: selected.size,
+    counts,
+    emptyShards,
+    missing,
+    extra,
+  };
+}
+
+/** The verdict as lines — `ok` or not, always naming what it found. */
+export function verifyReportLines(v) {
+  const head =
+    `${v.wanted} wanted / ${v.selected} selected / ${v.missing.length} missing / ` +
+    `${v.extra.length} extra; shards ${v.counts.join("/")}`;
+  if (v.ok) return [`[triage-grep] verified set-exact: ${head}`];
+  const lines = [`[triage-grep] SELECTION IS NOT SET-EXACT: ${head}`];
+  if (v.emptyShards.length) {
+    lines.push(
+      `  shard(s) ${v.emptyShards.join(", ")} selected NOTHING — a dispatch of one is a green run ` +
+        "that measures nothing, and the counts can still sum correctly",
+    );
+  }
+  for (const [label, list] of [["missing (wanted, not selected)", v.missing], ["extra (selected, not wanted)", v.extra]]) {
+    if (!list.length) continue;
+    lines.push(`  ${list.length} ${label}:`);
+    for (const p of list.slice(0, VERIFY_NAME_CAP)) lines.push(`    - ${p}`);
+    if (list.length > VERIFY_NAME_CAP) {
+      lines.push(`    - … and ${list.length - VERIFY_NAME_CAP} more not listed here`);
+    }
+  }
+  return lines;
+}
+
 function arg(argv, name, fallback) {
   const hit = argv.find((a) => a.startsWith(`--${name}=`));
   if (hit) return hit.split("=").slice(1).join("=");
@@ -127,10 +234,75 @@ function arg(argv, name, fallback) {
   return idx >= 0 && argv[idx + 1] ? argv[idx + 1] : fallback;
 }
 
+/** Every `--<name> <value>` / `--<name>=<value>` occurrence, in order. */
+function argAll(argv, name) {
+  const out = [];
+  argv.forEach((a, i) => {
+    if (a === `--${name}` && argv[i + 1]) out.push(argv[i + 1]);
+    if (a.startsWith(`--${name}=`)) out.push(a.split("=").slice(1).join("="));
+  });
+  return out;
+}
+
+/**
+ * `playwright test --list --reporter=json` for one fragment, parsed.
+ *
+ * Thin glue on purpose — the comparison above is the part with tests. Two
+ * measured details: `--list` runs nothing, so this needs no Langflow instance
+ * and no provider key; and stderr is FULL of module-load noise from the specs
+ * ("models.json not found — run collect-models.spec.ts first", once per spec),
+ * so it is captured and only shown when the run actually fails.
+ */
+function listSelection(fragment) {
+  let stdout;
+  try {
+    stdout = execFileSync(
+      "npx",
+      ["playwright", "test", "--list", "--reporter=json", "--grep", fragment],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 },
+    );
+  } catch (err) {
+    const tail = String(err.stderr ?? "").trim().split("\n").slice(-5).join("\n");
+    throw new Error(`\`playwright test --list\` failed (exit ${err.status}). Last stderr lines:\n${tail}`);
+  }
+  return JSON.parse(stdout);
+}
+
+function runVerify(argv, baseline, baselinePath) {
+  const shards = Number(arg(argv, "shards", "3"));
+  const preCaptured = argAll(argv, "list-json");
+  if (preCaptured.length && preCaptured.length !== shards) {
+    // Fail rather than silently verify a subset: a missing report would read as
+    // a shard that selected nothing, i.e. the exact false verdict this mode
+    // exists to produce loudly.
+    throw new Error(
+      `--verify got ${preCaptured.length} --list-json report(s) for ${shards} shard(s); ` +
+        "pass one per shard, in shard order",
+    );
+  }
+  const perShard = [];
+  for (let i = 1; i <= shards; i++) {
+    const fragment = buildFragment(shardTitles(baselineTitles(baseline), shards, i).map(escapeTitle));
+    const report = preCaptured.length
+      ? JSON.parse(fs.readFileSync(preCaptured[i - 1], "utf8"))
+      : listSelection(fragment);
+    perShard.push(listedPairs(report));
+  }
+  const verdict = verifySelection(baseline, perShard);
+  const out = verifyReportLines(verdict).join("\n");
+  if (verdict.ok) {
+    console.log(`${out}\n  (against ${baselinePath})`);
+    return 0;
+  }
+  console.error(out);
+  return 1;
+}
+
 function main(argv) {
   const baselinePath = arg(argv, "baseline", "tests/assets/triage/inherited-backlog-baseline.json");
   const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
   checkTitleCollisions(baseline, baselinePath);
+  if (argv.includes("--verify")) return runVerify(argv, baseline, baselinePath);
   const titles = shardTitles(baselineTitles(baseline), arg(argv, "shards", "3"), arg(argv, "shard", "1"));
   process.stdout.write(`${buildFragment(titles.map(escapeTitle))}\n`);
   return 0;

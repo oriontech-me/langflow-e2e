@@ -64,6 +64,27 @@ test("collectObservations treats an unrecognized stdout chunk shape as empty, no
   assert.equal(obs.get("a")[0].backendErrors, 0);
 });
 
+// The recursive `walk` in collectObservations, on the shape it actually meets:
+// the real suite nests `test.describe` inside `test.describe`, so a spec can
+// sit two suite levels below the file. Reviewed as "the one production-critical
+// path exercised only by hand" — 4 lines of fixture closes that.
+test("collectObservations descends through multi-level nested suites", () => {
+  const obs = collectObservations({
+    stats: { expected: 3, unexpected: 0, flaky: 0, skipped: 0 },
+    suites: [{
+      title: "file", file: "a/x.spec.ts",
+      specs: [spec("top level", "expected")],
+      suites: [{
+        title: "outer describe",
+        specs: [spec("one level down", "expected")],
+        suites: [{ title: "inner describe", specs: [spec("two levels down", "unexpected")], suites: [] }],
+      }],
+    }],
+  });
+  assert.deepEqual([...obs.keys()].sort(), ["one level down", "top level", "two levels down"]);
+  assert.equal(obs.get("two levels down")[0].status, "unexpected");
+});
+
 test("verdictFor: all green over three observations", () => {
   const v = verdictFor([{ status: "expected" }, { status: "expected" }, { status: "expected" }]);
   assert.equal(v.verdict, "green");
