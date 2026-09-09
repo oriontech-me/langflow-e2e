@@ -114,6 +114,54 @@ test("a title shared with an out-of-scope test is reported as a collision", () =
   assert.deepEqual(b.titleCollisions, ["same name"]);
 });
 
+// Finding A3. Only the in-scope <-> OUT-of-scope class was recorded, while
+// `build-triage-grep.mjs`'s docstring claimed a recorded collision meant "two
+// different tests in the underlying suite share the exact same title text".
+// Two IN-scope tests sharing a title were therefore invisible to the refusal
+// and silent in three further places: `baselineTitles` dedupes them into one
+// alternative, `rowsFor` renders two identical rows, and `verdictFor` folds
+// both tests' observations into ONE verdict -- a green one able to mask a red.
+// Zero such collisions in the corpus today, which is exactly why this is
+// pinned by a fixture instead of by the suite.
+test("two IN-SCOPE tests sharing a title are reported as a collision too", () => {
+  const b = classifyBacklog([
+    t("a/x.spec.ts", "same name", ["@release"]),
+    t("b/y.spec.ts", "same name", ["@release"]),
+  ], NO_FACTS);
+  assert.deepEqual(b.titleCollisions, ["same name"]);
+  // Both are genuinely in the population -- this is not the out-of-scope case
+  // wearing a different hat, and the two rows would be indistinguishable.
+  assert.equal(b.testCount, 2);
+  assert.deepEqual(b.specs.map((s) => s.relativePath), ["a/x.spec.ts", "b/y.spec.ts"]);
+});
+
+test("two in-scope tests sharing a title INSIDE one file are reported as a collision", () => {
+  const b = classifyBacklog([
+    t("a/x.spec.ts", "same name", ["@release"], 10),
+    t("a/x.spec.ts", "same name", ["@release"], 40),
+  ], NO_FACTS);
+  assert.deepEqual(b.titleCollisions, ["same name"]);
+  assert.equal(b.testCount, 2);
+});
+
+test("distinct titles are not collisions, and a title is reported at most once", () => {
+  const clean = classifyBacklog([
+    t("a/x.spec.ts", "one", ["@release"]),
+    t("b/y.spec.ts", "two", ["@release"]),
+  ], NO_FACTS);
+  assert.deepEqual(clean.titleCollisions, []);
+
+  // Three declarations on one title (two in scope, one out) must yield ONE
+  // entry, not three -- the refusal prints the list and a triplicated name
+  // would misreport how many titles need resolving.
+  const dup = classifyBacklog([
+    t("a/x.spec.ts", "same name", ["@release"]),
+    t("b/y.spec.ts", "same name", ["@release"]),
+    t("c/z.spec.ts", "same name", ["@stable"]),
+  ], NO_FACTS);
+  assert.deepEqual(dup.titleCollisions, ["same name"]);
+});
+
 test("specs are sorted and tests keep source order", () => {
   const b = classifyBacklog([
     t("z/last.spec.ts", "z", ["@release"]),

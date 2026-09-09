@@ -40,10 +40,26 @@ export interface BaselineFile {
   titleCollisions: string[];
 }
 
+/**
+ * Code-unit order — the SAME comparator `classifyBacklog` already sorts its
+ * spec list with (`[...byFile.keys()].sort()`), and the one `Array#sort`
+ * applies by default to strings.
+ *
+ * It used to be `localeCompare` here, over a list that arrived already sorted by
+ * code units. They agree on today's 55 paths, so nothing was wrong — but this
+ * file is a COMMITTED artifact whose `--check` mode compares exact bytes, and
+ * `localeCompare` is ICU-dependent: it folds case (measured — `Api/x.spec.ts`
+ * vs `api/x.spec.ts` sorts the opposite way from code units) and can differ
+ * between a runner's Node build and a developer's. Two comparators over one
+ * list is a `--check` failure waiting for the first camelCase directory, on a
+ * machine other than the one that wrote the file.
+ */
+const byCodeUnits = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
+
 export function renderBaseline(b: Backlog): string {
   const file: BaselineFile = {
     version: 1,
-    specs: b.specs.slice().sort((x, y) => x.relativePath.localeCompare(y.relativePath)),
+    specs: b.specs.slice().sort((x, y) => byCodeUnits(x.relativePath, y.relativePath)),
     testCount: b.testCount,
     titleCollisions: b.titleCollisions.slice().sort(),
   };

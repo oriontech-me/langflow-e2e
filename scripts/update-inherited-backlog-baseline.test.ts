@@ -37,6 +37,27 @@ test("renderBaseline is deterministic and newline-terminated", () => {
   assert.ok(a.indexOf('"a/x.spec.ts"') < a.indexOf('"b/y.spec.ts"'));
 });
 
+// Finding A6. `classifyBacklog` sorts its spec list by CODE UNITS
+// (`[...byFile.keys()].sort()`); this writer re-sorted the same list with
+// `localeCompare`. They agree on today's 55 paths, but this is a committed
+// artifact whose `--check` compares exact bytes and `localeCompare` is
+// ICU-dependent -- so one camelCase directory, on a machine whose Node carries
+// a different ICU, is a `--check` failure nobody can reproduce.
+//
+// Case is the measured disagreement: code units put `A` (65) before `a` (97),
+// ICU folds case and orders the lowercase path first. This fixture is the ONLY
+// thing distinguishing the two comparators, since every other axis agrees.
+test("renderBaseline sorts by code units, not by locale", () => {
+  const rendered = renderBaseline(backlog([spec("api/x.spec.ts"), spec("Api/x.spec.ts")]));
+  assert.ok(
+    rendered.indexOf('"Api/x.spec.ts"') < rendered.indexOf('"api/x.spec.ts"'),
+    "uppercase sorts first by code unit; localeCompare would put `api/` first",
+  );
+  // Stated as the property rather than only as the fixture's outcome.
+  assert.equal("Api/x.spec.ts".localeCompare("api/x.spec.ts") > 0, true,
+    "the fixture is only meaningful while the two comparators really disagree on it");
+});
+
 test("renderBaseline carries no timestamp", () => {
   // A generated-at field would make every regeneration a diff, which is how a
   // committed baseline stops being reviewable.

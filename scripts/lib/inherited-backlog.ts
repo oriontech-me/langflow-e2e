@@ -31,7 +31,29 @@ export interface BacklogSpec {
   hasIdScopedCleanup: boolean;
   tests: BacklogTest[];
 }
-export interface Backlog { specs: BacklogSpec[]; testCount: number; titleCollisions: string[] }
+export interface Backlog {
+  specs: BacklogSpec[];
+  testCount: number;
+  /**
+   * Titles that more than one DECLARATION in the suite carries — both classes,
+   * because `build-triage-grep.mjs` refuses on this field and its refusal is
+   * about anchoring being unable to tell two identically-titled tests apart:
+   *
+   *  1. **in-scope ↔ out-of-scope** — the `--grep` fragment for a backlog title
+   *     would also select a test outside the 92-test population;
+   *  2. **in-scope ↔ in-scope** — two backlog tests share a title. This one was
+   *     invisible until the final fix wave, and it is silent in three places at
+   *     once: `baselineTitles` dedupes it away (so the fragment selects both
+   *     tests under one alternative), `rowsFor` renders two IDENTICAL rows, and
+   *     `verdictFor` folds both tests' observations into a single verdict —
+   *     a green one masking a red one, with nothing saying so.
+   *
+   * Zero of either class today, so recording the second changes no data; it is
+   * pinned by a unit test rather than by the corpus, exactly because a corpus
+   * with zero instances cannot pin a guard against them.
+   */
+  titleCollisions: string[];
+}
 
 /**
  * A declaration counts as `@stable` only when it is a PLAIN `test(...)` --
@@ -71,13 +93,20 @@ export function classifyBacklog(
       !stableFiles.has(t.relativePath),
   );
 
-  const inScopeSet = new Set(inScope);
+  // Both collision classes (see `Backlog.titleCollisions`). Counting per title
+  // over the WHOLE suite answers both at once: a title carried by two or more
+  // declarations, at least one of them in scope, is a collision whichever side
+  // the other declaration sits on.
   const inScopeTitles = new Set(inScope.map((t) => t.title));
-  const titleCollisions = [
-    ...new Set(
-      all.filter((t) => !inScopeSet.has(t) && inScopeTitles.has(t.title)).map((t) => t.title),
-    ),
-  ].sort();
+  const countsByTitle = new Map<string, number>();
+  for (const t of all) {
+    if (!inScopeTitles.has(t.title)) continue;
+    countsByTitle.set(t.title, (countsByTitle.get(t.title) ?? 0) + 1);
+  }
+  const titleCollisions = [...countsByTitle]
+    .filter(([, n]) => n > 1)
+    .map(([title]) => title)
+    .sort();
 
   const byFile = new Map<string, TaggedTest[]>();
   for (const t of inScope) {

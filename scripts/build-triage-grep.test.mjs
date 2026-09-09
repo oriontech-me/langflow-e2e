@@ -119,3 +119,27 @@ test("checkTitleCollisions does not refuse -- and returns the empty list -- when
   assert.deepEqual(checkTitleCollisions({ titleCollisions: [] }), []);
   assert.deepEqual(checkTitleCollisions({}), []); // no field at all: same `?? []` guard main() used to inline
 });
+
+// Finding A3, the consumer side. The refusal was only ever fed the in-scope <->
+// OUT-of-scope collision class; two IN-scope tests sharing a title now reach it
+// too (`classifyBacklog`, scripts/lib/inherited-backlog.ts). This asserts what
+// that class costs if it slips past: `baselineTitles` dedupes the two into ONE
+// alternative, so the fragment silently selects both tests under one title and
+// the table renders two indistinguishable rows.
+test("a title held by two in-scope tests collapses to one alternative -- which is why it must refuse", () => {
+  const colliding = {
+    version: 1,
+    titleCollisions: ["same name"],
+    specs: [
+      { relativePath: "a/x.spec.ts", tests: [{ title: "same name" }] },
+      { relativePath: "b/y.spec.ts", tests: [{ title: "same name" }] },
+    ],
+  };
+  // Two tests, one alternative: the fragment cannot address them separately.
+  assert.deepEqual(baselineTitles(colliding), ["same name"]);
+  assert.throws(
+    () => checkTitleCollisions(colliding, "baseline.json"),
+    /1 title collision\(s\)/,
+    "an in-scope collision must be refused, not silently deduped",
+  );
+});

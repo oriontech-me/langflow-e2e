@@ -85,10 +85,22 @@ export function buildFragment(titles) {
 /**
  * Refuses (by throwing) when `baseline.titleCollisions` is non-empty.
  *
- * A recorded collision means two different tests in the underlying suite share
- * the exact same title text, so an escaped-and-anchored title could still pull
- * an out-of-scope test into the measurement -- no amount of anchoring on a
- * single title string can tell two identically-titled tests apart. Extracted
+ * A recorded collision means two different declarations in the underlying suite
+ * carry the exact same title text -- and the field records BOTH classes of that
+ * (`Backlog.titleCollisions` in `scripts/lib/inherited-backlog.ts`), because no
+ * amount of anchoring on a single title string can tell two identically-titled
+ * tests apart:
+ *
+ *  - one in scope and one OUT of scope: the fragment pulls a test outside the
+ *    92-test population into the measurement;
+ *  - both IN scope: `baselineTitles` dedupes them into one alternative, so the
+ *    fragment still selects both tests, and the table then renders two
+ *    identical rows whose observations are folded into a single verdict -- a
+ *    green one able to mask a red one. This class was invisible to the field
+ *    until the final fix wave; the docstring here claimed to cover it, which is
+ *    how it stayed invisible.
+ *
+ * Extracted
  * as its own pure function (rather than inlined in `main()`) so this refusal
  * is unit-testable directly, the same way the other two mandated refusals
  * already are via `shardTitles` and `buildFragment` -- `main()` is CLI-only
