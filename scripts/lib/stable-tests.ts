@@ -363,6 +363,19 @@ export interface DeclaredTest {
    * — `test.fixme(title, …)` or the declaring `test.skip(title, …)`.
    */
   fixme: boolean;
+  /**
+   * The declaring token when `fixme` is true — `"fixme"` or `"skip"` — or
+   * `""` for a plain `test(...)`. Additive alongside `fixme`: that boolean
+   * answers "does this run in no lane", which is all a consumer filtering for
+   * `@stable` needs, but the never-validated backlog's unmute step has to
+   * tell the operator WHICH call to change back. Reading that back out of the
+   * source with a regex is the same kind of instrument that produced wrong
+   * claims elsewhere in this repo's own tooling (a substring read standing in
+   * for a parse). This field is read off the exact AST node `fixme` already
+   * inspects, never by re-reading the source line, so there stays one
+   * authority for both questions.
+   */
+  modifier: string;
   /** A `tag` option existed but could not be read as an inline array of literals. */
   unparseableTags: boolean;
 }
@@ -449,6 +462,13 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             node.getStart(source),
           );
           const own = tags ?? [];
+          // Same node `isSkippedDeclaration` already matched: a plain `test(...)`
+          // call's expression is a bare Identifier, so this reads "" for it and
+          // the property-access name ("fixme" | "skip") for the other case —
+          // never a second AST walk, never a source-text read.
+          const modifier = ts.isPropertyAccessExpression(node.expression)
+            ? node.expression.name.text
+            : "";
           out.push({
             title,
             relativePath,
@@ -456,6 +476,7 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             tags: [...own, ...inheritedLane.filter((t) => !own.includes(t))],
             stable: inheritedStable || own.includes(STABLE_TAG),
             fixme: isSkippedDeclaration(node),
+            modifier,
             unparseableTags: unparseable,
           });
         }

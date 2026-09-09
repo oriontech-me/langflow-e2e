@@ -31,6 +31,9 @@ function declared(over: Partial<DeclaredTest> = {}): DeclaredTest {
     tags: ["@regression"],
     stable: false,
     fixme: false,
+    // The declaring token behind `fixme` — see the same line in
+    // scripts/reconcile-stable-orphans.test.ts for why the interface gained it.
+    modifier: "",
     unparseableTags: false,
     ...over,
   };

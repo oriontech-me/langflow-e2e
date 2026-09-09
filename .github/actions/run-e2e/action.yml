@@ -52,6 +52,10 @@ runs:
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         GOOGLE_API_KEY: ${{ inputs.google_api_key }}
+        # Write the JSON reporter to a FILE. Left unset, Playwright prints the
+        # whole report to stdout, which buries the run log and makes a grep over
+        # it useless. Same idiom daily-stable.yml uses on `merge-reports`.
+        PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
       run: |
         # Build the arg list as an array (no eval) so quoting is safe. Playwright only
         # honors one --grep, so "tag AND name" has to be composed into a single
@@ -66,7 +70,7 @@ runs:
         # Empty output means no filter at all — never an empty --grep, which matches
         # every test and would turn a narrowed dispatch into a full-suite run.
         FILTER="$(node scripts/build-grep-filter.mjs --tag="$TEST_TAG" --grep="$TEST_GREP")"
-        ARGS=(--pass-with-no-tests --reporter=html,github)
+        ARGS=(--pass-with-no-tests --reporter=html,github,json)
         if [ -n "$FILTER" ]; then ARGS+=(--grep "$FILTER"); fi
         echo "Running: npx playwright test ${ARGS[*]}"
         npx playwright test "${ARGS[@]}"
@@ -106,4 +110,16 @@ runs:
       with:
         name: playwright-report-manual-${{ github.run_id }}
         path: playwright-report/
+        retention-days: 14
+
+    - name: Upload Playwright JSON report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-json-manual-${{ github.run_id }}
+        path: results.json
+        # A run that died before Playwright started leaves no file. That is a real
+        # state (and one the consumer treats as an abort), not a reason to fail the
+        # upload step and mask the actual failure above it.
+        if-no-files-found: warn
         retention-days: 14

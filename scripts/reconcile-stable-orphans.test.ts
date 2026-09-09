@@ -396,6 +396,12 @@ function candidate(over: Partial<DeclaredTest> = {}): DeclaredTest {
     tags: [],
     stable: false,
     fixme: false,
+    // `modifier` is the declaring token behind `fixme` ("fixme" | "skip", or ""
+    // for a plain `test()`), added to DeclaredTest by the inherited-spec triage
+    // work, which needs to tell an operator WHICH token to unmute. The
+    // reconciler ignores it; this factory line keeps every fixture in this file
+    // compiling against the widened interface.
+    modifier: "",
     unparseableTags: false,
     ...over,
   };

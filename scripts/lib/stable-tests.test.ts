@@ -440,3 +440,40 @@ test("an inherited lane tag is not duplicated when the test declares it too", ()
   `);
   assert.deepEqual(out[0].tags, ["@destructive", "@api"]);
 });
+
+// ─── DeclaredTest.modifier — additive field ──────────────────────────────────
+//
+// `fixme` alone answers "does this run in no lane", which is all the
+// checklist guard's population needs; the never-validated backlog's unmute
+// step (design Task 7) has to tell the operator WHICH call to change back, so
+// it needs the specific token. Read off the exact AST node `fixme` already
+// inspects (see the `modifier` local in `parseDeclaredTests`), never by
+// re-reading the source line with a regex — the instrument that produced
+// wrong claims elsewhere in this repo's own tooling.
+
+test("modifier is the empty string on a plain test()", () => {
+  const out = declaredIn(`
+    test("a plain test", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modifier, "");
+  assert.equal(out[0].fixme, false);
+});
+
+test('modifier is "fixme" on the declaring form of test.fixme', () => {
+  const out = declaredIn(`
+    test.fixme("a quarantined test", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modifier, "fixme");
+  assert.equal(out[0].fixme, true);
+});
+
+test('modifier is "skip" on the declaring form of test.skip', () => {
+  const out = declaredIn(`
+    test.skip("a test quarantined with skip", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modifier, "skip");
+  assert.equal(out[0].fixme, true);
+});
