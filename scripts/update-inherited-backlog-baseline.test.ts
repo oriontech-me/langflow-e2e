@@ -18,7 +18,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "child_process";
 import * as path from "path";
 import { renderBaseline, diffBaseline, formatParseRefusal } from "./update-inherited-backlog-baseline";
-import type { Backlog } from "./lib/inherited-backlog";
+import { assertNoWarnings, type Backlog } from "./lib/inherited-backlog";
+import type { DeclaredTest } from "./lib/stable-tests";
 
 function spec(relativePath: string, tier: "T1" | "T2" = "T2") {
   return {
@@ -86,11 +87,33 @@ test("a missing committed baseline reports every spec as added", () => {
 // -- the same choice Task 2 made for `assertNoWarnings` itself.
 
 test("formatParseRefusal names the failure in the floor's own voice", () => {
-  const msg = formatParseRefusal(new Error("collectBacklog(): collectTaggedTests() reported 1 parse warning(s) (printed above)."));
+  // The input is the message `assertNoWarnings` REALLY throws, taken from the
+  // function itself rather than transcribed. The transcription it replaces
+  // quoted `collectTaggedTests() reported 1 parse warning(s)`, which nothing
+  // can produce since the #1746 reconciliation (`db7a580e`) replaced that
+  // walker's suite-level warnings array with the per-declaration
+  // `DeclaredTest.unparseableTags`. What this pins -- the prefix and the
+  // em-dash join -- was never wrong, but a fixture quoting a message no code
+  // path emits is one stale read away from being taken for the contract, and
+  // a hand-copied literal can go stale again. Deriving it cannot.
+  const bad: DeclaredTest = {
+    title: "one", relativePath: "a/x.spec.ts", line: 1, tags: [],
+    stable: false, fixme: false, modifier: "", unparseableTags: true,
+  };
+  const stderr = console.error;
+  console.error = () => {};   // assertNoWarnings prints the offending lines
+  let thrown = "";
+  try {
+    assertNoWarnings([bad]);
+  } catch (e) {
+    thrown = (e as Error).message;
+  } finally {
+    console.error = stderr;
+  }
+  assert.match(thrown, /^collectBacklog\(\): collectDeclaredTests\(\) reported 1 declaration\(s\)/);
   assert.equal(
-    msg,
-    "[triage-baseline] refusing: the AST parser could not fully read the corpus — " +
-      "collectBacklog(): collectTaggedTests() reported 1 parse warning(s) (printed above).",
+    formatParseRefusal(new Error(thrown)),
+    "[triage-baseline] refusing: the AST parser could not fully read the corpus — " + thrown,
   );
 });
 
