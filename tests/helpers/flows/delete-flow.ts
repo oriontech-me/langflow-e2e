@@ -30,11 +30,19 @@ export interface DeleteFlowHooks {
   /**
    * Attribute this flow's tokens before deleting it. Defaults to `true`.
    *
-   * `cleanAllFlows` passes `false`, and that is not a preference: it deletes
-   * EVERY user flow on the shared instance, including flows another worker is
-   * actively using. Naming those after whichever spec called the sweep writes
-   * WRONG rows into `by_spec` -- strictly worse than a missing row, because a
-   * wrong number carries no marker saying so (§2.2).
+   * Pass `false` only for a delete whose flows this spec did not create -- an
+   * unscoped sweep over the shared instance, which can reach flows another
+   * worker is actively using. Naming those after whichever spec called the
+   * sweep writes WRONG rows into `by_spec` -- strictly worse than a missing
+   * row, because a wrong number carries no marker saying so (§2.2).
+   *
+   * **Nothing passes `false` today.** The motivating caller was the global
+   * `cleanAllFlows` helper, deleted once #515/#690 left it with no callers at
+   * all. The option and its `delete-flow.test.ts` coverage are kept because the
+   * hazard is a property of unscoped deletes rather than of that one helper, and
+   * re-deriving it costs more than keeping it -- not because a caller exists.
+   * Do NOT pass it for an id-scoped delete of your own flow: that drops a real
+   * `by_spec` row for no reason.
    */
   attribute?: boolean;
   /**
