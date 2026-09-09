@@ -221,8 +221,9 @@ test.describe("Playground Output – Structured Data", () => {
     // The suite runs fullyParallel against a single shared auto_login user, so a
     // global cleanup here races sibling tests: it deletes their in-flight flow
     // mid-build, the output never renders, and the run "does not settle" (#465).
-    // Scoped deletion by id is collision-free. (The broader suite-wide hazard —
-    // other specs still calling the global cleanAllFlows — is tracked in #515.)
+    // Scoped deletion by id is collision-free. (#515 finished the migration: no
+    // spec calls a global wipe any more, and the helper that performed one has
+    // been deleted — the name survives in comments as an anti-pattern only.)
     //
     // The URL fallback is belt-and-braces, and it is worth saying which: since the
     // id is recorded the moment the create returns (`createdFlowId` above), a
@@ -242,7 +243,7 @@ test.describe("Playground Output – Structured Data", () => {
     await page.goto("/");
 
     // Obtain a bearer token via auto_login (no credentials required in dev/test),
-    // mirroring clean-all-flows.ts, then delete just this one flow.
+    // then delete just this one flow.
     const loginRes = await page.request.get("/api/v1/auto_login");
     let headers: Record<string, string> = {};
     if (loginRes.ok()) {

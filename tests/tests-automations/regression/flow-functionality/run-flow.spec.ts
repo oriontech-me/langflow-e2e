@@ -227,9 +227,8 @@ test.fixme(
       // (b) under `fullyParallel`, delete flows another worker just
       // created. Iterating the captured IDs eliminates both classes of
       // collateral damage. It also sidesteps the brittle object-form
-      // fallback (`body?.items` vs the actual `body.flows` shape used in
-      // `helpers/flows/clean-all-flows.ts`) since we no longer need to
-      // list at all.
+      // fallback (`body?.items` vs the actual `body.flows` shape that
+      // `GET /api/v1/flows/` returns) since we no longer need to list at all.
       try {
         const headers = { Authorization: await getAuthToken(request) };
         for (const id of createdFlowIds) {

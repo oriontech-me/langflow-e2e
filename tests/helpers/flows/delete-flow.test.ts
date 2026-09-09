@@ -283,7 +283,7 @@ test("an attribution failure never changes whether deleteFlow throws (§2.3)", a
   }
 });
 
-test("attribute: false suppresses the hook entirely — the cleanAllFlows case (§2.2)", async () => {
+test("attribute: false suppresses the hook entirely — the unscoped-sweep case (§2.2)", async () => {
   const out = tmpFile();
   process.env.TOKENS_ATTRIB = out;
   try {

@@ -38,11 +38,12 @@ failing 2/2 on the current nightly and structurally unpromotable:
 
 - **Parallel-suite wiper (#553/#520 class).** It called `cleanAllFlows` twice
   on the shared superuser, deleting every other worker's in-flight flows.
-  `clean-all-flows.ts` documents the spec as "NOT safe under concurrent
+  The helper's own docblock documented the spec as "NOT safe under concurrent
   neighbors". `@stable` runs fully parallel, so promoting it as-is would
   reintroduce the wiper. This spec was `cleanAllFlows`'s **last legitimate
   caller**; the redesign drops it, leaving no `@stable` spec that wipes flows
-  globally.
+  globally — and the helper itself has since been deleted, having no callers and
+  no importers left.
 - **Not repeatable.** `optins` persist per user across runs, so a second local
   run of the old assertions yielded 100%, not 66%.
 - **Dead product path.** On the 1.11 nightly `new_project_btn_empty_page` opens
@@ -152,4 +153,4 @@ persistence, flow-step derivation, or widget rendering fails a specific step.
 The test owns exactly one flow (created via API, id captured). `afterEach`
 deletes it id-scoped (404-tolerant) and resets the superuser optins, so neither
 flows nor tracked state accumulate across runs. No `cleanAllFlows` — this spec
-was its last caller; the helper can now be retired separately.
+was its last caller, and the helper has since been deleted.

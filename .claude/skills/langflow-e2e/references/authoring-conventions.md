@@ -86,10 +86,13 @@ bullets** — the Coverage Summary table and Phase 0 block auto-regenerate.
 - **Flow cleanup is id-scoped — never a pre-test wipe.** Create your flow,
   keep the id from the creation `POST /api/v1/flows/` 201 response
   (`loadTemplateByName` returns it; the canvas URL id is transient on 1.11),
-  and delete ONLY that id in `afterEach`. `cleanAllFlows` — and even a
+  and delete ONLY that id in `afterEach`. A global `cleanAllFlows` — and even a
   name-scoped delete — as pre-test cleanup kills flows other parallel workers
   are actively driving: the victim's page starts 404ing "Flow not found" and
-  its run request never fires (#553's daily flaky). Duplicate template names
+  its run request never fires (#553's daily flaky). **The helper of that name no
+  longer exists** — deleted once #515/#690 left it callerless — so its many
+  mentions across specs and spec docs are an anti-pattern named for teaching,
+  with nothing behind it. Do not write a replacement. Duplicate template names
   don't justify a wipe either: the backend auto-suffixes copies
   ("Memory Chatbot (1)"), and callers should hold the id, not the name.
 - **Home cards: never `nth(0)`/`first()` — anchor by id.** The home list
@@ -566,7 +569,7 @@ The Langflow canvas fights naive `playwright-cli` usage. Recipes that cut a
   `toBeAttached` before clicking an inspector, edge-count assertions after a
   connect. Prefer POMs (`MainPage`, `SimpleAgentTemplatePage`, …) and
   `helpers/` (`awaitBootstrapTest`, `adjustScreenView`, `zoomOut`,
-  `cleanAllFlows`, …) over raw Playwright.
+  `deleteFlow`, …) over raw Playwright.
 - **Comment the non-obvious** — especially assertions deliberately *not* made
   (e.g. not asserting a generic name is gone because a parallel worker may hold
   it) and why the full dialog text is read instead of one inner node.
