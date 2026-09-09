@@ -52,7 +52,7 @@ test.describe("Flows API — versions", () => {
 
   test(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
-    { tag: ["@stable", "@api", "@workspace"] },
+    { tag: ["@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
