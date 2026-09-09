@@ -157,7 +157,7 @@
 - [x] `DELETE /api/v1/flows/` (bulk, ids in the body) answers exactly `{"deleted": 2}` for two owned ids, both then `404 "Flow not found"` and absent from the listing → `api/flows/api-flows-put-and-bulk-delete.spec.ts`
 - [x] `DELETE /api/v1/flows/` with an unknown id answers `200 {"deleted": 0}` — recorded, not judged: a stale id gets the same status as a successful delete → `api/flows/api-flows-put-and-bulk-delete.spec.ts`
 - [x] `POST /api/v1/flows/download/` — one id is a portable JSON object with **no** `updated_at`/`user_id`/`folder_id`; two ids is `application/x-zip-compressed` with the ZIP magic and one `<name>.json` member per flow → `api/flows/api-flows-export-import.spec.ts`
-- [x] `POST /api/v1/flows/upload/` of an export whose flow still exists **updates it in place**: `201`, same `id`, newer `updated_at`, flow count unchanged → `api/flows/api-flows-export-import.spec.ts`
+- [x] `POST /api/v1/flows/upload/` of an export whose flow still exists **updates it in place**: `201`, same `id`, newer `updated_at`, the flow stays in its project and that project still holds exactly one flow → `api/flows/api-flows-export-import.spec.ts`
 - [x] `upload/` recreates a deleted flow under the **same id** its export carried, and mints a new id only when the export has none — the import is an upsert keyed by `id` → `api/flows/api-flows-export-import.spec.ts`
 - [x] `GET /api/v1/flows/public_flow/{id}` hides a PRIVATE flow (`404`, never a `403` that confirms existence) and serves a PUBLIC one with `public_access: {can_read, can_execute}` — **anonymously too**, asserted by body equality against the authenticated read → `api/flows/api-flows-public-and-metadata.spec.ts`
 - [x] `GET /api/v1/flows/{id}/note_translations` is `{}` for a flow without sticky notes → `api/flows/api-flows-public-and-metadata.spec.ts`
@@ -809,6 +809,7 @@
 - [x] Export flow as JSON → `flow-functionality/export-import-flow.spec.ts`
 - [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
 - [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
+- [x] Re-importing a live flow's own export through the UI adds a **copy** (`"<name> (1)"`, new id) instead of updating it — the UI import posts `POST /api/v1/flows/` and discards the export's id, unlike `POST /api/v1/flows/upload/`, which upserts → `flow-functionality/export-import-flow.spec.ts` (#1773)
 - [-] Import flow with outdated components → `flow-functionality/import-outdated-flow.spec.ts`
 - [x] Import invalid JSON — should display error message → `flow-functionality/import-invalid-json.spec.ts`
 
