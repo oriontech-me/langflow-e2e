@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import { tmpdir } from "os";
 import { leaveFlowEditor } from "../../../helpers/flows/leave-flow-editor";
 import path from "path";
 import type { Page } from "@playwright/test";
@@ -8,7 +9,7 @@ import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
-// Serial so the three tests share the created-flow tracker safely within
+// Serial so the four tests share the created-flow tracker safely within
 // this file.
 test.describe.configure({ mode: "serial" });
 
@@ -226,6 +227,110 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
       });
 
       await expect(page.getByText("uploaded successfully")).toBeVisible();
+    },
+  );
+
+  test(
+    "re-importing a live flow's own export adds a copy instead of updating it",
+    { tag: ["@release", "@workspace", "@api", "@regression"] },
+    async ({ page, request }) => {
+      const headers = { Authorization: await getAuthToken(request) };
+      // Created through the API, not the UI: a blank flow made through the UI
+      // gets an auto-generated name from a word list, and two parallel workers
+      // can land the same one — which would make the by-name read below
+      // perturbable by a neighbour, the very hazard this assertion exists to
+      // avoid (#1773).
+      const uniqueName = `export-reimport-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+      const created = await request.post("/api/v1/flows/", {
+        headers,
+        data: {
+          name: uniqueName,
+          description: "re-import round trip",
+          data: { nodes: [], edges: [], viewport: { zoom: 1, x: 0, y: 0 } },
+        },
+      });
+      expect(created.status()).toBe(201);
+      const flowId = (await created.json()).id as string;
+      createdFlowIds.push(flowId);
+
+      const flowsNamed = async (): Promise<Array<{ id: string; name: string }>> => {
+        const res = await request.get("/api/v1/flows/?header_flows=true", { headers });
+        expect(res.status()).toBe(200);
+        return (await res.json()).filter((f: { name: string }) =>
+          f.name.startsWith(uniqueName),
+        );
+      };
+
+      await awaitBootstrapTest(page, { skipModal: true });
+      await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
+
+      // The flow's OWN card, never `.nth(0)` — the home list sorts by
+      // `updated_at` DESC, so the first card is whatever any parallel worker
+      // touched last (#518).
+      const ownCard = page
+        .getByTestId("list-card")
+        .filter({ has: page.getByTestId(`flow-name-${flowId}`) });
+      await expect(ownCard).toHaveCount(1, { timeout: 15000 });
+
+      const savedExport = path.join(tmpdir(), `${uniqueName}.json`);
+
+      await test.step("export the flow from its own card", async () => {
+        const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
+        await ownCard.getByTestId("home-dropdown-menu").click();
+        await page.getByTestId("btn-download-json").last().click();
+        await page.waitForSelector('[data-testid="modal-export-button"]', {
+          timeout: 10000,
+        });
+        await page.getByTestId("modal-export-button").click();
+        await expect(page.getByText(/.*exported successfully/)).toBeVisible({
+          timeout: 10000,
+        });
+
+        // `saveAs` under a `.json` name, never `download.path()`: the raw path is
+        // an extension-less temp file, the browser reports its type as "", and
+        // `useUploadFlow` refuses anything but `application/json` with NO toast
+        // and NO request — the import would silently not happen and the listing
+        // below would read as an in-place update.
+        await (await downloadPromise).saveAs(savedExport);
+      });
+
+      await test.step("the export carries the source flow's id", async () => {
+        // Without this, a regression that stopped exporting the id would produce
+        // the same two flows and leave the assertion below green while
+        // describing the wrong cause.
+        expect(JSON.parse(readFileSync(savedExport, "utf-8")).id).toBe(flowId);
+      });
+
+      await test.step("re-importing it creates a SECOND flow, suffixed", async () => {
+        // The UI import never reaches `POST /api/v1/flows/upload/` (which upserts
+        // on this same file — see docs/api/flows/api-flows-export-import.md).
+        // `useUploadFlow` -> `useAddFlow` -> `createNewFlow` sets `id: ""` and
+        // posts a CREATE, so the id the export carries is discarded.
+        const importPost = page.waitForResponse(
+          (resp) =>
+            resp.url().includes("/api/v1/flows/") &&
+            resp.request().method() === "POST" &&
+            resp.status() === 201,
+          { timeout: 60000 },
+        );
+        const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 10000 });
+        await page.getByTestId("upload-project-button").last().click();
+        await (await fileChooserPromise).setFiles(savedExport);
+        // The importer's own signal. The success toast cannot be used: its
+        // absence is also what the `Invalid file type` refusal looks like.
+        await importPost;
+
+        const named = await flowsNamed();
+        expect(named.map((f) => f.name).sort()).toEqual([
+          uniqueName,
+          `${uniqueName} (1)`,
+        ]);
+        const original = named.find((f) => f.id === flowId);
+        expect(original?.name, "the original flow is untouched").toBe(uniqueName);
+        const copy = named.find((f) => f.id !== flowId);
+        expect(copy?.name, "the copy is the suffixed one").toBe(`${uniqueName} (1)`);
+      });
     },
   );
 });

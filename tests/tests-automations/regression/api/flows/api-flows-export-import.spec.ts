@@ -1,6 +1,10 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import {
+  createProjectViaApi,
+  type CreatedProject,
+} from "../../../../helpers/flows/create-project-via-api";
 
 // Export (`download/`) and import (`upload/`) as a round-trip contract. Spec doc:
 // docs/api/flows/api-flows-export-import.md
@@ -16,6 +20,7 @@ test.describe("Flows API — export and import", () => {
   const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
   const createdFlowIds: string[] = [];
+  const createdProjects: CreatedProject[] = [];
 
   test.afterEach(async ({ request }) => {
     const authToken = await getAuthToken(request);
@@ -27,16 +32,29 @@ test.describe("Flows API — export and import", () => {
       });
     }
     createdFlowIds.length = 0;
+    // Projects last: deleting one can take its flows with it, and the id-scoped
+    // flow sweep above must not be turned into a stream of 404s by that.
+    for (const project of createdProjects) {
+      await project.deleteProject(request).catch((error) => {
+        console.warn(`⚠️ Orphan project left behind (${project.projectId}): ${error}`);
+      });
+    }
+    createdProjects.length = 0;
   });
 
   async function createFlow(
     request: Parameters<typeof getAuthToken>[0],
     authToken: string,
     label: string,
+    folderId?: string,
   ): Promise<{ id: string; name: string; updated_at: string }> {
     const res = await request.post("/api/v1/flows/", {
       headers: { Authorization: authToken },
-      data: { ...FLOW_BASE, name: uniqueName(label) },
+      data: {
+        ...FLOW_BASE,
+        name: uniqueName(label),
+        ...(folderId ? { folder_id: folderId } : {}),
+      },
     });
     expect(res.status()).toBe(201);
     const flow = await res.json();
@@ -44,22 +62,38 @@ test.describe("Flows API — export and import", () => {
     return flow;
   }
 
-  async function countFlows(
+  // Scoped to ONE project, which is the whole point (#1773): a global count is
+  // state every parallel worker also writes.
+  //
+  // `get_all=false` is load-bearing. The default `get_all=true` branch of
+  // `read_flows` returns every flow the user owns and never applies `folder_id`
+  // — measured, it answered 37 for a project holding 1 — and only the paginated
+  // branch honours the filter, answering an envelope rather than a bare list.
+  async function countFlowsInProject(
     request: Parameters<typeof getAuthToken>[0],
     authToken: string,
+    projectId: string,
   ): Promise<number> {
-    const res = await request.get("/api/v1/flows/?header_flows=true", {
-      headers: { Authorization: authToken },
-    });
+    const res = await request.get(
+      `/api/v1/flows/?get_all=false&folder_id=${projectId}`,
+      { headers: { Authorization: authToken } },
+    );
     expect(res.status()).toBe(200);
-    return (await res.json()).length;
+    const page = await res.json();
+    expect(
+      page,
+      "get_all=false answers a paginated envelope, not a list",
+    ).toHaveProperty("total");
+    return page.total as number;
   }
 
   async function upload(
     request: Parameters<typeof getAuthToken>[0],
     authToken: string,
     exportJson: Buffer,
-  ): Promise<Array<{ id: string; updated_at: string; name: string }>> {
+  ): Promise<
+    Array<{ id: string; updated_at: string; name: string; folder_id: string }>
+  > {
     const res = await request.post("/api/v1/flows/upload/", {
       headers: { Authorization: authToken },
       multipart: {
@@ -123,14 +157,32 @@ test.describe("Flows API — export and import", () => {
     { tag: ["@stable", "@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
+        "POST /api/v1/projects/",
         "POST /api/v1/flows/",
         "POST /api/v1/flows/download/",
         "POST /api/v1/flows/upload/",
         "GET /api/v1/flows/",
+        "DELETE /api/v1/projects/{project_id}",
       ]);
       const authToken = await getAuthToken(request);
-      const flow = await createFlow(request, authToken, "upsert");
-      const before = await countFlows(request, authToken);
+
+      // The isolation boundary. The flow count either side of the upload used to
+      // be read GLOBALLY, over a flow space every parallel worker also writes:
+      // a neighbour creating a flow inside the download/upload window reddened it
+      // (`Expected: 27, Received: 29`, run 34304431241), and a neighbour that
+      // created one flow and deleted another left it unchanged while a duplicate
+      // existed. Nobody else writes into a project this test just created, so
+      // inside it "no row appeared" is legitimate again (#1773).
+      const project = await createProjectViaApi(
+        request,
+        { Authorization: authToken },
+        { namePrefix: "api-flows-export-upsert" },
+      );
+      createdProjects.push(project);
+
+      const flow = await createFlow(request, authToken, "upsert", project.projectId);
+      const before = await countFlowsInProject(request, authToken, project.projectId);
+      expect(before, "the test's project holds only its own flow").toBe(1);
 
       const exported = await request.post("/api/v1/flows/download/", {
         headers: { Authorization: authToken },
@@ -146,12 +198,18 @@ test.describe("Flows API — export and import", () => {
         expect(new Date(uploaded[0].updated_at).getTime()).toBeGreaterThanOrEqual(
           new Date(flow.updated_at).getTime(),
         );
+        // The export carries no `folder_id`, so the upsert takes its destination
+        // from the row it updates. Asserted, not assumed: the day that changes,
+        // the project scope below would silently stop covering the flow.
+        expect(uploaded[0].folder_id).toBe(project.projectId);
       });
 
       await test.step("no copy was created", async () => {
         // Both halves matter: the preserved id alone would also be satisfied by an
         // endpoint that created a duplicate and echoed the export's id back.
-        expect(await countFlows(request, authToken)).toBe(before);
+        expect(
+          await countFlowsInProject(request, authToken, project.projectId),
+        ).toBe(before);
       });
     },
   );
