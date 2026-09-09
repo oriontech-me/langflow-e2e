@@ -31,6 +31,7 @@
     "check:checklist-coverage": "ts-node scripts/check-checklist-coverage.ts",
     "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts",
     "catalog:baseline": "ts-node scripts/update-component-catalog-baseline.ts",
+    "triage:baseline": "ts-node scripts/update-inherited-backlog-baseline.ts",
     "api:baseline": "ts-node scripts/update-api-surface-baseline.ts",
     "api:coverage": "ts-node scripts/api-coverage-report.ts",
     "tokens:trend": "node scripts/token-trend.mjs"
