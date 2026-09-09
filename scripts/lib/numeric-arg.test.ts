@@ -61,10 +61,45 @@ test("a negative value is refused", () => {
   );
 });
 
-test("importing the module does not run any side effects", () => {
-  // The functions exported from this module are pure — they have no side
-  // effects and can be safely imported by other scripts without triggering
-  // I/O or initialization code. This guards against regression if the module
-  // structure changes.
-  assert.equal(typeof parseNumericArg, "function");
+// Finding A7. This test used to assert only `typeof parseNumericArg ===
+// "function"` under the title "importing the module does not run any side
+// effects" -- a name promising a property nothing checked. The property is
+// worth having: this module is imported by two CLI scripts that BOTH gate a
+// committed baseline behind it, so a stray top-level `console.log` added here
+// would print into their output — and both of them are read by a human deciding
+// whether a refusal is real. So it is asserted rather than renamed.
+//
+// Asserted by RELOADING the module with the observable side-effect channels
+// stubbed: a fresh evaluation is the only moment a top-level statement runs,
+// and the import at the top of this file already happened.
+//
+// Scoped to what a require CAN observe, deliberately: a `require.main ===
+// module` block would NOT fire here (nor on any import), so claiming to detect
+// one would be the same overstated title this test is fixing.
+test("importing the module runs no side effects — no output, no exit", () => {
+  const modulePath = require.resolve("./numeric-arg");
+  const observed: string[] = [];
+  const real = {
+    log: console.log, error: console.error, warn: console.warn, exit: process.exit,
+  };
+  console.log = (...a: unknown[]) => { observed.push(`console.log: ${a.join(" ")}`); };
+  console.error = (...a: unknown[]) => { observed.push(`console.error: ${a.join(" ")}`); };
+  console.warn = (...a: unknown[]) => { observed.push(`console.warn: ${a.join(" ")}`); };
+  process.exit = ((code?: number) => {
+    observed.push(`process.exit: ${code}`);
+  }) as unknown as typeof process.exit;
+
+  let reloaded: { parseNumericArg?: unknown } = {};
+  try {
+    delete require.cache[modulePath];
+    reloaded = require("./numeric-arg");
+  } finally {
+    console.log = real.log;
+    console.error = real.error;
+    console.warn = real.warn;
+    process.exit = real.exit;
+  }
+
+  assert.deepEqual(observed, [], "a fresh evaluation of the module must produce nothing");
+  assert.equal(typeof reloaded.parseNumericArg, "function", "and must still export the parser");
 });
