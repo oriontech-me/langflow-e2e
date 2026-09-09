@@ -1461,7 +1461,7 @@
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
-| `flow-functionality/` | 32 | 26 | 1 | 1 | 4 |
+| `flow-functionality/` | 33 | 27 | 1 | 1 | 4 |
 | `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
@@ -1472,7 +1472,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **654** | **518 (79%)** | **53 (8%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **519 (79%)** | **53 (8%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
