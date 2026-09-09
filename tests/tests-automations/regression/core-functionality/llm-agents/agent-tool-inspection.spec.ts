@@ -21,8 +21,9 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * what the agent did — this spec asserts BOTH layers of that surface:
  *
  *   1. UI (which tool) — the Playground renders a COMPLETED step for the call
- *      (`tool-status-done`) in a row naming the tool, here "FETCH CONTENT"
- *      followed by its duration.
+ *      (`tool-status-done`). The accordion trigger reads "FETCH CONTENT" plus
+ *      the duration; the dot's own parent, asserted here, is the title cell
+ *      and carries the name alone.
  *   2. Payload (what it did) — the run's persisted `tool_use` content block
  *      (monitor API, nonce-keyed) carries `tool_input` (the exact arguments,
  *      here the prompt's URL) and `output` (the tool result, the deterministic
@@ -49,8 +50,8 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * blocks and BOTH chips (`tool_fetch_content`, `tool_perform_search`) with no
  * `tool_use` block persisted — the old layer 1 passed. `tool-status-done` is 0
  * on that run and exactly 1 on a real call. `mcp-client-agent.spec.ts` asserts
- * the same two test ids and carries the same premise in its doc — reported
- * separately, not fixed here.
+ * the same two test ids and its comment carries the same premise; that is a
+ * separate spec and is deliberately NOT fixed here. No issue tracks it yet.
  *
  * Distinct from siblings: `agent-multi-tool-selection` asserts WHICH tool and
  * the ORDER of a sequence; `mcp-client-agent` asserts a tool indicator for MCP
@@ -160,14 +161,40 @@ async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   await waitForAgentToFinish(page);
 }
 
-// NOTE — there is deliberately no "expand the Steps accordion" helper here.
-// The spec carried one (a best-effort click on every `.cursor-pointer` inside a
-// row reading "Finished"/"Steps"), inherited from the 1.11 surface, and it was
-// dead: measured on 1.12.1 it finds ZERO such rows, and `tool-status-done` is
-// already visible before it runs. `ToolCallCard.tsx` says why — the card
-// "collapses to header-only once the producer attaches a duration", so the
-// TRIGGER row carrying the status dot and the tool name is always rendered and
-// only the args/result BODY collapses. Removing the call: 2 runs, 2 passes.
+// Best-effort expand of the "Steps"/"Finished" accordion. Measured on 1.12.1 it
+// matches ZERO rows and `tool-status-done` is already visible before it runs —
+// yet it is kept, because WHY it matches nothing is a property of the PRODUCER,
+// not of the surface, and the branch it guards is live product code.
+//
+// `ContentBlockDisplay.tsx` splits a message's content two ways. GROUPED blocks
+// render inside `{(hideHeader || isExpanded) && <Accordion …>}`, behind a header
+// (`{!hideHeader && …}`, and neither call site passes `hideHeader`, which
+// defaults to false) whose title is "Steps"/"Finished" and whose `.cursor-pointer`
+// chevron toggles `isExpanded` — initialised to `false`. On that branch the tool
+// cards are NOT IN THE DOM until the chevron is clicked, and this helper's
+// selector matches that row exactly. FLAT items take the other path
+// (`looseItems`), rendered above it with no header gate at all, and the file
+// says which one we get: "The agent emits tool_use items flat (not inside a
+// group), so they get their own ToolCallCard wrapper".
+//
+// So the helper is dead only for as long as the agent keeps emitting flat. An
+// earlier revision of this spec deleted it and justified that with
+// `ToolCallCard.tsx`'s "collapses to header-only once the producer attaches a
+// duration" — the WRONG mechanism: that comment is about the per-card accordion
+// holding the args/result body, not about the Steps accordion this targets.
+async function expandAgentSteps(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>("div.flex.items-center.justify-between"),
+    ).filter((row) => {
+      const text = row.textContent ?? "";
+      return text.includes("Finished") || text.includes("Steps");
+    });
+    for (const row of rows) {
+      row.querySelector<HTMLElement>(".cursor-pointer")?.click();
+    }
+  });
+}
 // Payload inspection (§6.5): the persisted `tool_use` block for THIS run
 // (nonce-keyed) must carry `tool_input` containing `inputNeedle` (the prompt's
 // exact URL — proves the captured input is the real arguments) AND `output`
@@ -263,7 +290,8 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("UI inspection: the completed step names the URL tool", async () => {
-          // Assert a COMPLETED tool step. `tool-status-done` is the only element
+          // Expand first (a no-op today — see `expandAgentSteps`), then assert a
+          // COMPLETED tool step. `tool-status-done` is the only element
           // in the Playground that an actual invocation creates: measured on
           // 1.12.1, a run where the agent answered from memory renders ZERO of
           // them, and a run that called the tool renders exactly one, in a row
@@ -271,19 +299,24 @@ for (const { label, options, skipReason } of targets) {
           // text is the tool NAME alone (no duration) — that is what the second
           // assertion reads.
           //
-          // `done` is not the only terminal status: `toolStatus.ts` derives
-          // `error` (which WINS over a duration) | `done` | `running`, so a tool
-          // that was called and FAILED renders `tool-status-error` and no
-          // `tool-status-done`. This spec requires a successful call — it goes
-          // on to assert the fetched payload — so failing there is right, but
-          // the message must not then claim no tool was invoked (#884: a wrong
-          // attribution costs more than a missing one).
+          // `done` is not the only status this can be missing for, and the
+          // message has to say so or it misattributes (#884). `toolStatus.ts`
+          // derives `error` (which WINS over a duration) | `done` | `running`,
+          // so a call that FAILED renders `tool-status-error` and one that never
+          // resolved renders `tool-status-running` — both are invocations. And a
+          // grouped `tool_use` would be behind the collapsed Steps accordion the
+          // helper above exists for. This spec requires a SUCCESSFUL call — it
+          // goes on to assert the fetched payload — so failing here is right in
+          // every one of those cases; only the wording has to distinguish them.
+          await expandAgentSteps(page);
           const completedToolSteps = page.getByTestId("tool-status-done").locator("xpath=..");
           await expect(
             completedToolSteps.first(),
-            "Playground must show a COMPLETED tool step (`tool-status-done`) — " +
-              "either the agent invoked no tool at all, or the call it made " +
-              "errored (`tool-status-error`, which wins over a duration)",
+            "Playground must show a COMPLETED tool step (`tool-status-done`). " +
+              "Either the agent invoked no tool at all, or the call it made " +
+              "errored (`tool-status-error`, which wins over a duration), or it " +
+              "never resolved (`tool-status-running`, no duration attached), or " +
+              "the card is inside a collapsed Steps/Finished group accordion",
           ).toBeVisible({ timeout: 120000 });
           await expect(
             completedToolSteps.filter({ hasText: TOOL_STEP_LABEL }).first(),

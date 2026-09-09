@@ -17,8 +17,10 @@ for agent tool usage — if they break, tool calls become a black box.
 **Two layers, both asserted:**
 
 1. **UI (which tool) —** the Playground renders a **completed tool step** for
-   the call — a `tool-status-done` marker in a row naming the tool
-   (`FETCH CONTENT`) with its duration. This is the operator's at-a-glance
+   the call — a `tool-status-done` marker in a row naming the tool. The
+   accordion trigger reads `FETCH CONTENT` plus the duration; the status dot's
+   own parent, which is what the spec asserts on, is the title cell and carries
+   the NAME alone. This is the operator's at-a-glance
    "tools used" surface on the message, and it exists only because the agent
    actually invoked the tool.
 2. **Payload (what it did) —** the run's persisted `tool_use` content block
@@ -58,8 +60,9 @@ for agent tool usage — if they break, tool calls become a black box.
 > caught it. On the same runs `tool-status-done` is **0**, and on a real call it
 > is exactly **1**, inside a row reading `FETCH CONTENT 834ms`
 > (`ToolCallCard.tsx`). `mcp-client-agent.spec.ts` asserts the same two test
-> ids and its doc states the same premise as *"Proof #1"* — reported separately,
-> not fixed here.
+> ids and its doc states the same premise as *"Proof #1"*; its comment also
+> repeats the wrong-accordion belief corrected below. Deliberately **not** fixed
+> here — different spec — and **no issue tracks it yet**.
 
 Distinct from existing coverage: `agent-multi-tool-selection` asserts WHICH
 tool the agent picks and the ORDER of a two-tool sequence; `mcp-client-agent`
@@ -91,12 +94,21 @@ Evidence, on `1.12.1` with `MODEL_TEST_PROVIDER=openai MODEL_TEST_ID=gpt-4o-mini
   at layer 1 (*"Playground must show a COMPLETED tool step"*) where before it
   reached the payload layer.
 - **Backend-error audit:** one advisory across the six runs, a
-  `404 {"detail":"Flow not found"}` on `GET /api/v1/flows/{id}` — the known
-  teardown race where the editor polls a flow `afterEach` has just deleted, not
-  a product failure. An earlier pre-fix run also logged one
-  `500 {"detail":"Could not update the flow."}` on an autosave `PATCH`, seen
-  once in five and not reproduced in the six post-fix runs; it is recorded here
-  rather than dismissed, since an HTTP error never fails a test (#1084).
+  `404 {"detail":"Flow not found"}` on `GET /api/v1/flows/{id}`, and **none at
+  all** in the three runs after the follow-up fix. It **matches the shape** of
+  the teardown race recorded in #1023 (fixed for project-management by #1103) —
+  a still-mounted editor polling a flow the `afterEach` has just deleted by id,
+  and this spec does leave the editor mounted. Recorded as matching that shape
+  rather than as a confirmed instance: it was seen once and nothing here
+  measured the polling that would attribute it. An earlier pre-fix run also
+  logged one `500 {"detail":"Could not update the flow."}` on an autosave
+  `PATCH`, seen once in five and not reproduced since. Both are recorded rather
+  than dismissed, since an HTTP error never fails a test (#1084).
+- **CONTRIBUTING step 4 (`--debug` walkthrough) was NOT run**, and is stated
+  here rather than left to be assumed from the other four: it drives an
+  interactive inspector, and what it would have shown — which element each
+  assertion resolves to — was obtained instead by dumping the live DOM at the
+  assertion point, which is what found the layer-1 false positive.
 
 **What is NOT covered by that evidence:** only `openai` was measured locally —
 the Anthropic key is drained (`credit balance is too low`) and google was not
@@ -131,12 +143,15 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
    `https://httpbin.org/json` — same env convention as
    `agent-multi-tool-selection`).
 4. Open the Playground (`playground-btn-flow-io`), send, wait for the run to
-   finish (Stop button hidden). No "expand the Steps accordion" step: the tool
-   card `collapses to header-only once the producer attaches a duration`
-   (`ToolCallCard.tsx`), so the trigger row carrying the status dot and the tool
-   name is always rendered — only the args/result body collapses. The spec
-   carried such a helper, inherited from 1.11; it was measured dead on 1.12.1
-   (it matches zero rows) and removed.
+   finish (Stop button hidden), then best-effort expand the "Steps"/"Finished"
+   accordion. That expand matches **zero rows on 1.12.1** and is kept anyway,
+   because why it matches nothing is a property of the **producer**:
+   `ContentBlockDisplay.tsx` renders GROUPED blocks behind an `isExpanded` gate
+   that starts closed — on that branch the tool cards are not in the DOM until
+   the chevron is clicked — while FLAT items render above it ungated, and the
+   file states which one we get ("The agent emits tool_use items flat (not
+   inside a group)"). The branch the helper guards is live product code, so it
+   stays.
 5. **UI inspection assert:** a completed tool step is visible
    (`tool-status-done`), and the row that carries it names `fetch_content` —
    the Playground names the URL tool the agent used. Asserted in two steps on
@@ -164,11 +179,13 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
 
 - The Playground renders a completed tool step (`tool-status-done`) whose row
   names `fetch_content` after the run (UI names the tool actually used).
-  `done` is not the only terminal status — `toolStatus.ts` derives
-  `error | done | running` and `error` wins over a duration — so a tool that was
-  called and FAILED renders no `tool-status-done` and this assertion fails. That
-  is correct for this spec, which goes on to assert the fetched payload, and the
-  failure message names BOTH causes rather than claiming no tool was invoked.
+  `done` is not the only status this can be missing for — `toolStatus.ts`
+  derives `error | done | running`, `error` wins over a duration, and a grouped
+  `tool_use` sits behind the collapsed Steps accordion — so a call that FAILED,
+  one that never RESOLVED, and one rendered on the grouped branch all fail this
+  assertion. Failing is correct for this spec, which goes on to assert the
+  fetched payload; the failure message names all four causes rather than
+  claiming no tool was invoked (#884).
 - The run's persisted `fetch_content` `tool_use` block carries `tool_input`
   with the prompt's exact URL AND `output` containing `Sample Slide Show`
   (the input and output are captured for inspection).
@@ -219,8 +236,8 @@ cleanup and the flow count grows.
 - Which tool the agent selects among several / multi-tool ordering (covered by
   `agent-multi-tool-selection`).
 - MCP tools in the Playground (covered by `mcp-client-agent` — whose own
-  tool-indicator assertion carries the premise corrected here, reported
-  separately rather than fixed in this PR).
+  tool-indicator assertion carries the premise corrected here; a separate spec,
+  deliberately not fixed in this PR, and not yet tracked by an issue).
 - The `button_open_actions` per-message actions button (message-level actions,
   not tool inspection).
 - Duration-value correctness (`duration` is captured but timing is
