@@ -21,13 +21,25 @@
 //
 // #1031 settled the tag decision elsewhere for exactly that reason: it exempts a
 // failure from @stable auto-removal on its OWN error signature (a transport-level
-// error is never a product assertion — scripts/lib/infra-signatures.ts), not on
-// overlap with these windows. The only value that crosses over is the `wedged`
-// output, which the auto-remove action uses to word its exemption.
+// error is never a product assertion — scripts/lib/infra-signatures.ts), and the
+// LAST-attempt half of that rule still never looks at these windows.
 //
-// This step REPORTS. It never fails the run and never gates the @stable tag: a
-// missing artifact yields `measured=false`, which must never be read as "no
-// wedge happened" — the distinction a silent diagnostic would erase.
+// SINCE #1589 THAT IS NO LONGER THE WHOLE STORY, and reading the paragraph above
+// as "the overlap never gates a tag" is now wrong. The last-attempt rule was
+// chosen against a sustained wedge, which burns the retries; an intermittent one
+// cycles THROUGH them, and on run 32827671203 four of seven hard failures carried
+// a transport-level signature on an earlier attempt and lost it on the last. An
+// earlier attempt may now be exempted, and the ONLY thing that licenses it is a
+// measured overlap computed here — so two values cross over, not one: the
+// `wedged` output (wording), and `OUTAGE_ATTEMPTS_OUT`'s attempt list (deciding).
+// The coin-flip caveat above is why that half also requires the attempt's own
+// error to be transport-level: the overlap widens which attempt may be read, it
+// never makes a product assertion into a transport error.
+//
+// This step still REPORTS and never fails the run. What it must not do is let a
+// missing artifact read as "no wedge happened" — hence `measured`, `specMeasured`
+// and `reportRead` in the payload, so the consumer can tell an absent measurement
+// from a measured absence.
 //
 // "Never fails the run" is ENFORCED, not merely intended: the entry point below
 // swallows every throw, and the workflow step carries continue-on-error. Both
@@ -67,16 +79,15 @@ const DEFAULT_MAX_WINDOWS = 12;
 // equal to it is dropped (see outputLines) so the value cannot be closed early
 // — the $GITHUB_OUTPUT equivalent of the injection guard in
 // scripts/check-run-integrity.mjs.
+import { normalizeSpecPath } from "./lib/spec-path.mjs";
+
 export const MD_DELIMITER = "LIVENESS_MD_EOF";
 
-// The merged report's spec paths are relative to Playwright's rootDir (`tests/`),
-// while matrix.files may carry either form depending on how the list was built.
-// Normalise both sides to the rootDir-relative shape.
-export function normalizeSpecPath(file) {
-  return String(file || "")
-    .replace(/^\.\//, "")
-    .replace(/^tests\//, "");
-}
+// Re-exported, not redefined: since #1589 this string is a join key shared with
+// `remove-stable-from-failures.ts`, so both read the one implementation in
+// `lib/spec-path.mjs`. Kept exported here because this module's own tests and
+// callers already import it from this path.
+export { normalizeSpecPath };
 
 export function readSummaries(dir) {
   let entries = [];
@@ -172,6 +183,22 @@ export function attribute(summaries, attempts) {
       failing: failing.length,
       collateral: collateral.length,
       collateralFiles: [...new Set(collateral.map((a) => a.file.split("/").pop()))].sort(),
+      // The IDENTITIES behind `collateral`, not just its size (#1589). The
+      // exemption in `remove-stable-from-failures.ts` needs to ask "did THIS
+      // attempt of THIS test overlap a measured outage on ITS OWN shard", and
+      // that question is only answerable here: the merged report does not say
+      // which shard a test ran on, while the shard summary's `files` list does.
+      collateralIds: collateral.map((a) => ({
+        file: a.file,
+        title: a.title,
+        retry: a.retry,
+      })),
+      // The spec paths this shard claims. Carried so `collateralPayload` can
+      // say whether the shard that ran a given spec was measured at all —
+      // `measured` at the top level is "ANY shard produced probes", and a
+      // consumer that prints a per-shard sentence from it states
+      // evidence-of-absence over a shard nobody measured (#1589).
+      files: [...own],
     };
   });
 
@@ -184,6 +211,55 @@ export function attribute(summaries, attempts) {
     downSecondsTotal: Math.round(shards.reduce((acc, s) => acc + s.downSeconds, 0) * 10) / 10,
     collateralAttempts: shards.reduce((acc, s) => acc + s.collateral, 0),
     blipsTotal: shards.reduce((acc, s) => acc + s.ignoredBlips, 0),
+  };
+}
+
+/**
+ * The corroboration file the `@stable` exemption reads (#1589).
+ *
+ * An EMPTY attempt list means two different things and the reader must never
+ * conflate them: "the recorder ran and no failing attempt overlapped an outage"
+ * is evidence, while "nothing was measured" is its absence (#1012).
+ *
+ * `measured` alone cannot carry that distinction, and the first version of this
+ * function shipped believing it could. It is a RUN-level flag — "any shard
+ * produced probes" — while the consumer prints a per-SHARD sentence from it, so
+ * a run where shard 1 uploaded a clean summary and shard 2 uploaded nothing had
+ * the umbrella say "the recorder measured this shard and this attempt did not
+ * overlap any outage window" about a failure on the shard nobody measured. That
+ * is the exact conflation `daily-stable.yml`'s `backend_wedged` gate guards
+ * against one level up, and it is reachable: `Download shard liveness data` is
+ * `continue-on-error`.
+ *
+ * So `specMeasured` travels too: per spec path, whether the shard that CLAIMS
+ * it produced probes. A spec absent from that map is on no shard summary at
+ * all, which is a third state again. And `reportRead` says whether the merged
+ * report was even parseable — with `collectAttempts(null)` the overlap is not
+ * "found to be absent", it was never computed.
+ */
+export function collateralPayload(agg, { reportRead = true } = {}) {
+  const attempts = [];
+  const seen = new Set();
+  const specMeasured = {};
+  for (const shard of agg.shards) {
+    for (const file of shard.files || []) {
+      // A spec claimed by two summaries counts as measured if EITHER measured
+      // it: the question is whether any probe covers it, not how many do.
+      specMeasured[file] = (specMeasured[file] ?? false) || shard.measured;
+    }
+    for (const id of shard.collateralIds || []) {
+      const key = `${id.file}\u0000${id.title}\u0000${id.retry}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      attempts.push({ ...id, shard: shard.shard });
+    }
+  }
+  return {
+    measured: agg.measured,
+    wedged: agg.wedged,
+    reportRead,
+    specMeasured,
+    attempts,
   };
 }
 
@@ -365,7 +441,38 @@ function main() {
   if (process.env.GITHUB_STEP_SUMMARY) {
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown + "\n");
   }
+  // Corroboration for the `@stable` exemption (#1589), written only when a
+  // caller asks for it. It is a separate FILE rather than a step output because
+  // it is a list of attempt identities, not a scalar — and because the consumer
+  // is a TypeScript script in another step, which would otherwise have to parse
+  // a multi-line output value.
+  //
+  // AFTER `writeOutputs`, and in its own try. This block is the newest thing in
+  // `main()` and the only one that writes to a caller-supplied path, so it is
+  // also the only one that can plausibly throw here (an unwritable path, a full
+  // disk). Ahead of `writeOutputs` a throw was swallowed by the top-level catch
+  // and took `backend_wedged` and the umbrella's whole liveness section with it
+  // — trading a report everyone reads for a corroboration file that fails
+  // closed anyway. The order encodes which of the two is load-bearing.
   writeOutputs(agg, markdown);
+
+  const attemptsOut = process.env.OUTAGE_ATTEMPTS_OUT;
+  if (attemptsOut) {
+    try {
+      const payload = collateralPayload(agg, { reportRead: report !== null });
+      fs.writeFileSync(attemptsOut, JSON.stringify(payload, null, 2) + "\n");
+      console.log(
+        `[liveness] wrote ${payload.attempts.length} corroborated collateral attempt(s) to ${attemptsOut} (measured=${payload.measured}).`,
+      );
+    } catch (e) {
+      // Absent is the fail-closed state the consumer already handles, so this
+      // costs the widened exemption for the day and nothing else. Said out loud
+      // rather than left as a missing file (#1012).
+      console.log(
+        `::warning::[liveness] could not write ${attemptsOut} (${e.message}) — the @stable exemption falls back to the last-attempt rule for this run.`,
+      );
+    }
+  }
 }
 
 // See scripts/check-run-integrity.mjs for why both normalisations are required.

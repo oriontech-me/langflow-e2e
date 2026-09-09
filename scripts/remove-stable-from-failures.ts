@@ -22,6 +22,40 @@
  *    backend (#1030/#1048). It is excluded from removal INDEPENDENTLY of the
  *    mass-failure guard, which only covers the wide wedge; the narrow one (a
  *    wedge costing ≤ MAX_AUTO_REMOVE tests) used to strip innocent tags.
+ *  - Corroborated earlier-attempt exemption (#1589): the last-attempt rule was
+ *    chosen against a SUSTAINED wedge, which burns the retries. An INTERMITTENT
+ *    one cycles through them — run 32827671203 measured 156 of 894 probes down
+ *    on shard 3 across windows as short as 6-8 s, and 4 of its 7 hard failures
+ *    carried a transport-level signature on an earlier attempt and lost it on
+ *    the last. An earlier attempt now exempts too, but only when the in-run
+ *    liveness recorder measured an outage overlapping THAT attempt on ITS shard.
+ *
+ * ─── #1589's four branches, and why this one ─────────────────────────────────
+ *
+ *  1. Corroborate against the recorder rather than re-picking an attempt.
+ *     TAKEN. It does not change which signatures qualify, only which attempt
+ *     may be read, and the per-shard per-attempt overlap already existed in
+ *     `report-backend-outages.mjs` for its `collateral_attempts` count — so the
+ *     evidence is measured, not inferred.
+ *  2. Read every attempt with a qualifier. NOT TAKEN as stated. Unqualified, it
+ *     would exempt a real regression that hit one transient blip on a retry —
+ *     the exemption would start protecting product breakage, which is worse
+ *     than the failure it fixes. The issue's own qualifier ("≥ 2 attempts
+ *     classifying") does not solve the motivating run either: all four of its
+ *     cases had exactly one classifying attempt.
+ *  3. Report the disagreement instead of resolving it. TAKEN, but as the
+ *     FALLBACK rather than the answer: it is what an unmeasured run gets, and
+ *     it is why a declined earlier-attempt signature is never silent again.
+ *  4. Do nothing. NOT TAKEN. The mass-failure guard does not cover the
+ *     sub-threshold day (≤ 5 hard failures: 2026-08-04, 08-13, 08-17, 08-24),
+ *     where the exemption is the only thing between an intermittently wedged
+ *     shard and an unreviewed tag removal.
+ *
+ * The invariant #1031 pins is unchanged in every branch: nothing here can add a
+ * test to the removal set, only take one out, so the set stays a subset of what
+ * the pre-#1031 script would have produced. Every corroboration failure mode —
+ * absent file, unreadable file, malformed payload, unmeasured run — degrades to
+ * exactly the last-attempt rule.
  *
  * Editing is AST-located + text-spliced: the TypeScript compiler API finds the
  * exact `"@stable"` element inside the `test(...)` `{ tag: [...] }` array, and
@@ -36,6 +70,9 @@ import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
 import { classifyInfraError, stripAnsi } from "./lib/infra-signatures";
+// The join key against the corroboration file is a string compare across this
+// script and `report-backend-outages.mjs`; both read the ONE normaliser (#1589).
+import { normalizeSpecPath } from "./lib/spec-path.mjs";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const STABLE_TAG = "@stable";
@@ -50,15 +87,48 @@ const MAX_AUTO_REMOVE = Number.parseInt(process.env.MAX_AUTO_REMOVE || "5", 10);
  * backend state is least known.
  */
 const BACKEND_WEDGED = process.env.BACKEND_WEDGED || "";
+/**
+ * Path to the collateral-attempt list `report-backend-outages.mjs` writes
+ * (#1589). Optional: absent means the widened, corroborated half of the
+ * exemption simply does not fire, and the rule is exactly what #1031 shipped.
+ */
+const OUTAGE_ATTEMPTS = process.env.OUTAGE_ATTEMPTS || "";
 
 interface Failure {
   title: string;
   file: string; // absolute path
+  /**
+   * The spec path exactly as the report spelled it, normalised the way
+   * `report-backend-outages.mjs` normalises it. This is the join key against
+   * the corroboration file (#1589); re-deriving it from `file` would have to
+   * guess which of `candidateBases()` won, and a near-miss there silently
+   * corroborates nothing.
+   */
+  specPath: string;
   line: number; // 1-based test() line, as Playwright reports it
   /**
    * Last failed attempt's error, ANSI-stripped and UNtruncated; "" if none.
    * Full text on purpose — it is what the infra-signature classifier reads.
    */
+  error: string;
+  /**
+   * Every failed attempt BEFORE the last one, oldest first (#1589). Empty on a
+   * test that failed once.
+   */
+  earlierAttempts: AttemptError[];
+  /**
+   * `result.retry` of the attempt `error` came from. Read from the report
+   * rather than derived from `earlierAttempts.length` — the two differ whenever
+   * the report omits `retry` or interleaves a skipped result, and the JSDoc on
+   * `Exempt.attempt` promises a retry index, not a count.
+   */
+  lastAttemptRetry: number;
+}
+
+/** One failed attempt of a test: which retry it was, and its full error text. */
+export interface AttemptError {
+  /** Playwright's `result.retry` — 0 is the first attempt. */
+  retry: number;
   error: string;
 }
 
@@ -86,6 +156,42 @@ interface Exempt {
   /** Why that signature cannot be the spec's own fault. */
   why: string;
   /** The matched error text, truncated for the issue body. */
+  error: string;
+  /**
+   * Which attempt carried the signature (#1589).
+   *
+   * `last-attempt` is the original #1031 rule and needs no corroboration — a
+   * transport error is not a product assertion whatever else the run measured.
+   * `earlier-attempt` is the widened case, and it is ONLY ever reached with
+   * measured corroboration: the same attempt's span overlapped an outage window
+   * the in-run recorder measured on that attempt's own shard.
+   */
+  via: "last-attempt" | "earlier-attempt";
+  /** `result.retry` of the attempt that carried the signature. */
+  attempt: number;
+}
+
+/**
+ * A hard failure whose EARLIER attempt classified transport-level but which was
+ * still counted as attributable, because nothing corroborated it (#1589).
+ *
+ * This is the branch that must never be silent. The rule is deliberately
+ * narrow, so the cases it declines are exactly the ones a human should look at:
+ * an intermittent wedge that cycled through the retries rather than burning
+ * them leaves this shape behind, and on run 32827671203 four of seven hard
+ * failures had it while the umbrella's collateral block rendered empty.
+ */
+interface Disagreement {
+  file: string; // repo-relative
+  title: string;
+  line: number;
+  /** `InfraSignature.id` that matched on the earlier attempt. */
+  signature: string;
+  why: string;
+  /** `result.retry` of the attempt that carried it. */
+  attempt: number;
+  /** Why the exemption was NOT extended to it. */
+  declined: string;
   error: string;
 }
 
@@ -151,15 +257,12 @@ function errorText(e: any): string {
  * pending call — the transport error itself — in a later `errors[]` entry, which
  * is precisely the shape "the test timed out while an API call hung".
  */
-export function lastFailureError(test: any): string {
-  const results: any[] = Array.isArray(test?.results) ? test.results : [];
-  const lastFailed =
-    [...results].reverse().find((r) => r?.status !== "passed" && r?.status !== "skipped") ??
-    results[results.length - 1];
-  if (!lastFailed) return "";
+/** Every error of ONE attempt, deduped and joined — the classifier's input. */
+function attemptErrorText(result: any): string {
+  if (!result) return "";
   const candidates = [
-    lastFailed.error,
-    ...(Array.isArray(lastFailed.errors) ? lastFailed.errors : []),
+    result.error,
+    ...(Array.isArray(result.errors) ? result.errors : []),
   ];
   // Playwright usually sets `error` to `errors[0]`, so dedup by text.
   const seen = new Set<string>();
@@ -174,6 +277,44 @@ export function lastFailureError(test: any): string {
   return parts.join("\n");
 }
 
+function failedResults(test: any): any[] {
+  const results: any[] = Array.isArray(test?.results) ? test.results : [];
+  return results.filter((r) => r?.status !== "passed" && r?.status !== "skipped");
+}
+
+export function lastFailureError(test: any): string {
+  const results: any[] = Array.isArray(test?.results) ? test.results : [];
+  const failed = failedResults(test);
+  const lastFailed = failed[failed.length - 1] ?? results[results.length - 1];
+  return attemptErrorText(lastFailed);
+}
+
+/**
+ * Every failed attempt BEFORE the one `lastFailureError` reads, oldest first
+ * (#1589).
+ *
+ * The last-attempt rule was chosen against a SUSTAINED wedge, where retries are
+ * burnt and the final attempt really is the informative one. It does not hold
+ * against an INTERMITTENT one: on run 32827671203 shard 3 measured 156 of 894
+ * probes down across 15 windows as short as 6-8 s, and the wedge cycled through
+ * the 30 s retry budget rather than consuming it — four of seven hard failures
+ * carried a transport-level signature on an earlier attempt and lost it on the
+ * last, one of them the barrier's own `[backend-unreachable]` marker.
+ */
+export function earlierFailedAttempts(test: any): AttemptError[] {
+  return failedResults(test)
+    .slice(0, -1)
+    .map((r) => ({ retry: Number(r?.retry) || 0, error: attemptErrorText(r) }));
+}
+
+/** `result.retry` of the attempt `lastFailureError` reads; 0 when there is none. */
+export function lastFailedAttemptRetry(test: any): number {
+  const results: any[] = Array.isArray(test?.results) ? test.results : [];
+  const failed = failedResults(test);
+  const lastFailed = failed[failed.length - 1] ?? results[results.length - 1];
+  return Number(lastFailed?.retry) || 0;
+}
+
 export function collectHardFailures(reportFile: string): Failure[] {
   if (!fs.existsSync(reportFile)) return [];
   let report: any;
@@ -184,8 +325,23 @@ export function collectHardFailures(reportFile: string): Failure[] {
   }
   const failures: Failure[] = [];
   const bases = candidateBases(report);
-  const resolveFile = (spec: any): string => {
-    const f = spec?.file || spec?.location?.file || "";
+  /**
+   * The spec path as the REPORT spells it, with the enclosing suite's `file` as
+   * a fallback.
+   *
+   * The fallback matches `collectAttempts()` in `report-backend-outages.mjs`,
+   * and since #1589 that symmetry is load-bearing: the two walk the same merged
+   * report and their results are joined on this string, so a spec one of them
+   * can name and the other cannot would leave the corroboration matching
+   * nothing — silently, since an unmatched attempt reads as "no outage
+   * overlapped it". Playwright's JSON reporter always emits `spec.file`, so
+   * this is a divergence closed rather than a bug fixed; the point is that it
+   * can no longer open.
+   */
+  const rawSpecPath = (spec: any, inheritedFile: string): string =>
+    spec?.file || spec?.location?.file || inheritedFile || "";
+  const resolveFile = (spec: any, inheritedFile: string): string => {
+    const f = rawSpecPath(spec, inheritedFile);
     if (!f) return "";
     if (path.isAbsolute(f)) return f;
     for (const base of bases) {
@@ -196,20 +352,247 @@ export function collectHardFailures(reportFile: string): Failure[] {
     // testDir) so the downstream "spec file not found" skip is meaningful.
     return path.resolve(path.join(REPO_ROOT, "tests"), f);
   };
-  const visit = (node: any): void => {
+  const visit = (node: any, inheritedFile: string): void => {
+    const nodeFile = node?.file || inheritedFile;
     for (const spec of node.specs || []) {
-      const file = resolveFile(spec);
+      const file = resolveFile(spec, nodeFile);
       const line = spec?.line || spec?.location?.line || 0;
       for (const t of spec.tests || []) {
         if (t.status === "unexpected") {
-          failures.push({ title: spec.title, file, line, error: lastFailureError(t) });
+          failures.push({
+            title: spec.title,
+            file,
+            specPath: normalizeSpecPath(rawSpecPath(spec, nodeFile)),
+            line,
+            error: lastFailureError(t),
+            earlierAttempts: earlierFailedAttempts(t),
+            lastAttemptRetry: lastFailedAttemptRetry(t),
+          });
         }
       }
     }
-    for (const child of node.suites || []) visit(child);
+    for (const child of node.suites || []) visit(child, nodeFile);
   };
-  for (const s of report.suites || []) visit(s);
+  for (const s of report.suites || []) visit(s, s?.file || "");
   return failures;
+}
+
+// ─── Corroboration from the in-run liveness recorder (#1589) ────────────────
+
+export { normalizeSpecPath };
+
+export interface Corroboration {
+  /**
+   * Whether ANY shard produced liveness probes. Run-level, so it can never
+   * justify a per-shard sentence on its own — that is what `specMeasured` is
+   * for. FALSE is the absence of evidence, not evidence of absence, and the two
+   * must not read alike (#1012).
+   */
+  measured: boolean;
+  /**
+   * Whether the merged report was parseable when the overlap was computed. With
+   * an unreadable report the reporter sees zero attempts, so an empty list is
+   * not "no attempt overlapped" — no attempt was ever examined.
+   */
+  reportRead: boolean;
+  /**
+   * Per spec path: did the shard that CLAIMS this spec produce probes? A spec
+   * missing from the map is on no shard summary at all, which is a third state
+   * and reported as such.
+   */
+  specMeasured: Record<string, boolean>;
+  /** `${specPath}\u0000${title}\u0000${retry}` for every corroborated attempt. */
+  keys: Set<string>;
+  /** Set when the file could not be read at all; the reason, for the report. */
+  unavailable?: string;
+}
+
+const NO_CORROBORATION = (unavailable: string): Corroboration => ({
+  measured: false,
+  reportRead: false,
+  specMeasured: {},
+  keys: new Set(),
+  unavailable,
+});
+
+export function attemptKey(specPath: string, title: string, retry: number): string {
+  return `${specPath}\u0000${title}\u0000${retry}`;
+}
+
+/**
+ * Load the collateral-attempt list `report-backend-outages.mjs` writes.
+ *
+ * FAIL-CLOSED on every failure mode: an absent path, an unreadable file and a
+ * malformed payload all yield "no corroboration", which reduces the exemption
+ * to exactly the rule it had before #1589. The widened branch may only ever
+ * SHRINK the removal set relative to the pre-#1031 script, so degrading it can
+ * never remove a tag that today's rule would keep — the invariant #1031 pins.
+ */
+export function loadCorroboration(file: string | undefined): Corroboration {
+  if (!file) return NO_CORROBORATION("no corroboration file was provided");
+  let parsed: any;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    return NO_CORROBORATION(
+      `${file} could not be read (${e instanceof Error ? e.message.split("\n")[0] : String(e)})`,
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.attempts)) {
+    return NO_CORROBORATION(`${file} has no \`attempts\` array`);
+  }
+  const measured = parsed.measured === true;
+  // Absent on a payload written before this field existed. Treated as NOT read,
+  // so the reason falls back to the honest "could not be established" wording
+  // rather than claiming an overlap was checked.
+  const reportRead = parsed.reportRead === true;
+  const keys = new Set<string>();
+  // Only from a payload that says BOTH halves happened. Today's producer cannot
+  // emit attempts without them — `measured: false` means no windows, which means
+  // no collateral — so this changes nothing about any real run. It is here
+  // because the documented guarantee ("a run whose shards produced no probes
+  // degrades to exactly the last-attempt rule") was a property of the PRODUCER
+  // and not of this reader, and a guarantee that holds only because the other
+  // side happens to behave is the shape #1084 was raised about. Probed: a
+  // hand-built `{measured: false, reportRead: false, attempts: [...]}` used to
+  // EXEMPT.
+  if (measured && reportRead) {
+    for (const a of parsed.attempts) {
+      if (!a || typeof a.file !== "string" || typeof a.title !== "string") continue;
+      keys.add(attemptKey(normalizeSpecPath(a.file), a.title, Number(a.retry) || 0));
+    }
+  }
+  const specMeasured: Record<string, boolean> = {};
+  const declared = parsed.specMeasured;
+  if (declared && typeof declared === "object" && !Array.isArray(declared)) {
+    for (const [spec, measured] of Object.entries(declared)) {
+      specMeasured[normalizeSpecPath(spec)] = measured === true;
+    }
+  }
+  return { measured, reportRead, specMeasured, keys };
+}
+
+/** Why the widened exemption was not extended to a classifying earlier attempt. */
+export function declinedReason(
+  corroboration: Corroboration,
+  specPath: string,
+): string {
+  if (corroboration.unavailable) {
+    return `no corroboration was available (${corroboration.unavailable})`;
+  }
+  if (!corroboration.reportRead) {
+    // Worded as an ABSENCE of a report, not as an observed failure: the field is
+    // also absent on a payload written before #1589, where nothing failed and
+    // nothing was claimed. Saying "could not read" there would assert an event
+    // that did not happen — #1012's rule pointed at its own reason string.
+    return "the liveness reporter did not report reading the merged report, so no attempt was examined for overlap at all";
+  }
+  const measured = corroboration.specMeasured[specPath];
+  if (measured === undefined) {
+    return "no shard summary claims this spec, so the backend state where it ran was never measured";
+  }
+  if (!measured) {
+    return "the shard that ran this spec produced no liveness probes, so nothing could corroborate it";
+  }
+  return "the recorder measured the shard that ran this spec, and this attempt did not overlap any outage window";
+}
+
+export interface Classification {
+  exempt: Exempt[];
+  attributable: Failure[];
+  disagreements: Disagreement[];
+}
+
+/**
+ * Decide, per hard failure, whether the run can attribute it to its spec.
+ *
+ * Two rules, and the second is strictly narrower than the first:
+ *
+ *   1. LAST attempt classifies transport-level -> exempt. #1031's rule,
+ *      unchanged, and it never depends on the liveness recorder: a caller with
+ *      no liveness step still gets it.
+ *   2. An EARLIER attempt classifies AND the recorder measured an outage
+ *      overlapping THAT attempt on ITS OWN shard -> exempt. This is #1589's
+ *      widening, and the corroboration is what keeps it from laundering a real
+ *      regression that hit one transient blip on a retry.
+ *
+ * An earlier attempt that classifies with no corroboration is NOT exempted and
+ * NOT silent: it becomes a `Disagreement`, which the umbrella renders. That is
+ * the cheap branch of #1589, kept as the fallback rather than as the answer,
+ * because it is the only honest outcome on a run the recorder never measured.
+ */
+export function classifyFailures(
+  allFailures: Failure[],
+  corroboration: Corroboration,
+): Classification {
+  const out: Classification = { exempt: [], attributable: [], disagreements: [] };
+  for (const f of allFailures) {
+    const rel = path.relative(REPO_ROOT, f.file);
+    const last = classifyInfraError(f.error);
+    if (last) {
+      out.exempt.push({
+        file: rel,
+        title: f.title,
+        line: f.line,
+        signature: last.id,
+        why: last.why,
+        error: truncateError(f.error),
+        via: "last-attempt",
+        attempt: f.lastAttemptRetry,
+      });
+      continue;
+    }
+
+    const classified = f.earlierAttempts
+      .map((a) => ({ attempt: a, signature: classifyInfraError(a.error) }))
+      .filter((c) => c.signature !== null) as Array<{
+      attempt: AttemptError;
+      signature: NonNullable<ReturnType<typeof classifyInfraError>>;
+    }>;
+
+    if (classified.length === 0) {
+      out.attributable.push(f);
+      continue;
+    }
+
+    const corroborated = classified.find((c) =>
+      corroboration.keys.has(attemptKey(f.specPath, f.title, c.attempt.retry)),
+    );
+    if (corroborated) {
+      out.exempt.push({
+        file: rel,
+        title: f.title,
+        line: f.line,
+        signature: corroborated.signature.id,
+        why: corroborated.signature.why,
+        error: truncateError(corroborated.attempt.error),
+        via: "earlier-attempt",
+        attempt: corroborated.attempt.retry,
+      });
+      continue;
+    }
+
+    // Declined, and named. The reason has to distinguish evidence AGAINST the
+    // widening from the absence of evidence, and it has to do so per SHARD:
+    // `measured` is run-level, so deriving the sentence from it claimed "the
+    // recorder measured this shard" over a shard that uploaded nothing, on a
+    // run where some other shard happened to report. That is the conflation
+    // #1012 forbids, produced by the field added to prevent it.
+    const declined = declinedReason(corroboration, f.specPath);
+    const first = classified[0];
+    out.attributable.push(f);
+    out.disagreements.push({
+      file: rel,
+      title: f.title,
+      line: f.line,
+      signature: first.signature.id,
+      why: first.signature.why,
+      attempt: first.attempt.retry,
+      declined,
+      error: truncateError(first.attempt.error),
+    });
+  }
+  return out;
 }
 
 // ─── AST: find the `"@stable"` element inside a matching test()'s tag array ──
@@ -319,23 +702,11 @@ function main(): void {
   // Partition BEFORE the guard, and report both sides in every branch (#1031).
   // Doing it after would lose the collateral labelling on precisely the run that
   // motivated this — the wide wedge, where the guard returns early.
-  const failures: Failure[] = [];
-  const exempt: Exempt[] = [];
-  for (const f of allFailures) {
-    const signature = classifyInfraError(f.error);
-    if (!signature) {
-      failures.push(f);
-      continue;
-    }
-    exempt.push({
-      file: path.relative(REPO_ROOT, f.file),
-      title: f.title,
-      line: f.line,
-      signature: signature.id,
-      why: signature.why,
-      error: truncateError(f.error),
-    });
-  }
+  const corroboration = loadCorroboration(OUTAGE_ATTEMPTS || undefined);
+  const { exempt, attributable: failures, disagreements } = classifyFailures(
+    allFailures,
+    corroboration,
+  );
 
   const result: {
     status: "removed" | "none" | "guard_tripped";
@@ -347,6 +718,20 @@ function main(): void {
     removed: Removed[];
     skipped: Skipped[];
     exempt: Exempt[];
+    /**
+     * Hard failures counted as attributable although an EARLIER attempt
+     * classified transport-level (#1589). Not a removal decision — a pointer
+     * for the analyst, so the case the widened rule declines is never silent.
+     */
+    disagreements: Disagreement[];
+    /**
+     * Whether the in-run liveness recorder produced probes this run (#1589).
+     * `false` means the widened exemption could not be evaluated at all, which
+     * is not the same as evaluating it and declining.
+     */
+    corroborationMeasured: boolean;
+    /** Present when the corroboration file was absent or unreadable. */
+    corroborationUnavailable?: string;
     /** "true" | "false" | "" — the #1030 liveness verdict, for wording only. */
     backendWedged: string;
   } = {
@@ -357,6 +742,11 @@ function main(): void {
     removed: [],
     skipped: [],
     exempt,
+    disagreements,
+    corroborationMeasured: corroboration.measured,
+    ...(corroboration.unavailable
+      ? { corroborationUnavailable: corroboration.unavailable }
+      : {}),
     backendWedged: BACKEND_WEDGED,
   };
 

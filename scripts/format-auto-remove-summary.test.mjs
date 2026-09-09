@@ -189,3 +189,99 @@ test("output produced before #1031 still renders", () => {
   assert.doesNotMatch(md, /NOT attributable/);
   assert.match(md, /Skipped 1/);
 });
+
+// ─── Which attempt carried the signature (#1589) ─────────────────────────────
+
+const earlierAttemptCollateral = {
+  ...collateral("intermittent"),
+  via: "earlier-attempt",
+  attempt: 0,
+};
+
+test("an earlier-attempt exemption says so, and names the attempt", () => {
+  // It is a different claim from a last-attempt exemption: it only holds
+  // because the recorder measured an outage overlapping that very attempt.
+  // Rendering the two identically would hide that the widened branch fired.
+  const md = render({
+    status: "none",
+    hardFailures: 1,
+    attributableFailures: 0,
+    removed: [],
+    skipped: [],
+    exempt: [earlierAttemptCollateral],
+    disagreements: [],
+  });
+  assert.match(md, /attempt 0, corroborated by a measured outage overlapping it/);
+});
+
+test("a last-attempt exemption carries no attempt caveat", () => {
+  const md = render({
+    status: "none",
+    hardFailures: 1,
+    attributableFailures: 0,
+    removed: [],
+    skipped: [],
+    exempt: [{ ...collateral("sustained"), via: "last-attempt", attempt: 1 }],
+    disagreements: [],
+  });
+  assert.doesNotMatch(md, /corroborated by a measured outage/);
+  assert.match(md, /NOT attributable to their spec/);
+});
+
+test("a declined earlier-attempt signature is NAMED, with the reason it was declined", () => {
+  // The empty-collateral-block failure this exists to end: on run 32827671203
+  // four of seven hard failures carried a transport-level signature on an
+  // earlier attempt, and the umbrella said nothing at all about them.
+  const md = render({
+    status: "removed",
+    hardFailures: 1,
+    attributableFailures: 1,
+    removed: [{ file: "tests/x/a.spec.ts", title: "a", line: 4, soleTag: false }],
+    skipped: [],
+    exempt: [],
+    disagreements: [
+      {
+        file: "tests/x/a.spec.ts",
+        title: "a",
+        line: 4,
+        signature: "api-request-timeout",
+        why: "a direct REST call to the backend never answered",
+        attempt: 0,
+        declined: "no shard produced liveness probes, so nothing could corroborate it",
+        error: "TimeoutError: apiRequestContext.get: Timeout 20000ms exceeded.",
+      },
+    ],
+  });
+  assert.match(md, /transport-level signature on an EARLIER attempt/);
+  assert.match(md, /attempt 0: api-request-timeout/);
+  assert.match(md, /declined: no shard produced liveness probes/);
+});
+
+test("no disagreements renders no disagreement block", () => {
+  const md = render({
+    status: "none",
+    hardFailures: 0,
+    attributableFailures: 0,
+    removed: [],
+    skipped: [],
+    exempt: [],
+    disagreements: [],
+  });
+  assert.doesNotMatch(md, /EARLIER attempt/);
+});
+
+test("a result produced before #1589 still renders", () => {
+  // Older artifacts carry neither `disagreements` nor `via`; the formatter is
+  // also run by hand over a downloaded result.
+  const md = render({
+    status: "none",
+    hardFailures: 1,
+    attributableFailures: 0,
+    removed: [],
+    skipped: [],
+    exempt: [collateral("legacy")],
+  });
+  assert.match(md, /NOT attributable to their spec/);
+  assert.doesNotMatch(md, /EARLIER attempt/);
+  assert.doesNotMatch(md, /corroborated by a measured outage/);
+});

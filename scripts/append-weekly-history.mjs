@@ -36,6 +36,10 @@
 //   "flaky":    [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
 //   "run_errors": [ "..." ]                     // optional, see below
 //   "report_missing": true                      // optional, see below
+//   `infra_signature_any_attempt` (additive to schema v1, #1589) is the same
+//   classifier run over EVERY failed attempt, earliest match wins — a lead for a
+//   triage recomputing recurrence, never a verdict, since it carries no
+//   corroboration that the backend was actually down.
 //   `infra_signature` (additive to schema v1, #1310) is the id of the
 //   infra-signature the entry's error matched (`scripts/lib/infra-signatures.mjs`)
 //   or null — i.e. "the harness could not reach the backend, so this failure is
@@ -147,6 +151,30 @@ function infraSignatureId(result) {
   return classifyInfraError(fullErrorText(result))?.id ?? null;
 }
 
+// The signature carried by the EARLIEST failed attempt that has one, across
+// every attempt of the test (#1589). Additive to schema v1; `infra_signature`
+// keeps its meaning untouched, so this file and
+// `remove-stable-from-failures.ts` still agree about the attempt they read.
+//
+// It exists because an INTERMITTENT wedge cycles through the retry budget
+// rather than burning it, so a transport-level signature can sit on attempt 0
+// and be gone by the last one — on run 32827671203 that was 4 of 7 hard
+// failures, every one of them recorded here as `infra_signature: null`, which
+// left a later triage recomputing recurrence from the history unable to see
+// them as collateral at all.
+//
+// It is a SIGNATURE, never a verdict: it carries no corroboration, so a row
+// with it is a lead. The exemption decision lives in the run's auto-remove
+// result, which is the only place that has the liveness overlap.
+function infraSignatureAnyAttempt(test) {
+  for (const result of test?.results || []) {
+    if (result?.status === "passed" || result?.status === "skipped") continue;
+    const id = infraSignatureId(result);
+    if (id) return id;
+  }
+  return null;
+}
+
 // Normalise ONE error object (not a result) to its signature: first *non-empty*
 // line (some messages lead with a blank line), trimmed and capped so equal
 // causes cluster to an equal signature. Shared by the per-test path above and
@@ -224,6 +252,7 @@ function visit(node, suitePath = []) {
           attempts,
           error_signature: firstFailedSignature || "unknown",
           infra_signature: infraSignatureId(firstFailedResult),
+          infra_signature_any_attempt: infraSignatureAnyAttempt(test),
           ...(param ? { param } : {}),
         });
         continue;
@@ -260,6 +289,7 @@ function visit(node, suitePath = []) {
         // `remove-stable-from-failures.ts`, so the history and the umbrella's
         // collateral block cannot disagree about the same failure.
         infra_signature: infraSignatureId(lastFailed),
+        infra_signature_any_attempt: infraSignatureAnyAttempt(test),
         ...(param ? { param } : {}),
       });
     }
