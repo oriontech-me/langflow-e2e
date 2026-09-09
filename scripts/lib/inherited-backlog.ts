@@ -5,11 +5,27 @@
  * `classifyBacklog` is pure and cannot throw: the baseline writer, the `--grep`
  * builder and the ownership guard all read the same population, and a predicate
  * that could fail differently in three places is three populations.
+ *
+ * Reads `collectDeclaredTests()` (`./stable-tests.ts`) -- the parser #1746's
+ * orphan reconciler landed with, upstream of this module -- rather than a
+ * second AST walker of its own; keeping both would be exactly the #985 drift
+ * this file exists to avoid. The two never disagreed on POPULATION, only on
+ * shape: the same four-clause predicate evaluated against this parser's
+ * output over the real suite returns the identical 55 specs / 92 tests as the
+ * walker it replaced. Two measured exposures of the switch, both zero
+ * occurrences today: `collectDeclaredTests()` does not admit `.only` /
+ * `.fail` / `.slow` declarations at all (confirmed empty:
+ * `grep -rnoE '^\s*test\.(only|fail|slow)\(\s*"' tests/tests-automations/regression`),
+ * and it inherits only its OWN three lane tags (`@destructive` / `@enterprise`
+ * / `@serving`) from an enclosing `test.describe` -- a describe tagged
+ * `@authz` / `@sso` / `@governance` alone would not reach a test's `tags`
+ * here. The corpus has zero describes carrying any lane tag at all today, so
+ * nothing currently relies on that inheritance either way.
  */
 import * as fs from "fs";
 import * as path from "path";
 import {
-  REGRESSION_ROOT, REPO_ROOT, STABLE_TAG, type TaggedTest, collectTaggedTests,
+  REGRESSION_ROOT, REPO_ROOT, STABLE_TAG, type DeclaredTest, collectDeclaredTests,
 } from "./stable-tests";
 
 /**
@@ -17,6 +33,18 @@ import {
  * `@stable` would make it run nowhere at all, silently (#1010) -- absence of the
  * tag is the correct state and never debt. Excluded by construction, and pinned
  * by a test, so a later edit cannot widen this population onto Enterprise.
+ *
+ * Deliberately NOT `stable-tests.ts`'s `LANE_TAGS` (3 tags -- `@destructive` /
+ * `@enterprise` / `@serving`), and never merged into it, even though the two
+ * lists overlap. They answer different questions over the same vocabulary:
+ * `LANE_TAGS` feeds the #1746 reconciler's "was `@stable` REMOVED without an
+ * owner", which walks git history -- a test that never carried the tag is not
+ * a removal, so that list only needs to name what an OWNED removal could look
+ * like. This module asks "never had it at all", which needs every lane a test
+ * could legitimately have no `@stable` for, `@authz` / `@sso` / `@governance`
+ * included. Widening `LANE_TAGS` to 6 would change the reconciler's behaviour
+ * for a question that belongs to this module, not to it -- so the two lists
+ * stay separate, in their own modules, on purpose.
  */
 export const LANE_SELECTORS = [
   "@destructive", "@enterprise", "@authz", "@sso", "@serving", "@governance",
@@ -56,26 +84,31 @@ export interface Backlog {
 }
 
 /**
- * A declaration counts as `@stable` only when it is a PLAIN `test(...)` --
- * `modifier === ""`, i.e. no `.fixme` / `.skip` / `.only` / `.fail` / `.slow`
- * -- whose tags include the literal tag. This is the SAME rule
- * `parseStableTests` uses (`./stable-tests.ts`), which is what the
- * QA-CHECKLIST generator and the checklist guard both read.
+ * A declaration counts as `@stable` only when `@stable` REACHES it (its own
+ * tag array, or inherited from an enclosing `test.describe` --
+ * `DeclaredTest.stable`) AND it is not quarantined before its body runs
+ * (`!DeclaredTest.fixme`, which collapses `test.fixme(...)` and the declaring
+ * `test.skip(...)`).
  *
- * A `test.fixme("x", { tag: ["@stable"] })` is therefore NOT `@stable` to this
- * repo: it runs in no lane whatever its tags claim. Do not simplify this to
- * `tags.includes(STABLE_TAG)` -- that would give the suite's single most
- * load-bearing tag a second, looser definition inside the one module whose
- * entire justification is that there is only one (Task 2 review, ruling P7).
- * A quarantined declaration belongs in THIS backlog, and the design's PARK
- * outcome is how it exits.
+ * `test.stable` alone is not enough: a `test.fixme("x", { tag: ["@stable"] })`
+ * has `stable: true` but runs in no lane whatever its tags claim. This is the
+ * SAME rule `parseStableTests` uses (`./stable-tests.ts`, via its
+ * `modifier === "" && tags.includes(STABLE_TAG)` filter over the same AST) --
+ * `test.stable && !test.fixme` is that predicate's exact equivalent over
+ * `DeclaredTest`'s shape, and it is what the QA-CHECKLIST generator and the
+ * checklist guard both, transitively, read. Do not simplify this to
+ * `test.stable` -- that would give the suite's single most load-bearing tag a
+ * second, looser definition inside the one module whose entire justification
+ * is that there is only one (Task 2 review, ruling P7). A quarantined
+ * declaration belongs in THIS backlog, and the design's PARK outcome is how
+ * it exits.
  */
-function isStable(test: TaggedTest): boolean {
-  return test.modifier === "" && test.tags.includes(STABLE_TAG);
+function isStable(test: DeclaredTest): boolean {
+  return test.stable && !test.fixme;
 }
 
 export function classifyBacklog(
-  all: TaggedTest[],
+  all: DeclaredTest[],
   facts: (relativePath: string) => SpecFacts,
 ): Backlog {
   // Clause 4: no test in the same file is @stable.
@@ -108,7 +141,7 @@ export function classifyBacklog(
     .map(([title]) => title)
     .sort();
 
-  const byFile = new Map<string, TaggedTest[]>();
+  const byFile = new Map<string, DeclaredTest[]>();
   for (const t of inScope) {
     const list = byFile.get(t.relativePath) ?? [];
     list.push(t);
@@ -153,20 +186,38 @@ export function specFactsFromDisk(relativePath: string): SpecFacts {
  * builder, the ownership guard) all read it, and a predicate that could fail
  * differently in each one is three populations -- so the warning check lives
  * on the IO shell instead. Exported so this behaviour is unit-testable
- * without needing a real parse warning in the corpus (there are none today).
+ * without needing a real unparseable declaration in the corpus (there are
+ * none today).
+ *
+ * `collectDeclaredTests()` carries no suite-level warnings array of its own --
+ * unlike this module's retired `collectTaggedTests()`, an unreadable `tag`
+ * option is recorded PER DECLARATION (`DeclaredTest.unparseableTags`), which
+ * is exactly how `stable-orphans.ts`'s #1746 reconciler treats it: a
+ * per-test `state: "unknown"`, never a crash -- the right call for a
+ * reconciler that must still report on the tests it CAN read. This function
+ * wants the opposite: a `tag` array this parser cannot read might be hiding
+ * an `@stable` tag on that declaration or on another one in the SAME file,
+ * either of which would silently flip clause 2 or clause 4's answer -- so it
+ * checks every declaration across the whole suite, not only the in-scope
+ * ones, the same width `collectTaggedTests()`'s warnings array had.
  */
-export function assertNoWarnings(warnings: readonly string[]): void {
-  if (warnings.length === 0) return;
-  for (const w of warnings) console.error(`  • ${w}`);
+export function assertNoWarnings(tests: readonly DeclaredTest[]): void {
+  const unparseable = tests.filter((t) => t.unparseableTags);
+  if (unparseable.length === 0) return;
+  for (const t of unparseable) {
+    console.error(
+      `  • ${t.relativePath}:${t.line} — \`tag\` option is not an inline array of string literals`,
+    );
+  }
   throw new Error(
-    `collectBacklog(): collectTaggedTests() reported ${warnings.length} parse ` +
-      "warning(s) (printed above). Computing the backlog anyway could silently " +
+    `collectBacklog(): collectDeclaredTests() reported ${unparseable.length} declaration(s) with an ` +
+      "unparseable `tag` option (printed above). Computing the backlog anyway could silently " +
       "miscount it, so this IO shell refuses instead of dropping them.",
   );
 }
 
 export function collectBacklog(): Backlog {
-  const { tests, warnings } = collectTaggedTests();
-  assertNoWarnings(warnings);
+  const tests = collectDeclaredTests();
+  assertNoWarnings(tests);
   return classifyBacklog(tests, specFactsFromDisk);
 }

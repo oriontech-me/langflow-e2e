@@ -17,8 +17,12 @@
  *
  * `collectBacklog()` itself throws (via `assertNoWarnings`) rather than
  * compute a silently incomplete population when the AST parser could not
- * fully read the corpus -- an unparseable `tag:` option, or `@stable`
- * declared on a `test.describe` block. That is the right call, but a throw
+ * fully read the corpus -- an unparseable `tag:` option on any declaration in
+ * the suite. (`@stable` declared on a `test.describe` block is NOT such a
+ * case: `collectDeclaredTests()`, the parser this reads since the #1746
+ * reconciliation, resolves that inheritance into the child tests' `stable`
+ * field rather than warning about it, so there is nothing here left to
+ * refuse on.) A throw is the right call for the case that remains, but one
  * escaping this script would read as a crash instead of a decision, so it is
  * caught here and reported as a named refusal in the same voice as the floor
  * below, in both write and `--check` mode (they share this call).

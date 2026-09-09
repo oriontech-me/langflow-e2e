@@ -1,6 +1,5 @@
 /**
- * Shared source of truth for "which declaration carries which tags", and the
- * `@stable` filter over it.
+ * Shared source of truth for "which `test()` calls carry `@stable`".
  *
  * Extracted from `scripts/stable-tests.ts` (the Phase 0 regenerator) so that the
  * checklist-coverage guard (`scripts/check-checklist-coverage.ts`) enforces the
@@ -14,13 +13,6 @@
  * #704"), and commented-out `{ tag: [...] }` lines. Only a real `test(...)` call
  * whose options object has an inline `tag` array containing the literal
  * `"@stable"` counts.
- *
- * `parseTaggedTests` / `collectTaggedTests` expose every tagged DECLARATION —
- * `test(...)` and its modifiers (`.fixme`, `.skip`, `.only`, `.fail`, `.slow`) —
- * with whatever tags and modifier it carries. `parseStableTests` /
- * `collectStableTests` are a FILTER over that same walk, not a second one, so a
- * future consumer that needs the wider population (e.g. a never-validated
- * backlog) never has to keep a second AST walker in agreement with this one.
  */
 
 import * as fs from "fs";
@@ -142,106 +134,17 @@ function isDescribeCall(call: ts.CallExpression): boolean {
   return /^test\.describe\b/.test(call.expression.getText());
 }
 
-/** Match `test(...)` and its declaration modifiers — never `test.describe`, never `test.step`. */
-const DECLARATION_RE = /^test(?:\.(fixme|skip|only|fail|slow))?$/;
-
-export interface TaggedTest {
-  /** Title as written in the first argument (template `${...}` placeholders preserved). */
-  title: string;
-  /** Every literal string in the inline `tag: [...]` array, in source order. */
-  tags: string[];
-  /** "" for a plain `test(...)`; otherwise "fixme" | "skip" | "fail" | "only" | "slow". */
-  modifier: string;
-  /** Module path under `regression/`, e.g. `core-functionality/llm-agents`. */
-  modulePath: string;
-  /** Spec basename, e.g. `loop-component-regression.spec.ts`. */
-  specFile: string;
-  /** Path under `regression/`, e.g. `core-components/loop-component-regression.spec.ts`. */
-  relativePath: string;
-  /** 1-based source line of the declaration. */
-  line: number;
-}
-
-/**
- * A parse problem, carrying WHICH declaration it is about.
- *
- * The modifier is what lets a consumer decide whether a warning is theirs.
- * `parseStableTests`'s population is plain `test(...)` calls only, so a
- * `test.skip(..., { tag: SHARED })` it cannot read is not a gap in ITS truth —
- * such a declaration can never be `@stable` to this repo whatever its tags say.
- * Forwarding it made `check-checklist-coverage.ts` (which exits 1 on any
- * warning) fail every PR that wrote one, with a message telling the author to
- * inline the array "so it shows up in Phase 0" — impossible for a modified
- * declaration. Measured base-vs-head on such a source: 0 warnings before Task
- * 1 widened the walk, 1 after.
- *
- * `null` means "not attributable to a declaration at all" — today only the
- * `@stable`-on-a-`test.describe` case, which every consumer needs: Playwright
- * really does apply that tag to each test inside, so those tests run in the
- * daily while staying out of Phase 0 and the checklist guard.
- */
-export interface ParseWarning {
-  /** Human-readable message — exactly what the string-valued arrays carry. */
-  message: string;
-  /** "" for a plain `test(...)`, the modifier for a modified one, `null` for a non-declaration. */
-  modifier: string | null;
-}
-
-/**
- * True when a warning bears on the `@stable` population — i.e. on a plain
- * declaration, or on a `test.describe` tag that Playwright propagates into one.
- * The filter `parseStableTests` applies; exported so the rule is testable and
- * has exactly one definition.
- */
-export function warningAffectsStable(w: ParseWarning): boolean {
-  return w.modifier === "" || w.modifier === null;
-}
-
-export interface CollectTaggedResult {
-  tests: TaggedTest[];
-  /** Non-fatal parse problems (e.g. a `tag` option that is not an inline array). */
-  warnings: string[];
-  /** The same problems, each carrying the modifier of the declaration it is about. */
-  warningDetails: ParseWarning[];
-}
-
-/**
- * Parse one spec's SOURCE TEXT for every DECLARATION that carries an inline
- * `tag` array — `test(...)` and its modifiers (`.fixme`, `.skip`, `.only`,
- * `.fail`, `.slow`) — regardless of which tags it carries. This is the ONE AST
- * walk in the module; `parseStableTests` below is a filter over it rather than
- * a second walker, which is the #985 drift this module exists to prevent.
- *
- * `filePath` is only used to derive the reported `modulePath` / `specFile` /
- * `relativePath`, so it may point at a file that does not exist; it must still
- * be an ABSOLUTE path under `REGRESSION_ROOT` for those to come out right —
- * the same contract `parseStableTests` has always had.
- *
- * An in-body `test.skip(condition, message)` guard also has two arguments,
- * exactly like a declaration's `(title, options)` — but its second argument is
- * a string, not an object literal carrying a `tag` property, so `readTagsArray`
- * reports "no tag array" rather than "unparseable" and it is silently not a
- * declaration. Counting it as one would inflate the population by every
- * provider guard in the suite (96 in `llm-agents` alone).
- */
-export function parseTaggedTests(
+function parseStableTestsInFile(
   filePath: string,
-  sourceText: string,
-): CollectTaggedResult {
-  const tests: TaggedTest[] = [];
-  const warningDetails: ParseWarning[] = [];
+  source: ts.SourceFile,
+  warnings: string[],
+): StableTest[] {
+  const out: StableTest[] = [];
   const relativePath = path
     .relative(REGRESSION_ROOT, filePath)
     .split(path.sep)
     .join("/");
   const modulePath = path.dirname(relativePath);
-  const specFile = path.basename(relativePath);
-  const source = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-  );
 
   function visit(node: ts.Node): void {
     // Playwright propagates a `test.describe` tag to every child test, and the
@@ -259,60 +162,34 @@ export function parseTaggedTests(
         const { line } = source.getLineAndCharacterOfPosition(
           node.getStart(source),
         );
-        warningDetails.push({
-          // Not a declaration: `null`, so every consumer keeps it. Playwright
-          // really does propagate this tag into the tests inside.
-          modifier: null,
-          message:
-            `${relativePath}:${line + 1} — \`@stable\` is declared on a \`test.describe\` block. ` +
+        warnings.push(
+          `${relativePath}:${line + 1} — \`@stable\` is declared on a \`test.describe\` block. ` +
             "Playwright applies it to every test inside, but this parser only reads per-`test()` " +
             "tags, so those tests would run in the daily while staying out of Phase 0 and the " +
             "checklist guard. Move `@stable` onto each `test(...)` call.",
-        });
+        );
       }
     }
-    if (ts.isCallExpression(node)) {
-      const m = DECLARATION_RE.exec(node.expression.getText());
-      if (m && node.arguments.length >= 2) {
-        const title = literalText(node.arguments[0]);
-        const { tags, unparseable } = readTagsArray(node.arguments[1]);
+    if (ts.isCallExpression(node) && isPlainTestCall(node)) {
+      const args = node.arguments;
+      if (args.length >= 2) {
+        const title = literalText(args[0]);
+        const { tags, unparseable } = readTagsArray(args[1]);
         const { line } = source.getLineAndCharacterOfPosition(
           node.getStart(source),
         );
         if (unparseable) {
-          const modifier = m[1] ?? "";
-          // The remediation has to be TRUE for whoever is being asked to act on
-          // it. A plain declaration's unreadable tag array really can hide an
-          // `@stable` test from Phase 0. A MODIFIED one cannot: `.skip` /
-          // `.fixme` / `.only` / `.fail` / `.slow` are never `@stable` to this
-          // repo (see `parseStableTests`), so telling that author to inline the
-          // array "so it shows up in Phase 0" is asking for the impossible —
-          // and it is a PR-blocking ask, since `check-checklist-coverage.ts`
-          // exits 1 on any warning. What such a declaration really affects is
-          // the never-validated backlog, which does count it.
-          warningDetails.push({
-            modifier,
-            message:
-              modifier === ""
-                ? `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string ` +
-                  "literals; the script cannot determine if this test is `@stable`. Inline the " +
-                  'array (e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.'
-                : `${relativePath}:${line + 1} — \`tag\` option on a \`test.${modifier}(...)\` ` +
-                  "declaration is not an inline array of string literals, so its tags cannot be " +
-                  'read. Inline the array (e.g. `tag: ["@regression", ...]`) so the ' +
-                  "never-validated backlog counts it. This does not affect Phase 0 or the " +
-                  "checklist guard: a modified declaration is never `@stable` to this repo.",
-          });
+          warnings.push(
+            `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string literals; ` +
+              "the script cannot determine if this test is `@stable`. Inline the array " +
+              '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.',
+          );
         }
-        // A `tag` array is what makes this a DECLARATION rather than an in-body
-        // `test.skip(cond, msg)` guard, which also carries two arguments.
-        if (title !== null && tags) {
-          tests.push({
+        if (title !== null && tags && tags.includes(STABLE_TAG)) {
+          out.push({
             title,
-            tags,
-            modifier: m[1] ?? "",
             modulePath,
-            specFile,
+            specFile: path.basename(relativePath),
             relativePath,
             line: line + 1,
           });
@@ -323,29 +200,7 @@ export function parseTaggedTests(
   }
 
   visit(source);
-  return { tests, warnings: warningDetails.map((w) => w.message), warningDetails };
-}
-
-/**
- * Every tagged declaration across every spec under `regression/`, plus any
- * non-fatal parse warnings. Files are walked in sorted (absolute-path) order
- * so the result is deterministic across filesystems — POSIX does not
- * guarantee `readdirSync` order — but that is the only ordering promise: a
- * consumer that needs a specific key (e.g. `collectStableTests`'s
- * module → spec → line) sorts its own filtered result.
- */
-export function collectTaggedTests(): CollectTaggedResult {
-  const tests: TaggedTest[] = [];
-  const warningDetails: ParseWarning[] = [];
-  for (const file of walkSpecs(REGRESSION_ROOT).sort()) {
-    const parsed = parseTaggedTests(file, fs.readFileSync(file, "utf-8"));
-    tests.push(...parsed.tests);
-    warningDetails.push(...parsed.warningDetails);
-  }
-  // Every warning, unfiltered: this population INCLUDES modified declarations,
-  // so a tag array it cannot read really is a gap in its own truth — which is
-  // why `collectBacklog()` refuses on it (`assertNoWarnings`).
-  return { tests, warnings: warningDetails.map((w) => w.message), warningDetails };
+  return out;
 }
 
 /**
@@ -353,38 +208,19 @@ export function collectTaggedTests(): CollectTaggedResult {
  * under `collectStableTests()`. `filePath` is only used to derive the reported
  * `modulePath` / `relativePath`, so it may point at a file that does not exist;
  * it must still be under `REGRESSION_ROOT` for those paths to come out right.
- *
- * A filter over `parseTaggedTests`: only a plain `test(...)` (no modifier —
- * `.skip` / `.fixme` / `.only` / `.fail` / `.slow` never run in the daily as
- * written, so counting one as validated coverage would overstate the release
- * signal) whose tags include `@stable`.
- *
- * **The warnings are filtered the same way**, and that is not cosmetic: both
- * consumers of this function treat a warning as fail-closed — `stable-tests.ts`
- * prints them and `check-checklist-coverage.ts` EXITS 1 on any — so forwarding
- * a warning about a declaration this population cannot contain turns the first
- * `test.skip(..., { tag: SHARED_TAGS })` anyone writes into a red PR whose
- * remediation is impossible to satisfy (`warningAffectsStable` above).
- * Fail-closed stays fail-closed for everything that IS this population's:
- * a plain declaration's unreadable tags, and a `test.describe` tag Playwright
- * propagates into one.
  */
 export function parseStableTests(
   filePath: string,
   text: string,
 ): CollectResult {
-  const { tests, warningDetails } = parseTaggedTests(filePath, text);
-  const warnings = warningDetails.filter(warningAffectsStable).map((w) => w.message);
-  const stable: StableTest[] = tests
-    .filter((t) => t.modifier === "" && t.tags.includes(STABLE_TAG))
-    .map(({ title, modulePath, specFile, relativePath, line }) => ({
-      title,
-      modulePath,
-      specFile,
-      relativePath,
-      line,
-    }));
-  return { tests: stable, warnings };
+  const warnings: string[] = [];
+  const source = ts.createSourceFile(
+    filePath,
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
+  return { tests: parseStableTestsInFile(filePath, source, warnings), warnings };
 }
 
 /**
@@ -527,6 +363,19 @@ export interface DeclaredTest {
    * — `test.fixme(title, …)` or the declaring `test.skip(title, …)`.
    */
   fixme: boolean;
+  /**
+   * The declaring token when `fixme` is true — `"fixme"` or `"skip"` — or
+   * `""` for a plain `test(...)`. Additive alongside `fixme`: that boolean
+   * answers "does this run in no lane", which is all a consumer filtering for
+   * `@stable` needs, but the never-validated backlog's unmute step has to
+   * tell the operator WHICH call to change back. Reading that back out of the
+   * source with a regex is the same kind of instrument that produced wrong
+   * claims elsewhere in this repo's own tooling (a substring read standing in
+   * for a parse). This field is read off the exact AST node `fixme` already
+   * inspects, never by re-reading the source line, so there stays one
+   * authority for both questions.
+   */
+  modifier: string;
   /** A `tag` option existed but could not be read as an inline array of literals. */
   unparseableTags: boolean;
 }
@@ -613,6 +462,13 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             node.getStart(source),
           );
           const own = tags ?? [];
+          // Same node `isSkippedDeclaration` already matched: a plain `test(...)`
+          // call's expression is a bare Identifier, so this reads "" for it and
+          // the property-access name ("fixme" | "skip") for the other case —
+          // never a second AST walk, never a source-text read.
+          const modifier = ts.isPropertyAccessExpression(node.expression)
+            ? node.expression.name.text
+            : "";
           out.push({
             title,
             relativePath,
@@ -620,6 +476,7 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             tags: [...own, ...inheritedLane.filter((t) => !own.includes(t))],
             stable: inheritedStable || own.includes(STABLE_TAG),
             fixme: isSkippedDeclaration(node),
+            modifier,
             unparseableTags: unparseable,
           });
         }

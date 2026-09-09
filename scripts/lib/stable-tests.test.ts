@@ -23,17 +23,11 @@ import {
   parseDeclaredCounts,
   parseDeclaredTests,
   parseStableTests,
-  parseTaggedTests,
 } from "./stable-tests";
 
 // A path under REGRESSION_ROOT — it never has to exist, `parseStableTests`
 // only uses it to derive modulePath / specFile / relativePath.
 const SPEC = path.join(REGRESSION_ROOT, "core-components", "example.spec.ts");
-
-// Same idiom, for the `parseTaggedTests` cases below — a distinct path so the
-// expected `modulePath` / `specFile` / `relativePath` values are visibly tied
-// to this constant rather than reused from SPEC's `core-components/` value.
-const TAGGED_SPEC = path.join(REGRESSION_ROOT, "area", "x.spec.ts");
 
 function parse(source: string) {
   return parseStableTests(SPEC, source);
@@ -447,145 +441,39 @@ test("an inherited lane tag is not duplicated when the test declares it too", ()
   assert.deepEqual(out[0].tags, ["@destructive", "@api"]);
 });
 
-// ─── parseTaggedTests — every tagged declaration, not only @stable ──────────
+// ─── DeclaredTest.modifier — additive field ──────────────────────────────────
 //
-// The backlog predicate in a later task reads this directly instead of a
-// second AST walk (#985 would apply to this module just as much as to a
-// separate one). It must see every DECLARATION regardless of tag or modifier,
-// and it must not be fooled by an in-body `test.skip(cond, msg)` guard, which
-// has the same two-argument shape as a real declaration.
+// `fixme` alone answers "does this run in no lane", which is all the
+// checklist guard's population needs; the never-validated backlog's unmute
+// step (design Task 7) has to tell the operator WHICH call to change back, so
+// it needs the specific token. Read off the exact AST node `fixme` already
+// inspects (see the `modifier` local in `parseDeclaredTests`), never by
+// re-reading the source line with a regex — the instrument that produced
+// wrong claims elsewhere in this repo's own tooling.
 
-test("parseTaggedTests reads a plain tagged declaration", () => {
-  const src = `test("a title", { tag: ["@release", "@api"] }, async () => {});`;
-  const { tests, warnings } = parseTaggedTests(TAGGED_SPEC, src);
-  assert.equal(warnings.length, 0);
-  assert.deepEqual(tests, [
-    {
-      title: "a title",
-      tags: ["@release", "@api"],
-      modifier: "",
-      modulePath: "area",
-      specFile: "x.spec.ts",
-      relativePath: "area/x.spec.ts",
-      line: 1,
-    },
-  ]);
+test("modifier is the empty string on a plain test()", () => {
+  const out = declaredIn(`
+    test("a plain test", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modifier, "");
+  assert.equal(out[0].fixme, false);
 });
 
-test("parseTaggedTests records the modifier of a quarantined declaration", () => {
-  const src = `test.fixme("blocked", { tag: ["@release"] }, async () => {});`;
-  const { tests } = parseTaggedTests(TAGGED_SPEC, src);
-  assert.equal(tests.length, 1);
-  assert.equal(tests[0].modifier, "fixme");
+test('modifier is "fixme" on the declaring form of test.fixme', () => {
+  const out = declaredIn(`
+    test.fixme("a quarantined test", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modifier, "fixme");
+  assert.equal(out[0].fixme, true);
 });
 
-// THE TRAP. `test.skip(condition, message)` inside a test body also has two
-// arguments, and counting it as a declaration inflates the population by the
-// number of provider guards -- 96 of them in llm-agents alone. The second
-// argument must be an object literal carrying an inline `tag` array.
-test("parseTaggedTests ignores an in-body test.skip guard", () => {
-  const src = [
-    `test("real", { tag: ["@release"] }, async ({ page }) => {`,
-    `  test.skip(!hasProviderEnvKeys("openai"), "no key");`,
-    `  test.fail();`,
-    `});`,
-  ].join("\n");
-  const { tests } = parseTaggedTests(TAGGED_SPEC, src);
-  assert.equal(tests.length, 1);
-  assert.equal(tests[0].title, "real");
-});
-
-test("parseTaggedTests warns on a tag array it cannot read", () => {
-  const src = `test("t", { tag: SHARED_TAGS }, async () => {});`;
-  const { tests, warnings } = parseTaggedTests(TAGGED_SPEC, src);
-  assert.equal(tests.length, 0);
-  assert.match(warnings[0], /not an inline array/);
-});
-
-test("parseTaggedTests preserves a template-literal title", () => {
-  const src = "test(`agent [${label}]`, { tag: [\"@release\"] }, async () => {});";
-  const { tests } = parseTaggedTests(TAGGED_SPEC, src);
-  assert.equal(tests[0].title, "agent [${label}]");
-});
-
-// ─── Finding A4: the warning channel is per-consumer ────────────────────────
-//
-// Task 1 replaced `parseStableTests`'s own walk with a filter over
-// `parseTaggedTests`, which admits five declaration modifiers -- and forwarded
-// the WARNINGS unfiltered too. Both consumers of `parseStableTests` treat a
-// warning as fail-closed (`scripts/stable-tests.ts` prints them;
-// `scripts/check-checklist-coverage.ts` EXITS 1 on any), so the first
-// `test.skip(..., { tag: SHARED_TAGS })` anyone wrote would fail every PR --
-// with a message telling the author to inline the array "so it shows up in
-// Phase 0", which a modified declaration can never do.
-//
-// Measured base-vs-head on exactly that source: 0 warnings before Task 1, 1
-// after. The empty-QA-CHECKLIST.md-diff check Task 1 relied on structurally
-// cannot see this channel, which is why it needs its own tests.
-
-const MODIFIER_CASES = ["skip", "fixme", "only", "fail", "slow"] as const;
-
-test("parseStableTests does not forward a MODIFIED declaration's unreadable-tag warning", () => {
-  for (const modifier of MODIFIER_CASES) {
-    const src = `test.${modifier}("q", { tag: SHARED_TAGS }, async () => {});`;
-    assert.deepEqual(
-      parseStableTests(SPEC, src).warnings,
-      [],
-      `test.${modifier} can never be @stable, so its unreadable tags are not this population's gap`,
-    );
-    // The wider population DOES count such a declaration, so the warning must
-    // still exist there -- `collectBacklog()` refuses on it.
-    assert.equal(
-      parseTaggedTests(SPEC, src).warnings.length,
-      1,
-      `test.${modifier}'s warning must survive for the backlog's fail-closed guard`,
-    );
-  }
-});
-
-test("parseStableTests still fails closed on a PLAIN declaration's unreadable tags", () => {
-  // The half that must not be loosened: an unreadable tag array here really can
-  // hide an @stable test from Phase 0 and from the checklist guard.
-  const { warnings } = parseStableTests(SPEC, `test("q", { tag: SHARED_TAGS }, async () => {});`);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /Phase 0/);
-});
-
-test("parseStableTests still forwards a @stable-on-test.describe warning", () => {
-  // Not attributable to a declaration (modifier `null`), but every consumer
-  // needs it: Playwright really applies the tag to each test inside, so those
-  // tests run in the daily while staying invisible to Phase 0.
-  const src = [
-    `test.describe("suite", { tag: ["@stable"] }, () => {`,
-    `  test("inner", { tag: ["@release"] }, async () => {});`,
-    `});`,
-  ].join("\n");
-  const { warnings } = parseStableTests(SPEC, src);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /declared on a `test\.describe` block/);
-});
-
-test("the remediation message is TRUE for whichever declaration it is about", () => {
-  const modified = parseTaggedTests(SPEC, `test.skip("q", { tag: SHARED }, async () => {});`);
-  assert.match(modified.warnings[0], /`test\.skip\(\.\.\.\)` declaration/, "must name the modifier");
-  assert.match(modified.warnings[0], /never `@stable` to this repo/);
-  assert.doesNotMatch(
-    modified.warnings[0],
-    /so it shows up in Phase 0/,
-    "asking a modified declaration to show up in Phase 0 is asking for the impossible",
-  );
-
-  const plain = parseTaggedTests(SPEC, `test("q", { tag: SHARED }, async () => {});`);
-  assert.match(plain.warnings[0], /so it shows up in Phase 0/, "which is exactly right for a plain one");
-});
-
-test("warningDetails carries the modifier, and `warnings` stays the same strings", () => {
-  const src = [
-    `test("plain", { tag: SHARED }, async () => {});`,
-    `test.skip("muted", { tag: SHARED }, async () => {});`,
-  ].join("\n");
-  const { warnings, warningDetails } = parseTaggedTests(SPEC, src);
-  assert.deepEqual(warningDetails.map((w) => w.modifier), ["", "skip"]);
-  assert.deepEqual(warnings, warningDetails.map((w) => w.message),
-    "the string channel must be derived from the structured one, never a second computation");
+test('modifier is "skip" on the declaring form of test.skip', () => {
+  const out = declaredIn(`
+    test.skip("a test quarantined with skip", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modifier, "skip");
+  assert.equal(out[0].fixme, true);
 });

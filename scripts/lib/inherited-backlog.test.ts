@@ -17,20 +17,31 @@ import {
   collectBacklog,
   LANE_SELECTORS,
 } from "./inherited-backlog";
-import type { TaggedTest } from "./stable-tests";
+import { STABLE_TAG, type DeclaredTest } from "./stable-tests";
 
+// Builds a `DeclaredTest` the way `parseDeclaredTests` would for a
+// declaration whose OWN tag array is exactly `tags` and that inherits
+// nothing from an enclosing `describe` -- inheritance itself is
+// `stable-tests.test.ts`'s concern, not this predicate's. `stable` and
+// `fixme` are derived from `tags` / `modifier` the same way the real parser
+// derives them, so `isStable`'s `test.stable && !test.fixme` sees the exact
+// shape it sees in production.
 function t(
   relativePath: string,
   title: string,
   tags: string[],
   line = 1,
   modifier = "",
-): TaggedTest {
-  const parts = relativePath.split("/");
+): DeclaredTest {
   return {
-    title, tags, modifier, line, relativePath,
-    specFile: parts[parts.length - 1],
-    modulePath: parts.slice(0, -1).join("/") || ".",
+    title,
+    relativePath,
+    line,
+    tags,
+    stable: tags.includes(STABLE_TAG),
+    fixme: modifier === "fixme" || modifier === "skip",
+    modifier,
+    unparseableTags: false,
   };
 }
 const NO_FACTS = () => ({ hasMirroredDoc: false, hasIdScopedCleanup: false });
@@ -179,32 +190,46 @@ test("an empty suite yields an empty backlog rather than throwing", () => {
 
 // ─── assertNoWarnings -- collectBacklog()'s IO-shell warning guard ──────────
 //
-// `parseTaggedTests` (./stable-tests.ts, the single AST walker
-// `collectTaggedTests()` forwards) emits "unparseable tag" warnings that
-// `collectTaggedTests()` surfaces to every caller, including `collectBacklog()`
-// here. Zero occurrences in the corpus today, but a silent drop is exactly the
-// #1012 failure mode: a future declaration that trips a warning must not
-// quietly vanish into a smaller-than-real backlog. Tested as its own unit
-// rather than by forcing a real parse warning, because `collectBacklog()`
-// intentionally takes no injectable dependency (it must match the produced
-// `(): Backlog` interface Tasks 3-6 consume).
+// `DeclaredTest.unparseableTags` (./stable-tests.ts, set by `parseDeclaredTests`,
+// the single AST walker `collectDeclaredTests()` forwards) marks a declaration
+// whose `tag` option could not be read as an inline array of literals.
+// `collectDeclaredTests()` carries no SUITE-LEVEL warnings array of its own --
+// unlike this module's retired `collectTaggedTests()` -- so `assertNoWarnings`
+// reads the per-declaration flag directly. Zero occurrences in the corpus
+// today, but a silent drop is exactly the #1012 failure mode: a future
+// declaration that trips this must not quietly vanish into a
+// smaller-than-real backlog. Tested as its own unit rather than by forcing a
+// real unparseable declaration, because `collectBacklog()` intentionally
+// takes no injectable dependency (it must match the produced `(): Backlog`
+// interface Tasks 3-6 consume).
 
 test("assertNoWarnings is a no-op when there is nothing to report", () => {
   assert.doesNotThrow(() => assertNoWarnings([]));
+  assert.doesNotThrow(() => assertNoWarnings([t("a/x.spec.ts", "one", ["@release"])]));
 });
 
-test("assertNoWarnings throws rather than letting a parse warning pass silently", () => {
+test("assertNoWarnings throws rather than letting an unparseable tag pass silently", () => {
+  const bad: DeclaredTest = { ...t("some.spec.ts", "one", []), unparseableTags: true };
   assert.throws(
-    () => assertNoWarnings(["some.spec.ts:1 — tag option is not an inline array"]),
-    /1 parse warning/,
+    () => assertNoWarnings([bad]),
+    /reported 1 declaration\(s\) with an unparseable/,
+  );
+});
+
+test("assertNoWarnings only counts declarations that are actually unparseable", () => {
+  const clean = t("a/x.spec.ts", "one", ["@release"]);
+  const bad: DeclaredTest = { ...t("a/y.spec.ts", "two", []), unparseableTags: true };
+  assert.throws(
+    () => assertNoWarnings([clean, bad]),
+    /reported 1 declaration\(s\)/,
   );
 });
 
 // ─── Invariant over the real suite ───────────────────────────────────────────
 
-test("collectBacklog() walks the real suite (via collectTaggedTests()) and returns a well-shaped, non-empty backlog", () => {
-  // Not a fixture: `collectTaggedTests()` itself shipped with no direct unit
-  // test (Task 1 review), and this is the only production call site. Counts
+test("collectBacklog() walks the real suite (via collectDeclaredTests()) and returns a well-shaped, non-empty backlog", () => {
+  // Not a fixture: `collectDeclaredTests()` has its own direct unit test
+  // (`stable-tests.test.ts`), and this is merely a production call site. Counts
   // are volatile by design -- the suite moves -- so only shape and
   // non-emptiness are asserted here; the exact figures are sanity-checked
   // manually against the design's own measurement (Task 2 brief, Step 4).
