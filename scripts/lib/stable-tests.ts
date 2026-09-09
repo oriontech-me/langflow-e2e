@@ -162,10 +162,47 @@ export interface TaggedTest {
   line: number;
 }
 
+/**
+ * A parse problem, carrying WHICH declaration it is about.
+ *
+ * The modifier is what lets a consumer decide whether a warning is theirs.
+ * `parseStableTests`'s population is plain `test(...)` calls only, so a
+ * `test.skip(..., { tag: SHARED })` it cannot read is not a gap in ITS truth —
+ * such a declaration can never be `@stable` to this repo whatever its tags say.
+ * Forwarding it made `check-checklist-coverage.ts` (which exits 1 on any
+ * warning) fail every PR that wrote one, with a message telling the author to
+ * inline the array "so it shows up in Phase 0" — impossible for a modified
+ * declaration. Measured base-vs-head on such a source: 0 warnings before Task
+ * 1 widened the walk, 1 after.
+ *
+ * `null` means "not attributable to a declaration at all" — today only the
+ * `@stable`-on-a-`test.describe` case, which every consumer needs: Playwright
+ * really does apply that tag to each test inside, so those tests run in the
+ * daily while staying out of Phase 0 and the checklist guard.
+ */
+export interface ParseWarning {
+  /** Human-readable message — exactly what the string-valued arrays carry. */
+  message: string;
+  /** "" for a plain `test(...)`, the modifier for a modified one, `null` for a non-declaration. */
+  modifier: string | null;
+}
+
+/**
+ * True when a warning bears on the `@stable` population — i.e. on a plain
+ * declaration, or on a `test.describe` tag that Playwright propagates into one.
+ * The filter `parseStableTests` applies; exported so the rule is testable and
+ * has exactly one definition.
+ */
+export function warningAffectsStable(w: ParseWarning): boolean {
+  return w.modifier === "" || w.modifier === null;
+}
+
 export interface CollectTaggedResult {
   tests: TaggedTest[];
   /** Non-fatal parse problems (e.g. a `tag` option that is not an inline array). */
   warnings: string[];
+  /** The same problems, each carrying the modifier of the declaration it is about. */
+  warningDetails: ParseWarning[];
 }
 
 /**
@@ -192,7 +229,7 @@ export function parseTaggedTests(
   sourceText: string,
 ): CollectTaggedResult {
   const tests: TaggedTest[] = [];
-  const warnings: string[] = [];
+  const warningDetails: ParseWarning[] = [];
   const relativePath = path
     .relative(REGRESSION_ROOT, filePath)
     .split(path.sep)
@@ -222,12 +259,16 @@ export function parseTaggedTests(
         const { line } = source.getLineAndCharacterOfPosition(
           node.getStart(source),
         );
-        warnings.push(
-          `${relativePath}:${line + 1} — \`@stable\` is declared on a \`test.describe\` block. ` +
+        warningDetails.push({
+          // Not a declaration: `null`, so every consumer keeps it. Playwright
+          // really does propagate this tag into the tests inside.
+          modifier: null,
+          message:
+            `${relativePath}:${line + 1} — \`@stable\` is declared on a \`test.describe\` block. ` +
             "Playwright applies it to every test inside, but this parser only reads per-`test()` " +
             "tags, so those tests would run in the daily while staying out of Phase 0 and the " +
             "checklist guard. Move `@stable` onto each `test(...)` call.",
-        );
+        });
       }
     }
     if (ts.isCallExpression(node)) {
@@ -239,11 +280,29 @@ export function parseTaggedTests(
           node.getStart(source),
         );
         if (unparseable) {
-          warnings.push(
-            `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string literals; ` +
-              "the script cannot determine if this test is `@stable`. Inline the array " +
-              '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.',
-          );
+          const modifier = m[1] ?? "";
+          // The remediation has to be TRUE for whoever is being asked to act on
+          // it. A plain declaration's unreadable tag array really can hide an
+          // `@stable` test from Phase 0. A MODIFIED one cannot: `.skip` /
+          // `.fixme` / `.only` / `.fail` / `.slow` are never `@stable` to this
+          // repo (see `parseStableTests`), so telling that author to inline the
+          // array "so it shows up in Phase 0" is asking for the impossible —
+          // and it is a PR-blocking ask, since `check-checklist-coverage.ts`
+          // exits 1 on any warning. What such a declaration really affects is
+          // the never-validated backlog, which does count it.
+          warningDetails.push({
+            modifier,
+            message:
+              modifier === ""
+                ? `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string ` +
+                  "literals; the script cannot determine if this test is `@stable`. Inline the " +
+                  'array (e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.'
+                : `${relativePath}:${line + 1} — \`tag\` option on a \`test.${modifier}(...)\` ` +
+                  "declaration is not an inline array of string literals, so its tags cannot be " +
+                  'read. Inline the array (e.g. `tag: ["@regression", ...]`) so the ' +
+                  "never-validated backlog counts it. This does not affect Phase 0 or the " +
+                  "checklist guard: a modified declaration is never `@stable` to this repo.",
+          });
         }
         // A `tag` array is what makes this a DECLARATION rather than an in-body
         // `test.skip(cond, msg)` guard, which also carries two arguments.
@@ -264,7 +323,7 @@ export function parseTaggedTests(
   }
 
   visit(source);
-  return { tests, warnings };
+  return { tests, warnings: warningDetails.map((w) => w.message), warningDetails };
 }
 
 /**
@@ -277,13 +336,16 @@ export function parseTaggedTests(
  */
 export function collectTaggedTests(): CollectTaggedResult {
   const tests: TaggedTest[] = [];
-  const warnings: string[] = [];
+  const warningDetails: ParseWarning[] = [];
   for (const file of walkSpecs(REGRESSION_ROOT).sort()) {
     const parsed = parseTaggedTests(file, fs.readFileSync(file, "utf-8"));
     tests.push(...parsed.tests);
-    warnings.push(...parsed.warnings);
+    warningDetails.push(...parsed.warningDetails);
   }
-  return { tests, warnings };
+  // Every warning, unfiltered: this population INCLUDES modified declarations,
+  // so a tag array it cannot read really is a gap in its own truth — which is
+  // why `collectBacklog()` refuses on it (`assertNoWarnings`).
+  return { tests, warnings: warningDetails.map((w) => w.message), warningDetails };
 }
 
 /**
@@ -296,12 +358,23 @@ export function collectTaggedTests(): CollectTaggedResult {
  * `.skip` / `.fixme` / `.only` / `.fail` / `.slow` never run in the daily as
  * written, so counting one as validated coverage would overstate the release
  * signal) whose tags include `@stable`.
+ *
+ * **The warnings are filtered the same way**, and that is not cosmetic: both
+ * consumers of this function treat a warning as fail-closed — `stable-tests.ts`
+ * prints them and `check-checklist-coverage.ts` EXITS 1 on any — so forwarding
+ * a warning about a declaration this population cannot contain turns the first
+ * `test.skip(..., { tag: SHARED_TAGS })` anyone writes into a red PR whose
+ * remediation is impossible to satisfy (`warningAffectsStable` above).
+ * Fail-closed stays fail-closed for everything that IS this population's:
+ * a plain declaration's unreadable tags, and a `test.describe` tag Playwright
+ * propagates into one.
  */
 export function parseStableTests(
   filePath: string,
   text: string,
 ): CollectResult {
-  const { tests, warnings } = parseTaggedTests(filePath, text);
+  const { tests, warningDetails } = parseTaggedTests(filePath, text);
+  const warnings = warningDetails.filter(warningAffectsStable).map((w) => w.message);
   const stable: StableTest[] = tests
     .filter((t) => t.modifier === "" && t.tags.includes(STABLE_TAG))
     .map(({ title, modulePath, specFile, relativePath, line }) => ({

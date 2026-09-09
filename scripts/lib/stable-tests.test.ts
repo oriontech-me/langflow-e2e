@@ -507,3 +507,85 @@ test("parseTaggedTests preserves a template-literal title", () => {
   const { tests } = parseTaggedTests(TAGGED_SPEC, src);
   assert.equal(tests[0].title, "agent [${label}]");
 });
+
+// ─── Finding A4: the warning channel is per-consumer ────────────────────────
+//
+// Task 1 replaced `parseStableTests`'s own walk with a filter over
+// `parseTaggedTests`, which admits five declaration modifiers -- and forwarded
+// the WARNINGS unfiltered too. Both consumers of `parseStableTests` treat a
+// warning as fail-closed (`scripts/stable-tests.ts` prints them;
+// `scripts/check-checklist-coverage.ts` EXITS 1 on any), so the first
+// `test.skip(..., { tag: SHARED_TAGS })` anyone wrote would fail every PR --
+// with a message telling the author to inline the array "so it shows up in
+// Phase 0", which a modified declaration can never do.
+//
+// Measured base-vs-head on exactly that source: 0 warnings before Task 1, 1
+// after. The empty-QA-CHECKLIST.md-diff check Task 1 relied on structurally
+// cannot see this channel, which is why it needs its own tests.
+
+const MODIFIER_CASES = ["skip", "fixme", "only", "fail", "slow"] as const;
+
+test("parseStableTests does not forward a MODIFIED declaration's unreadable-tag warning", () => {
+  for (const modifier of MODIFIER_CASES) {
+    const src = `test.${modifier}("q", { tag: SHARED_TAGS }, async () => {});`;
+    assert.deepEqual(
+      parseStableTests(SPEC, src).warnings,
+      [],
+      `test.${modifier} can never be @stable, so its unreadable tags are not this population's gap`,
+    );
+    // The wider population DOES count such a declaration, so the warning must
+    // still exist there -- `collectBacklog()` refuses on it.
+    assert.equal(
+      parseTaggedTests(SPEC, src).warnings.length,
+      1,
+      `test.${modifier}'s warning must survive for the backlog's fail-closed guard`,
+    );
+  }
+});
+
+test("parseStableTests still fails closed on a PLAIN declaration's unreadable tags", () => {
+  // The half that must not be loosened: an unreadable tag array here really can
+  // hide an @stable test from Phase 0 and from the checklist guard.
+  const { warnings } = parseStableTests(SPEC, `test("q", { tag: SHARED_TAGS }, async () => {});`);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Phase 0/);
+});
+
+test("parseStableTests still forwards a @stable-on-test.describe warning", () => {
+  // Not attributable to a declaration (modifier `null`), but every consumer
+  // needs it: Playwright really applies the tag to each test inside, so those
+  // tests run in the daily while staying invisible to Phase 0.
+  const src = [
+    `test.describe("suite", { tag: ["@stable"] }, () => {`,
+    `  test("inner", { tag: ["@release"] }, async () => {});`,
+    `});`,
+  ].join("\n");
+  const { warnings } = parseStableTests(SPEC, src);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /declared on a `test\.describe` block/);
+});
+
+test("the remediation message is TRUE for whichever declaration it is about", () => {
+  const modified = parseTaggedTests(SPEC, `test.skip("q", { tag: SHARED }, async () => {});`);
+  assert.match(modified.warnings[0], /`test\.skip\(\.\.\.\)` declaration/, "must name the modifier");
+  assert.match(modified.warnings[0], /never `@stable` to this repo/);
+  assert.doesNotMatch(
+    modified.warnings[0],
+    /so it shows up in Phase 0/,
+    "asking a modified declaration to show up in Phase 0 is asking for the impossible",
+  );
+
+  const plain = parseTaggedTests(SPEC, `test("q", { tag: SHARED }, async () => {});`);
+  assert.match(plain.warnings[0], /so it shows up in Phase 0/, "which is exactly right for a plain one");
+});
+
+test("warningDetails carries the modifier, and `warnings` stays the same strings", () => {
+  const src = [
+    `test("plain", { tag: SHARED }, async () => {});`,
+    `test.skip("muted", { tag: SHARED }, async () => {});`,
+  ].join("\n");
+  const { warnings, warningDetails } = parseTaggedTests(SPEC, src);
+  assert.deepEqual(warningDetails.map((w) => w.modifier), ["", "skip"]);
+  assert.deepEqual(warnings, warningDetails.map((w) => w.message),
+    "the string channel must be derived from the structured one, never a second computation");
+});
