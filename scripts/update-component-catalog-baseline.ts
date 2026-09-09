@@ -41,6 +41,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAuthToken } from "../tests/helpers/auth/get-auth-token";
 import { snapshotCatalog } from "../tests/helpers/other/component-catalog-drift";
+import { parseNumericArg } from "./lib/numeric-arg";
 
 dotenv.config();
 
@@ -50,26 +51,16 @@ const OUT_PATH = path.join(
   "../tests/assets/catalog/component-catalog-baseline.json",
 );
 
-export function parseNumericArg(
-  argv: string[],
-  name: string,
-  fallback: number,
-): number {
-  const raw = argv.find((a) => a.startsWith(`${name}=`))?.split("=")[1];
-  if (raw === undefined) return fallback;
-  // `Number("")` and `Number(" ")` are 0, which is finite and non-negative — so
-  // an empty value (`--min-categories=`) used to disable the plausibility floor
-  // silently, reaching the same state as `--force` without the explicit opt-in
-  // that makes `--force` legitimate. Disabling a guard must be asked for.
-  if (raw.trim() === "") {
-    throw new Error(`${name} was given no value — pass a number, e.g. ${name}=20`);
-  }
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${name} must be a non-negative number, got: ${raw}`);
-  }
-  return parsed;
-}
+// `parseNumericArg` moved to `./lib/numeric-arg` (Task 3 review fix, issue
+// #1769) so the sibling `update-inherited-backlog-baseline.ts` writer can
+// share it for its own `--min-specs` floor without duplicating the validation
+// or importing this module -- which would drag its module-scope
+// `dotenv.config()` into a script that has no business reading `.env`.
+// Re-exported (imported above, then re-exported here) so this file's own test
+// suite keeps importing `parseNumericArg` from this path unchanged -- a bare
+// `export { x } from "./mod"` re-export would forward it to importers without
+// binding it locally, breaking `numericArg`'s own call to it below.
+export { parseNumericArg };
 
 function numericArg(name: string, fallback: number): number {
   try {

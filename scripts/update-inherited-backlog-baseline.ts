@@ -8,7 +8,12 @@
  * The floor (`--min-specs`, default 10) refuses to write an implausibly small
  * baseline. A wrong baseline is permanent and silent -- the guard in
  * `check-stable-ownership.ts` reads it as the set of specs that are ALLOWED to
- * be unowned, so an empty one silently exempts the whole suite.
+ * be unowned, so an empty one silently exempts the whole suite. `--min-specs`
+ * itself is parsed by the shared `parseNumericArg` (`./lib/numeric-arg`, also
+ * used by `update-component-catalog-baseline.ts`'s `--min-categories`), which
+ * throws on an empty, non-numeric or negative value instead of letting
+ * `Number(...)` turn it into `NaN` -- a value the floor check below could never
+ * be less than, so the floor would silently no-op instead of refusing.
  *
  * `collectBacklog()` itself throws (via `assertNoWarnings`) rather than
  * compute a silently incomplete population when the AST parser could not
@@ -22,6 +27,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { REPO_ROOT } from "./lib/stable-tests";
 import { collectBacklog, type Backlog, type BacklogSpec } from "./lib/inherited-backlog";
+import { parseNumericArg } from "./lib/numeric-arg";
 
 export const BASELINE_PATH = path.join(
   REPO_ROOT, "tests", "assets", "triage", "inherited-backlog-baseline.json",
@@ -82,8 +88,24 @@ function readCommitted(): BaselineFile | null {
 
 function main(argv: string[]): number {
   const check = argv.includes("--check");
-  const minArg = argv.find((a) => a.startsWith("--min-specs="));
-  const minSpecs = minArg ? Number(minArg.split("=")[1]) : 10;
+
+  // Review finding (Task 3): `Number(minArg.split("=")[1])` on a malformed
+  // `--min-specs` value -- empty, non-numeric, or negative -- used to yield
+  // `NaN` or a value `current.specs.length < minSpecs` could never be true
+  // for, so the floor silently no-opped instead of refusing. `parseNumericArg`
+  // is the fix already proven for the sibling catalog writer's
+  // `--min-categories`: it throws on exactly those inputs, so it is caught
+  // here and turned into a named refusal in this script's own voice, the same
+  // treatment the parse-warning throw below gets.
+  let minSpecs: number;
+  try {
+    minSpecs = parseNumericArg(argv, "--min-specs", 10);
+  } catch (e) {
+    console.error(
+      `[triage-baseline] refusing: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 1;
+  }
 
   // Ruling P8: a corpus the parser could not fully read must never be baselined
   // -- that would be permanent and silent, exactly what the floor below exists

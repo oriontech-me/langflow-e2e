@@ -3,14 +3,20 @@
 //
 // The wave needs a fixed target and the ownership guard (a later task) needs a
 // set of specs that are ALLOWED to be unowned -- both read the committed
-// `tests/assets/triage/inherited-backlog-baseline.json`. Only the pure parts
-// are covered here (`renderBaseline`, `diffBaseline`, `formatParseRefusal`):
-// `main()`'s IO -- reading the real corpus, writing the file -- is exercised
-// by actually running the script (see the task report for the write / --check
-// / drift-detection transcript), the same split `update-component-catalog-
-// baseline.test.ts` uses for its own writer.
+// `tests/assets/triage/inherited-backlog-baseline.json`. Most of this is
+// covered via the pure parts (`renderBaseline`, `diffBaseline`,
+// `formatParseRefusal`): the rest of `main()`'s IO -- reading the real corpus,
+// writing the file -- is exercised by actually running the script (see the
+// task report for the write / --check / drift-detection transcript), the same
+// split `update-component-catalog-baseline.test.ts` uses for its own writer.
+// The `--min-specs` validation tests near the bottom are the one exception --
+// they spawn the real script (`main()` is not exported, matching every other
+// `.ts` script under `scripts/`), because what they cover is exit-code and
+// stderr behaviour that a pure-function call cannot observe.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "child_process";
+import * as path from "path";
 import { renderBaseline, diffBaseline, formatParseRefusal } from "./update-inherited-backlog-baseline";
 import type { Backlog } from "./lib/inherited-backlog";
 
@@ -71,5 +77,66 @@ test("formatParseRefusal handles a non-Error throw", () => {
   assert.equal(
     formatParseRefusal("boom"),
     "[triage-baseline] refusing: the AST parser could not fully read the corpus — boom",
+  );
+});
+
+// ─── Review finding (Task 3) -- `--min-specs` must validate its value ────────
+// `Number(minArg.split("=")[1])` on a malformed `--min-specs` value -- empty,
+// non-numeric, or negative -- used to yield `NaN` or a value
+// `current.specs.length < minSpecs` could never be true for, so the floor
+// silently no-opped instead of refusing: exactly the failure mode
+// `update-component-catalog-baseline.ts`'s `parseNumericArg` (now shared via
+// `./lib/numeric-arg`) already closes for `--min-categories`.
+//
+// `main()` is not exported -- no `.ts` script under `scripts/` exports or
+// unit-tests its own `main()` (`update-component-catalog-baseline.test.ts`
+// itself stops at `parseNumericArg` and never touches `numericArg` or
+// `main()`) -- and this fix is specifically about exit-code and stderr
+// behaviour, which a call to a pure function cannot observe. So these spawn
+// the real script through `ts-node/register` and read its exit status and
+// stderr back, the same technique `playwright.config.test.ts` and
+// `remove-stable-from-failures.test.ts` use to exercise a script's actual
+// CLI/process behaviour without exporting or restructuring its entry point.
+// That also means this exercises the REAL `parseNumericArg`, not a synthetic
+// Error standing in for it.
+//
+// `--check` is passed alongside the bad `--min-specs` value as a second,
+// belt-and-braces guard: today the bad value is caught and returns before
+// `collectBacklog()` or any file IO runs at all, but even if that ordering
+// ever changed, `--check` mode never reaches `fs.writeFileSync` -- so these
+// tests cannot touch the committed baseline either way.
+
+const SCRIPT = path.join(__dirname, "update-inherited-backlog-baseline.ts");
+
+function runWithMinSpecs(value: string): { status: number | null; stderr: string } {
+  const run = spawnSync(
+    process.execPath,
+    ["--require", "ts-node/register", SCRIPT, "--check", `--min-specs=${value}`],
+    { encoding: "utf-8" },
+  );
+  return { status: run.status, stderr: run.stderr };
+}
+
+test("an empty --min-specs value is refused, not silently disabled", () => {
+  const { status, stderr } = runWithMinSpecs("");
+  assert.equal(status, 1);
+  assert.match(stderr, /\[triage-baseline\] refusing: --min-specs was given no value/);
+});
+
+test("a non-numeric --min-specs value is refused, not silently disabled", () => {
+  const { status, stderr } = runWithMinSpecs("nope");
+  assert.equal(status, 1);
+  assert.match(
+    stderr,
+    /\[triage-baseline\] refusing: --min-specs must be a non-negative number, got: nope/,
+  );
+});
+
+test("a negative --min-specs value is refused, not silently disabled", () => {
+  const { status, stderr } = runWithMinSpecs("-1");
+  assert.equal(status, 1);
+  assert.match(
+    stderr,
+    /\[triage-baseline\] refusing: --min-specs must be a non-negative number, got: -1/,
   );
 });
