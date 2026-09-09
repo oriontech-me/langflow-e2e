@@ -32,9 +32,21 @@ for retiring it.
 **The predicate** (derived, never hand-maintained). A test is in scope when all
 of the following hold:
 
-1. it is a `test(...)` / `test.fixme(...)` / `test.skip(...)` **declaration**
-   under `tests/tests-automations/regression/`, with an inline `tag:` array;
-2. that array does **not** contain `@stable`;
+1. it is a test **declaration** under `tests/tests-automations/regression/` with
+   an inline `tag:` array — `test(...)` or any of its declaration modifiers
+   (`.fixme`, `.skip`, `.fail`, `.only`, `.slow`). The enumeration is complete on
+   purpose: the criterion is the *lane*, not the modifier, and a `test.fail`
+   declaration without `@stable` runs in no scheduled lane exactly as a
+   `test.skip` one does. An earlier revision named only the first three and the
+   implementation admitted all five, which is a prose gap rather than a
+   behaviour question — measured, the suite holds 4 `.fixme`, 6 `.skip` and
+   **zero** `.fail` / `.only` / `.slow` declarations, so the two readings select
+   the same 92 tests today;
+2. it does **not** carry `@stable` — and `@stable` here means what the repo's own
+   parser means by it (`scripts/lib/stable-tests.ts`): the tag on a declaration
+   with **no** modifier. A `test.fixme(..., { tag: ["@stable"] })` is therefore
+   in scope, which is also the right semantic — a quarantined declaration runs
+   nowhere whatever its tags, and PARK below is how it exits;
 3. it carries **no lane selector** — `@destructive`, `@enterprise`, `@authz`,
    `@sso`, `@serving`, `@governance`;
 4. **no** test in the same file is `@stable`.
