@@ -498,7 +498,7 @@
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`
 
 #### 6.5 Output and Reasoning
-- [-] Inspect tools used by Agent in Playground → `llm-agents/agent-tool-inspection.spec.ts` (UI chip names the tool + persisted `tool_use` input/output; `@stable` gated on the clean baseline #818, per #827)
+- [x] Inspect tools used by Agent in Playground → `llm-agents/agent-tool-inspection.spec.ts` (completed tool step names the tool + persisted `tool_use` input/output; **`@stable` since #1451**. Both gates it carried closed on 2026-07-30 — the flaky cluster #773 and the clean non-guarded baseline #818, per #827 — and the promotion was not a tag flip: the forced-failure pass found layer 1 asserting the canvas nodes' `tools_metadata` field through the Playground modal, i.e. the tools ATTACHED to the agent rather than the ones it USED, and it passed on a run with no tool call at all. Rewritten onto `tool-status-done`, then 6 clean whole-file runs on 1.12.1 / `gpt-4o-mini` with five forced failures)
 - [x] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
 - [-] Agent returns output in correctly rendered Markdown → `llm-agents/agent-markdown-output.spec.ts`
 - [x] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
