@@ -303,6 +303,55 @@ Review (2026-09-17): re-run `npm run api:coverage` against the then-current
 nightly, refresh the baseline if the surface moved (`npm run api:baseline`, a
 committed diff), and date the next families.
 
+### Wave 8 — Inherited spec triage  ·  undated
+
+**Undated on purpose**: the order is fixed and the scope is measured, but the date
+is a review's call — the same treatment the pool's decided tail gets. First wave
+whose backlog is **derived from the suite** rather than listed in the checklist.
+
+Measured 2026-09-08 from the spec ASTs: 821 declared tests, 598 `@stable`. Of the
+223 without the tag, **116 are lane-gated and correct that way** (no scheduled
+lane exists for `@destructive` / `@enterprise` / `@serving`, so the tag would make
+a test run nowhere at all — #1010), **15** lost it per test (#1746's scope), and
+**92, across 55 spec files, have never carried it** — 70 of those from the single
+2026-03-11 import of Langflow's own suite. Nothing runs them: outside the daily
+by tag, outside the PR lane unless something they import changes. Design and
+decision record: `docs/triage/inherited-spec-triage-design.md`.
+
+Requires (GitHub milestone *Wave 8 — Inherited spec triage*):
+- **Instrument + pilot** (#1769): derive the population from the ASTs, freeze it
+  as `tests/assets/triage/inherited-backlog-baseline.json`, build the `--grep`
+  selector and the verdict renderer, make the shared E2E action emit
+  `results.json` — and **run the measurement as the pilot**, publishing
+  `docs/triage/inherited-spec-triage.md`. Same shape as #1692, which shipped a
+  whole instrument plus the `files` family in one issue.
+- **Guard** (#1770): every spec with no `@stable` test has an open issue that owns
+  it or a committed exemption whose reason is verified in **both** directions
+  (#1084). Fails on the PR's own diff, notices on the pre-existing backlog (#980),
+  and reports from the daily into an issue body rather than a log line (#1252).
+- **Follow-ups, one issue per cause cluster, filed off the committed verdict
+  table** (largest cluster first, mirroring how #1699/#1700/#1707 were filed off
+  the API baseline): **T1** only — 26 specs / 41 tests.
+
+Notes: three outcomes per spec and no fourth — promote (four conditions, all
+required), delete (only with a named replacing spec **and** test), or park (filed
+issue, `test.fixme` linking it, reason in the doc). Green alone never promotes:
+that is how Wave 4 imported invisible reds. **T2** — the 29 specs / 51 tests with
+neither a doc nor id-scoped cleanup — is Wave 9, a full wave on its own by the
+Wave 4 measurement. OSS only, verified: 0 of the 55 sit under `enterprise/`,
+`serving/` or `governance/`. **Two entries below are absorbed** rather than run in
+parallel: the pool's *Disabled-test triage* (the backlog holds all 10 of its
+current `test.skip`/`test.fixme` declarations) and most of the continuous spec-doc
+backfill (33 of the 41 specs that lack a mirrored doc).
+
+Convergence: **the checklist `%` may FALL, and that is not a regression** —
+deleting a duplicate removes numerator. Directional, like Wave 6's.
+Exit: the verdict table is committed; T1 is empty (every one of its 26 specs
+promoted, deleted or parked); the guard runs in the daily; the frozen baseline has
+shrunk to the parked set; Wave 9 is fillable with a concrete list.
+Review: at the next roadmap review — date Wave 9 off the table's T2 rows, and
+re-run `npm run triage:baseline -- --check` before quoting any count here.
+
 ---
 
 ## Pool — not yet dated
@@ -316,7 +365,7 @@ committed diff), and date the next families.
 
 - **Auth & user management** — login/logout states, admin user lifecycle, auto-login, session isolation (`auth/` §4.1–4.2, ~13 `[-]`).
 - **Project-management tail** — deletion integrity, move/drag flows, folder navigation & search (`project-management/` §10, ~7 `[-]`/`[~]`).
-- **Disabled-test triage** — audit the 53 `test.skip` / 1 `test.fixme`: re-enable real ones, delete dead stubs (e.g. `voice-assistant.spec.ts`, `generalBugs-shard-3` no-op), resolve the webhook `fixme` (#165).
+- **Disabled-test triage** — **mostly absorbed by Wave 8** (#1769). The "53 `test.skip` / 1 `test.fixme`" figure counted in-body `test.skip(cond, msg)` guards as declarations; measured 2026-09-08 the suite holds **10** disabled *declarations*, of which **7 are inside Wave 8's backlog** (`voice-assistant` ×3, `generalBugs-shard-3`, `toolModeGroup`, `youtube-transcripts`, `run-flow`). The **3 that remain here** sit in files that still carry `@stable` tests, so Wave 8's predicate excludes them by design: `loop-component-regression`, `publish-flow`, `credential-secret-exposure`. The entry's webhook `fixme` (#165) is **not** among them — no webhook spec has a disabled declaration today, so that pointer needs re-checking before this item is dated.
 
 **Needs scoping first (Rule 1 — no inventing inside a wave):**
 
@@ -326,7 +375,7 @@ committed diff), and date the next families.
 
 > Not a wave. Runs alongside every wave per `CONTRIBUTING.md`.
 
-- Close the ~129 specs without a matching doc under `docs/` (worst: `flow-functionality` ~39, `ui-ux` ~28). New specs ship with docs by policy; this clears the inherited debt.
+- Close the specs without a matching doc under `docs/`. New specs ship with docs by policy; this clears the inherited debt. **The "~129" is stale** — measured 2026-09-08, **41** of 314 specs lack a mirrored doc, and **33 of those 41 are inside Wave 8's backlog** (#1769), retiring as a side effect of its promote outcome. The 8 outside it are not necessarily debt at all: docs resolve by content reference, not filename (`scripts/check-checklist-coverage.ts`, header). Re-measure before sizing this track.
 
 ## Intake — community regression issues (proposed)
 

@@ -21,6 +21,44 @@
 - **Scope is OSS.** Lane selectors (`@destructive`, `@enterprise`, `@authz`, `@sso`, `@serving`, `@governance`) are excluded by construction and that exclusion is pinned by a test.
 - Out of scope for this plan, by construction: the Phase 2 cause-clustered batches. Their content is the measurement's output, so they get their own plan once the table lands.
 
+
+## How this becomes issues
+
+This plan is the content of **two** issues, not nine. The cut follows Wave 7,
+which is this repo's measured precedent for work of exactly this shape: #1692
+shipped an entire instrument as one issue — a committed baseline, a drift verdict
+in `globalSetup`, a fixture, an npm script, **and** the `files` family closed as
+its pilot — and its five siblings were then filed off that instrument's own gap
+ranking. Recent waves carry 6 (Wave 7) to 10 (Wave 6) issues, and they got there
+by making issues bigger, not more numerous.
+
+| Issue | Labels | Tasks | Branch |
+|---|---|---|---|
+| **A** — the triage instrument, with the measurement as its pilot | `qa-infra`, `roadmap` | 1–7 | one branch, one PR |
+| **B** — the `@stable` ownership guard | `qa-infra`, `roadmap` | 8–9 | one branch, one PR |
+
+Tasks 1–3 are deliberately **not** their own issues: a predicate with no consumer
+gives a reviewer nothing to approve or reject, and the pipeline gates one issue
+per branch, so nine issues would mean nine PRs for one instrument.
+
+Three consequences for whoever executes this:
+
+- **The measurement (Task 7) ships inside issue A's PR**, the way #1692's pilot
+  did. It is what proves the instrument end to end, and splitting it out would
+  make a second PR whose only content is a generated file.
+- **Every branch in Task 7 forks issue A's branch**, not `main`: the dispatched
+  ref has to carry Task 5's `results.json`, which `main` does not have yet.
+- **The pipeline's IMPLEMENT step needs every deliverable listed**, not just the
+  specs — an unlisted file makes the PR gate demand `extraFiles` plus a reason.
+  Each task's **Files** block is that list; issue A's is the union of Tasks 1–7's,
+  including the two generated artifacts (`tests/assets/triage/inherited-backlog-baseline.json`
+  and `docs/triage/inherited-spec-triage.md`) and the `package.json` script entries.
+
+The cause-clustered batches are issues C..N, filed off the committed verdict
+table once issue A lands — largest cluster first, one table row per test, the
+measured finding in the title, mirroring #1699/#1700/#1707. They are not planned
+here because their content is issue A's output.
+
 ---
 
 ### Task 1: One parser for every tagged declaration
@@ -1345,12 +1383,17 @@ No new code. This is the dispatch the previous tasks exist to make honest, and i
 **Files:**
 - Create: `docs/triage/inherited-spec-triage.md` (written by Task 6's script)
 
-- [ ] **Step 1: Refresh and verify the baseline on a clean `main`**
+- [ ] **Step 1: Verify the baseline on the issue's own branch**
+
+Tasks 1–7 are ONE issue and ONE branch (see *How this becomes issues*), so the
+measurement runs from that branch — never from `main`, which does not yet carry
+Task 5's `results.json` and would dispatch a run whose report cannot be read:
 
 ```bash
-git checkout main && git pull --ff-only && npm run triage:baseline -- --check
+git rev-parse --abbrev-ref HEAD   # the issue's branch, not main
+npm run triage:baseline -- --check
 ```
-Expected: `in sync`. If it is stale, land a baseline refresh commit first — measuring against a stale target is how the table ends up with UNKNOWN rows nobody can explain.
+Expected: `in sync`. If it is stale, refresh and commit it before dispatching — measuring against a stale target is how the table ends up with UNKNOWN rows nobody can explain.
 
 - [ ] **Step 2: Verify each shard's selection before spending a runner**
 
@@ -1364,18 +1407,23 @@ Expected: three non-empty fragments. Then confirm the counts sum to the baseline
 - [ ] **Step 3: Unmute the quarantined tests on a throwaway measurement branch**
 
 A `test.fixme`/`test.skip` declaration records `0/N` and reads as clean, so the
-10 disabled tests would be measured as "skipped" and tell us nothing. Unmute them
+7 disabled declarations inside the backlog would be measured as "skipped" and tell
+us nothing. Unmute them
 on a branch that is **never merged**, and dispatch from that ref.
 
 ```bash
 mkdir -p /tmp/triage
+# Forks the ISSUE's branch, which is what carries Task 5's results.json.
 git checkout -b measure/inherited-triage
 node -e 'const b=require("./tests/assets/triage/inherited-backlog-baseline.json");
 for (const s of b.specs) for (const t of s.tests) if (t.modifier)
   console.log(`${s.relativePath}:${t.line}\ttest.${t.modifier}\t${t.title}`)' | tee /tmp/triage/muted.tsv
 ```
 
-Expected: **10** lines. Edit each one, turning `test.fixme(` / `test.skip(` into
+Expected: **7** lines. (The suite holds 10 disabled declarations; the other 3 sit
+in files that still have `@stable` tests, so they are outside this population by
+clause 4 — `loop-component-regression`, `publish-flow` and
+`credential-secret-exposure`.) Edit each one, turning `test.fixme(` / `test.skip(` into
 `test(` at the listed line, then confirm none is left:
 
 ```bash
@@ -1386,7 +1434,8 @@ console.log(left.length?"STILL MUTED:\n"+left.join("\n"):"all unmuted")'
 git commit -am "test: unmute the quarantined backlog specs for the triage measurement
 
 MEASUREMENT BRANCH — do not merge. A test.fixme records 0/N and reads as clean,
-so the 10 quarantined tests would be measured as skipped and yield no verdict.
+so the 7 quarantined declarations in the backlog would be measured as skipped and
+yield no verdict.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push -u origin measure/inherited-triage
@@ -1431,7 +1480,7 @@ cut -f1 /tmp/triage/runs.tsv | while read -r id; do
   gh run download "$id" --repo oriontech-me/langflow-e2e \
     -n "playwright-json-manual-$id" -D "/tmp/triage/$id"
 done
-git checkout main
+git checkout -   # back to the issue's branch; the table is committed there
 node scripts/build-triage-table.mjs \
   $(for f in /tmp/triage/*/results.json; do printf -- '--report %s ' "$f"; done) \
   --out docs/triage/inherited-spec-triage.md \
@@ -1478,8 +1527,8 @@ git commit -m "docs(triage): the measured verdicts for the 55 never-validated sp
 Five dispatches: three sharded first passes plus two re-runs of everything not
 green, so flaky is separable from a hard failure. retries=0 throughout -- a retry
 hides exactly the intermittence this table exists to record -- and the ten
-quarantined tests were unmuted on a throwaway branch, since a test.fixme records
-0/N and reads as clean.
+quarantined declarations in the backlog were unmuted on a throwaway branch, since
+a test.fixme records 0/N and reads as clean.
 
 This is the scoping pass the wave's later items are filed from; a verdict here is
 an input to the design's §3 decision rules, never a conclusion.

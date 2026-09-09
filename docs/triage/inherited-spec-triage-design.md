@@ -149,7 +149,8 @@ never a conclusion.
 **Two ways the measurement itself lies, handled explicitly.** A green dispatch
 that executed **zero** tests (the `--grep` matched nothing) is an **abort**, not
 "all green" — a per-line `expected=N` read is what catches it. And a quarantined
-spec records `0/N` and reads as clean, so the 10 disabled tests are **unmuted on
+spec records `0/N` and reads as clean, so the 7 disabled declarations inside the
+backlog are **unmuted on
 the measurement branch** and their rows marked as such.
 
 ## 3. Decision rules — the three outcomes
@@ -262,16 +263,29 @@ duplicate removes numerator. `ROADMAP.md` already has the wording for this
 (`Convergence: directional`). Stated before the work starts, or the end of the
 wave gets read as a failure.
 
-**Sizing — split across two waves.** This is measured, not preference:
+**Sizing — split across two waves, and deliberately undated.** The split is
+measured; the dates are a review's call, and the roadmap already carries the
+wording for a decided-but-undated tail (*"ready to date — coin at a review"*):
 
 | Wave | Scope | Items |
 |---|---|---|
-| **Wave 8** (2026-09-17 → 10-01) | measurement + **T1** (26 specs / 41 tests) + the guard | 1 measurement + 4–6 batches + 1 guard ≈ **6–8 issues** |
+| **Wave 8** | the triage instrument **and its pilot run**, **T1** (26 specs / 41 tests), and the guard | 2 instrument issues + 4–6 batches ≈ **6–8 issues** |
 | **Wave 9** | **T2** (29 specs / 51 tests) — consolidate-and-harden | ~5–7 batches |
 
-T2 is a full wave on its own: Wave 4 ran ~46 bullets with that same recipe.
-Forcing T1 + T2 + guard into 09-17 → 10-01 gives ~13 issues, above the capacity
-band, and the roadmap's discipline is *lock the time, flex the scope*.
+T2 is a full wave on its own: Wave 4 ran ~46 bullets with that same recipe. All
+three in one wave is ~13 issues, well above what the recent waves carry (Wave 6
+ran 10, Wave 7 ran 6), and the roadmap's discipline is *lock the time, flex the
+scope*.
+
+**The issue shape follows Wave 7's, which is the measured precedent for work of
+exactly this kind.** #1692 shipped an entire instrument as ONE issue — a
+committed router-table baseline, a drift verdict in `globalSetup`, a fixture, an
+npm script, **and** the `files` family closed as its pilot — and its five
+siblings were then filed off that instrument's own gap ranking, largest family
+first. So the tooling plus the measurement run is one issue with the measurement
+as its pilot, the guard is a second, and the cause-clustered batches are filed
+off the committed verdict table the way #1699/#1700/#1707 were filed off the API
+baseline: one table row per unit, the measured finding in the title.
 
 **Anti-goals**, written down so they are not re-decided:
 
