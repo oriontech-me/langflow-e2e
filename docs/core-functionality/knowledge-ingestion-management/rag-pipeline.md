@@ -113,7 +113,19 @@ account's Google Vertex project-wide per-minute quota
 (`global_embed_content_requests_per_minute_per_base_model`, base model
 `gemini-embedding`) rejected the embedding call with **429 RESOURCE_EXHAUSTED**.
 Nothing failed the test on it, because the run is `POST /api/v2/workflows`, whose
-flow-error verdict is ADVISORY by design (#1162 staging).
+flow-error verdict was ADVISORY by design at the time (#1162 staging).
+
+**That verdict is no longer advisory — and this particular cause would still not
+fail the test, which is why the sentence needs both halves** (#1452). v2 was
+flipped to failing in `f3bdd864` (PR #1691), so a crashed run here now fails like
+a v1 one. A **provider quota** is the deliberate exception: `RESOURCE_EXHAUSTED`
+matches `PROVIDER_OUTAGE_PATTERNS`, so it is downgraded to *unevaluated* rather
+than reported as a flow error — on purpose, because failing on a drained account
+is what would strip `@stable` in an unreviewed commit (#1165). So the wait below
+is not made redundant by the flip: for this exact failure it remains the only
+thing that observes the run at all. A spec that wants the run's verdict itself
+can now read it with `page.flowErrorReport()`, whose `clean` is false for an
+unevaluated run.
 
 Each node run therefore:
 

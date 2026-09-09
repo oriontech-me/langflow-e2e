@@ -111,7 +111,7 @@ export type FlowErrorVerdict =
  * the fixture with no failing flow-error gate at all, which is a real loss for a
  * hypothetical one; the honest bound is documented rather than removed.
  *
- * The read budget is bounded accordingly — see `SHORT_READ_TIMEOUT_MS` in
+ * The read budget is bounded accordingly — see `V1_BODY_READ_TIMEOUT_MS` in
  * `fixtures.ts`: only v2 reads get the long budget, because only v2 reads are
  * drained at teardown.
  */

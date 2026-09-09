@@ -92,7 +92,11 @@ machinery (family standard). Per model, a serial describe with two tests:
    `tool_use` block whose `output` contains today's **UTC** date
    (`YYYY-MM-DD` computed at assert time; the day-boundary edge accepts
    today-or-yesterday UTC to survive a midnight flip mid-run).
-6. No `allowFlowErrors` — any flow error fails via the fixture.
+6. No `allowFlowErrors` — a flow error the fixture reaches a verdict on fails the test
+   (v1, and v2 since #1165). A run it could NOT read — a cancelled stream, a
+   provider outage — is reported as *unevaluated* and does not fail anything;
+   `page.flowErrorReport()` is how a spec asserts that guarantee for itself
+   (#1452, `CONTRIBUTING.md` step 5).
 
 **Test 2 — toggle OFF: the date tool is removed from the toolkit (§6.5)**
 
@@ -107,7 +111,7 @@ machinery (family standard). Per model, a serial describe with two tests:
    **zero** `get_current_date` `tool_use` blocks. The final AI bubble must
    be visible and non-empty (the run completed; what the model *says*
    about the date is deliberately not asserted).
-6. No `allowFlowErrors`.
+6. No `allowFlowErrors` (same caveat as test 1, step 6).
 
 ---
 

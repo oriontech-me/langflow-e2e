@@ -20,6 +20,10 @@ import {
   type CapturedStream,
 } from "./run-stream-capture";
 import {
+  buildFlowErrorReport,
+  type FlowErrorReport,
+} from "./flow-error-report";
+import {
   coverageTeardownError,
   installApiCoverage,
   writeCoverageRecord,
@@ -103,6 +107,37 @@ export type PageWithErrorHooks = Page & {
    * one of them looking stale.
    */
   expectKnownHttpError: (defect: KnownHttpDefect) => void;
+  /**
+   * Read the flow-error verdict this test has reached SO FAR (#1452).
+   *
+   * The gate above fails a test on a verdict it reached. This is how a spec asks
+   * about the verdicts it did NOT reach — a cancelled stream, an unreadable
+   * body, an unwatched v2 surface, a provider outage — all of which are printed
+   * as *"unknown, not clean"* and then leave the test green. For a spec whose
+   * contract is "the run did not crash", that silence is the assertion not
+   * happening, so:
+   *
+   * ```ts
+   * const report = await (page as PageWithErrorHooks).flowErrorReport();
+   * expect(report.evaluated, "no run stream was accounted for").toBeGreaterThan(0);
+   * expect(report.clean, report.summary).toBe(true);
+   * ```
+   *
+   * BOTH lines. `clean` is vacuously true when nothing was accounted for, so on
+   * its own it makes "the run was healthy" and "the send never fired" the same
+   * assertion — the #1092 shape this accessor exists to close, and measured:
+   * the healthy-run behavioural test passed under every mutation it was meant to
+   * catch until `evaluated` was asserted.
+   *
+   * Read-only, and NOT a hatch: `allowFlowErrors()` suppresses the gate, it does
+   * not empty this report — which also means the report is CUMULATIVE for the
+   * whole test: once anything has failed, `clean` stays false. A per-run window
+   * is two reports diffed; see `flow-error-report.ts`'s header. Call it AFTER the run has finished — a stream still
+   * open has no verdict yet and is reported as `pending`, which is not clean
+   * either; the accessor deliberately does not wait, because nothing here can
+   * know whether a given stream will ever close.
+   */
+  flowErrorReport: () => Promise<FlowErrorReport>;
 };
 
 // Extend test to log backend errors
@@ -178,8 +213,32 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
      * a race nobody could see.
      */
     const unevaluatedStreams = new Map<string, number>();
-    const countUnevaluated = (reason: string) =>
-      unevaluatedStreams.set(reason, (unevaluatedStreams.get(reason) ?? 0) + 1);
+    const countUnevaluated = (reason: string, howMany = 1) =>
+      unevaluatedStreams.set(reason, (unevaluatedStreams.get(reason) ?? 0) + howMany);
+    /**
+     * Run streams the fixture DID reach a conclusion about — failed or clean.
+     *
+     * Not the same as "did not fail": `clean` would otherwise be vacuously true
+     * for a test in which no run ever happened, so a spec that adopted the
+     * accessor would keep passing if the send never fired or the run moved to an
+     * endpoint `runStreamSurface()` does not know (the "a nonexistent path is
+     * silent" failure this repo files under #1092). A provider outage does NOT
+     * count: it is a conclusion about the account, not about Langflow.
+     */
+    let evaluatedStreams = 0;
+    /**
+     * v1 verdicts still in flight (#1452).
+     *
+     * The v1 body read is deliberately untracked — attaching anything to that
+     * promise marks its rejection handled and downgrades the gate from
+     * "interrupts the running test" to "fails its teardown" (measured: 238 ms vs
+     * 10 249 ms). This counter is NOT that: it is incremented before the
+     * listener's async work and decremented in a `finally` INSIDE it, so the
+     * intentional throw still escapes as an unhandled rejection. Without it the
+     * accessor answered `clean` on a v1 error the fixture logged milliseconds
+     * later — confirmed by probe during review.
+     */
+    let v1VerdictsInFlight = 0;
 
     /**
      * Render a flow-error verdict. Shared, because the two surfaces reach it by
@@ -237,6 +296,7 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       }
       const verdict = classifyFlowError(stream.body);
       if (reportProviderOutage(stream.url, verdict)) return;
+      evaluatedStreams += 1;
       // Step 2 of #1162: a v2 verdict now FAILS the test, like v1 (#1165).
       //
       // It fails through the teardown check rather than by throwing from here,
@@ -263,7 +323,6 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       declaredDefects.push(defect);
       declaredDefectHits.set(defect, 0);
     };
-
     // Capture v2 run-stream bodies as they arrive. This is what makes the v2
     // verdict deterministic: the old `response.text()` path lost every run whose
     // stream outlived its test, which on the node-run path was all of them
@@ -272,6 +331,57 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       page,
       judgeCapturedStream,
     );
+
+    /**
+     * The unevaluated tally, plus the runs that never produced a stream at all.
+     *
+     * A v2 run that answered non-200 is captured nowhere — there is nothing to
+     * read — and an HTTP error never fails a test on its own (#1084), so before
+     * this a `POST /api/v2/workflows` that answered 500 read back as a perfectly
+     * clean run: the hardest possible crash, reported as the absence of one
+     * (confirmed by probe during review). Built as a fresh Map rather than
+     * folded into `unevaluatedStreams`, so the count cannot double when both the
+     * accessor and the teardown ask.
+     */
+    const unevaluatedSnapshot = (): Map<string, number> => {
+      const snapshot = new Map(unevaluatedStreams);
+      const nonOk = runStreamCapture.nonOkRuns();
+      if (nonOk > 0) {
+        snapshot.set("run answered non-2xx (no stream to judge)", nonOk);
+      }
+      return snapshot;
+    };
+
+    // Read-only view of the same accounting the teardown renders (#1452).
+    //
+    // The `settle()` is LOAD BEARING, and measured rather than assumed: with it
+    // removed, three of the SEVEN accessor tests in `flow-error-gate.spec.ts`
+    // fail 5 runs out of 5 — the v2 error and the provider outage both read back
+    // as a CLEAN run, and the healthy run reads as unaccounted. (An earlier
+    // version of this comment said "two of the four", which was a stale count of
+    // BOTH numbers and the same defect the sweep below is about.) `judgeCapturedStream` runs from an async continuation, so a
+    // stream that has already closed is still a CDP round-trip short of being
+    // counted, and an accessor that answers first reports the one thing it
+    // exists to prevent. Streams still OPEN are left alone: judging one early
+    // would spend its partial body on a verdict while the rest of the run was
+    // still arriving, and `drain()` in its place loses the teardown's verdict
+    // altogether (measured too — the pending test fails on it).
+    (page as any).flowErrorReport = async (): Promise<FlowErrorReport> => {
+      await runStreamCapture.settle();
+      return buildFlowErrorReport({
+        failures: errors
+          .filter((e) => e.type === "flow_error")
+          .map((e) => ({ url: e.url, message: e.responseBody ?? "" })),
+        unevaluated: unevaluatedSnapshot(),
+        // Both surfaces. `settle()` only covers the v2 capture, so a v1 verdict
+        // still resolving would otherwise be invisible here — and the v1 read
+        // has its own 2 s budget, which is 2 s of a report that could say
+        // "clean" about a run the fixture is about to fail.
+        pending: runStreamCapture.pendingStreams() + v1VerdictsInFlight,
+        evaluated: evaluatedStreams,
+        v2Watched: runStreamCapture.available,
+      });
+    };
 
     // Monitor API responses for errors
     page.on("response", async (response) => {
@@ -405,8 +515,10 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       const surface =
         status === 200 ? runStreamSurface(url, response.request().method()) : null;
       if (surface === "v1") {
+        v1VerdictsInFlight += 1;
         void (async () => {
           try {
+           try {
             const contentType = (
               response.headers()["content-type"] || ""
             ).toLowerCase();
@@ -455,6 +567,7 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
             // `failed: false` verdict, so an early return on `!verdict.failed`
             // would drop it without a word — on the surface that DOES fail tests.
             if (reportProviderOutage(url, verdict)) return;
+            evaluatedStreams += 1;
             if (!verdict.failed) return;
             reportFlowError(url, verdict);
 
@@ -471,11 +584,18 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
               (page as any).emit("pageerror", new Error(errorMessage));
               throw new Error(errorMessage);
             }
-          } catch (e) {
+           } catch (e) {
             // Only ignore parsing errors, not our intentional throws
             if (e instanceof Error && e.message.includes("Flow execution error")) {
               throw e;
             }
+           }
+          } finally {
+            // Runs on the intentional throw too, and the throw still propagates
+            // out of this async function as the unhandled rejection the gate
+            // depends on — a `finally` does not handle a rejection, unlike the
+            // `.catch()` the invariant in `flow-error-policy.test.ts` forbids.
+            v1VerdictsInFlight -= 1;
           }
         })();
       }
@@ -491,6 +611,21 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
     for (const stream of await runStreamCapture.drain()) {
       judgeCapturedStream(stream);
     }
+    // Whatever `drain()` could not settle. `drain()` empties `open` and judges
+    // it, but `settling` past the budget and `requests` whose headers never came
+    // survive it — and the session is detached immediately after, so they never
+    // will settle. Before this they were simply dropped: a #1012 violation
+    // introduced by the very budget that made `settle()` safe, since the OLD
+    // `drain()` awaited `settling` without a cap and could not leave a residual.
+    // Read AFTER the drain on purpose — read before it, this would count the
+    // streams the drain is about to judge.
+    const residual = runStreamCapture.pendingStreams();
+    if (residual > 0) {
+      countUnevaluated(
+        "run stream still pending when the test ended (settle budget exhausted)",
+        residual,
+      );
+    }
     if (!runStreamCapture.available) {
       // No CDP session, so the whole v2 surface went unwatched for this test.
       // Said out loud rather than left to read as a clean run (#1012).
@@ -500,10 +635,12 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
     // Say it out loud: a run stream the fixture could not read means the
     // flow-error verdict for this test is UNKNOWN, not clean. Same rule as the
     // daily's runguard (#1012) — a verdict that cannot be produced must not read
-    // as a pass. All four give-up paths funnel here; three of them used to be
-    // silent, and one printed nothing at all.
-    if (unevaluatedStreams.size > 0) {
-      const breakdown = [...unevaluatedStreams.entries()]
+    // as a pass. EVERY give-up path funnels here — the count once written in this
+    // comment ("all four") was already short of the call sites above (#1452);
+    // three of them used to be silent, and one printed nothing at all.
+    const unevaluatedAtTeardown = unevaluatedSnapshot();
+    if (unevaluatedAtTeardown.size > 0) {
+      const breakdown = [...unevaluatedAtTeardown.entries()]
         .map(([reason, count]) => `      ${count}× ${reason}`)
         .join("\n");
       console.log(

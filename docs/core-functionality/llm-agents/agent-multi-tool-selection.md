@@ -50,8 +50,9 @@ tool** ("you MUST call exactly one tool… choose the tool that fits") — tool
 the test flaky), but tool *choice* is left entirely to the agent, which is
 exactly the behavior under test.
 
-Both runs finishing with zero flow errors (fixture, no `allowFlowErrors`)
-with both tools wired is what proves §6.2's "executes correctly".
+Both runs finishing with zero flow errors (fixture, no `allowFlowErrors` — see
+the caveat in step 7 for what the fixture does and does not gate) with both
+tools wired is what proves §6.2's "executes correctly".
 
 If this test fails, agents mis-route prompts across their toolset — the core
 usefulness contract of multi-tool agents.
@@ -166,7 +167,11 @@ describe with two tests:
    a rare model-side behavior tracked as a flake in #634, and this test's
    contract (tool selection + execution) is fully proven by step 5 + this output
    assert without coupling to it.
-7. No `allowFlowErrors` — any flow error fails the test via the fixture.
+7. No `allowFlowErrors` — a flow error the fixture reaches a verdict on fails the test
+   (v1, and v2 since #1165). A run it could NOT read — a cancelled stream, a
+   provider outage — is reported as *unevaluated* and does not fail anything;
+   `page.flowErrorReport()` is how a spec asserts that guarantee for itself
+   (#1452, `CONTRIBUTING.md` step 5).
 
 **Test 2 — search prompt selects the Web Search tool (§6.4)**
 
@@ -180,7 +185,7 @@ describe with two tests:
 6. **Execution assert (UI):** the final AI bubble is visible and non-empty
    (search result content is inherently non-deterministic — the selection
    assert in step 5 is the concrete observable; see false-positive notes).
-7. No `allowFlowErrors`.
+7. No `allowFlowErrors` (same caveat as test 1, step 7).
 
 **Test 3 — chained prompt runs both tools in sequence (§6.4 sequence)**
 
@@ -210,7 +215,7 @@ describe with two tests:
    `indexOf(fetch_content) < indexOf(perform_search)` — the agent ran the two
    tools one after another in the required order. Only names/order are
    asserted (search content is non-deterministic).
-7. No `allowFlowErrors`.
+7. No `allowFlowErrors` (same caveat as test 1, step 7).
 
 > **Why `max_iterations` is capped here and nowhere else (#1378).** Unlike
 > tests 1–2, this test's instruction *permits* a multi-tool sequence, and the
@@ -372,21 +377,30 @@ tools in the wrong order, fails).
   spec doc never specified a bubble assert for it. The code carried one
   anyway — never documented here — and it was the line that failed on every
   context blow-up, reporting `element(s) not found` instead of the real cause.
-  It is removed rather than relaxed — and the cost of that has to be stated
-  plainly, because the natural phrasing ("no `allowFlowErrors`, so the fixture
-  catches a crashed run") is **false on this surface today**. The Playground
-  runs through `POST /api/v2/workflows`, where the flow-error verdict is
-  ADVISORY by design (#1165) — the fixture prints *"this does NOT fail the test
-  yet"*, and #1378's own evidence carries that exact line for this spec. So the
-  ordered `tool_use` assert is now the **only** gate, and it reads data
-  persisted *before* an overflow: a run that calls both tools and then dies
-  could satisfy it. That is unmeasured rather than disproven — an attempt to
-  force the overflow on `1.12.0.dev20` did not reproduce it — and #14489 makes
-  the scenario much harder to reach from `dev25` on, which is why it is a
-  follow-up rather than a blocker. When the v2 verdict flips to failing, the
-  fixture becomes the gate this paragraph used to claim it already was; until
-  then the honest gate would be a fixture accessor for the advisory verdict,
-  never a proxy assert on the reply bubble.
+  It is removed rather than relaxed, and the cost of that was stated here as a
+  standing caveat — *"no `allowFlowErrors`, so the fixture catches a crashed
+  run" is false on this surface today* — because the Playground runs through
+  `POST /api/v2/workflows`, whose verdict was ADVISORY by design at the time
+  (#1165, and #1378's own evidence carries the *"does NOT fail the test yet"*
+  line for this spec). **That is no longer the state of the fixture, and the
+  correction is the point of #1452:** the v2 verdict was flipped to failing in
+  `f3bdd864` (PR #1691), so a crashed run on this surface now fails the test
+  like a v1 one. The ordered `tool_use` assert is no longer the only gate.
+
+  Two things survive the flip, and they are why this bullet is not simply
+  deleted. The ordered assert still reads data persisted *before* an overflow,
+  so a run that calls both tools and then dies could satisfy **it** — unmeasured
+  rather than disproven (forcing the overflow on `1.12.0.dev20` did not
+  reproduce it, and `langflow-ai/langflow#14489` makes the scenario much harder
+  to reach from `dev25` on), and now backed by the fixture rather than standing
+  alone. And the fixture gates a verdict it **reaches**: a run it could not read
+  — a cancelled stream, an unreadable or empty body, an unwatched v2 surface, or
+  the deliberate provider-outage downgrade — is reported as *unevaluated* and
+  fails nothing. The accessor this paragraph used to call for now exists:
+  `page.flowErrorReport()` (#1452), whose `clean` is true only when a verdict
+  was reached for every run in the test and all of them were clean. Adopting it
+  in this spec needs a validated run against a live provider, so it is a
+  follow-up here rather than part of #1452.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — expect the sibling tool
   as first call in test 1 ⇒ selection assert must fail; M2 — assert an
   impossible title (e.g. `Sample Slide Show XYZ`) ⇒ the `fetch_content`

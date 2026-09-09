@@ -333,7 +333,57 @@ The base fixture prints backend errors automatically. Look for:
 
 - `🚨 Backend Error:` — unexpected HTTP error. **Logged, never fails the test** (#1084)
 - `🚨 Flow Error Detected` — silent failure in flow execution. **Fails the test** unless
-  the spec called `page.allowFlowErrors()`
+  the spec called `page.allowFlowErrors()` — on both run surfaces since #1165
+  (`POST /api/v2/workflows`, i.e. every Playground and agent run on 1.12.x, was staged
+  as advisory until then)
+- `⚠️  run stream(s) NOT evaluated` — the fixture could not reach a verdict for a run:
+  a cancelled stream, an unreadable body, no CDP session, or a **provider outage** (a
+  drained key, a quota — downgraded on purpose, since failing on it would strip `@stable`
+  in an unreviewed commit). **Nothing fails.** The verdict for that run is unknown, not
+  clean (#1012), so this line is a finding like the advisory HTTP one below it
+
+If your spec's contract IS "the run did not crash" — as `agent-tool-error-handling`'s is —
+the gate above is not enough on its own, because it can only fail on a verdict it reached.
+Assert the verdict directly (#1452):
+
+```typescript
+// PageWithErrorHooks is exported from tests/fixtures/fixtures.ts alongside `test`
+const report = await (page as PageWithErrorHooks).flowErrorReport();
+expect(report.evaluated, "no run stream was accounted for at all").toBeGreaterThan(0);
+expect(report.clean, report.summary).toBe(true);
+```
+
+**Both lines, and the first one is the one that gets dropped.** `clean` is vacuously
+true when nothing was accounted for, so a spec asserting it alone keeps passing when the
+send never fired or the run moved to an endpoint `runStreamSurface()` does not classify —
+"the run was healthy" and "there was no run" become the same assertion, which is #1092's
+silent-nonexistent-path shape. `flow-error-gate.spec.ts` records the same lesson from the
+other side: its healthy-run test passed under every mutation it was meant to catch until
+`evaluated` was asserted.
+
+`clean` is true only when every run stream in the test was evaluated and none of them
+failed — an unevaluated run is not clean. It also requires `v2Watched`, and that is the
+half worth knowing mid-test: with no CDP session the unevaluated count is still **empty**
+until teardown, so `v2Watched` is the only thing keeping the report from reading clean at
+the moment a spec asks. `summary` always names whichever reason applied. Call it **after** the run has finished (a stream
+still open is reported as `pending`, which is not clean either; it does not wait, because
+nothing can know whether a given stream will close). It is read-only and NOT a hatch:
+`allowFlowErrors()` suppresses the gate, it does not empty the report, so a hatched spec
+can still find out what actually happened.
+
+**It is cumulative for the whole test, not per run.** Once anything has failed, `clean`
+stays false for the rest of the test — an earlier version of this paragraph said a spec
+could tolerate one deliberate failure and then assert a *later* run came back clean, and
+it cannot. A spec that needs a per-run window takes TWO reports and compares them:
+
+```typescript
+const before = await (page as PageWithErrorHooks).flowErrorReport();
+// … drive the run …
+const after = await (page as PageWithErrorHooks).flowErrorReport();
+expect(after.failures.length).toBe(before.failures.length);
+expect(after.evaluated, "the run produced no verdict at all")
+  .toBeGreaterThan(before.evaluated);
+```
 
 Because an HTTP error cannot fail a test, **this step is the only thing standing between a
 real backend 500 and a green run** — the fixture prints
