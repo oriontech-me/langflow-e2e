@@ -476,6 +476,48 @@ test("the workflow takes the issue title from the script, never a second copy", 
   );
 });
 
+// The two properties the whole design leans on, neither of which was pinned.
+// Structural, and #1226 is the standing reason that is the weaker thing — but a
+// workflow cannot be exercised from a unit test at all, so the alternative here
+// is not a behavioural guard, it is nothing.
+test("the workflow checks out FULL history and never destroys the report on a lookup outage", () => {
+  const wf = fs.readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/stable-orphan-reconcile.yml"),
+    "utf-8",
+  );
+
+  // Without it every row comes back UNKNOWN — loud, useless, and the benign
+  // half of the pair. Pinned anyway: the reason lives in a comment that a tidy-up
+  // can carry away with the line.
+  assert.match(
+    wf,
+    /fetch-depth:\s*0/,
+    "the reconcile job checks out full history — a shallow clone dates no removal",
+  );
+
+  // The destructive half. `has_findings` is `false` on a lookup outage for the
+  // same reason it is false on a clean tree, so the CLOSE step without this
+  // clause would comment on and close a standing issue listing real orphans —
+  // silently, on a five-minute GitHub API blip, taking any human notes with it.
+  const closeStep = wf.slice(wf.indexOf("Close the report issue when there is nothing left"));
+  assert.ok(closeStep.length > 0, "the close step is still in this workflow");
+  assert.match(
+    closeStep.slice(0, 400),
+    /tracker_lookup_failed == 'false'/,
+    "the CLOSE step is barred when the issue lookup itself failed",
+  );
+
+  const openStep = wf.slice(
+    wf.indexOf("Open or refresh the orphan report issue"),
+    wf.indexOf("Close the report issue when there is nothing left"),
+  );
+  assert.match(
+    openStep.slice(0, 400),
+    /tracker_lookup_failed == 'false'/,
+    "the REFRESH step is barred when the issue lookup itself failed — it rewrites the whole body",
+  );
+});
+
 // ─── Review findings, pinned ─────────────────────────────────────────────────
 
 test("a SHALLOW clone reports UNKNOWN, never `never` — the false-clean the check exists to prevent", () => {

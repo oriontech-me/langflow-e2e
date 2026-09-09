@@ -358,19 +358,41 @@ export interface DeclaredTest {
    * "is `@stable` written on this line".
    */
   stable: boolean;
-  /** Declared as `test.fixme(...)` — skipped before its body runs, on every lane. */
+  /**
+   * Declared with a modifier that skips it before its body runs, on every lane
+   * — `test.fixme(title, …)` or the declaring `test.skip(title, …)`.
+   */
   fixme: boolean;
   /** A `tag` option existed but could not be read as an inline array of literals. */
   unparseableTags: boolean;
 }
 
-/** Match `test.fixme(...)` used as a DECLARING call (title + options + body). */
-function isFixmeDeclaration(call: ts.CallExpression): boolean {
+/**
+ * Match a DECLARING call that also skips the test before its body runs —
+ * `test.fixme(title, …)` and `test.skip(title, …)`.
+ *
+ * `test.skip` is in here for the reason the reconciler exists at all: without
+ * it, a test quarantined with `test.skip("title", …)` is not a row in the
+ * output — not an orphan, not owned, not UNKNOWN, simply absent, which is the
+ * silent-nonexistent-path shape (#1092) inside the check written to end it.
+ * There are none today, so this is latent rather than a live gap; that is why
+ * it is a parser rule and not a report.
+ *
+ * The MODIFIER form (`test.skip(condition, "reason")`, called from inside a
+ * test) cannot be confused with it: its first argument is a condition or an
+ * arrow function, never a string literal, and it is not the two-arg
+ * title-plus-body shape either.
+ */
+const DECLARING_SKIP_MODIFIERS = ["fixme", "skip"] as const;
+
+function isSkippedDeclaration(call: ts.CallExpression): boolean {
   return (
     ts.isPropertyAccessExpression(call.expression) &&
     ts.isIdentifier(call.expression.expression) &&
     call.expression.expression.text === "test" &&
-    call.expression.name.text === "fixme" &&
+    (DECLARING_SKIP_MODIFIERS as readonly string[]).includes(
+      call.expression.name.text,
+    ) &&
     call.arguments.length >= 2 &&
     literalText(call.arguments[0]) !== null
   );
@@ -378,7 +400,8 @@ function isFixmeDeclaration(call: ts.CallExpression): boolean {
 
 /**
  * Every declared test in one spec's SOURCE TEXT — `test(...)` and the declaring
- * form of `test.fixme(...)` alike — with the tags that reach it.
+ * forms of `test.fixme(...)` / `test.skip(...)` alike — with the tags that
+ * reach it.
  *
  * Deliberately broader than `parseStableTests()`, which only ever needed the
  * `@stable` subset for the checklist blocks. The reconciler needs the
@@ -415,7 +438,7 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
           (LANE_TAGS as readonly string[]).includes(t),
         );
         if (lane.length > 0) childrenLane = [...inheritedLane, ...lane];
-      } else if (isPlainTestCall(node) || isFixmeDeclaration(node)) {
+      } else if (isPlainTestCall(node) || isSkippedDeclaration(node)) {
         const title = literalText(node.arguments[0]);
         if (title !== null) {
           const { tags, unparseable } =
@@ -432,7 +455,7 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             line: line + 1,
             tags: [...own, ...inheritedLane.filter((t) => !own.includes(t))],
             stable: inheritedStable || own.includes(STABLE_TAG),
-            fixme: isFixmeDeclaration(node),
+            fixme: isSkippedDeclaration(node),
             unparseableTags: unparseable,
           });
         }

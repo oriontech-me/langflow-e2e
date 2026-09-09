@@ -305,6 +305,36 @@ test("the declaring form of test.fixme is a declared test, and is marked", () =>
   assert.equal(out[0].title, "a quarantined test");
 });
 
+test("the declaring form of test.skip is a declared test too, and is marked", () => {
+  // Latent, not live: there are zero such declarations in the suite today. It
+  // is a parser rule rather than a report because the failure mode is silence —
+  // a test quarantined this way was not an orphan, not owned and not UNKNOWN,
+  // it was simply absent from the reconciler's output, which is the
+  // nonexistent-path shape (#1092) inside the check written to end it.
+  const out = declaredIn(`
+    test.skip("a test quarantined with skip", { tag: ["@regression"] }, async ({ page }) => {});
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, true, "it runs on no lane, same as test.fixme");
+  assert.equal(out[0].title, "a test quarantined with skip");
+});
+
+test("the MODIFIER form of test.skip is not mistaken for a declaration", () => {
+  // The form the suite actually uses — 8 call sites today, e.g.
+  // `model-provider-base-url-ssrf.spec.ts`. Its first argument is a condition or
+  // an arrow function, never a string literal, which is what separates the two.
+  const out = declaredIn(`
+    test("a test that skips itself", { tag: ["@regression"] }, async ({ page }) => {
+      test.skip();
+      test.skip(true, "a reason");
+      test.skip(process.env.X !== "1", "another reason");
+      test.skip(({ browserName }) => browserName === "firefox", "yet another");
+    });
+  `);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fixme, false, "the declaration is a plain test()");
+});
+
 test("an in-body test.fixme() call is not mistaken for a declaration", () => {
   const out = declaredIn(`
     test("a test that skips itself", { tag: ["@regression"] }, async ({ page }) => {
