@@ -88,12 +88,25 @@ Route by the verdict:
   start-time overlap in the report JSON. (Real case: #553 — 3/3 failing
   attempts had a `memory-history-regression` test starting inside the
   failure window; its `loadTemplateByName` → `cleanAllFlows` was the wiper.)
-  **Hunt wipers TRANSITIVELY** — a spec-level grep for `cleanAllFlows` misses
-  indirection: in #520 the wiper was `model-provider-model-toggle` via
-  `SimpleAgentTemplatePage.load()` → `loadTemplateByName` → `cleanAllFlows`
-  (a POM hop that hid a 15-spec / 11-`@stable` wiper family). Grep the POMs
-  and helpers a suspect imports, not just the spec body. Same class, roles
-  swap freely: #553's wiper (memory-history) was #520's victim.
+  **Hunt wipers TRANSITIVELY** — the wiper can sit one POM or helper hop away
+  from the spec body, so a spec-level grep misses it. Grep the POMs and
+  helpers a suspect imports, not just the spec, and grep for the BEHAVIOUR
+  rather than for a helper name: **any delete that is not id-scoped**, reached
+  through such a hop — a sweep over `GET /api/v1/flows/`, a delete-by-name or
+  by shared display name, a "clean everything first" pre-step in a POM
+  `load()`. **Historical incidents**, kept because the class recurs and NOT as
+  a chain to reproduce: in #520 the wiper was `model-provider-model-toggle`
+  via `SimpleAgentTemplatePage.load()` → `loadTemplateByName` → a global
+  pre-cleanup (a POM hop that hid a 15-spec / 11-`@stable` wiper family), and
+  #553's wiper was `memory-history` through the same `loadTemplateByName`.
+  **Neither chain resolves today**: the #553 fix removed that pre-cleanup and
+  `tests/helpers/flows/load-template-by-name.ts` records the removal in its
+  own docblock ("Deliberately NO pre-cleanup of existing flows: this helper
+  used to call `cleanAllFlows` first"), and #1772 then retired the helper
+  itself — so that name has **no live call site and no definition** anywhere in
+  the tree: grepping it today returns only prose warning against it. Hunt the
+  shape, not the name. Same class, roles swap freely: #553's wiper
+  (memory-history) was #520's victim.
   GitHub quirk: a `Fixes #NNN` EDITED into an open PR's body may not
   auto-close that issue on merge — verify both issues' state post-merge and
   close manually with a reference comment if needed.
