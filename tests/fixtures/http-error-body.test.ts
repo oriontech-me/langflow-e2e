@@ -197,6 +197,35 @@ test("an error whose message getter THROWS does not throw out of the fixture", (
   assert.match(out.line, /could not be read/);
 });
 
+test("an error whose message is NOT a string does not throw out of the fixture", () => {
+  // The sibling above pins a message getter that THROWS, which the outer try
+  // catches. This pins the case that ESCAPED it: `Error.message` is typed
+  // `string` and is a plain own property, so anything can be written to it, and
+  // the coercion happened one frame up — OUTSIDE the try — where `raw.split()`
+  // threw `TypeError: raw.split is not a function`. From an async `response`
+  // handler with no surrounding try that is an unhandled rejection, i.e. an
+  // HTTP error FAILING a test, which #1084 says never happens.
+  const withMessage = (message: unknown): Error => {
+    const error = new Error("placeholder");
+    Object.defineProperty(error, "message", { value: message });
+    return error;
+  };
+  for (const message of [
+    Symbol("s"),
+    123,
+    { a: 1 },
+    ["a"],
+    null,
+    undefined,
+    true,
+  ]) {
+    const out = describeResponseBody({ ok: false, error: withMessage(message) });
+    assert.equal(typeof out.bodyUnavailable, "string");
+    assert.ok(out.line.length > 0, `no line for message ${String(message)}`);
+    assert.equal(out.responseBody, undefined);
+  }
+});
+
 test("both real Chromium rejection messages survive intact", () => {
   // Two different real strings, and the two halves of this change had been
   // pinning one each without saying so: `#1168` measured "No resource with
@@ -239,10 +268,20 @@ test("the fixture stamps the pending reason before it attempts the read", () => 
   );
 });
 
-test("the fixture feeds its recorded HTTP errors to the teardown summary", () => {
+test("the fixture PRINTS what the teardown summary returns", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "fixtures.ts"),
     "utf-8",
   );
-  assert.match(source, /summarizeMissingBodies\(httpErrors\)/);
+  // Pinning the CALL alone left the mutation that matters alive: keeping
+  // `for (const line of summarizeMissingBodies(httpErrors))` and dropping the
+  // `console.log(line)` inside it passes the whole unit lane, because the lines
+  // print during fixture teardown and no test in this repo can observe them
+  // (the same structural limit `http-error-gate.spec.ts` records for the
+  // `📋 Found N` total). This pins the EFFECT, not just the call — still a
+  // spelling guard, and #1226 is the standing reason that is the weaker thing.
+  assert.match(
+    source,
+    /for \(const line of summarizeMissingBodies\(httpErrors\)\) \{\s*console\.log\(line\);\s*\}/,
+  );
 });

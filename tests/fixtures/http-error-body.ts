@@ -115,12 +115,36 @@ export function readFailureReason(error: unknown): string {
     : firstLine;
 }
 
+/**
+ * A value that is typed `string` but reaches us from a thrown object, coerced
+ * to one. `String()` is used rather than a template literal because a `Symbol`
+ * throws in the latter and this must not be the thing that throws.
+ */
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return String(value);
+  } catch {
+    return "";
+  }
+}
+
 function rawReason(error: unknown): string {
   return error instanceof Error
       ? // A named subclass says something ("TimeoutError"); the generic `Error`
         // name says nothing, and printing it would be the empty line again with
         // extra steps.
-        error.message || (error.name && error.name !== "Error" ? error.name : "")
+        //
+        // `message` is TYPED `string` and is not guaranteed to BE one: it is a
+        // plain own property and anything can write it. Returning it unchecked
+        // handed a non-string to `raw.split()` one frame up, OUTSIDE the try —
+        // so this function threw, from inside an async `response` handler with
+        // no surrounding try, which is the one thing its header says it must
+        // never do.
+        asText(error.message) ||
+          (asText(error.name) && asText(error.name) !== "Error"
+            ? asText(error.name)
+            : "")
       : typeof error === "string"
         ? error
         : error === undefined
@@ -192,7 +216,9 @@ export function summarizeMissingBodies(
   return [
     `   ⚠️  ${total} of them carry NO body — unread is unknown, not absent (#1012):`,
     ...[...byReason.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      // Not `localeCompare`: it reads the RUNTIME locale, so the order of two
+      // equally-common reasons would depend on the machine printing them.
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
       .map(([reason, count]) => `      ${count}× ${reason}`),
   ];
 }

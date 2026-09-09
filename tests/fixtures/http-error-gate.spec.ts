@@ -30,32 +30,38 @@
 // flow. The fixture only cares that the pathname contains `/api/` and the status
 // is 4xx/5xx.
 //
-// MEASURED COVERAGE, and three accepted gaps. Fifteen mutations of the production
+// MEASURED COVERAGE, and one accepted gap. Sixteen mutations of the production
 // code were applied one at a time and run against `npm run test:units` plus this
-// file: twelve are killed — matching on pathname alone, on status alone, by substring
+// file: fifteen are killed — matching on pathname alone, on status alone, by substring
 // instead of equality, checking the declaration before `IGNORED`, keying the
 // stale check on `expectedStatus`, removing the stale throw, printing the gate
 // string in the `📌` line, never incrementing the hit counter, announcing on every
 // occurrence instead of the first, and removing the stale-declaration grace
 // period, plus (#1432) reverting the body read to the old inline try/catch,
 // printing a fixed sentinel instead of the reason, collapsing the empty and
-// unreadable lines into one, and printing `<empty body>` where the body should
-// go. THREE SURVIVE and are accepted, recorded rather than left unknown (#1012's
-// rule):
+// unreadable lines into one, printing `<empty body>` where the body should
+// go, deleting the `bodyUnavailable: BODY_PENDING` stamp, and making
+// `summarizeMissingBodies` return nothing. ONE SURVIVES and is accepted,
+// recorded rather than left unknown (#1012's rule):
 //
 //   (a) dropping the `else` so a declared defect is *also* tallied in
 //       `ignoredByPolicy`. That only double-counts it inside the
 //       `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count, no gate string
 //       — so there is no behaviour to pin. If that breakdown ever becomes
 //       load-bearing, this is the gap.
-//   (b) deleting the `bodyUnavailable: BODY_PENDING` stamp. Only observable on a
-//       body read that never settles, which cannot be provoked here.
-//   (c) making `summarizeMissingBodies` return nothing. Its output prints during
-//       fixture teardown, after this body has returned — the same structural
-//       limit recorded below for the `📋 Found N` total.
 //
-// (b) and (c) are pinned by SPELLING in `http-error-body.test.ts`, which #1226
-// says is the weaker thing; that is stated there rather than dressed up.
+// An earlier version of this inventory named two more survivors — the
+// `BODY_PENDING` stamp and a `summarizeMissingBodies` returning nothing — and
+// BOTH were wrong: applied one at a time they fail one and two unit tests
+// respectively. What actually survived was neither, and it is the #1226 shape:
+// keeping the `for (const line of summarizeMissingBodies(httpErrors))` loop and
+// dropping the `console.log(line)` INSIDE it, because the summary prints during
+// fixture teardown, after this body has returned — the same structural limit
+// recorded below for the `📋 Found N` total. That one is now pinned by SPELLING
+// in `http-error-body.test.ts`, over the effect and not merely over the call,
+// which #1226 still says is the weaker thing; that is stated there rather than
+// dressed up. Recorded at length because a mutation inventory that overstates
+// its own gaps is as unreadable as one that understates them.
 //
 // WHY `@stable` — the same reasoning as `flow-error-gate.spec.ts`, and it is load
 // bearing there too. `daily-stable.yml` selects with `--grep @stable` and is the

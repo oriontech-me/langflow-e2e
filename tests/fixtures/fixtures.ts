@@ -370,9 +370,14 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
         // retain a zero-length body, so `response.text()` REJECTS on any
         // bodyless response rather than resolving to `""` (measured — see
         // `http-error-body.ts`). An unread body is unknown, not absent (#1012).
+        //
+        // `Promise.resolve().then(...)` rather than `response.text().then(...)`:
+        // the `catch` only sees a REJECTION, while the `try` this replaced also
+        // caught a SYNCHRONOUS throw out of `response.text()` itself. Starting
+        // the chain first keeps both on the same path.
         const outcome = describeResponseBody(
-          await response
-            .text()
+          await Promise.resolve()
+            .then(() => response.text())
             .then((body) => ({ ok: true, body }) as const)
             .catch((error) => ({ ok: false, error }) as const),
         );
@@ -567,10 +572,12 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
         console.log(
           `   ⚠️  ${httpErrors.length} HTTP error(s) detected — ADVISORY: these do NOT fail the test. Review them before trusting this run.`,
         );
-        // The inline `Response:` line races the end of the test — the body read
-        // is not awaited — so an error observed late can leave the log with a
-        // `🚨` line and nothing under it. Saying it here is what keeps that from
-        // reading as a body nobody bothered to print (#1432).
+        // The inline `Response:` line races the end of the test. The read IS
+        // awaited inside the `page.on("response")` handler — what nothing
+        // awaits is the HANDLER — so an error observed late can have its entry
+        // recorded (that part is synchronous) while the log never gets the
+        // `Response:` line under its `🚨`. Saying it here is what keeps that
+        // from reading as a body nobody bothered to print (#1432).
         for (const line of summarizeMissingBodies(httpErrors)) {
           console.log(line);
         }
