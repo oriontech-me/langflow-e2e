@@ -1,6 +1,13 @@
 # Inherited spec triage — design
 
 > **Status:** approved design, not yet scheduled. Written 2026-09-08.
+> **Revised 2026-09-09**, from the whole-branch review of the instrument's
+> implementation: §2 now gives **every** test three observations (it gave a green
+> one only one, which §3's promotion gate cannot be satisfied against); §2's
+> mandated Output no longer asks the renderer for two facts a Playwright report
+> cannot answer; §1 names the baseline file that actually exists; the
+> title-collision argument records what it does **not** guard; and the
+> `cleanAllFlows` retraction is dated now that the helper is retired.
 > **Decisions locked before writing:** triage with three outcomes · a dedicated
 > wave with a measurement item first · a prevention guard inside the same wave ·
 > **OSS only**.
@@ -80,8 +87,13 @@ so the tag would make such a test run nowhere at all, silently (#1010). They are
 not debt.
 
 **The inventory is frozen.** At wave open, the predicate's output is committed as
-`tests/assets/triage/inherited-spec-baseline.json`, so the guard in §5 has
-something to diff against and the wave is not aiming at a moving target.
+**`tests/assets/triage/inherited-backlog-baseline.json`**, so the guard in §5 has
+something to diff against and the wave is not aiming at a moving target. Written
+and verified by `npm run triage:baseline` / `npm run triage:baseline -- --check`.
+(That is the real path. An earlier revision of this line said
+`inherited-spec-baseline.json`, which has never existed — §5 points the next
+implementer here for "the frozen baseline of §1", so the wrong name sent them to
+a file they would have to invent.)
 
 ### This population absorbs a second roadmap item
 
@@ -121,11 +133,18 @@ over-reports by the size of the docblock culture. Ask it of the AST, or at
 minimum of the call form.
 
 Two consequences. There is no fast lane and no precondition: the measurement in
-§2 runs against the backlog as it stands. And `tests/helpers/flows/clean-all-flows.ts`
-is dead code whose docblock still names `user-progress-track.spec.ts` as "the ONE
-legitimate remaining caller" — a spec that is now `@stable` and does not call it.
-That is real debt, it is **not** this plan's, and it is recorded here only so the
-next reader does not rediscover it as a hazard.
+§2 runs against the backlog as it stands.
+
+And, **as observed on 2026-09-08**, `tests/helpers/flows/clean-all-flows.ts` was
+dead code whose docblock still named `user-progress-track.spec.ts` as "the ONE
+legitimate remaining caller" — a spec that is `@stable` and does not call it.
+That was real debt and never this plan's. **It is now closed:** the helper was
+retired on `origin/main` in #1772 (`79de9015`, 2026-09-08) and its two dead
+references repaired in #1775 (`140d7d56`, 2026-09-09). Recorded as a dated
+observation rather than a standing claim, because the lesson is the part that
+outlives the file: **a substring grep over spec sources cannot answer a
+call-site question in this repo** — the docblock culture over-reports it by
+design.
 
 ## 2. Phase 1 — measurement (the wave's first item)
 
@@ -133,10 +152,37 @@ Nothing currently knows whether these 92 pass. The measurement produces that
 fact, and it is the wave's scoping pass — which is what keeps the later items
 from being invented inside the wave (`ROADMAP.md` Rule 1).
 
-**Instrument.** Three parallel `manual.yml` dispatches. Each takes a `test_grep`
-holding an alternation over one third of the 92 test titles, `retries: 0`,
-`provider: auto`, targeting the OSS nightly image — the same image the daily
-runs. Red tests are then re-dispatched twice, for three observations each.
+**Instrument.** Three passes over three shards — **nine** `manual.yml`
+dispatches, all parallel. Each takes a `test_grep` holding an alternation over
+one third of the 92 test titles, `retries: 0`, `provider: auto`, targeting the
+OSS nightly image — the same image the daily runs. **Every test gets three
+observations**, green ones included.
+
+**Why every test and not only the reds, which is what an earlier revision of
+this section said.** As written, §2 gave a green test ONE observation while §3's
+PROMOTE gate demands "3/3 green, no exceptions" and §4 forbids re-measuring in
+Phase 2 — three rules that cannot all be satisfied, whose failure mode is the
+one the four promotion conditions exist to prevent: a quietly relaxed gate,
+promoting on a single green run and calling it 3/3.
+
+Resolved by **raising §2, not lowering §3**. Three reasons, in the order that
+decided it. Runner minutes are free for this repo — the recorded constraint is
+wall clock, not spend (#1183) — and the nine dispatches are parallel,
+so wall clock is unchanged from three. Three observations for a *green* test is
+precisely what makes `flaky` detectable **before** a promotion rather than
+after it, which is the question §3's gate is asking in the first place. And the
+alternative direction would have had to weaken the one gate Wave 4's imported
+invisible reds are the argument for. Cost if this is wrong: six extra
+dispatches of free runner minutes.
+
+Two consequences. §3's gate stands exactly as written. And the **red-only
+re-dispatch step is deleted** from the plan's Task 7 — it is redundant once
+every test is measured three times, which also disposes of the review finding
+that that step carried no shard-sizing rule of its own.
+
+`retries: 0` throughout: a retry inside one dispatch hides the intermittence
+this measurement exists to record, and the three observations are what separate
+`flaky` from `hard-failure` instead.
 
 Why the selector works with no repo change — and the trap that "unique titles"
 hides. The 92 titles are unique among themselves (zero collision with any
@@ -158,24 +204,90 @@ nor a single word contains one internally) **plus** requiring the tail to be
 nothing but space-`@token` pairs to the end of the string — because after a
 test's own title only its own tags can follow, while after a describe title
 there is always more plain text. With both, the selection is set-exact: 92
-wanted, 92 selected, 0 missing, 0 extra, verified with `--list` and by
-comparing the selected titles against the baseline. Two of the titles also
-contain regex metacharacters and are escaped.
+wanted, 92 selected, 0 missing, 0 extra. Two of the titles also contain regex
+metacharacters and are escaped.
 
-Why three dispatches and not one: 92 tests at a 5-minute per-test worst case over
+**Verified as a SET, and by one command.** The count is the wrong check and the
+document used to prescribe it: 92 can be reached by dropping some tests and
+adding others, so `npm run triage:verify` compares `--list`'s selected
+`spec::title` **pairs** against the baseline's and reports
+`wanted / selected / missing / extra` per shard. Pairs, not titles, because the
+right title in the wrong file is a match under a title-only comparison. An
+empty shard is called out by number too — a dispatch of one is a green run that
+measured nothing, and it hides inside a correct total whenever another shard
+over-selects. `--list` runs nothing, so this costs no instance and no key.
+
+**Three residual collision classes, two of them unguarded — recorded because
+the property holds today and nothing keeps it holding:**
+
+1. **In-scope ↔ in-scope.** Two backlog tests sharing a title. *Guarded* —
+   `classifyBacklog` records it in `titleCollisions` and the fragment builder
+   refuses on it. It has to be, because that class is silent in three places at
+   once: the title list dedupes it, the table renders two identical rows, and
+   their observations fold into one verdict where a green can mask a red.
+2. **A baseline title that is a whitespace-aligned SUFFIX of another test's own
+   title.** The recorded minor names only the prefix direction, but the anchor
+   is symmetric in the wrong way: `(?<=^|\s)` admits a match starting mid-title
+   at a space boundary, and the tag-tail requirement is satisfied because the
+   *other* test's tags are all that follows. So a backlog title `"as a
+   template"` would also select a test titled `"saving a component as a
+   template"` — confirmed against the real anchor, which matches that joined
+   target. Unguarded. Measured 2026-09-09 over `--list`: **0** such pairs.
+3. **Case folding.** Playwright compiles `--grep` as `new RegExp(pattern, "gi")`
+   (`node_modules/playwright/lib/util.js`), so the selection is
+   case-INSENSITIVE while `titleCollisions` compares titles case-sensitively.
+   Two titles differing only in case are one selector and two rows. Unguarded.
+   Measured 2026-09-09: **0** case-insensitive duplicate titles, and **0**
+   exact duplicates, over both `--list` universes (726 titles in the normal
+   lane, 744 with `@destructive`; every one distinct).
+
+Both unguarded classes would be caught by `npm run triage:verify` **as extra
+selections** rather than named as collisions, which is the reason they are minor
+rather than open: the pre-dispatch verification does see them, it just cannot
+say why. Re-measure both before quoting the zeros; they move with every merge.
+
+Why three SHARDS and not one: 92 tests at a 5-minute per-test worst case over
 2 workers is ≈230 minutes against this lane's 180-minute cap. A single dispatch
 would be killed partway and return no merged report at all — the exact cost
-#1174 measured.
+#1174 measured. (Three *passes* is the observation count above; three *shards*
+is this cap. The two multiply to nine dispatches and neither number is the
+other's reason.)
 
 Why this lane and not a local run: local spend is unmeasured here (tracing is off
 in the start scripts, so token history exists only for CI), and the measurement
 must run against the image the daily uses.
 
-**Output.** `docs/triage/inherited-spec-triage.md`, committed, one row per test:
-verdict (`3/3 green` / `flaky N/3` / `hard failure` / `permanently skipped`), the
-failure signature, whether the run logged `🚨 Backend Error`, whether the spec
-leaked a flow, and the duplicate candidate if any. A red row is an input to §3,
-never a conclusion.
+**Output.** `docs/triage/inherited-spec-triage.md`, committed, one row per test.
+**Rendered from the reports** — `scripts/build-triage-table.mjs`, whose rows are
+therefore exactly what a Playwright JSON report can answer:
+
+- the **verdict** (`3/3 green` / `flaky N/3` / `hard failure` / `permanently
+  skipped` / `UNKNOWN`), with skips reported *alongside* the ratio rather than
+  inside it (`2/2 green, 1 skipped`) and a retried pass named as one
+  (`0/3 green, 3 passed on retry`) — a retry is not a failure, and folding it
+  into one is how a test that always passed on retry gets routed to PARK;
+- the **failure signature** — the first line of `results[].error.message`, ANSI
+  stripped and truncated. §4 clusters the follow-up issues by root cause read
+  off this column, so without it whoever files them reopens the HTML report once
+  per red;
+- whether the run logged **`🚨 Backend Error`** (an HTTP error never fails a
+  test on its own — #1084);
+- the **quarantine marker**, because 7 of the 92 are `test.skip` / `test.fixme`
+  on `main` and a row reading `3/3 green` without saying so is the most
+  misleading row this table can produce.
+
+**Two facts an earlier revision mandated here are NOT derivable from a report,
+and are recorded as human work rather than left as a mandate nobody
+implements:** *whether the spec leaked a flow* and *the duplicate candidate*.
+The first needs the instance's flow list diffed around the run (the report says
+nothing about it) and the second is a judgement over the `@stable` suite — §3's
+DELETE outcome is *defined* by a human naming the replacing spec and test. Both
+are read during triage and recorded in the **cause-cluster issue** (§4 already
+requires the evidence to ship in the issue body), never as a column here: this
+file is regenerated by a script, so a hand-added column would be destroyed by
+the next render.
+
+A red row is an input to §3, never a conclusion.
 
 **Two ways the measurement itself lies, handled explicitly.** A green dispatch
 that executed **zero** tests (the `--grep` matched nothing) is an **abort**, not
@@ -239,6 +351,13 @@ table and not before:
 three outcomes; its Part II bullet is updated; a doc is written for promotions;
 and the PR names, per spec, the outcome and the evidence row it came from. No
 item re-measures — the evidence ships in the issue body.
+
+**The two facts the table cannot render live here** (§2 Output): the issue body
+records, per spec, **whether it leaked a flow** — required by the promote
+outcome's cleanup audit, and read by diffing the instance's flow list around a
+run, not from any report — and **the duplicate candidate**, which is DELETE's
+defining evidence: the replacing spec and the specific test inside it, named, or
+delete is not an available outcome.
 
 ## 5. The guard — the item that stops the backlog regrowing
 

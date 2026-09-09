@@ -4,7 +4,23 @@
 
 **Goal:** Build the tooling that measures the 55 never-validated OSS specs, publishes a per-test triage verdict, and prevents the backlog from regrowing silently.
 
-**Architecture:** One AST parser already exists for `@stable` (`scripts/lib/stable-tests.ts`); it is widened to return *every* tagged declaration, and a pure predicate module derives the backlog and its two tiers from that. Everything else is a thin shell over pure functions: a baseline writer, a `--grep` fragment builder, a report-to-table renderer, and an ownership guard. The measurement itself is three `manual.yml` dispatches whose JSON reports the renderer consumes.
+**Architecture:** One AST parser already exists for `@stable` (`scripts/lib/stable-tests.ts`); it is widened to return *every* tagged declaration, and a pure predicate module derives the backlog and its two tiers from that. Everything else is a thin shell over pure functions: a baseline writer, a `--grep` fragment builder, a report-to-table renderer, and an ownership guard. The measurement itself is **nine** `manual.yml` dispatches — three passes over three shards — whose JSON reports the renderer consumes.
+
+> ### ⚠️ Status, 2026-09-09: Tasks 1–7 are IMPLEMENTED; the code is the authority
+>
+> The design (`docs/triage/inherited-spec-triage-design.md`) is binding, and the
+> shipped code under `scripts/` is what actually ran. **Tasks 1, 2, 3, 4 and 6
+> carry a per-task superseded note** over their code blocks: each of those five
+> shipped a deviation from the literal block below, every deviation was forced
+> by a measurement or a review, and the reasoning lives in the design plus the
+> functions' own docblocks. The blocks are marked stale rather than rewritten,
+> deliberately — a half-updated code block is worse than one honestly labelled.
+>
+> **Tasks 8–9 (the ownership guard and its wiring) have NOT been implemented**
+> and their steps are current. Two things to carry into them: the runbook now
+> verifies a selection as a **set** (`npm run triage:verify`), never by counting
+> to 92; and every test gets **three** observations, so there is no red-only
+> re-dispatch step.
 
 **Tech Stack:** TypeScript (`ts-node`, TypeScript compiler API) for anything touching spec ASTs; dependency-free `.mjs` for anything a workflow calls directly; `node --test` for both lanes; GitHub Actions; `gh` CLI.
 
@@ -64,6 +80,17 @@ here because their content is issue A's output.
 ### Task 1: One parser for every tagged declaration
 
 `scripts/lib/stable-tests.ts` already walks the specs and reads inline `tag:` arrays, but it only ever returns the `@stable` ones. Two parsers that are supposed to agree about what a tag is would be exactly the drift issue #985 was raised about, so the backlog predicate is built on this one — widened, not copied.
+
+> ⚠️ **SUPERSEDED — Task 1 is implemented, and its `CollectTaggedResult` below
+> is missing the field the fix needed.** Widening the walk to five declaration
+> modifiers also widened the **warning** channel, and both consumers of
+> `parseStableTests` are fail-closed on a warning
+> (`scripts/check-checklist-coverage.ts` exits 1 on any), so the first
+> `test.skip(..., { tag: SHARED_TAGS })` anyone wrote would have failed every
+> PR — with a remediation that a modified declaration cannot satisfy. A warning
+> now carries the modifier it is about (`ParseWarning` / `warningDetails`), and
+> `parseStableTests` forwards only the ones that bear on the `@stable`
+> population. `warnings: string[]` is unchanged for every existing caller.
 
 **Files:**
 - Modify: `scripts/lib/stable-tests.ts`
@@ -282,6 +309,15 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ---
 
 ### Task 2: The backlog predicate and its two tiers
+
+> ⚠️ **SUPERSEDED — Task 2 is implemented; `titleCollisions` records more than
+> the block below computes.** Step 3's version records only in-scope ↔
+> out-of-scope collisions; the shipped `classifyBacklog` also records **two
+> in-scope tests sharing a title**, which is silent in three places at once (the
+> title list dedupes it, the table renders two identical rows, and their
+> observations fold into one verdict where a green can mask a red). Zero
+> collisions of either class today. See `Backlog.titleCollisions` in
+> `scripts/lib/inherited-backlog.ts`, and the design's §2.
 
 **Files:**
 - Create: `scripts/lib/inherited-backlog.ts`
@@ -527,6 +563,17 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 The wave needs a fixed target and the guard needs something to diff against. The floor exists for the same reason the catalog baseline has one: a wrong baseline is permanent and silent, while a small-but-real population is drift a human should still see.
 
+> ⚠️ **SUPERSEDED — Task 3 is implemented; read the shipped code, not this
+> block.** Two fixes landed after this plan was written, and Step 3's code below
+> shows neither. (a) The `--min-specs` floor is parsed by the shared
+> `parseNumericArg` (`scripts/lib/numeric-arg.ts`), not by `Number(...)`: on an
+> empty, non-numeric or negative value the old form yielded `NaN` — a value
+> `current.specs.length < minSpecs` can never be true for — so the floor
+> silently no-opped instead of refusing. (b) `renderBaseline` sorts by **code
+> units**, not `localeCompare`: this is a committed artifact whose `--check`
+> compares exact bytes, and ICU folds case. The design records the reasoning;
+> the code and its tests are the authority.
+
 **Files:**
 - Create: `scripts/update-inherited-backlog-baseline.ts`
 - Create: `tests/assets/triage/inherited-backlog-baseline.json` (written by the script)
@@ -754,6 +801,21 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 Playwright honours exactly one `--grep`, and `manual.yml` passes a lone `test_grep` fragment through `scripts/build-grep-filter.mjs` **verbatim**. So the fragment must be self-contained: its own non-capturing group, its own escaping. An unparenthesised alternation is what cost #1275 real coverage during a release validation.
 
+> ⚠️ **SUPERSEDED — Task 4 is implemented, and its Step 3 code below is the
+> version that FAILED its own Step 4.** Read `scripts/build-triage-grep.mjs` and
+> the design's §2 instead. Three things changed, all of them load-bearing:
+> (a) `escapeTitle` **anchors** as well as escapes — the naive version below
+> selected **106** tests where 92 are wanted, because Playwright's `--grep`
+> matches `TestCase._grepTitleWithTags()` (path + every describe title + the
+> test's own title + its tags, space-joined), not the isolated title; whitespace
+> anchoring alone still selected 97, and the tag-tail anchor closes the rest.
+> The full argument is in that function's docblock. (b) The collision refusal is
+> the exported, unit-tested `checkTitleCollisions`, not the `if` inlined in
+> `main()` below — `main()` is CLI-only and `node --test` never reaches it.
+> (c) A `--verify` mode exists (`npm run triage:verify`) that compares the
+> selection as a SET. Marked stale rather than rewritten: a half-updated code
+> block is worse than one honestly labelled.
+
 **Files:**
 - Create: `scripts/build-triage-grep.mjs`
 - Test: `scripts/build-triage-grep.test.mjs`
@@ -922,14 +984,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 - [ ] **Step 4: Run the tests, then verify the selection against Playwright itself**
 
 ```bash
-node --test scripts/build-triage-grep.test.mjs && \
-for i in 1 2 3; do
-  F=$(node scripts/build-triage-grep.mjs --shards 3 --shard $i)
-  N=$(npx playwright test --list --reporter=json --grep "$F" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);let n=0;const w=u=>{for(const x of u){n+=(x.specs||[]).length;w(x.suites||[])}};w(r.suites||[]);console.log(n)})')
-  echo "shard $i selects $N test(s)"
-done
+node --test scripts/build-triage-grep.test.mjs && npm run triage:verify
 ```
-Expected: tests PASS, and the three counts sum to **92** with no shard at 0. `--list` runs nothing, so this verification is free and does not need a Langflow instance.
+Expected: tests PASS, then exit 0 and
+`[triage-grep] verified set-exact: 92 wanted / 92 selected / 0 missing / 0 extra; shards 31/31/30`.
+
+**A count is the wrong check, and this step used to prescribe it.** An earlier
+revision asked only that "the three counts sum to 92 with no shard at 0" —
+refuted by ruling P14 in its own words: *92 can be reached by dropping some and
+adding others*. `--verify` compares `--list`'s selected `spec::title` **pairs**
+against the baseline's, so the right title in the wrong file is one *missing*
+plus one *extra*, and a shard that selected nothing is named by number even when
+the total is right. `--list` runs nothing, so this verification is free and
+needs no Langflow instance and no provider key.
+
+If it is NOT set-exact, the anchoring is the first place to look — see
+`escapeTitle`'s docblock: unanchored, these 92 titles selected **106** tests,
+and whitespace anchoring alone still selected 97.
 
 - [ ] **Step 5: Commit**
 
@@ -1080,6 +1151,23 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ---
 
 ### Task 6: Render the triage table from the dispatch reports
+
+> ⚠️ **SUPERSEDED — Task 6 is implemented; read `scripts/build-triage-table.mjs`
+> and the design's §2 Output.** The interface below is missing the pieces that
+> matter most, and the code blocks under it are pre-fix:
+> (a) **`rowsFor(baseline, byTitle)`** is the one shared row computation both
+> renderers consume — the JSON sidecar exists so the follow-up work reads DATA
+> rather than re-parsing our own markdown, which only holds if the two outputs
+> cannot drift on how a row is computed;
+> (b) `verdictFor` handles **all four** of Playwright's statuses — `flaky` is a
+> retry named in the detail (never a hard failure), a `skipped` observation
+> leaves the ratio instead of diluting it, and an unrecognised status is
+> `unknown` **with the value named**;
+> (c) a row carries the **quarantine marker** and the **failure signature**
+> (with its truncation stated in the code), plus `unmatchedTitles` for the
+> opposite direction of silence — an observed title that is not in the baseline;
+> (d) an unreadable `--report` is a named refusal, not a stack.
+> Marked stale rather than rewritten, on purpose.
 
 **Files:**
 - Create: `scripts/build-triage-table.mjs`
@@ -1403,11 +1491,21 @@ Expected: `in sync`. If it is stale, refresh and commit it before dispatching �
 - [ ] **Step 2: Verify each shard's selection before spending a runner**
 
 ```bash
-for i in 1 2 3; do
-  echo "shard $i: $(node scripts/build-triage-grep.mjs --shards 3 --shard $i | head -c 60)…"
-done
+npm run triage:verify
 ```
-Expected: three non-empty fragments. Then confirm the counts sum to the baseline's `testCount` with the `--list` command from Task 4 Step 4.
+Expected, exit 0: `[triage-grep] verified set-exact: 92 wanted / 92 selected / 0 missing / 0 extra; shards 31/31/30`.
+
+**Set-exact, never a count** — this is the check ruling P14 actually made, and
+its own words are that "92 can be reached by dropping some and adding others".
+`--verify` compares `--list`'s selected `spec::title` **pairs** against the
+baseline's, so a title selected in the wrong file is one *missing* plus one
+*extra* rather than a match, and a shard that selected nothing is named by
+number even when the total is right. `--list` runs nothing, so this costs no
+Langflow instance, no provider key and no runner minute.
+
+Anything but exit 0 stops here: re-read the anchoring argument in
+`scripts/build-triage-grep.mjs`'s `escapeTitle` docblock and the design's §2
+before touching the fragment.
 
 - [ ] **Step 3: Unmute the quarantined tests on a throwaway measurement branch**
 
@@ -1450,96 +1548,110 @@ Expected: `all unmuted`, and the baseline regenerated on this branch with every
 changed anything other than the modifiers — the fragments must still select the
 same 92 titles.
 
-- [ ] **Step 4: Dispatch the three measurement runs from that ref**
+- [ ] **Step 4: Dispatch NINE measurement runs from that ref — three passes over three shards**
 
 ```bash
-for i in 1 2 3; do
-  gh workflow run manual.yml --repo oriontech-me/langflow-e2e \
-    --ref measure/inherited-triage \
-    -f langflow_target=latest \
-    -f langflow_image=nightly \
-    -f test_grep="$(node scripts/build-triage-grep.mjs --shards 3 --shard $i)" \
-    -f provider=auto \
-    -f retries=0
-  sleep 5   # so the three runs are distinguishable by creation order
+for pass in 1 2 3; do
+  for i in 1 2 3; do
+    gh workflow run manual.yml --repo oriontech-me/langflow-e2e \
+      --ref measure/inherited-triage \
+      -f langflow_target=latest \
+      -f langflow_image=nightly \
+      -f test_grep="$(node scripts/build-triage-grep.mjs --shards 3 --shard $i)" \
+      -f provider=auto \
+      -f retries=0
+    sleep 5   # so the runs are distinguishable by creation order
+  done
 done
 sleep 30
 gh run list --repo oriontech-me/langflow-e2e --workflow manual.yml \
-  --branch measure/inherited-triage --limit 3 \
+  --branch measure/inherited-triage --limit 9 \
   --json databaseId,status,createdAt --jq '.[] | "\(.databaseId)\t\(.status)"' | tee /tmp/triage/runs.tsv
 ```
+Expected: **9** lines in `runs.tsv`.
+
+**Three passes, not one, and it is EVERY test that gets three observations —
+green ones included** (design §2, revised 2026-09-09). An earlier revision of
+this plan measured each test once and re-dispatched only the reds, which cannot
+satisfy §3's PROMOTE gate ("3/3 green, no exceptions"): a green test had one
+observation, and §4 forbids re-measuring later. Runner minutes are free here and
+the nine dispatches are parallel, so wall clock is unchanged from three — and
+three observations for a *green* test is exactly what makes `flaky` detectable
+**before** a promotion rather than after it.
 
 Leave `test_tag` empty: the tag is what would AND a second filter in, and the
-fragment already **is** the selection. `retries=0` because a retry hides the
-intermittent failure the measurement exists to find.
+fragment already **is** the selection. `retries=0` because a retry inside one
+dispatch hides the intermittence the three passes exist to measure.
 
 **Before reading any provider-spec red**, confirm the credentials were live for
 that run — this account has three recorded drains (#772, #1029, #1169), and a
 credit error persists as a run row that reads exactly like a product bug. Each
 dispatch's `Collect models` step names the active providers.
 
-- [ ] **Step 5: Collect the reports and render the table**
+- [ ] **Step 5: Collect the nine reports and render the table**
 
 ```bash
 cut -f1 /tmp/triage/runs.tsv | while read -r id; do
   gh run download "$id" --repo oriontech-me/langflow-e2e \
     -n "playwright-json-manual-$id" -D "/tmp/triage/$id"
 done
+ls /tmp/triage/*/results.json | wc -l    # expect 9
 git checkout -   # back to the issue's branch; the table is committed there
 node scripts/build-triage-table.mjs \
   $(for f in /tmp/triage/*/results.json; do printf -- '--report %s ' "$f"; done) \
   --out docs/triage/inherited-spec-triage.md \
   --out-json /tmp/triage/verdicts.json
 ```
-Expected: one `N test result(s)` line per report, summing to the baseline's
-`testCount`, then two `wrote …` lines. **Exit 2 means a shard matched nothing** —
-fix that fragment and re-dispatch it; do not commit a partial table.
+Expected: nine `N test result(s)` lines, summing to **3 × the baseline's
+`testCount`**, then two `wrote …` lines.
 
-- [ ] **Step 6: Re-dispatch everything not green, twice, then commit**
+**Check the report count before rendering.** Nine is not decoration: a download
+that silently produced fewer leaves some tests with one or two observations, and
+`2/2 green` is not the `3/3 green` §3's gate requires. The table will not say
+so on its own — the detail column reports the ratio it measured, so the reader
+has to know nine reports went in.
 
-Two more observations for every non-green test, so `flaky` separates from
-`hard-failure`. The fragment is built from the JSON sidecar, never by re-parsing
-the markdown:
+Two named refusals to expect rather than debug:
+- **exit 2** — a report executed zero tests, i.e. that shard's `--grep` matched
+  nothing. Re-dispatch that shard; do not commit a partial table.
+- **`[triage-table] ENOENT: …/*/results.json`** — the glob matched nothing and
+  bash passed the pattern through literally, so the downloads failed. Re-run the
+  download loop.
 
-```bash
-node -e 'const fs=require("fs");
-const v=require("/tmp/triage/verdicts.json");
-const tests=v.rows.filter(r=>r.verdict!=="green").map(r=>({title:r.title}));
-if(!tests.length){console.log("nothing to re-dispatch");process.exit(0)}
-fs.writeFileSync("/tmp/triage/reds.json",JSON.stringify(
-  {version:1,titleCollisions:[],specs:[{relativePath:"reds",tier:"T2",tests}]},null,2));
-console.log(tests.length,"non-green test(s) to re-measure")'
+`git checkout -` matters for a reason beyond tidiness: the quarantine column is
+read from the **committed baseline**, which on the issue's branch still records
+`main`'s `test.skip` / `test.fixme` declarations. Rendering from the measurement
+branch (where Step 3 regenerated the baseline with every modifier empty) would
+produce a table that silently drops all 7 markers.
 
-for pass in 1 2; do
-  gh workflow run manual.yml --repo oriontech-me/langflow-e2e \
-    --ref measure/inherited-triage \
-    -f langflow_target=latest -f provider=auto -f retries=0 \
-    -f test_grep="$(node scripts/build-triage-grep.mjs --baseline /tmp/triage/reds.json --shards 1 --shard 1)"
-  sleep 5
-done
-```
+- [ ] **Step 6: Commit the table**
 
-Download those two reports the same way, then re-render with **all five** and
-commit only the markdown — the sidecar and the reports stay in `/tmp`:
+Commit **only** the markdown — the sidecar and the downloaded reports stay in
+`/tmp`:
 
 ```bash
-node scripts/build-triage-table.mjs \
-  $(for f in /tmp/triage/*/results.json; do printf -- '--report %s ' "$f"; done) \
-  --out docs/triage/inherited-spec-triage.md
 git add docs/triage/inherited-spec-triage.md
 git commit -m "docs(triage): the measured verdicts for the 55 never-validated specs
 
-Five dispatches: three sharded first passes plus two re-runs of everything not
-green, so flaky is separable from a hard failure. retries=0 throughout -- a retry
-hides exactly the intermittence this table exists to record -- and the ten
-quarantined declarations in the backlog were unmuted on a throwaway branch, since
-a test.fixme records 0/N and reads as clean.
+Nine dispatches: three passes over three shards, so EVERY test has three
+observations and flaky is separable from a hard failure without a second round.
+retries=0 throughout -- a retry inside one dispatch hides exactly the
+intermittence this table exists to record -- and the 7 quarantined declarations
+in the backlog were unmuted on a throwaway branch, since a test.fixme records
+0/N and reads as clean. Their rows carry the Quarantine marker, read from this
+branch's committed baseline.
 
 This is the scoping pass the wave's later items are filed from; a verdict here is
 an input to the design's §3 decision rules, never a conclusion.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
+
+> **Superseded step, deliberately removed.** An earlier revision had a *Step 6:
+> re-dispatch everything not green, twice*. It is redundant now that Step 4
+> measures every test three times (design §2, revised 2026-09-09), and it was
+> also the step a review found to carry no shard-sizing rule of its own. Do not
+> reinstate it: re-measuring after the table lands is what §4 forbids.
 
 - [ ] **Step 7: Delete the measurement branch**
 

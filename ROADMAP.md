@@ -340,9 +340,12 @@ that is how Wave 4 imported invisible reds. **T2** — the 29 specs / 51 tests w
 neither a doc nor id-scoped cleanup — is Wave 9, a full wave on its own by the
 Wave 4 measurement. OSS only, verified: 0 of the 55 sit under `enterprise/`,
 `serving/` or `governance/`. **Two entries below are absorbed** rather than run in
-parallel: the pool's *Disabled-test triage* (the backlog holds all 10 of its
-current `test.skip`/`test.fixme` declarations) and most of the continuous spec-doc
-backfill (33 of the 41 specs that lack a mirrored doc).
+parallel: the pool's *Disabled-test triage* (the backlog holds **7 of its 10**
+current `test.skip`/`test.fixme` declarations — 6 `skip` + 1 `fixme`, per
+`tests/assets/triage/inherited-backlog-baseline.json`; the other 3 sit in files
+that still carry `@stable` tests, so clause 4 excludes them by design and the
+pool entry below lists them) and most of the continuous spec-doc backfill (33 of
+the 41 specs that lack a mirrored doc).
 
 Convergence: **the checklist `%` may FALL, and that is not a regression** —
 deleting a duplicate removes numerator. Directional, like Wave 6's.
