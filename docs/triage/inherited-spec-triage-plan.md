@@ -1051,7 +1051,9 @@ node --test scripts/run-e2e-json-report.test.mjs && npm run test:scripts
 ```
 Expected: both PASS. `test:scripts` must stay green — other structural tests assert on this action's shape.
 
-**Blast radius, measured:** `run-e2e` is used by exactly two workflows — `nightly.yml` and `manual.yml`. `pr-validation.yml` is **not** a consumer: it runs `npx playwright test $SPECS --reporter=github` inline. And `nightly.yml` is disabled (no cron, `disabled_manually` in Actions), so `manual.yml` is the only live consumer — which is the lane the measurement dispatches to. Do not describe this action as shared by three or four lanes.
+**Blast radius, measured — and measured twice, because the first measurement was still wrong.** `run-e2e` is used by exactly **one** workflow: `manual.yml`, at lines 496 and 666. `pr-validation.yml` runs `npx playwright test $SPECS --reporter=github` inline and is not a consumer. Neither is `nightly.yml` — `grep -rln 'actions/run-e2e'` lists it, but its only hit is a **comment** (`nightly.yml:129`); it has no `uses:` line for this action and invokes Playwright inline itself. So reviving nightly's cron would not give it JSON reporting or anything else here for free; that would be a separate migration. Do not describe this action as shared by two, three or four lanes — and note that the grep which suggested two is the same instrument that produced two earlier wrong claims in this document. Ask it for `uses:` lines, not for substrings.
+
+**What the change actually restores, rather than adds:** `playwright.config.ts:119` documents the intent as *"Non-sharded CI (nightly / manual): html + github + json"* and line 131 configures exactly `[["html"], ["github"], ["json"]]`. A CLI `--reporter` **replaces** the config's list rather than merging with it, so the action's `--reporter=html,github` had been silently overriding that three-reporter intent down to two. The task closes a pre-existing mismatch between documented intent and behaviour in the file it touches.
 
 - [ ] **Step 5: Commit**
 
