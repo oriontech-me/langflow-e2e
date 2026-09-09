@@ -19,26 +19,36 @@ import {
 } from "./inherited-backlog";
 import { STABLE_TAG, type DeclaredTest } from "./stable-tests";
 
-// Builds a `DeclaredTest` the way `parseDeclaredTests` would for a
-// declaration whose OWN tag array is exactly `tags` and that inherits
-// nothing from an enclosing `describe` -- inheritance itself is
-// `stable-tests.test.ts`'s concern, not this predicate's. `stable` and
-// `fixme` are derived from `tags` / `modifier` the same way the real parser
-// derives them, so `isStable`'s `test.stable && !test.fixme` sees the exact
-// shape it sees in production.
+// Builds a `DeclaredTest` the way `parseDeclaredTests` would. By default the
+// declaration's OWN tag array is exactly `tags` and it inherits nothing from
+// an enclosing `describe`, so `stable` and `fixme` are derived from `tags` /
+// `modifier` exactly as the real parser derives them and `isStable`'s
+// `test.stable && !test.fixme` sees the shape it sees in production.
+//
+// `stable` is an explicit OVERRIDE for one case the derivation cannot reach:
+// `@stable` on an enclosing `test.describe`, which `collectDeclaredTests()`
+// RESOLVES into `stable: true` with the tag absent from the child's own
+// array. HOW the parser resolves that is `stable-tests.test.ts`'s concern;
+// what `classifyBacklog` does with such a row is nobody's but this file's,
+// and until the override existed no test here could construct one -- so the
+// only semantic change the #1746 reconciliation made to this predicate was
+// unpinned, and reverting it to `tags.includes(STABLE_TAG) && !fixme` passed
+// every test in the repo (the corpus has zero instances). See the tests
+// tagged "inherited @stable" below.
 function t(
   relativePath: string,
   title: string,
   tags: string[],
   line = 1,
   modifier = "",
+  stable = tags.includes(STABLE_TAG),
 ): DeclaredTest {
   return {
     title,
     relativePath,
     line,
     tags,
-    stable: tags.includes(STABLE_TAG),
+    stable,
     fixme: modifier === "fixme" || modifier === "skip",
     modifier,
     unparseableTags: false,
@@ -104,6 +114,46 @@ test("a file with one real @stable test is excluded even when a fixme'd test als
     t("a/x.spec.ts", "plain backlog test", ["@release"], 3),
   ], NO_FACTS);
   assert.equal(b.specs.length, 0);
+});
+
+// ─── inherited @stable -- the one semantic change the #1746 switch made ──────
+//
+// `isStable` reads `DeclaredTest.stable`, which is true when `@stable` REACHES
+// the test: its own `tag` array OR an enclosing `test.describe`'s. The retired
+// parser could only see the first, so these two rows were unconstructible here
+// and the change was invisible: reverting clause 2 and clause 4 to
+// `tags.includes(STABLE_TAG) && !fixme` is behaviourally visible (measured:
+// `stableFiles` goes 1 -> 0 on the second fixture, putting the sibling in
+// scope) yet passed the whole unit lane, the real-suite test and
+// `triage:baseline --check`, because the corpus has zero describe-level
+// `@stable` blocks. Which is precisely the standard `Backlog.titleCollisions`
+// states two docblocks up: a corpus with zero instances cannot pin a guard
+// against them.
+//
+// The divergence from `parseStableTests` here is deliberate and documented on
+// `isStable` itself: that parser WARNS about a describe-level tag (it would be
+// invisible to Phase 0) while this module must treat the test as run by the
+// daily, so not never-validated debt.
+
+test("clause 2: a test inheriting @stable from its describe is not backlog debt", () => {
+  const b = classifyBacklog(
+    [t("a/x.spec.ts", "inherits stable", ["@release"], 10, "", /* stable */ true)],
+    NO_FACTS,
+  );
+  assert.equal(b.specs.length, 0, "an inherited-@stable test is run by the daily");
+  assert.equal(b.testCount, 0);
+});
+
+test("clause 4: a test inheriting @stable exempts its whole file, siblings included", () => {
+  // The file-wide half, which is the consequence that actually moves the
+  // baseline: `stableFiles` is keyed on `isStable`, so the untagged sibling
+  // drops out too.
+  const b = classifyBacklog([
+    t("a/x.spec.ts", "inherits stable", ["@release"], 10, "", /* stable */ true),
+    t("a/x.spec.ts", "sibling with no stable of its own", ["@release"], 20),
+  ], NO_FACTS);
+  assert.deepEqual(b.specs, [], "the describe's tag exempts every test in the file");
+  assert.equal(b.testCount, 0);
 });
 
 test("tier is T1 when the spec has a doc or id-scoped cleanup", () => {
@@ -223,6 +273,32 @@ test("assertNoWarnings only counts declarations that are actually unparseable", 
     () => assertNoWarnings([clean, bad]),
     /reported 1 declaration\(s\)/,
   );
+});
+
+// The documented WIDTH, which was documented and untested: "every declaration
+// across the whole suite, not only the in-scope ones". Every fixture above
+// passes rows the backlog KEEPS, so narrowing the guard to `classifyBacklog`'s
+// output -- or filtering by scope inside `assertNoWarnings` -- would have kept
+// all of them green while dropping the guarantee. These two rows are
+// demonstrably out of scope (clause 3 drops the lane one, clause 2 the stable
+// one), which is exactly why they must still be refused: an unreadable `tag`
+// array is the one thing that could be HIDING the lane tag or the `@stable`
+// the clause reading it depends on.
+test("assertNoWarnings refuses declarations the backlog itself excludes", () => {
+  const lane: DeclaredTest = {
+    ...t("a/x.spec.ts", "enterprise only", ["@enterprise"]),
+    unparseableTags: true,
+  };
+  const stable: DeclaredTest = {
+    ...t("a/y.spec.ts", "already validated", [STABLE_TAG]),
+    unparseableTags: true,
+  };
+  assert.equal(
+    classifyBacklog([lane, stable], NO_FACTS).testCount,
+    0,
+    "fixture is only meaningful while both rows are out of scope",
+  );
+  assert.throws(() => assertNoWarnings([lane, stable]), /reported 2 declaration\(s\)/);
 });
 
 // ─── Invariant over the real suite ───────────────────────────────────────────

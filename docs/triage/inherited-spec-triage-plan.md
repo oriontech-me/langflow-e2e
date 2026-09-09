@@ -4,17 +4,24 @@
 
 **Goal:** Build the tooling that measures the 55 never-validated OSS specs, publishes a per-test triage verdict, and prevents the backlog from regrowing silently.
 
-**Architecture:** One AST parser already exists for `@stable` (`scripts/lib/stable-tests.ts`); it is widened to return *every* tagged declaration, and a pure predicate module derives the backlog and its two tiers from that. Everything else is a thin shell over pure functions: a baseline writer, a `--grep` fragment builder, a report-to-table renderer, and an ownership guard. The measurement itself is **nine** `manual.yml` dispatches — three passes over three shards — whose JSON reports the renderer consumes.
+**Architecture:** One AST parser returns every declared test with the tags that reach it — `collectDeclaredTests()` in `scripts/lib/stable-tests.ts`, which #1746's orphan reconciler landed — and a pure predicate module derives the backlog and its two tiers from that. Everything else is a thin shell over pure functions: a baseline writer, a `--grep` fragment builder, a report-to-table renderer, and an ownership guard. The measurement itself is **nine** `manual.yml` dispatches — three passes over three shards — whose JSON reports the renderer consumes.
 
-> ### ⚠️ Status, 2026-09-09: Tasks 1–6 are IMPLEMENTED; Task 7's runbook has NOT been run
+> This sentence used to read *"one AST parser already exists for `@stable`; it **is widened** to return every tagged declaration"*, which is inverted twice over. Task 1 did widen that parser; #1746 then landed a second answer to the same question in the same file, and the widening was **reverted** in `db7a580e` in favour of consuming upstream's. Nothing of Task 1 shipped — see its own banner below.
+
+> ### ⚠️ Status, 2026-09-09: Task 1 was REVERTED; Tasks 2–6 are IMPLEMENTED; Task 7's runbook has NOT been run
 >
 > The design (`docs/triage/inherited-spec-triage-design.md`) is binding, and the
 > shipped code under `scripts/` is what actually ran. **Tasks 1, 2, 3, 4 and 6
-> carry a per-task superseded note** over their code blocks: each of those five
-> shipped a deviation from the literal block below, every deviation was forced
-> by a measurement or a review, and the reasoning lives in the design plus the
-> functions' own docblocks. The blocks are marked stale rather than rewritten,
-> deliberately — a half-updated code block is worse than one honestly labelled.
+> carry a per-task note** over their code blocks, and the five are not all the
+> same kind of note: **Tasks 2, 3, 4 and 6 each shipped a deviation** from the
+> literal block below, forced by a measurement or a review, with the reasoning
+> in the design plus the functions' own docblocks — while **Task 1 shipped
+> nothing at all.** It was implemented, then reverted in `db7a580e` once #1746
+> landed a second parser for the same question in the same file; every symbol
+> its blocks name is deleted, and a worker following them would re-add the
+> parser that commit removed. The blocks are marked stale rather than
+> rewritten, deliberately — a half-updated code block is worse than one
+> honestly labelled — so read each task's banner before its steps.
 >
 > **Task 7 (the measurement) has NOT been run** — its deliverable
 > `docs/triage/inherited-spec-triage.md` does not exist, and its steps below are
@@ -88,16 +95,39 @@ here because their content is issue A's output.
 
 `scripts/lib/stable-tests.ts` already walks the specs and reads inline `tag:` arrays, but it only ever returns the `@stable` ones. Two parsers that are supposed to agree about what a tag is would be exactly the drift issue #985 was raised about, so the backlog predicate is built on this one — widened, not copied.
 
-> ⚠️ **SUPERSEDED — Task 1 is implemented, and its `CollectTaggedResult` below
-> is missing the field the fix needed.** Widening the walk to five declaration
-> modifiers also widened the **warning** channel, and both consumers of
-> `parseStableTests` are fail-closed on a warning
-> (`scripts/check-checklist-coverage.ts` exits 1 on any), so the first
+> ⚠️ **REVERTED — Task 1 shipped NOTHING. Do not implement the steps below.**
+> It was implemented, and then removed in **`db7a580e`**. #1746 (PR #1754)
+> landed while this branch was in final review and added to the very same file
+> a second answer to the same question — declared tests with the tags that
+> reach them — and two parallel APIs for one question in one file is the #985
+> drift Task 1 was itself justified by. So `scripts/lib/stable-tests.ts` is
+> back to the form `origin/main` has, apart from one additive `DeclaredTest`
+> field (`modifier`), and `scripts/lib/inherited-backlog.ts` (Task 2) consumes
+> upstream's `collectDeclaredTests()` instead. The measurement that decided it:
+> the four-clause predicate evaluated through upstream's parser returns the
+> identical **55 specs / 92 tests**, 0 entering and 0 leaving — the same
+> population from a different walk. Upstream's is also the better parser on two
+> axes this branch had to concede: it RESOLVES describe-level inheritance of
+> `@stable` where this one only warned, and its discriminator admits an
+> untagged declaration while still excluding the in-body `test.skip(cond, msg)`
+> guard.
+>
+> **Every symbol named in this task — `TaggedTest`, `CollectTaggedResult`,
+> `parseTaggedTests`, `collectTaggedTests`, and the `ParseWarning` /
+> `warningDetails` pair — is deleted.** The four exposures of consuming
+> upstream's parser instead, all zero occurrences in the corpus today, are
+> recorded in `scripts/lib/inherited-backlog.ts`'s header, and the one input on
+> which this branch's `isStable` and `parseStableTests` legitimately disagree
+> (a describe-level `@stable`) is recorded on `isStable` itself.
+>
+> Kept as history, because it is why the reverted parser had the shape it did:
+> widening the walk to five declaration modifiers also widened the **warning**
+> channel, and both consumers of `parseStableTests` are fail-closed on a
+> warning (`scripts/check-checklist-coverage.ts` exits 1 on any), so the first
 > `test.skip(..., { tag: SHARED_TAGS })` anyone wrote would have failed every
-> PR — with a remediation that a modified declaration cannot satisfy. A warning
-> now carries the modifier it is about (`ParseWarning` / `warningDetails`), and
-> `parseStableTests` forwards only the ones that bear on the `@stable`
-> population. `warnings: string[]` is unchanged for every existing caller.
+> PR — with a remediation that a modified declaration cannot satisfy. That is a
+> live hazard for anyone who widens that parser again; upstream's avoids it by
+> not admitting those forms at all.
 
 **Files:**
 - Modify: `scripts/lib/stable-tests.ts`
@@ -325,13 +355,25 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 > observations fold into one verdict where a green can mask a red). Zero
 > collisions of either class today. See `Backlog.titleCollisions` in
 > `scripts/lib/inherited-backlog.ts`, and the design's §2.
+>
+> **Also superseded by Task 1's revert (`db7a580e`): the input type.** Task 1
+> shipped nothing, so this module consumes `DeclaredTest` /
+> `collectDeclaredTests()` from `scripts/lib/stable-tests.ts` (#1746's parser).
+> Every `TaggedTest` below — the `Produces` signature's `classifyBacklog(all:
+> TaggedTest[], …)` and the `import type { TaggedTest }` in Step 1's fixture —
+> names a deleted type; read `DeclaredTest` for it. The fixture factory also
+> differs from the block below in shape, since `DeclaredTest` carries `stable`
+> / `fixme` / `unparseableTags` and no `modulePath` / `specFile`. Clause 2's
+> predicate is `t.stable && !t.fixme` rather than `modifier === "" &&
+> tags.includes("@stable")`; the two agree on every input except a
+> describe-level `@stable`, which is documented on `isStable`.
 
 **Files:**
 - Create: `scripts/lib/inherited-backlog.ts`
 - Test: `scripts/lib/inherited-backlog.test.ts`
 
 **Interfaces:**
-- Consumes: `TaggedTest`, `collectTaggedTests` from Task 1.
+- Consumes: `DeclaredTest`, `collectDeclaredTests` from `scripts/lib/stable-tests.ts` — #1746's parser, not Task 1's (reverted; see its banner).
 - Produces:
   ```ts
   export const LANE_SELECTORS: readonly string[];

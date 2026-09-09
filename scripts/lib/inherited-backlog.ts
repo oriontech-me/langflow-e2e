@@ -12,20 +12,74 @@
  * this file exists to avoid. The two never disagreed on POPULATION, only on
  * shape: the same four-clause predicate evaluated against this parser's
  * output over the real suite returns the identical 55 specs / 92 tests as the
- * walker it replaced. Two measured exposures of the switch, both zero
- * occurrences today: `collectDeclaredTests()` does not admit `.only` /
- * `.fail` / `.slow` declarations at all (confirmed empty:
- * `grep -rnoE '^\s*test\.(only|fail|slow)\(\s*"' tests/tests-automations/regression`),
- * and it inherits only its OWN three lane tags (`@destructive` / `@enterprise`
- * / `@serving`) from an enclosing `test.describe` -- a describe tagged
- * `@authz` / `@sso` / `@governance` alone would not reach a test's `tags`
- * here. The corpus has zero describes carrying any lane tag at all today, so
- * nothing currently relies on that inheritance either way.
+ * walker it replaced (`db7a580e`).
+ *
+ * FOUR measured exposures of that switch, all zero occurrences today. Two
+ * NARROW the population, in the direction of dropping a declaration:
+ *
+ *  1. `collectDeclaredTests()` does not admit `.only` / `.fail` / `.slow`
+ *     declarations at all -- its matcher is `isPlainTestCall(node) ||
+ *     isSkippedDeclaration(node)`, a bare `test(...)` or the declaring
+ *     `test.fixme` / `test.skip`, where the retired walker's
+ *     `/^test(?:\.(fixme|skip|only|fail|slow))?$/` admitted all five. The
+ *     corpus figure was re-derived BY AST, not by grep: 4 `.fixme`, 6
+ *     `.skip`, ZERO `.only` / `.fail` / `.slow` declaring calls (the design's
+ *     §1 clause 1 records the same three figures). Grep cannot answer this
+ *     question, and the command recorded here before could have returned
+ *     empty while a declaration existed: it anchored on `("`, so
+ *     `test.only('a', ...)`, a template-literal title (a spelling this corpus
+ *     uses for parametrized titles) and a title on the following line all
+ *     escaped it. The over-wide screen is
+ *     `grep -rnE '(^|[^.[:alnum:]_])test\.(only|fail|slow)\s*\(' tests/tests-automations/regression`,
+ *     which prints THREE lines today and not one of them is a declaration:
+ *     two prose mentions inside comments, plus one no-arg `test.fail()`
+ *     MODIFIER called from a test body
+ *     (`api/flows/workflows-v2-job-lifecycle.spec.ts:326`). Nothing but an
+ *     AST separates that last one from a declaration, which is why the AST
+ *     figure is the authority here and the grep only a screen.
+ *  2. an unreadable `tag` array ON one of those three forms therefore no
+ *     longer reaches `assertNoWarnings`'s refusal below: the matcher never
+ *     sees the node, so `unparseableTags` is never set for it and the
+ *     suite-level warning the retired walker raised is simply gone. A
+ *     corollary of (1), spelled out because refusals that stopped refusing
+ *     are this module's own subject.
+ *
+ * Two WIDEN it, in the direction of admitting one:
+ *
+ *  3. a declaration with NO `tag` option at all is now a row, where the
+ *     retired walker required an inline `tag:` array and dropped it -- so a
+ *     future `test("x", async () => {})` joins this backlog silently.
+ *     Arguably the right answer (an untagged test has never carried `@stable`
+ *     either), which is exactly why it is stated here rather than discovered
+ *     from a baseline diff.
+ *  4. `@stable` on an enclosing `test.describe` is RESOLVED into the child
+ *     tests' `stable` field instead of raising a suite-level refusal. What
+ *     that costs the baseline writer's parse-refusal path is recorded in
+ *     `update-inherited-backlog-baseline.ts`'s header; where it lands HERE is
+ *     `isStable` below, and it is the one input on which this module and
+ *     `parseStableTests` legitimately disagree -- see that function's docblock.
+ *
+ * Lane-tag inheritance is narrower than `LANE_SELECTORS`: `collectDeclaredTests()`
+ * inherits only its OWN three lane tags (`@destructive` / `@enterprise` /
+ * `@serving`) from an enclosing `test.describe`, so a describe tagged `@authz`
+ * / `@sso` / `@governance` alone would not reach a test's `tags` here. The
+ * corpus has zero describes carrying any lane tag at all today, so nothing
+ * currently relies on that inheritance either way.
+ *
+ * THE LINT LANE DOES NOT OPEN THIS FILE. `npm run lint` is `eslint tests/`,
+ * so no PR job ever lints anything under `scripts/` -- this module or
+ * `./stable-tests.ts` included. `npm run typecheck` compiles them and
+ * `npm run test:units` runs their tests, but a lint-only defect (a dead
+ * import is an ERROR under this repo's config) is invisible to every gate on
+ * the PR; one shipped in the commit this note was added with. Same shape as
+ * #1593's "typechecked by nothing", and worth stating rather than leaving the
+ * lane looking clean: run `npx eslint scripts/lib/inherited-backlog.ts` by
+ * hand when you change this file.
  */
 import * as fs from "fs";
 import * as path from "path";
 import {
-  REGRESSION_ROOT, REPO_ROOT, STABLE_TAG, type DeclaredTest, collectDeclaredTests,
+  REGRESSION_ROOT, REPO_ROOT, type DeclaredTest, collectDeclaredTests,
 } from "./stable-tests";
 
 /**
@@ -91,17 +145,55 @@ export interface Backlog {
  * `test.skip(...)`).
  *
  * `test.stable` alone is not enough: a `test.fixme("x", { tag: ["@stable"] })`
- * has `stable: true` but runs in no lane whatever its tags claim. This is the
- * SAME rule `parseStableTests` uses (`./stable-tests.ts`, via its
- * `modifier === "" && tags.includes(STABLE_TAG)` filter over the same AST) --
- * `test.stable && !test.fixme` is that predicate's exact equivalent over
- * `DeclaredTest`'s shape, and it is what the QA-CHECKLIST generator and the
- * checklist guard both, transitively, read. Do not simplify this to
- * `test.stable` -- that would give the suite's single most load-bearing tag a
- * second, looser definition inside the one module whose entire justification
- * is that there is only one (Task 2 review, ruling P7). A quarantined
- * declaration belongs in THIS backlog, and the design's PARK outcome is how
- * it exits.
+ * has `stable: true` but runs in no lane whatever its tags claim. Do not
+ * simplify this to `test.stable` -- that would give the suite's single most
+ * load-bearing tag a second, looser definition inside the one module whose
+ * entire justification is that there is only one (Task 2 review, ruling P7).
+ * A quarantined declaration belongs in THIS backlog, and the design's PARK
+ * outcome is how it exits.
+ *
+ * THIS IS NOT `parseStableTests`'s FILTER, and where the two stop agreeing is
+ * the most important sentence in the file -- this module's whole justification
+ * is that there is ONE definition of `@stable`, so the input on which that
+ * stops being literally true has to be written down rather than smoothed over.
+ * (An earlier version of this docblock claimed the two were "exact
+ * equivalents" "over the same AST", citing a `modifier === "" &&
+ * tags.includes(STABLE_TAG)` filter. All three were wrong: that filter was
+ * THIS branch's deleted parser, `parseStableTests` has its own separate walk,
+ * and the equivalence is false on the one input `db7a580e` widened.)
+ *
+ * `parseStableTests` (`./stable-tests.ts`, read transitively by the
+ * QA-CHECKLIST generator and the checklist guard) matches `isPlainTestCall()`
+ * -- a BARE `test(...)`, so `test.fixme` / `test.skip` are not even
+ * candidates -- and then requires `@stable` in that declaration's OWN `tag`
+ * array. It also has its own AST walk (`parseStableTestsInFile`): there are
+ * two walks over the specs now, deliberately, not one shared one. The two
+ * predicates answer different questions:
+ *
+ *   `isStable`         -- does the daily RUN this test? Playwright's
+ *                         `--grep @stable` honours a `test.describe` tag, so
+ *                         a test inheriting it really is in the stable lane.
+ *   `parseStableTests` -- is `@stable` WRITTEN where Phase 0 can see it? That
+ *                         parser is per-`test()` by construction, so a
+ *                         describe-level tag leaves those tests invisible to
+ *                         Phase 0 and to the checklist guard -- a defect, and
+ *                         it warns fail-closed about it (#985).
+ *
+ * So on a describe-level tag they DISAGREE. Measured, on
+ * `test.describe("s", { tag: ["@stable"] }, () => { test("inner", { tag:
+ * ["@release"] }, ...) })`:
+ *
+ *   parseStableTests -> 0 tests, 1 warning
+ *   isStable         -> true
+ *
+ * Both are right for their own question, and the divergence must NOT be
+ * "fixed" in either direction. Such a test IS run by the daily, so its file
+ * is not never-validated debt and clauses 2 and 4 must exclude it (pinned by
+ * a unit test, since the corpus has no instance); the warning is about the
+ * other failure entirely and must keep firing. Every other input agrees: a
+ * plain own-tag `@stable` is stable to both, an untagged declaration to
+ * neither, and a `test.fixme` carrying `@stable` to neither -- the one for
+ * want of a plain-call match, the other for `!fixme`.
  */
 function isStable(test: DeclaredTest): boolean {
   return test.stable && !test.fixme;
@@ -199,7 +291,12 @@ export function specFactsFromDisk(relativePath: string): SpecFacts {
  * an `@stable` tag on that declaration or on another one in the SAME file,
  * either of which would silently flip clause 2 or clause 4's answer -- so it
  * checks every declaration across the whole suite, not only the in-scope
- * ones, the same width `collectTaggedTests()`'s warnings array had.
+ * ones, the same width `collectTaggedTests()`'s warnings array had. That
+ * width is now pinned by a fixture whose unparseable rows are demonstrably
+ * OUT of scope (a lane selector and an `@stable`), because it was documented
+ * and untested: every earlier fixture passed rows the backlog itself keeps,
+ * so narrowing this to `classifyBacklog`'s output -- or filtering by scope in
+ * here -- would have broken the guarantee with nothing failing.
  */
 export function assertNoWarnings(tests: readonly DeclaredTest[]): void {
   const unparseable = tests.filter((t) => t.unparseableTags);
