@@ -5,7 +5,10 @@
 // Every other field is a rendering of that. The rule is the whole point of the
 // accessor — a spec asserting `clean` must not be able to pass on a run the
 // fixture never managed to read, which is the failure mode #1012 names and the
-// one the four give-up paths in `fixtures.ts` produce silently.
+// one the give-up paths in `fixtures.ts` produce silently — SEVEN
+// `countUnevaluated(...)` call sites at the time of writing, not the "four" an
+// earlier version of this line claimed, which was a count of reason CATEGORIES
+// and short even of those. Count the call sites rather than quoting a number.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -178,7 +181,7 @@ test("the report is a copy — the fixture keeps mutating its own accounting", (
 });
 
 test("a nonsensical pending count cannot buy a clean verdict", () => {
-  // Unreachable from the fixture (`openStreams()` is a `Map.size`) and pinned
+  // Unreachable from the fixture (`pendingStreams()` sums counters it owns) and pinned
   // anyway, because the obvious defensive move here — clamping to zero — points
   // the wrong way: it converts a count nobody can explain into a CLEAN verdict.
   // Caught reviewing this file's own first draft, where the clamp shipped with a
@@ -208,3 +211,34 @@ test("a nonsensical pending count cannot buy a clean verdict", () => {
 // into a helper turns it green while the defect stands. It was also brittle in
 // its own right — it sliced the body to the first `};`, which any object literal
 // would have cut short.
+
+// The ONE exception, and it is labelled the weaker thing it is. The residual
+// `settle()` could not drain is folded into the unevaluated tally at teardown,
+// and teardown output is the one region no test in this repo can observe — the
+// same structural limit `flow-error-gate.spec.ts` records for its own v1
+// interrupt and for the advisory block. Nothing behavioural can reach it, so
+// this pins that the block is still there at all: it catches deletion, and
+// #1226 says it will not catch a rewrite that keeps the spelling and loses the
+// effect. Recorded rather than dressed up.
+//
+// Why it matters: `drain()` empties and judges `open`, but `settling` past the
+// budget and `requests` whose headers never came survive it, and the session is
+// detached immediately after — so they never settle. The capped `settle()` this
+// PR introduced is what made that residual reachable; the unbounded `drain()` it
+// replaced could not leave one. Dropping it in silence is #1012's rule broken by
+// the change that enforces it everywhere else.
+test("the teardown counts what the drain could not settle (#1012)", () => {
+  const source = fs.readFileSync(path.join(__dirname, "fixtures.ts"), "utf-8");
+  const drain = source.indexOf("runStreamCapture.drain()");
+  const residual = source.indexOf("runStreamCapture.pendingStreams()", drain);
+  assert.ok(drain > -1, "the teardown still drains the v2 capture");
+  assert.ok(
+    residual > -1,
+    "the teardown reads the residual `pendingStreams()` after draining",
+  );
+  assert.match(
+    source.slice(residual, residual + 400),
+    /countUnevaluated\(/,
+    "the residual is COUNTED as unevaluated, not merely read",
+  );
+});

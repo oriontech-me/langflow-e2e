@@ -349,8 +349,17 @@ Assert the verdict directly (#1452):
 ```typescript
 // PageWithErrorHooks is exported from tests/fixtures/fixtures.ts alongside `test`
 const report = await (page as PageWithErrorHooks).flowErrorReport();
+expect(report.evaluated, "no run stream was accounted for at all").toBeGreaterThan(0);
 expect(report.clean, report.summary).toBe(true);
 ```
+
+**Both lines, and the first one is the one that gets dropped.** `clean` is vacuously
+true when nothing was accounted for, so a spec asserting it alone keeps passing when the
+send never fired or the run moved to an endpoint `runStreamSurface()` does not classify —
+"the run was healthy" and "there was no run" become the same assertion, which is #1092's
+silent-nonexistent-path shape. `flow-error-gate.spec.ts` records the same lesson from the
+other side: its healthy-run test passed under every mutation it was meant to catch until
+`evaluated` was asserted.
 
 `clean` is true only when every run stream in the test was evaluated and none of them
 failed — an unevaluated run is not clean. It also requires `v2Watched`, and that is the
@@ -359,8 +368,22 @@ until teardown, so `v2Watched` is the only thing keeping the report from reading
 the moment a spec asks. `summary` always names whichever reason applied. Call it **after** the run has finished (a stream
 still open is reported as `pending`, which is not clean either; it does not wait, because
 nothing can know whether a given stream will close). It is read-only and NOT a hatch:
-`allowFlowErrors()` suppresses the gate, it does not empty the report, so a spec can
-tolerate one deliberate failure and still assert a later run came back clean.
+`allowFlowErrors()` suppresses the gate, it does not empty the report, so a hatched spec
+can still find out what actually happened.
+
+**It is cumulative for the whole test, not per run.** Once anything has failed, `clean`
+stays false for the rest of the test — an earlier version of this paragraph said a spec
+could tolerate one deliberate failure and then assert a *later* run came back clean, and
+it cannot. A spec that needs a per-run window takes TWO reports and compares them:
+
+```typescript
+const before = await (page as PageWithErrorHooks).flowErrorReport();
+// … drive the run …
+const after = await (page as PageWithErrorHooks).flowErrorReport();
+expect(after.failures.length).toBe(before.failures.length);
+expect(after.evaluated, "the run produced no verdict at all")
+  .toBeGreaterThan(before.evaluated);
+```
 
 Because an HTTP error cannot fail a test, **this step is the only thing standing between a
 real backend 500 and a green run** — the fixture prints

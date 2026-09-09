@@ -155,9 +155,13 @@ export function buildFlowErrorReport(
     // reasons are ASCII, so a plain comparison is both stable and enough.
     .sort((a, b) => (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0));
   const unevaluatedTotal = unevaluated.reduce((sum, e) => sum + e.count, 0);
-  // `openStreams()` is a `Map.size`, so anything but a non-negative integer is a
-  // bug in the caller rather than a state of the run — and it is reported as
-  // UNDECIDABLE, not clamped to zero. Clamping is the tempting move and it is
+  // `pending` is a SUM of counters the caller owns (`open.size + settling.size +
+  // requests.size` from the v2 capture, plus the v1 in-flight count), so anything
+  // but a non-negative integer is a bug in the caller rather than a state of the
+  // run — and it is reported as UNDECIDABLE, not clamped to zero. The symbol is
+  // `pendingStreams()`; an earlier version of this comment named an
+  // `openStreams()` that does not exist and described it as one `Map.size`,
+  // which understated what has to hold. Clamping is the tempting move and it is
   // the wrong direction: it would turn a nonsensical count into a clean verdict,
   // which is the one outcome this whole accessor exists to prevent (#1012).
   const pendingValid = Number.isInteger(input.pending) && input.pending >= 0;

@@ -303,7 +303,7 @@ export async function attachRunStreamCapture(
    * asked once. Capped rather than looped to exhaustion — a page that keeps
    * closing streams must not be able to hold a teardown open — and the cap being
    * reached is not an error state: whatever is left is simply still pending, and
-   * `openStreams()` says so.
+   * `pendingStreams()` says so.
    */
   const settle = async (budgetMs = SETTLE_BUDGET_MS): Promise<void> => {
     const deadline = Date.now() + budgetMs;

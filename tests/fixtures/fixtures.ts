@@ -114,11 +114,20 @@ export type PageWithErrorHooks = Page & {
    *
    * ```ts
    * const report = await (page as PageWithErrorHooks).flowErrorReport();
+   * expect(report.evaluated, "no run stream was accounted for").toBeGreaterThan(0);
    * expect(report.clean, report.summary).toBe(true);
    * ```
    *
+   * BOTH lines. `clean` is vacuously true when nothing was accounted for, so on
+   * its own it makes "the run was healthy" and "the send never fired" the same
+   * assertion — the #1092 shape this accessor exists to close, and measured:
+   * the healthy-run behavioural test passed under every mutation it was meant to
+   * catch until `evaluated` was asserted.
+   *
    * Read-only, and NOT a hatch: `allowFlowErrors()` suppresses the gate, it does
-   * not empty this report. Call it AFTER the run has finished — a stream still
+   * not empty this report — which also means the report is CUMULATIVE for the
+   * whole test: once anything has failed, `clean` stays false. A per-run window
+   * is two reports diffed; see `flow-error-report.ts`'s header. Call it AFTER the run has finished — a stream still
    * open has no verdict yet and is reported as `pending`, which is not clean
    * either; the accessor deliberately does not wait, because nothing here can
    * know whether a given stream will ever close.
@@ -196,8 +205,8 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
      * a race nobody could see.
      */
     const unevaluatedStreams = new Map<string, number>();
-    const countUnevaluated = (reason: string) =>
-      unevaluatedStreams.set(reason, (unevaluatedStreams.get(reason) ?? 0) + 1);
+    const countUnevaluated = (reason: string, howMany = 1) =>
+      unevaluatedStreams.set(reason, (unevaluatedStreams.get(reason) ?? 0) + howMany);
     /**
      * Run streams the fixture DID reach a conclusion about — failed or clean.
      *
@@ -338,9 +347,11 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
     // Read-only view of the same accounting the teardown renders (#1452).
     //
     // The `settle()` is LOAD BEARING, and measured rather than assumed: with it
-    // removed, two of the four accessor tests in `flow-error-gate.spec.ts` fail
-    // 5 runs out of 5 — the v2 error and the provider outage both read back as a
-    // CLEAN run. `judgeCapturedStream` runs from an async continuation, so a
+    // removed, three of the SEVEN accessor tests in `flow-error-gate.spec.ts`
+    // fail 5 runs out of 5 — the v2 error and the provider outage both read back
+    // as a CLEAN run, and the healthy run reads as unaccounted. (An earlier
+    // version of this comment said "two of the four", which was a stale count of
+    // BOTH numbers and the same defect the sweep below is about.) `judgeCapturedStream` runs from an async continuation, so a
     // stream that has already closed is still a CDP round-trip short of being
     // counted, and an accessor that answers first reports the one thing it
     // exists to prevent. Streams still OPEN are left alone: judging one early
@@ -569,6 +580,21 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
     // tail. No waiting, because there is nothing left to wait for (#1168).
     for (const stream of await runStreamCapture.drain()) {
       judgeCapturedStream(stream);
+    }
+    // Whatever `drain()` could not settle. `drain()` empties `open` and judges
+    // it, but `settling` past the budget and `requests` whose headers never came
+    // survive it — and the session is detached immediately after, so they never
+    // will settle. Before this they were simply dropped: a #1012 violation
+    // introduced by the very budget that made `settle()` safe, since the OLD
+    // `drain()` awaited `settling` without a cap and could not leave a residual.
+    // Read AFTER the drain on purpose — read before it, this would count the
+    // streams the drain is about to judge.
+    const residual = runStreamCapture.pendingStreams();
+    if (residual > 0) {
+      countUnevaluated(
+        "run stream still pending when the test ended (settle budget exhausted)",
+        residual,
+      );
     }
     if (!runStreamCapture.available) {
       // No CDP session, so the whole v2 surface went unwatched for this test.

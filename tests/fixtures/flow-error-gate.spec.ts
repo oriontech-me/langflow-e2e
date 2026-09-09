@@ -17,8 +17,8 @@
 //   4. a PROVIDER outage in a v2 run is NOT a flow error (#1165) — it is reported
 //      as unevaluated, and it must leave a test green with no hatch at all;
 //   5. `page.flowErrorReport()` answers what the gate cannot (#1452) — it is the
-//      only way a spec can tell "no flow error" from "no verdict", and the four
-//      cases at the end are the four states a caller has to distinguish.
+//      only way a spec can tell "no flow error" from "no verdict", and the SEVEN
+//      cases at the end are the states a caller has to distinguish.
 //      Behavioural on purpose: the verdict rule is unit-tested next door, but
 //      whether the accessor sees a stream that closed MID-TEST depends on the
 //      capture's async continuation, and only a real session exercises that.
@@ -319,11 +319,15 @@ test.describe("fixture flow-error gate", () => {
 
   // --- page.flowErrorReport() (#1452) -------------------------------------
   //
-  // Four states, and the accessor's only job is that a caller can tell them
-  // apart. Three of them leave the test GREEN today — which is the whole
-  // problem: three spec docs read "any flow error fails the test via the
-  // fixture" and used that to justify dropping their own asserts, and the
-  // sentence is true only of the state the gate reaches a verdict in.
+  // Seven states, and the accessor's only job is that a caller can tell them
+  // apart. Every one but the first and the second leaves the test GREEN today —
+  // which is the whole problem: FOUR spec docs read "any flow error fails the
+  // test via the fixture" and used that to justify dropping their own asserts,
+  // and the sentence is true only of the state the gate reaches a verdict in.
+  //
+  // The counts here were "four" and "three" in the first version of this block,
+  // both stale, in the PR whose own sweep is about a stale count. Recorded
+  // rather than silently corrected: the same slip is one added test away.
 
   test(
     "flowErrorReport(): a healthy v2 run reads clean",
