@@ -998,8 +998,8 @@ State the honest limit in a comment at the top of the file:
 ```js
 // STRUCTURAL, and structural guards pin a SPELLING rather than a behaviour
 // (#1226: every regex added over a workflow's text was then shown to pass its
-// own mutation). It is here because the reporter list reached four lanes by copy
-// -paste and a silent revert would strand every consumer of results.json; the
+// own mutation). It is here because a silent revert would strand every consumer
+// of results.json -- the measurement included; the
 // behaviour is covered where it can be -- build-triage-table.test.mjs asserts on
 // real report fixtures.
 ```
@@ -1049,7 +1049,9 @@ After the existing `Upload Playwright report` step, add:
 ```bash
 node --test scripts/run-e2e-json-report.test.mjs && npm run test:scripts
 ```
-Expected: both PASS. `test:scripts` must stay green — this action is shared by `pr-validation.yml`, `nightly.yml` and `manual.yml`, and other structural tests assert on its shape.
+Expected: both PASS. `test:scripts` must stay green — other structural tests assert on this action's shape.
+
+**Blast radius, measured:** `run-e2e` is used by exactly two workflows — `nightly.yml` and `manual.yml`. `pr-validation.yml` is **not** a consumer: it runs `npx playwright test $SPECS --reporter=github` inline. And `nightly.yml` is disabled (no cron, `disabled_manually` in Actions), so `manual.yml` is the only live consumer — which is the lane the measurement dispatches to. Do not describe this action as shared by three or four lanes.
 
 - [ ] **Step 5: Commit**
 
@@ -1067,7 +1069,8 @@ destructive lane keeps --reporter=github so it overwrites neither artifact.
 
 Note the guard's limit: a regex over workflow text pins a spelling, not a
 behaviour (#1226). It is here because this reporter list is now load-bearing for
-four lanes; the parsing behaviour is covered against real fixtures instead.
+`manual.yml`, the lane the measurement dispatches to; the parsing behaviour is
+covered against real fixtures instead.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
