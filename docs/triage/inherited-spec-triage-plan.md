@@ -23,12 +23,13 @@
 > rewritten, deliberately — a half-updated code block is worse than one
 > honestly labelled — so read each task's banner before its steps.
 >
-> **Task 7 (the measurement) has NOT been run** — its deliverable
-> `docs/triage/inherited-spec-triage.md` does not exist, and its steps below are
-> **current**, not superseded: this is the one runbook the final fix wave rewrote
-> end to end (nine dispatches over three passes, `npm run triage:verify`, and the
-> red-only re-dispatch deleted). Running it needs CI and live provider
-> credentials, which is why it is not on this branch.
+> **Task 7 (the measurement) HAS been run** — 2026-09-09, nine dispatches on
+> `measure/inherited-triage`, landing `docs/triage/inherited-spec-triage.md`
+> (92 rows: 59 green, 19 hard-failure, 9 flaky, 5 skipped; 29 of 55 specs
+> 100% green). Its steps below are the procedure that ran, with **two premises
+> corrected in place** — Step 1's branch rule and Step 5's expected report total
+> — because both were measured false during the run. Read those two notes before
+> re-running anything.
 >
 > **Tasks 8–9 (the ownership guard and its wiring) have NOT been implemented**
 > and their steps are current. Two things to carry into them: the runbook now
@@ -76,8 +77,10 @@ Three consequences for whoever executes this:
 - **The measurement (Task 7) ships inside issue A's PR**, the way #1692's pilot
   did. It is what proves the instrument end to end, and splitting it out would
   make a second PR whose only content is a generated file.
-- **Every branch in Task 7 forks issue A's branch**, not `main`: the dispatched
-  ref has to carry Task 5's `results.json`, which `main` does not have yet.
+- **Every branch in Task 7 forks a ref that carries Task 5's reporter and the
+  frozen baseline.** That was issue A's branch while A was open; once A merges it
+  is `main`, and the 2026-09-09 run forked `main`. Check the ref's contents
+  rather than assuming which branch has them — see Task 7 Step 1's correction.
 - **The pipeline's IMPLEMENT step needs every deliverable listed**, not just the
   specs — an unlisted file makes the PR gate demand `extraFiles` plus a reason.
   Each task's **Files** block is that list; issue A's is the union of Tasks 1–7's,
@@ -1527,12 +1530,18 @@ No new code. This is the dispatch the previous tasks exist to make honest, and i
 
 - [ ] **Step 1: Verify the baseline on the issue's own branch**
 
-Tasks 1–7 are ONE issue and ONE branch (see *How this becomes issues*), so the
-measurement runs from that branch — never from `main`, which does not yet carry
-Task 5's `results.json` and would dispatch a run whose report cannot be read:
+> **Corrected 2026-09-09, measured.** This step used to say the measurement runs
+> from issue A's branch and *never* from `main`, because `main` "does not yet
+> carry Task 5's `results.json`". That premise expires the moment issue A merges,
+> and it had: #1780/#1782 landed the run-e2e JSON reporter, the frozen baseline
+> and both npm scripts on `main` before the measurement ran. **Check what the ref
+> carries, do not assume which branch carries it** — the dispatched ref needs the
+> reporter, the baseline and the scripts, and `main` had all three. Verify with
+> `git show <ref>:.github/actions/run-e2e/action.yml | grep PLAYWRIGHT_JSON_OUTPUT_NAME`
+> plus `git ls-tree <ref> tests/assets/triage/`. The 2026-09-09 run forked `main`.
 
 ```bash
-git rev-parse --abbrev-ref HEAD   # the issue's branch, not main
+git rev-parse --abbrev-ref HEAD   # a ref that carries Task 5 + the baseline
 npm run triage:baseline -- --check
 ```
 Expected: `in sync`. If it is stale, refresh and commit it before dispatching — measuring against a stale target is how the table ends up with UNKNOWN rows nobody can explain.
@@ -1651,8 +1660,25 @@ node scripts/build-triage-table.mjs \
   --out docs/triage/inherited-spec-triage.md \
   --out-json /tmp/triage/verdicts.json
 ```
-Expected: nine `N test result(s)` lines, summing to **3 × the baseline's
-`testCount`**, then two `wrote …` lines.
+Expected: nine `N test result(s)` lines, then two `wrote …` lines. The sum is
+**at least** `3 × the baseline's testCount` and may legitimately exceed it — see
+the fan-out note below. The 2026-09-09 run summed **294** against a `testCount`
+of 92.
+
+> **Corrected 2026-09-09, measured.** This line used to demand the sum equal
+> `3 × testCount`, which is false whenever a selected test is **parametrized per
+> provider**: `provider=auto` fans it out to one instance per catalog provider,
+> and those instances are byte-identical on `spec::title` — no distinguishing
+> `describe` — so one baseline row yields three report entries. Three backlog
+> tests do this (`agent-markdown-output`, `agent-tool-inspection`,
+> `mcp-client-agent`), giving `3 × 3 passes × 2 extra = 18` over 276.
+>
+> **`npm run triage:verify` cannot see this and is not wrong.** It runs `--list`
+> with no provider catalog, so it counts one instance per test and reports
+> `31/31/30`; shard 1's *reports* then say **37**. Do not read that gap as a
+> selection defect. `build-triage-table.mjs` groups on `spec::title` and handles
+> it correctly — those rows read `N/6` with the skipped instances named
+> alongside, never folded into the ratio.
 
 **Check the report count before rendering.** Nine is not decoration: a download
 that silently produced fewer leaves some tests with one or two observations, and
