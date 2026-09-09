@@ -5,6 +5,11 @@ import {
   type KnownHttpDefect,
 } from "./http-error-policy";
 import {
+  BODY_PENDING,
+  describeResponseBody,
+  summarizeMissingBodies,
+} from "./http-error-body";
+import {
   classifyFlowError,
   isUnreadableStream,
   runStreamSurface,
@@ -135,7 +140,10 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
       url: string;
       status: number;
       statusText: string;
+      /** Present only when the body was READ. `""` is a real, empty body. */
       responseBody?: string;
+      /** Present only when it was not, with the reason (#1432). */
+      bodyUnavailable?: string;
       type?: string;
     }> = [];
     // Flag to allow flow errors (for tests that expect errors)
@@ -340,20 +348,42 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
           status: number;
           statusText: string;
           responseBody?: string;
+          bodyUnavailable?: string;
           type: string;
         } = {
           url,
           status,
           statusText: response.statusText(),
+          // Stamped BEFORE the read, and overwritten by whichever outcome wins
+          // (#1432). Because the entry is recorded first — deliberately, see
+          // above — a read that never settles used to leave it silent about its
+          // body, which is a third state and not a body at all. This is what
+          // makes "we never found out" say so in the teardown summary.
+          bodyUnavailable: BODY_PENDING,
           type: "http_error",
         };
         errors.push(entry);
-        try {
-          entry.responseBody = await response.text();
-          console.log(`   Response: ${entry.responseBody}`);
-        } catch (e) {
-          entry.responseBody = "Could not read response";
-        }
+        // Every branch prints, including the failure (#1432). The catch this
+        // replaces swallowed the reason along with the body, so an error whose
+        // body could not be READ was indistinguishable in the log from one
+        // whose body was EMPTY. That is not a rare shape: Chromium does not
+        // retain a zero-length body, so `response.text()` REJECTS on any
+        // bodyless response rather than resolving to `""` (measured — see
+        // `http-error-body.ts`). An unread body is unknown, not absent (#1012).
+        //
+        // `Promise.resolve().then(...)` rather than `response.text().then(...)`:
+        // the `catch` only sees a REJECTION, while the `try` this replaced also
+        // caught a SYNCHRONOUS throw out of `response.text()` itself. Starting
+        // the chain first keeps both on the same path.
+        const outcome = describeResponseBody(
+          await Promise.resolve()
+            .then(() => response.text())
+            .then((body) => ({ ok: true, body }) as const)
+            .catch((error) => ({ ok: false, error }) as const),
+        );
+        entry.responseBody = outcome.responseBody;
+        entry.bodyUnavailable = outcome.bodyUnavailable;
+        console.log(outcome.line);
       }
 
       // Monitor the v1 run-stream endpoints for execution errors. Which URLs
@@ -542,6 +572,15 @@ export const test = base.extend<{ apiCoverage: ApiCoverage }>({
         console.log(
           `   ⚠️  ${httpErrors.length} HTTP error(s) detected — ADVISORY: these do NOT fail the test. Review them before trusting this run.`,
         );
+        // The inline `Response:` line races the end of the test. The read IS
+        // awaited inside the `page.on("response")` handler — what nothing
+        // awaits is the HANDLER — so an error observed late can have its entry
+        // recorded (that part is synchronous) while the log never gets the
+        // `Response:` line under its `🚨`. Saying it here is what keeps that
+        // from reading as a body nobody bothered to print (#1432).
+        for (const line of summarizeMissingBodies(httpErrors)) {
+          console.log(line);
+        }
       }
 
       // Fail the test if flow errors occurred and weren't allowed
