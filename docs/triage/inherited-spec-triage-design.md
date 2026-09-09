@@ -86,22 +86,34 @@ is mostly the same 55 files, and it retires as a side effect of §3's promote
 outcome. The stale figure is the same class of error #1350 found in the `[-]`
 premise, and it is recorded here so the next wave is not sized against it.
 
-### One hazard found while scoping, handled ahead of the measurement
+### A hazard this design claimed, and the measurement that retracted it
 
-Five of the 55 call `cleanAllFlows` — a global wipe, contrary to the id-scoped
-cleanup rule (#515):
+An earlier revision of this document opened a "fast lane" for five backlog specs
+said to call `cleanAllFlows` — a global flow wipe the helper's own docblock marks
+DEPRECATED and unsafe across parallel workers — and made fixing them a
+precondition of the measurement.
 
-- `core-functionality/llm-agents/general-bugs-agent-sum-duplicate-message-playground.spec.ts`
-- `core-functionality/playground/playground-send-while-in-progress.spec.ts`
-- `flow-functionality/import-outdated-flow.spec.ts`
-- `flow-functionality/run-flow.spec.ts`
-- `mcp/client/mcp-client-agent.spec.ts`
+**That was wrong, and the retraction is recorded rather than deleted**, because
+the same bad instrument is what anyone re-checking would reach for first. The
+finding came from a substring grep for `cleanAllFlows|clean-all-flows` over spec
+sources: 5 hits inside the backlog, 26 across `regression/`. Parsed for the call
+form instead, `regression/` holds **one** `cleanAllFlows(` occurrence — inside
+the comment *"never a global cleanAllFlows()"* — and **zero** importers. Across
+all of `tests/` and `scripts/`, the helper has **no caller at all**.
 
-They are absent from the daily, but the PR lane selects a spec whose imports
-changed, so this is live rather than historical. They are fixed — or deleted, if
-§3 rules them duplicates — in **one PR before the measurement runs**: a global
-wipe during a parallel measurement deletes other workers' flows and poisons the
-table the whole wave is built on.
+Every one of the 26 is a comment, and that is not an accident: this suite
+documents *why a spec does not* wipe globally, so its sources carry the
+deprecated name far more often than any caller would. **A substring grep over
+spec sources cannot answer a call-site question here** — it structurally
+over-reports by the size of the docblock culture. Ask it of the AST, or at
+minimum of the call form.
+
+Two consequences. There is no fast lane and no precondition: the measurement in
+§2 runs against the backlog as it stands. And `tests/helpers/flows/clean-all-flows.ts`
+is dead code whose docblock still names `user-progress-track.spec.ts` as "the ONE
+legitimate remaining caller" — a spec that is now `@stable` and does not call it.
+That is real debt, it is **not** this plan's, and it is recorded here only so the
+next reader does not rediscover it as a hazard.
 
 ## 2. Phase 1 — measurement (the wave's first item)
 
@@ -149,7 +161,7 @@ Applied in this order, per **spec** rather than per test:
    spec and the specific test inside it; without that named replacement, delete
    is not an available outcome and the review rejects it.
 2. **PROMOTE to `@stable`** — requires all four, with no exceptions: 3/3 green;
-   id-scoped cleanup (deletes its own flow ids, `cleanAllFlows` removed); a spec
+   id-scoped cleanup (deletes only the flow ids it created); a spec
    doc with the four mandatory sections; and a force-fail run. Green alone is not
    enough — promoting a green inherited spec without the cleanup audit is how
    Wave 4 imported invisible reds.
@@ -180,7 +192,8 @@ table and not before:
 - **testid drift** — #818 measured that most daily reds are drift rather than
   regression, so one fix clears a cluster;
 - **duplicate of a hardened spec** → DELETE;
-- **missing or global cleanup** — the five above;
+- **missing cleanup** — a spec that creates a flow and never deletes it, which
+  leaks one flow per run and eventually reddens a neighbour;
 - **product bug** → PARK, one issue per bug;
 - **provider packaging** — `groq-provider`, `mistral-provider`: **no work**.
   #1039 and `docs/component-distribution-policy.md` already decided these; they
@@ -284,7 +297,6 @@ band, and the roadmap's discipline is *lock the time, flex the scope*.
 
 - the triage table is committed;
 - T1 is empty: every one of its 26 specs has reached promote / delete / park;
-- the five `cleanAllFlows` specs are fixed or deleted;
 - the guard runs in the daily and reports into an issue body;
 - the frozen baseline has shrunk to the parked set;
 - Wave 9 is datable with a concrete list.
