@@ -1,8 +1,28 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
+import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
 
 test.describe("Settings — Edit Shortcut", () => {
+  // The test creates flows on two paths and deleted neither: `awaitBootstrapTest`
+  // creates `New Flow` and `Basic Prompting` whenever the default project is empty,
+  // and the canvas step opens a blank flow of its own. Measured against a purged
+  // instance, one run left 3 behind (#1788). A source grep could not see it — the
+  // first two are created inside a helper — so the tracker captures every
+  // `POST /api/v1/flows/` → 201 the page performs and deletes exactly those ids.
+  let flows: ReturnType<typeof trackCreatedFlows>;
+
+  test.beforeEach(async ({ page }) => {
+    flows = trackCreatedFlows(page);
+  });
+
+  // Two independent teardowns, both of which must run: this one sweeps the flows,
+  // the one below restores the shortcut table.
+  test.afterEach(async ({ request }) => {
+    await flows.cleanup(request);
+    flows.dispose();
+  });
+
   test.afterEach(async ({ page }) => {
     try {
       await page.goto("/settings/shortcuts");
@@ -27,7 +47,7 @@ test.describe("Settings — Edit Shortcut", () => {
 
   test(
     "editing the Duplicate shortcut persists and triggers the action on canvas",
-    { tag: ["@release", "@regression", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@release", "@regression", "@settings", "@ui-ux"] },
     async ({ page }) => {
       await test.step("load home", async () => {
         await awaitBootstrapTest(page, { skipModal: true });
@@ -41,7 +61,9 @@ test.describe("Settings — Edit Shortcut", () => {
           timeout: 10000,
         });
 
-        await page.getByRole("link", { name: "Shortcuts", exact: true }).click();
+        await page
+          .getByRole("link", { name: "Shortcuts", exact: true })
+          .click();
 
         await expect(page.getByTestId("settings_menu_header")).toContainText(
           "Shortcuts",
@@ -60,17 +82,15 @@ test.describe("Settings — Edit Shortcut", () => {
         await expect(
           page.getByText("Key Combination", { exact: true }),
         ).toBeVisible({ timeout: 5000 });
-        await expect(
-          page.getByText("Recording your keyboard"),
-        ).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText("Recording your keyboard")).toBeVisible({
+          timeout: 5000,
+        });
       });
 
       await test.step("record Ctrl/Cmd+Alt+U and apply", async () => {
         await page.keyboard.press("ControlOrMeta+Alt+U");
 
-        await page
-          .getByRole("button", { name: "Apply", exact: true })
-          .click();
+        await page.getByRole("button", { name: "Apply", exact: true }).click();
 
         await expect(
           page.getByText("Duplicate shortcut successfully changed"),
@@ -80,7 +100,9 @@ test.describe("Settings — Edit Shortcut", () => {
           .locator("[role='row']")
           .filter({ hasText: "Duplicate" })
           .first();
-        await expect(duplicateRowAfter).toContainText(/Alt/i, { timeout: 5000 });
+        await expect(duplicateRowAfter).toContainText(/Alt/i, {
+          timeout: 5000,
+        });
         await expect(duplicateRowAfter).toContainText("U", { timeout: 5000 });
       });
 

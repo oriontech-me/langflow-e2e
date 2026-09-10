@@ -429,7 +429,7 @@
 
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable
-- [-] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
+- [x] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
 - [x] Edit existing global variable — quarantine lifted 2026-08-11 (#1235). The row click was silently dropped while the RBAC permission query loaded, so the Update Variable modal never opened (dailies 2026-07-27 and 2026-08-03, [LE-2123](https://datastax.jira.com/browse/LE-2123)); fixed upstream by langflow#14404 (permission loading state) and re-validated on `1.12.0.dev23`. The provider-credential removal below (§7.5) was grouped here at triage and proved to be a separate *test* defect, fixed in #1276 → `ui-ux/global-variable-edit.spec.ts`
 - [x] Delete global variable → `ui-ux/global-variables-crud.spec.ts`
 - [x] Create global variable of type "Generic" → `ui-ux/global-variables-crud.spec.ts`
@@ -684,10 +684,12 @@
 - [x] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
 - [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010; stays `[-]` permanently, since `[x]` requires `@stable` and `@destructive` must never carry it — the pair would mean "runs nowhere")
 - [x] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
+- [x] Create a flow inside a specific folder via API — `POST /api/v1/flows/` with an explicit `folder_id` echoes back that same `folder_id`, so the flow lands in the folder and not in the default project → `core-functionality/project-management/folder-drag-drop-flow.spec.ts`
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
 - [x] Navigate between folders → `core-functionality/project-management/flow-navigation-between-folders.spec.ts`
+- [x] A folder lists the flows it contains — the folder created over the API appears in the home sidebar under either testid spelling (#1363) and clicking it lists the flow created inside it, addressed by its own unique name → `core-functionality/project-management/folder-drag-drop-flow.spec.ts`
 - [-] Search flow by name filters results correctly
 - [-] Folders in navigation sidebar
 
@@ -864,6 +866,7 @@
 - [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
 - [x] Flow exposed as MCP server — verify generated endpoint, and that the transport takes an API key: the same `initialize` with no credential is refused `403` (#1522) → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
+- [x] A flow created MCP-enabled is exposed end to end — it is listed by name in the MCP Server tab's tool list, the JSON config advertises the project's `mcp/project/<id>/streamable` URL, and that endpoint answers a JSON-RPC `initialize` with `200` when carrying an `x-api-key` → `mcp/server/mcp-server-regression.spec.ts`
 - [x] Register an external MCP server through the stdio form — `command` + `args` resolves the server's real tools into the MCPTools node → `mcp/server/mcp-server.spec.ts`
 - [x] Add-server modal fields persist across save → reopen-for-edit — stdio (name, command, 4 args, 2 env pairs) and HTTP/SSE (name, URL, 2 headers, 2 env pairs) → `mcp/server/mcp-server.spec.ts`
 - [x] Tool list refreshes when a registered server is edited to run a different package → `mcp/server/mcp-server.spec.ts`
