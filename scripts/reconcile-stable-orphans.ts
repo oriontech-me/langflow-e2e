@@ -97,7 +97,7 @@ import {
  * it is the one bug this design can produce on its own.
  */
 export const ORPHAN_ISSUE_TITLE =
-  "[@stable] removals with no owner — tests that run in no scheduled lane";
+  "[@stable] absences nobody is holding — orphaned removals and expired justifications";
 
 export const EXEMPTIONS_PATH = "scripts/lib/stable-orphan-exemptions.json";
 
@@ -913,6 +913,15 @@ export function run(argv: string[]): number {
   } else if (citedRefs.length > 0) {
     refStates = resolveRefStates(citedRefs, queryRefsViaGh);
   }
+  // A reference that does not EXIST is a finding; a reference we could not ASK
+  // about is an outage, and the two must not render the same. The workflow uses
+  // this to leave a standing report alone rather than overwrite real findings
+  // with "we could not ask" — the same rule the tracker lookup already follows,
+  // and for the same reason: a body rewrite is destructive and an outage
+  // decides nothing.
+  const gateLookupFailed = Object.values(refStates).some(
+    (s) => s.kind === "unresolved" && s.reason.startsWith("lookup failed:"),
+  );
   const gateVerdict: GateVerdict = classifyGates({
     tests,
     justifications,
@@ -963,6 +972,7 @@ export function run(argv: string[]): number {
         `finding_count=${findings}`,
         `has_findings=${hasFindings(verdict) || hasGateFindings(gateVerdict)}`,
         `expired_gate_count=${gateVerdict.expired.length}`,
+        `gate_lookup_failed=${gateLookupFailed ? "true" : "false"}`,
         // The workflow uses this to leave a standing report ALONE rather than
         // overwriting it with "we could not ask GitHub": an outage decides
         // nothing about ownership, and a body rewrite is destructive.

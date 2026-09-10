@@ -505,23 +505,66 @@ test("the workflow checks out FULL history and never destroys the report on a lo
   // same reason it is false on a clean tree, so the CLOSE step without this
   // clause would comment on and close a standing issue listing real orphans —
   // silently, on a five-minute GitHub API blip, taking any human notes with it.
-  const closeStep = wf.slice(wf.indexOf("Close the report issue when there is nothing left"));
-  assert.ok(closeStep.length > 0, "the close step is still in this workflow");
+  /**
+   * One step's YAML, from its `- name:` to the next one.
+   *
+   * A fixed `slice(0, N)` was used here and it is the wrong tool: it measures
+   * PROSE, so adding a comment above the `if:` pushes the clauses past the
+   * window and the guard fails on a change that altered no behaviour — which is
+   * exactly what happened when this file grew one. The step boundary is what
+   * the assertion actually means.
+   */
+  function stepBody(name: string): string {
+    const start = wf.indexOf(`- name: ${name}`);
+    assert.notEqual(start, -1, `the step "${name}" is still in this workflow`);
+    const next = wf.indexOf("\n      - name: ", start + 1);
+    return wf.slice(start, next === -1 ? undefined : next);
+  }
+
+  const closeStep = stepBody(
+    "Close the report issue when there is nothing left to reconcile",
+  );
   assert.match(
-    closeStep.slice(0, 400),
+    closeStep,
     /tracker_lookup_failed == 'false'/,
     "the CLOSE step is barred when the issue lookup itself failed",
   );
-
-  const openStep = wf.slice(
-    wf.indexOf("Open or refresh the orphan report issue"),
-    wf.indexOf("Close the report issue when there is nothing left"),
-  );
   assert.match(
-    openStep.slice(0, 400),
+    closeStep,
+    /gate_lookup_failed == 'false'/,
+    "the CLOSE step is barred when a cited REFERENCE could not be looked up (#1783)",
+  );
+
+  const openStep = stepBody("Open or refresh the report issue");
+  assert.match(
+    openStep,
     /tracker_lookup_failed == 'false'/,
     "the REFRESH step is barred when the issue lookup itself failed — it rewrites the whole body",
   );
+  assert.match(
+    openStep,
+    /gate_lookup_failed == 'false'/,
+    "the REFRESH step is barred when a cited REFERENCE could not be looked up either (#1783) — a reference that does not exist is a finding, one we could not ask about is an outage, and refreshing on the second replaces real findings with a page that says less",
+  );
+
+  // A `#` inside a folded block scalar is CONTENT, not a comment: YAML only
+  // treats `#` as a comment outside a scalar. A note written inside an
+  // `if: >-` block therefore lands in the expression GitHub Actions evaluates,
+  // and the workflow fails to parse. This file grew one such comment while
+  // #1783 was being written.
+  const lines = wf.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim().startsWith("if: >-")) continue;
+    const indent = lines[i].length - lines[i].trimStart().length;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (!lines[j].trim()) continue;
+      if (lines[j].length - lines[j].trimStart().length <= indent) break;
+      assert.ok(
+        !lines[j].trimStart().startsWith("#"),
+        `line ${j + 1} is a comment INSIDE an \`if: >-\` block, where YAML reads it as part of the expression`,
+      );
+    }
+  }
 });
 
 // ─── Review findings, pinned ─────────────────────────────────────────────────
