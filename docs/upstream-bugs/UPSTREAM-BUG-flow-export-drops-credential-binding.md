@@ -129,29 +129,49 @@ by that**: the nightly is cut from the release line under development, *not* fro
 about a fix that shipped. Checked on `origin/main` **and** `origin/release-1.12.0`,
 `release-1.12.1`, `release-1.12.2`, `release-1.13.0`.
 
-**Every file the causing commit touched is byte-identical to its own tree, on all
-five refs.** This is stronger than a commit walk and immune to the two mistakes
-the first version of this section made (below):
+**Every one of the six product files the causing commit touched is byte-identical
+to its own tree, on all five refs.** This is stronger than a commit walk and
+immune to the two mistakes the first version of this section made (below). The
+loop covers all six rather than the four that carry the logic, because the point
+is a trigger the next re-check can trust:
 
 ```bash
-for p in utils/flow_secrets.py api/v1/flows_helpers.py \
-         api/v1/projects_files.py api/v1/flow_version.py; do
+for p in utils/flow_secrets.py api/v1/flows_helpers.py api/v1/projects_files.py \
+         api/v1/flow_version.py api/utils/core.py api/utils/__init__.py; do
   for r in fc3810da origin/main origin/release-1.12.{0,1,2} origin/release-1.13.0; do
     git rev-parse "$r:src/backend/base/langflow/$p"
   done
 done
-# flow_secrets.py    12f2a5e … (identical on all six)
-# flows_helpers.py   96dab51 … (identical on all six)
-# projects_files.py  05ecd47 … (identical on all six)
-# flow_version.py    b946d66 … (identical on all six)
+# flow_secrets.py    12f2a5e … (identical on all six refs)
+# flows_helpers.py   96dab51 …
+# projects_files.py  05ecd47 …
+# flow_version.py    b946d66 …
+# api/utils/core.py  a7e336c …
+# api/utils/__init__ d78506f …
 ```
+
+(The seventh file is the cause's own unit test,
+`tests/unit/api/v1/test_export_secret_sanitization.py` — also unchanged, and §2
+point 2 already records what it does not assert.)
+
+The two `api/utils/` files are an `__all__` list and four alias assignments, so
+they carry no logic a fix could land in; they are in the loop anyway because a
+trigger that skips files "unlikely to matter" is how the first version of this
+section went blind. The one piece of export-path logic outside the six is
+`normalize_flow_for_export` (`api/utils/core.py:158`), which runs **after**
+`strip_flow_secrets` on both download surfaces and therefore cannot restore a
+value already nulled — and there is no `lfx` copy of the scrubber
+(`git grep -l strip_secret_field_values origin/main -- 'src/lfx/**'` is empty).
 
 The paths are **the three export call sites plus the scrubber** — `flows_helpers.py`
 (`POST /api/v1/flows/download/`), `projects_files.py` (`download_project_flows`,
 i.e. `GET /api/v1/projects/download/{id}`) and `flow_version.py`
-(`strip_version_data`). An earlier version of this table watched
-`api/v1/projects.py`, which only *imports* `download_project_flows` and was not
-touched by the cause, and omitted `flow_version.py` altogether — so its stated
+(`strip_version_data`, which is a version **read** rather than an export endpoint —
+the header row calls it a sibling surface for that reason). An earlier version of this table watched
+`api/v1/projects.py` — which *declares* the `GET /download/{project_id}` route and
+calls `download_project_flows` (`projects.py:1103`), but holds no scrubber call of
+its own and was not touched by the cause — and omitted `flow_version.py`
+altogether — so its stated
 trigger was blind to a fix landing on either real sibling surface. It also listed
 `c3bfdb7d` (a `release-1.12.0` → `main` back-merge) as a commit "since 2026-08-19"
 when it is dated 2026-08-18, i.e. *before* the cause.
@@ -173,7 +193,9 @@ git show fc3810da^:src/backend/base/langflow/utils/flow_secrets.py | grep -c _is
 # 3   ← already there, pre-cause
 ```
 
-`fc3810da`'s entire change to that file is adding `strip_flow_secrets` (+24/−1).
+`fc3810da`'s change to that file is +24/−1: it adds `strip_flow_secrets` and
+tightens `strip_secret_field_values`'s short-circuit from `if not flow_data:` to
+`if flow_data is None:`.
 What it did was move the export call sites off the legacy `remove_api_keys`
 (`password`-marked **and** API-key-named) onto the broader metadata-driven scrubber
 — `password` **or** secret-named, `flow_secrets.py:308` — **without** passing the
@@ -188,20 +210,21 @@ Two reasons, and the mechanical one comes first: the test is `test.fixme`, so **
 today means §3's by-hand reproduction, or lifting the quarantine first. And even
 then it would spend CI to confirm what the blob identity above already settles.
 
-It becomes the right move the moment any of those four blobs changes on any watched
+It becomes the right move the moment any of those six blobs changes on any watched
 ref — and at that point the order is: reproduce by hand (§3), then lift.
 
 ### What filing it needs
 
 §1–§4 are the report; §3 is a deterministic reproduction that needs no LLM key.
 The one thing missing is the act of posting. **The usual channel here is DataStax
-Jira** — six of the eight docs in this directory carry an `LE-####`, and
-`REGRESSIONS.md` accepts either a Jira ticket or a `langflow-ai/langflow` issue —
+Jira** — seven of the eight other upstream-bug docs in this directory name an
+`LE-####` (the eighth reads *"Not yet — evidence collected here first"*), and
+`REGRESSIONS.md:12` accepts either a Jira ticket or a `langflow-ai/langflow` issue —
 so this does not require an upstream GitHub account or a public statement; a Jira
 ticket is enough to unblock the deliverable. Suggested title, covering all three
 surfaces rather than only the one the H1 names:
 
-> Flow and project export null `load_from_db` credential bindings — `POST /api/v1/flows/download/`, `GET /api/v1/projects/download/{id}` and `strip_version_data` all drop the variable name
+> Flow and project export null `load_from_db` credential bindings — `POST /api/v1/flows/download/` and `GET /api/v1/projects/download/{id}` drop the variable name, and version reads (`strip_version_data`) do the same
 
 Once filed, put the ticket in the **Filed upstream** row above and, if upstream
 disputes the intent (§2), record the answer in §4 rather than in the ticket thread
