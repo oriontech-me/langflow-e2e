@@ -151,10 +151,16 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
    because why it matches nothing is a property of the **producer**:
    `ContentBlockDisplay.tsx` renders GROUPED blocks behind an `isExpanded` gate
    that starts closed — on that branch the tool cards are not in the DOM until
-   the chevron is clicked — while FLAT items render above it ungated, and the
-   file states which one we get ("The agent emits tool_use items flat (not
-   inside a group)"). The branch the helper guards is live product code, so it
-   stays.
+   the chevron is clicked — while FLAT items render above it ungated. **What
+   decides which layout this Playground gets is `hideHeader`, and an earlier
+   revision of this section got that wrong** (#1793): the two call sites differ
+   — `chat-message.tsx` passes nothing (header shown, grouped cards gated) while
+   `bot-message.tsx` passes `hideHeader={true}` (no header, gate satisfied
+   unconditionally). This Playground is the second, measured rather than
+   inferred: on a run with a completed tool call, zero rows matched the helper's
+   selector while `tool-status-done` was already present, and `ToolCallCard`
+   only renders inside `ContentBlockDisplay`. The helper is kept for the other
+   call site's layout.
 5. **UI inspection assert:** a completed tool step is visible
    (`tool-status-done`), and the row that carries it names `fetch_content` —
    the Playground names the URL tool the agent used. Asserted in two steps on
