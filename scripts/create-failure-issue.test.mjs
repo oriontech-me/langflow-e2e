@@ -28,13 +28,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderIssue, apiUrlFor, createIssue, CC_DEFAULT } from "./create-failure-issue.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 /** The script itself, for the handful of assertions that must go through `main()`. */
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "create-failure-issue.mjs");
@@ -527,7 +527,7 @@ test("main() reads TESTS_FAILED as the string 'true', and only that", async () =
   // process so the mapping, not a re-declaration of it, is what is asserted.
   // RUN_DIR, because `main()` always writes `$RUN_DIR/issue-body.md` and the default
   // is the CWD — a test that leaves a file in the repo root is its own defect.
-  const runDir = mkdtempSync(join(tmpdir(), "issue-body-"));
+  const runDir = makeTempDir("issue-body-");
   const base = {
     ...process.env,
     ISSUE_DRY_RUN: "1",
@@ -554,5 +554,4 @@ test("main() reads TESTS_FAILED as the string 'true', and only that", async () =
   assert.match(green.stdout, /NO usable provider on/);
   assert.doesNotMatch(failed.stdout, /@stable run had NO usable provider on/);
   assert.match(failed.stdout, /@stable tests failed on/);
-  rmSync(runDir, { recursive: true, force: true });
 });
