@@ -383,6 +383,38 @@ test("the target's run command crosses on every run, and the sync command never 
   assert.equal(glued.stdout, "7999", "the assignment that follows has to survive");
 });
 
+test("a run command set against the default switches is warned about, in the phase that can still act", () => {
+  // Both collisions are silent and neither names itself as the cause. PREPARE_TARGET=1
+  // rebuilds the clone that is not going to serve, and then run-metadata.json carries a
+  // prepared sha describing a tree nobody ran. REQUIRE_TARGET_VERSION=1 compares the
+  // LIVE instance's version against upstream's nightly resolution, which moves daily,
+  // so a pinned distribution fails the verdict on a difference the operator introduced
+  // — with a message about authoritative version checks.
+  const cmd = "/root/venv-dev8/bin/langflow run";
+
+  const both = sourced(`PREPARE_TARGET=1 REQUIRE_TARGET_VERSION=1 LANGFLOW_SRC_RUN_CMD="${cmd}" warn_target_cmd_conflicts`);
+  assert.equal(both.status, 0, both.stderr);
+  assert.match(both.stderr, /PREPARE_TARGET=0/, "the warning has to name the switch that stops the rebuild");
+  assert.match(both.stderr, /REQUIRE_TARGET_VERSION=1/, "and the one that fails the verdict");
+
+  // Silent when the caller has already dealt with both — a warning that fires anyway is
+  // a warning nobody reads.
+  const handled = sourced(`PREPARE_TARGET=0 REQUIRE_TARGET_VERSION=0 LANGFLOW_SRC_RUN_CMD="${cmd}" warn_target_cmd_conflicts`);
+  assert.equal(handled.status, 0, handled.stderr);
+  assert.doesNotMatch(handled.stderr, /LANGFLOW_SRC_RUN_CMD is set/);
+
+  // And silent on the default path, which is how this script runs every weekday: no
+  // run command, nothing to warn about, whatever the other two switches say.
+  const none = sourced(`(unset LANGFLOW_SRC_RUN_CMD; PREPARE_TARGET=1 REQUIRE_TARGET_VERSION=1 warn_target_cmd_conflicts)`);
+  assert.equal(none.status, 0, none.stderr);
+  assert.doesNotMatch(none.stderr, /LANGFLOW_SRC_RUN_CMD is set/);
+
+  // Wired into the phase, not merely defined: a guard nothing calls is a guard that
+  // does not exist.
+  const body = readFileSync(SCRIPT, "utf8");
+  assert.match(body, /^\s+warn_target_cmd_conflicts$/m, "phase_preflight has to call it");
+});
+
 test("the remote quoting survives a value carrying a quote, which no current value does", () => {
   // The branch none of today's values reach, and therefore the one that will be wrong
   // when it is first needed — the day someone overrides a mirrored variable from the

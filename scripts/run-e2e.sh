@@ -453,6 +453,36 @@ target_cmd_env() {
   printf 'LANGFLOW_SRC_RUN_CMD=%s ' "$(shq "${LANGFLOW_SRC_RUN_CMD:-}")"
 }
 
+# The two switches a run command silently collides with, warned about once, in the
+# phase where there is still time to act.
+#
+# Neither collision is hypothetical, and neither announces itself as the cause:
+#
+#   PREPARE_TARGET=1 (the default) still checks out and REBUILDS the clone — the
+#   longest thing this run does — for a tree that is not going to serve. Worse than the
+#   wasted minutes, run-metadata.json then carries langflow_prepared_sha beside
+#   langflow_target_run_cmd, and the prepared sha describes something nobody ran.
+#
+#   REQUIRE_TARGET_VERSION=1 (the default) compares the version scraped from the LIVE
+#   instance against the one resolved from upstream's nightly, which moves daily. A
+#   pinned distribution therefore fails the verdict on a difference the operator
+#   introduced on purpose, and the message it fails with talks about authoritative
+#   version checks rather than about the pin.
+#
+# A warning and not a `die`: both combinations are legitimate — a venv pinned to the
+# resolved version passes the gate, and someone may want the clone placed anyway. What
+# is not legitimate is discovering either one from a shard timeout or a red verdict.
+warn_target_cmd_conflicts() {
+  [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || return 0
+  if [ "${PREPARE_TARGET:-1}" = "1" ]; then
+    warn "LANGFLOW_SRC_RUN_CMD is set, and PREPARE_TARGET=1: this run will still place and rebuild the clone, which is not what will serve. Set PREPARE_TARGET=0 unless you mean both."
+  fi
+  if [ "${REQUIRE_TARGET_VERSION:-1}" = "1" ]; then
+    warn "LANGFLOW_SRC_RUN_CMD is set, and REQUIRE_TARGET_VERSION=1: the served version must equal the one resolved from upstream, or the verdict fails on a difference you introduced. Pin the distribution to the resolved version, or set REQUIRE_TARGET_VERSION=0 and accept the blind axis."
+  fi
+  return 0
+}
+
 # Should this run place the target's clone, and if not, why not?
 #
 # Split out of phase_preflight so the decision is testable without ssh — the phase
@@ -756,6 +786,7 @@ phase_preflight() {
   # artifact was ASKED to serve has to be readable without waiting for a metadata file
   # the run may never write.
   info "target env: $(mirrored_target_env)$(target_cmd_env)"
+  warn_target_cmd_conflicts
 
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives a second machine and will not guess its name."
   command -v node > /dev/null || die "node is not on PATH."
