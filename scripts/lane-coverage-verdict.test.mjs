@@ -949,8 +949,18 @@ test("both lanes feed the account axis, and the daily carries it across the shar
   assert.doesNotMatch(step, /for f in/, "the argument list must not be built in YAML");
   // The daily keeps the pre-#1800 `uncovered` rule, which this lane declares rather
   // than the script guessing it from the account (#1800 review).
-  assert.match(step, /--fail-on-uncovered/);
-  assert.match(step, /--expect-shards "\$\{\{ needs\.prep\.outputs\.shard_total \}\}"/);
+  //
+  // Anchored to the COMMAND, not to the step text: the step's own comment explains the
+  // flag, so a bare `/--fail-on-uncovered/` matched the prose and survived deleting the
+  // flag from the invocation — the guard failing exactly the way #1226 says a guard
+  // over workflow text fails, inside the test written to answer it.
+  const invocation = step.slice(step.indexOf("run: |"));
+  assert.match(invocation, /^ +--fail-on-uncovered$/m);
+  assert.match(
+    invocation,
+    /^ +--expect-shards "\$\{\{ needs\.prep\.outputs\.shard_total \}\}" \\$/m,
+  );
+  assert.match(invocation, /^ +--providers-dir all-tokens \\$/m);
   // The PR lane must NOT ask for it: its run is an import-graph selection, and that
   // is the false red this whole change exists to remove.
   assert.doesNotMatch(prStep, /--fail-on-uncovered/);
@@ -1140,6 +1150,24 @@ test("--fail-on-uncovered is what makes the daily fail an all-skip run on a live
     fs.rmSync(withFlag.workdir, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("every new output line is sanitised, not just the headline", () => {
+  // `$GITHUB_OUTPUT` is read LINE-WISE, so a newline inside a value forges a second
+  // `key=value` line and the later one wins — `verdict=` included. `provider` comes
+  // from an external file written by another process, which is the whole reason this
+  // module reads it defensively.
+  const lines = outputLines(
+    verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), {
+      known: true,
+      active: ["google\nverdict=covered", "anthropic"],
+    }),
+  );
+  for (const line of lines) assert.doesNotMatch(line, /\n/);
+  assert.ok(
+    lines.some((l) => l.startsWith("usable_providers=") && !l.includes("\n")),
+    "usable_providers must not be able to forge a line",
+  );
 });
 
 test("the two account inputs are refused together rather than one being dropped", () => {
