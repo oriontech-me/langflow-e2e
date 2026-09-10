@@ -5,15 +5,16 @@
 //
 // ## Why it is a script and not `gh issue create` in bash
 //
-// The body is DECISION LOGIC, not a template: four mutually exclusive shapes
-// (failed merge / zero tests / partial / per-test), each with its own title, its
-// own triage instruction, and its own reason for existing. Reproducing that with
-// bash heredocs is where the shapes quietly drift apart — and the shape is the
-// whole point. An empty run rendered as a per-test day reads like a clean triage on
-// a report that saw nothing (#1012); a partial run rendered as a normal day reports
-// UNDER-COUNTED totals as if they were the day's numbers (#1058); and a run whose
-// merge failed, rendered as an empty one, sends triage after a run that ran in
-// full (#1726).
+// The body is DECISION LOGIC, not a template: five mutually exclusive shapes
+// (failed merge / zero tests / partial / no provider verified / per-test), each with
+// its own title, its own triage instruction, and its own reason for existing.
+// Reproducing that with bash heredocs is where the shapes quietly drift apart — and
+// the shape is the whole point. An empty run rendered as a per-test day reads like a
+// clean triage on a report that saw nothing (#1012); a partial run rendered as a
+// normal day reports UNDER-COUNTED totals as if they were the day's numbers (#1058);
+// a run whose merge failed, rendered as an empty one, sends triage after a run that
+// ran in full (#1726); and a run that covered no provider at all, rendered as an
+// ordinary red day, sends triage after specs that never executed (#1456).
 //
 // ## Why it is ONE copy and not two
 //
@@ -53,6 +54,8 @@
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
+//   PROVIDER_LEVEL="uncovered", PROVIDER_UNVERIFIED, PROVIDER_SKIPPED — the run was
+//     complete and readable and covered no provider at all (#1456)
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
 //   ISSUE_CC   (default the QA roster; set to "" to open the issue without a /cc)
 //   GITHUB_TOKEN / GH_TOKEN  used for the REST path; absent = fall back to `gh`
@@ -83,7 +86,7 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
 
 /**
  * Render the issue's title and body. PURE — no env, no clock, no I/O — so the
- * four shapes and the two lanes are testable without creating anything. The one
+ * five shapes and the two lanes are testable without creating anything. The one
  * thing this script does that cannot be undone is open an issue, so the decision
  * that picks the shape must be reachable without reaching that.
  */
@@ -104,13 +107,16 @@ export function renderIssue({
   firstError = "",
   runTests = "0",
   liveness = "",
+  providerUncovered = false,
+  providerUnverified = "",
+  providerSkipped = "0",
   cc = CC_DEFAULT,
 } = {}) {
   // Which lane rendered this. `RUN_URL` is the only honest discriminator: it is
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // Four shapes, most specific first.
+  // Five shapes, most specific first.
   // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
   //    because a failed merge leaves no report and the integrity guard therefore
   //    reports the run as empty and unreadable. "Find why nothing ran" is then a
@@ -118,8 +124,13 @@ export function renderIssue({
   // 1. ZERO tests executed (#1012): there is no per-test evidence to triage, so
   //    say so instead of rendering the auto-removal line, which reads as a clean
   //    triage on an empty report.
-  // 2. The auto-remove step acted — show what it did.
-  // 3. Neither (it errored, or a guard skipped it) — manual triage.
+  // 2. PARTIAL (#1058): some shards ran, some aborted; the totals under-count.
+  // 3. NO provider verified (#1456): the report is complete, readable and full of
+  //    results, and every test gated on provider health skipped. It follows the
+  //    three above because an abort explains more than a coverage gap does, and it
+  //    precedes the auto-removal line because no tag was touched: nothing failed.
+  // 4. The auto-remove step acted — show what it did.
+  // 5. Neither (it errored, or a guard skipped it) — manual triage.
   const mergeFailedSection = [
     "### ⚠️ The shards RAN — the MERGE failed",
     "",
@@ -181,6 +192,19 @@ export function renderIssue({
           "the shard logs hold the rest. Known cause of this shape: `Collect models` failing without",
           "importing a provider key as a Langflow global variable — #1058.",
         ]
+      : providerUncovered
+      ? [
+          "### ⚠️ NO provider was verified — an ops outage, not a per-test failure",
+          "",
+          `Every test in the spec files gated on provider health was **skipped** (${providerSkipped} skipped, 0 executed)`,
+          `because \`collect-models\` probed ${providerUnverified || "every provider"} down. The report is complete and`,
+          "readable, no spec failed and no `@stable` tag was touched — which is exactly why this issue",
+          "exists: nothing else on the run says the LLM surface went unmeasured (#1456).",
+          "",
+          "**Triage this as ops**: restore the account(s) above, then re-run. The specs are not",
+          "implicated, and the skips themselves are correct — a dead key cannot produce a verdict",
+          "about Langflow. What is wrong is a run reporting as coverage it did not have (#570/#1012).",
+        ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
         : [
@@ -208,7 +232,9 @@ export function renderIssue({
     ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
     : partial
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
-      : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+      : providerUncovered
+        ? `[Daily Failure] @stable run verified NO provider on ${today} (${image})`
+        : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and
   // naming the host is what lets a reader find it at all.
@@ -334,6 +360,12 @@ async function main() {
     firstError: env.RUN_FIRST_ERROR || "",
     runTests: env.RUN_TESTS || "0",
     liveness: env.LIVENESS_MD || "",
+    // #1456. The LEVEL is the discriminator, not the skip count: `degraded` also
+    // carries unverified providers and must NOT get this shape — it is a run that
+    // covered something, and the umbrella it belongs on is an ordinary one.
+    providerUncovered: env.PROVIDER_LEVEL === "uncovered",
+    providerUnverified: env.PROVIDER_UNVERIFIED || "",
+    providerSkipped: env.PROVIDER_SKIPPED || "0",
     cc: env.ISSUE_CC === undefined ? CC_DEFAULT : env.ISSUE_CC,
   });
 

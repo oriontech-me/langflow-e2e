@@ -1011,6 +1011,7 @@ jobs:
           TOKENS_MAX_SECONDS: "3300"
 
       - name: Run impacted specs
+        id: impacted_run
         # Skipped only when the selection is 100% `@destructive`, in which case
         # this run would match nothing and exit 1 while the destructive lane below
         # runs those very specs. The verdict comes from `detect-specs` (tag-based,
@@ -1045,10 +1046,17 @@ jobs:
           # daily-stable.yml: with this unset (local runs) the helper makes no
           # request and writes no file.
           TOKENS_ATTRIB: token-attrib.jsonl
+          # The JSON report is what "Provider coverage" below reads (#1456). Without
+          # it that verdict can only ever answer `unknown`, which is why the unit
+          # lane pins this pair rather than trusting it. `--reporter` REPLACES the
+          # config's list, so `github` has to be restated here; and the env var is
+          # not optional — the json reporter prints the whole report to stdout when
+          # it has no output file, which would bury the github annotations.
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
         run: |
           echo "Running specs: $SPECS"
           # shellcheck disable=SC2086
-          npx playwright test $SPECS --reporter=github
+          npx playwright test $SPECS --reporter=github,json
 
       # Destructive lane (#1010). `@destructive` tests wipe account-wide state, so
       # playwright.config.ts keeps them out of the run above and pins this lane to
@@ -1073,6 +1081,37 @@ jobs:
           # shellcheck disable=SC2086
           npx playwright test $SPECS --grep "@destructive" --pass-with-no-tests \
             --reporter=github --output=test-results-destructive
+
+      # Which providers this run actually verified (#1456). A provider `collect-models`
+      # probed `inactive` makes every spec parametrized on it `test.skip` with the
+      # measured reason, and until now nothing distinguished that from a run where
+      # those tests ran and passed: run 31698035402 reported 3 skipped / 5 passed and a
+      # SUCCESS check, where the three skips were the OpenAI targets — the provider this
+      # lane pins itself to (#1169).
+      #
+      # A `::warning::` was not the answer (`mode=count` was printed every run for weeks
+      # and read by nobody, #1252), so the verdict is written to the RUN SUMMARY, and it
+      # is graded: `degraded` (something still ran) keeps the check green, because an
+      # ops outage must not redden a PR that cannot fix it (#980); `uncovered` (nothing
+      # ran in any spec provider health gated) exits non-zero, because a run that
+      # measured nothing must not report as a pass (#570/#1012). The policy is a pure
+      # function with its own unit tests — pinning it by a regex over this file is what
+      # #1226 showed does not work.
+      #
+      # always(): the verdict is most useful precisely when the run above went red, and
+      # every remaining step in this job is already `always()`, so failing here costs no
+      # artifact. `--run-outcome` decides how loud an unreadable report is: on a run
+      # that claimed success an undecidable verdict fails (#1035); on one that already
+      # failed, the missing report is a symptom of a failure that is already named.
+      - name: Provider coverage verdict
+        if: always()
+        run: |
+          node scripts/provider-coverage-verdict.mjs \
+            --report results.json \
+            --lane pr-validation \
+            --run-outcome "$RUN_OUTCOME"
+        env:
+          RUN_OUTCOME: ${{ steps.impacted_run.outcome }}
 
       # Stop the recorder, price what it saw, and upload the raw JSONL — mirrors
       # daily-stable.yml's shard-level "Stop and collect" + merge-job "Summarize"

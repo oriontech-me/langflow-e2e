@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  renderRotationSummary,
   rotationSlot,
   selectDailyModelTarget,
 } from "./select-daily-model-target.mjs";
@@ -333,4 +334,60 @@ test("the daily emits the provider/model pair from the script, not from inline e
     /MODEL_TEST_(ID|PROVIDER):/,
     "the @stable run sets a pin variable inline — it must come from GITHUB_ENV",
   );
+});
+
+// #1456. This is the daily's half of the provider-coverage question, and the one the
+// report-based verdict structurally cannot answer: when the rotation advances, the
+// specs are pinned to the SUBSTITUTE provider, so nothing skips and the run is
+// honestly `covered` while the day's provider went unrun.
+test("an advanced rotation renders a run-summary block naming the slot it lost", () => {
+  const markdown = renderRotationSummary({
+    ok: true,
+    provider: "openai",
+    model: "gpt-4o-mini",
+    reason: null,
+    warnings: [],
+    skipped: [
+      { provider: "google", reason: 'provider "google" probed "inactive" — spending cap' },
+    ],
+  });
+  assert.match(markdown, /DEVIATED/);
+  assert.match(markdown, /`google`/);
+  assert.match(markdown, /spending cap/);
+  assert.match(markdown, /`openai`/);
+  // The cost, in the unit that matters: google's only slot is Wednesday.
+  assert.match(markdown, /7 days/);
+});
+
+test("a rotation that ran its own weekday's provider renders nothing", () => {
+  assert.equal(
+    renderRotationSummary({
+      ok: true,
+      provider: "openai",
+      model: "gpt-4o-mini",
+      reason: null,
+      warnings: [],
+      skipped: [],
+    }),
+    "",
+  );
+});
+
+test("a declined rotation says the run is heading for zero provider coverage", () => {
+  const markdown = renderRotationSummary({
+    ok: false,
+    provider: null,
+    model: null,
+    reason: "no provider in the rotation is usable",
+    warnings: [],
+    skipped: [
+      { provider: "openai", reason: 'probed "inactive" — no credits' },
+      { provider: "anthropic", reason: 'probed "inactive" — credit balance is too low' },
+    ],
+  });
+  assert.match(markdown, /NO provider/);
+  assert.match(markdown, /`openai`/);
+  assert.match(markdown, /`anthropic`/);
+  // Points at the guard that will fail the run, so the two readings agree.
+  assert.match(markdown, /covering NOTHING/);
 });

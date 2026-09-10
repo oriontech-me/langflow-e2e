@@ -187,8 +187,16 @@ export function unavailableReason(
  * it must never read `inactive — null`. `collect-models` always fills `error` for an
  * inactive record today, but the field is nullable and a hand-edited or
  * future-schema file must still produce a usable line.
+ *
+ * EXPORTED for one reason (#1456): `scripts/provider-coverage-verdict.mjs` reads this
+ * exact wording back out of the Playwright report to say which providers a run failed
+ * to verify. That makes this string a contract between two files, and a reworded
+ * reason would silently turn that verdict into a permanent "everything covered" — the
+ * class of silent-green failure the verdict exists to remove. `provider-health.test.ts`
+ * runs the producer against the consumer's regex so the rewording fails a unit test
+ * instead.
  */
-function inactiveReason(record: ProviderHealthRecord): string {
+export function inactiveReason(record: ProviderHealthRecord): string {
   return `Provider "${record.provider}" inactive — ${
     record.error ?? "no reason recorded by collect-models"
   }`;

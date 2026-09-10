@@ -848,6 +848,37 @@ jobs:
         env:
           PLAYWRIGHT_JSON: results.json
 
+      # Third guard, and the only one about WHAT was covered rather than whether
+      # anything was (#1456). `runguard` above cannot see this: a day on which every
+      # LLM spec skipped because the account is drained produces a full report, passes
+      # both integrity gates, and reads as a clean green — the all-skip green #570 and
+      # #1012 exist to prevent, arriving through a `test.skip` that is individually
+      # CORRECT (a dead key cannot produce a verdict about Langflow) and a
+      # `collect-models` step that deliberately downgrades a billing outage to a
+      # warning (#952) and is `continue-on-error` here anyway.
+      #
+      # Reports facts and exits 0 either way — the same shape as `shardguard` and
+      # `runguard`: the verdict is written to the run summary, its level lands in a
+      # step output, and the LAST step of this job is what fails the run on it. That
+      # ordering is load-bearing: this step sits ahead of the history append, the QA
+      # POST and the umbrella issue, none of which may be skipped because a provider
+      # was dry. `continue-on-error` covers the script's own exit 1 on `uncovered`.
+      #
+      # `--run-outcome`: `success` only when the shards really passed, so an
+      # undecidable verdict is loud exactly where its silence would read as coverage
+      # (#1035) and quiet on a run whose failure is already named.
+      - name: Guard — which providers this run verified
+        id: providerguard
+        if: always()
+        continue-on-error: true
+        run: |
+          node scripts/provider-coverage-verdict.mjs \
+            --report results.json \
+            --lane daily-stable \
+            --run-outcome "$RUN_OUTCOME"
+        env:
+          RUN_OUTCOME: ${{ needs.test.result }}
+
       # Name the wedge (#1030). Runs after the merge so it can attribute failing
       # attempts to the outages measured on their OWN shard, and before the
       # umbrella issue so the section can lead the body: a wedged run has to
@@ -1437,8 +1468,13 @@ jobs:
       # removals without review), its own gates already bar it from an empty or partial
       # report, and widening when it fires is a decision of its own, not a side effect
       # of this one.
+      # `|| providerguard.level == 'uncovered'` (#1456) is the same argument as
+      # `|| runguard.empty` one line up, for the other way a GREEN test job can mean
+      # no coverage: every LLM spec skipped on a drained account. Without it the last
+      # step of this job reddens the run and no issue names the reason — the shape
+      # #1176 had to fix for the zero-test case.
       - name: Create issue on failure
-        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
+        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.providerguard.outputs.level == 'uncovered') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
@@ -1485,6 +1521,13 @@ jobs:
           # the wedge out for the triager, and "not measured" says the state is
           # unknown. Only silence would be misleading.
           LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
+          # #1456. `PROVIDER_LEVEL` is the discriminator and only `uncovered` selects
+          # its own shape: a `degraded` day covered something and belongs on an
+          # ordinary umbrella, where the run summary already names what went
+          # unverified.
+          PROVIDER_LEVEL: ${{ steps.providerguard.outputs.level }}
+          PROVIDER_UNVERIFIED: ${{ steps.providerguard.outputs.unverified }}
+          PROVIDER_SKIPPED: ${{ steps.providerguard.outputs.skipped }}
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be
@@ -1525,5 +1568,34 @@ jobs:
             echo "::error::PARTIAL run — $RUN_TESTS test result(s) recorded, but $RUN_ERRORS top-level report error(s) mean at least one shard aborted before running its tests. The totals are UNDER-COUNTED and the specs of that shard neither passed nor failed: they never ran. @stable auto-removal and the spec-duration refresh were skipped. Cause from the shard that died: $RUN_FIRST_ERROR (see #1058)."
           elif [ -z "$RUN_EMPTY" ]; then
             echo "::error::The report-integrity guard reported nothing (empty output is unset) — its verdict is UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — merged report contains test results' step."
+          fi
+          exit 1
+
+      # Its own step rather than a fifth clause above (#1456): that one is about a
+      # report that cannot be TRUSTED, this one about a report that is complete,
+      # readable and covers no provider at all. Same shape and the same schedule-only
+      # scope — a manual dispatch keeps warnings, it is a triage run by definition.
+      #
+      # `degraded` is deliberately NOT here. A provider going unverified while the run
+      # still covered others is a summary headline, not a red: reddening the daily over
+      # an ops outage buys nothing and trains people to ignore the colour (#980).
+      #
+      # FAIL-CLOSED on anything that is neither `covered` nor `degraded`, absence
+      # included: an unset output means the guard never reported (skipped, or a future
+      # edit broke its entrypoint), and a guard whose silence reads as coverage is the
+      # exact failure this mechanism removes (#1012/#1035).
+      - name: Fail scheduled run that verified no provider
+        if: always() && github.event_name == 'schedule' && steps.providerguard.outputs.level != 'covered' && steps.providerguard.outputs.level != 'degraded'
+        env:
+          LEVEL: ${{ steps.providerguard.outputs.level }}
+          UNVERIFIED: ${{ steps.providerguard.outputs.unverified }}
+          SKIPPED: ${{ steps.providerguard.outputs.skipped }}
+        run: |
+          if [ "$LEVEL" = "uncovered" ]; then
+            echo "::error::This run verified NO provider — every test in the spec files gated on provider health was skipped ($SKIPPED skipped, 0 executed; providers down: ${UNVERIFIED:-unknown}). The report is complete and no spec failed, so nothing else on this run says so. Restore the account and re-run; the specs are not implicated (#1456)."
+          elif [ "$LEVEL" = "unknown" ]; then
+            echo "::error::Which providers this run verified is UNKNOWN — the merged report could not be read for it. Unknown is not clean (#1012). Check the 'Guard — which providers this run verified' step."
+          else
+            echo "::error::The provider-coverage guard reported nothing (level output is '${LEVEL:-<unset>}') — its verdict is UNKNOWN, so this run cannot be trusted as having covered a provider. Check the 'Guard — which providers this run verified' step."
           fi
           exit 1

@@ -155,6 +155,52 @@ export function selectPrModelTarget(providers, options = {}) {
 }
 
 /**
+ * The run-summary block for a pin that did NOT happen (#1456).
+ *
+ * The decline already prints a `::warning::`, and that was the whole surface: a
+ * reviewer reading the PR sees a green check and no reason to open a 2000-line log.
+ * `mode=count` proved what a log line is worth here (#1252), so the decline also goes
+ * where the reviewer already looks.
+ *
+ * A successful pin renders nothing on purpose — it is the normal state, and a headline
+ * printed on every run is a headline nobody reads.
+ *
+ * @param {{ok: boolean, provider: string, reason: string|null}} result
+ * @returns {string} markdown, empty when there is nothing to say
+ */
+export function renderPinSummary(result) {
+  if (result.ok) return "";
+  return [
+    "### ⚠️ Provider pin — DECLINED",
+    "",
+    `This lane pins its LLM specs to \`${result.provider}\` (#1169) and could not: ${result.reason}`,
+    "",
+    "The run therefore falls back to its default per-provider parametrization — costlier,",
+    `but it covers something. Read any \`${result.provider}\` result on this run as ABSENT,`,
+    "not as passing; the provider-coverage verdict at the end of the E2E job counts what",
+    "that cost.",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Append a markdown block to the step summary, if there is one and a sink for it.
+ * Best-effort: the block is a reporting nicety and must never be the reason a lane
+ * fails — the annotation and the JSON on stdout carry the same verdict.
+ * @param {string} markdown
+ * @param {string} [sink]
+ */
+export function appendSummary(markdown, sink = process.env.GITHUB_STEP_SUMMARY) {
+  if (!markdown || !sink) return false;
+  try {
+    fs.appendFileSync(sink, `${markdown}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Reads the providers file. A missing file is a legitimate state (the sweep was
  * skipped, or ran `continue-on-error` on a canary), not a crash.
  * @returns {{ providers: unknown, missing: boolean }}
@@ -238,6 +284,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } else {
     process.stderr.write(`::warning::select-pr-model-target: ${result.reason}\n`);
   }
+
+  appendSummary(renderPinSummary(result));
 
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(0);

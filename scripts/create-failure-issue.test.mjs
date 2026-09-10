@@ -98,7 +98,7 @@ test("a failed MERGE outranks `empty`, and never says nothing ran", () => {
   assert.match(stillEmpty.title, /executed ZERO tests/);
 });
 
-test("the four verdict shapes get four titles, and an empty run never claims tests failed", () => {
+test("the five verdict shapes get five titles, and an empty run never claims tests failed", () => {
   const empty = renderIssue({ ...ACTIONS, empty: true, runErrors: "4" });
   assert.match(empty.title, /executed ZERO tests/);
   assert.doesNotMatch(empty.title, /tests failed/, "an empty run must not claim tests failed");
@@ -110,8 +110,45 @@ test("the four verdict shapes get four titles, and an empty run never claims tes
   assert.match(partial.body, /UNDER-COUNTED/, "a partial run must say its totals are under-counted");
   assert.match(partial.body, /\*\*180 test result\(s\)\*\*/);
 
+  // #1456. The one shape that can be reached with a GREEN test job: every LLM spec
+  // skipped because the account is drained. "@stable tests failed" would be the one
+  // false sentence on an issue about tests that never ran.
+  const uncovered = renderIssue({
+    ...ACTIONS,
+    providerUncovered: true,
+    providerUnverified: "openai,anthropic",
+    providerSkipped: "31",
+  });
+  assert.match(uncovered.title, /verified NO provider/);
+  assert.doesNotMatch(uncovered.title, /tests failed/);
+  assert.match(uncovered.body, /openai,anthropic/);
+  assert.match(uncovered.body, /31 skipped, 0 executed/);
+  assert.match(uncovered.body, /Triage this as ops/);
+
   const failures = renderIssue(ACTIONS);
   assert.match(failures.title, /@stable tests failed/);
+});
+
+test("an abort outranks the provider-coverage shape, and `degraded` never selects it", () => {
+  // An abort explains more than a coverage gap does: on a run that never executed a
+  // test, "no provider was verified" is true and points at ops instead of at the
+  // wedge that actually happened.
+  const empty = renderIssue({ ...ACTIONS, empty: true, providerUncovered: true });
+  assert.match(empty.title, /executed ZERO tests/);
+
+  const partial = renderIssue({ ...ACTIONS, partial: true, providerUncovered: true });
+  assert.match(partial.title, /PARTIAL/);
+
+  // The discriminator is the LEVEL, not the presence of unverified providers: a
+  // `degraded` day covered something and belongs on an ordinary umbrella.
+  const degraded = renderIssue({
+    ...ACTIONS,
+    providerUncovered: false,
+    providerUnverified: "openai",
+    providerSkipped: "3",
+  });
+  assert.match(degraded.title, /@stable tests failed/);
+  assert.doesNotMatch(degraded.body, /verified NO provider|Triage this as ops/);
 });
 
 test("`empty` outranks `partial`, and both outrank the auto-removal summary", () => {

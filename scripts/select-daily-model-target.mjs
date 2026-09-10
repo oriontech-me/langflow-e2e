@@ -84,6 +84,7 @@
  */
 import * as fs from "fs";
 import {
+  appendSummary,
   readProvidersFile,
   // Named for the lane that first needed it (#1169); it is really
   // "is this provider usable, and what model did collect-models settle on".
@@ -207,6 +208,58 @@ export function selectDailyModelTarget(providers, options = {}) {
   };
 }
 
+/**
+ * The run-summary block for a rotation that did not run this weekday's provider (#1456).
+ *
+ * This is the daily's HALF of the provider-coverage question, and the report-based
+ * verdict (`provider-coverage-verdict.mjs`) structurally cannot see it: when the
+ * rotation advances, the specs are pinned to the substitute provider, so NOTHING skips
+ * and the run is honestly `covered`. What was lost is the day's slot — and with a fixed
+ * Mon-Fri mapping that is up to 4 days for openai/anthropic and a full **7 for google**,
+ * whose only slot is Wednesday. A `::warning::` in the shard log is not where anyone
+ * would find that (#1252).
+ *
+ * A rotation that ran its own weekday's provider renders nothing.
+ *
+ * @param {{ok: boolean, provider: string|null, model: string|null, reason: string|null, skipped: Array<{provider: string, reason: string}>}} result
+ * @returns {string} markdown, empty when the rotation went as scheduled
+ */
+export function renderRotationSummary(result) {
+  const skipped = result.skipped ?? [];
+  if (result.ok && skipped.length === 0) return "";
+
+  const rows = skipped.map((s) => `| \`${s.provider}\` | ${s.reason} |`);
+  const header = ["| Provider | Why it was not run |", "| --- | --- |"];
+
+  if (result.ok) {
+    return [
+      "### ⚠️ Provider rotation — DEVIATED",
+      "",
+      `This weekday's slot belongs to \`${skipped[0].provider}\`; the rotation advanced past ` +
+        `${skipped.length} provider(s) and ran \`${result.provider}\` / \`${result.model}\` instead.`,
+      "",
+      ...header,
+      ...rows,
+      "",
+      "The agent specs on this run say nothing about the provider(s) above, and the rotation",
+      "does not come back to them before their next weekday — up to 7 days for `google`, whose",
+      "only slot is Wednesday. The deviation is the right call (losing the day costs more than",
+      "spend, #980); it is not coverage.",
+      "",
+    ].join("\n");
+  }
+
+  return [
+    "### 🚨 Provider rotation — NO provider",
+    "",
+    "No provider in the rotation could be pinned, so the lane keeps its default per-provider",
+    "parametrization and every parametrized agent spec will skip. Expect the provider-coverage",
+    "verdict on the merge job to report this run as covering NOTHING.",
+    "",
+    ...(rows.length ? [...header, ...rows, ""] : []),
+  ].join("\n");
+}
+
 function parseArgs(argv) {
   const args = {
     providersFile: "tests/helpers/provider-setup/data/providers.json",
@@ -296,6 +349,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } else {
     process.stderr.write(`::warning::select-daily-model-target: ${result.reason}\n`);
   }
+
+  appendSummary(renderRotationSummary(result));
 
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(0);

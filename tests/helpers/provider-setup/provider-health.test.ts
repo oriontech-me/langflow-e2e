@@ -22,6 +22,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   degradeProviders,
+  inactiveReason,
   providerSkipReasons,
   providersForEnvKeys,
   readProviderHealth,
@@ -31,6 +32,10 @@ import {
   type ProviderHealthRecord,
 } from "./provider-health";
 import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
+import {
+  PROVIDER_INACTIVE_SKIP,
+  providerCoverageVerdict,
+} from "../../../scripts/provider-coverage-verdict.mjs";
 
 /** Verbatim from run 30374528125's providers.json — Google monthly spend cap. */
 const SPEND_CAP =
@@ -479,4 +484,56 @@ test("a missing providers.json says so, instead of looking healthy in silence", 
   const warnings = captureWarnings(() => providerSkipReasons(null, QUIET));
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /collect-models\.spec\.ts/);
+});
+
+// #1456. The skip reason is a CONTRACT between this file and
+// `scripts/provider-coverage-verdict.mjs`, which reads it back out of the Playwright
+// report to say which providers a run failed to verify. Nothing else connects the two,
+// so a reword here would silently turn that verdict into a permanent "everything
+// covered" — the same class of silent green it exists to remove. These run the real
+// producer against the real consumer instead of pinning a spelling on either side.
+test("the skip reason a dead provider produces is the one the coverage verdict parses", () => {
+  const record: ProviderHealthRecord = {
+    provider: "openai",
+    model: null,
+    status: "inactive",
+    error: "You have no credits remaining.",
+  };
+
+  const match = PROVIDER_INACTIVE_SKIP.exec(inactiveReason(record));
+  assert.ok(match, "the coverage verdict no longer recognises this skip reason");
+  assert.equal(match[1], "openai");
+  assert.equal(match[2], "You have no credits remaining.");
+});
+
+test("the map the parametrized specs skip on is parsed the same way", () => {
+  // The other producer: `providerSkipReasons` feeds `resolveTestTargets`, so both entry
+  // points have to keep landing in the verdict — the hardcoded gate and the
+  // parametrized one drifting apart is what #1043 deduplicated in the first place.
+  const reason = providerSkipReasons(RUN_30374528125, QUIET).get("google");
+  assert.ok(reason);
+
+  const verdict = providerCoverageVerdict({
+    suites: [
+      {
+        file: "agent.spec.ts",
+        specs: [
+          {
+            file: "agent.spec.ts",
+            title: "t",
+            tests: [
+              { status: "skipped", annotations: [{ type: "skip", description: reason }] },
+              { status: "expected", annotations: [] },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(verdict.level, "degraded");
+  assert.deepEqual(
+    verdict.unverified.map((p) => p.provider),
+    ["google"],
+  );
 });

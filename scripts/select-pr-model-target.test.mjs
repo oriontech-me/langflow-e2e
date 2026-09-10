@@ -22,7 +22,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { selectPrModelTarget, readProvidersFile } from "./select-pr-model-target.mjs";
+import {
+  appendSummary,
+  readProvidersFile,
+  renderPinSummary,
+  selectPrModelTarget,
+} from "./select-pr-model-target.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -273,4 +278,41 @@ test("daily-stable.yml does NOT narrow the collector-stall gate (#1370)", () => 
     /COLLECT_REQUIRED_PROVIDERS:/,
     "daily-stable.yml must leave the collector-stall gate at its default (every env-keyed provider)",
   );
+});
+
+// #1456 — the decline is now reported where a reviewer looks, not only in the log.
+test("a declined pin renders a run-summary block naming the provider and the fallback", () => {
+  const markdown = renderPinSummary({
+    ok: false,
+    provider: "openai",
+    reason: 'provider "openai" probed "inactive" — collect-models reported: no credits',
+    warnings: [],
+  });
+  assert.match(markdown, /DECLINED/);
+  assert.match(markdown, /`openai`/);
+  assert.match(markdown, /no credits/);
+  // The consequence, not just the fact: an openai result on this run is ABSENT.
+  assert.match(markdown, /ABSENT/);
+});
+
+test("a successful pin renders nothing", () => {
+  // A headline on every green run is a headline nobody reads — the `mode=count`
+  // lesson (#1252) applies to the surface this issue moved the signal TO.
+  assert.equal(
+    renderPinSummary({ ok: true, provider: "openai", model: "gpt-4o-mini", reason: null }),
+    "",
+  );
+});
+
+test("writing the summary is best-effort and never throws", () => {
+  const dir = makeTempDir("pin-summary-");
+  const sink = path.join(dir, "summary.md");
+  assert.equal(appendSummary("### hi", sink), true);
+  assert.match(fs.readFileSync(sink, "utf-8"), /### hi/);
+
+  // No sink (a local run) and nothing to say are both no-ops, not failures: the
+  // verdict is also on stderr and stdout, so the block is a nicety.
+  assert.equal(appendSummary("### hi", ""), false);
+  assert.equal(appendSummary("", sink), false);
+  assert.equal(appendSummary("### hi", path.join(dir, "no", "such", "dir", "s.md")), false);
 });
