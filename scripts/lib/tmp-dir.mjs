@@ -64,18 +64,29 @@ let sweepRegistered = false;
 /**
  * `fs.mkdtempSync(path.join(os.tmpdir(), prefix))`, plus the removal.
  *
+ * `options.dir` moves the parent directory, and exists for one measured reason
+ * (#1456): a temporary **Playwright project** cannot live under `$TMPDIR`, because
+ * `@playwright/test` resolves from the config file's own directory and nothing under
+ * the system temp dir can see this repo's `node_modules`. Such a caller needs an
+ * in-repo, gitignored parent — and it must not get there by calling `mkdtempSync`
+ * itself, which is what the guard in this module's own test forbids and what this
+ * option makes unnecessary. The lifetime is unchanged: wherever it is created, the
+ * exit sweep removes it.
+ *
  * @param {string} prefix the same prefix the direct call used, so a leftover
  *   directory from an older run is still attributable to its test file.
+ * @param {{ dir?: string }} [options] `dir` overrides the parent (default:
+ *   `os.tmpdir()`); it must exist, exactly as `mkdtempSync` requires.
  * @returns {string} the created directory
  */
-export function makeTempDir(prefix) {
+export function makeTempDir(prefix, options = {}) {
   if (!sweepRegistered) {
     // `exit` handlers must be synchronous, which `rmSync` is. Registered lazily
     // so importing this module costs nothing to a caller that never uses it.
     process.on("exit", removeAllTempDirs);
     sweepRegistered = true;
   }
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(options.dir ?? tmpdir(), prefix));
   created.add(dir);
   return dir;
 }

@@ -49,6 +49,21 @@ test("makeTempDir creates a real directory and removeAllTempDirs takes it away",
   assert.equal(existsSync(dir), false, "the sweep must remove a NON-EMPTY directory");
 });
 
+test("`dir` moves the parent, and the sweep still owns the lifetime (#1456)", () => {
+  // The option exists because a temporary Playwright PROJECT cannot live under
+  // $TMPDIR — `@playwright/test` resolves from the config file's own directory. The
+  // property that must survive the option is the one this whole module is for: the
+  // directory is still swept, wherever it was created.
+  const parent = makeTempDir("tmp-dir-unit-parent-");
+  const dir = makeTempDir("tmp-dir-unit-nested-", { dir: parent });
+  assert.ok(dir.startsWith(parent), `${dir} is not under ${parent}`);
+  assert.ok(statSync(dir).isDirectory());
+
+  removeAllTempDirs();
+  assert.equal(existsSync(dir), false, "a relocated directory must be swept too");
+  assert.equal(existsSync(parent), false);
+});
+
 test("the sweep is idempotent, and survives a caller that already cleaned up", () => {
   const dir = makeTempDir("tmp-dir-unit-");
   execFileSync(process.execPath, ["-e", `require("node:fs").rmSync(${JSON.stringify(dir)}, {recursive:true})`]);
