@@ -552,6 +552,69 @@ test("a REAL Playwright run puts the skip reason where the verdict reads it", ()
   }
 });
 
+test("the skip reason survives `merge-reports`, which is what the daily reads", () => {
+  // The test above proves the annotation on a DIRECT json run — the PR lane's
+  // path. The daily never reads that: its shards write `blob` and the merge job
+  // rebuilds the json with `merge-reports`, so the whole daily half of #1456 rests
+  // on the annotation surviving that rebuild. Measured here rather than assumed,
+  // because if it did not, the daily's verdict would be a permanent `covered` and
+  // nothing would say so.
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("verdict-merge-", { dir: TMP_ROOT });
+  try {
+    fs.mkdirSync(path.join(dir, "specs"));
+    fs.writeFileSync(
+      path.join(dir, "pw.config.ts"),
+      `import { defineConfig } from "@playwright/test";\n` +
+        `export default defineConfig({ testDir: "./specs", reporter: [["blob", ` +
+        `{ outputDir: ${JSON.stringify(path.join(dir, "blob"))} }]] });\n`,
+    );
+    fs.writeFileSync(
+      path.join(dir, "specs", "gate.spec.ts"),
+      [
+        `import { test, expect } from "@playwright/test";`,
+        `test.describe("suite-level gate", () => {`,
+        `  test.skip(true, ${JSON.stringify(OPENAI_DEAD)});`,
+        `  test("openai target", async () => { expect(1).toBe(1); });`,
+        `});`,
+        `test("runs", async () => { expect(1).toBe(1); });`,
+        ``,
+      ].join("\n"),
+    );
+
+    execFileSync(
+      process.execPath,
+      [PLAYWRIGHT_CLI, "test", "-c", path.join(dir, "pw.config.ts")],
+      { cwd: REPO_ROOT, encoding: "utf-8", stdio: ["ignore", "ignore", "pipe"] },
+    );
+
+    const merged = path.join(dir, "results.json");
+    execFileSync(
+      process.execPath,
+      [PLAYWRIGHT_CLI, "merge-reports", "--reporter=json", path.join(dir, "blob")],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: merged },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+
+    const result = laneCoverageVerdict(JSON.parse(fs.readFileSync(merged, "utf-8")), {
+      lane: "daily-stable",
+    });
+    assert.equal(result.verdict, DEGRADED);
+    assert.equal(result.executed, 1);
+    assert.deepEqual(
+      result.providers.map((p) => [p.provider, p.reasons[0]]),
+      [["openai", "credit balance is too low"]],
+      "the reason must survive the blob round trip, or the daily's verdict is a lie",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- the wiring, and what it cannot prove -----------------------------------
 //
 // Everything above pins the verdict itself, which is the part #1456 asks to be
