@@ -1687,11 +1687,15 @@ jobs:
             # so this one must not also claim the report is complete (#1800 review).
             echo "::error::NO provider was recorded usable on this run, so every @stable test that needs one was SKIPPED and the LLM surface went unmeasured: $COVERAGE_HEADLINE. Check both halves before re-running — whether the keys are live, and whether the sweep imported them; re-running changes nothing until one of them is fixed (#1456/#1800)."
           elif [ "$COVERAGE_VERDICT" = "uncovered" ] && [ "$COVERAGE_FAIL" = "true" ]; then
-            # Guarded on the fail decision as well: with a live account this verdict
-            # does not fail the run, and one of the branches ABOVE may be why the step
-            # fired — in which case "the report is complete and the tests are not red"
-            # would contradict a message printed four lines earlier.
-            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. The report is complete and the tests are not red; there is simply no evidence in this run (#1456)."
+            # The completeness claim is GONE, for the same reason the dry branch never
+            # made one: the branches above may already have reported an incomplete,
+            # partial or unreadable report, and this one would then contradict a message
+            # printed four lines earlier. The `$COVERAGE_FAIL` guard cannot prevent that
+            # — on THIS lane `--fail-on-uncovered` makes `shouldFail()` true for every
+            # `uncovered` verdict, so it is never false when this branch is taken. It
+            # stays as documentation of the policy the message belongs to, not as the
+            # thing that makes the sentence honest; the wording is what does that.
+            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. No spec is implicated; there is simply no evidence in this run (#1456)."
           elif [ "$COVERAGE_FAIL" != "false" ]; then
             echo "::error::The coverage guard reported '${COVERAGE_FAIL:-unset}' for fail_recommended (verdict '${COVERAGE_VERDICT:-unset}') — UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — the run covered the providers it was supposed to cover' step (#1456)."
           fi

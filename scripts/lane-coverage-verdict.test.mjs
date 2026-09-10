@@ -721,8 +721,10 @@ const verdictWith = (reportBody, usability, options = {}) =>
 // whatever the import graph selected — frequently ONE spec file — so a PR editing a
 // single wholly-gated spec during a drain of that spec's provider executes nothing.
 // Under the old rule that was `uncovered` and `--fail-closed` blocked the merge, for
-// an outage its author cannot fix. Two specs reach this today:
-// `chatInputOutputUser-shard-2` and `general-bugs-agent-images-playground`.
+// an outage its author cannot fix. TWELVE specs reach this today — eight on openai,
+// two on google, two on anthropic, none on a pair; `chatInputOutputUser-shard-2`
+// below is one of them. The count is derived in `lib/provider-usability.mjs`, which
+// also records the two figures this comment used to carry (two, then thirteen).
 test("a one-spec selection wholly skipped does NOT fail while the account is alive", () => {
   const result = verdictWith(
     report("tests/chatInputOutputUser-shard-2.spec.ts", [skipped("agent", OPENAI_DEAD)]),
@@ -1258,4 +1260,116 @@ test("a providers.json whose record shape drifted is UNKNOWN, never dry", () => 
     fs.rmSync(run.workdir, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- the daily's final gate, executed rather than spelled (#1800 review) ------
+//
+// Both #1800 edits to that step — reporting `unreadable` FIRST, and dropping the
+// completeness claim from the `uncovered` message — were unpinned: mutating either
+// left the whole lane green, because the only assertion that reads this step reads its
+// `if:` expression. That is #1226's lesson in the guard written to answer #1226, so
+// the block is EXTRACTED FROM THE YAML and run under `bash`, and the assertions are on
+// what it prints.
+//
+// The extraction is deliberately brittle in the safe direction: if the step is renamed
+// or its `run:` reshaped, the helper throws rather than silently asserting on nothing.
+function runDailyGate(env) {
+  const daily = readWorkflow("daily-stable.yml");
+  const marker = "- name: Fail scheduled run on an incomplete, empty, partial or uncovered report";
+  const start = daily.indexOf(marker);
+  assert.ok(start > 0, "the daily's final gate step must exist under its known name");
+  const step = daily.slice(start, daily.indexOf("\n      - name:", start + 10));
+  const runAt = step.indexOf("run: |");
+  assert.ok(runAt > 0, "the gate must still be an inline shell block");
+  const body = step
+    .slice(step.indexOf("\n", runAt) + 1)
+    .split("\n")
+    .map((line) => line.replace(/^ {10}/, ""))
+    .join("\n");
+  assert.match(body, /^exit 1$/m, "the gate must still be unconditional-exit-1");
+
+  const run = spawnSync("bash", ["-c", body], {
+    encoding: "utf-8",
+    // Only what the step declares; anything it reads and the workflow does not export
+    // would otherwise be inherited from the developer's shell.
+    env: {
+      PATH: process.env.PATH,
+      COMPLETE: "",
+      RUN_EMPTY: "false",
+      RUN_UNREADABLE: "false",
+      RUN_PARTIAL: "false",
+      RUN_ERRORS: "0",
+      RUN_TESTS: "600",
+      RUN_FIRST_ERROR: "",
+      COVERAGE_VERDICT: "",
+      COVERAGE_HEADLINE: "H",
+      COVERAGE_FAIL: "false",
+      COVERAGE_ACCOUNT: "unknown",
+      ...env,
+    },
+  });
+  return { status: run.status, out: `${run.stdout}${run.stderr}` };
+}
+
+test("the daily's final gate always names a cause, and never two that disagree", () => {
+  // The reachable shapes, each with the message it must select.
+  const cases = [
+    [{ COMPLETE: "false" }, /Merge was incomplete/],
+    [{ RUN_UNREADABLE: "true" }, /missing or unparseable/],
+    [{ RUN_EMPTY: "true" }, /ZERO tests executed/],
+    [{ RUN_PARTIAL: "true" }, /PARTIAL run/],
+    [{ RUN_EMPTY: "" }, /reported nothing \(empty output is unset\)/],
+    [
+      { COVERAGE_VERDICT: "unreadable", COVERAGE_FAIL: "true", COVERAGE_ACCOUNT: "dry" },
+      /could not read the merged report/,
+    ],
+    [
+      { COVERAGE_VERDICT: "degraded", COVERAGE_ACCOUNT: "dry", COVERAGE_FAIL: "true" },
+      /NO provider was recorded usable/,
+    ],
+    [
+      { COVERAGE_VERDICT: "uncovered", COVERAGE_ACCOUNT: "alive", COVERAGE_FAIL: "true" },
+      /ZERO verdicts about Langflow/,
+    ],
+    [{ COVERAGE_FAIL: "" }, /for fail_recommended/],
+  ];
+  for (const [env, expected] of cases) {
+    const { status, out } = runDailyGate(env);
+    assert.equal(status, 1, `the gate must fail: ${JSON.stringify(env)}`);
+    assert.match(out, expected, `wrong message for ${JSON.stringify(env)}`);
+  }
+
+  // `unreadable` FIRST: it populates the account axis too, so the dry branch would
+  // otherwise claim "every @stable test that needs one was SKIPPED" on a run with no
+  // report to read at all.
+  const unreadableAndDry = runDailyGate({
+    COVERAGE_VERDICT: "unreadable",
+    COVERAGE_ACCOUNT: "dry",
+    COVERAGE_FAIL: "true",
+  });
+  assert.doesNotMatch(unreadableAndDry.out, /every @stable test that needs one was SKIPPED/);
+
+  // And no coverage message may claim the report is complete on a run whose FIRST
+  // message said it was not — the pair the review measured.
+  for (const verdict of ["uncovered", "degraded"]) {
+    const { out } = runDailyGate({
+      COMPLETE: "false",
+      COVERAGE_VERDICT: verdict,
+      COVERAGE_ACCOUNT: "dry",
+      COVERAGE_FAIL: "true",
+    });
+    assert.match(out, /Merge was incomplete/);
+    assert.doesNotMatch(out, /report is complete/, `${verdict} must not contradict the line above`);
+  }
+});
+
+test("the daily's final gate stays silent on a run that deserves to pass", () => {
+  // It is only ever REACHED on a failing shape (its `if:` is asserted elsewhere), but
+  // `exit 1` is unconditional inside it — so a shape that prints nothing would fail the
+  // day with no cause named, which is the #1176 failure in the direction that costs the
+  // triage. Every branch above is therefore exhaustive by construction, and this pins
+  // that the healthy-looking combination still names something.
+  const { status, out } = runDailyGate({ COVERAGE_FAIL: "false", RUN_EMPTY: "false" });
+  assert.equal(status, 1);
+  assert.doesNotMatch(out, /::error::/, "nothing to report, so nothing is claimed");
 });

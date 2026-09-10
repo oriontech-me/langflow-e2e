@@ -120,7 +120,9 @@ export function renderIssue({
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // SIX shapes, most specific first (the count was already stale at four).
+  // SEVEN shapes, most specific first. The count has been stale twice — it read
+  // "four" while there were six, and "six" while omitting `partial`, which has its
+  // own title and its own body — so it is enumerated exhaustively below.
   // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
   //    because a failed merge leaves no report and the integrity guard therefore
   //    reports the run as empty and unreadable. "Find why nothing ran" is then a
@@ -135,6 +137,9 @@ export function renderIssue({
   //    run that broke, this one describes a run that worked and proved nothing.
   //    Ranked under `partial` deliberately: when a shard also died, the abort is
   //    what triage must start from.
+  // 2b. PARTIAL (#1726): a shard never ran its tests, so the report under-counts.
+  //    Above the coverage shapes for the same reason `empty` is: triage must start
+  //    from the abort, not from what the surviving shards happened to cover.
   // 3. NO USABLE PROVIDER (#1800): the report is complete and hundreds of tests DID
   //    execute, but nothing was recorded usable, so the whole LLM surface went
   //    unmeasured — the shape this lane can actually reach, where `uncovered` cannot
@@ -297,8 +302,18 @@ export function renderIssue({
   // (the run's `::error::` lives in a step log nobody opens twice). It leads the body
   // for the same reason the liveness block does (#1030): the failures below are
   // plausibly collateral of the outage, and triage that starts from them starts wrong.
+  //
+  // Scoped to the shapes that actually carry per-test material. On `empty`, `partial`
+  // and `mergeFailed` there ARE no failures below — those bodies say so themselves
+  // ("no per-test evidence to triage", "no spec is implicated") — and the banner's
+  // "start here" would sit above the section's own "Triage the abort first". The
+  // combination is not exotic: `Collect models` failing to import a key (#1058) aborts
+  // shards (`partial`) while the same sweep records every provider `inactive`
+  // (`accountDry`), and the shard-side copy runs under `if: always()`, so the file
+  // reaches the merge job even from a dead shard. `uncovered` is excluded too, since
+  // its own section already renders every one of these lines.
   const accountBanner =
-    accountDry && testsFailed
+    accountDry && testsFailed && !empty && !partial && !mergeFailed && !uncovered
       ? [
           "### ⚠️ NO usable provider on this run — read the failures below against it",
           "",

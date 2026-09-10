@@ -555,3 +555,32 @@ test("main() reads TESTS_FAILED as the string 'true', and only that", async () =
   assert.doesNotMatch(failed.stdout, /@stable run had NO usable provider on/);
   assert.match(failed.stdout, /@stable tests failed on/);
 });
+
+test("the outage banner stays off the shapes that have no failures below it", () => {
+  // Reachable on the #1058 day, not exotic: `Collect models` failing to import a key
+  // aborts shards (`partial`) while the same sweep records every provider `inactive`
+  // (`accountDry`). The banner says "read the failures below against it" and those
+  // bodies say there are none — one of them four lines under its own "Triage the
+  // abort first".
+  for (const flag of ["empty", "partial", "mergeFailed", "uncovered"]) {
+    const { body } = renderIssue({
+      ...ACTIONS,
+      [flag]: true,
+      accountDry: true,
+      testsFailed: true,
+      runTests: "3",
+      coverageProviders: "openai",
+      coverageSkips: "12",
+      coverageHeadline: "daily-stable did not cover openai",
+    });
+    assert.doesNotMatch(
+      body,
+      /NO usable provider on this run — read the failures below/,
+      `${flag} has no per-test material for the banner to point at`,
+    );
+    // And the coverage material must not be rendered twice on the shape that owns it.
+    if (flag === "uncovered") {
+      assert.equal(body.match(/Providers that went uncovered/g)?.length, 1);
+    }
+  }
+});

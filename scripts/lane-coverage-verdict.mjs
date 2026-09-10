@@ -562,7 +562,7 @@ export function renderSummary(result) {
             // NOT "narrow, not blind": on an `uncovered` run it was blind, and the
             // heading two lines above says so. What the live account establishes is
             // only that the account is not the thing to fix — and for a spec that
-            // HARDCODES the dead provider (13 of them do) a re-dispatch recovers
+            // HARDCODES the dead provider (12 of them do) a re-dispatch recovers
             // nothing either, so this must not read as "just re-run it".
             const scope =
               result.verdict === UNCOVERED
@@ -598,7 +598,7 @@ export function outputLines(result) {
     `executed=${result.executed}`,
     `skipped_total=${result.skippedTotal}`,
     `provider_skips=${result.providerSkips.length}`,
-    `providers=${result.providers.map((p) => p.provider).join(",")}`,
+    `providers=${displaySafe(result.providers.map((p) => p.provider).join(","))}`,
     `lane_provider_skipped=${result.laneProviderSkipped}`,
     // #1800. `account` is the state, `fail_recommended` is the DECISION — emitted so
     // the workflows read one computed answer instead of re-deriving the policy in a
@@ -760,18 +760,24 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
           `contributes nothing to whether any provider was usable\n`,
       );
     }
-    // Kept apart from `unread` because it sends the reader somewhere else entirely:
-    // the file IS there and parsed, and what changed is the record shape the producer
-    // writes. `collect-models.ts` and `provider-health.ts` keep that shape in sync by
-    // hand, so naming the file and the expected fields is the whole difference between
-    // a five-minute fix and a day spent on the keys.
-    for (const path of usability.unrecognised ?? []) {
-      process.stderr.write(
-        `::warning::lane-coverage-verdict: ${path} parsed but carries no record with a ` +
-          `\`provider\` and an active/inactive \`status\` — the producer's shape may have ` +
-          `drifted (collect-models.ts / provider-health.ts). Treated as UNKNOWN, never as dry\n`,
-      );
-    }
+  }
+
+  // Drift is reported UNCONDITIONALLY, unlike `unread` above, and the asymmetry is the
+  // whole point of keeping the two lists apart. #1252's noise argument covers an absent
+  // optional file, which is the normal state of every LLM-free PR; it does not cover a
+  // file that exists, parses, and carries records this reader cannot interpret — that
+  // is never routine. And the skip gate would make this warning unreachable in exactly
+  // the scenario it was written for: a renamed `status` also defeats `providerSkipGate`'s
+  // own `status === "inactive"` test, so NO provider-health skip fires, the verdict is
+  // `covered`, and the one message naming the file and the expected fields would never
+  // print (measured — the run was silent on the PR lane and, on the daily, said only
+  // "a missing file" about a file that was present).
+  for (const path of usability.unrecognised ?? []) {
+    process.stderr.write(
+      `::warning::lane-coverage-verdict: ${path} parsed but carries no record with a ` +
+        `\`provider\` and an active/inactive \`status\` — the producer's shape may have ` +
+        `drifted (collect-models.ts / provider-health.ts). Treated as UNKNOWN, never as dry\n`,
+    );
   }
 
   if (args.json) {
