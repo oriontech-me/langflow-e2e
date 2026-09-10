@@ -323,22 +323,112 @@ test("the zero-verdicts body survives a run that reported no headline", () => {
   assert.doesNotMatch(body, /Providers that went uncovered/, "no list when nothing was reported");
 });
 
-test("the daily fires the umbrella on `uncovered` and hands it the verdict", () => {
+test("the daily fires the umbrella on the coverage DECISION and hands it the verdict", () => {
   // The wiring half, which no render test can reach: this step is gated on the
-  // TEST job, and an `uncovered` day is green there. Without the extra clause the
+  // TEST job, and a coverage day is green there. Without the extra clause the
   // job's last step reddens the run and nothing opens an issue naming the cause —
   // a red day with no triage attached, which is #1176 in the direction that costs
   // the evidence rather than the gate.
+  //
+  // #1800 moved the clause from `verdict == 'uncovered'` to `fail_recommended`,
+  // because `uncovered` requires ZERO executed tests and a full `@stable` run always
+  // executes hundreds of non-LLM ones — so the clause could not fire on this lane at
+  // all. What fires now is the reachable case: a complete report and NO usable
+  // provider.
   const wf = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
   const step = wf.slice(wf.indexOf("- name: Create issue on failure"));
   const block = step.slice(0, step.indexOf("\n      - name:", 10));
 
   assert.match(
     block.slice(0, block.indexOf("\n", block.indexOf("if:"))),
-    /steps\.coverage\.outputs\.verdict == 'uncovered'/,
-    "an uncovered day leaves the test job GREEN, so the umbrella needs its own clause",
+    /steps\.coverage\.outputs\.fail_recommended == 'true'/,
+    "a coverage day leaves the test job GREEN, so the umbrella needs its own clause",
   );
-  for (const key of ["COVERAGE_VERDICT", "COVERAGE_HEADLINE", "COVERAGE_PROVIDERS", "COVERAGE_SKIPS"]) {
+  for (const key of [
+    "COVERAGE_VERDICT",
+    "COVERAGE_HEADLINE",
+    "COVERAGE_PROVIDERS",
+    "COVERAGE_SKIPS",
+    "COVERAGE_ACCOUNT",
+  ]) {
     assert.match(block, new RegExp(`${key}: `), `the umbrella cannot render the shape without ${key}`);
   }
+});
+
+// --- the dry-account shape (#1800) ------------------------------------------
+// The reachable sibling of the zero-verdicts shape. `uncovered` needs ZERO executed
+// tests, which a full `@stable` run never produces; a DRY account is what the daily
+// can actually hit — hundreds of green non-LLM tests and no provider reachable at all.
+
+test("a dry account gets its own title and does not claim nothing ran", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    runTests: "412",
+    coverageProviders: "openai, anthropic, google",
+    coverageSkips: "31",
+    coverageHeadline: "daily-stable did not cover openai, anthropic, google",
+  });
+
+  assert.match(title, /NO usable provider/);
+  assert.doesNotMatch(title, /ZERO verdicts/, "tests DID produce verdicts — just not LLM ones");
+  assert.doesNotMatch(title, /tests failed/);
+  assert.match(body, /reached \*\*no provider at all\*\*/);
+  assert.match(body, /The rest of the suite did run/);
+  assert.match(body, /31 test\(s\)/);
+  assert.match(body, /provider account, not the suite/);
+  // It must NOT borrow the zero-verdicts claims, which are false here.
+  assert.doesNotMatch(body, /not one of them is a/);
+  assert.doesNotMatch(body, /no per-test evidence to/);
+});
+
+// This shape is selected by the ACCOUNT, which says nothing about whether tests also
+// failed — so unlike the zero-verdicts shape (where nothing ran, so nothing could
+// fail) the auto-remove step CAN have stripped tags on the same run. Dropping its
+// summary would tell the triager the specs are not implicated on a day three tags
+// had just been removed.
+test("a dry account that ALSO had failures keeps the auto-removal summary", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    runTests: "412",
+    coverageProviders: "openai",
+    coverageSkips: "31",
+    arStatus: "success",
+    arSummary: "Removed @stable from 3 tests: a, b, c",
+  });
+
+  assert.match(title, /NO usable provider/);
+  assert.match(body, /### `@stable` auto-removal/);
+  assert.match(body, /Removed @stable from 3 tests/);
+  // And it says why that matters here rather than leaving the two blocks unrelated.
+  assert.match(body, /plausible cause of the very/);
+});
+
+test("the structural shapes outrank the dry-account one too", () => {
+  for (const flag of ["partial", "empty", "mergeFailed"]) {
+    const { title } = renderIssue({ ...ACTIONS, [flag]: true, accountDry: true, runTests: "3" });
+    assert.doesNotMatch(title, /NO usable provider/, `${flag} must win the title`);
+  }
+  // And zero-verdicts outranks it: if nothing ran at all, that is the stronger fact.
+  const bothCoverage = renderIssue({
+    ...ACTIONS,
+    uncovered: true,
+    accountDry: true,
+    runTests: "3",
+  });
+  assert.match(bothCoverage.title, /ZERO verdicts/);
+});
+
+test("an alive account never selects the dry shape", () => {
+  // The discriminator is the account state, not the presence of unverified providers:
+  // a `degraded` day on a live account is an ordinary umbrella.
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: false,
+    coverageProviders: "openai",
+    coverageSkips: "3",
+  });
+  assert.match(title, /tests failed/);
+  assert.doesNotMatch(body, /NO usable provider|no provider at all/);
 });

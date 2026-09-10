@@ -52,6 +52,7 @@
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   COVERAGE_VERDICT, COVERAGE_HEADLINE, COVERAGE_PROVIDERS, COVERAGE_SKIPS (#1456)
+//   COVERAGE_ACCOUNT="dry" — no provider was usable at all (#1800)
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
@@ -102,6 +103,7 @@ export function renderIssue({
   partial = false,
   mergeFailed = false,
   uncovered = false,
+  accountDry = false,
   coverageHeadline = "",
   coverageProviders = "",
   coverageSkips = "0",
@@ -193,26 +195,52 @@ export function renderIssue({
           "the shard logs hold the rest. Known cause of this shape: `Collect models` failing without",
           "importing a provider key as a Langflow global variable — #1058.",
         ]
-      : uncovered
+      : uncovered || accountDry
       ? [
-          "### ⚠️ ZERO verdicts — a dead provider skipped every test that ran",
+          uncovered
+            ? "### ⚠️ ZERO verdicts — a dead provider skipped every test that ran"
+            : "### ⚠️ NO usable provider — the LLM surface of this run went unmeasured",
           "",
-          `The report is complete and carries **${runTests} result(s)**, and **not one of them is a`,
-          "verdict about Langflow**: every test that produced a result was skipped because a",
-          "provider `collect-models` probed `inactive` could not serve a call.",
+          ...(uncovered
+            ? [
+                `The report is complete and carries **${runTests} result(s)**, and **not one of them is a`,
+                "verdict about Langflow**: every test that produced a result was skipped because a",
+                "provider `collect-models` probed `inactive` could not serve a call.",
+              ]
+            : [
+                `The report is complete and carries **${runTests} result(s)**, and \`collect-models\``,
+                "reached **no provider at all** — so every test that needs one was skipped and this",
+                "run is not evidence about any of them. The rest of the suite did run (#1800).",
+              ]),
           ...(coverageProviders
             ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
             : []),
           ...(coverageHeadline ? ["", "```", coverageHeadline, "```"] : []),
           "",
-          "No spec failed, no `@stable` tag was touched and there is **no per-test evidence to",
-          "triage** — the specs never ran. This is NOT the `empty` shape: the shards worked and",
-          "the report is intact, which is exactly why the run would otherwise have read as a",
-          "clean day (#1456).",
+          ...(uncovered
+            ? [
+                "No spec failed, no `@stable` tag was touched and there is **no per-test evidence to",
+                "triage** — the specs never ran. This is NOT the `empty` shape: the shards worked and",
+                "the report is intact, which is exactly why the run would otherwise have read as a",
+                "clean day (#1456).",
+              ]
+            : [
+                "This shape is selected by the ACCOUNT being dry, which says nothing about whether",
+                "tests also failed — so read the auto-removal block below, if there is one, before",
+                "concluding the specs are not implicated. An outage is a plausible cause of the very",
+                "failures a tag was removed on, and the infra-signature exemption does not classify",
+                "one (#1031).",
+              ]),
           "",
           "**Triage this as the provider account, not the suite**: restore the key or the credit,",
-          "then re-run the day. A green run that skipped everything is not evidence that anything",
-          "works (#570/#1012).",
+          "then re-run the day. Re-running before that changes nothing, and a green run that",
+          "skipped the whole LLM surface is not evidence that it works (#570/#1012).",
+          // Carried, never replaced: on the dry-account path the auto-remove step CAN
+          // have run, and dropping its summary would tell the triager the specs were
+          // not implicated on a day tags had just been stripped.
+          ...(accountDry && arStatus
+            ? ["", "### `@stable` auto-removal", "", arSummary]
+            : []),
         ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
@@ -243,7 +271,9 @@ export function renderIssue({
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
       : uncovered
         ? `[Daily Failure] @stable run produced ZERO verdicts — a dead provider skipped every test on ${today} (${image})`
-        : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+        : accountDry
+          ? `[Daily Failure] @stable run had NO usable provider on ${today} (${image})`
+          : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and
   // naming the host is what lets a reader find it at all.
@@ -373,6 +403,10 @@ async function main() {
     // chosen by POSITIVE identification, unlike the run's gate, which is
     // fail-closed. Mislabelling a day is worse than not labelling it.
     uncovered: env.COVERAGE_VERDICT === "uncovered",
+    // #1800. The account axis, which the verdict cannot carry: a run can be
+    // `degraded` — hundreds of tests executed — while no provider was reachable at
+    // all, and that is the shape this lane can actually reach.
+    accountDry: env.COVERAGE_ACCOUNT === "dry",
     coverageHeadline: env.COVERAGE_HEADLINE || "",
     coverageProviders: env.COVERAGE_PROVIDERS || "",
     coverageSkips: env.COVERAGE_SKIPS || "0",

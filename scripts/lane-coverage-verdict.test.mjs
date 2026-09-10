@@ -33,6 +33,7 @@ import {
   outputLines,
   parseArgs,
   renderSummary,
+  shouldFail,
 } from "./lane-coverage-verdict.mjs";
 import { formatProviderInactiveReason } from "./lib/provider-health-reason.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -423,7 +424,9 @@ function runCli(reportBody, args = [], { dir } = {}) {
   };
 }
 
-test("--fail-closed exits 1 on `uncovered` and 0 on `degraded`", () => {
+test("--fail-closed exits 1 on `uncovered` with no account evidence, 0 on `degraded`", () => {
+  // No `--providers` here, so the account axis is UNKNOWN and `shouldFail` is
+  // fail-closed on it (#1800). The case where it is KNOWN-alive is the next test.
   fs.mkdirSync(TMP_ROOT, { recursive: true });
 
   const uncovered = runCli(report("tests/a.spec.ts", [skipped("openai", OPENAI_DEAD)]), [
@@ -692,12 +695,280 @@ test("the daily runs the verdict report-only, and the last step gates on it", ()
     "failing HERE would skip the @stable auto-removal and the umbrella issue (#1176)",
   );
 
-  // FAIL-CLOSED at the gate: `covered` and `degraded` pass, everything else — an
-  // `uncovered` run, an unreadable report, or an absent output because the step was
-  // skipped or crashed — fails. A `== 'uncovered'` test would go green on silence.
+  // FAIL-CLOSED at the gate, on the guard's OWN decision since #1800: anything but
+  // `fail_recommended=false` fails, including an absent output because the step was
+  // skipped or crashed. A `== 'true'` test would go green on silence.
   const gate = yml.slice(yml.indexOf("- name: Fail scheduled run on an incomplete"));
   const gateStep = gate.slice(0, gate.indexOf("\n      - name:", 10) + 1 || undefined);
-  assert.match(gateStep, /steps\.coverage\.outputs\.verdict != 'covered'/);
-  assert.match(gateStep, /steps\.coverage\.outputs\.verdict != 'degraded'/);
-  assert.doesNotMatch(gateStep, /steps\.coverage\.outputs\.verdict == 'uncovered'/);
+  assert.match(gateStep, /steps\.coverage\.outputs\.fail_recommended != 'false'/);
+  assert.doesNotMatch(gateStep, /steps\.coverage\.outputs\.fail_recommended == 'true'/);
+  // The policy must not be re-derived here: two spellings of one rule is how the
+  // lanes drift apart (#1045), and the old one could not reach this lane's real case.
+  assert.doesNotMatch(gateStep, /outputs\.verdict != 'covered'/);
+});
+
+// --- the account axis, and what it changes about failing (#1800) -------------
+
+const ALIVE = { known: true, active: ["anthropic", "google"] };
+const DRY = { known: true, active: [] };
+const UNKNOWN_ACCOUNT = { known: false, active: [] };
+
+/** The verdict for one report under one account state. */
+const verdictWith = (reportBody, usability, options = {}) =>
+  laneCoverageVerdict(reportBody, { lane: "pr-validation", usability, ...options });
+
+// THE DEFECT #1800 was filed for, as the run that produces it. The PR lane's "run" is
+// whatever the import graph selected — frequently ONE spec file — so a PR editing a
+// single wholly-gated spec during a drain of that spec's provider executes nothing.
+// Under the old rule that was `uncovered` and `--fail-closed` blocked the merge, for
+// an outage its author cannot fix. Two specs reach this today:
+// `chatInputOutputUser-shard-2` and `general-bugs-agent-images-playground`.
+test("a one-spec selection wholly skipped does NOT fail while the account is alive", () => {
+  const result = verdictWith(
+    report("tests/chatInputOutputUser-shard-2.spec.ts", [skipped("agent", OPENAI_DEAD)]),
+    ALIVE,
+  );
+
+  // The verdict is unchanged — the run really did produce no evidence — and that is
+  // exactly why the two questions are separate.
+  assert.equal(result.verdict, UNCOVERED);
+  assert.equal(result.account, "alive");
+  assert.equal(shouldFail(result), false);
+  assert.match(result.headline, /anthropic, google were still usable/);
+});
+
+// The other half: the same shape with nothing usable stays failing, because a re-run
+// cannot help until someone acts.
+test("the same run with a DRY account fails", () => {
+  const result = verdictWith(
+    report("tests/chatInputOutputUser-shard-2.spec.ts", [skipped("agent", OPENAI_DEAD)]),
+    DRY,
+  );
+  assert.equal(result.verdict, UNCOVERED);
+  assert.equal(result.account, "dry");
+  assert.equal(shouldFail(result), true);
+  assert.match(result.headline, /No provider was usable at all/);
+});
+
+// Fail-closed on the unknown is preserved: `uncovered` is already a strong signal, and
+// "nothing ran and nothing says a provider was reachable" must not go green.
+test("an uncovered run with no account evidence still fails", () => {
+  const result = verdictWith(
+    report("tests/a.spec.ts", [skipped("agent", OPENAI_DEAD)]),
+    UNKNOWN_ACCOUNT,
+  );
+  assert.equal(shouldFail(result), true);
+  assert.match(result.headline, /UNKNOWN/);
+});
+
+// What this WIDENS, and the reason the daily half of #1456 was decorative: a full
+// `@stable` run always executes hundreds of non-LLM tests, so `executed === 0` never
+// held there and the daily's gate could not fire at all. A dry account can.
+test("a degraded run on a dry account fails — the case the daily can actually reach", () => {
+  const result = verdictWith(
+    report("tests/a.spec.ts", [
+      executed("one"),
+      executed("two"),
+      skipped("agent", OPENAI_DEAD),
+    ]),
+    DRY,
+  );
+  assert.equal(result.verdict, DEGRADED);
+  assert.equal(shouldFail(result), true);
+});
+
+test("a degraded run on a live account still does not fail", () => {
+  const result = verdictWith(
+    report("tests/a.spec.ts", [executed("one"), skipped("agent", OPENAI_DEAD)]),
+    ALIVE,
+  );
+  assert.equal(shouldFail(result), false);
+});
+
+// A dry account with nothing to lose is not a failure: no spec asked for a provider,
+// so no coverage went missing. Without this clause every LLM-free PR would go red on
+// the day an account drained.
+test("a dry account with no provider-health skip does not fail", () => {
+  const result = verdictWith(report("tests/a.spec.ts", [executed("one")]), DRY);
+  assert.equal(result.verdict, COVERED);
+  assert.equal(shouldFail(result), false);
+});
+
+test("an unreadable report fails whatever the account says", () => {
+  for (const usability of [ALIVE, DRY, UNKNOWN_ACCOUNT]) {
+    const result = verdictWith(null, usability);
+    assert.equal(result.verdict, UNREADABLE);
+    assert.equal(shouldFail(result), true);
+  }
+});
+
+test("the summary states the account, so the colour is not the only clue", () => {
+  const alive = renderSummary(
+    verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), ALIVE),
+  );
+  assert.match(alive, /Still usable/);
+  assert.match(alive, /anthropic, google/);
+
+  const dry = renderSummary(
+    verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), DRY),
+  );
+  assert.match(dry, /No provider was usable/);
+  assert.match(dry, /re-running changes nothing/);
+
+  const unknown = renderSummary(
+    verdictWith(
+      report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]),
+      UNKNOWN_ACCOUNT,
+    ),
+  );
+  assert.match(unknown, /UNKNOWN/);
+});
+
+test("the outputs carry the account and the decision, not just the verdict", () => {
+  const lines = outputLines(
+    verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), ALIVE),
+  );
+  assert.ok(lines.includes("account=alive"));
+  assert.ok(lines.includes("usable_providers=anthropic,google"));
+  assert.ok(lines.includes("fail_recommended=false"));
+  // The verdict is still emitted unchanged — the workflows and the umbrella both read
+  // it, and #1800 adds an axis rather than replacing one.
+  assert.ok(lines.includes("verdict=uncovered"));
+});
+
+test("--providers is repeatable and every value is kept", () => {
+  const args = parseArgs([
+    "--providers",
+    "a.json",
+    "--providers",
+    "b.json",
+    "--lane",
+    "daily-stable",
+  ]);
+  assert.deepEqual(args.providers, ["a.json", "b.json"]);
+  // Not defaulted: a caller that passes none gets UNKNOWN and says so, which is the
+  // honest answer for a lane that never ran the sweep.
+  assert.deepEqual(parseArgs([]).providers, []);
+});
+
+test("the CLI reads providers.json and lets a live account pass", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-usability-");
+  const providers = path.join(dir, "providers.json");
+  fs.writeFileSync(
+    providers,
+    JSON.stringify([
+      { provider: "openai", model: null, status: "inactive", error: "no credits" },
+      { provider: "google", model: "gemini-2.5-flash", status: "active", error: null },
+    ]),
+  );
+
+  const run = runCli(report("tests/a.spec.ts", [skipped("agent", OPENAI_DEAD)]), [
+    "--lane",
+    "pr-validation",
+    "--provider",
+    "openai",
+    "--providers",
+    providers,
+    "--fail-closed",
+  ]);
+  try {
+    assert.equal(run.status, 0, "a live account must not fail a narrow selection");
+    assert.match(run.outputs, /verdict=uncovered/);
+    assert.match(run.outputs, /account=alive/);
+    assert.match(run.outputs, /fail_recommended=false/);
+    // The annotation follows the DECISION: an ::error:: on a step that exits 0 is how
+    // an annotation stops being read.
+    assert.match(run.stderr, /^::warning::/m);
+    assert.doesNotMatch(run.stderr, /^::error::/m);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the CLI names a providers.json it could not read", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const run = runCli(
+    report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]),
+    ["--lane", "daily-stable", "--providers", "definitely/not/here.json"],
+  );
+  try {
+    // Silently dropping it would leave the account UNKNOWN with no way to tell that
+    // from "no file was asked for" (#1012).
+    assert.match(run.stderr, /definitely\/not\/here\.json is missing or unreadable/);
+    assert.match(run.outputs, /account=unknown/);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+  }
+});
+
+test("both lanes feed the account axis, and the daily carries it across the shards", () => {
+  const pr = readWorkflow("pr-validation.yml");
+  const prIdx = pr.indexOf("- name: Coverage verdict");
+  const prStep = pr.slice(prIdx, pr.indexOf("- name:", prIdx + 10));
+  assert.match(
+    prStep,
+    /--providers tests\/helpers\/provider-setup\/data\/providers\.json/,
+    "without it the PR lane's account axis is permanently UNKNOWN (#1800)",
+  );
+
+  const daily = readWorkflow("daily-stable.yml");
+  // The shard writes it onto the artifact the merge job already downloads...
+  assert.match(daily, /tokens\/providers-\$\{\{ matrix\.shard \}\}\.json/);
+  // ...and the merge job passes every one it finds.
+  const idx = daily.indexOf("- name: Guard — the run covered the providers");
+  const step = daily.slice(idx, daily.indexOf("- name:", idx + 10));
+  assert.match(step, /all-tokens\/providers-\*\.json/);
+  assert.match(step, /--providers/);
+});
+
+test("the umbrella opens on the decision, not on a verdict this lane cannot reach", () => {
+  const daily = readWorkflow("daily-stable.yml");
+  const idx = daily.indexOf("- name: Create issue on failure");
+  const step = daily.slice(idx, daily.indexOf("- name:", idx + 10));
+  assert.match(step, /steps\.coverage\.outputs\.fail_recommended == 'true'/);
+  assert.doesNotMatch(
+    step,
+    /steps\.coverage\.outputs\.verdict == 'uncovered'/,
+    "`uncovered` needs ZERO executed tests, which a full @stable run never reaches",
+  );
+  // The account state reaches the issue body, which is what lets it pick the shape
+  // that is true for a dry-but-degraded day.
+  assert.match(step, /COVERAGE_ACCOUNT: \$\{\{ steps\.coverage\.outputs\.account \}\}/);
+});
+
+// Found while proving the fix on a real report: naming the raw active set produced
+// "openai could not serve a call … openai was still usable" in one sentence. The
+// account DECISION stays on the raw record (that is the account's state), but what the
+// text NAMES is the set difference — a provider that skipped here is not evidence that
+// anything was covered. The two sets can legitimately differ, since the daily unions
+// four shards and one shard can reach a provider another could not.
+test("a provider that skipped is never named as still usable", () => {
+  const result = verdictWith(
+    report("tests/a.spec.ts", [executed("one"), skipped("agent", OPENAI_DEAD)]),
+    { known: true, active: ["openai", "google"] },
+  );
+
+  assert.equal(result.account, "alive", "the account decision stays on the raw record");
+  assert.match(result.headline, /google was still usable/);
+  assert.doesNotMatch(result.headline, /openai was still usable/);
+  assert.doesNotMatch(result.headline, /openai, google were still usable/);
+  assert.match(renderSummary(result), /Still usable: \*\*google\*\*/);
+});
+
+test("a sweep that disagrees with the run says so instead of contradicting itself", () => {
+  // Only openai is active AND only openai skipped: the difference is empty, so there
+  // is nothing honest to name. Saying it was "still usable" would deny the skip in the
+  // line above it.
+  const result = verdictWith(
+    report("tests/a.spec.ts", [executed("one"), skipped("agent", OPENAI_DEAD)]),
+    { known: true, active: ["openai"] },
+  );
+
+  assert.equal(result.account, "alive");
+  assert.equal(shouldFail(result), false, "the account was up — this must not fail");
+  assert.match(result.headline, /the sweep and the run disagree/);
+  assert.doesNotMatch(result.headline, /openai was still usable/);
+  assert.match(renderSummary(result), /disagree/);
 });

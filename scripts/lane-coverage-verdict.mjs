@@ -44,7 +44,8 @@
  *                what it did not cover in the run summary.
  *   `uncovered`  at least one provider-health skip and ZERO tests executed. The run
  *                produced no verdict about Langflow at all; its green is worth
- *                nothing. Fail-closed with `--fail-closed`.
+ *                nothing. Whether it FAILS the lane is `shouldFail()`'s call, not
+ *                this verdict's — see below.
  *
  * `degraded` staying green is #980's trade, unchanged: on the PR lane a drained
  * openai key makes the pin decline and the parametrized specs run on the remaining
@@ -52,11 +53,28 @@
  * there would turn one dead account into a merge block for every PR that touches a
  * provider-dependent spec — including PRs whose specs passed on two other providers.
  *
- * `uncovered` failing is the rule #570, #1012 and #1010 already wrote for this repo,
- * arriving by a route none of them covered: an all-skip run that reads as coverage.
- * It is also the narrowest gate that closes it — it fires only when the lane received
- * no evidence whatsoever, which is precisely the case where nothing is lost by
- * refusing to call it a pass.
+ * `uncovered` names a run that received no evidence whatsoever — the all-skip green
+ * #570, #1012 and #1010 wrote their rules against.
+ *
+ * ## What FAILS is a second question, and not the same one (#1800)
+ *
+ * `--fail-closed` originally failed on `uncovered`, and that proved too wide on the PR
+ * lane, where the "run" is whatever the import graph selected — frequently ONE spec
+ * file. A PR editing a single wholly-gated spec during a drain of that spec's provider
+ * executes nothing and scores `uncovered`, so one dead key became a merge block for an
+ * author who cannot fix it: #980 inverted, on the lane a human is waiting on. Two specs
+ * reach it today (`chatInputOutputUser-shard-2`, `general-bugs-agent-images-playground`
+ * — both `@agents`, both one test, both gated on openai) and openai has drained three
+ * times on this project.
+ *
+ * So the failing decision moved to `shouldFail()` and asks what a re-run can answer:
+ * the ACCOUNT axis, read from `providers.json` rather than guessed from the report,
+ * because a healthy provider leaves no trace in a report at all. A dry account fails
+ * (nothing could have served a call); an `uncovered` run with no evidence either way
+ * fails (fail-closed on the unknown); an `uncovered` run on a demonstrably live account
+ * is reported loudly and does not fail. See `shouldFail()` for the full matrix and for
+ * the one thing this WIDENS: a `degraded` daily on a dry account now fails, which the
+ * old rule could not reach at all.
  *
  * Weighed and DECLINED: failing whenever the lane's pinned provider is among the
  * skipped ones. It is the same fact with a much wider blast radius — see `degraded`
@@ -82,6 +100,9 @@
  *
  * Outputs ($GITHUB_OUTPUT + a readable block on stdout):
  *   verdict               covered | degraded | uncovered | unreadable
+ *   account               dry | alive | unknown  — could ANY provider serve a call
+ *   usable_providers      comma-separated providers recorded active ("" when none)
+ *   fail_recommended      the shouldFail() decision, independent of --fail-closed
  *   executed              tests that produced a verdict (passed, failed or flaky)
  *   skipped_total         every skipped test, whatever the reason
  *   provider_skips        tests skipped for provider health
@@ -91,12 +112,13 @@
  *
  * Exit codes:
  *   0  a verdict was produced (any verdict, unless --fail-closed says otherwise)
- *   1  --fail-closed and the verdict is `uncovered` or `unreadable`
+ *   1  --fail-closed and shouldFail() says the run deserves to fail
  *   2  usage error
  *
  * Run:
  *   PLAYWRIGHT_JSON=results.json node scripts/lane-coverage-verdict.mjs \
- *     --lane pr-validation --provider openai --fail-closed
+ *     --lane pr-validation --provider openai --fail-closed \
+ *     --providers tests/helpers/provider-setup/data/providers.json
  *
  * Pure, dependency-free ESM: the daily's merge job runs it with plain `node`.
  */
@@ -105,6 +127,7 @@ import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { parseProviderInactiveReason } from "./lib/provider-health-reason.mjs";
+import { readUsability, usabilityState } from "./lib/provider-usability.mjs";
 
 export const COVERED = "covered";
 export const DEGRADED = "degraded";
@@ -119,7 +142,12 @@ const HELP = `usage: lane-coverage-verdict.mjs [options]
   --lane NAME       lane label used in the messages (default: "this lane")
   --provider NAME   the provider this lane pinned itself to; reported, never gated on
   --report PATH     Playwright JSON report (default: $PLAYWRIGHT_JSON or results.json)
-  --fail-closed     exit 1 when the verdict is \`uncovered\` or \`unreadable\`
+  --providers PATH  providers.json written by collect-models; repeatable, since the
+                    daily's shards each write their own. Absent = the account axis is
+                    UNKNOWN, which never fails on its own.
+  --fail-closed     exit 1 when the run deserves it (see shouldFail): an unreadable
+                    report, a dry account, or a run that covered nothing with no
+                    evidence that any provider was reachable
   --json            print the full result as JSON instead of the readable block
   -h, --help        this text
 `;
@@ -277,6 +305,9 @@ export function laneCoverageVerdict(report, options = {}) {
   const lane = options.lane || "this lane";
   const laneProvider = options.laneProvider || null;
   const reportPath = options.reportPath || "the Playwright JSON report";
+  const usability = options.usability ?? { known: false, active: [] };
+  const account = usabilityState(usability);
+  const usableProviders = usability.active ?? [];
 
   if (!report || typeof report !== "object" || !Array.isArray(report.suites)) {
     return {
@@ -284,6 +315,8 @@ export function laneCoverageVerdict(report, options = {}) {
       lane,
       laneProvider,
       laneProviderSkipped: false,
+      account,
+      usableProviders,
       executed: 0,
       skippedTotal: 0,
       providerSkips: [],
@@ -304,8 +337,33 @@ export function laneCoverageVerdict(report, options = {}) {
   if (providerSkips.length > 0) verdict = executed === 0 ? UNCOVERED : DEGRADED;
 
   const names = providers.map((p) => p.provider).join(", ");
+
+  // What to NAME as still usable, which is not the same set as what decides `dry` vs
+  // `alive`. The decision is about the account and stays on the raw record; the
+  // sentence is about this run, and a provider that skipped here is not evidence of
+  // anything, so listing it produced "openai could not serve a call … openai was still
+  // usable" in one line — measured while proving the fix. The two sets can legitimately
+  // differ: the daily unions four shards, and one shard reaching a provider another
+  // shard could not is exactly the disagreement the union exists to keep.
+  const skippedNames = new Set(providers.map((p) => p.provider));
+  const stillUsable = usableProviders.filter((p) => !skippedNames.has(p));
+
+  // The account clause is appended rather than woven in, so the three verdict
+  // sentences stay exactly what #1456 shipped and the new fact reads as the separate
+  // axis it is: what the run covered, and whether anything COULD have covered it.
+  const accountClause =
+    providerSkips.length === 0
+      ? ""
+      : account === "dry"
+        ? ". No provider was usable at all, so re-running changes nothing until the account is restored"
+        : account === "alive"
+          ? stillUsable.length > 0
+            ? `. ${stillUsable.join(", ")} ${stillUsable.length === 1 ? "was" : "were"} still usable`
+            : `. The account was not down — collect-models recorded ${usableProviders.join(", ")} usable, and the same provider(s) skipped here, so the sweep and the run disagree`
+          : ". Whether any provider was usable is UNKNOWN — no providers.json was readable";
+
   const headline =
-    verdict === COVERED
+    (verdict === COVERED
       ? `${lane}: no provider-health skip — all ${executed} executed test(s) ` +
         `produced a verdict`
       : verdict === UNCOVERED
@@ -316,19 +374,62 @@ export function laneCoverageVerdict(report, options = {}) {
           `${executed + skippedTotal} test(s) skipped on provider health` +
           (laneProviderSkipped
             ? `, including the provider this lane pins itself to (${laneProvider})`
-            : "");
+            : "")) + accountClause;
 
   return {
     verdict,
     lane,
     laneProvider,
     laneProviderSkipped,
+    account,
+    usableProviders,
     executed,
     skippedTotal,
     providerSkips,
     providers,
     headline: displaySafe(headline),
   };
+}
+
+/**
+ * Whether this verdict should FAIL the lane — the decision #1800 separates from the
+ * verdict itself.
+ *
+ * `--fail-closed` used to mean "fail on `uncovered` or `unreadable`", and `uncovered`
+ * is the wrong trigger on its own. It says the RUN produced no evidence, which on the
+ * daily means the suite is broken and on the PR lane frequently means the import graph
+ * selected one wholly-gated spec. Failing there turns one drained key into a merge
+ * block for a PR whose author cannot fix it — #980 inverted, on the lane a human is
+ * waiting on, and reachable today through two specs (#1800).
+ *
+ * What survives is the question a re-run can answer:
+ *
+ *   unreadable                    → fail. A verdict that could not look must not pass.
+ *   account dry, any skip         → fail. Nothing could have served a call; a re-run
+ *                                   changes nothing until someone acts, and the
+ *                                   emptiness is not an artifact of a narrow selection.
+ *   uncovered, account NOT alive  → fail. Nothing ran AND nothing says a provider was
+ *                                   reachable: fail-closed on the unknown, because
+ *                                   `uncovered` alone is already a strong signal.
+ *   uncovered, account alive      → do NOT fail. Reported loudly — the summary block
+ *                                   and the annotation both fire — but a live account
+ *                                   means the selection was narrow, not that the world
+ *                                   is down.
+ *
+ * Note what the second clause adds rather than removes: a `degraded` daily on a dry
+ * account now fails, where the old rule could not reach it at all (a full `@stable` run
+ * always executes hundreds of non-LLM tests, so `executed === 0` never held there).
+ * That is a real widening of when the daily goes red, taken deliberately: the LLM
+ * surface went unmeasured and nothing else on the run says so.
+ *
+ * @param {ReturnType<typeof laneCoverageVerdict>} result
+ * @returns {boolean}
+ */
+export function shouldFail(result) {
+  if (result.verdict === UNREADABLE) return true;
+  if (result.providerSkips.length === 0) return false;
+  if (result.account === "dry") return true;
+  return result.verdict === UNCOVERED && result.account !== "alive";
 }
 
 /**
@@ -375,6 +476,26 @@ export function renderSummary(result) {
   }
   lines.push("", `Executed: **${result.executed}** · skipped for provider health: **${result.providerSkips.length}** · skipped in total: **${result.skippedTotal}**`, "");
 
+  // The account axis, always stated when anything skipped (#1800). It is what decides
+  // whether this block is a red or a warning, so leaving the reader to infer it from
+  // the colour is how the two get read as one fact.
+  lines.push(
+    result.account === "dry"
+      ? "**No provider was usable on this run**, so this is not a narrow selection — re-running changes nothing until the account is restored."
+      : result.account === "alive"
+        ? // Same set difference as the headline, and for the same reason: a provider
+          // that skipped here is not evidence that anything was covered.
+          (() => {
+            const skippedNames = new Set(result.providers.map((p) => p.provider));
+            const stillUsable = result.usableProviders.filter((p) => !skippedNames.has(p));
+            return stillUsable.length > 0
+              ? `Still usable: **${stillUsable.join(", ")}** — the account is up, so this run is narrow, not blind.`
+              : `The account is up (\`collect-models\` recorded **${result.usableProviders.join(", ")}** usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce.`;
+          })()
+        : "Whether any provider was usable is **UNKNOWN** (no readable `providers.json`). Unknown is not clean (#1012).",
+    "",
+  );
+
   // Named one by one, capped, and never silently — #1012's rule. Which tests lost
   // their coverage is what decides whether the day needs a re-run.
   const titles = result.providerSkips.map((s) => `${s.title}`);
@@ -399,18 +520,30 @@ export function outputLines(result) {
     `provider_skips=${result.providerSkips.length}`,
     `providers=${result.providers.map((p) => p.provider).join(",")}`,
     `lane_provider_skipped=${result.laneProviderSkipped}`,
+    // #1800. `account` is the state, `fail_recommended` is the DECISION — emitted so
+    // the workflows read one computed answer instead of re-deriving the policy in a
+    // YAML `if:`, which is where two lanes drift apart. Independent of --fail-closed:
+    // that flag says whether this process exits non-zero, not what the run deserves.
+    `account=${result.account}`,
+    `usable_providers=${result.usableProviders.join(",")}`,
+    `fail_recommended=${shouldFail(result)}`,
     `headline=${displaySafe(result.headline)}`,
   ];
 }
 
 /** The flags that take a value; every other flag is either a switch or unknown. */
-const VALUE_FLAGS = new Set(["--lane", "--provider", "--report"]);
+const VALUE_FLAGS = new Set(["--lane", "--provider", "--report", "--providers"]);
 
 export function parseArgs(argv) {
   const args = {
     lane: "this lane",
     provider: null,
     report: process.env.PLAYWRIGHT_JSON || "results.json",
+    // Repeatable: the daily's shards each write their own providers.json and the merge
+    // job unions them. Not defaulted to the in-repo path — a caller that does not pass
+    // one gets UNKNOWN and says so, which is the honest answer for a lane that never
+    // ran the sweep.
+    providers: [],
     failClosed: false,
     json: false,
     help: false,
@@ -438,6 +571,7 @@ export function parseArgs(argv) {
     if (value === undefined) throw new Error(`${flag} needs a value`);
     if (flag === "--lane") args.lane = value;
     else if (flag === "--provider") args.provider = value;
+    else if (flag === "--providers") args.providers.push(value);
     else args.report = value;
     i++;
   }
@@ -466,10 +600,22 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     process.exit(0);
   }
 
+  const usability = readUsability(args.providers);
+  // Said out loud rather than folded into the verdict: a providers.json that was asked
+  // for and could not be read is why a run may read `unknown` instead of `dry`, and an
+  // unknown account is the difference between failing and not (#1012).
+  for (const path of usability.unread) {
+    process.stderr.write(
+      `::warning::lane-coverage-verdict: ${path} is missing or unreadable, so it ` +
+        `contributes nothing to whether any provider was usable\n`,
+    );
+  }
+
   const result = laneCoverageVerdict(readReport(args.report), {
     lane: args.lane,
     laneProvider: args.provider,
     reportPath: args.report,
+    usability,
   });
 
   if (args.json) {
@@ -492,13 +638,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // The annotation is a SECOND surface, not the signal — the summary block above is
   // the one a reviewer reads. It exists so the failing case names its cause in the
   // log too, where a red step is read.
-  if (result.verdict === UNCOVERED || result.verdict === UNREADABLE) {
+  // The annotation follows the FAIL decision, not the verdict (#1800): an `uncovered`
+  // run on a live account is a narrow selection, and printing `::error::` for one that
+  // does not fail the step is how an annotation stops being read.
+  if (shouldFail(result)) {
     process.stderr.write(`::error::${result.headline}\n`);
-  } else if (result.verdict === DEGRADED) {
+  } else if (result.verdict !== COVERED) {
     process.stderr.write(`::warning::${result.headline}\n`);
   }
 
-  const failing =
-    args.failClosed && (result.verdict === UNCOVERED || result.verdict === UNREADABLE);
-  process.exit(failing ? 1 : 0);
+  process.exit(args.failClosed && shouldFail(result) ? 1 : 0);
 }
