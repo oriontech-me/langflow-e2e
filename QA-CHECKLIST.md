@@ -1455,18 +1455,18 @@
 | `api/flows/` — REST API | 100 | 94 | 1 | 3 | 2 |
 | `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 90 | 1 | 0 | 1 |
-| `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
+| `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
-| `core-functionality/project-management/` | 12 | 8 | 4 | 0 | 0 |
+| `core-functionality/project-management/` | 14 | 10 | 4 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
 | `flow-functionality/` | 33 | 28 | 0 | 1 | 4 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
-| `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
+| `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 29 | 23 | 0 | 1 | 5 |
@@ -1475,7 +1475,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **534 (82%)** | **38 (6%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **658** | **538 (82%)** | **37 (6%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1491,7 +1491,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 614 `test()` calls carrying the `@stable` tag, distributed across 238 spec
+> 620 `test()` calls carrying the `@stable` tag, distributed across 242 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1992,6 +1992,8 @@
 - [x] deleting a folder should update the folder list immediately → `folder-deletion-integrity.spec.ts`
 - [x] deleting one folder should not affect other folders → `folder-deletion-integrity.spec.ts`
 - [x] creating a new folder after deletion should work correctly → `folder-deletion-integrity.spec.ts`
+- [x] creating a flow in a specific folder via API places it in that folder → `folder-drag-drop-flow.spec.ts`
+- [x] folder listing shows flows correctly via UI → `folder-drag-drop-flow.spec.ts`
 - [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
 
 #### flow-functionality/
@@ -2070,6 +2072,7 @@
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
+- [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
@@ -2145,6 +2148,7 @@
 - [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
 - [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
 - [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
+- [x] editing the Duplicate shortcut persists and triggers the action on canvas → `settings-shortcuts-edit.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
 - [x] dragging a sidebar component drops the node at the pointer → `sidebar-add-component.spec.ts`
@@ -2156,6 +2160,8 @@
 - [x] adding a sticky note places it on the canvas and in the flow → `sticky-notes.spec.ts`
 - [x] changing a sticky note colour repaints it and persists the choice → `sticky-notes.spec.ts`
 - [x] resizing a sticky note grows it and persists the new size → `sticky-notes.spec.ts`
+- [x] bind a Credential global variable to a component secret field → `use-global-variable-in-component.spec.ts`
+- [x] component secret-field global-variable binding persists across reload → `use-global-variable-in-component.spec.ts`
 
 ---
 
@@ -2168,7 +2174,7 @@
 | `api/flows/` — REST API | 1 | 2 |
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
-| `core-functionality/auth/` | 2 | 0 |
+| `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 2 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 1 | 1 |
