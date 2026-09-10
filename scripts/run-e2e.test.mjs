@@ -313,6 +313,120 @@ test("the mirrored values cross the ssh boundary, which a default alone does not
   }
 });
 
+test("the target's run command crosses on every run, and the sync command never crosses", () => {
+  // A measured need rather than a knob for its own sake: on 2026-09-10 the PUBLISHED
+  // distribution served the traces family with tracing ON — 23 of 23, no gunicorn
+  // WORKER TIMEOUT — where the source clone wedges under the same selection on the same
+  // machine (7, 8 and 9 failures across the three attribution runs of #1720).
+  const line = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes("bash -s; sleep 86400"));
+  assert.ok(line, "could not find the command that starts the backend on the target");
+  assert.match(line, /\$\(target_cmd_env\)/);
+
+  // And it reaches the run's EARLY log, not only its metadata. The preflight line
+  // exists because a run that dies in prep or in a shard never reaches phase_merge, and
+  // that is the run whose record matters most — a wrong run command is a backend that
+  // never answers, which arrives as a shard timeout with nothing naming the cause.
+  const preflight = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes('info "target env:'));
+  assert.ok(preflight, "could not find the preflight line that records the target's environment");
+  assert.match(preflight, /\$\(target_cmd_env\)/, "the run command must be readable before phase_merge");
+
+  // Unconditional, EMPTY INCLUDED, and that is the property the metadata field rests
+  // on: a value that crosses only sometimes cannot be recorded as the one in force.
+  // Turning this back into a conditional makes langflow_target_run_cmd a guess, so it
+  // is pinned here and not only where the field is written.
+  const unset = sourced(`(unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR; target_cmd_env)`);
+  assert.equal(unset.status, 0, unset.stderr);
+  assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_RUN_CMD=/, "an unset command still has to cross, as empty");
+
+  // The frontend directory travels with the command, because without it the command
+  // cannot reach the state it was added for: the starter refuses a clone with no built
+  // UI, and it looks for those assets under the CLONE, while a published distribution
+  // ships its own inside the package. Naming what serves and not naming the assets it
+  // serves would be half a knob.
+  assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_FRONTEND_DIR=/, "the frontend dir has to cross too");
+  const fe = sourced(`target_cmd_env`, {
+    LANGFLOW_SRC_RUN_CMD: "/root/venv-dev8/bin/langflow run",
+    LANGFLOW_SRC_FRONTEND_DIR: "/root/venv-dev8/lib/python3.14/site-packages/langflow/frontend",
+  });
+  assert.match(fe.stdout, /LANGFLOW_SRC_FRONTEND_DIR='?\/root\/venv-dev8/, "and carry the value it was given");
+
+  // The sync command is a deliberate NON-feature. The starter reads it as
+  // `${VAR-default}`, so empty-but-SET means "skip `uv sync --frozen` entirely", and a
+  // workflow `env:` block cannot express "unset" — an absent input arrives as
+  // empty-but-set. Forwarding it would put a silent skip of the dependency
+  // reconciliation one typo away.
+  for (const env of [{}, { LANGFLOW_SRC_SYNC_CMD: "" }, { LANGFLOW_SRC_SYNC_CMD: "uv sync --frozen --offline" }]) {
+    const r = sourced(`target_cmd_env`, env);
+    assert.doesNotMatch(r.stdout, /LANGFLOW_SRC_SYNC_CMD/, `sync must not cross: ${JSON.stringify(env)}`);
+  }
+
+  // Read back on the far side rather than string-matched here. The ordinary value
+  // carries a space (`…/bin/langflow run`), so the quoting is load-bearing from the
+  // first use. Only the ARGUMENT separator is supported, and deliberately so: the
+  // starter launches `${RUN_CMD}` unquoted, so `cmd arg` splits into words — a path
+  // that itself contains a space could never serve, whatever this test proved.
+  const cmd = "/opt/venv/bin/langflow run --extra 'a b'";
+  const round = sourced(
+    [
+      `remote="$(target_cmd_env)bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_SRC_RUN_CMD"' | env -u LANGFLOW_SRC_RUN_CMD bash -c "$remote"`,
+    ].join("\n"),
+    { LANGFLOW_SRC_RUN_CMD: cmd },
+  );
+  assert.equal(round.status, 0, round.stderr);
+  assert.equal(round.stdout, cmd, "the far side must READ the command back, quoting included");
+
+  // The trailing space is part of the contract, because the caller concatenates. Drop
+  // it and the assignment glues onto the next one, producing a single corrupt
+  // assignment out of two — a failure that reaches the operator as "the backend did not
+  // answer", which is the wrong message for the right reason.
+  const glued = sourced(
+    [
+      `remote="$(target_cmd_env)LANGFLOW_PORT=7999 bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_PORT"' | env -u LANGFLOW_PORT bash -c "$remote"`,
+    ].join("\n"),
+    { LANGFLOW_SRC_RUN_CMD: "/opt/venv/bin/langflow run" },
+  );
+  assert.equal(glued.status, 0, glued.stderr);
+  assert.equal(glued.stdout, "7999", "the assignment that follows has to survive");
+});
+
+test("a run command set against the default switches is warned about, in the phase that can still act", () => {
+  // Both collisions are silent and neither names itself as the cause. PREPARE_TARGET=1
+  // rebuilds the clone that is not going to serve, and then run-metadata.json carries a
+  // prepared sha describing a tree nobody ran. REQUIRE_TARGET_VERSION=1 compares the
+  // LIVE instance's version against upstream's nightly resolution, which moves daily,
+  // so a pinned distribution fails the verdict on a difference the operator introduced
+  // — with a message about authoritative version checks.
+  const cmd = "/root/venv-dev8/bin/langflow run";
+
+  const both = sourced(`PREPARE_TARGET=1 REQUIRE_TARGET_VERSION=1 LANGFLOW_SRC_RUN_CMD="${cmd}" warn_target_cmd_conflicts`);
+  assert.equal(both.status, 0, both.stderr);
+  assert.match(both.stderr, /PREPARE_TARGET=0/, "the warning has to name the switch that stops the rebuild");
+  assert.match(both.stderr, /REQUIRE_TARGET_VERSION=1/, "and the one that fails the verdict");
+
+  // Silent when the caller has already dealt with both — a warning that fires anyway is
+  // a warning nobody reads.
+  const handled = sourced(`PREPARE_TARGET=0 REQUIRE_TARGET_VERSION=0 LANGFLOW_SRC_RUN_CMD="${cmd}" warn_target_cmd_conflicts`);
+  assert.equal(handled.status, 0, handled.stderr);
+  assert.doesNotMatch(handled.stderr, /LANGFLOW_SRC_RUN_CMD is set/);
+
+  // And silent on the default path, which is how this script runs every weekday: no
+  // run command, nothing to warn about, whatever the other two switches say.
+  const none = sourced(`(unset LANGFLOW_SRC_RUN_CMD; PREPARE_TARGET=1 REQUIRE_TARGET_VERSION=1 warn_target_cmd_conflicts)`);
+  assert.equal(none.status, 0, none.stderr);
+  assert.doesNotMatch(none.stderr, /LANGFLOW_SRC_RUN_CMD is set/);
+
+  // Wired into the phase, not merely defined: a guard nothing calls is a guard that
+  // does not exist.
+  const body = readFileSync(SCRIPT, "utf8");
+  assert.match(body, /^\s+warn_target_cmd_conflicts$/m, "phase_preflight has to call it");
+});
+
 test("the remote quoting survives a value carrying a quote, which no current value does", () => {
   // The branch none of today's values reach, and therefore the one that will be wrong
   // when it is first needed — the day someone overrides a mirrored variable from the
@@ -1068,6 +1182,27 @@ function metadataFrom(env, after = "") {
   assert.ok(existsSync(file), `phase_merge wrote no metadata\n${r.stdout}\n${r.stderr}`);
   return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr };
 }
+
+test("the metadata names the command that served the target, so two artifacts are not one run", () => {
+  // Without this field a run against the published distribution is byte-identical to
+  // one against the clone: same version string, same suite sha, same mirrored env. It
+  // is the "green run against the wrong instance" class the starter's build stamp
+  // exists for (#1658), arriving through the ARTIFACT instead of through stale assets —
+  // and the comparison this lane produces is only about the environment if both sides
+  // are known to have run the same product.
+  const { meta } = metadataFrom({ ...BLANKED, LANGFLOW_SRC_RUN_CMD: "/root/venv-dev8/bin/langflow run" });
+  assert.equal(meta.langflow_target_run_cmd, "/root/venv-dev8/bin/langflow run");
+
+  // Empty is not "unknown": it is the starter's own default, uv against the clone.
+  //
+  // The name is blanked EXPLICITLY, for the reason the mirrored test states three
+  // paragraphs down: `sourced()` forwards process.env, and BLANKED only neutralises the
+  // four mirrored names. Without this the default case asserts "" against whatever the
+  // operator exported — so the test would go red on exactly the machine this feature is
+  // for, the qa VM whose wrapper carries the override. Found by review, reproduced.
+  const { meta: dflt } = metadataFrom({ ...BLANKED, LANGFLOW_SRC_RUN_CMD: "" });
+  assert.equal(dflt.langflow_target_run_cmd, "");
+});
 
 test("the metadata records the mirrored values that were IN FORCE, not the defaults", () => {
   // The property #1748 exists for. On 2026-09-07 the instance under test ran with

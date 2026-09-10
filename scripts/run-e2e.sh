@@ -422,6 +422,77 @@ mirrored_target_env() {
   done
 }
 
+# The command that SERVES the target, forwarded to the starter on every run.
+#
+# The starter has accepted LANGFLOW_SRC_RUN_CMD since #1658 — it is how a machine
+# without uv, or a run against the PUBLISHED distribution rather than the clone, is
+# served — but the remote environment above is composed from a fixed list, so an
+# override exported on the qa wrapper never crossed the ssh boundary. The knob existed
+# on one side of the connection and not the other.
+#
+# Why the lane needs it, measured rather than supposed: on 2026-09-10 the published
+# distribution served the traces family with tracing ON, 23 of 23 and no gunicorn
+# WORKER TIMEOUT, where the source clone wedges under the same selection on the same
+# machine — 7, 8 and 9 failures across the three attribution runs of #1720.
+#
+# Sent UNCONDITIONALLY, including empty, for the reason mirrored_target_env sends its
+# four the same way: a value that crosses only sometimes cannot be recorded as the one
+# in force, and run-metadata.json records this one. The starter tests it with
+# `-n "${VAR:-}"`, so an empty assignment is indistinguishable from no assignment on
+# the far side — unconditional forwarding is therefore free, and it gives the field the
+# same standing the mirrored four have: what this side holds is what the starter reads,
+# unless the target's own profile re-exports it. Same standing, same residual.
+#
+# The SYNC command is deliberately NOT forwarded, and that is a decision rather than an
+# omission. The starter reads it as `${VAR-default}` on purpose, so empty-but-SET means
+# "skip `uv sync --frozen` entirely" — and a caller cannot express "unset" through a
+# workflow `env:` block, where an absent input arrives as empty-but-set. Forwarding it
+# would put a silent skip of the dependency reconciliation one typo away, to serve a
+# knob nothing in this repository sets today.
+#
+# LANGFLOW_SRC_FRONTEND_DIR travels with it, and without it the run command does not
+# actually reach the state it was added for. The starter refuses to serve a clone with
+# no built UI — a backend answering /health_check while every browser spec dies at page
+# load is the failure it exists to prevent — and it looks for those assets under the
+# CLONE. A published distribution ships its own built frontend inside the package, so
+# the two knobs are one decision: name the command that serves and the assets it serves.
+# Forwarded the same way and for the same reason, and just as safely: the starter reads
+# it as `${VAR:-default}`, so empty falls back to the clone's path.
+target_cmd_env() {
+  printf 'LANGFLOW_SRC_RUN_CMD=%s ' "$(shq "${LANGFLOW_SRC_RUN_CMD:-}")"
+  printf 'LANGFLOW_SRC_FRONTEND_DIR=%s ' "$(shq "${LANGFLOW_SRC_FRONTEND_DIR:-}")"
+}
+
+# The two switches a run command silently collides with, warned about once, in the
+# phase where there is still time to act.
+#
+# Neither collision is hypothetical, and neither announces itself as the cause:
+#
+#   PREPARE_TARGET=1 (the default) still checks out and REBUILDS the clone — the
+#   longest thing this run does — for a tree that is not going to serve. Worse than the
+#   wasted minutes, run-metadata.json then carries langflow_prepared_sha beside
+#   langflow_target_run_cmd, and the prepared sha describes something nobody ran.
+#
+#   REQUIRE_TARGET_VERSION=1 (the default) compares the version scraped from the LIVE
+#   instance against the one resolved from upstream's nightly, which moves daily. A
+#   pinned distribution therefore fails the verdict on a difference the operator
+#   introduced on purpose, and the message it fails with talks about authoritative
+#   version checks rather than about the pin.
+#
+# A warning and not a `die`: both combinations are legitimate — a venv pinned to the
+# resolved version passes the gate, and someone may want the clone placed anyway. What
+# is not legitimate is discovering either one from a shard timeout or a red verdict.
+warn_target_cmd_conflicts() {
+  [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || return 0
+  if [ "${PREPARE_TARGET:-1}" = "1" ]; then
+    warn "LANGFLOW_SRC_RUN_CMD is set, and PREPARE_TARGET=1: this run will still place and rebuild the clone, which is not what will serve. Set PREPARE_TARGET=0 unless you mean both."
+  fi
+  if [ "${REQUIRE_TARGET_VERSION:-1}" = "1" ]; then
+    warn "LANGFLOW_SRC_RUN_CMD is set, and REQUIRE_TARGET_VERSION=1: the served version must equal the one resolved from upstream, or the verdict fails on a difference you introduced. Pin the distribution to the resolved version, or set REQUIRE_TARGET_VERSION=0 and accept the blind axis."
+  fi
+  return 0
+}
+
 # Should this run place the target's clone, and if not, why not?
 #
 # Split out of phase_preflight so the decision is testable without ssh — the phase
@@ -718,7 +789,14 @@ phase_preflight() {
   # dies in prep or in a shard never reaches phase_merge. The run that most needs this
   # record would be exactly the one that produced none. First line of the first phase
   # costs nothing and survives every abort after it.
-  info "target env: $(mirrored_target_env)"
+  #
+  # The target's run command is printed from the same composer for the same reason, and
+  # the reason is sharper for it than for the mirrored four: a wrong path there is a
+  # backend that never answers, which reaches the operator as a shard timeout. Which
+  # artifact was ASKED to serve has to be readable without waiting for a metadata file
+  # the run may never write.
+  info "target env: $(mirrored_target_env)$(target_cmd_env)"
+  warn_target_cmd_conflicts
 
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives a second machine and will not guess its name."
   command -v node > /dev/null || die "node is not on PATH."
@@ -1014,7 +1092,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
@@ -1378,6 +1456,7 @@ phase_merge() {
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
+    langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}" \
