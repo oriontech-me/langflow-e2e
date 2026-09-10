@@ -338,9 +338,21 @@ test("the target's run command crosses on every run, and the sync command never 
   // on: a value that crosses only sometimes cannot be recorded as the one in force.
   // Turning this back into a conditional makes langflow_target_run_cmd a guess, so it
   // is pinned here and not only where the field is written.
-  const unset = sourced(`(unset LANGFLOW_SRC_RUN_CMD; target_cmd_env)`);
+  const unset = sourced(`(unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR; target_cmd_env)`);
   assert.equal(unset.status, 0, unset.stderr);
   assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_RUN_CMD=/, "an unset command still has to cross, as empty");
+
+  // The frontend directory travels with the command, because without it the command
+  // cannot reach the state it was added for: the starter refuses a clone with no built
+  // UI, and it looks for those assets under the CLONE, while a published distribution
+  // ships its own inside the package. Naming what serves and not naming the assets it
+  // serves would be half a knob.
+  assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_FRONTEND_DIR=/, "the frontend dir has to cross too");
+  const fe = sourced(`target_cmd_env`, {
+    LANGFLOW_SRC_RUN_CMD: "/root/venv-dev8/bin/langflow run",
+    LANGFLOW_SRC_FRONTEND_DIR: "/root/venv-dev8/lib/python3.14/site-packages/langflow/frontend",
+  });
+  assert.match(fe.stdout, /LANGFLOW_SRC_FRONTEND_DIR='?\/root\/venv-dev8/, "and carry the value it was given");
 
   // The sync command is a deliberate NON-feature. The starter reads it as
   // `${VAR-default}`, so empty-but-SET means "skip `uv sync --frozen` entirely", and a

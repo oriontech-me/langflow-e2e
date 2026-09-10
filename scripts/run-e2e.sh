@@ -449,8 +449,18 @@ mirrored_target_env() {
 # workflow `env:` block, where an absent input arrives as empty-but-set. Forwarding it
 # would put a silent skip of the dependency reconciliation one typo away, to serve a
 # knob nothing in this repository sets today.
+#
+# LANGFLOW_SRC_FRONTEND_DIR travels with it, and without it the run command does not
+# actually reach the state it was added for. The starter refuses to serve a clone with
+# no built UI — a backend answering /health_check while every browser spec dies at page
+# load is the failure it exists to prevent — and it looks for those assets under the
+# CLONE. A published distribution ships its own built frontend inside the package, so
+# the two knobs are one decision: name the command that serves and the assets it serves.
+# Forwarded the same way and for the same reason, and just as safely: the starter reads
+# it as `${VAR:-default}`, so empty falls back to the clone's path.
 target_cmd_env() {
   printf 'LANGFLOW_SRC_RUN_CMD=%s ' "$(shq "${LANGFLOW_SRC_RUN_CMD:-}")"
+  printf 'LANGFLOW_SRC_FRONTEND_DIR=%s ' "$(shq "${LANGFLOW_SRC_FRONTEND_DIR:-}")"
 }
 
 # The two switches a run command silently collides with, warned about once, in the
