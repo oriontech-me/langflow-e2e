@@ -18,6 +18,10 @@ import { execFileSync } from "node:child_process";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  displacementLines,
+  nextScheduledSlot,
+  renderRotationSummary,
+  rotationDisplacement,
   rotationSlot,
   selectDailyModelTarget,
 } from "./select-daily-model-target.mjs";
@@ -333,4 +337,139 @@ test("the daily emits the provider/model pair from the script, not from inline e
     /MODEL_TEST_(ID|PROVIDER):/,
     "the @stable run sets a pin variable inline — it must come from GITHUB_ENV",
   );
+});
+
+// --- what a displaced slot COSTS (issue #1456) -------------------------------
+// The rotation advancing past a dead provider is the right call — losing the day
+// costs more than spend (#980) — but until #1456 the only trace was a `::warning::`,
+// the surface #1252 measured nobody reading. What was missing is not the fact that a
+// provider was skipped; it is how long that provider then goes uncovered.
+
+const ORDER = ["openai", "anthropic", "google"];
+
+test("google displaced on its Wednesday waits a full week, not three days", () => {
+  // The number the issue was written around. With three providers over a Mon-Fri
+  // cron, google owns Wednesday alone: Saturday's slot would also be its, and
+  // Saturday is not a run.
+  const next = nextScheduledSlot("google", ORDER, WED);
+  assert.equal(next.days, 7);
+  assert.equal(next.date.toISOString().slice(0, 10), "2026-08-05");
+});
+
+test("openai and anthropic wait at most four days, and it depends on the day", () => {
+  // CLAUDE.md's "≤3 days" is the intra-week gap; the real bound is 4, because the
+  // cron does not run the weekend. Derived here rather than asserted in prose.
+  assert.equal(nextScheduledSlot("openai", ORDER, MON).days, 3); // Mon → Thu
+  assert.equal(nextScheduledSlot("openai", ORDER, THU).days, 4); // Thu → Mon
+  assert.equal(nextScheduledSlot("anthropic", ORDER, TUE).days, 3); // Tue → Fri
+  assert.equal(nextScheduledSlot("anthropic", ORDER, FRI).days, 4); // Fri → Tue
+});
+
+test("a provider outside the rotation order has no slot to wait for", () => {
+  assert.equal(nextScheduledSlot("mistral", ORDER, WED), null);
+});
+
+test("an undisplaced rotation reports nothing at all", () => {
+  // No block on the ordinary day: a summary printed every run is the artifact, not
+  // the signal.
+  const result = selectDailyModelTarget(healthy(), { date: WED });
+  assert.equal(rotationDisplacement(result, { date: WED }), null);
+  assert.equal(renderRotationSummary(null), "");
+  assert.deepEqual(displacementLines(null), []);
+});
+
+test("a displaced Wednesday names the provider, the cause and the gap", () => {
+  const providers = healthy().map((p) =>
+    p.provider === "google"
+      ? { ...p, status: "inactive", model: null, error: "monthly spending cap" }
+      : p,
+  );
+  const result = selectDailyModelTarget(providers, { date: WED });
+  assert.equal(result.ok, true, "the day must still run — #980's trade");
+  assert.equal(result.provider, "openai");
+
+  const displacement = rotationDisplacement(result, { date: WED });
+  assert.equal(displacement.weekday, "Wednesday");
+  assert.equal(displacement.resolved, "openai");
+  assert.deepEqual(
+    displacement.displaced.map((d) => [d.provider, d.days]),
+    [["google", 7]],
+  );
+
+  const summary = renderRotationSummary(displacement);
+  assert.match(summary, /^### /, "the block leads with a heading");
+  assert.match(summary, /Rotation displaced/);
+  assert.match(summary, /google/);
+  assert.match(summary, /monthly spending cap/, "the cause the sweep measured");
+  assert.match(summary, /7 day\(s\)/, "the cost, which is the point");
+  assert.match(summary, /openai/, "and what ran instead");
+
+  // The log line carries the same facts, for the VM lane — which runs this script
+  // outside Actions and has no step summary.
+  const [line] = displacementLines(displacement);
+  assert.match(line, /Wednesday is "google"'s slot/);
+  assert.match(line, /7 day\(s\)/);
+  assert.match(line, /monthly spending cap/);
+});
+
+test("declining to pin renders as a decline, not as an advance", () => {
+  // Every provider down: the lane keeps its multi-provider default, so there is no
+  // "ran X instead" to claim.
+  const providers = healthy().map((p) => ({
+    ...p,
+    status: "inactive",
+    model: null,
+    error: "dead key",
+  }));
+  const result = selectDailyModelTarget(providers, { date: WED });
+  assert.equal(result.ok, false);
+  const displacement = rotationDisplacement(result, { date: WED });
+  assert.equal(displacement.resolved, null);
+  assert.equal(displacement.displaced.length, 3);
+  const summary = renderRotationSummary(displacement);
+  assert.match(summary, /could not pin/);
+  assert.doesNotMatch(summary, /advanced to/);
+});
+
+test("the CLI writes the block to \$GITHUB_STEP_SUMMARY, and only when displaced", () => {
+  const dir = makeTempDir("rotation-1456-");
+  const providersFile = path.join(dir, "providers.json");
+  const summaryFile = path.join(dir, "summary.md");
+  const envFile = path.join(dir, "env.txt");
+
+  const run = (providers) => {
+    fs.writeFileSync(providersFile, JSON.stringify(providers));
+    fs.writeFileSync(summaryFile, "");
+    return execFileSync(
+      process.execPath,
+      [SCRIPT, "--providers-file", providersFile, "--date", WED.toISOString()],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          GITHUB_STEP_SUMMARY: summaryFile,
+          GITHUB_ENV: envFile,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  };
+
+  run(healthy());
+  assert.equal(
+    fs.readFileSync(summaryFile, "utf-8"),
+    "",
+    "an undisplaced rotation must add nothing to the run summary",
+  );
+
+  run(
+    healthy().map((p) =>
+      p.provider === "google"
+        ? { ...p, status: "inactive", model: null, error: "monthly spending cap" }
+        : p,
+    ),
+  );
+  const written = fs.readFileSync(summaryFile, "utf-8");
+  assert.match(written, /Rotation displaced/);
+  assert.match(written, /7 day\(s\)/);
 });
