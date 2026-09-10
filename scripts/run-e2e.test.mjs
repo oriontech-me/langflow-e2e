@@ -1126,6 +1126,21 @@ function metadataFrom(env, after = "") {
   return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr };
 }
 
+test("the metadata names the command that served the target, so two artifacts are not one run", () => {
+  // Without this field a run against the published distribution is byte-identical to
+  // one against the clone: same version string, same suite sha, same mirrored env. It
+  // is the "green run against the wrong instance" class the starter's build stamp
+  // exists for (#1658), arriving through the ARTIFACT instead of through stale assets —
+  // and the comparison this lane produces is only about the environment if both sides
+  // are known to have run the same product.
+  const { meta } = metadataFrom({ ...BLANKED, LANGFLOW_SRC_RUN_CMD: "/root/venv-dev8/bin/langflow run" });
+  assert.equal(meta.langflow_target_run_cmd, "/root/venv-dev8/bin/langflow run");
+
+  // Empty is not "unknown": it is the starter's own default, uv against the clone.
+  const { meta: dflt } = metadataFrom({ ...BLANKED });
+  assert.equal(dflt.langflow_target_run_cmd, "");
+});
+
 test("the metadata records the mirrored values that were IN FORCE, not the defaults", () => {
   // The property #1748 exists for. On 2026-09-07 the instance under test ran with
   // tracing OFF against the workflow's `false`; the override was an export in the

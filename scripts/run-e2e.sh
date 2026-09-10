@@ -1411,6 +1411,7 @@ phase_merge() {
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
+    langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     tests_total "${RUN_TESTS:-0}" \
