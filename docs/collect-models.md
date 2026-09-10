@@ -197,6 +197,20 @@ but was drained still made the live call. On run 30374528125 that hung two Googl
 tests past gunicorn's 300s timeout, killed shard 2's Langflow worker six times, and
 produced 14 collateral timeouts in specs that never touch Google.
 
+A **third consumer** arrived with #1456, and it is not a spec: the LANE. Once the
+skips exist, nothing in a check status distinguishes a run where three tests skipped
+on a dead key from one where they ran and passed — run 31698035402 reported SUCCESS
+over 3 skipped / 5 passed / 1 flaky. `scripts/lane-coverage-verdict.mjs` reads the
+skips back out of the run's own Playwright JSON report and classifies the run
+`covered`, `degraded` or `uncovered`, so a run whose provider-health skips left
+**nothing** executed can no longer report success. It deliberately does not read
+`providers.json`: what a lane owes is a statement about what it covered, not about
+what it expected to skip. That makes the skip REASON a contract rather than prose —
+`inactiveReason()` here and the verdict there both go through
+`scripts/lib/provider-health-reason.mjs`, with the round trip unit-tested from both
+ends, because a reader carrying its own copy of the pattern would fail by finding no
+provider-health skip at all and calling the run fully covered.
+
 ### What the health gate does NOT cover
 
 `collect-models` records a **point-in-time probe**. The gate therefore covers a

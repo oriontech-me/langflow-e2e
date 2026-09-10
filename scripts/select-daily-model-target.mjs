@@ -62,9 +62,18 @@
  *  - providers.json unreadable        → exit 2. An undecidable verdict must not read
  *                                       as "nothing to pin" (#1035).
  *
- * Every deviation is loud, and recoverable after the fact: the resolved provider and
- * model land in the `param` field of `reports/daily-history.jsonl`, so "which provider
- * did Tuesday actually run?" is answerable without opening the job log.
+ * Every deviation is loud, and — since #1456 — costed: a displaced slot renders as a
+ * run-summary block naming the provider, the cause and how long it now goes
+ * uncovered (`rotationDisplacement` below).
+ *
+ * It is stated ON THE DAY because it cannot be reconstructed afterwards. This header
+ * used to claim the opposite — "the resolved provider and model land in the `param`
+ * field of `reports/daily-history.jsonl`, so 'which provider did Tuesday actually
+ * run?' is answerable without opening the job log" — and that is FALSE, measured on
+ * the committed series: `append-weekly-history.mjs` attaches `param` to entries in
+ * `failures` and `flaky`, per TEST, so a green day records no provider at all and a
+ * red one records only the providers that failed. The retrospective question needs a
+ * run-level field the appender does not write; adding one is a separate decision.
  *
  * ## Why it reuses the PR lane's decision function
  *
@@ -207,6 +216,161 @@ export function selectDailyModelTarget(providers, options = {}) {
   };
 }
 
+/**
+ * The next weekday this provider's rotation slot comes round, counted from `from`.
+ *
+ * DERIVED from the rotation rather than looked up in the run history, and that is
+ * the whole reason this function exists (#1456). What a displaced slot COSTS is a
+ * property of the schedule — the cron is Mon-Fri and the slot repeats every
+ * `order.length` weekdays — so it is computable on the day it happens. The
+ * retrospective question ("when did google last actually run?") is NOT computable:
+ * `reports/daily-history.jsonl` records `param` per FAILING test, so a green day
+ * leaves no record of which provider it resolved. Answering that needs a run-level
+ * field the appender does not write today, which is a separate decision.
+ *
+ * Weekends are skipped rather than counted, because the schedule does not run them.
+ * That is what makes google's cost 7 days and not 3: with the default three-provider
+ * order it owns Wednesday alone, and Saturday's slot — which would also be its — is
+ * not a run.
+ *
+ * @param {string} provider
+ * @param {string[]} order rotation order
+ * @param {Date} from the displaced run's own instant
+ * @returns {{ days: number, date: Date }|null} null when the provider is not in the
+ *   order at all, or when no weekday in the next fortnight resolves to it (only
+ *   possible for an order longer than the working week)
+ */
+export function nextScheduledSlot(provider, order, from) {
+  const slot = order.indexOf(provider);
+  if (slot < 0) return null;
+  for (let days = 1; days <= 14; days++) {
+    const date = new Date(from.getTime() + days * 86400000);
+    const weekday = date.getUTCDay();
+    if (weekday === 0 || weekday === 6) continue; // the cron is Mon-Fri
+    if (rotationSlot(date, order.length) === slot) return { days, date };
+  }
+  return null;
+}
+
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/** `2026-09-09` — the date half of an ISO instant, which is how the history keys days. */
+function isoDay(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * What the rotation did, when it did not do the obvious thing.
+ *
+ * Returns `null` on the ordinary day — the day's provider was usable — because a
+ * block printed on every run is the artifact #1252 already measured: `mode=count`
+ * was in the daily's log for weeks and read by nobody.
+ *
+ * @param {{ ok: boolean, provider: string|null, skipped: Array<{provider: string, reason: string}> }} result
+ * @param {{ order?: string[], date?: Date }} [options]
+ */
+export function rotationDisplacement(result, options = {}) {
+  const skipped = result?.skipped ?? [];
+  if (skipped.length === 0) return null;
+  const order = options.order ?? DEFAULT_ORDER;
+  const date = options.date ?? new Date();
+  return {
+    weekday: WEEKDAY_NAMES[date.getUTCDay()],
+    day: isoDay(date),
+    resolved: result.ok ? result.provider : null,
+    displaced: skipped.map((entry) => {
+      const next = nextScheduledSlot(entry.provider, order, date);
+      return {
+        provider: entry.provider,
+        reason: entry.reason,
+        nextDay: next ? isoDay(next.date) : null,
+        nextWeekday: next ? WEEKDAY_NAMES[next.date.getUTCDay()] : null,
+        days: next ? next.days : null,
+      };
+    }),
+  };
+}
+
+/**
+ * One line per displaced provider, for the log — the only surface the VM lane has
+ * (it runs this script outside Actions, so `$GITHUB_STEP_SUMMARY` is unset there).
+ *
+ * @param {ReturnType<typeof rotationDisplacement>} displacement
+ * @returns {string[]}
+ */
+export function displacementLines(displacement) {
+  if (!displacement) return [];
+  return displacement.displaced.map((entry) => {
+    const cost =
+      entry.days === null
+        ? "it has no further slot in the next fortnight"
+        : `its next slot is ${entry.nextWeekday} ${entry.nextDay}, ${entry.days} day(s) ` +
+          `from this run — nothing runs an agent spec against it until then`;
+    const instead = displacement.resolved
+      ? `the lane ran ${displacement.resolved} instead`
+      : "the lane declined to pin at all";
+    return (
+      `rotation: ${displacement.weekday} is "${entry.provider}"'s slot and ` +
+      `${instead}; ${cost}. Cause: ${entry.reason}`
+    );
+  });
+}
+
+/**
+ * The run-summary block for a displaced rotation (#1456).
+ *
+ * The rotation already emitted a `::warning::` for this before, which is precisely
+ * the surface #1252 showed nobody reads. This lands in the run summary, and it leads
+ * with the COST rather than with the mechanism: a provider losing its slot is only
+ * legible if the reader is told how long the gap is.
+ *
+ * @param {ReturnType<typeof rotationDisplacement>} displacement
+ * @returns {string} markdown, or "" when the rotation ran its own weekday's provider
+ */
+export function renderRotationSummary(displacement) {
+  if (!displacement) return "";
+  const lines = [
+    displacement.resolved
+      ? `### ⚠️ Rotation displaced — ${displacement.weekday}'s provider could not run`
+      : `### ❌ Rotation could not pin — no provider in the rotation is usable`,
+    "",
+    displacement.resolved
+      ? `\`daily-stable\` runs ONE provider per weekday (#1185). ` +
+        `${displacement.weekday} ${displacement.day} belongs to ` +
+        `${displacement.displaced.map((d) => `\`${d.provider}\``).join(", ")}, which ` +
+        `could not serve this run, so the lane advanced to ` +
+        `**${displacement.resolved}**. The day is not lost; that provider's is.`
+      : `\`daily-stable\` found no usable provider in the rotation, so it kept its ` +
+        `default per-provider parametrization.`,
+    "",
+    "| Provider | Next scheduled slot | Gap | Why it could not run |",
+    "|---|---|---|---|",
+  ];
+  for (const entry of displacement.displaced) {
+    lines.push(
+      `| \`${entry.provider}\` | ${
+        entry.nextDay ? `${entry.nextWeekday} ${entry.nextDay}` : "none in the next fortnight"
+      } | ${entry.days === null ? "—" : `${entry.days} day(s)`} | ${entry.reason} |`,
+    );
+  }
+  lines.push(
+    "",
+    "The gap is derived from the schedule, not from the run history: a history row " +
+      "records the day's `skipped` count and never its reason, so this block is the " +
+      "only place the loss is stated (#1456).",
+    "",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
 function parseArgs(argv) {
   const args = {
     providersFile: "tests/helpers/provider-setup/data/providers.json",
@@ -275,6 +439,31 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Deviations first, so they are visible even when the pin succeeded.
   for (const warning of result.warnings) {
     process.stderr.write(`::warning::select-daily-model-target: ${warning}\n`);
+  }
+
+  // A displaced slot costs a provider up to a week of coverage, and until #1456 the
+  // only trace of it was the `::warning::` above. The run summary is where a human
+  // already looks; the log lines carry the same fact to the VM lane, which runs this
+  // script outside Actions and has no step summary.
+  const displacement = rotationDisplacement(result, {
+    order: args.order,
+    date: args.date ?? new Date(),
+  });
+  for (const line of displacementLines(displacement)) {
+    process.stderr.write(`::warning::select-daily-model-target: ${line}\n`);
+  }
+  if (displacement && process.env.GITHUB_STEP_SUMMARY) {
+    // Best effort: a summary that cannot be written must not cost the lane its pin.
+    try {
+      fs.appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        renderRotationSummary(displacement),
+      );
+    } catch (error) {
+      process.stderr.write(
+        `::warning::select-daily-model-target: could not write the run summary: ${error.message}\n`,
+      );
+    }
   }
 
   if (result.ok) {

@@ -848,6 +848,49 @@ jobs:
         env:
           PLAYWRIGHT_JSON: results.json
 
+      # Third report guard, and the one the other two cannot reach (#1456).
+      #
+      # `shardguard` asks "did every shard produce a blob"; `runguard` asks "did the
+      # run produce any TEST". Both say yes on a day a provider key is dead, because
+      # a skipped test IS a test result: `runguard` counts `skipped` in
+      # `tests_total`, so a day whose only @stable results were provider-health skips
+      # reads as a complete run of N tests. This one asks the remaining question —
+      # were those results VERDICTS about Langflow, or skips quoting a dead key.
+      #
+      # On THIS lane `uncovered` is a backstop, not the expected verdict: 600-odd
+      # @stable tests do not all gate on one provider, so a dead key leaves plenty
+      # executing. `degraded` is what a dead key actually produces here, and the
+      # product is the run-summary headline naming which providers went uncovered
+      # ON THE DAY IT HAPPENED — which the tracked history cannot reconstruct
+      # afterwards, since a row records `skipped: 3` and never why.
+      #
+      # That gap is widest where the daily is weakest: the weekday rotation (#1185)
+      # gives google one slot, Wednesday, so a dry google key costs it the whole
+      # week. The rotation step in the shard job names that displacement where it
+      # happens; this step names what the RUN did not cover, which is the half a
+      # merged report can answer.
+      #
+      # Report-only, and both halves of that are deliberate:
+      #  - no `--fail-closed`. A step that fails HERE would skip `Auto-remove @stable
+      #    from hard failures`, which carries no `always()` by design, and the
+      #    umbrella issue's own inputs. The verdict is consumed by the last step in
+      #    the job instead, exactly as `runguard`'s is — #1176's lesson.
+      #  - `continue-on-error`, same reason the liveness reporter has it: a defect in
+      #    a diagnostic must not be able to skip the write path that follows it. The
+      #    final gate reads the verdict FAIL-CLOSED, so a crash here cannot buy a
+      #    green either.
+      #
+      # No `--provider`: which provider the rotation settled on is the shard's fact,
+      # not the merge job's (it lands in `$GITHUB_ENV` per shard). What this step
+      # establishes is which providers SKIPPED, which the merged report holds.
+      - name: Guard — the run covered the providers it was supposed to cover
+        id: coverage
+        if: always()
+        continue-on-error: true
+        run: node scripts/lane-coverage-verdict.mjs --lane "daily-stable"
+        env:
+          PLAYWRIGHT_JSON: results.json
+
       # Name the wedge (#1030). Runs after the merge so it can attribute failing
       # attempts to the outages measured on their OWN shard, and before the
       # umbrella issue so the section can lead the body: a wedged run has to
@@ -1437,8 +1480,18 @@ jobs:
       # removals without review), its own gates already bar it from an empty or partial
       # report, and widening when it fires is a decision of its own, not a side effect
       # of this one.
+      # The `uncovered` clause (#1456) is the third way this step has to fire on a
+      # run whose `test` job came back GREEN. The other two are the report guards;
+      # this one is a complete report full of provider-health skips. Without it the
+      # last step of the job reddens the run and NOTHING opens an issue naming why —
+      # #1176's lesson, in the direction that costs the triage rather than the gate.
+      #
+      # `== 'uncovered'`, POSITIVE, unlike the fail-closed gate below: an absent or
+      # unknown verdict must fail the run without labelling the day as a dead
+      # provider. Mislabelling is worse than not labelling — the umbrella's title is
+      # the part most people read.
       - name: Create issue on failure
-        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
+        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.verdict == 'uncovered') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
@@ -1485,6 +1538,15 @@ jobs:
           # the wedge out for the triager, and "not measured" says the state is
           # unknown. Only silence would be misleading.
           LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
+          # ZERO VERDICTS (#1456): the report is complete and every result in it is a
+          # provider-health skip. It gets its own shape because it is neither `empty`
+          # (the shards worked) nor a per-test day (no spec ran), and pointing triage
+          # at the merge step or at the specs would both be wrong — the repair is the
+          # provider account.
+          COVERAGE_VERDICT: ${{ steps.coverage.outputs.verdict }}
+          COVERAGE_HEADLINE: ${{ steps.coverage.outputs.headline }}
+          COVERAGE_PROVIDERS: ${{ steps.coverage.outputs.providers }}
+          COVERAGE_SKIPS: ${{ steps.coverage.outputs.provider_skips }}
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be
@@ -1503,8 +1565,8 @@ jobs:
       # this whole mechanism exists to remove. `complete` keeps `== 'false'`: its
       # own absence is already covered, since a skipped shardguard means no blobs
       # were downloaded and runguard then sees no report at all.
-      - name: Fail scheduled run on an incomplete, empty or partial report
-        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false' || steps.runguard.outputs.partial == 'true')
+      - name: Fail scheduled run on an incomplete, empty, partial or uncovered report
+        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false' || steps.runguard.outputs.partial == 'true' || (steps.coverage.outputs.verdict != 'covered' && steps.coverage.outputs.verdict != 'degraded'))
         env:
           COMPLETE: ${{ steps.shardguard.outputs.complete }}
           RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
@@ -1513,6 +1575,8 @@ jobs:
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_TESTS: ${{ steps.runguard.outputs.tests_total }}
           RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
+          COVERAGE_VERDICT: ${{ steps.coverage.outputs.verdict }}
+          COVERAGE_HEADLINE: ${{ steps.coverage.outputs.headline }}
         run: |
           if [ "$COMPLETE" = "false" ]; then
             echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
@@ -1525,5 +1589,15 @@ jobs:
             echo "::error::PARTIAL run — $RUN_TESTS test result(s) recorded, but $RUN_ERRORS top-level report error(s) mean at least one shard aborted before running its tests. The totals are UNDER-COUNTED and the specs of that shard neither passed nor failed: they never ran. @stable auto-removal and the spec-duration refresh were skipped. Cause from the shard that died: $RUN_FIRST_ERROR (see #1058)."
           elif [ -z "$RUN_EMPTY" ]; then
             echo "::error::The report-integrity guard reported nothing (empty output is unset) — its verdict is UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — merged report contains test results' step."
+          fi
+          # Coverage verdict (#1456), read FAIL-CLOSED like `empty` above: `covered`
+          # and `degraded` are the two verdicts that let a scheduled run pass, and
+          # anything else — `uncovered`, `unreadable`, or an absent output because the
+          # step was skipped or crashed — fails it. A guard whose silence reads as
+          # "all good" is the failure this mechanism exists to remove.
+          if [ "$COVERAGE_VERDICT" = "uncovered" ]; then
+            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. The report is complete and the tests are not red; there is simply no evidence in this run. Fix the provider account, then re-run the day (#1456)."
+          elif [ "$COVERAGE_VERDICT" != "covered" ] && [ "$COVERAGE_VERDICT" != "degraded" ]; then
+            echo "::error::The coverage verdict is '${COVERAGE_VERDICT:-unset}' — UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — the run covered the providers it was supposed to cover' step (#1456)."
           fi
           exit 1

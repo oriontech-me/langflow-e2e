@@ -57,3 +57,9 @@ runs/
 
 # Per-machine API coverage measurement (#1692) — aggregated by npm run api:coverage
 .api-coverage/
+
+# Transient Playwright projects the unit lanes generate (scripts/lane-coverage-verdict.test.mjs,
+# #1456). They must live inside the repo — `@playwright/test` resolves from the config
+# file's own directory — and must never reach `git status`: the VM orchestrator's
+# wrapper runs `git pull --ff-only`, which a dirty tree stops.
+.unit-tmp/

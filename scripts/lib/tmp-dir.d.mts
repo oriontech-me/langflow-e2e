@@ -12,5 +12,8 @@
 // directory `test:units` creates — including the suite's worst offender, 4480
 // directories — with every test still green.
 
-export declare function makeTempDir(prefix: string): string;
+export declare function makeTempDir(
+  prefix: string,
+  options?: { dir?: string },
+): string;
 export declare function removeAllTempDirs(): void;
