@@ -48,9 +48,21 @@ async function readOfferedOllamaModels(page: Page): Promise<string[]> {
  *     the instance serves", read off the observation that
  *     `enabled_models.Ollama` held both tags after a save. It does — but that is the
  *     live default flag being reported, not state the save wrote, and reading it the
- *     other way makes an empty dropdown look like proof the save failed. So the
- *     keyed helpers' "enable every model toggle" loop still has nothing to do here,
- *     for a different reason: the tags are already default-enabled on read.
+ *     other way makes an empty dropdown look like proof the save failed. So the loop
+ *     at Step 5 below still has nothing to do here, for a different reason: the tags
+ *     are already default-enabled on read.
+ *
+ *     That loop is also the last whole-panel enable in this directory. #1679 replaced
+ *     the keyed helpers' version of it — 29 enable updates in one request measured 93 s
+ *     of a fully blocked single worker, ending in gunicorn's `SIGKILL` — and left this
+ *     one alone deliberately, on scope and on evidence: it is a REPAIR path over a
+ *     panel that is already default-enabled, every lane's Ollama image serves exactly
+ *     one baked tag (`docker/ollama-e2e/Dockerfile`), and the validation it triggers is
+ *     `requests.get(<base_url>/api/tags, timeout=5)` against a local instance rather
+ *     than a provider round trip. A hand-run instance serving many tags is the case
+ *     that would make it cost what the keyed ones cost, and nothing here is validated
+ *     against one — so if this ever needs narrowing, it needs an Ollama with several
+ *     models to be validated against, not an argument.
  *
  * That live enumeration is also why this helper cannot invent a model name: a target
  * must arrive pinned (`OLLAMA_TEST_MODEL`), and a name the instance does not serve

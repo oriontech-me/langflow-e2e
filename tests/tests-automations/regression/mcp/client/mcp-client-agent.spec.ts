@@ -47,9 +47,14 @@ const MCP_JSON_CONFIG = JSON.stringify({
 let createdFlowId: string | undefined;
 
 // Picks the pinned model from the Agent dropdown without opening the Model Providers
-// panel, whose setup enables EVERY model of the provider — each enable runs a live
-// synchronous credential validation that blocks the single-worker backend for ~35s when
-// the provider throttles it (#922/#927). Returns false when the model is not offered.
+// panel at all. That panel's setup used to enable EVERY model of the provider, and each
+// enable runs a live synchronous credential validation inside the request, on the single
+// worker the lanes pin — 0.75 to 3.2 s per model, measured on 1.13.0.dev8, so a
+// whole-panel batch blocked the backend for 28 to 93 s and sometimes died on gunicorn's
+// timeout (#922/#927/#1679). Since #1679 the setup enables one model, so the saving here
+// is smaller than the comment used to claim; skipping the panel entirely is still
+// cheaper, and this path also avoids the post-close picker refresh. Returns false when
+// the model is not offered.
 async function selectPinnedModel(page: Page, model: string): Promise<boolean> {
   await hideInspectorPanel(page);
   // With no provider configured (fresh instance), 1.12 renders a "Setup Provider"

@@ -8,9 +8,15 @@ import {
   openModelPickerAfterPanelClose,
   selectPinnedModelOption,
 } from "./model-option";
-import { enableAndSettleModelToggles } from "./model-toggle-batch";
+import {
+  enableAndSettleModelToggles,
+  planToggleTargets,
+  waitForModelToggles,
+} from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
+import { ANTHROPIC_MODEL_PREFERENCES } from "./model-preferences";
+
 
 export async function setupAnthropic(
   page: Page,
@@ -52,23 +58,43 @@ export async function setupAnthropic(
       .catch(() => {});
   }
 
-  // Step 5: Enable all available models — and let the write settle.
-  // Toggles only render after the provider is authenticated — waitFor retries until visible.
+  // Step 5: Enable the ONE model this setup needs — and let the write settle.
+  // Toggles only render after the provider is authenticated, so the wait comes
+  // first: an enumeration that races the panel's fetch reads as "the panel lists
+  // nothing" and plans nothing (#1012).
   // Enabling is a TRANSACTION: the toggles are batched behind a 1000 ms debounce,
   // and closing the panel inside that window takes the flush path that never
   // refreshes the model picker (#1649). The helper clicks and then waits for the
   // product's own write to go quiet, so Step 6 below cannot close on top of it.
-  // Costs nothing when nothing was clicked, which is the normal CI path.
+  // What it must NOT do is click every toggle: the endpoint validates the key once
+  // per model, synchronously, inside the request, so a whole-panel batch blocks the
+  // single worker until gunicorn kills it and persists nothing (#1679 — measured in
+  // model-toggle-batch.ts). Anthropic's panel is the smallest of the three, which
+  // is why it has not stalled yet; that is its catalog, not safety.
+  // Costs nothing when the plan is empty, which is the normal path.
   // The result is CAPTURED, not discarded: when this batch does not settle it is
   // the only source that can explain the picker read below, and #1651 printed it
   // to a log nothing correlates instead of carrying it forward (#1649).
-  const toggleWrite = await enableAndSettleModelToggles(page);
+  await waitForModelToggles(page);
+  const plan = planToggleTargets({
+    listed: await enumerateEnabledModels(page),
+    checked: await enumerateCheckedModels(page),
+    requested: modelTestId,
+    // Anthropic's five `default: true` models are all `claude-*` (measured on
+    // 1.13.0.dev8), so both ranks are already satisfied and the no-pin path clicks
+    // nothing. The ladder and the reasoning for it live in `model-preferences.ts`,
+    // where the unit tests can reach them.
+    acceptable: ANTHROPIC_MODEL_PREFERENCES,
+  });
+  const toggleWrite = await enableAndSettleModelToggles(page, { plan });
 
-  // Read the panel's toggles BEFORE closing it: they are the second, independent
-  // source the picker can be contradicted by, and a picker miss that they
-  // contradict is not an absence (#1461). BOTH are read, because "the panel lists
-  // it" and "its toggle is on" are different facts and only the second one may be
-  // reported as ENABLED (#1649).
+  // Re-read the panel's toggles AFTER the batch and BEFORE closing it: they are the
+  // second, independent source the picker can be contradicted by, and a picker miss
+  // that they contradict is not an absence (#1461). BOTH are read, because "the
+  // panel lists it" and "its toggle is on" are different facts and only the second
+  // one may be reported as ENABLED (#1649). Re-read rather than reused from the
+  // plan above, because a click flips `aria-checked` optimistically — and that
+  // optimistic value is exactly what makes the write-stalled verdict reachable.
   const listedModels = await enumerateEnabledModels(page);
   const checkedModels = await enumerateCheckedModels(page);
 
