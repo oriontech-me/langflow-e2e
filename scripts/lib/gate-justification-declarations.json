@@ -1,0 +1,43 @@
+{
+  "$comment": [
+    "Citations that are PROVENANCE rather than a live gate, read by scripts/reconcile-stable-orphans.ts (#1783).",
+    "An entry silences exactly one spec's citations, and must list every reference it covers.",
+    "It is verified in BOTH directions (#1084's lesson): if the spec carries @stable again, becomes lane-gated, is renamed away, or stops citing a declared reference, the declaration is REPORTED as expired instead of being honoured silently — otherwise this check grows the exact silent-expiry problem it exists to close.",
+    "A LIVE gate does not belong here. Cite an open issue in the justification instead: one open reference is enough for the check to leave the spec alone.",
+    "NOT every closed citation is provenance. The two shapes look alike and are not: `starter-projects` and `userSettings` cite #820 inside a COVERAGE NOTE (\"covered by x.spec.ts, y.spec.ts (#820)\"), which says nothing about the tag, while `dragAndDrop` cites #938 inside the sentence explaining the ABSENCE (\"would flip a checklist bullet outside the scope of #938\"). The second is reported rather than declared: a citation in the tag-absence rationale is exactly what this check is for, and the fix there is to point the prose at something live — not to silence it."
+  ],
+  "declarations": [
+    {
+      "spec": "core-functionality/model-provider/groq-provider.spec.ts",
+      "refs": [
+        "#1039"
+      ],
+      "reason": "#1039 is cited as the source of a STANDING policy, not as a gate that could reopen: the Groq components are not bundled in the tested image, and component availability is a packaging decision per image whose answer lives in docs/component-distribution-policy.md. The same absence is declared for the orphan half in stable-orphan-exemptions.json.",
+      "ref": "#1783"
+    },
+    {
+      "spec": "core-functionality/model-provider/mistral-provider.spec.ts",
+      "refs": [
+        "#1039"
+      ],
+      "reason": "The same packaging decision as Groq, recorded in docs/component-distribution-policy.md — #1039 is provenance for the standing answer, not a gate.",
+      "ref": "#1783"
+    },
+    {
+      "spec": "core-functionality/templates/starter-projects.spec.ts",
+      "refs": [
+        "#820"
+      ],
+      "reason": "The only citation is the Part II bullet's coverage note (\"covered by starter-projects.spec.ts, create-flow-from-template.spec.ts (#820)\"), where #820 records WHICH issue added the note. It says nothing about why the spec is not @stable.",
+      "ref": "#1783"
+    },
+    {
+      "spec": "ui-ux/userSettings.spec.ts",
+      "refs": [
+        "#820"
+      ],
+      "reason": "Same shape as starter-projects: #820 is provenance on a coverage note in the Part II bullet, not a gate on the tag.",
+      "ref": "#1783"
+    }
+  ]
+}

@@ -135,10 +135,25 @@ jobs:
         run: |
           echo "::warning::The open-issue lookup failed, so ownership is undecided for every removal. The report issue was left untouched — see the job summary and the uploaded verdict."
 
-      - name: Open or refresh the orphan report issue
+      # This freezes publication of the ORPHAN half too, whose own lookup may
+      # have succeeded — the two share one issue body, so there is no way to
+      # refresh half of it. Fail-closed is the right direction (an outage must
+      # not overwrite standing findings) and the full verdict is still in the
+      # job summary and the artifact.
+      - name: Warn when a cited reference could not be resolved
+        if: always() && steps.reconcile.outputs.gate_lookup_failed == 'true'
+        run: |
+          echo "::warning::At least one cited issue reference could not be looked up, so the gate-justification verdict understates. The report issue was left untouched — see the job summary and the uploaded verdict."
+
+      - name: Open or refresh the report issue
+        # Both lookups must have succeeded. A reference that does not EXIST is a
+        # finding and refreshes normally; a reference we could not ASK about is
+        # an outage, and refreshing on one would replace a standing list of real
+        # findings (and any human notes on it) with a page that says less.
         if: >-
           always() && steps.reconcile.outputs.has_findings == 'true'
           && steps.reconcile.outputs.tracker_lookup_failed == 'false'
+          && steps.reconcile.outputs.gate_lookup_failed == 'false'
         uses: actions/github-script@v9
         env:
           ORPHAN_TITLE: ${{ steps.reconcile.outputs.issue_title }}
@@ -196,9 +211,18 @@ jobs:
       # that were since restored is the same silent-expiry failure this check
       # exists to catch, pointed at its own output.
       - name: Close the report issue when there is nothing left to reconcile
+        # The `gate_lookup_failed` clause is redundant TODAY and kept
+        # deliberately, the way `hasFindings` keeps its own redundant clause: a
+        # failed reference lookup makes every gate row `unknown`, which already
+        # makes `has_findings` true, so it can never be the deciding clause
+        # right now. That is a property of how the verdict is populated, not of
+        # what it means — and this step CLOSES a standing issue, so a later
+        # change to `hasGateFindings` must not be able to make that destructive
+        # silently.
         if: >-
           always() && steps.reconcile.outputs.has_findings == 'false'
           && steps.reconcile.outputs.tracker_lookup_failed == 'false'
+          && steps.reconcile.outputs.gate_lookup_failed == 'false'
         uses: actions/github-script@v9
         env:
           ORPHAN_TITLE: ${{ steps.reconcile.outputs.issue_title }}

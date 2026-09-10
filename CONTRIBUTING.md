@@ -987,6 +987,51 @@ because those components are not bundled in the tested image
 (`docs/component-distribution-policy.md`, #1039). A temporary absence needs an
 open issue, not a declaration.
 
+### The second half — a justification that cites a dead issue (#1783)
+
+The same report answers a second question about the same absence: a spec whose
+tests carry **no** `@stable` has to say *why*, and nothing checked that the issue
+that prose cites is still **open**. `agent-tool-inspection` cited #818 for two
+weeks after #818 closed; while reviewing PR #1381 the trap fired twice inside an
+hour, the commit written to remove one expired justification restating another
+as live.
+
+The check reads the two places `CONTRIBUTING.md` requires that justification to
+be written — the spec doc's `## Tags` section and the `QA-CHECKLIST.md` Part II
+bullets naming the spec — and resolves every `#N` it finds.
+
+| Situation | What the report says |
+|---|---|
+| One cited issue is still open | Nothing. The justification stands on it. |
+| **Every** cited issue is closed or merged | **expired** — the finding |
+| A citation could not be resolved | `unknown`, with the reason |
+| The citation is provenance, not a gate | `declared`, if it is in `scripts/lib/gate-justification-declarations.json` |
+
+Four things about it are not obvious, and each cost a wrong verdict while it was
+being written:
+
+- **An open issue naming the spec does NOT clear the finding** — it is printed
+  beside it as context, and is usually what the prose should have cited. An
+  earlier draft suppressed on it and hit the self-reference oscillation
+  `ORPHAN_ISSUE_TITLE` warns about from the other side: #1783, the issue
+  specifying the check, lists every affected spec, so it marked 10 of 11 rows
+  owned and emptied the report. Excluding one title would not have helped —
+  *any* issue that discusses the check names the specs.
+- **A bare `#N` that does not resolve here is undecidable, never closed.** This
+  repo writes `#14512` for an upstream pull request; resolving it locally would
+  report a live upstream gate as dead. Write
+  `langflow-ai/langflow#14512` and the row decides itself.
+- **`MERGED` counts as closed**, since most upstream references cited here are
+  pull requests, and a merged one is the strongest form of "this gate is gone".
+- **A declaration is verified in both directions**, exactly as the orphan
+  exemptions are: a declared spec that carries `@stable` again, is renamed away,
+  or stops citing the reference it declares is reported **expired** rather than
+  honoured.
+
+Declare a citation only when it is genuinely provenance — *"#820 records which
+issue added this coverage note"* — never to silence a gate you have not looked
+at. A live gate needs an **open** issue in the prose instead; one is enough.
+
 Three properties worth knowing before reading a report:
 
 - **`@stable` missing and `test.fixme` are two different states**, and the report
