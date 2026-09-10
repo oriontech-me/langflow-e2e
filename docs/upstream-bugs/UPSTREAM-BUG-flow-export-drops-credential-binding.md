@@ -2,7 +2,8 @@
 
 | Field | Value |
 |---|---|
-| **Filed upstream** | _pending_ (draft below; owner: QA team) |
+| **Filed upstream** | _still pending_ (draft in §6; owner: QA team) — **the blocking deliverable**: nothing has been reported to the people who can fix this, and the quarantine hides it from our own dailies |
+| **Last re-checked** | 2026-09-10 — **no upstream fix has landed**; the quarantine stands. Evidence in §6 |
 | **Repo issue** | [oriontech-me/langflow-e2e#1546](https://github.com/oriontech-me/langflow-e2e/issues/1546) (spun out of daily triage #1544) |
 | **Affected builds** | `langflowai/langflow-nightly:latest` since `2026-08-20` (first nightly cut after the causing merge); reproduced 5/5 on `1.12.0.dev33` |
 | **Introduced by** | [langflow-ai/langflow#14639](https://github.com/langflow-ai/langflow/pull/14639) — *fix(security): scrub all secret fields on flow and project export* (commit `fc3810da0`, merged 2026-08-19T17:36Z into `release-1.12.0`) |
@@ -115,3 +116,43 @@ mode; the fix is plausibly one line per call site
   lands in `langflowai/langflow-nightly:latest`.
 - The serial sibling *"the run resolves the credential without echoing it"*
   resumes running (it was cascade-skipped while the export test hard-failed).
+
+## 6. Re-check log, and why re-measuring is not the next step
+
+**2026-09-10 — no upstream fix. The quarantine stands and nothing about the
+product has changed.** Checked against `langflow-ai/langflow` rather than against
+a nightly, because the question "did the fix land" is answerable from the history
+of the three paths this defect lives in:
+
+| Path | Commits since 2026-08-19 |
+|---|---|
+| `src/backend/base/langflow/utils/flow_secrets.py` (the scrubber) | `fc3810da` only — **the commit that caused this** (#14639) |
+| `src/backend/base/langflow/api/v1/flows_helpers.py` (the `POST /api/v1/flows/download/` call site) | `fc3810da` only |
+| `src/backend/base/langflow/api/v1/projects.py` (sibling surface) | `c3bfdb7d`, a `release-1.12.0` → `main` back-merge |
+
+**Reading the current file alone is misleading here, and that trap is worth
+recording so the next check does not fall into it.** `flow_secrets.py` on `main`
+today carries `load_from_db` handling (`_is_variable_reference`) and a scrub
+narrowed to fields that are `password`-marked *and* named like a secret — which
+reads exactly like the repair §4 asks for. It is not: the history shows both
+arrived **inside the causing commit**, which replaced the legacy `remove_api_keys`
+(that narrow rule) with the metadata-driven scrubber. So the file looks fixed
+because it looks *deliberate*, not because it changed.
+
+A `manual.yml` dispatch to re-measure was considered and declined: the code path
+is byte-identical to the one that reproduced 5/5 on `1.12.0.dev33`, so a run would
+spend CI to confirm what an untouched path already settles. It becomes the right
+move the moment any of the three rows above gains a commit.
+
+### What filing it needs
+
+§1–§4 are the report; §3 is a deterministic reproduction that needs no LLM key.
+The one thing missing is the act of posting, which is deliberately left to a human
+with an upstream account: it is a public statement in a third-party repository,
+made in someone's name. Suggested title:
+
+> `POST /api/v1/flows/download/` nulls `load_from_db` credential bindings — exported flows no longer import with their variables bound
+
+Once posted, put the issue URL in the **Filed upstream** row above and, if
+upstream disputes the intent (§2), record the answer in §4 rather than in the
+issue thread alone — the quarantine's lifetime depends on it.

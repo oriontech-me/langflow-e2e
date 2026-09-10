@@ -310,6 +310,11 @@ test.describe("Credential secret exposure", () => {
   // skip, not a failure) lets the serial sibling below run again. Lifting the
   // quarantine (remove test.fixme + restore @stable) is a deliverable of #1546,
   // due when the upstream fix lands in langflowai/langflow-nightly:latest.
+  //
+  // Re-checked 2026-09-10: NOT fixed. The scrubber and both call sites carry no
+  // commit since the causing one, so the path is unchanged — see the doc's
+  // re-check log (§6), which also records why the current `flow_secrets.py` reads
+  // like a repair when it is the causing commit's own narrowing.
   test.fixme(
     "the exported flow carries the credential binding, never the secret",
     { tag: ["@api", "@regression"] },
