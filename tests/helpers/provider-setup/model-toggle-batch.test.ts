@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import {
   flushVerdict,
   modelTriggerStallMessage,
+  planToggleTargets,
   writeStallReason,
   type ToggleBatchObservation,
 } from "./model-toggle-batch";
@@ -204,4 +205,231 @@ test("with no stall the model_model failure is left exactly as it was", () => {
     ),
     null,
   );
+});
+
+// ─── planToggleTargets (#1679) ────────────────────────────────────────────────
+//
+// The panel used to be SWEPT — every unchecked `:visible` toggle clicked — and that
+// write is not affordable. `POST /models/enabled_models` is an `async def` handler
+// that calls `validate_model_provider_key` once per enabled update, synchronously,
+// and that call ends in `llm.invoke("test")` on the event loop of the single
+// uvicorn worker the lanes pin. Measured on 1.13.0.dev8, one idle container,
+// `LANGFLOW_WORKERS=1`, `LANGFLOW_WORKER_TIMEOUT=120`, `/health_check` probed at
+// 1 Hz: one model answers 200 in 0.86 s and never drops a probe, while 29 models
+// NEVER answer — the connection closes at 93.2 s with 26 consecutive probes down
+// over 97 s, the container log carrying `WORKER TIMEOUT` -> `Worker was sent
+// SIGKILL!`, and the enabled set afterwards still exactly the `MIN_DEFAULT_MODELS`
+// five, because `_update_model_sets` runs AFTER the validation loop. The sweep is
+// therefore not a slow success: it is a guaranteed failure every spec on that
+// instance re-pays in full.
+//
+// The planner is PURE for the same reason `flushVerdict` is: the branches that
+// matter are decided by panel states a spec cannot produce on demand (a pin the
+// catalog retired, a provider whose defaults no caller accepts).
+//
+// The model ids below are the REAL catalog, read from
+// `GET /api/v1/models?purpose=configure` on 1.13.0.dev8 — including the fact that
+// the five `default: true` entries are catalog positions 0-4 for all three
+// providers.
+const GOOGLE_DEFAULTS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-flash-latest",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash-lite",
+];
+const GOOGLE_REST = [
+  "gemini-flash-lite-latest",
+  "gemini-3.1-flash-lite-image",
+  "gemini-omni-flash-preview",
+  "gemini-3.5-live-translate-preview",
+];
+const GOOGLE_LISTED = [...GOOGLE_DEFAULTS, ...GOOGLE_REST];
+
+const OPENAI_DEFAULTS = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6", "gpt-5.6-terra"];
+const OPENAI_REST = ["gpt-realtime-2.1", "gpt-5.5-pro", "gpt-5.5", "gpt-4o-mini", "gpt-4o"];
+const OPENAI_LISTED = [...OPENAI_DEFAULTS, ...OPENAI_REST];
+
+const NON_CHAT = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
+// `setup-openai.ts`'s ladder, verbatim — the one the plan and the post-close
+// ranking share.
+const OPENAI_LADDER = [
+  (m: string) => m.includes("gpt-4o-mini") && !NON_CHAT.test(m),
+  (m: string) => m.includes("-mini") && !NON_CHAT.test(m),
+  (m: string) => m.includes("gpt-4o") && !NON_CHAT.test(m),
+  (m: string) => m.includes("gpt-4.1") && !NON_CHAT.test(m),
+];
+const GOOGLE_LADDER = [
+  (m: string) => /gemini/.test(m) && /flash/.test(m) && !/image|tts|audio|preview/.test(m),
+  (m: string) => /gemini/.test(m),
+];
+
+test("the #1679 case: the pinned Google model IS a default, so nothing is clicked", () => {
+  // The four specs that failed the 2026-09-02 daily pin what `resolveGeminiModel`
+  // settles on, and its first preference — `gemini-flash-latest` — is one of the
+  // five `default: true` models, enabled server-side the moment the credential
+  // exists. Not one of the 29 clicks was the model they went on to select.
+  const plan = planToggleTargets({
+    listed: GOOGLE_LISTED,
+    checked: GOOGLE_DEFAULTS,
+    requested: "gemini-flash-latest",
+    acceptable: GOOGLE_LADDER,
+  });
+  assert.deepEqual(plan.toClick, []);
+  assert.match(plan.reason, /already enabled/);
+});
+
+test("a pinned model the panel lists but has OFF is the only toggle clicked", () => {
+  const plan = planToggleTargets({
+    listed: GOOGLE_LISTED,
+    checked: GOOGLE_DEFAULTS,
+    requested: "gemini-flash-lite-latest",
+    acceptable: GOOGLE_LADDER,
+  });
+  // One click — and specifically not the ladder's own first choice, which would
+  // substitute a model the caller did not ask for.
+  assert.deepEqual(plan.toClick, ["gemini-flash-lite-latest"]);
+  assert.match(plan.reason, /ONLY "gemini-flash-lite-latest"/);
+});
+
+test("a pinned model the panel does NOT list falls through to the preference ladder", () => {
+  // `initialGPTsetup` pins from `models.json`, which can be stale (#606), and its
+  // consumers must degrade rather than fail. The whole-panel sweep degraded by
+  // accident — everything was enabled, so the post-close ranking always had a
+  // choice. Enabling nothing here would silently stop doing that, leaving the
+  // ranking with only the five defaults, none of which it accepts.
+  const plan = planToggleTargets({
+    listed: OPENAI_LISTED,
+    checked: OPENAI_DEFAULTS,
+    requested: "gpt-4o-mini-2024-07-18",
+    acceptable: OPENAI_LADDER,
+  });
+  assert.deepEqual(plan.toClick, ["gpt-4o-mini"]);
+  assert.match(plan.reason, /does not list the pinned "gpt-4o-mini-2024-07-18"/);
+});
+
+test("OpenAI with no pin enables the ladder's top match even though five are already on", () => {
+  // The defaults are `gpt-6-astra` and four `gpt-5.6-*`; the ranking accepts none of
+  // them, so a no-pin caller (the vision spec) must not be left with them. The RANK
+  // decides, not the count: an already-enabled lower rank does not stop a listed
+  // higher rank from being enabled.
+  const plan = planToggleTargets({
+    listed: OPENAI_LISTED,
+    checked: OPENAI_DEFAULTS,
+    acceptable: OPENAI_LADDER,
+  });
+  assert.deepEqual(plan.toClick, ["gpt-4o-mini"]);
+  assert.match(plan.reason, /no model was pinned/);
+  assert.match(plan.reason, /preference 1 of 4/);
+});
+
+test("no pin and an already-enabled model that matches: no write at all", () => {
+  // Google's and Anthropic's defaults are all `gemini`/`claude`, so this is the
+  // no-pin path on two of the three providers — and it pays nothing.
+  const plan = planToggleTargets({
+    listed: GOOGLE_LISTED,
+    checked: GOOGLE_DEFAULTS,
+    acceptable: GOOGLE_LADDER,
+  });
+  assert.deepEqual(plan.toClick, []);
+  assert.match(plan.reason, /"gemini-3\.8-flash" is already enabled/);
+});
+
+test("the ladder is walked in order — rank 2 is only reached when rank 1 is nowhere", () => {
+  const plan = planToggleTargets({
+    listed: ["gemini-3.1-flash-lite-image", "gemini-2.5-pro"],
+    checked: [],
+    acceptable: GOOGLE_LADDER,
+  });
+  // Rank 1 excludes the image variant, so rank 2 ("any gemini") decides, and it
+  // takes the FIRST listed match rather than a scan order of its own.
+  assert.deepEqual(plan.toClick, ["gemini-3.1-flash-lite-image"]);
+  assert.match(plan.reason, /preference 2 of 2/);
+});
+
+test("a ladder nothing satisfies leaves the panel alone and SAYS so", () => {
+  // Not silence: "clicked nothing" has four causes and only two of them are
+  // healthy, so the reason is what a run can triage from (#1012).
+  const plan = planToggleTargets({
+    listed: OPENAI_DEFAULTS,
+    checked: OPENAI_DEFAULTS,
+    acceptable: OPENAI_LADDER,
+  });
+  assert.deepEqual(plan.toClick, []);
+  assert.match(plan.reason, /none of the 5 listed model\(s\) matches/);
+  assert.match(plan.reason, /picker ranking decides/);
+});
+
+test("no pin and no ladder is a decision, not an omission", () => {
+  const plan = planToggleTargets({ listed: GOOGLE_LISTED, checked: GOOGLE_DEFAULTS });
+  assert.deepEqual(plan.toClick, []);
+  assert.match(plan.reason, /no preference was given/);
+});
+
+test('an empty-string pin is treated as no pin, not as a model named ""', () => {
+  // `modelTestId` reaches the setups as `string | undefined` through
+  // `providerSetupMap`, and a caller reading it out of the environment
+  // (`MODEL_TEST_ID`) can hand over "". Looking that up would plan a click on
+  // `llm-toggle-`, which matches every toggle by prefix.
+  const plan = planToggleTargets({
+    listed: OPENAI_LISTED,
+    checked: OPENAI_DEFAULTS,
+    requested: "",
+    acceptable: OPENAI_LADDER,
+  });
+  assert.deepEqual(plan.toClick, ["gpt-4o-mini"]);
+  assert.match(plan.reason, /no model was pinned/);
+});
+
+test("the ladder sees the model id LOWERCASED, and the plan keeps the original", () => {
+  // The predicates are substring tests written in lower case (they are shared with
+  // the picker-side ranking, which lower-cases its labels). A build that renders an
+  // id with capitals must still match, and the click must still address the real
+  // testid.
+  const plan = planToggleTargets({
+    listed: ["GPT-4o-Mini"],
+    checked: [],
+    acceptable: OPENAI_LADDER,
+  });
+  assert.deepEqual(plan.toClick, ["GPT-4o-Mini"]);
+});
+
+test("an unlisted pin with an empty panel plans nothing — and names the empty panel", () => {
+  // `waitForModelToggles` runs before the enumeration precisely so this state means
+  // "the provider really has no toggles" (unconfigured, rejected key) rather than
+  // "we looked too early". Either way there is nothing to click, and the picker read
+  // at the end of the setup is the gate that reports it with evidence.
+  const plan = planToggleTargets({
+    listed: [],
+    checked: [],
+    requested: "gemini-flash-latest",
+    acceptable: GOOGLE_LADDER,
+  });
+  assert.deepEqual(plan.toClick, []);
+  assert.match(plan.reason, /0 listed model\(s\)/);
+});
+
+test("every branch states a reason, and no branch can ever plan a sweep", () => {
+  // The give-up message prints the plan's reason, so an empty one would make a
+  // stall on a one-model write indistinguishable from a stall on a plan that
+  // clicked nothing. The second assertion is the #1679 invariant itself: a
+  // provider setup picks exactly one model, so no input may grow the plan back
+  // into a batch.
+  const inputs = [
+    { listed: GOOGLE_LISTED, checked: GOOGLE_DEFAULTS, requested: "gemini-flash-latest" },
+    { listed: GOOGLE_LISTED, checked: [], requested: "gemini-flash-latest" },
+    { listed: GOOGLE_LISTED, checked: GOOGLE_DEFAULTS, requested: "gemini-1.0-pro" },
+    { listed: [], checked: [], requested: "gemini-flash-latest" },
+    { listed: [], checked: [] },
+    { listed: GOOGLE_LISTED, checked: GOOGLE_DEFAULTS },
+    { listed: GOOGLE_LISTED, checked: [] },
+    { listed: OPENAI_LISTED, checked: OPENAI_DEFAULTS },
+  ];
+  for (const input of inputs) {
+    for (const acceptable of [undefined, GOOGLE_LADDER, OPENAI_LADDER]) {
+      const plan = planToggleTargets({ ...input, acceptable });
+      assert.ok(plan.reason.trim().length > 0, JSON.stringify(input));
+      assert.ok(plan.toClick.length <= 1, JSON.stringify(input));
+    }
+  }
 });

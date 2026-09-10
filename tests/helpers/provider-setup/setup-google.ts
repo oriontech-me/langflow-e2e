@@ -8,10 +8,31 @@ import {
   openModelPickerAfterPanelClose,
   selectPinnedModelOption,
 } from "./model-option";
-import { enableAndSettleModelToggles } from "./model-toggle-batch";
+import {
+  enableAndSettleModelToggles,
+  planToggleTargets,
+  waitForModelToggles,
+} from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
 import { providerAlreadyConfigured } from "./provider-config-state";
+
+/**
+ * What this setup will accept when no model is pinned, in preference order.
+ *
+ * Mirrors the picker-side `find` at the bottom of this file — the caller with no
+ * pin takes the first `gemini` option — with one refinement the sweep used to make
+ * unnecessary: an image/tts/preview variant is a poor default for a chat spec, so
+ * a flash chat model is preferred when one is listed. Both ranks are normally
+ * satisfied by Google's five `default: true` models (all `gemini-*-flash` on
+ * 1.13.0.dev8), so the plan clicks nothing at all.
+ */
+const GOOGLE_NON_CHAT = /image|tts|audio|preview/;
+const GOOGLE_ACCEPTABLE_MODELS = [
+  (model: string) =>
+    /gemini/.test(model) && /flash/.test(model) && !GOOGLE_NON_CHAT.test(model),
+  (model: string) => /gemini/.test(model),
+];
 
 export async function setupGoogle(
   page: Page,
@@ -88,28 +109,38 @@ export async function setupGoogle(
       .catch(() => {});
   }
 
-  // Step 5: Enable all available models — and let the write settle.
-  // Toggles only render after the provider is authenticated — waitFor retries until visible.
-  // The `:visible` filter excludes toggles inside the collapsed "deprecated
-  // models" section, which are mounted in the DOM but not displayed until the
-  // section's "Show N deprecated models" button is clicked. Without the
-  // filter, `.click()` on a hidden toggle (e.g. gemini-2.0-flash on 1.11.x)
-  // retry-loops to a timeout.
+  // Step 5: Enable the ONE model this setup needs — and let the write settle.
+  // Toggles only render after the provider is authenticated, so the wait comes
+  // first: an enumeration that races the panel's fetch reads as "the panel lists
+  // nothing" and plans nothing (#1012).
   // Enabling is a TRANSACTION: the toggles are batched behind a 1000 ms debounce,
   // and closing the panel inside that window takes the flush path that never
   // refreshes the model picker (#1649). The helper clicks and then waits for the
   // product's own write to go quiet, so Step 6 below cannot close on top of it.
-  // Costs nothing when nothing was clicked, which is the normal CI path.
+  // What it must NOT do is click every toggle: 29 enable updates in one request is
+  // ~93 s of a blocked single worker, ending in gunicorn's SIGKILL with nothing
+  // persisted, and it is the model picker's own defaults that already carry what
+  // this setup goes on to select (#1679 — measured in model-toggle-batch.ts).
+  // Costs nothing when the plan is empty, which is the normal path.
   // The result is CAPTURED, not discarded: when this batch does not settle it is
   // the only source that can explain the picker read below, and #1651 printed it
   // to a log nothing correlates instead of carrying it forward (#1649).
-  const toggleWrite = await enableAndSettleModelToggles(page);
+  await waitForModelToggles(page);
+  const plan = planToggleTargets({
+    listed: await enumerateEnabledModels(page),
+    checked: await enumerateCheckedModels(page),
+    requested: modelTestId,
+    acceptable: GOOGLE_ACCEPTABLE_MODELS,
+  });
+  const toggleWrite = await enableAndSettleModelToggles(page, { plan });
 
-  // Read the panel's toggles BEFORE closing it: they are the second, independent
-  // source the picker can be contradicted by, and a picker miss that they
-  // contradict is not an absence (#1461). BOTH are read, because "the panel lists
-  // it" and "its toggle is on" are different facts and only the second one may be
-  // reported as ENABLED (#1649).
+  // Re-read the panel's toggles AFTER the batch and BEFORE closing it: they are the
+  // second, independent source the picker can be contradicted by, and a picker miss
+  // that they contradict is not an absence (#1461). BOTH are read, because "the
+  // panel lists it" and "its toggle is on" are different facts and only the second
+  // one may be reported as ENABLED (#1649). Re-read rather than reused from the
+  // plan above, because a click flips `aria-checked` optimistically — and that
+  // optimistic value is exactly what makes the write-stalled verdict reachable.
   const listedModels = await enumerateEnabledModels(page);
   const checkedModels = await enumerateCheckedModels(page);
 

@@ -91,11 +91,11 @@ test.afterEach(async ({ request }) => {
 // unreachable — the provider-prefixed model name made the test skip before the
 // disable — so no failure-path restore ever existed. Waking the test makes one
 // mandatory: a failure between the disable and the re-enable would otherwise leave
-// the model off for every later spec. The sibling setups do re-enable everything
-// (`[data-testid^="llm-toggle"]:visible` in setup-openai/anthropic/google), but only
-// when a later spec configures the SAME provider in the same lane, which the daily's
-// weekday provider rotation does not guarantee — and
-// `setup-language-model-openai.ts` enables one model and repairs nothing.
+// the model off for every later spec. Nothing else repairs it: since #1679 the three
+// sibling setups enable ONLY the model they are about to pick (the whole-panel
+// re-enable they used to do took the backend down and persisted nothing), and
+// `setup-language-model-openai.ts` has always enabled one model and repaired
+// nothing. The restore below is the only mechanism.
 let disabledModel: string | null = null;
 
 // Restored over the API, not the UI: after a mid-test failure the page can be
@@ -335,7 +335,7 @@ test.describe("Model Provider Model Toggle", () => {
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
 
-      await test.step("configure provider and enable all its models", async () => {
+      await test.step("configure the provider", async () => {
         await loadAgentWithProvider(page);
       });
 
@@ -344,6 +344,14 @@ test.describe("Model Provider Model Toggle", () => {
 
       await test.step("open Model Providers and pick an enabled model", async () => {
         await openProviderModelList(page);
+        // The FIRST toggle, and it is asserted ON below. That used to be trivially
+        // true because the provider setups enabled the whole panel; since #1679 they
+        // enable only the model they pick, so what holds it up is the product's own
+        // rule — `default = index < MIN_DEFAULT_MODELS` — which makes the first five
+        // catalog entries the enabled ones (measured on 1.13.0.dev8 for all three
+        // providers: the five `default: true` models ARE catalog positions 0-4). If
+        // that ever stops holding, this assertion is where it surfaces, and the fix
+        // is to pick the first CHECKED toggle rather than to re-enable the panel.
         const firstToggle = page
           .locator('[data-testid^="llm-toggle-"]:visible')
           .first();

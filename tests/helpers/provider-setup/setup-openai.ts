@@ -8,9 +8,42 @@ import {
   openModelPickerAfterPanelClose,
   selectPinnedModelOption,
 } from "./model-option";
-import { enableAndSettleModelToggles } from "./model-toggle-batch";
+import {
+  enableAndSettleModelToggles,
+  planToggleTargets,
+  waitForModelToggles,
+} from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
+
+// Families that are NOT general-purpose vision chat models: reasoning (o1/o3/o4…),
+// audio/realtime/tts/transcribe, search-preview and nano variants. Substring
+// "gpt-4o-mini" alone would otherwise match e.g. "gpt-4o-mini-tts" or rank a
+// text-only "o3-mini" as a fallback, breaking callers like the agent image test
+// that need real vision output.
+const NON_CHAT_MODEL = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
+
+/**
+ * What this setup will accept when no model is pinned, most- to least-preferred.
+ *
+ * All target small multimodal chat models; anything not matched (pro, reasoning,
+ * codex) is only reached via the ranking's first-available fallback below.
+ *
+ * ONE list, read twice, and that is the point: it decides which toggle the plan
+ * enables (#1679) and which option the post-close ranking then picks. Two copies
+ * would let the setup enable one model and select another. It is also why enabling
+ * nothing is not an option for OpenAI: measured on 1.13.0.dev8, its five
+ * `default: true` models are `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`,
+ * `gpt-5.6` and `gpt-5.6-terra` — no rank below accepts any of them, so a
+ * no-pin caller would fall through to the frontier model where the whole-panel
+ * sweep used to hand it `gpt-4o-mini`.
+ */
+const PREFERRED_CHAT_MODELS: Array<(model: string) => boolean> = [
+  (m) => m.includes("gpt-4o-mini") && !NON_CHAT_MODEL.test(m),
+  (m) => m.includes("-mini") && !NON_CHAT_MODEL.test(m),
+  (m) => m.includes("gpt-4o") && !NON_CHAT_MODEL.test(m),
+  (m) => m.includes("gpt-4.1") && !NON_CHAT_MODEL.test(m),
+];
 
 export async function setupOpenAI(
   page: Page,
@@ -68,22 +101,38 @@ export async function setupOpenAI(
     }
   }
 
-  // Step 5: Enable all available models — and let the write settle.
+  // Step 5: Enable the ONE model this setup needs — and let the write settle.
+  // The wait comes first: an enumeration that races the panel's own fetch reads as
+  // "the panel lists nothing" and plans nothing (#1012).
   // Enabling is a TRANSACTION: the toggles are batched behind a 1000 ms debounce,
   // and closing the panel inside that window takes the flush path that never
   // refreshes the model picker (#1649). The helper clicks and then waits for the
   // product's own write to go quiet, so Step 6 below cannot close on top of it.
-  // Costs nothing when nothing was clicked, which is the normal CI path.
+  // What it must NOT do is click every toggle: OpenAI's panel is the LARGEST of the
+  // three (42 llm models on 1.13.0.dev8), and the endpoint validates the key once
+  // per model, synchronously, inside the request — 29 of them measured 93 s of a
+  // blocked single worker ending in gunicorn's SIGKILL, with nothing persisted
+  // (#1679 — measured in model-toggle-batch.ts).
+  // Costs nothing when the plan is empty, which is the normal path.
   // The result is CAPTURED, not discarded: when this batch does not settle it is
   // the only source that can explain the picker read below, and #1651 printed it
   // to a log nothing correlates instead of carrying it forward (#1649).
-  const toggleWrite = await enableAndSettleModelToggles(page);
+  await waitForModelToggles(page);
+  const plan = planToggleTargets({
+    listed: await enumerateEnabledModels(page),
+    checked: await enumerateCheckedModels(page),
+    requested: modelTestId,
+    acceptable: PREFERRED_CHAT_MODELS,
+  });
+  const toggleWrite = await enableAndSettleModelToggles(page, { plan });
 
-  // Read the panel's toggles BEFORE closing it: they are the second, independent
-  // source the picker can be contradicted by, and a picker miss that they
-  // contradict is not an absence (#1461). BOTH are read, because "the panel lists
-  // it" and "its toggle is on" are different facts and only the second one may be
-  // reported as ENABLED (#1649).
+  // Re-read the panel's toggles AFTER the batch and BEFORE closing it: they are the
+  // second, independent source the picker can be contradicted by, and a picker miss
+  // that they contradict is not an absence (#1461). BOTH are read, because "the
+  // panel lists it" and "its toggle is on" are different facts and only the second
+  // one may be reported as ENABLED (#1649). Re-read rather than reused from the
+  // plan above, because a click flips `aria-checked` optimistically — and that
+  // optimistic value is exactly what makes the write-stalled verdict reachable.
   const listedModels = await enumerateEnabledModels(page);
   const checkedModels = await enumerateCheckedModels(page);
 
@@ -160,25 +209,11 @@ export async function setupOpenAI(
       (option.model ?? option.visibleLabel).trim().toLowerCase(),
     );
 
-    // Reject families that are NOT general-purpose vision chat models: reasoning
-    // (o1/o3/o4…), audio/realtime/tts/transcribe, search-preview and nano
-    // variants. Substring "gpt-4o-mini" alone would otherwise match e.g.
-    // "gpt-4o-mini-tts" or rank a text-only "o3-mini" as a fallback, breaking
-    // callers like the agent image test that need real vision output.
-    const nonChat = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
-
-    // Ordered most- to least-preferred. All target small multimodal chat models;
-    // anything not matched (pro, reasoning, codex) is only reached via the
-    // first-available fallback.
-    const preferences: Array<(m: string) => boolean> = [
-      (m) => m.includes("gpt-4o-mini") && !nonChat.test(m),
-      (m) => m.includes("-mini") && !nonChat.test(m),
-      (m) => m.includes("gpt-4o") && !nonChat.test(m),
-      (m) => m.includes("gpt-4.1") && !nonChat.test(m),
-    ];
-
+    // The ranking runs on the SAME ladder the toggle plan used above
+    // (`PREFERRED_CHAT_MODELS`), so the model this setup enabled is the model it
+    // then selects (#1679).
     let chosenIndex = -1;
-    for (const matches of preferences) {
+    for (const matches of PREFERRED_CHAT_MODELS) {
       const idx = labels.findIndex(matches);
       if (idx !== -1) {
         chosenIndex = idx;
