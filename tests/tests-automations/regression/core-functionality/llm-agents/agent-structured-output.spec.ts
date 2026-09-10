@@ -117,7 +117,9 @@ interface SchemaRow {
 //
 // The poll MUST inspect the model field's selected `value`, not the whole
 // serialized field: `template.model` embeds an `options` list of every
-// enabled model (~59 on a multi-provider nightly), so a substring check over
+// enabled model (~59 on a multi-provider nightly when the setups enabled whole
+// panels; ~5-6 per provider since #1679, which changes the size and none of the
+// reasoning), so a substring check over
 // the stringified field matched `expectedModel` in `options` regardless of
 // what was actually selected — returning "flow-ready" on the FIRST GET even
 // when `value` was still the template default. That let a pre-autosave GET

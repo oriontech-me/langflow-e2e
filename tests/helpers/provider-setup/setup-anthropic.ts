@@ -15,20 +15,8 @@ import {
 } from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
+import { ANTHROPIC_MODEL_PREFERENCES } from "./model-preferences";
 
-/**
- * What this setup will accept when no model is pinned, in preference order.
- *
- * Mirrors the picker-side `find` at the bottom of this file (first `claude`
- * option), with the same refinement `setup-google.ts` makes: a non-opus model is a
- * cheaper default for a spec that only needs a completion. Anthropic's five
- * `default: true` models are all `claude-*` (measured on 1.13.0.dev8), so both
- * ranks are normally already satisfied and the plan clicks nothing.
- */
-const ANTHROPIC_ACCEPTABLE_MODELS = [
-  (model: string) => /claude/.test(model) && !/opus/.test(model),
-  (model: string) => /claude/.test(model),
-];
 
 export async function setupAnthropic(
   page: Page,
@@ -92,7 +80,11 @@ export async function setupAnthropic(
     listed: await enumerateEnabledModels(page),
     checked: await enumerateCheckedModels(page),
     requested: modelTestId,
-    acceptable: ANTHROPIC_ACCEPTABLE_MODELS,
+    // Anthropic's five `default: true` models are all `claude-*` (measured on
+    // 1.13.0.dev8), so both ranks are already satisfied and the no-pin path clicks
+    // nothing. The ladder and the reasoning for it live in `model-preferences.ts`,
+    // where the unit tests can reach them.
+    acceptable: ANTHROPIC_MODEL_PREFERENCES,
   });
   const toggleWrite = await enableAndSettleModelToggles(page, { plan });
 

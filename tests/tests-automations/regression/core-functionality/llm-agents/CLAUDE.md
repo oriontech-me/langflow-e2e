@@ -224,9 +224,14 @@ Two consequences, both measured rather than argued:
 
 So a setup enables **the one model it is about to pick**, through
 `planToggleTargets` (`tests/helpers/provider-setup/model-toggle-batch.ts`), and
-usually not even that: the five `default: true` models are catalog positions 0-4 for
-all three providers, so a pinned model that happens to be one of them costs zero
-clicks. Same spec after the change: **28.7 s**, one 0.633 s probe, zero probes down.
+usually not even that: `get_unified_models_detailed` stamps `default = i <
+default_model_count` **after** its sort, so the five defaults are catalog positions
+0-4 for all three providers by construction (`unified_models/model_catalog.py` —
+not `MIN_DEFAULT_MODELS`, which is the same 5 for the live-discovery providers), and
+a pinned model that happens to be one of them costs zero clicks. Same spec after the change: **28.7 s**, zero probes down, and one probe
+slowed to 0.633 s — the single one-model write, and the only trace of it. (A later
+run of the same spec from a freshly reset instance measured 24.0 s and one 0.769 s
+probe; the two numbers are two runs, not a discrepancy.)
 
 Two things NOT to do when touching this:
 

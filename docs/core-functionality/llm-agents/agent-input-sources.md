@@ -180,7 +180,9 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
   `ValueError: __default_language_model__ variable not found`; the agent never
   builds, so `node_duration_agent` never appears and the step times out. Run in
   isolation it passed because the full provider setup (key + enabling every
-  model) took long enough for the save to land. `waitForFlowSaveSettled` before
+  model) took long enough for the save to land — a cover that no longer exists:
+  since #1679 the setup enables one model, not the panel, so the setup is ~90 s
+  faster on a cold google provider. The guard below is what the spec relies on. `waitForFlowSaveSettled` before
   the run removes the race deterministically — the same guard
   `agent-system-prompt.spec.ts` uses.
 - **Credential-settle gate (#751):** the same async-model-selection race has a

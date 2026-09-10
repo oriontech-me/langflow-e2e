@@ -85,17 +85,22 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Model set to DISABLED by the test body and not yet restored by it.
+// Model set to DISABLED by a test body and not yet restored by it.
 //
-// Test 2 mutates ACCOUNT-GLOBAL state, and until #1464 that mutation was
-// unreachable — the provider-prefixed model name made the test skip before the
-// disable — so no failure-path restore ever existed. Waking the test makes one
-// mandatory: a failure between the disable and the re-enable would otherwise leave
-// the model off for every later spec. Nothing else repairs it: since #1679 the three
-// sibling setups enable ONLY the model they are about to pick (the whole-panel
-// re-enable they used to do took the backend down and persisted nothing), and
-// `setup-language-model-openai.ts` has always enabled one model and repaired
-// nothing. The restore below is the only mechanism.
+// BOTH tests mutate ACCOUNT-GLOBAL state and both arm this. Until #1464 test 2's
+// mutation was unreachable — the provider-prefixed model name made it skip before
+// the disable — so no failure-path restore ever existed; waking it made one
+// mandatory, because a failure between the disable and the re-enable leaves the
+// model off for every later spec. Test 1 was left on its inline restore alone until
+// #1679, which is the more expensive of the two to lose: it disables the panel's
+// FIRST toggle, which is one of the provider's five defaults, and its own
+// "aria-checked=true" assertion then requires that model to be enabled — so one
+// interrupted run makes it fail deterministically forever on that instance.
+// Nothing else repairs either: since #1679 the three sibling setups enable ONLY the
+// model they are about to pick (the whole-panel re-enable they used to do took the
+// backend down and persisted nothing), and `setup-language-model-openai.ts` has
+// always enabled one model and repaired nothing. The restore below is the only
+// mechanism.
 let disabledModel: string | null = null;
 
 // Restored over the API, not the UI: after a mid-test failure the page can be
@@ -148,10 +153,11 @@ test.afterEach(async ({ request }) => {
   );
 });
 
-// Load the Simple Agent template with the configured provider. This configures
-// the provider's API key globally and enables all of its models — the known
-// baseline both tests start from. MODEL_NOT_AVAILABLE (a model present in
-// models.json but absent from the picker) is turned into a skip.
+// Load the Simple Agent template with the configured provider. This configures the
+// provider's API key globally; since #1679 it enables only the ONE model the setup
+// picks, so the baseline both tests start from is the provider's five `default:
+// true` models plus that one — not the whole catalog. MODEL_NOT_AVAILABLE (a model
+// present in models.json but absent from the picker) is turned into a skip.
 async function loadAgentWithProvider(page: Page): Promise<void> {
   page.on("response", (resp) => {
     if (
@@ -347,11 +353,17 @@ test.describe("Model Provider Model Toggle", () => {
         // The FIRST toggle, and it is asserted ON below. That used to be trivially
         // true because the provider setups enabled the whole panel; since #1679 they
         // enable only the model they pick, so what holds it up is the product's own
-        // rule — `default = index < MIN_DEFAULT_MODELS` — which makes the first five
-        // catalog entries the enabled ones (measured on 1.13.0.dev8 for all three
-        // providers: the five `default: true` models ARE catalog positions 0-4). If
-        // that ever stops holding, this assertion is where it surfaces, and the fix
-        // is to pick the first CHECKED toggle rather than to re-enable the panel.
+        // rule: `get_unified_models_detailed` sorts each provider's rows
+        // (deprecated last, newest first) and stamps `default = i <
+        // default_model_count` AFTER that sort, so the five defaults ARE positions
+        // 0-4 by construction — `unified_models/model_catalog.py`, and NOT
+        // `MIN_DEFAULT_MODELS`, which is the same 5 but governs the live-discovery
+        // providers (Ollama, OpenAI-Compatible, OpenRouter, vLLM). Verified live on
+        // 1.13.0.dev8 for all three keyed providers, under the panel's own query
+        // (`include_deprecated=true&include_unsupported=true`) as well as
+        // `purpose=configure`. If it ever stops holding, this assertion is where it
+        // surfaces, and the fix is to pick the first CHECKED toggle — never to
+        // re-enable the panel.
         const firstToggle = page
           .locator('[data-testid^="llm-toggle-"]:visible')
           .first();
@@ -364,6 +376,18 @@ test.describe("Model Provider Model Toggle", () => {
       });
 
       await test.step("disable the model — change is immediate and persisted", async () => {
+        // Armed BEFORE the disable, disarmed after the restore below, so the
+        // failure-path `afterEach` owns the window in between. This test mutates
+        // account-wide state exactly as test 2 does, and it was relying on its own
+        // inline restore alone — a crash between the two steps left one of the
+        // provider's five DEFAULT models in the persistent `disabled_models` set,
+        // which is worse here than anywhere else: `:364` above requires the panel's
+        // first toggle to read ON, so one interrupted run makes this test fail
+        // deterministically on that instance forever, and the file is `serial`, so
+        // test 2 is skipped and nothing else notices. It used to self-heal because
+        // the sibling provider setups re-enabled the whole panel; since #1679 they
+        // enable only the model they pick, so nothing repairs it but this.
+        disabledModel = modelName;
         await setToggle(page, toggle, false, modelName);
       });
 
@@ -376,6 +400,7 @@ test.describe("Model Provider Model Toggle", () => {
         // Restore the baseline so the model stays enabled for other specs.
         await setToggle(page, reopened, true, modelName);
         await expect(reopened).toHaveAttribute("aria-checked", "true");
+        disabledModel = null;
       });
     },
   );

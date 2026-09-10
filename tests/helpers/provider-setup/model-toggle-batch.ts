@@ -88,10 +88,16 @@ import type { Page } from "@playwright/test";
  *     loop, so a killed batch persists NOTHING — the sweep is not a slow success
  *     that later specs ride for free, it is a guaranteed failure every spec on that
  *     instance re-pays in full;
- *   - `gemini-flash-latest`, which `resolveGeminiModel` prefers FIRST, is one of
- *     Google's five `default: true` models and is therefore enabled server-side the
- *     moment the credential exists. Not one of the 29 clicks was the model the
- *     failing specs went on to select.
+ *   - and for a whole class of callers the batch was buying NOTHING even when it
+ *     landed: `gemini-flash-latest` — `resolveGeminiModel`'s first preference, so
+ *     what `google-provider.spec.ts` and `language-model-regression.spec.ts` pin —
+ *     is one of Google's five `default: true` models, enabled server-side the
+ *     moment the credential exists. The parametrized agent specs pin the model the
+ *     key axis SETTLED on instead, which locally measured `gemini-2.5-flash` and is
+ *     NOT a default; for those the batch did carry their model — as 1 of 30 enable
+ *     updates in a request that was then killed, so they got nothing either. Which
+ *     model the daily settles on is not recorded per run, so this is stated for the
+ *     callers whose pin is derived and measured for the local one (#1012).
  *
  * So the panel does not need every model enabled; it needs the ONE model this
  * setup is about to pick, and usually not even that. {@link planToggleTargets}
@@ -131,6 +137,25 @@ export type TogglePlanInput = {
    * reason that helper documents; the click step is where a collapsed toggle is
    * handled, because "not rendered" and "rendered inside the deprecated disclosure"
    * are different facts and only the first one is an absence.
+   *
+   * Two properties of this set bound what a plan can promise, and both are the
+   * panel's, not this function's. It is the panel's own query
+   * (`include_deprecated=true&include_unsupported=true`), so it is WIDER than the
+   * picker's: measured on 1.13.0.dev8 it carries 45 google / 56 openai / 28
+   * anthropic llm rows against 36 / 42 / 14 under `purpose=configure`, the surplus
+   * being 9 / 9+6 / 14 deprecated-or-unsupported rows the endpoint REFUSES to enable
+   * (`400 Cannot enable deprecated model: …`). So a plan is a request, not a
+   * guarantee — a refused write leaves the model off and the picker read at the end
+   * of the setup is what reports it, with the server's own words.
+   *
+   * What keeps that theoretical is the product's own ORDER, not luck:
+   * `get_unified_models_detailed` sorts each provider's rows by
+   * `(is_deprecated, -created)`, so every deprecated row sorts last and the panel
+   * renders them inside the collapsed disclosure at the bottom. This set is read in
+   * DOM order, so a rank's `find` returns an active row whenever one matches, and
+   * reaches a deprecated one only when nothing active does. That case is not
+   * defended against on purpose: enabling nothing there would leave the picker on
+   * its five defaults with no explanation, where a refusal names itself.
    */
   listed: string[];
   /** The subset whose toggle already reads ON — `enumerateCheckedModels`. */
@@ -170,25 +195,33 @@ export function planToggleTargets(input: TogglePlanInput): TogglePlan {
   const { listed, checked, requested, acceptable } = input;
   const onCount = `${checked.length} of ${listed.length} listed model(s) already enabled`;
 
-  if (requested !== undefined && requested !== "") {
-    if (checked.includes(requested)) {
+  // Normalised ONCE, and read everywhere below. `modelTestId` reaches the setups as
+  // `string | undefined` through `providerSetupMap`, and a caller resolving it from
+  // the environment (`MODEL_TEST_ID`) can hand over "". Two independent
+  // `=== ""` checks made the guard untestable — dropping either one left the output
+  // identical, because "" is in neither `checked` nor `listed` — so a single
+  // normalisation is what makes "an empty pin is NO pin" a pinnable property.
+  const pinned = requested !== undefined && requested.trim() !== "" ? requested : undefined;
+
+  if (pinned !== undefined) {
+    if (checked.includes(pinned)) {
       return {
         toClick: [],
-        reason: `"${requested}" is already enabled — no write needed (${onCount})`,
+        reason: `"${pinned}" is already enabled — no write needed (${onCount})`,
       };
     }
-    if (listed.includes(requested)) {
+    if (listed.includes(pinned)) {
       return {
-        toClick: [requested],
-        reason: `enabling ONLY "${requested}", the model this setup targets (${onCount})`,
+        toClick: [pinned],
+        reason: `enabling ONLY "${pinned}", the model this setup targets (${onCount})`,
       };
     }
   }
 
   const pin =
-    requested === undefined || requested === ""
+    pinned === undefined
       ? "no model was pinned"
-      : `the panel does not list the pinned "${requested}"`;
+      : `the panel does not list the pinned "${pinned}"`;
 
   if (acceptable === undefined || acceptable.length === 0) {
     return {
@@ -493,14 +526,36 @@ export async function enableAndSettleModelToggles(
   const hidden: string[] = [];
 
   try {
-    const visible = await waitForModelToggles(page);
+    // Skipped when there is nothing to click, and that is not a micro-optimisation:
+    // the callers wait for the toggles themselves to build the plan, and on the path
+    // where NO toggle ever renders — a rejected or drained key, which this account
+    // has hit three times (#772/#1029/#1169) — waiting a second time doubled the
+    // budget spent before the loud picker verdict is reached.
+    const visible =
+      planned.length > 0
+        ? await waitForModelToggles(page)
+        : await page.locator('[data-testid^="llm-toggle"]:visible').count();
 
     for (const model of planned) {
       // Addressed by its own testid, not by index into the `:visible` list: the
       // plan names models, and resolving one by position would depend on the
       // panel's ordering, which is the catalog's and moves per build.
       const toggle = page.getByTestId(`llm-toggle-${model}`);
-      if (!(await toggle.isVisible().catch(() => false))) {
+      // A short WAIT, not an `isVisible()` snapshot. The snapshot answers `false`
+      // for two different states — the row sits in the collapsed deprecated
+      // disclosure, and the panel happened to be re-rendering in the milliseconds
+      // between the caller's enumeration and this click (its own fetch resolving, a
+      // `refreshAllModelInputs`, the toggle queue's optimistic overlay). Deciding
+      // the batch's only click on that snapshot is the mistake `setup-google.ts`
+      // documents for the Disconnect probe: a slow re-render read as "not there",
+      // the write skipped, and the log then asserting a deprecation cause it never
+      // observed (#1012). Short because the toggles are already rendered — the
+      // caller enumerated them — so this only ever pays out on a re-render.
+      const displayed = await toggle
+        .waitFor({ state: "visible", timeout: 3000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!displayed) {
         hidden.push(model);
         continue;
       }
@@ -515,11 +570,20 @@ export async function enableAndSettleModelToggles(
       // Warned rather than thrown: a deprecated model cannot be enabled at all
       // (`POST /models/enabled_models` answers `400 Cannot enable deprecated
       // model`), so failing here would replace a verdict the picker read states
-      // with evidence by one stated from the panel alone.
+      // with evidence by one stated from the panel alone. What it must NOT do is
+      // name a cause it did not observe — the disclosure is the LIKELY one (9
+      // google / 9 openai / 14 anthropic deprecated rows collapse into it on
+      // 1.13.0.dev8), never the established one. OpenAI's 6 `not_supported` rows are
+      // NOT in it: they render as ordinary rows and are clickable, and the endpoint
+      // refuses them at write time instead (`400 Cannot enable not supported
+      // model`), which the picker read reports.
       console.warn(
-        `⚠️  provider panel: ${hidden.join(", ")} is listed but its toggle is not displayed — ` +
-          `it sits in the collapsed "deprecated models" disclosure, so it was NOT clicked. ` +
-          `The picker read below is what decides what that costs (#1679).`,
+        `⚠️  provider panel: ${hidden.join(", ")} was listed by the panel but its toggle was ` +
+          `not displayed within 3000ms, so it was NOT clicked. The likeliest cause is the ` +
+          `collapsed "deprecated models" disclosure — those rows are in the DOM and hidden, ` +
+          `and the endpoint refuses to enable them anyway — but that is NOT established here: ` +
+          `a panel still re-rendering looks identical. The picker read below is what decides ` +
+          `what it cost (#1679).`,
       );
     }
 

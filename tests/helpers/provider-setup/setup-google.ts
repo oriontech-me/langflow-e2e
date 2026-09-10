@@ -16,23 +16,7 @@ import {
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
 import { providerAlreadyConfigured } from "./provider-config-state";
-
-/**
- * What this setup will accept when no model is pinned, in preference order.
- *
- * Mirrors the picker-side `find` at the bottom of this file — the caller with no
- * pin takes the first `gemini` option — with one refinement the sweep used to make
- * unnecessary: an image/tts/preview variant is a poor default for a chat spec, so
- * a flash chat model is preferred when one is listed. Both ranks are normally
- * satisfied by Google's five `default: true` models (all `gemini-*-flash` on
- * 1.13.0.dev8), so the plan clicks nothing at all.
- */
-const GOOGLE_NON_CHAT = /image|tts|audio|preview/;
-const GOOGLE_ACCEPTABLE_MODELS = [
-  (model: string) =>
-    /gemini/.test(model) && /flash/.test(model) && !GOOGLE_NON_CHAT.test(model),
-  (model: string) => /gemini/.test(model),
-];
+import { GOOGLE_MODEL_PREFERENCES } from "./model-preferences";
 
 export async function setupGoogle(
   page: Page,
@@ -130,7 +114,11 @@ export async function setupGoogle(
     listed: await enumerateEnabledModels(page),
     checked: await enumerateCheckedModels(page),
     requested: modelTestId,
-    acceptable: GOOGLE_ACCEPTABLE_MODELS,
+    // Both of Google's ranks are normally satisfied by its five `default: true`
+    // models (four `gemini-*-flash` plus `gemini-3.5-flash-lite` on 1.13.0.dev8),
+    // so the no-pin path clicks nothing at all. The ladder and the reasoning for
+    // it live in `model-preferences.ts`, where the unit tests can reach them.
+    acceptable: GOOGLE_MODEL_PREFERENCES,
   });
   const toggleWrite = await enableAndSettleModelToggles(page, { plan });
 

@@ -1,6 +1,6 @@
 # Model Provider Model Toggle
 
-**Last validated:** Langflow 1.13.x (measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
+**Last validated:** Langflow 1.13.x (re-run on `1.13.0.dev8` after the scoped toggle write, #1679; measured on `1.13.0.dev0`; the settings-navigation hops measured there, #1696. Earlier: `1.12.0.dev30`; the provider-list wait re-measured on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -30,7 +30,7 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 
 ### Test 1 — toggle changes immediately and persists across reopen
 
-1. `SimpleAgentTemplatePage.load({ provider })` — configures the provider's API key globally and enables all its models (the known baseline). `MODEL_NOT_AVAILABLE` is caught and turned into a skip.
+1. `SimpleAgentTemplatePage.load({ provider })` — configures the provider's API key globally. Since #1679 it enables **only the one model the setup goes on to pick**, so the baseline is the provider's five `default: true` models plus that one, not the whole catalog: the whole-panel enable it used to do issues one `POST /models/enabled_models` per toggle batch, and the endpoint validates the key **per model, synchronously, inside the request** — measured at 93 s of a fully blocked single-worker backend for a 29-model google batch, ending in gunicorn's `SIGKILL` with nothing persisted. `MODEL_NOT_AVAILABLE` is caught and turned into a skip.
 2. Navigate to **Settings → Model Providers** through `navigateSettingsPages()` (see *Reaching the Settings page* below — three **verified** hops, never three blind clicks), expand the provider through `waitForProviderRow()` (see *Waiting for the provider list* — never a bare `provider-item-...` wait), and wait for `model-provider-selection` and `llm-models-section`.
 3. Read the first visible `llm-toggle-<model>` to derive a model name, filter the list to it via `model-search-input`, and assert it is enabled (`aria-checked="true"`).
 4. Disable it: click the toggle, assert `aria-checked="false"` immediately (optimistic), and wait for the `POST .../enabled_models` response (debounced persistence flush) — through `toggleWriteVerdict()`, so a write that never lands says which half failed (see *Waiting for the persistence write* below).
@@ -39,7 +39,7 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 
 ### Test 2 — disabling a model removes it from a component dropdown
 
-1. `SimpleAgentTemplatePage.load({ provider })` — same baseline (all models enabled, a model selected on the Agent). Capture the flow URL.
+1. `SimpleAgentTemplatePage.load({ provider })` — same baseline (the five defaults plus the picked model enabled, a model selected on the Agent). Capture the flow URL.
 2. Open the Agent's `model_model` picker and enumerate every option through
    `enumerateModelOptions()` (`tests/helpers/provider-setup/model-option.ts`),
    which reads each option's **identity** — `data-value` (`${provider}::${model}`)
@@ -287,10 +287,15 @@ anything still armed through `POST /api/v1/models/enabled_models`
 after a mid-test failure the page can be anywhere and a restore needing Settings to
 render is one that fails exactly when it is needed. A failed restore is **logged loudly**
 and never swallowed: leaving it silent would hand every later spec a disabled model with
-nothing in the log naming why (#1012). Relying on a sibling's `setup-*` enable-all pass
-is not sufficient — it repairs only when a later spec configures the **same** provider in
-the same lane, which the daily's weekday provider rotation does not guarantee, and
-`setup-language-model-openai.ts` enables a single model and repairs nothing.
+nothing in the log naming why (#1012). No sibling repairs it: since #1679 the three `setup-*`
+helpers enable only the model they are about to pick, so the enable-all pass that used to
+repair this by accident is **gone** (it never repaired reliably anyway — only when a later
+spec configured the *same* provider in the same lane, which the daily's weekday provider
+rotation does not guarantee), and `setup-language-model-openai.ts` enables a single model
+and repairs nothing. **Both** tests arm the restore: test 2 because #1464 made its mutation
+reachable, and test 1 because it disables the panel's *first* toggle — one of the five
+defaults — which its own `aria-checked="true"` assertion then requires, so an interrupted
+run would make it fail deterministically on that instance forever (#1679).
 
 Behavioral force-fail contract: leave the model disabled with the restore no-op'd, and a
 sibling spec pinning that model skips or fails.

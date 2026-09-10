@@ -48,11 +48,17 @@ inside the request** (measured on an idle container, #1666: 1 model 0.4-1.0 s,
 30 models **103 s**, the same 30 *disabled* 0.02 s), and the lanes run
 `LANGFLOW_WORKERS: 1` — so a 30-model enable write blocks the only worker for 103 s,
 past the helper's own 90 s flush budget and within reach of gunicorn's 120 s timeout
-under any concurrent load. #1666 removed that sweep from `collect-models`; the
-spec-side path (`enableAndSettleModelToggles`, which still clicks every visible
-toggle) is #1679. Measure the outage total **after** narrowing that write before
-benchmarking a worker count or a runner size against it — #1686 is blocked on exactly
-that, so a lever sized today would be sized against a wedge the suite is causing.
+under any concurrent load. #1666 removed that sweep from `collect-models` and
+**#1679 removed it from the spec side too**: `enableAndSettleModelToggles` now clicks
+only the model the setup is about to pick, via `planToggleTargets`. Re-measured there on
+`1.13.0.dev8`, one idle container: a 29-model google batch never answers and takes the
+backend down for ~100 s (gunicorn `WORKER TIMEOUT` -> `SIGKILL`, nothing persisted),
+against **0.86 s and no dropped probe** for one model — and end to end, the same
+`agent-component-regression [google]` went from a 109 s outage while passing to zero
+probes down. So the outage total still has to be re-read across ≥2 scheduled dailies
+before a worker count or a runner size is benchmarked against it, but the reason is now
+"confirm the suite-caused share is gone" rather than "the suite is still causing it":
+#1686's stated blocker is cleared by #1679, and its own *Done when* is what closes it.
 
 **One gap to know before running the benchmark itself.** History lines are written on
 `schedule` only, so a lever measured through a `workflow_dispatch` of `daily-stable.yml`

@@ -24,6 +24,11 @@ import {
   writeStallReason,
   type ToggleBatchObservation,
 } from "./model-toggle-batch";
+import {
+  ANTHROPIC_MODEL_PREFERENCES,
+  GOOGLE_MODEL_PREFERENCES,
+  OPENAI_MODEL_PREFERENCES,
+} from "./model-preferences";
 
 const OPTS = { quietMs: 1500, deadlineAt: 100_000 };
 
@@ -250,25 +255,23 @@ const OPENAI_DEFAULTS = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6"
 const OPENAI_REST = ["gpt-realtime-2.1", "gpt-5.5-pro", "gpt-5.5", "gpt-4o-mini", "gpt-4o"];
 const OPENAI_LISTED = [...OPENAI_DEFAULTS, ...OPENAI_REST];
 
-const NON_CHAT = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
-// `setup-openai.ts`'s ladder, verbatim — the one the plan and the post-close
-// ranking share.
-const OPENAI_LADDER = [
-  (m: string) => m.includes("gpt-4o-mini") && !NON_CHAT.test(m),
-  (m: string) => m.includes("-mini") && !NON_CHAT.test(m),
-  (m: string) => m.includes("gpt-4o") && !NON_CHAT.test(m),
-  (m: string) => m.includes("gpt-4.1") && !NON_CHAT.test(m),
-];
-const GOOGLE_LADDER = [
-  (m: string) => /gemini/.test(m) && /flash/.test(m) && !/image|tts|audio|preview/.test(m),
-  (m: string) => /gemini/.test(m),
-];
+// THE REAL LADDERS, imported — not copies. The first version of this file
+// re-declared them, because they were module-private in the three `setup-*.ts`
+// files, and copies pin nothing: gutting each real ladder to `[]` — the exact
+// failure the ladder exists to prevent — passed the whole unit suite 1326/1326.
+// `model-preferences.ts` exists so a `node --test` process can reach them without
+// importing `@playwright/test`.
+const OPENAI_LADDER = OPENAI_MODEL_PREFERENCES;
+const GOOGLE_LADDER = GOOGLE_MODEL_PREFERENCES;
 
 test("the #1679 case: the pinned Google model IS a default, so nothing is clicked", () => {
-  // The four specs that failed the 2026-09-02 daily pin what `resolveGeminiModel`
-  // settles on, and its first preference — `gemini-flash-latest` — is one of the
-  // five `default: true` models, enabled server-side the moment the credential
-  // exists. Not one of the 29 clicks was the model they went on to select.
+  // `resolveGeminiModel`'s first preference — what `google-provider.spec.ts` (the
+  // 2026-09-03 occurrence) and `language-model-regression.spec.ts` pin — is
+  // `gemini-flash-latest`, one of the five `default: true` models and therefore
+  // enabled server-side the moment the credential exists. For that class of caller
+  // the whole 29-toggle batch was buying nothing even when it landed. The
+  // parametrized agent specs pin the SETTLED model instead (locally
+  // `gemini-2.5-flash`, not a default) and take the branch below.
   const plan = planToggleTargets({
     listed: GOOGLE_LISTED,
     checked: GOOGLE_DEFAULTS,
@@ -366,19 +369,29 @@ test("no pin and no ladder is a decision, not an omission", () => {
   assert.match(plan.reason, /no preference was given/);
 });
 
-test('an empty-string pin is treated as no pin, not as a model named ""', () => {
+test('an empty pin is NO pin, and the reason must not quote a model named ""', () => {
   // `modelTestId` reaches the setups as `string | undefined` through
-  // `providerSetupMap`, and a caller reading it out of the environment
-  // (`MODEL_TEST_ID`) can hand over "". Looking that up would plan a click on
-  // `llm-toggle-`, which matches every toggle by prefix.
-  const plan = planToggleTargets({
-    listed: OPENAI_LISTED,
-    checked: OPENAI_DEFAULTS,
-    requested: "",
-    acceptable: OPENAI_LADDER,
-  });
-  assert.deepEqual(plan.toClick, ["gpt-4o-mini"]);
-  assert.match(plan.reason, /no model was pinned/);
+  // `providerSetupMap`, and a caller resolving it from the environment
+  // (`MODEL_TEST_ID`) can hand over "" or " ".
+  //
+  // The `toClick` half is NOT what pins this — "" is in neither `checked` nor
+  // `listed`, so the ladder decides either way and the click list is identical
+  // with or without the guard (measured: dropping it failed nothing). What the
+  // guard decides is the REASON, which is the line a triage reads: without it a
+  // run reports `the panel does not list the pinned ""`, an absence of a model
+  // nobody asked for. So the assertion is on the reason, and on the absence of
+  // the empty-quote spelling.
+  for (const requested of ["", "   "]) {
+    const plan = planToggleTargets({
+      listed: OPENAI_LISTED,
+      checked: OPENAI_DEFAULTS,
+      requested,
+      acceptable: OPENAI_LADDER,
+    });
+    assert.deepEqual(plan.toClick, ["gpt-4o-mini"]);
+    assert.match(plan.reason, /no model was pinned/);
+    assert.doesNotMatch(plan.reason, /pinned ""|pinned "\s+"/);
+  }
 });
 
 test("the ladder sees the model id LOWERCASED, and the plan keeps the original", () => {
@@ -392,6 +405,100 @@ test("the ladder sees the model id LOWERCASED, and the plan keeps the original",
     acceptable: OPENAI_LADDER,
   });
   assert.deepEqual(plan.toClick, ["GPT-4o-Mini"]);
+});
+
+// ─── the three real ladders (#1679) ───────────────────────────────────────────
+//
+// Asserted against the LIVE catalogs, read from
+// `GET /api/v1/models?purpose=configure` on 1.13.0.dev8, because the property that
+// matters is not "the list is non-empty" — it is which of each provider's five
+// `default: true` models the ladder accepts. Google's and Anthropic's are all
+// accepted (so those setups write nothing); OpenAI's are all REJECTED (so that
+// setup must write, or a no-pin caller silently gets a frontier model). A ladder
+// gutted to `[]`, or an OpenAI ladder loosened until `gpt-6-astra` passes, fails
+// here.
+const ANTHROPIC_DEFAULTS = [
+  "claude-fable-5-1",
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-fable-5",
+  "claude-opus-4-8",
+];
+
+const accepts = (ladder: Array<(m: string) => boolean>, model: string): boolean =>
+  ladder.some((rank) => rank(model.toLowerCase()));
+
+test("Google's and Anthropic's ladders accept their own defaults — those setups write nothing", () => {
+  for (const model of GOOGLE_DEFAULTS) {
+    assert.ok(accepts(GOOGLE_MODEL_PREFERENCES, model), `google ladder rejects ${model}`);
+  }
+  for (const model of ANTHROPIC_DEFAULTS) {
+    assert.ok(accepts(ANTHROPIC_MODEL_PREFERENCES, model), `anthropic ladder rejects ${model}`);
+  }
+  // …and the plan agrees, which is the property the setups depend on.
+  assert.deepEqual(
+    planToggleTargets({
+      listed: ANTHROPIC_DEFAULTS,
+      checked: ANTHROPIC_DEFAULTS,
+      acceptable: ANTHROPIC_MODEL_PREFERENCES,
+    }).toClick,
+    [],
+  );
+});
+
+test("OpenAI's ladder rejects ALL five of its defaults — that setup MUST write", () => {
+  // The asymmetry the ladder exists for. If a future edit makes one of these
+  // acceptable, `general-bugs-agent-images-playground` silently starts running its
+  // multimodal assertion on a frontier model instead of `gpt-4o-mini`.
+  for (const model of OPENAI_DEFAULTS) {
+    assert.ok(
+      !accepts(OPENAI_MODEL_PREFERENCES, model),
+      `openai ladder accepts ${model}, so the no-pin path would stop enabling a chat model`,
+    );
+  }
+  assert.ok(accepts(OPENAI_MODEL_PREFERENCES, "gpt-4o-mini"));
+  assert.deepEqual(
+    planToggleTargets({
+      listed: OPENAI_LISTED,
+      checked: OPENAI_DEFAULTS,
+      acceptable: OPENAI_MODEL_PREFERENCES,
+    }).toClick,
+    ["gpt-4o-mini"],
+  );
+});
+
+test("no ladder is empty, and none accepts a non-chat variant of its own family", () => {
+  // An empty ladder is the mutation that passed 1326/1326 before these tests
+  // existed. The second half pins what each ladder is FOR: the families that break
+  // the callers — a reasoning/audio/nano OpenAI id (#961/#569), a google image/tts
+  // variant on a chat spec.
+  for (const [name, ladder] of [
+    ["openai", OPENAI_MODEL_PREFERENCES],
+    ["google", GOOGLE_MODEL_PREFERENCES],
+    ["anthropic", ANTHROPIC_MODEL_PREFERENCES],
+  ] as const) {
+    assert.ok(ladder.length > 0, `${name} ladder is empty`);
+  }
+  for (const model of [
+    "gpt-4o-mini-tts",
+    "gpt-4o-mini-audio-preview",
+    "gpt-4o-mini-search-preview",
+    "gpt-5-nano",
+    "o3-mini",
+    "o4-mini",
+  ]) {
+    assert.ok(!accepts(OPENAI_MODEL_PREFERENCES, model), `openai ladder accepts ${model}`);
+  }
+  for (const model of [
+    "gemini-3.1-flash-lite-image",
+    "gemini-2.5-flash-preview-tts",
+    "gemini-omni-flash-preview",
+  ]) {
+    assert.ok(
+      !GOOGLE_MODEL_PREFERENCES[0](model),
+      `google's first rank accepts ${model}, which is not a chat model`,
+    );
+  }
 });
 
 test("an unlisted pin with an empty panel plans nothing — and names the empty panel", () => {

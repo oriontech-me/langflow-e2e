@@ -15,35 +15,7 @@ import {
 } from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
-
-// Families that are NOT general-purpose vision chat models: reasoning (o1/o3/o4…),
-// audio/realtime/tts/transcribe, search-preview and nano variants. Substring
-// "gpt-4o-mini" alone would otherwise match e.g. "gpt-4o-mini-tts" or rank a
-// text-only "o3-mini" as a fallback, breaking callers like the agent image test
-// that need real vision output.
-const NON_CHAT_MODEL = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
-
-/**
- * What this setup will accept when no model is pinned, most- to least-preferred.
- *
- * All target small multimodal chat models; anything not matched (pro, reasoning,
- * codex) is only reached via the ranking's first-available fallback below.
- *
- * ONE list, read twice, and that is the point: it decides which toggle the plan
- * enables (#1679) and which option the post-close ranking then picks. Two copies
- * would let the setup enable one model and select another. It is also why enabling
- * nothing is not an option for OpenAI: measured on 1.13.0.dev8, its five
- * `default: true` models are `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`,
- * `gpt-5.6` and `gpt-5.6-terra` — no rank below accepts any of them, so a
- * no-pin caller would fall through to the frontier model where the whole-panel
- * sweep used to hand it `gpt-4o-mini`.
- */
-const PREFERRED_CHAT_MODELS: Array<(model: string) => boolean> = [
-  (m) => m.includes("gpt-4o-mini") && !NON_CHAT_MODEL.test(m),
-  (m) => m.includes("-mini") && !NON_CHAT_MODEL.test(m),
-  (m) => m.includes("gpt-4o") && !NON_CHAT_MODEL.test(m),
-  (m) => m.includes("gpt-4.1") && !NON_CHAT_MODEL.test(m),
-];
+import { OPENAI_MODEL_PREFERENCES } from "./model-preferences";
 
 export async function setupOpenAI(
   page: Page,
@@ -122,7 +94,12 @@ export async function setupOpenAI(
     listed: await enumerateEnabledModels(page),
     checked: await enumerateCheckedModels(page),
     requested: modelTestId,
-    acceptable: PREFERRED_CHAT_MODELS,
+    // NOT satisfiable by OpenAI's five `default: true` models — they are
+    // `gpt-6-astra` and four `gpt-5.6-*`, which none of these ranks accepts — so
+    // this is the one provider whose no-pin path really does need a write. The
+    // ladder and the reasoning for it live in `model-preferences.ts`, where the
+    // unit tests can reach them.
+    acceptable: OPENAI_MODEL_PREFERENCES,
   });
   const toggleWrite = await enableAndSettleModelToggles(page, { plan });
 
@@ -205,23 +182,44 @@ export async function setupOpenAI(
           "FAILURE, not a silent default (#1461).",
       );
     }
-    const labels = optionEntries.map((option) =>
+    // Scoped to OPENAI's own options, and that scoping is load-bearing since #1679.
+    // The picker mixes every configured provider (#597 measured it listing a gemini
+    // first while this setup's provider was OpenAI), and the last-resort branch below
+    // takes index 0. Pre-#1679 that branch was unreachable in practice — the sweep
+    // enabled all 42 OpenAI models, so rank 1 always matched — whereas now the ladder
+    // is load-bearing, and one unlanded write would have made "first available" mean
+    // Anthropic's `claude-opus-5` (the picker's actual first option, measured in
+    // `modelInputComponent.spec.ts`) selected under an OpenAI key: the #961 bug
+    // `setup-language-model-openai.ts` carries a `^gpt-` guard for. Its two siblings
+    // never needed this — they scope by `/gemini/` and `/claude/`.
+    const ownOptions = optionEntries.filter((option) => option.provider === "OpenAI");
+    if (ownOptions.length === 0) {
+      await page.keyboard.press("Escape");
+      throw new Error(
+        `MODEL_PICKER_DEFECT: the model picker offers no OpenAI option after configuring ` +
+          `OpenAI — ${optionEntries.length} option(s) enumerated across ` +
+          `[${[...new Set(optionEntries.map((o) => o.provider ?? "(unparsed)"))].join(", ")}]. ` +
+          `Ranking the whole picker instead would select another provider's model under ` +
+          `OpenAI's key, so this is reported as a FAILURE, not degraded (#1461/#1679).`,
+      );
+    }
+    const labels = ownOptions.map((option) =>
       (option.model ?? option.visibleLabel).trim().toLowerCase(),
     );
 
     // The ranking runs on the SAME ladder the toggle plan used above
-    // (`PREFERRED_CHAT_MODELS`), so the model this setup enabled is the model it
+    // (`OPENAI_MODEL_PREFERENCES`), so the model this setup enabled is the model it
     // then selects (#1679).
     let chosenIndex = -1;
-    for (const matches of PREFERRED_CHAT_MODELS) {
+    for (const matches of OPENAI_MODEL_PREFERENCES) {
       const idx = labels.findIndex(matches);
       if (idx !== -1) {
         chosenIndex = idx;
         break;
       }
     }
-    if (chosenIndex === -1) chosenIndex = 0; // no preferred match — first available
+    if (chosenIndex === -1) chosenIndex = 0; // no preferred match — first OpenAI option
 
-    await clickModelOption(page, optionEntries[chosenIndex]);
+    await clickModelOption(page, ownOptions[chosenIndex]);
   }
 }
