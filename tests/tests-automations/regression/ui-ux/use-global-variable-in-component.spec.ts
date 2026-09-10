@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
 
 // Consumption side of global variables: binding a Credential-typed variable to a
 // component's secret field (OpenAI `api_key`, a SecretStrInput) via the field's
@@ -23,7 +24,9 @@ async function addOpenAiComponent(page: Page): Promise<void> {
 
   await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("openai");
-  await page.waitForSelector('[data-testid="openaiOpenAI"]', { timeout: 30000 });
+  await page.waitForSelector('[data-testid="openaiOpenAI"]', {
+    timeout: 30000,
+  });
   await page
     .getByTestId("openaiOpenAI")
     .hover()
@@ -32,7 +35,9 @@ async function addOpenAiComponent(page: Page): Promise<void> {
     });
 
   // The OpenAI node renders expanded, so its primary `api_key` field is on the canvas.
-  await expect(page.getByTestId(API_KEY_ANCHOR)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId(API_KEY_ANCHOR)).toBeVisible({
+    timeout: 15000,
+  });
 }
 
 /**
@@ -86,7 +91,11 @@ async function createAndBindCredentialVariable(
   });
 
   await page.getByPlaceholder("Enter a name for the variable...").fill(varName);
-  // Switch to Credential BEFORE saving — otherwise a Generic variable is created.
+  // Selects the Credential tab explicitly. Measured on 1.13.0.dev8 (#1788's
+  // force-fail audit): removing this click does NOT produce a Generic variable —
+  // opening "Add New Variable" from a `SecretStrInput`'s own dropdown already
+  // creates a Credential, so the click is belt-and-braces, not the thing that
+  // decides the type. The comment here used to claim the opposite.
   await page.getByTestId("credential-tab").click();
   await page
     .getByPlaceholder("Enter a value for the variable...")
@@ -101,11 +110,57 @@ async function createAndBindCredentialVariable(
   // After creation the variable is either left selectable in the still-open
   // dropdown or auto-bound to the referencing field. Wait for whichever occurs,
   // then bind explicitly only when it isn't bound yet.
-  await expect(boundValue.or(optionRow)).toBeVisible({ timeout: 10000 });
-  if ((await optionRow.count()) > 0) {
+  //
+  // `.first()` is load-bearing, and its absence was a latent strict-mode defect
+  // rather than a style choice: the two states are not exclusive. On
+  // 1.13.0.dev8 creating the variable from this field auto-binds it AND leaves
+  // the dropdown open listing it, so `boundValue.or(optionRow)` resolves to TWO
+  // elements and `toBeVisible` fails with `strict mode violation` — measured
+  // 2/2 red locally on a spec the T1 triage table recorded 3/3 green, because
+  // CI happened to poll while only the option row had rendered. Waiting for
+  // "whichever of the two" is what this line means; it must not also assert
+  // that only one of them exists.
+  await expect(boundValue.or(optionRow).first()).toBeVisible({
+    timeout: 10000,
+  });
+  // Bind only when the field does NOT already show the variable: clicking the
+  // option row of an already-bound variable is a second toggle on the same
+  // value, which is how a passing bind would be undone.
+  if ((await boundValue.count()) === 0 && (await optionRow.count()) > 0) {
     await optionRow.click();
   }
   await expect(boundValue).toBeVisible({ timeout: 10000 });
+}
+
+/**
+ * Asserts the variable the test just created is actually a **Credential**.
+ *
+ * Added by #1788's force-fail audit, which is the only reason it exists: skipping
+ * the `credential-tab` click — so a **Generic** variable is created instead — left
+ * the test GREEN. The dropdown offers Generic variables to this field too, and the
+ * binding assertion reads the variable NAME, which is identical either way, so the
+ * word "Credential" in the test title was not verified by anything. A regression
+ * that made the credential tab write the wrong type would have gone unnoticed.
+ *
+ * Read over the API rather than off the UI: the type is not rendered anywhere on the
+ * canvas once the variable is bound.
+ */
+async function expectCredentialVariable(
+  request: import("@playwright/test").APIRequestContext,
+  varName: string,
+): Promise<void> {
+  const authToken = await getAuthToken(request);
+  const listRes = await request.get("/api/v1/variables/", {
+    headers: { Authorization: authToken },
+  });
+  expect(listRes.ok()).toBeTruthy();
+  const variables = (await listRes.json()) as Array<{
+    name: string;
+    type?: string;
+  }>;
+  const match = variables.find((v) => v.name === varName);
+  expect(match, `global variable ${varName} must exist`).toBeTruthy();
+  expect(match?.type).toBe("Credential");
 }
 
 /**
@@ -120,7 +175,10 @@ async function deleteVariableByName(
     headers: { Authorization: authToken },
   });
   if (!listRes.ok()) return;
-  const variables = (await listRes.json()) as Array<{ id: string; name: string }>;
+  const variables = (await listRes.json()) as Array<{
+    id: string;
+    name: string;
+  }>;
   const match = variables.find((v) => v.name === varName);
   if (match) {
     await request.delete(`/api/v1/variables/${match.id}`, {
@@ -129,71 +187,98 @@ async function deleteVariableByName(
   }
 }
 
-test(
-  "bind a Credential global variable to a component secret field",
-  { tag: ["@release", "@workspace", "@regression"] },
-  async ({ page, request }) => {
-    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const varName = `gv-api-key-${stamp}`;
-    const sentinelValue = `SECRET-SENTINEL-${stamp}`;
+// Both tests reach the canvas through `awaitBootstrapTest`, which creates `New Flow`
+// and `Basic Prompting` whenever the default project is empty, and then open a blank
+// flow of their own. None of those ids was ever seen by this file, so the `finally`
+// blocks below — which delete the global VARIABLE, correctly — left the flows behind:
+// measured 4 per run against a purged instance (#1788). `trackCreatedFlows` captures
+// every `POST /api/v1/flows/` → 201 the page performs and deletes exactly those ids.
+test.describe("Global variable bound to a component secret field", () => {
+  let flows: ReturnType<typeof trackCreatedFlows>;
 
-    try {
-      await test.step("Add an OpenAI component with an api_key secret field", async () => {
-        await addOpenAiComponent(page);
-      });
+  test.beforeEach(async ({ page }) => {
+    flows = trackCreatedFlows(page);
+  });
 
-      await test.step("Create a Credential variable and bind it to the api_key field", async () => {
-        await createAndBindCredentialVariable(page, varName, sentinelValue);
-      });
+  test.afterEach(async ({ request }) => {
+    await flows.cleanup(request);
+    flows.dispose();
+  });
 
-      await test.step("Field shows the variable name and never leaks the secret value", async () => {
-        // The field displays the variable NAME as its bound value.
-        await expect(
-          page.getByTestId(API_KEY_ANCHOR).getByText(varName, { exact: true }),
-        ).toBeVisible({ timeout: 10000 });
+  test(
+    "bind a Credential global variable to a component secret field",
+    { tag: ["@stable", "@release", "@workspace", "@regression"] },
+    async ({ page, request }) => {
+      const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const varName = `gv-api-key-${stamp}`;
+      const sentinelValue = `SECRET-SENTINEL-${stamp}`;
 
-        // The secret value is never rendered as visible text anywhere on the page.
-        // Substring match (no `exact`) also catches a leak embedded in a longer string.
-        await expect(page.getByText(sentinelValue)).toHaveCount(0, {
-          timeout: 5000,
+      try {
+        await test.step("Add an OpenAI component with an api_key secret field", async () => {
+          await addOpenAiComponent(page);
         });
-      });
-    } finally {
-      await deleteVariableByName(request, varName);
-    }
-  },
-);
 
-test(
-  "component secret-field global-variable binding persists across reload",
-  { tag: ["@release", "@workspace", "@regression"] },
-  async ({ page, request }) => {
-    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const varName = `gv-api-key-${stamp}`;
-    const sentinelValue = `SECRET-SENTINEL-${stamp}`;
-
-    try {
-      await test.step("Add an OpenAI component and bind a Credential variable to api_key", async () => {
-        await addOpenAiComponent(page);
-        await createAndBindCredentialVariable(page, varName, sentinelValue);
-      });
-
-      await test.step("Reload the page and confirm the binding survived", async () => {
-        // Let the flow autosave the binding, then reload from scratch.
-        await page.waitForTimeout(2000);
-        await page.reload();
-
-        // The rehydrated node still shows the same variable as its bound value —
-        // auto-bind never overrides an explicit binding saved in the flow.
-        await expect(page.getByTestId(API_KEY_ANCHOR)).toBeVisible({
-          timeout: 30000,
+        await test.step("Create a Credential variable and bind it to the api_key field", async () => {
+          await createAndBindCredentialVariable(page, varName, sentinelValue);
         });
-        await expect(
-          page.getByTestId(API_KEY_ANCHOR).getByText(varName, { exact: true }),
-        ).toBeVisible({ timeout: 15000 });
-      });
-    } finally {
-      await deleteVariableByName(request, varName);
-    }
-  },
-);
+
+        await test.step("The variable created from the field is a Credential", async () => {
+          await expectCredentialVariable(request, varName);
+        });
+
+        await test.step("Field shows the variable name and never leaks the secret value", async () => {
+          // The field displays the variable NAME as its bound value.
+          await expect(
+            page
+              .getByTestId(API_KEY_ANCHOR)
+              .getByText(varName, { exact: true }),
+          ).toBeVisible({ timeout: 10000 });
+
+          // The secret value is never rendered as visible text anywhere on the page.
+          // Substring match (no `exact`) also catches a leak embedded in a longer string.
+          await expect(page.getByText(sentinelValue)).toHaveCount(0, {
+            timeout: 5000,
+          });
+        });
+      } finally {
+        await deleteVariableByName(request, varName);
+      }
+    },
+  );
+
+  test(
+    "component secret-field global-variable binding persists across reload",
+    { tag: ["@stable", "@release", "@workspace", "@regression"] },
+    async ({ page, request }) => {
+      const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const varName = `gv-api-key-${stamp}`;
+      const sentinelValue = `SECRET-SENTINEL-${stamp}`;
+
+      try {
+        await test.step("Add an OpenAI component and bind a Credential variable to api_key", async () => {
+          await addOpenAiComponent(page);
+          await createAndBindCredentialVariable(page, varName, sentinelValue);
+        });
+
+        await test.step("Reload the page and confirm the binding survived", async () => {
+          // Let the flow autosave the binding, then reload from scratch.
+          await page.waitForTimeout(2000);
+          await page.reload();
+
+          // The rehydrated node still shows the same variable as its bound value —
+          // auto-bind never overrides an explicit binding saved in the flow.
+          await expect(page.getByTestId(API_KEY_ANCHOR)).toBeVisible({
+            timeout: 30000,
+          });
+          await expect(
+            page
+              .getByTestId(API_KEY_ANCHOR)
+              .getByText(varName, { exact: true }),
+          ).toBeVisible({ timeout: 15000 });
+        });
+      } finally {
+        await deleteVariableByName(request, varName);
+      }
+    },
+  );
+});
