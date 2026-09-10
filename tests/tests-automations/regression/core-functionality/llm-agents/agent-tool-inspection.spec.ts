@@ -20,9 +20,10 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * Playground"). After a tool-using run, the operator must be able to inspect
  * what the agent did — this spec asserts BOTH layers of that surface:
  *
- *   1. UI (which tool) — the Playground renders a `div-tools_tools_metadata`
- *      row with a `tool_<name>` chip (here `tool_fetch_content`, label
- *      "FETCH_CONTENT") naming the tool the agent called.
+ *   1. UI (which tool) — the Playground renders a COMPLETED step for the call
+ *      (`tool-status-done`). The accordion trigger reads "FETCH CONTENT" plus
+ *      the duration; the dot's own parent, asserted here, is the title cell
+ *      and carries the name alone.
  *   2. Payload (what it did) — the run's persisted `tool_use` content block
  *      (monitor API, nonce-keyed) carries `tool_input` (the exact arguments,
  *      here the prompt's URL) and `output` (the tool result, the deterministic
@@ -30,17 +31,32 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  *
  * 1.12 rendering note: through ~1.11 the tool call surfaced as a
  * `.cursor-pointer` "Called tool" accordion that expanded inline to Input/Output
- * JSON; on 1.12 that accordion is gone (scouted live on 1.12.0.dev0). The chips
- * name the tool; the input/output payload lives only in `content_blocks`, which
- * is what any inspection reads from — so this spec asserts the chip (UI) + the
+ * JSON; on 1.12 that accordion is gone (scouted live on 1.12.0.dev0). The
+ * input/output payload lives only in `content_blocks`, which is what any
+ * inspection reads from — so this spec asserts the completed step (UI) + the
  * persisted payload (API), not a DOM accordion that no longer exists (#894 found
  * the same drift for the MCP-tool indicator).
  *
+ * WHY NOT `div-tools_tools_metadata` / `tool_<name>` (#1451). Until this
+ * revision layer 1 asserted those two test ids, on the stated premise that "the
+ * block only exists after a real tool call, so a hallucinated text-only answer
+ * has no chip". That premise is FALSE, and the assertion was a no-op: they are
+ * the `tools_metadata` FIELD of the URL and Web Search NODES on the canvas
+ * (`aria-labelledby="node-URLComponent-…-field-tools_metadata-label"`), which
+ * stays mounted BEHIND the Playground modal and is therefore matched by an
+ * unscoped `.last()`. They list the tools ATTACHED to the agent, not the ones it
+ * used, and they exist before any run. Measured on 1.12.1: an agent told never
+ * to call a tool, answering "4" to "what is 2+2", still renders 2 metadata
+ * blocks and BOTH chips (`tool_fetch_content`, `tool_perform_search`) with no
+ * `tool_use` block persisted — the old layer 1 passed. `tool-status-done` is 0
+ * on that run and exactly 1 on a real call. `mcp-client-agent.spec.ts` asserts
+ * the same two test ids and its comment carries the same premise; that is a
+ * separate spec and is deliberately NOT fixed here — tracked by #1793.
+ *
  * Distinct from siblings: `agent-multi-tool-selection` asserts WHICH tool and
- * the ORDER of a sequence; `mcp-client-agent` asserts the chip for MCP tools.
- * Neither asserts the tool call's INPUT arguments are captured — this spec's
- * subject. Gated: no @stable at creation (flaky cluster #773; promotion gated
- * on the clean baseline #818, per #827).
+ * the ORDER of a sequence; `mcp-client-agent` asserts a tool indicator for MCP
+ * tools. Neither asserts the tool call's INPUT arguments are captured — this
+ * spec's subject.
  */
 
 if (!process.env.CI) {
@@ -54,6 +70,10 @@ const HTTPBIN_BASE = (
 ).replace(/\/$/, "");
 const FETCH_URL = `${HTTPBIN_BASE}/json`;
 const URL_TOOL = "fetch_content";
+// The completed step renders the tool name as a display label ("FETCH CONTENT"),
+// so match it tolerantly: uppercased-with-spaces and the raw `fetch_content`
+// spelling both satisfy this, and neither is hardcoded away from URL_TOOL.
+const TOOL_STEP_LABEL = new RegExp(URL_TOOL.replace(/_/g, "[\\s_]"), "i");
 const EXPECTED_TITLE = /Sample Slide Show/i;
 const SYSTEM_PROMPT =
   "For every user question you MUST call exactly one tool to obtain the answer - " +
@@ -141,12 +161,27 @@ async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   await waitForAgentToFinish(page);
 }
 
-// The Playground renders the tools-metadata block inside a collapsed
-// "Steps"/"Finished" accordion by default (chat-message.tsx, hideHeader=false —
-// chevron click required to reveal it). Best-effort expand every such row so the
-// `div-tools_tools_metadata` / `tool_<name>` chips become visible; if already
-// expanded the click is a no-op. Mirrors mcp-client-agent.spec.ts (proven on
-// 1.12) — the chevron trigger is a `.cursor-pointer` in the header row.
+// Best-effort expand of the "Steps"/"Finished" accordion. Measured on 1.12.1 it
+// matches ZERO rows and `tool-status-done` is already visible before it runs —
+// yet it is kept, because WHY it matches nothing is a property of the PRODUCER,
+// not of the surface, and the branch it guards is live product code.
+//
+// `ContentBlockDisplay.tsx` splits a message's content two ways. GROUPED blocks
+// render inside `{(hideHeader || isExpanded) && <Accordion …>}`, behind a header
+// (`{!hideHeader && …}`, and neither call site passes `hideHeader`, which
+// defaults to false) whose title is "Steps"/"Finished" and whose `.cursor-pointer`
+// chevron toggles `isExpanded` — initialised to `false`. On that branch the tool
+// cards are NOT IN THE DOM until the chevron is clicked, and this helper's
+// selector matches that row exactly. FLAT items take the other path
+// (`looseItems`), rendered above it with no header gate at all, and the file
+// says which one we get: "The agent emits tool_use items flat (not inside a
+// group), so they get their own ToolCallCard wrapper".
+//
+// So the helper is dead only for as long as the agent keeps emitting flat. An
+// earlier revision of this spec deleted it and justified that with
+// `ToolCallCard.tsx`'s "collapses to header-only once the producer attaches a
+// duration" — the WRONG mechanism: that comment is about the per-card accordion
+// holding the args/result body, not about the Steps accordion this targets.
 async function expandAgentSteps(page: Page): Promise<void> {
   await page.evaluate(() => {
     const rows = Array.from(
@@ -160,7 +195,6 @@ async function expandAgentSteps(page: Page): Promise<void> {
     }
   });
 }
-
 // Payload inspection (§6.5): the persisted `tool_use` block for THIS run
 // (nonce-keyed) must carry `tool_input` containing `inputNeedle` (the prompt's
 // exact URL — proves the captured input is the real arguments) AND `output`
@@ -232,7 +266,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`Agent Tool Inspection [${label}]`, () => {
     test(
       "Playground names the tool used and captures its input/output",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -255,19 +289,38 @@ for (const { label, options, skipReason } of targets) {
           await openPlaygroundAndSend(page, task);
         });
 
-        await test.step("UI inspection: the tools-used row names the URL tool", async () => {
-          // Reveal the collapsed Steps accordion, then assert the tools-metadata
-          // block + the URL-tool chip (unscoped `.last()`, mirroring the proven
-          // mcp-client-agent assertions — the block only exists after a real tool
-          // call, so a hallucinated text-only answer has no chip).
+        await test.step("UI inspection: the completed step names the URL tool", async () => {
+          // Expand first (a no-op today — see `expandAgentSteps`), then assert a
+          // COMPLETED tool step. `tool-status-done` is the only element
+          // in the Playground that an actual invocation creates: measured on
+          // 1.12.1, a run where the agent answered from memory renders ZERO of
+          // them, and a run that called the tool renders exactly one, in a row
+          // reading "FETCH CONTENT 834ms". Its parent is the title cell, whose
+          // text is the tool NAME alone (no duration) — that is what the second
+          // assertion reads.
+          //
+          // `done` is not the only status this can be missing for, and the
+          // message has to say so or it misattributes (#884). `toolStatus.ts`
+          // derives `error` (which WINS over a duration) | `done` | `running`,
+          // so a call that FAILED renders `tool-status-error` and one that never
+          // resolved renders `tool-status-running` — both are invocations. And a
+          // grouped `tool_use` would be behind the collapsed Steps accordion the
+          // helper above exists for. This spec requires a SUCCESSFUL call — it
+          // goes on to assert the fetched payload — so failing here is right in
+          // every one of those cases; only the wording has to distinguish them.
           await expandAgentSteps(page);
+          const completedToolSteps = page.getByTestId("tool-status-done").locator("xpath=..");
           await expect(
-            page.getByTestId("div-tools_tools_metadata").last(),
-            "Playground must show a tool-usage block — agent answered without invoking any tool",
+            completedToolSteps.first(),
+            "Playground must show a COMPLETED tool step (`tool-status-done`). " +
+              "Either the agent invoked no tool at all, or the call it made " +
+              "errored (`tool-status-error`, which wins over a duration), or it " +
+              "never resolved (`tool-status-running`, no duration attached), or " +
+              "the card is inside a collapsed Steps/Finished group accordion",
           ).toBeVisible({ timeout: 120000 });
           await expect(
-            page.getByTestId(`tool_${URL_TOOL}`).last(),
-            `The tool named in the Playground must be ${URL_TOOL}`,
+            completedToolSteps.filter({ hasText: TOOL_STEP_LABEL }).first(),
+            `The tool named in the Playground step must be ${URL_TOOL}`,
           ).toBeVisible({ timeout: 5000 });
         });
 
