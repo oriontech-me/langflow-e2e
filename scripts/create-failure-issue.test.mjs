@@ -589,6 +589,23 @@ test("the outage banner stays off the shapes that have no failures below it", ()
     if (flag === "empty" || flag === "mergeFailed") {
       assert.match(body, /no provider was \*\*recorded\*\* usable on this run/);
     }
+    // The CAUSE hint is `empty`'s alone. #1058 aborts the shards, which is a cause
+    // `mergeFailed` demonstrably does not have — its own text says every shard
+    // finished and no spec is implicated, so the hint would contradict it three lines
+    // down, which is the defect this whole PR keeps removing from other messages.
+    if (flag === "mergeFailed") {
+      assert.doesNotMatch(body, /can abort the shards/);
+    }
+    if (flag === "empty") {
+      assert.match(body, /can abort the shards in the same run/);
+    }
+  }
+
+  // ...and the note must be ABSENT on a live account, or it becomes a false claim on
+  // every aborted run — the #1012 class it exists to satisfy, inverted.
+  for (const flag of ["empty", "mergeFailed"]) {
+    const { body } = renderIssue({ ...ACTIONS, [flag]: true, accountDry: false, runTests: "3" });
+    assert.doesNotMatch(body, /no provider was \*\*recorded\*\* usable/, `${flag} on a live account`);
   }
 });
 

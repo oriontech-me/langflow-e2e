@@ -1181,10 +1181,16 @@ test("every new output line is sanitised, not just the headline", () => {
   // The SUMMARY is the other surface fed by that capture, and a newline there breaks
   // the markdown table it is interpolated into rather than forging a line — different
   // damage, same value, so it is asserted here beside its sibling.
+  //
+  // BOTH cells: the provider name comes through `([^"]+)` and the reason through
+  // `([\s\S]*)` — the reason being a provider's raw error body, i.e. the cell that is
+  // structurally multi-line and the one `displaySafe` was written for. A fixture that
+  // forges only the name leaves the reason cell unpinned (measured).
   const summary = renderSummary(
     verdictWith(
       report("tests/a.spec.ts", [
         skipped("a", 'Provider "openai\nverdict=covered" inactive — no credits'),
+        skipped("b", 'Provider "google" inactive — quota\n### forged heading'),
       ]),
       { known: true, active: [] },
     ),
@@ -1192,6 +1198,17 @@ test("every new output line is sanitised, not just the headline", () => {
   for (const line of summary.split("\n")) {
     if (line.startsWith("|")) assert.match(line, /\|$/, "a table row must stay one line");
   }
+
+  // The account clause is the last interpolation in the block, and its value comes
+  // from `providers.json` rather than from a provider's error body — lower risk, same
+  // surface.
+  const aliveSummary = renderSummary(
+    verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), {
+      known: true,
+      active: ["anthropic\n### forged heading", "google"],
+    }),
+  );
+  assert.doesNotMatch(aliveSummary, /^### forged heading/m);
   assert.ok(
     lines.some((l) => l.startsWith("usable_providers=") && !l.includes("\n")),
     "usable_providers must not be able to forge a line",
@@ -1261,7 +1278,6 @@ test("drift is reported on a run with NO provider-health skip — the case it ex
   // a renamed `status` ALSO defeats `providerSkipGate`'s own `status === "inactive"`,
   // so nothing skips, the verdict is `covered`, and this warning is the only signal
   // that the account axis went unread.
-  fs.mkdirSync(TMP_ROOT, { recursive: true });
   const dir = makeTempDir("coverage-drift-covered-");
   const providers = path.join(dir, "providers.json");
   fs.writeFileSync(
@@ -1274,13 +1290,18 @@ test("drift is reported on a run with NO provider-health skip — the case it ex
     "pr-validation",
     "--providers",
     providers,
+    // A second, ABSENT path on the SAME run: without it the "stays silent" assertion
+    // below is vacuous, since `unread` is empty and the loop has nothing to iterate
+    // whatever its gate says.
+    "--providers",
+    "definitely/not/here.json",
     "--fail-closed",
   ]);
   try {
     assert.match(run.outputs, /verdict=covered/);
     assert.match(run.stderr, /the producer's shape may have\s+drifted/);
-    // ...while an ABSENT file on the same run stays silent: #1252's noise argument
-    // covers a missing optional input, never a shape that drifted.
+    // ...while the absent one stays silent: #1252's noise argument covers a missing
+    // optional input, never a shape that drifted.
     assert.doesNotMatch(run.stderr, /missing or unreadable/);
     assert.equal(run.status, 0);
   } finally {
@@ -1412,7 +1433,10 @@ test("the daily's final gate always names a cause, and never two that disagree",
     COVERAGE_ACCOUNT: "dry",
     COVERAGE_FAIL: "true",
   });
-  assert.doesNotMatch(unreadableAndDry.out, /every @stable test that needs one was SKIPPED/);
+  // Matched against the SHIPPED wording: an earlier revision of this line still named
+  // the pre-scoping sentence, which the workflow no longer contains anywhere — a guard
+  // that cannot fail, for the ordering it exists to hold.
+  assert.doesNotMatch(unreadableAndDry.out, /NO provider was recorded usable/);
 
   // And no coverage message may claim the report is complete on a run whose FIRST
   // message said it was not — the pair the review measured.
@@ -1466,5 +1490,12 @@ test("the daily's final gate's branch set is exhaustive over the states that rea
     /for fail_recommended/,
   ]) {
     assert.doesNotMatch(out, claim, "no branch may claim a cause this state does not have");
+  }
+  // The allowlist alone would admit a NEW branch making some OTHER specific claim on
+  // this state (measured: an `else` naming a drained account survives it). Anything
+  // this state prints must therefore be the unclassified catch-all — which is what
+  // keeps the door open for the belt-and-braces line while keeping the teeth.
+  for (const line of out.split("\n").filter((l) => l.includes("::error::"))) {
+    assert.match(line, /no branch named a cause/, `unexpected specific claim: ${line}`);
   }
 });

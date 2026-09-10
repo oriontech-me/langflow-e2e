@@ -152,16 +152,26 @@ export function renderIssue({
   // dry account is reported by nothing else at all: the banner is scoped away (there
   // are no failures to read against it), the run's own `::error::` needs a
   // provider-health skip that an aborted run never produced, and `renderSummary`
-  // returns "" for the `covered` verdict such a report yields. It is a CAUSE HINT
-  // there rather than collateral framing — #1058 is one sweep that can record every
-  // provider `inactive` AND abort the shards — so it is worded as a note, not as a
-  // heading (#1012: the fact must exist somewhere a human reads).
-  const dryAccountNote = accountDry
+  // returns "" for the `covered` verdict such a report yields. So the FACT is carried
+  // on both — as a note rather than a heading, since neither shape is about it
+  // (#1012: it has to exist somewhere a human reads).
+  //
+  // The CAUSE HINT is `empty`'s alone, and the split is the point. #1058 is one sweep
+  // that can record every provider `inactive` AND abort the shards, which makes the
+  // hint worth printing where the shards aborted — and false where they did not:
+  // `mergeFailed`'s own text says every shard finished and no spec is implicated, so
+  // offering "can abort the shards in the same run" three lines below it names a cause
+  // that shape does not have. The same defect this round removed from the daily's dry
+  // `::error::`, in the umbrella.
+  const dryAccountFact =
+    "Note: no provider was **recorded** usable on this run (`providers.json`).";
+  const dryAccountNote = accountDry ? ["", dryAccountFact] : [];
+  const dryAccountNoteWithCause = accountDry
     ? [
         "",
-        "Note: no provider was **recorded** usable on this run (`providers.json`). Possibly the",
-        "same cause — `Collect models` failing to import the keys records every provider",
-        "`inactive` and can abort the shards in the same run (#1058/#1800).",
+        `${dryAccountFact} Possibly the same cause —`,
+        "`Collect models` failing to import the keys records every provider `inactive` and",
+        "can abort the shards in the same run (#1058/#1800).",
       ]
     : [];
 
@@ -194,7 +204,7 @@ export function renderIssue({
             : "The merged report was **missing or unparseable** — the run produced no readable result at all. Suspect the merge step and the per-shard blob files first."
           : `The merged report carries **no test results at all** (${runErrors} top-level report error(s)) — the shards aborted before the first test.`,
         "No spec failed and no `@stable` tag was touched, so there is **no per-test evidence to triage**.",
-        ...dryAccountNote,
+        ...dryAccountNoteWithCause,
         ...(firstError ? ["", "```", firstError, "```"] : []),
         "",
         "**Triage this as infrastructure**: find why nothing ran, not which test broke.",

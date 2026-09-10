@@ -569,8 +569,8 @@ export function renderSummary(result) {
                 ? "This run still produced no verdict — a spec hardcoded to the dead provider does not recover by re-running."
                 : "So this run is narrower than the check status shows, not blind.";
             return stillUsable.length > 0
-              ? `Still usable: **${stillUsable.join(", ")}** — the account is up, so it is not what needs fixing. ${scope}`
-              : `The account is up (**${result.usableProviders.join(", ")}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;
+              ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}`
+              : `The account is up (**${displaySafe(result.usableProviders.join(", "))}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;
           })()
         : "Whether any provider was usable is **UNKNOWN** (no readable `providers.json`). Unknown is not clean (#1012).",
     "",
