@@ -1177,6 +1177,21 @@ test("every new output line is sanitised, not just the headline", () => {
     lines.filter((l) => l.startsWith("verdict=")).length === 1,
     "no output value may forge a second verdict= line",
   );
+
+  // The SUMMARY is the other surface fed by that capture, and a newline there breaks
+  // the markdown table it is interpolated into rather than forging a line — different
+  // damage, same value, so it is asserted here beside its sibling.
+  const summary = renderSummary(
+    verdictWith(
+      report("tests/a.spec.ts", [
+        skipped("a", 'Provider "openai\nverdict=covered" inactive — no credits'),
+      ]),
+      { known: true, active: [] },
+    ),
+  );
+  for (const line of summary.split("\n")) {
+    if (line.startsWith("|")) assert.match(line, /\|$/, "a table row must stay one line");
+  }
   assert.ok(
     lines.some((l) => l.startsWith("usable_providers=") && !l.includes("\n")),
     "usable_providers must not be able to forge a line",
@@ -1371,7 +1386,11 @@ test("the daily's final gate always names a cause, and never two that disagree",
     ],
     [
       { COVERAGE_VERDICT: "degraded", COVERAGE_ACCOUNT: "dry", COVERAGE_FAIL: "true" },
-      /NO provider was recorded usable/,
+      // Scoped to the tests that PRODUCED A RESULT: this line can print under a
+      // `PARTIAL` or incomplete report, which the branch above just called
+      // under-counted, so an unscoped "every @stable test that needs one" speaks for
+      // specs that never ran.
+      /every @stable test that needs one AND produced a result was SKIPPED/,
     ],
     [
       { COVERAGE_VERDICT: "uncovered", COVERAGE_ACCOUNT: "alive", COVERAGE_FAIL: "true" },
