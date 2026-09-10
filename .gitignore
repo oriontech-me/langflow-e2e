@@ -57,3 +57,8 @@ runs/
 
 # Per-machine API coverage measurement (#1692) — aggregated by npm run api:coverage
 .api-coverage/
+
+# Playwright's json reporter output. CI has written it in the merge job for a long
+# time; #1456 added it to the PR lane's run and gave anyone reproducing the
+# provider-coverage verdict locally a reason to produce one at the repo root.
+results.json

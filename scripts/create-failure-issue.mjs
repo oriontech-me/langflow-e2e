@@ -54,8 +54,8 @@
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
-//   PROVIDER_LEVEL="uncovered", PROVIDER_UNVERIFIED, PROVIDER_SKIPPED — the run was
-//     complete and readable and covered no provider at all (#1456)
+//   PROVIDER_LEVEL="uncovered", PROVIDER_UNVERIFIED, PROVIDER_SKIPPED — the report was
+//     complete and readable and NO provider was usable (#1456)
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
 //   ISSUE_CC   (default the QA roster; set to "" to open the issue without a /cc)
 //   GITHUB_TOKEN / GH_TOKEN  used for the REST path; absent = fall back to `gh`
@@ -125,10 +125,13 @@ export function renderIssue({
   //    say so instead of rendering the auto-removal line, which reads as a clean
   //    triage on an empty report.
   // 2. PARTIAL (#1058): some shards ran, some aborted; the totals under-count.
-  // 3. NO provider verified (#1456): the report is complete, readable and full of
-  //    results, and every test gated on provider health skipped. It follows the
-  //    three above because an abort explains more than a coverage gap does, and it
-  //    precedes the auto-removal line because no tag was touched: nothing failed.
+  // 3. NO provider was USABLE (#1456): the report is complete, readable and full of
+  //    results, and `collect-models` could not reach a single provider. It follows the
+  //    three above because an abort explains more than a coverage gap does. It takes
+  //    the TITLE from the auto-removal shape below because the outage is the most
+  //    actionable fact of such a day — but it CARRIES that shape's summary rather than
+  //    replacing it: this branch is chosen by the coverage level, which says nothing
+  //    about whether tests also failed.
   // 4. The auto-remove step acted — show what it did.
   // 5. Neither (it errored, or a guard skipped it) — manual triage.
   const mergeFailedSection = [
@@ -194,16 +197,37 @@ export function renderIssue({
         ]
       : providerUncovered
       ? [
-          "### ⚠️ NO provider was verified — an ops outage, not a per-test failure",
+          "### ⚠️ NO provider was usable — an ops outage, not a per-test failure",
           "",
-          `Every test in the spec files gated on provider health was **skipped** (${providerSkipped} skipped, 0 executed)`,
-          `because \`collect-models\` probed ${providerUnverified || "every provider"} down. The report is complete and`,
-          "readable, no spec failed and no `@stable` tag was touched — which is exactly why this issue",
-          "exists: nothing else on the run says the LLM surface went unmeasured (#1456).",
+          `\`collect-models\` recorded **every** configured provider as unusable (${providerUnverified || "all of them"}),`,
+          `so ${providerSkipped} test(s) skipped on provider health and the run carries no evidence about`,
+          "the LLM surface at all. The report is complete and readable — which is exactly why this",
+          "issue exists: nothing else on the run says that surface went unmeasured (#1456).",
           "",
-          "**Triage this as ops**: restore the account(s) above, then re-run. The specs are not",
-          "implicated, and the skips themselves are correct — a dead key cannot produce a verdict",
+          "**Triage this as ops**: restore the account(s) above, then re-run. Re-running before that",
+          "changes nothing, and the skips themselves are correct — a dead key cannot produce a verdict",
           "about Langflow. What is wrong is a run reporting as coverage it did not have (#570/#1012).",
+          // The auto-removal block is carried, never replaced. This shape is chosen by
+          // the coverage LEVEL, which says nothing about whether tests also failed, so
+          // a red-and-dry day reaches it with tags already stripped. An earlier draft
+          // asserted "no spec failed and no `@stable` tag was touched" unconditionally
+          // and dropped the summary — telling the triager the specs were not implicated
+          // on a day three tags had just been removed.
+          ...(arStatus
+            ? [
+                "",
+                "### `@stable` auto-removal",
+                "",
+                arSummary,
+                "",
+                "Tests DID fail on this run and the tag was mutated on that evidence. Weigh it against",
+                "the outage above before accepting a removal — a dry account is a plausible cause of",
+                "collateral failures, and the infra-signature exemption does not classify one (#1031).",
+              ]
+            : [
+                "",
+                "No `@stable` tag was touched on this run.",
+              ]),
         ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
@@ -233,7 +257,7 @@ export function renderIssue({
     : partial
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
       : providerUncovered
-        ? `[Daily Failure] @stable run verified NO provider on ${today} (${image})`
+        ? `[Daily Failure] @stable run had NO usable provider on ${today} (${image})`
         : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and

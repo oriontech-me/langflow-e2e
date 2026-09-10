@@ -13,6 +13,11 @@ export interface ProviderCoverageEntry {
   skipped: number;
 }
 
+export interface ProviderUsability {
+  known: boolean;
+  active: string[];
+}
+
 export interface ProviderCoverageVerdict {
   level: "covered" | "degraded" | "uncovered" | "unknown";
   unverified: ProviderCoverageEntry[];
@@ -20,10 +25,13 @@ export interface ProviderCoverageVerdict {
   executed: number;
   gatedFiles: string[];
   totalTests: number;
+  usableProviders: string[];
+  usabilityKnown: boolean;
 }
 
 export declare const PROVIDER_INACTIVE_SKIP: RegExp;
 
 export declare function providerCoverageVerdict(
   report: unknown,
+  usability?: ProviderUsability,
 ): ProviderCoverageVerdict;

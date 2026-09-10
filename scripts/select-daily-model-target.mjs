@@ -83,8 +83,8 @@
  * it pins. Always prints the decision as JSON on stdout.
  */
 import * as fs from "fs";
+import { appendSummary } from "./lib/step-summary.mjs";
 import {
-  appendSummary,
   readProvidersFile,
   // Named for the lane that first needed it (#1169); it is really
   // "is this provider usable, and what model did collect-models settle on".
@@ -221,6 +221,12 @@ export function selectDailyModelTarget(providers, options = {}) {
  *
  * A rotation that ran its own weekday's provider renders nothing.
  *
+ * This runs in the SHARDED job, so a deviation is written once per shard rather than
+ * once per run. Kept that way deliberately: each shard resolves its own provider from
+ * its own sweep, so the four blocks are four measurements and not four copies — they
+ * can legitimately disagree when a key recovers mid-run, and suppressing three of them
+ * would lose the deviation entirely on a day shard 1 dies early.
+ *
  * @param {{ok: boolean, provider: string|null, model: string|null, reason: string|null, skipped: Array<{provider: string, reason: string}>}} result
  * @returns {string} markdown, empty when the rotation went as scheduled
  */
@@ -253,8 +259,15 @@ export function renderRotationSummary(result) {
     "### 🚨 Provider rotation — NO provider",
     "",
     "No provider in the rotation could be pinned, so the lane keeps its default per-provider",
-    "parametrization and every parametrized agent spec will skip. Expect the provider-coverage",
-    "verdict on the merge job to report this run as covering NOTHING.",
+    "parametrization and every parametrized agent spec will skip.",
+    "",
+    // Precise on purpose. The rotation covers openai/anthropic/google; the coverage
+    // verdict asks whether ANY configured provider was usable, and CI also carries
+    // groq and mistral keys. So "the rotation declined" implies `uncovered` only if
+    // nothing else is active either — an earlier draft stated it flatly and would
+    // have contradicted the verdict a triager reads two jobs later.
+    "If no provider outside the rotation is active either, the provider-coverage verdict on",
+    "the merge job will report this run as covering NOTHING and fail it.",
     "",
     ...(rows.length ? [...header, ...rows, ""] : []),
   ].join("\n");

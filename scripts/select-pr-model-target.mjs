@@ -65,6 +65,8 @@
 
 import fs from "node:fs";
 
+import { appendSummary } from "./lib/step-summary.mjs";
+
 const HELP = `usage: select-pr-model-target.mjs [options]
 
   --providers-file PATH  providers.json written by collect-models
@@ -181,23 +183,6 @@ export function renderPinSummary(result) {
     "that cost.",
     "",
   ].join("\n");
-}
-
-/**
- * Append a markdown block to the step summary, if there is one and a sink for it.
- * Best-effort: the block is a reporting nicety and must never be the reason a lane
- * fails — the annotation and the JSON on stdout carry the same verdict.
- * @param {string} markdown
- * @param {string} [sink]
- */
-export function appendSummary(markdown, sink = process.env.GITHUB_STEP_SUMMARY) {
-  if (!markdown || !sink) return false;
-  try {
-    fs.appendFileSync(sink, `${markdown}\n`);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**

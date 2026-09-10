@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Says, on a surface a human already reads, **which providers a run did not verify**
- * because their key was down — and fails the lane only when it verified none (#1456).
+ * because their key was down — and fails the lane only when none was usable (#1456).
  *
  * ## The gap this closes
  *
@@ -24,34 +24,66 @@
  * those three tests ran and passed. That is the all-skip green #570 and #1012 exist to
  * prevent, arriving by a route neither covered.
  *
- * ## The decision (#1456), and why it is graded rather than binary
+ * ## The decision (#1456), and where the failing line is drawn
  *
  * A `::warning::` was ruled out at the outset: `mode=count` was printed in the daily's
  * prep log every run for weeks and read by nobody (#1252), and a second line in a
  * 2000-line log is the same artifact. So the verdict goes to the **run summary**, and
  * in one case to the **job status**:
  *
- *   covered    no provider-health skip at all              → silent, exit 0
- *   degraded   some provider went unverified, but the run   → SUMMARY HEADLINE naming
- *              still executed tests in the specs it gated     the provider and the
- *                                                             reason; exit 0, SUCCESS
- *   uncovered  NOTHING ran in the specs provider health     → headline + exit 1
- *              gated — the run measured nothing about them
+ *   covered    no provider-health skip                     → silent, exit 0
+ *   degraded   a provider went unverified, and the account → SUMMARY HEADLINE naming
+ *              still had a usable one                        the provider and the
+ *                                                            reason; exit 0, SUCCESS
+ *   uncovered  a provider went unverified and NO provider  → headline + exit 1
+ *              was usable at all
  *
- * `degraded` keeps SUCCESS on purpose: the run did cover something (on the PR lane the
- * pin declines and the costlier multi-provider fallback runs the other providers), and
- * reddening a PR over an ops outage its author cannot fix is exactly #980's warning.
- * `uncovered` fails because at that point the lane's LLM evidence is empty, and an
- * empty verdict must never render as a pass.
+ * **The failing line is "was any provider usable", not "did any test run", and the
+ * difference is the whole correctness of this file.** The first version counted tests
+ * that executed in the spec files that produced a skip, which is wrong in both
+ * directions and was caught in review before it ever ran:
  *
- * One consequence to state rather than discover: on a lane whose only provider-gated
- * spec is hardcoded to the drained provider, `uncovered` reddens the run even though a
- * top-up is the fix. That is the chosen trade — accepted knowing that the specs which
- * matter most here already hedge it. `openai-provider.spec.ts` deliberately leaves its
- * first test on the env-presence gate so it still runs on a dry day, which is enough to
- * make the file `degraded` rather than `uncovered`.
+ *  - FALSE RED. A run with `rag-pipeline.spec.ts` (gated on google, wholly skipped)
+ *    and `openai-provider.spec.ts` (two tests, both passed) scored `uncovered` and
+ *    printed "no evidence about `google` or any other provider" while openai had just
+ *    been verified in the same report — because a file that produces no skip is not a
+ *    gated file and its passing tests were therefore invisible. Twelve spec files are
+ *    wholly gated on one provider, so a PR editing any one of them during a drain
+ *    would have gone red for a reason its author cannot fix — #980 inverted, on the
+ *    lane a human is waiting on.
+ *  - FALSE GREEN, on the lane the issue actually asked about. The daily runs all three
+ *    `*-provider.spec.ts`, and each deliberately leaves its FIRST test on the
+ *    env-presence gate so it still runs on a dry day. That test executes inside a
+ *    gated file, so `uncovered` was unreachable on the daily even with all three
+ *    providers down — the exact day the mechanism exists for.
  *
- * ## What counts, and the one marker deliberately left out
+ * Asking whether the account had a usable provider fixes both, and it draws the line
+ * where a re-run stops being able to help: with one provider left alive the lane can
+ * still be re-dispatched into coverage, and with none it cannot until someone acts.
+ * Note the consequence and do not mistake it for an oversight: a run whose selection
+ * touched only the dead provider reports `degraded`, not `uncovered`, because another
+ * provider WAS available. The headline still names what went unverified — the verdict
+ * decides the colour, the headline decides what is known.
+ *
+ * ## What "usable" is read from, and what happens without it
+ *
+ * `providers.json`, the file `collect-models` writes and every gate in this repo
+ * already reads. Usability is a property of the ACCOUNT, and the report cannot answer
+ * it: a healthy provider leaves no trace in the report at all, which is exactly how
+ * the first version got it wrong.
+ *
+ * With several files (the daily's shards each collect their own) a provider counts as
+ * usable if ANY of them recorded it active — the fail-open direction, since one shard
+ * reaching a provider proves the account could.
+ *
+ * With NO readable file, usability is UNKNOWN and the verdict degrades to `degraded`
+ * with the gap stated in the summary. That is the one place this guard deliberately
+ * does not fail closed: `uncovered` fails a lane, and failing it on the ABSENCE of a
+ * file that is legitimately absent (a skipped sweep, a `continue-on-error` canary)
+ * would redden runs for a missing optional input. It is never silent, which is the
+ * part #1012 asks for.
+ *
+ * ## What counts as a skip, and the one marker deliberately left out
  *
  * The subject is **provider health**, and the only marker is the one string
  * `inactiveReason()` in `tests/helpers/provider-setup/provider-health.ts` produces:
@@ -59,48 +91,57 @@
  *   Provider "openai" inactive — You have no credits remaining.
  *
  * It is a single source read by both the hardcoded gate (`providerSkipGate`) and the
- * parametrized resolvers (`providerSkipReasons`), and it appears ONLY when
- * `collect-models` measured a live outage. `provider-health.test.ts` pins the producer
- * against this consumer's regex, so a reworded reason fails a unit test instead of
- * silently turning this verdict into a permanent `covered`.
+ * parametrized resolvers (`providerSkipReasons`). `provider-health.test.ts` pins the
+ * producer against this consumer's regex, so a reworded reason fails a unit test
+ * instead of silently turning this verdict into a permanent `covered`. One nuance: a
+ * record written by `degradeProviders()` (the credentials pre-flight, #1058) is a
+ * STRUCTURAL failure rather than an outage and reads identically here — correctly, its
+ * cost to coverage is the same.
  *
  * The sibling skip — `OPENAI_API_KEY required to run this test`, a key that is not
  * configured at all — is **excluded**, and not for lack of interest: it fires for keys
  * a lane legitimately does not carry. `composio.spec.ts` skips on `COMPOSIO_API_KEY`,
- * which no workflow sets, so counting it would make every PR touching that spec
- * `uncovered` and red. An unset secret is a real hole of the same family, and it is
+ * which no workflow sets. An unset secret is a real hole of the same family, and it is
  * #570's, not this one's.
  *
- * ## Why the report, and not providers.json
+ * ## What the report IS for
  *
- * `providers.json` says which keys were down; only the report says what that COST. The
- * distinction is the whole point of the daily's rotation: on a Wednesday with a dry
- * google key the rotation advances to another provider, no test skips at all, and this
- * verdict is honestly `covered` — the deviation is google's slot going unrun, which the
- * rotation script announces on its own summary (`select-daily-model-target.mjs`).
- * Two different losses, two different reporters; neither can see the other's.
+ * Everything the headline says: which providers went unverified, what `collect-models`
+ * measured about each, how many tests it cost, and in which spec files. Those counts
+ * are reported, never used as the verdict.
  *
- * Measured on Playwright 1.58: a `test.skip(cond, reason)` — in the body or in a
- * `beforeEach` — lands as `annotations: [{ type: "skip", description: reason }]` on the
- * test, with `status: "skipped"`, and `merge-reports --reporter=json` preserves it, so
- * both the PR lane's direct json run and the daily's merged report answer this.
+ * The daily's OTHER coverage loss is invisible here and has its own reporter: when the
+ * weekday rotation advances past a dry provider the specs are pinned to the substitute,
+ * so nothing skips and this verdict is honestly `covered` while the day's slot went
+ * unrun (`select-daily-model-target.mjs`).
+ *
+ * Measured on Playwright 1.58: a `test.skip(cond, reason)` — in a test body, a
+ * `beforeEach`, a `describe` or at file level — lands as
+ * `annotations: [{ type: "skip", description: reason }]` on the test, with
+ * `status: "skipped"`, and `merge-reports --reporter=json` preserves it, so both the PR
+ * lane's direct json run and the daily's merged report answer this. A `test.skip()`
+ * with no description carries no `description` key and is ignored.
  *
  * ## Undecidable is not clean (#1012/#1035)
  *
- * A report this cannot read is reported `unknown`. It exits 2 when the run it is asked
- * about REPORTED SUCCESS — a lane that says it passed and cannot show what it covered
- * must not go green on this guard's silence — and exits 0 when the run already failed,
- * where the missing report is a symptom of a failure that is already red and named.
+ * A REPORT this cannot read is `unknown` — distinct from an unreadable providers.json,
+ * which only costs the usability half. It exits 2 when the run it describes REPORTED
+ * SUCCESS — a lane that says it passed and cannot show what it covered must not go
+ * green on this guard's silence — and exits 0 when the run already failed, where the
+ * missing report is a symptom of a failure that is already red and named.
  *
  * Run:
- *   node scripts/provider-coverage-verdict.mjs --report results.json --lane pr-validation
+ *   node scripts/provider-coverage-verdict.mjs --report results.json \
+ *     --providers tests/helpers/provider-setup/data/providers.json
  *
  * Outputs: a markdown block on `$GITHUB_STEP_SUMMARY` (or `--summary PATH`), one
- * annotation, `level` / `unverified` / `headline` on `$GITHUB_OUTPUT`, and the full
- * verdict as JSON on stdout.
+ * annotation, `level` / `unverified` / `skipped` / `executed` on `$GITHUB_OUTPUT`, and
+ * the full verdict as JSON on stdout.
  */
 
 import fs from "node:fs";
+
+import { appendSummary, tableCell } from "./lib/step-summary.mjs";
 
 /**
  * The one skip reason that means "collect-models measured this provider down".
@@ -150,18 +191,43 @@ export function collectTests(report) {
 }
 
 /**
+ * Whether the ACCOUNT had a usable provider, from one or more `providers.json` files.
+ *
+ * A provider counts as usable if ANY file recorded it `active`: the daily's shards
+ * each collect their own health, and one shard reaching a provider proves the account
+ * could. `known: false` means no file could be read at all — reported, never guessed.
+ *
+ * @param {Array<unknown>} payloads parsed providers.json contents
+ * @returns {{known: boolean, active: string[]}}
+ */
+export function providerUsability(payloads = []) {
+  const readable = payloads.filter((p) => Array.isArray(p));
+  if (readable.length === 0) return { known: false, active: [] };
+
+  const active = new Set();
+  for (const records of readable) {
+    for (const record of records) {
+      if (record && typeof record === "object" && record.status === "active") {
+        active.add(String(record.provider ?? ""));
+      }
+    }
+  }
+  return { known: true, active: [...active].filter(Boolean).sort() };
+}
+
+/**
  * The graded verdict for one run.
  *
- * `gated files` — the files that produced at least one provider-health skip — are the
- * denominator on purpose. A file is what a provider gates: the parametrized specs emit
- * one test per provider into the same file, so "openai skipped, anthropic ran" is
- * visible there and nowhere else, and a run that executed something in every gated file
- * did cover the surface, just not on every provider.
+ * The report decides WHAT went unverified and what it cost; `usability` decides the
+ * LEVEL. Keeping those two apart is the fix for the review defect described in the
+ * header — a healthy provider leaves no trace in the report, so no count taken from
+ * the report can answer "was anything usable".
  *
  * @param {unknown} report parsed Playwright JSON report
- * @returns {{level: string, unverified: Array<{provider: string, reason: string, skipped: number}>, skipped: number, executed: number, gatedFiles: string[], totalTests: number}}
+ * @param {{known: boolean, active: string[]}} [usability]
+ * @returns {{level: string, unverified: Array<{provider: string, reason: string, skipped: number}>, skipped: number, executed: number, gatedFiles: string[], totalTests: number, usableProviders: string[], usabilityKnown: boolean}}
  */
-export function providerCoverageVerdict(report) {
+export function providerCoverageVerdict(report, usability = { known: false, active: [] }) {
   const tests = collectTests(report);
   const gatedFiles = new Set();
   /** @type {Map<string, {provider: string, reason: string, skipped: number}>} */
@@ -186,6 +252,8 @@ export function providerCoverageVerdict(report) {
     }
   }
 
+  // Reported as context, never as the verdict: how much of the gated surface still
+  // produced a result. It is the figure the first version failed the lane on.
   const executed = tests.filter(
     (t) => gatedFiles.has(t.file) && t.status !== "skipped",
   ).length;
@@ -194,14 +262,17 @@ export function providerCoverageVerdict(report) {
   );
   const skipped = unverified.reduce((n, e) => n + e.skipped, 0);
 
+  const known = Boolean(usability?.known);
+  const active = usability?.active ?? [];
+
   const level =
     tests.length === 0
       ? "unknown"
       : unverified.length === 0
         ? "covered"
-        : executed > 0
-          ? "degraded"
-          : "uncovered";
+        : known && active.length === 0
+          ? "uncovered"
+          : "degraded";
 
   return {
     level,
@@ -210,6 +281,8 @@ export function providerCoverageVerdict(report) {
     executed,
     gatedFiles: [...gatedFiles].sort(),
     totalTests: tests.length,
+    usableProviders: active,
+    usabilityKnown: known,
   };
 }
 
@@ -241,56 +314,73 @@ export function renderVerdict(verdict, options = {}) {
     };
   }
 
-  const providers = verdict.unverified
-    .map((p) => `\`${p.provider}\``)
-    .join(", ");
+  const providers = verdict.unverified.map((p) => `\`${p.provider}\``).join(", ");
   const rows = verdict.unverified.map(
-    (p) => `| \`${p.provider}\` | ${p.skipped} | ${p.reason} |`,
+    (p) => `| \`${p.provider}\` | ${p.skipped} | ${tableCell(p.reason)} |`,
   );
+  const table = [
+    "| Provider | Tests skipped | What `collect-models` measured |",
+    "| --- | --- | --- |",
+    ...rows,
+  ];
+  const cost =
+    `${verdict.skipped} test(s) skipped across ${verdict.gatedFiles.length} spec file(s)` +
+    (verdict.executed > 0 ? `, where ${verdict.executed} other test(s) still ran` : "");
 
   if (verdict.level === "uncovered") {
     return {
       markdown: [
         `### 🚨 Provider coverage — NONE${lane}`,
         "",
-        `**No provider was verified by this run.** Every test in the ${verdict.gatedFiles.length} ` +
-          `spec file(s) gated on provider health was skipped (${verdict.skipped} skipped, 0 executed), ` +
-          `so this run carries no evidence about ${providers} or any other provider.`,
+        `**No provider was usable on this run.** \`collect-models\` recorded every configured ` +
+          `provider as unusable, so ${cost} — and re-running changes nothing until the ` +
+          `account(s) are restored.`,
         "",
-        "| Provider | Tests skipped | What `collect-models` measured |",
-        "| --- | --- | --- |",
-        ...rows,
+        ...table,
         "",
-        "This is the reason the run is RED with no test failure: a run that measured nothing",
-        "must not report as a pass (#570/#1012). Restore the account, then re-run — the specs",
-        "themselves are not implicated.",
+        "This is why the run is RED with no test failure: a run that could not reach any",
+        "provider must not report as a pass (#570/#1012). The specs are not implicated —",
+        "the skips themselves are correct, a dead key cannot produce a verdict about Langflow.",
         "",
       ].join("\n"),
       annotation:
-        `No provider was verified by this run: ${verdict.skipped} test(s) skipped and 0 executed ` +
-        `across the spec file(s) gated on ${providers}.`,
+        `No provider was usable on this run (${providers} down, none active): ${cost}.`,
     };
   }
+
+  const usability = verdict.usabilityKnown
+    ? `\`${verdict.usableProviders.join("`, `")}\` ${
+        verdict.usableProviders.length === 1 ? "was" : "were"
+      } still usable, so the run could still cover something.`
+    : "Whether any provider was usable could not be read (no `providers.json`), so this " +
+      "is reported as degraded rather than failing — the gap is stated, not assumed away.";
 
   return {
     markdown: [
       `### ⚠️ Provider coverage — DEGRADED${lane}`,
       "",
-      `${providers} ${verdict.unverified.length === 1 ? "was" : "were"} **not verified** by this ` +
-        `run: ${verdict.skipped} test(s) skipped on provider health, while ${verdict.executed} ` +
-        `test(s) still ran in the same ${verdict.gatedFiles.length} spec file(s).`,
+      `${providers} ${verdict.unverified.length === 1 ? "was" : "were"} **not verified** by ` +
+        `this run: ${cost}. ${usability}`,
       "",
-      "| Provider | Tests skipped | What `collect-models` measured |",
-      "| --- | --- | --- |",
-      ...rows,
+      ...table,
       "",
-      "The run is green because it did cover something — an ops outage must not redden work",
-      "that cannot fix it (#980). It is **not** evidence about the provider(s) above.",
+      // The closing line follows what is KNOWN. Saying "the account was not down" on a
+      // run where usability could not be read would state the very thing the paragraph
+      // above just said could not be determined.
+      ...(verdict.usabilityKnown
+        ? [
+            "The run is green because the account was not down — an ops outage must not redden work",
+            "that cannot fix it (#980). It is **not** evidence about the provider(s) above, whichever",
+            "specs did run.",
+          ]
+        : [
+            "The run is green because this verdict does not fail a lane on an input it could not",
+            "read (#980). It is **not** evidence about the provider(s) above, whichever specs did run.",
+          ]),
       "",
     ].join("\n"),
     annotation:
-      `${providers} not verified by this run (${verdict.skipped} test(s) skipped on provider ` +
-      `health, ${verdict.executed} still ran).`,
+      `${providers} not verified by this run (${cost}).`,
   };
 }
 
@@ -313,20 +403,48 @@ export function readReport(reportPath, { readFile, exists } = {}) {
   }
 }
 
+/**
+ * Read every providers.json given. Unreadable files are skipped, not fatal: usability
+ * is an optional input and its absence has its own reported outcome.
+ * @returns {{payloads: unknown[], unread: string[]}}
+ */
+export function readProviderFiles(paths, { readFile, exists } = {}) {
+  const fileExists = exists ?? ((p) => fs.existsSync(p));
+  const read = readFile ?? ((p) => fs.readFileSync(p, "utf-8"));
+  const payloads = [];
+  const unread = [];
+  for (const p of paths) {
+    if (!fileExists(p)) {
+      unread.push(p);
+      continue;
+    }
+    try {
+      payloads.push(JSON.parse(read(p)));
+    } catch {
+      unread.push(p);
+    }
+  }
+  return { payloads, unread };
+}
+
 const HELP = `usage: provider-coverage-verdict.mjs [options]
 
   --report PATH        Playwright JSON report (default: results.json)
+  --providers PATH     providers.json written by collect-models; repeatable, since the
+                       daily's shards each write their own. Absent = usability UNKNOWN,
+                       which degrades the verdict rather than failing the lane.
   --lane NAME          lane name, for the summary heading
   --summary PATH       markdown sink (default: $GITHUB_STEP_SUMMARY)
   --github-output PATH key=value sink (default: $GITHUB_OUTPUT)
   --run-outcome NAME   outcome of the run this describes (success|failure|…). Decides
-                       how loud an unreadable report is: on a run that claimed success
+                       how loud an unreadable REPORT is: on a run that claimed success
                        an undecidable verdict exits 2 (#1035).
 `;
 
 function parseArgs(argv) {
   const args = {
     report: "results.json",
+    providers: [],
     lane: "",
     summary: process.env.GITHUB_STEP_SUMMARY ?? "",
     githubOutput: process.env.GITHUB_OUTPUT ?? "",
@@ -343,6 +461,7 @@ function parseArgs(argv) {
     if (value === undefined) throw new Error(`missing value for ${flag}`);
     i++;
     if (flag === "--report") args.report = value;
+    else if (flag === "--providers") args.providers.push(value);
     else if (flag === "--lane") args.lane = value;
     else if (flag === "--summary") args.summary = value;
     else if (flag === "--github-output") args.githubOutput = value;
@@ -380,8 +499,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const { report, reason } = readReport(args.report);
+  const { payloads, unread } = readProviderFiles(args.providers);
+  const usability = providerUsability(payloads);
+
   const verdict = report
-    ? providerCoverageVerdict(report)
+    ? providerCoverageVerdict(report, usability)
     : {
         level: "unknown",
         unverified: [],
@@ -389,6 +511,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         executed: 0,
         gatedFiles: [],
         totalTests: 0,
+        usableProviders: usability.active,
+        usabilityKnown: usability.known,
       };
   if (reason) verdict.reason = reason;
   if (verdict.level === "unknown" && !verdict.reason) {
@@ -396,19 +520,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   if (!LEVELS.has(verdict.level)) verdict.level = "unknown";
 
+  // Said out loud rather than folded into the verdict: a providers.json that was asked
+  // for and could not be read is why a run might read `degraded` instead of `uncovered`.
+  for (const path of unread) {
+    process.stderr.write(
+      `::warning::provider-coverage-verdict: ${path} is missing or unreadable, so it ` +
+        `contributes nothing to whether any provider was usable\n`,
+    );
+  }
+
   const { markdown, annotation } = renderVerdict(verdict, { lane: args.lane });
 
-  if (markdown && args.summary) {
-    try {
-      fs.appendFileSync(args.summary, `${markdown}\n`);
-    } catch (error) {
-      // The summary is the primary surface, so a failure to write it must be said out
-      // loud — but it must not swallow the verdict itself, which the annotation and
-      // the exit code still carry.
-      process.stderr.write(
-        `::warning::provider-coverage-verdict: could not write the run summary: ${error.message}\n`,
-      );
-    }
+  if (markdown && args.summary && !appendSummary(markdown, args.summary)) {
+    // The summary is the primary surface, so a failure to write it must be said out
+    // loud — but it must not swallow the verdict, which the annotation and the exit
+    // code still carry.
+    process.stderr.write(
+      `::warning::provider-coverage-verdict: could not write the run summary to ${args.summary}\n`,
+    );
   }
   if (annotation) {
     const level = verdict.level === "uncovered" ? "error" : "warning";

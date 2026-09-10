@@ -110,20 +110,21 @@ test("the five verdict shapes get five titles, and an empty run never claims tes
   assert.match(partial.body, /UNDER-COUNTED/, "a partial run must say its totals are under-counted");
   assert.match(partial.body, /\*\*180 test result\(s\)\*\*/);
 
-  // #1456. The one shape that can be reached with a GREEN test job: every LLM spec
-  // skipped because the account is drained. "@stable tests failed" would be the one
-  // false sentence on an issue about tests that never ran.
+  // #1456. The one shape that can be reached with a GREEN test job: every provider
+  // drained, so every LLM spec skipped. "@stable tests failed" would be the one false
+  // sentence on an issue about tests that never ran.
   const uncovered = renderIssue({
     ...ACTIONS,
     providerUncovered: true,
     providerUnverified: "openai,anthropic",
     providerSkipped: "31",
   });
-  assert.match(uncovered.title, /verified NO provider/);
+  assert.match(uncovered.title, /NO usable provider/);
   assert.doesNotMatch(uncovered.title, /tests failed/);
   assert.match(uncovered.body, /openai,anthropic/);
-  assert.match(uncovered.body, /31 skipped, 0 executed/);
+  assert.match(uncovered.body, /31 test\(s\) skipped/);
   assert.match(uncovered.body, /Triage this as ops/);
+  assert.match(uncovered.body, /No `@stable` tag was touched/);
 
   const failures = renderIssue(ACTIONS);
   assert.match(failures.title, /@stable tests failed/);
@@ -148,7 +149,32 @@ test("an abort outranks the provider-coverage shape, and `degraded` never select
     providerSkipped: "3",
   });
   assert.match(degraded.title, /@stable tests failed/);
-  assert.doesNotMatch(degraded.body, /verified NO provider|Triage this as ops/);
+  assert.doesNotMatch(degraded.body, /NO usable provider|Triage this as ops/);
+});
+
+// Review finding: this shape is selected by the coverage LEVEL, which says nothing
+// about whether tests also failed — so a red-and-dry day reaches it with `@stable`
+// already stripped by the auto-remove step, which is untouched by that level. The
+// first draft asserted "no spec failed and no `@stable` tag was touched" and dropped
+// the summary, telling the triager the specs were not implicated on a day three tags
+// had just been removed.
+test("a dry account that ALSO had failures keeps the auto-removal summary", () => {
+  const both = renderIssue({
+    ...ACTIONS,
+    providerUncovered: true,
+    providerUnverified: "openai,anthropic,google",
+    providerSkipped: "31",
+    arStatus: "success",
+    arSummary: "Removed @stable from 3 tests: a, b, c",
+  });
+
+  assert.match(both.title, /NO usable provider/);
+  assert.match(both.body, /Removed @stable from 3 tests/);
+  assert.match(both.body, /### `@stable` auto-removal/);
+  // And it must not claim the opposite in the same breath.
+  assert.doesNotMatch(both.body, /No `@stable` tag was touched/);
+  // The outage is a plausible cause of the very failures the tag was removed on.
+  assert.match(both.body, /Weigh it against/);
 });
 
 test("`empty` outranks `partial`, and both outrank the auto-removal summary", () => {

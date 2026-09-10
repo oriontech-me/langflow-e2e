@@ -1091,23 +1091,43 @@ jobs:
       #
       # A `::warning::` was not the answer (`mode=count` was printed every run for weeks
       # and read by nobody, #1252), so the verdict is written to the RUN SUMMARY, and it
-      # is graded: `degraded` (something still ran) keeps the check green, because an
-      # ops outage must not redden a PR that cannot fix it (#980); `uncovered` (nothing
-      # ran in any spec provider health gated) exits non-zero, because a run that
-      # measured nothing must not report as a pass (#570/#1012). The policy is a pure
-      # function with its own unit tests — pinning it by a regex over this file is what
-      # #1226 showed does not work.
+      # is graded: `degraded` — a provider went unverified while the ACCOUNT still had a
+      # usable one — keeps the check green, because an ops outage must not redden a PR
+      # that cannot fix it (#980); `uncovered` — no provider was usable at all, so no
+      # re-run can help until someone acts — exits non-zero (#570/#1012). The policy is
+      # a pure function with its own unit tests; pinning it by a regex over this file is
+      # what #1226 showed does not work.
+      #
+      # `--providers` is what makes that line drawable at all: a HEALTHY provider leaves
+      # no trace in the report, so nothing computed from the report can answer "was
+      # anything usable" — an earlier version tried, and scored `uncovered` on a run
+      # whose openai specs had just passed. Written by `Collect models` above into the
+      # workspace; absent (an LLM-free PR, a canary whose sweep was allowed to fail) the
+      # verdict degrades and says so rather than failing on a missing optional input.
+      #
+      # Worth stating so the step is not read as more than it is: on THIS lane
+      # `Collect models` is a hard gate and already fails the job when no provider probed
+      # active, so `uncovered` here is near-unreachable and the step's real contribution
+      # is the `degraded` headline. It is kept failing anyway — the sweep is skipped on
+      # an LLM-free PR, and a gate that only exists on the other lane is one refactor
+      # from being absent on both.
       #
       # always(): the verdict is most useful precisely when the run above went red, and
       # every remaining step in this job is already `always()`, so failing here costs no
-      # artifact. `--run-outcome` decides how loud an unreadable report is: on a run
-      # that claimed success an undecidable verdict fails (#1035); on one that already
-      # failed, the missing report is a symptom of a failure that is already named.
+      # artifact. `--run-outcome` decides how loud an unreadable REPORT is: on a run that
+      # claimed success an undecidable verdict fails (#1035); on one that already failed,
+      # the missing report is a symptom of a failure that is already named.
+      #
+      # `results.json` is resolved against this step's cwd, and the reporter writes it
+      # next to `playwright.config.ts`. Both are the repo root today; a `working-directory:`
+      # on either step would silently break the pair, which is why the report is also
+      # uploaded with the Playwright artifact below — a red verdict must be auditable.
       - name: Provider coverage verdict
         if: always()
         run: |
           node scripts/provider-coverage-verdict.mjs \
             --report results.json \
+            --providers tests/helpers/provider-setup/data/providers.json \
             --lane pr-validation \
             --run-outcome "$RUN_OUTCOME"
         env:
@@ -1169,7 +1189,12 @@ jobs:
         if: always()
         with:
           name: playwright-report-pr-${{ github.run_id }}
-          path: playwright-report/
+          # results.json rides along (#1456): it is what the provider-coverage verdict
+          # read, and a reviewer looking at a red `uncovered` needs to be able to check
+          # that verdict rather than take it on trust.
+          path: |
+            playwright-report/
+            results.json
           retention-days: 14
 
       - name: Upload test results on failure

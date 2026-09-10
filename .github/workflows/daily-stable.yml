@@ -677,6 +677,15 @@ jobs:
           # the rotation declined to pin (every provider dry), which is a real
           # outcome and must not be confused with a shard that failed to report.
           printf '%s' "${MODEL_TEST_PROVIDER:-}" > "tokens/token-provider-${{ matrix.shard }}.txt"
+          # #1456: the provider health THIS shard collected, carried to the merge job on
+          # the artifact that already crosses that boundary. The coverage verdict runs
+          # there and needs to know whether the ACCOUNT had a usable provider — a
+          # question the merged report cannot answer, because a healthy provider leaves
+          # no trace in it. Best-effort: a shard that never got to collect leaves no
+          # file, the verdict unions whatever arrives, and with none at all it degrades
+          # rather than failing.
+          cp tests/helpers/provider-setup/data/providers.json \
+            "tokens/providers-${{ matrix.shard }}.json" 2>/dev/null || true
           echo "--- token recorder stdout (tail) ---"
           tail -n 5 /tmp/tokens.log 2>/dev/null || true
 
@@ -857,27 +866,41 @@ jobs:
       # `collect-models` step that deliberately downgrades a billing outage to a
       # warning (#952) and is `continue-on-error` here anyway.
       #
-      # Reports facts and exits 0 either way — the same shape as `shardguard` and
-      # `runguard`: the verdict is written to the run summary, its level lands in a
-      # step output, and the LAST step of this job is what fails the run on it. That
-      # ordering is load-bearing: this step sits ahead of the history append, the QA
-      # POST and the umbrella issue, none of which may be skipped because a provider
-      # was dry. `continue-on-error` covers the script's own exit 1 on `uncovered`.
+      # Like `shardguard` and `runguard` this REPORTS: the verdict goes to the run
+      # summary, its level lands in a step output, and the LAST step of this job is what
+      # fails the run on it. The script itself exits 1 on `uncovered` (the PR lane wants
+      # that), so `continue-on-error` absorbs it here — the ordering is load-bearing,
+      # because this step sits ahead of the history append, the QA POST and the umbrella
+      # issue, and none of them may be skipped because a provider was dry.
       #
-      # `--run-outcome`: `success` only when the shards really passed, so an
-      # undecidable verdict is loud exactly where its silence would read as coverage
-      # (#1035) and quiet on a run whose failure is already named.
+      # `--providers`: whether the ACCOUNT had a usable provider is what separates
+      # `degraded` from `uncovered`, and the merged report cannot answer it — a healthy
+      # provider leaves no trace in it. Each shard copied its own `providers.json` onto
+      # the tokens artifact; a provider counts as usable if ANY shard reached it. With
+      # none readable the verdict degrades and states the gap, rather than failing the
+      # daily over a missing optional input.
+      #
+      # No `--run-outcome`: with `continue-on-error` the exit code is absorbed, and the
+      # final step below fails on `unknown` regardless. Passing it here would be dead
+      # configuration that reads like a policy.
       - name: Guard — which providers this run verified
         id: providerguard
         if: always()
         continue-on-error: true
         run: |
+          providers=()
+          found=0
+          for f in all-tokens/providers-*.json; do
+            if [ -e "$f" ]; then
+              providers+=(--providers "$f")
+              found=$((found + 1))
+            fi
+          done
+          echo "Provider health collected by $found shard(s)."
           node scripts/provider-coverage-verdict.mjs \
             --report results.json \
             --lane daily-stable \
-            --run-outcome "$RUN_OUTCOME"
-        env:
-          RUN_OUTCOME: ${{ needs.test.result }}
+            ${providers[@]+"${providers[@]}"}
 
       # Name the wedge (#1030). Runs after the merge so it can attribute failing
       # attempts to the outages measured on their OWN shard, and before the
@@ -1584,7 +1607,7 @@ jobs:
       # included: an unset output means the guard never reported (skipped, or a future
       # edit broke its entrypoint), and a guard whose silence reads as coverage is the
       # exact failure this mechanism removes (#1012/#1035).
-      - name: Fail scheduled run that verified no provider
+      - name: Fail scheduled run that had no usable provider
         if: always() && github.event_name == 'schedule' && steps.providerguard.outputs.level != 'covered' && steps.providerguard.outputs.level != 'degraded'
         env:
           LEVEL: ${{ steps.providerguard.outputs.level }}
@@ -1592,7 +1615,7 @@ jobs:
           SKIPPED: ${{ steps.providerguard.outputs.skipped }}
         run: |
           if [ "$LEVEL" = "uncovered" ]; then
-            echo "::error::This run verified NO provider — every test in the spec files gated on provider health was skipped ($SKIPPED skipped, 0 executed; providers down: ${UNVERIFIED:-unknown}). The report is complete and no spec failed, so nothing else on this run says so. Restore the account and re-run; the specs are not implicated (#1456)."
+            echo "::error::NO provider was usable on this run — collect-models reached none of them, and $SKIPPED test(s) skipped on provider health (down: ${UNVERIFIED:-unknown}). The report is complete and no spec failed, so nothing else on this run says so. Restore the account and re-run; re-running before that changes nothing and the specs are not implicated (#1456)."
           elif [ "$LEVEL" = "unknown" ]; then
             echo "::error::Which providers this run verified is UNKNOWN — the merged report could not be read for it. Unknown is not clean (#1012). Check the 'Guard — which providers this run verified' step."
           else

@@ -23,7 +23,6 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  appendSummary,
   readProvidersFile,
   renderPinSummary,
   selectPrModelTarget,
@@ -302,17 +301,4 @@ test("a successful pin renders nothing", () => {
     renderPinSummary({ ok: true, provider: "openai", model: "gpt-4o-mini", reason: null }),
     "",
   );
-});
-
-test("writing the summary is best-effort and never throws", () => {
-  const dir = makeTempDir("pin-summary-");
-  const sink = path.join(dir, "summary.md");
-  assert.equal(appendSummary("### hi", sink), true);
-  assert.match(fs.readFileSync(sink, "utf-8"), /### hi/);
-
-  // No sink (a local run) and nothing to say are both no-ops, not failures: the
-  // verdict is also on stderr and stdout, so the block is a nicety.
-  assert.equal(appendSummary("### hi", ""), false);
-  assert.equal(appendSummary("", sink), false);
-  assert.equal(appendSummary("### hi", path.join(dir, "no", "such", "dir", "s.md")), false);
 });
