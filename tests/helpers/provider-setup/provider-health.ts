@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { providerConfigMap, type Provider } from "./provider-config";
+import { formatProviderInactiveReason } from "../../../scripts/lib/provider-health-reason.mjs";
 
 // Provider health gate for specs that HARDCODE a provider (issue #1029).
 //
@@ -187,11 +188,15 @@ export function unavailableReason(
  * it must never read `inactive — null`. `collect-models` always fills `error` for an
  * inactive record today, but the field is nullable and a hand-edited or
  * future-schema file must still produce a usable line.
+ *
+ * Since #1456 the wording is no longer only for humans: `lane-coverage-verdict.mjs`
+ * reads it back out of the Playwright report to tell a provider-health skip from
+ * every other kind, so it is a contract with that consumer and is formatted by the
+ * module both sides share (`scripts/lib/provider-health-reason.mjs`). The wording can
+ * no longer be changed here alone — the round trip is unit-tested from both ends.
  */
 function inactiveReason(record: ProviderHealthRecord): string {
-  return `Provider "${record.provider}" inactive — ${
-    record.error ?? "no reason recorded by collect-models"
-  }`;
+  return formatProviderInactiveReason(record.provider, record.error);
 }
 
 /**
