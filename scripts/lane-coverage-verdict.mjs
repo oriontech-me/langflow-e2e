@@ -62,19 +62,33 @@
  * lane, where the "run" is whatever the import graph selected — frequently ONE spec
  * file. A PR editing a single wholly-gated spec during a drain of that spec's provider
  * executes nothing and scores `uncovered`, so one dead key became a merge block for an
- * author who cannot fix it: #980 inverted, on the lane a human is waiting on. Two specs
- * reach it today (`chatInputOutputUser-shard-2`, `general-bugs-agent-images-playground`
- * — both `@agents`, both one test, both gated on openai) and openai has drained three
- * times on this project.
+ * author who cannot fix it: #980 inverted, on the lane a human is waiting on.
+ * THIRTEEN specs are wholly gated that way (measured) — eight on openai, two on google,
+ * two on anthropic, one on the pair — and all of them are provider-dependent, so the
+ * sweep runs and the gate is armed. Not through their tags: `provider-dependent-specs.mjs`
+ * also matches an AREA or a MARKER, and `provider-setup` is a marker that every one of
+ * these files hits through the import that gives it `providerSkipGate`.
  *
  * So the failing decision moved to `shouldFail()` and asks what a re-run can answer:
  * the ACCOUNT axis, read from `providers.json` rather than guessed from the report,
- * because a healthy provider leaves no trace in a report at all. A dry account fails
- * (nothing could have served a call); an `uncovered` run with no evidence either way
- * fails (fail-closed on the unknown); an `uncovered` run on a demonstrably live account
- * is reported loudly and does not fail. See `shouldFail()` for the full matrix and for
- * the one thing this WIDENS: a `degraded` daily on a dry account now fails, which the
- * old rule could not reach at all.
+ * because a healthy provider leaves no trace in a report at all. See `shouldFail()`
+ * for the matrix.
+ *
+ * ## What that leaves on each lane, stated because it is not symmetric
+ *
+ * On the DAILY this is a widening: `uncovered` needs zero executed tests, which a full
+ * `@stable` run never produces, so the gate could not fire at all — and a dry account
+ * now fails it.
+ *
+ * On the PR lane it is close to a removal, and pretending otherwise would be the
+ * dishonest half. `dry` is all but unreachable there because `Collect models` is a HARD
+ * gate that already fails on "no provider probed active" (collect-models.spec.ts), and
+ * `unknown`-with-a-skip cannot occur because the same absent `providers.json` makes
+ * `providerSkipReasons` fail OPEN, so no provider-health skip fires in the first place.
+ * What is left failing on that lane is an unreadable report. That is the intended
+ * end state — the account is already gated one step earlier, by a check that fails with
+ * the cause named — but it means the PR lane's coverage verdict is now a REPORTING
+ * surface, and #1456's gate there lives in `Collect models`, not here.
  *
  * Weighed and DECLINED: failing whenever the lane's pinned provider is among the
  * skipped ones. It is the same fact with a much wider blast radius — see `degraded`
@@ -127,7 +141,11 @@ import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { parseProviderInactiveReason } from "./lib/provider-health-reason.mjs";
-import { readUsability, usabilityState } from "./lib/provider-usability.mjs";
+import {
+  readUsability,
+  readUsabilityDir,
+  usabilityState,
+} from "./lib/provider-usability.mjs";
 
 export const COVERED = "covered";
 export const DEGRADED = "degraded";
@@ -142,8 +160,9 @@ const HELP = `usage: lane-coverage-verdict.mjs [options]
   --lane NAME       lane label used in the messages (default: "this lane")
   --provider NAME   the provider this lane pinned itself to; reported, never gated on
   --report PATH     Playwright JSON report (default: $PLAYWRIGHT_JSON or results.json)
-  --providers PATH  providers.json written by collect-models; repeatable, since the
-                    daily's shards each write their own. Absent = the account axis is
+  --providers PATH  providers.json written by collect-models; repeatable.
+  --providers-dir D  read every providers-*.json in D and union them — the daily's
+                    shards each write one. Absent (either flag) = the account axis is
                     UNKNOWN, which never fails on its own.
   --fail-closed     exit 1 when the run deserves it (see shouldFail): an unreadable
                     report, a dry account, or a run that covered nothing with no
@@ -355,7 +374,7 @@ export function laneCoverageVerdict(report, options = {}) {
     providerSkips.length === 0
       ? ""
       : account === "dry"
-        ? ". No provider was usable at all, so re-running changes nothing until the account is restored"
+        ? ". No provider was RECORDED usable, so re-running changes nothing until that is fixed"
         : account === "alive"
           ? stillUsable.length > 0
             ? `. ${stillUsable.join(", ")} ${stillUsable.length === 1 ? "was" : "were"} still usable`
@@ -455,9 +474,16 @@ export function renderSummary(result) {
     return `${lines.join("\n")}\n`;
   }
 
+  // The heading follows the FAIL decision, not the verdict (#1800 review). A red ❌
+  // over a step that exits 0 is a summary contradicting its own check, and it was
+  // measured on the exact run this fix exists for: "This run covered nothing" in red,
+  // above a green check, above a line saying the run was narrow. `uncovered` is still
+  // named in the body — what changes is which of the two facts leads.
   lines.push(
     result.verdict === UNCOVERED
-      ? "### ❌ This run covered nothing — every test that could have produced a verdict was skipped"
+      ? shouldFail(result)
+        ? "### ❌ This run covered nothing — every test that could have produced a verdict was skipped"
+        : "### ⚠️ This run covered nothing — every test in it was skipped on provider health"
       : "### ⚠️ Provider-health skip — this run covered less than the check status shows",
     "",
     result.headline,
@@ -481,16 +507,28 @@ export function renderSummary(result) {
   // the colour is how the two get read as one fact.
   lines.push(
     result.account === "dry"
-      ? "**No provider was usable on this run**, so this is not a narrow selection — re-running changes nothing until the account is restored."
+      ? "**No provider was recorded usable on this run** — not a narrow selection, and re-running " +
+        "changes nothing until that is fixed. `providers.json` is written by the `collect-models` " +
+        "sweep AND by `globalSetup`'s credential degradation (#1058), and this reads the record, " +
+        "not the cause: a drained account and a sweep that never imported the keys both produce it."
       : result.account === "alive"
         ? // Same set difference as the headline, and for the same reason: a provider
           // that skipped here is not evidence that anything was covered.
           (() => {
             const skippedNames = new Set(result.providers.map((p) => p.provider));
             const stillUsable = result.usableProviders.filter((p) => !skippedNames.has(p));
+            // NOT "narrow, not blind": on an `uncovered` run it was blind, and the
+            // heading two lines above says so. What the live account establishes is
+            // only that the account is not the thing to fix — and for a spec that
+            // HARDCODES the dead provider (13 of them do) a re-dispatch recovers
+            // nothing either, so this must not read as "just re-run it".
+            const scope =
+              result.verdict === UNCOVERED
+                ? "This run still produced no verdict — a spec hardcoded to the dead provider does not recover by re-running."
+                : "So this run is narrower than the check status shows, not blind.";
             return stillUsable.length > 0
-              ? `Still usable: **${stillUsable.join(", ")}** — the account is up, so this run is narrow, not blind.`
-              : `The account is up (\`collect-models\` recorded **${result.usableProviders.join(", ")}** usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce.`;
+              ? `Still usable: **${stillUsable.join(", ")}** — the account is up, so it is not what needs fixing. ${scope}`
+              : `The account is up (**${result.usableProviders.join(", ")}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;
           })()
         : "Whether any provider was usable is **UNKNOWN** (no readable `providers.json`). Unknown is not clean (#1012).",
     "",
@@ -532,7 +570,13 @@ export function outputLines(result) {
 }
 
 /** The flags that take a value; every other flag is either a switch or unknown. */
-const VALUE_FLAGS = new Set(["--lane", "--provider", "--report", "--providers"]);
+const VALUE_FLAGS = new Set([
+  "--lane",
+  "--provider",
+  "--report",
+  "--providers",
+  "--providers-dir",
+]);
 
 export function parseArgs(argv) {
   const args = {
@@ -544,6 +588,10 @@ export function parseArgs(argv) {
     // one gets UNKNOWN and says so, which is the honest answer for a lane that never
     // ran the sweep.
     providers: [],
+    // The daily's four shards land their files in one downloaded directory. Globbing
+    // it HERE rather than in the workflow is what makes the wiring testable — see
+    // `readUsabilityDir`.
+    providersDir: null,
     failClosed: false,
     json: false,
     help: false,
@@ -572,6 +620,7 @@ export function parseArgs(argv) {
     if (flag === "--lane") args.lane = value;
     else if (flag === "--provider") args.provider = value;
     else if (flag === "--providers") args.providers.push(value);
+    else if (flag === "--providers-dir") args.providersDir = value;
     else args.report = value;
     i++;
   }
@@ -600,23 +649,39 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     process.exit(0);
   }
 
-  const usability = readUsability(args.providers);
-  // Said out loud rather than folded into the verdict: a providers.json that was asked
-  // for and could not be read is why a run may read `unknown` instead of `dry`, and an
-  // unknown account is the difference between failing and not (#1012).
-  for (const path of usability.unread) {
-    process.stderr.write(
-      `::warning::lane-coverage-verdict: ${path} is missing or unreadable, so it ` +
-        `contributes nothing to whether any provider was usable\n`,
+  const usability = args.providersDir
+    ? readUsabilityDir(args.providersDir)
+    : readUsability(args.providers);
+  if (args.providersDir) {
+    process.stdout.write(
+      `Provider health read from ${usability.read} shard file(s) in ${args.providersDir}.\n`,
     );
   }
-
   const result = laneCoverageVerdict(readReport(args.report), {
     lane: args.lane,
     laneProvider: args.provider,
     reportPath: args.report,
     usability,
   });
+
+  // Said out loud rather than folded into the verdict: a providers.json that was asked
+  // for and could not be read is why a run may read `unknown` instead of `dry`, and an
+  // unknown account is the difference between failing and not (#1012).
+  //
+  // Only where the axis can CHANGE something, though — computed after the verdict for
+  // exactly that reason. `Collect models` is skipped on every LLM-free PR, so warning
+  // unconditionally put a yellow annotation on the majority of PRs, about a file that
+  // was never meant to exist and an axis with nothing to decide: #1252's `mode=count`
+  // re-created in the lane a human actually reads. With no provider-health skip the
+  // verdict is `covered` and no account state can move it.
+  if (result.providerSkips.length > 0) {
+    for (const path of usability.unread) {
+      process.stderr.write(
+        `::warning::lane-coverage-verdict: ${path} is missing or unreadable, so it ` +
+          `contributes nothing to whether any provider was usable\n`,
+      );
+    }
+  }
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

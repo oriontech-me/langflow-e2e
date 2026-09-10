@@ -747,7 +747,7 @@ test("the same run with a DRY account fails", () => {
   assert.equal(result.verdict, UNCOVERED);
   assert.equal(result.account, "dry");
   assert.equal(shouldFail(result), true);
-  assert.match(result.headline, /No provider was usable at all/);
+  assert.match(result.headline, /No provider was RECORDED usable/);
 });
 
 // Fail-closed on the unknown is preserved: `uncovered` is already a strong signal, and
@@ -812,8 +812,12 @@ test("the summary states the account, so the colour is not the only clue", () =>
   const dry = renderSummary(
     verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), DRY),
   );
-  assert.match(dry, /No provider was usable/);
-  assert.match(dry, /re-running changes nothing/);
+  assert.match(dry, /No provider was recorded usable/);
+  assert.match(dry, /re-running\s+changes nothing/);
+  // It must not assert HOW the record got there: `globalSetup`'s credential
+  // degradation (#1058) writes the same `inactive` records the sweep does, so "the
+  // account is drained" is a cause this cannot observe.
+  assert.match(dry, /globalSetup/);
 
   const unknown = renderSummary(
     verdictWith(
@@ -916,11 +920,14 @@ test("both lanes feed the account axis, and the daily carries it across the shar
   const daily = readWorkflow("daily-stable.yml");
   // The shard writes it onto the artifact the merge job already downloads...
   assert.match(daily, /tokens\/providers-\$\{\{ matrix\.shard \}\}\.json/);
-  // ...and the merge job passes every one it finds.
+  // ...and the merge job hands the DIRECTORY to the script. Deliberately not a shell
+  // loop building `--providers` args: a mutation that found the files and never
+  // passed them survived every guard available in YAML (#1226). The globbing is
+  // `readUsabilityDir`, whose behaviour these tests can actually assert.
   const idx = daily.indexOf("- name: Guard — the run covered the providers");
   const step = daily.slice(idx, daily.indexOf("- name:", idx + 10));
-  assert.match(step, /all-tokens\/providers-\*\.json/);
-  assert.match(step, /--providers/);
+  assert.match(step, /--providers-dir all-tokens/);
+  assert.doesNotMatch(step, /for f in/, "the argument list must not be built in YAML");
 });
 
 test("the umbrella opens on the decision, not on a verdict this lane cannot reach", () => {

@@ -12,10 +12,20 @@
 // false positive that reddens a PR (#1800): the PR lane's "run" is whatever the
 // import graph selected, frequently ONE spec file, so a PR editing a single wholly-
 // gated spec during a drain of that spec's provider executes nothing and scores
-// `uncovered` — while two other providers were alive and the rest of the suite would
-// have run fine. Two specs reach that today, both `@agents`, both one test, both
-// gated on openai: `chatInputOutputUser-shard-2.spec.ts` and
-// `general-bugs-agent-images-playground.spec.ts`.
+// `uncovered` — while other providers were alive and the rest of the suite would have
+// run fine.
+//
+// THIRTEEN specs are wholly gated on one provider's health, and the first version of
+// this comment said two, for a reason worth recording because it is the natural
+// mistake: `provider-dependent-specs.mjs` decides `providerDependent` as
+// `consumesModelData || tags.length > 0`, and `consumesModelData` is an AREA or a
+// MARKER match — `initialGPTsetup`, `SimpleAgentTemplatePage`, and `provider-setup`,
+// which every one of these files matches through the very import that gives it
+// `providerSkipGate`. So the tag is the least of it: 20 of the 21 specs calling that
+// gate are provider-dependent (measured), all 13 wholly-gated ones among them, and
+// `consumesModelData` specs are never excluded as transitive either. The trigger is
+// therefore any PR whose selection is one of those thirteen, on a drain of the
+// provider it names — openai for eight, google for two, anthropic for two.
 //
 // So the account axis is read where it is actually recorded: `providers.json`, the
 // file `collect-models` writes and every provider gate in this repo already consumes.
@@ -53,7 +63,11 @@ import fs from "node:fs";
  * @returns {{ known: boolean, active: string[] }}
  */
 export function foldUsability(payloads = []) {
-  const readable = payloads.filter((payload) => Array.isArray(payload));
+  // An EMPTY array carries no information about the account — the sweep recorded no
+  // provider at all — so it counts as unread rather than as "nothing usable". Reading
+  // it as `dry` would make a file that says nothing indistinguishable from a file that
+  // says every key is dead, in the one direction that fails a lane.
+  const readable = payloads.filter((payload) => Array.isArray(payload) && payload.length > 0);
   if (readable.length === 0) return { known: false, active: [] };
 
   const active = new Set();
@@ -99,7 +113,40 @@ export function readUsability(paths = [], io = {}) {
     payloads.push(parsed);
   }
 
-  return { ...foldUsability(payloads), unread };
+  return { ...foldUsability(payloads), unread, read: payloads.length };
+}
+
+/**
+ * Every `providers-*.json` in a directory, folded.
+ *
+ * The daily's merge job downloads four shards' files into one directory, and building
+ * that argument list in YAML was a real gap: a mutation that found the files, counted
+ * them and then never passed them left every test green, because the only guard
+ * available there is a regex over the step text and the tokens it looks for survive
+ * (#1226's lesson, in the shape that mattered). Globbing HERE makes the behaviour
+ * unit-testable — an empty directory, a missing one, and one file among four all have
+ * asserted outcomes.
+ *
+ * A directory that does not exist is not an error: the artifact download is
+ * `continue-on-error`, and no file simply means the account axis is UNKNOWN.
+ *
+ * @param {string} dir
+ * @param {{ readFile?: (p: string) => string, readdir?: (d: string) => string[] }} [io]
+ * @returns {ProviderUsability & { read: number }}
+ */
+export function readUsabilityDir(dir, io = {}) {
+  const readdir = io.readdir ?? ((d) => fs.readdirSync(d));
+  let entries;
+  try {
+    entries = readdir(dir);
+  } catch {
+    return { known: false, active: [], unread: [], read: 0 };
+  }
+  const files = entries
+    .filter((name) => /^providers-.*\.json$/.test(name))
+    .sort()
+    .map((name) => `${dir.replace(/\/$/, "")}/${name}`);
+  return readUsability(files, io);
 }
 
 /**

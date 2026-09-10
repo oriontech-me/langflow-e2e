@@ -52,7 +52,9 @@
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   COVERAGE_VERDICT, COVERAGE_HEADLINE, COVERAGE_PROVIDERS, COVERAGE_SKIPS (#1456)
-//   COVERAGE_ACCOUNT="dry" — no provider was usable at all (#1800)
+//   COVERAGE_ACCOUNT="dry" — no provider was recorded usable (#1800)
+//   TESTS_FAILED="true" — the `test` job failed, so the dry-account shape must not
+//     take the title away from the per-test one (#1800)
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
@@ -104,6 +106,7 @@ export function renderIssue({
   mergeFailed = false,
   uncovered = false,
   accountDry = false,
+  testsFailed = false,
   coverageHeadline = "",
   coverageProviders = "",
   coverageSkips = "0",
@@ -195,7 +198,7 @@ export function renderIssue({
           "the shard logs hold the rest. Known cause of this shape: `Collect models` failing without",
           "importing a provider key as a Langflow global variable — #1058.",
         ]
-      : uncovered || accountDry
+      : uncovered || (accountDry && !testsFailed)
       ? [
           uncovered
             ? "### ⚠️ ZERO verdicts — a dead provider skipped every test that ran"
@@ -208,9 +211,9 @@ export function renderIssue({
                 "provider `collect-models` probed `inactive` could not serve a call.",
               ]
             : [
-                `The report is complete and carries **${runTests} result(s)**, and \`collect-models\``,
-                "reached **no provider at all** — so every test that needs one was skipped and this",
-                "run is not evidence about any of them. The rest of the suite did run (#1800).",
+                `The report is complete and carries **${runTests} result(s)**, and **no provider was`,
+                "recorded usable** — so every test that needs one was skipped and this run is not",
+                "evidence about any of them. The rest of the suite did run (#1800).",
               ]),
           ...(coverageProviders
             ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
@@ -225,21 +228,45 @@ export function renderIssue({
                 "clean day (#1456).",
               ]
             : [
-                "This shape is selected by the ACCOUNT being dry, which says nothing about whether",
-                "tests also failed — so read the auto-removal block below, if there is one, before",
-                "concluding the specs are not implicated. An outage is a plausible cause of the very",
-                "failures a tag was removed on, and the infra-signature exemption does not classify",
-                "one (#1031).",
+                "No spec failed on this run — this shape is only chosen when the `test` job came",
+                "back green, so a day with real per-test failures keeps its own title and body.",
+                "`providers.json` is written by the `collect-models` sweep AND by `globalSetup`'s",
+                "credential degradation (#1058), so this says what was RECORDED, not why: a drained",
+                "account and a sweep that never imported the keys both produce it.",
               ]),
           "",
-          "**Triage this as the provider account, not the suite**: restore the key or the credit,",
-          "then re-run the day. Re-running before that changes nothing, and a green run that",
-          "skipped the whole LLM surface is not evidence that it works (#570/#1012).",
-          // Carried, never replaced: on the dry-account path the auto-remove step CAN
-          // have run, and dropping its summary would tell the triager the specs were
+          ...(uncovered
+            ? [
+                "**Triage this as the provider account, not the suite**: restore the key or the credit,",
+                "then re-run the day. A green run that skipped everything is not evidence that anything",
+                "works (#570/#1012).",
+              ]
+            : [
+                "**Triage this as provider configuration, not the suite**: check whether the keys are",
+                "live AND whether the sweep imported them, then re-run the day. Re-running before that",
+                "changes nothing, and a green run that skipped the whole LLM surface is not evidence",
+                "that it works (#570/#1012).",
+              ]),
+          // Belt and braces: the shape is now gated on the test job being green, so the
+          // auto-remove step cannot have run — but if it somehow did, dropping its
+          // summary would tell the triager the specs were not implicated on a day tags
+          // had just been stripped, which is the exact review finding this answers.
+          // Only on the dry-account branch. `uncovered` deliberately DROPS a stale
+          // auto-removal summary (#1456): nothing ran there, so nothing failed, and
+          // rendering that section reads as a triaged day. Here the shape is gated on
+          // the test job being green so the step cannot have run either — but if it
+          // somehow did, dropping the summary would tell the triager the specs were
           // not implicated on a day tags had just been stripped.
-          ...(accountDry && arStatus
-            ? ["", "### `@stable` auto-removal", "", arSummary]
+          ...(accountDry && !uncovered && arStatus
+            ? [
+                "",
+                "### `@stable` auto-removal",
+                "",
+                arSummary,
+                "",
+                "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
+                "the removal against the outage above before accepting it.",
+              ]
             : []),
         ]
       : arStatus
@@ -271,7 +298,7 @@ export function renderIssue({
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
       : uncovered
         ? `[Daily Failure] @stable run produced ZERO verdicts — a dead provider skipped every test on ${today} (${image})`
-        : accountDry
+        : accountDry && !testsFailed
           ? `[Daily Failure] @stable run had NO usable provider on ${today} (${image})`
           : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
@@ -407,6 +434,12 @@ async function main() {
     // `degraded` — hundreds of tests executed — while no provider was reachable at
     // all, and that is the shape this lane can actually reach.
     accountDry: env.COVERAGE_ACCOUNT === "dry",
+    // Whether SPECS also failed, which the coverage axis cannot tell (#1800 review).
+    // Without it a dry account took the title on a day with real per-test failures and
+    // rendered a body carrying neither the failures nor — when the mass-failure guard
+    // left `arStatus` empty, which is exactly the >5-failure outage day — an
+    // auto-removal block its own hedge pointed at.
+    testsFailed: env.TESTS_FAILED === "true",
     coverageHeadline: env.COVERAGE_HEADLINE || "",
     coverageProviders: env.COVERAGE_PROVIDERS || "",
     coverageSkips: env.COVERAGE_SKIPS || "0",

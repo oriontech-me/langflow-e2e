@@ -903,18 +903,16 @@ jobs:
         # could, and the four sweeps can legitimately disagree when a key recovers
         # mid-run. Without it the account axis reads UNKNOWN and the run can only be
         # failed by an unreadable report, which is where this lane stood before.
+        #
+        # `--providers-dir`, not a shell loop building the argument list: an earlier
+        # revision globbed here, and a mutation that found the files, counted them and
+        # then never passed them left every test green — the only guard available in
+        # YAML is a regex over this step's text, and the tokens it looks for survive
+        # that (#1226, in the shape that mattered). Globbing inside the script makes
+        # "one file of four", "an empty directory" and "no directory at all" assertable.
         run: |
-          providers=()
-          found=0
-          for f in all-tokens/providers-*.json; do
-            if [ -e "$f" ]; then
-              providers+=(--providers "$f")
-              found=$((found + 1))
-            fi
-          done
-          echo "Provider health collected by $found shard(s)."
           node scripts/lane-coverage-verdict.mjs --lane "daily-stable" \
-            ${providers[@]+"${providers[@]}"}
+            --providers-dir all-tokens
         env:
           PLAYWRIGHT_JSON: results.json
 
@@ -1585,6 +1583,12 @@ jobs:
           # — hundreds of tests executed — while no provider was reachable at all, and
           # that is the shape this lane can actually reach.
           COVERAGE_ACCOUNT: ${{ steps.coverage.outputs.account }}
+          # Whether SPECS also failed, which the coverage axis cannot tell (#1800
+          # review). Without it a dry account took the title on a day with real
+          # per-test failures, and rendered a body carrying neither the failures nor —
+          # when the mass-failure guard leaves the auto-removal empty, which is exactly
+          # the >5-failure outage day — any account of what was touched.
+          TESTS_FAILED: ${{ needs.test.result == 'failure' }}
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be
@@ -1650,8 +1654,13 @@ jobs:
           # Three messages, because the three causes send triage to different places:
           # a dry account is ops, an all-skip run is the suite, and an unset output is
           # this step's own wiring.
-          if [ "$COVERAGE_ACCOUNT" = "dry" ]; then
-            echo "::error::NO provider was usable on this run — collect-models reached none of them, so every @stable test that needs one was SKIPPED and the LLM surface went unmeasured: $COVERAGE_HEADLINE. The report is complete and the tests are not red; re-running changes nothing until the account is restored (#1456/#1800)."
+          if [ "$COVERAGE_ACCOUNT" = "dry" ] && [ "$COVERAGE_FAIL" = "true" ]; then
+            # Deliberately says only what it can observe. `providers.json` is written by
+            # the `collect-models` sweep AND by globalSetup's credential degradation
+            # (#1058), so "the account is drained" is a cause this cannot see; and the
+            # branches above may already have reported an incomplete or partial report,
+            # so this one must not also claim the report is complete (#1800 review).
+            echo "::error::NO provider was recorded usable on this run, so every @stable test that needs one was SKIPPED and the LLM surface went unmeasured: $COVERAGE_HEADLINE. Check both halves before re-running — whether the keys are live, and whether the sweep imported them; re-running changes nothing until one of them is fixed (#1456/#1800)."
           elif [ "$COVERAGE_VERDICT" = "uncovered" ]; then
             echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. The report is complete and the tests are not red; there is simply no evidence in this run (#1456)."
           elif [ "$COVERAGE_FAIL" != "false" ]; then

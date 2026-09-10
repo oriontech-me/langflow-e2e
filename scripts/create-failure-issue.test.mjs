@@ -373,24 +373,32 @@ test("a dry account gets its own title and does not claim nothing ran", () => {
   assert.match(title, /NO usable provider/);
   assert.doesNotMatch(title, /ZERO verdicts/, "tests DID produce verdicts — just not LLM ones");
   assert.doesNotMatch(title, /tests failed/);
-  assert.match(body, /reached \*\*no provider at all\*\*/);
+  assert.match(body, /no provider was\n?\s*recorded usable/i);
   assert.match(body, /The rest of the suite did run/);
   assert.match(body, /31 test\(s\)/);
-  assert.match(body, /provider account, not the suite/);
+  // Its own triage line, not the zero-verdicts one: `providers.json` is written by the
+  // sweep AND by `globalSetup`'s credential degradation (#1058), so "restore the key
+  // or the credit" would misdirect on half the states that produce this shape.
+  assert.match(body, /provider configuration, not the suite/);
+  assert.match(body, /whether the sweep imported them/);
+  assert.match(body, /globalSetup/);
   // It must NOT borrow the zero-verdicts claims, which are false here.
   assert.doesNotMatch(body, /not one of them is a/);
   assert.doesNotMatch(body, /no per-test evidence to/);
+  assert.doesNotMatch(body, /restore the key or the credit/);
 });
 
-// This shape is selected by the ACCOUNT, which says nothing about whether tests also
-// failed — so unlike the zero-verdicts shape (where nothing ran, so nothing could
-// fail) the auto-remove step CAN have stripped tags on the same run. Dropping its
-// summary would tell the triager the specs are not implicated on a day three tags
-// had just been removed.
-test("a dry account that ALSO had failures keeps the auto-removal summary", () => {
+// Review finding: the account says nothing about whether tests ALSO failed, and this
+// shape sits above the per-test one — so a real failure day with a dry account took a
+// title that omitted the failures and a body that told the triager to ignore the
+// suite, with no failure list and (when the mass-failure guard leaves `arStatus`
+// empty, which is exactly the >5-failure outage day) no auto-removal block either.
+// The shape is now gated on the test job being GREEN.
+test("a dry account that ALSO had failures keeps the per-test shape", () => {
   const { title, body } = renderIssue({
     ...ACTIONS,
     accountDry: true,
+    testsFailed: true,
     runTests: "412",
     coverageProviders: "openai",
     coverageSkips: "31",
@@ -398,11 +406,27 @@ test("a dry account that ALSO had failures keeps the auto-removal summary", () =
     arSummary: "Removed @stable from 3 tests: a, b, c",
   });
 
-  assert.match(title, /NO usable provider/);
+  assert.match(title, /@stable tests failed/, "the failures own the title");
+  assert.doesNotMatch(title, /NO usable provider/);
   assert.match(body, /### `@stable` auto-removal/);
   assert.match(body, /Removed @stable from 3 tests/);
-  // And it says why that matters here rather than leaving the two blocks unrelated.
-  assert.match(body, /plausible cause of the very/);
+  assert.doesNotMatch(body, /Triage this as provider configuration/);
+});
+
+// And the belt: if the auto-remove step somehow ran on a green test job, its summary
+// is carried rather than dropped — the shape must never assert that no tag was
+// touched while one was.
+test("a dry account carries an unexpected auto-removal instead of hiding it", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    runTests: "412",
+    arStatus: "success",
+    arSummary: "Removed @stable from 3 tests: a, b, c",
+  });
+  assert.match(title, /NO usable provider/);
+  assert.match(body, /Removed @stable from 3 tests/);
+  assert.match(body, /Unexpected on this shape/);
 });
 
 test("the structural shapes outrank the dry-account one too", () => {
