@@ -187,7 +187,8 @@ export async function setupOpenAI(
     // The picker mixes every configured provider (#597 measured it listing a gemini
     // first while this setup's provider was OpenAI), and the last-resort branch below
     // takes index 0. Pre-#1679 that branch was unreachable in practice — the sweep
-    // enabled all 42 OpenAI models, so rank 1 always matched — whereas now the ladder
+    // clicked every visible toggle and left the picker offering all 42 of OpenAI's
+    // non-deprecated models, so rank 1 always matched — whereas now the ladder
     // is load-bearing, and one unlanded write would have made "first available" mean
     // Anthropic's `claude-opus-5` (the picker's actual first option, measured in
     // `modelInputComponent.spec.ts`) selected under an OpenAI key: the #961 bug

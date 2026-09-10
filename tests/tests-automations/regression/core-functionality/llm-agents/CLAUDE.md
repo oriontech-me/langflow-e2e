@@ -216,9 +216,14 @@ Two consequences, both measured rather than argued:
   `MIN_DEFAULT_MODELS` five afterwards. The sweep is not a slow success that later
   specs ride for free — it is a guaranteed failure every spec on that instance
   re-pays in full;
-- **the spec that pays it usually still passes**, which is why this hid for five
-  dailies (2026-08-31, 09-01, 09-02, 09-03 and 09-08, under three different
-  signature names). Reproduced end to end on the pre-fix helper:
+- **the spec that pays it usually still passes**, which is why this hid for six
+  dailies — 2026-08-31, 09-01, 09-02, 09-03, 09-08 and 09-09, under three
+  different signature names, all six retried green except where they took
+  something else down with them. (#1679 and this PR's own body say five: 09-09
+  landed in `reports/daily-history.jsonl` the day before the PR was written and
+  was missed. Recount it there rather than trusting either number — the query is
+  `.flaky[]` and `.failures[]` matching `MODEL_TOGGLE_WRITE_STALLED`,
+  `MODEL_PICKER_DEFECT` or `PROVIDER_LIST_STALLED`.) Reproduced end to end on the pre-fix helper:
   `agent-component-regression [google]` printed `30 toggle(s) clicked, 1 write(s)
   started, 0 finished`, took the backend down for **109 s**, and then **passed** —
   because its pinned model was already enabled — and NOT because the pin is one of

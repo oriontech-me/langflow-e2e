@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import {
   ANTHROPIC_MODEL_PREFERENCES,
   GOOGLE_MODEL_PREFERENCES,
+  GOOGLE_NON_CHAT_MODEL,
   OPENAI_MODEL_PREFERENCES,
   OPENAI_NON_CHAT_MODEL,
 } from "./model-preferences";
@@ -84,7 +85,12 @@ test("OpenAI's ladder rejects ALL five of its defaults — that setup MUST write
 // `gpt-4o-mini`, not `-mini`, not `gpt-4o`, not `gpt-4.1`), so it held with or
 // without the guard — and `nano`, `realtime` and `transcribe` could all be
 // deleted from the regex with the whole unit suite still green. `gpt-4.1-nano` is
-// not hypothetical: `resolve-gpt-model.ts` names that family explicitly.
+// not hypothetical: `resolve-gpt-model.ts`'s rank 3 is `/^gpt-4\.1(-mini|-nano)?$/`,
+// so that helper can settle on the very id this ladder refuses. The two do not
+// collide today — a settled model arrives as a PIN, and a pin that the panel lists
+// is enabled without consulting the ladder at all — but they are two OpenAI
+// preference lists in one directory that disagree about one family, and nothing
+// pins that agreement (pre-existing, #1679 did not introduce it).
 const OPENAI_NON_CHAT_CASES: Array<[token: string, model: string, matchedBy: string]> = [
   ["\\bo\\d", "o3-mini", "rank 2, -mini"],
   ["audio", "gpt-4o-mini-audio-preview", "rank 1, gpt-4o-mini"],
@@ -111,15 +117,29 @@ test("each OPENAI_NON_CHAT_MODEL token is load-bearing for an id a rank would ot
   }
 });
 
+// Same table shape, and the same trap avoided a second time: every non-chat
+// gemini id in the measured catalog carries `preview` as well, so a list read
+// straight off it pins `preview` and NOTHING else — deleting `tts` or `audio`
+// from `GOOGLE_NON_CHAT_MODEL` left the suite green. Two of the four ids below
+// are therefore CONSTRUCTED, not catalog rows, and they are the only way to
+// isolate their token. The token is still worth having: `preview` is dropped from
+// a model id the moment it goes GA, and a GA `-tts` or `-audio` gemini is what
+// this rank exists to keep off a chat spec.
+const GOOGLE_NON_CHAT_CASES: Array<[token: string, model: string, source: string]> = [
+  ["image", "gemini-3.1-flash-lite-image", "catalog, 1.13.0.dev8"],
+  ["preview", "gemini-omni-flash-preview", "catalog, 1.13.0.dev8"],
+  ["tts", "gemini-2.5-flash-tts", "constructed — every catalog tts row also says preview"],
+  ["audio", "gemini-2.5-flash-native-audio", "constructed — same reason"],
+];
+
 test("Google's first rank is chat-only, and its second is the catch-all", () => {
   // Rank 1 is `gemini` AND `flash` AND not a non-chat variant, so each id here
   // satisfies the first two and is rejected only by `GOOGLE_NON_CHAT_MODEL`.
-  for (const model of [
-    "gemini-3.1-flash-lite-image",
-    "gemini-2.5-flash-preview-tts",
-    "gemini-2.5-flash-preview-native-audio-dialog",
-    "gemini-omni-flash-preview",
-  ]) {
+  for (const [token, model, source] of GOOGLE_NON_CHAT_CASES) {
+    assert.ok(
+      GOOGLE_NON_CHAT_MODEL.test(model),
+      `GOOGLE_NON_CHAT_MODEL no longer rejects ${model} (${source}) — the "${token}" token is gone`,
+    );
     assert.ok(
       !GOOGLE_MODEL_PREFERENCES[0](model),
       `google's first rank accepts ${model}, which is not a chat model`,
