@@ -44,9 +44,13 @@ function obs(over: Partial<ToggleBatchObservation> = {}): ToggleBatchObservation
 }
 
 test("a panel nobody changed needs no flush at all", () => {
-  // The normal CI path: `Collect models` already enabled everything, the loop
-  // clicks nothing, and there is no batch to wait for. This branch is what keeps
-  // the fix free on every run that does not hit the defect.
+  // The normal CI path, and it stayed normal for a different reason twice over:
+  // it used to be that `Collect models` had already enabled everything, which
+  // stopped being true at #1666 (its sweep landed zero writes and was removed);
+  // since #1679 it is that the plan is usually empty, because the model a setup
+  // picks is one of the provider's five defaults. Either way there is no batch to
+  // wait for, and this branch is what keeps the fix free on every run that does
+  // not hit the defect.
   const v = flushVerdict(obs({ clicked: 0, postsStarted: 0, postsFinished: 0 }), 1_000, OPTS);
   assert.equal(v.kind, "nothing-to-flush");
 });
@@ -364,9 +368,22 @@ test("a ladder nothing satisfies leaves the panel alone and SAYS so", () => {
 });
 
 test("no pin and no ladder is a decision, not an omission", () => {
-  const plan = planToggleTargets({ listed: GOOGLE_LISTED, checked: GOOGLE_DEFAULTS });
-  assert.deepEqual(plan.toClick, []);
-  assert.match(plan.reason, /no preference was given/);
+  // BOTH spellings of "no ladder", because they are two different call sites: a
+  // caller that omits the field, and one that computes an empty array. The guard
+  // reads `acceptable === undefined || acceptable.length === 0`, and weakening it
+  // to the first half alone changed no `toClick` — the empty array falls out of
+  // the loop with nothing to click either way — so only the REASON separates
+  // them, and the reason is what the give-up path prints (#1012).
+  for (const acceptable of [undefined, []]) {
+    const plan = planToggleTargets({
+      listed: GOOGLE_LISTED,
+      checked: GOOGLE_DEFAULTS,
+      acceptable,
+    });
+    assert.deepEqual(plan.toClick, []);
+    assert.match(plan.reason, /no preference was given/);
+    assert.doesNotMatch(plan.reason, /preference 1 of 0|matches any of the 0/);
+  }
 });
 
 test('an empty pin is NO pin, and the reason must not quote a model named ""', () => {
@@ -407,16 +424,14 @@ test("the ladder sees the model id LOWERCASED, and the plan keeps the original",
   assert.deepEqual(plan.toClick, ["GPT-4o-Mini"]);
 });
 
-// ─── the three real ladders (#1679) ───────────────────────────────────────────
+// ─── the plan and the three real ladders together (#1679) ────────────────────
 //
-// Asserted against the LIVE catalogs, read from
-// `GET /api/v1/models?purpose=configure` on 1.13.0.dev8, because the property that
-// matters is not "the list is non-empty" — it is which of each provider's five
-// `default: true` models the ladder accepts. Google's and Anthropic's are all
-// accepted (so those setups write nothing); OpenAI's are all REJECTED (so that
-// setup must write, or a no-pin caller silently gets a frontier model). A ladder
-// gutted to `[]`, or an OpenAI ladder loosened until `gpt-6-astra` passes, fails
-// here.
+// The ladders themselves — which of each provider's five `default: true` models
+// each one accepts, and which non-chat families it must reject — are asserted in
+// `model-preferences.test.ts`, next to the module that owns them. What is pinned
+// HERE is the consequence the setups depend on: fed a real ladder and the real
+// catalog it was designed against, the PLAN is empty for Google and Anthropic and
+// one model for OpenAI.
 const ANTHROPIC_DEFAULTS = [
   "claude-fable-5-1",
   "claude-opus-5",
@@ -425,17 +440,7 @@ const ANTHROPIC_DEFAULTS = [
   "claude-opus-4-8",
 ];
 
-const accepts = (ladder: Array<(m: string) => boolean>, model: string): boolean =>
-  ladder.some((rank) => rank(model.toLowerCase()));
-
-test("Google's and Anthropic's ladders accept their own defaults — those setups write nothing", () => {
-  for (const model of GOOGLE_DEFAULTS) {
-    assert.ok(accepts(GOOGLE_MODEL_PREFERENCES, model), `google ladder rejects ${model}`);
-  }
-  for (const model of ANTHROPIC_DEFAULTS) {
-    assert.ok(accepts(ANTHROPIC_MODEL_PREFERENCES, model), `anthropic ladder rejects ${model}`);
-  }
-  // …and the plan agrees, which is the property the setups depend on.
+test("Anthropic's own defaults satisfy its ladder, so that setup plans no write", () => {
   assert.deepEqual(
     planToggleTargets({
       listed: ANTHROPIC_DEFAULTS,
@@ -446,17 +451,11 @@ test("Google's and Anthropic's ladders accept their own defaults — those setup
   );
 });
 
-test("OpenAI's ladder rejects ALL five of its defaults — that setup MUST write", () => {
-  // The asymmetry the ladder exists for. If a future edit makes one of these
-  // acceptable, `general-bugs-agent-images-playground` silently starts running its
-  // multimodal assertion on a frontier model instead of `gpt-4o-mini`.
-  for (const model of OPENAI_DEFAULTS) {
-    assert.ok(
-      !accepts(OPENAI_MODEL_PREFERENCES, model),
-      `openai ladder accepts ${model}, so the no-pin path would stop enabling a chat model`,
-    );
-  }
-  assert.ok(accepts(OPENAI_MODEL_PREFERENCES, "gpt-4o-mini"));
+test("OpenAI's own defaults satisfy nothing in its ladder, so that setup plans one write", () => {
+  // The asymmetry the three lists exist to encode. If a future edit makes one of
+  // OpenAI's defaults acceptable, `general-bugs-agent-images-playground` silently
+  // starts running its multimodal assertion on a frontier model instead of
+  // `gpt-4o-mini`.
   assert.deepEqual(
     planToggleTargets({
       listed: OPENAI_LISTED,
@@ -465,40 +464,6 @@ test("OpenAI's ladder rejects ALL five of its defaults — that setup MUST write
     }).toClick,
     ["gpt-4o-mini"],
   );
-});
-
-test("no ladder is empty, and none accepts a non-chat variant of its own family", () => {
-  // An empty ladder is the mutation that passed 1326/1326 before these tests
-  // existed. The second half pins what each ladder is FOR: the families that break
-  // the callers — a reasoning/audio/nano OpenAI id (#961/#569), a google image/tts
-  // variant on a chat spec.
-  for (const [name, ladder] of [
-    ["openai", OPENAI_MODEL_PREFERENCES],
-    ["google", GOOGLE_MODEL_PREFERENCES],
-    ["anthropic", ANTHROPIC_MODEL_PREFERENCES],
-  ] as const) {
-    assert.ok(ladder.length > 0, `${name} ladder is empty`);
-  }
-  for (const model of [
-    "gpt-4o-mini-tts",
-    "gpt-4o-mini-audio-preview",
-    "gpt-4o-mini-search-preview",
-    "gpt-5-nano",
-    "o3-mini",
-    "o4-mini",
-  ]) {
-    assert.ok(!accepts(OPENAI_MODEL_PREFERENCES, model), `openai ladder accepts ${model}`);
-  }
-  for (const model of [
-    "gemini-3.1-flash-lite-image",
-    "gemini-2.5-flash-preview-tts",
-    "gemini-omni-flash-preview",
-  ]) {
-    assert.ok(
-      !GOOGLE_MODEL_PREFERENCES[0](model),
-      `google's first rank accepts ${model}, which is not a chat model`,
-    );
-  }
 });
 
 test("an unlisted pin with an empty panel plans nothing — and names the empty panel", () => {
