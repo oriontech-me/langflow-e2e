@@ -8,6 +8,39 @@
 
 Validates that an LLM agent can discover and call an MCP tool mid-conversation via the MCPTools component. The agent receives a prompt instructing it to call the `echo` tool and the test verifies the echoed value appears in the Playground response. This is the primary real-world use case for MCP client: a user builds a flow where the agent has access to external tools via MCP.
 
+> **Proofs #1 and #2 asserted the wrong surface until #1793.** They read
+> `div-tools_tools_metadata` and `tool_echo` with an unscoped `.last()`, on the
+> stated premise that *"this DOM only exists after the agent invoked a tool"*.
+> **That premise is false.** Both test ids come from
+> `parameterRenderComponent/components/ToolsComponent/index.tsx` — the
+> `tools_metadata` **field of the MCPTools node on the canvas**, which stays
+> mounted behind the Playground modal and is matched by an unscoped locator
+> (Playwright visibility is a bounding box, not "on top"). They enumerate the
+> tools **attached** to the component and exist **before any run**.
+>
+> Measured on the sibling spec at `1.12.1` (#1451 / PR #1792): an agent
+> instructed never to call a tool still rendered the block and the chips, with
+> no `tool_use` persisted, and the equivalent assertions **passed**. Proof #3
+> was the only one that could fail — which is why the spec was weakened rather
+> than useless, and why the gap went unnoticed.
+>
+> **Measured here, closing the open half of #1793: both old proofs were
+> no-ops, not merely unsound.** On `1.12.1` with the `everything` server
+> registered and the agent asked *"What is 2+2? Answer with the number only. Do
+> not use any tool."*, at the assertion point:
+> `div-tools_tools_metadata` **visible**, `tool_echo` **visible**,
+> `tool-status-done` count **0**. The canvas chips enumerate every attached
+> tool — `tool_echo`, `tool_get-env`, `tool_get-resource-links`,
+> `tool_get-annotated-message` from the server plus the template's own
+> `tool_fetch_content` / `tool_perform_search` — with no invocation involved.
+>
+> One force-failure is worth recording because it did NOT fail, and the reason
+> is the #1187 lesson rather than a weak assertion: instructing the agent
+> *"You MUST NOT call any tool, ever. Reply with exactly: hello mcp"* still
+> produced `tool-status-done` = 1 reading `ECHO` — the model called the tool
+> anyway. A mutation on the model's CHOICE is not a mutation on the assertion;
+> the prompt that needs no tool is.
+
 ---
 
 ## Tags *(required)*
@@ -25,9 +58,9 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 5. Enable tool mode on MCPTools (`tool-mode-button`) — verify "toolset" label appears
 6. Connect MCPTools toolset output handle → Agent tools input handle
 7. Open Playground and send: `"Use the 'echo' tool to echo: hello mcp"`
-8. Wait for agent to finish (Stop button disappears), best-effort expand any collapsed "Agent Steps" accordion
-9. **Proof #1** — the Playground shows a tool-invocation block (`div-tools_tools_metadata`): the agent actually called a tool, it did not hallucinate a text-only answer
-10. **Proof #2** — the invoked tool is `echo` (`tool_echo` testid, rendered "ECHO")
+8. Wait for agent to finish (Stop button disappears)
+9. **Proof #1** — the Playground shows a **completed tool step** (`tool-status-done`): the agent actually called a tool, it did not hallucinate a text-only answer
+10. **Proof #2** — the row carrying that step names `echo`
 11. **Proof #3** — the last AI chat message (`[data-testid^="chat-message-AI-"]`) contains `"hello mcp"` — the echoed payload made the full round-trip and was surfaced to the user
 
 ---
@@ -47,7 +80,8 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 - `src/frontend/src/modals/addMcpServerModal/index.tsx` — JSON tab; testids `json-tab`, `json-input`, `add-mcp-server-button`
 - `src/backend/base/langflow/api/v2/mcp.py` — `GET /api/v2/mcp/servers?action_count=true` and `DELETE /api/v2/mcp/servers/{name}`
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle
-- `src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx` (+ the Playground tool-metadata renderer) — emits the `div-tools_tools_metadata` / `tool_<name>` testids and the "Agent Steps" block asserted by Proofs #1–#2
+- `src/frontend/src/components/core/chatComponents/ToolCallCard.tsx` — renders the per-call step asserted by Proofs #1–#2: a status test id beside the tool title, one of `tool-status-done`, `tool-status-error` or `tool-status-running`, mounted by `ContentBlockDisplay.tsx` only under `if (run.item.type === "tool_use")`
+- `src/frontend/src/components/core/chatComponents/toolStatus.ts` — derives `error | done | running`, with `error` winning over a duration; only `done` satisfies Proof #1
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx`
 - `tests/helpers/flows/agent-credential-settle.ts` — the shared probe, verdict taxonomy and failure formatter this spec's load guard settles on (#1274/#1371). Only the pure functions are shared; the wait loop is this spec's own
 - `tests/helpers/flows/load-template-by-name.ts` — loads the Simple Agent template and returns the created flow id
