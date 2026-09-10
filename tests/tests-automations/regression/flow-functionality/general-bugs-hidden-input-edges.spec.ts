@@ -42,7 +42,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user should not be able to hide connected inputs",
-  { tag: ["@release", "@api", "@database"] },
+  { tag: ["@stable", "@release", "@api", "@database"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);

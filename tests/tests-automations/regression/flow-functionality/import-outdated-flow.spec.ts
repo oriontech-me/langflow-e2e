@@ -1,4 +1,5 @@
 import path from "path";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
@@ -23,19 +24,49 @@ const createdFlowIds: string[] = [];
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
   const headers = { Authorization: await getAuthToken(request) };
-  for (const id of createdFlowIds.splice(0)) {
+  // Deduped: the upload id is pushed explicitly (it is also needed to open the
+  // flow) AND seen by the capture listener, so the same id can appear twice.
+  for (const id of new Set(createdFlowIds.splice(0))) {
     // Best-effort per-flow so one failure does not abort the sweep.
     await deleteFlow(request, id, { headers }).catch(() => {});
   }
 });
 
+/**
+ * Capture every flow the PAGE creates, installed before the bootstrap.
+ *
+ * `awaitBootstrapTest` creates `New Flow` plus a `Basic Prompting` when the
+ * project is empty, and capturing only the upload response left those two behind
+ * on every run -- green path as well as red (#1787, measured on 1.13.0.dev8).
+ * Id-scoped, never a global sweep: under `fullyParallel` deleting anything this
+ * page did not create would wipe a concurrent worker's flow, and a parallel
+ * worker's bootstrap creates different ids.
+ */
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
 test(
   "importing an outdated flow via the UI upload button surfaces the outdated notification on open",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page }) => {
     let importedFlowId: string | undefined;
 
     await test.step("Bootstrap the flows page", async () => {
+      trackCreatedFlows(page);
       await awaitBootstrapTest(page, { skipModal: true });
       await expect(page.getByTestId("mainpage_title")).toBeVisible({
         timeout: 30000,

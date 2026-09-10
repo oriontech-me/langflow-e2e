@@ -256,7 +256,7 @@
 - [x] Edit table input → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
-- [-] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
+- [x] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
 - [x] Two nodes on the canvas exposing the same field name render distinct DOM ids, while `data-testid` stays unscoped so both nodes remain selectable (LE-2037 / langflow#14312) → `core-components/duplicate-dom-ids-regression.spec.ts`
 
 #### 2.2 Tool Mode
@@ -683,7 +683,7 @@
 - [x] Integrity after deletion — the deleted folder leaves the sidebar immediately, the page stays functional, and a sibling folder is untouched and still clickable → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
 - [x] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
 - [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010; stays `[-]` permanently, since `[x]` requires `@stable` and `@destructive` must never carry it — the pair would mean "runs nowhere")
-- [-] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
+- [x] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
@@ -810,7 +810,7 @@
 - [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
 - [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
 - [x] Re-importing a live flow's own export through the UI adds a **copy** (`"<name> (1)"`, new id) instead of updating it — the UI import posts `POST /api/v1/flows/` and discards the export's id, unlike `POST /api/v1/flows/upload/`, which upserts → `flow-functionality/export-import-flow.spec.ts` (#1773)
-- [-] Import flow with outdated components → `flow-functionality/import-outdated-flow.spec.ts`
+- [x] Import flow with outdated components → `flow-functionality/import-outdated-flow.spec.ts`
 - [x] Import invalid JSON — should display error message → `flow-functionality/import-invalid-json.spec.ts`
 
 #### 12.5 Flow Operations
@@ -821,7 +821,7 @@
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
 #### 12.6 Flow Execution
-- [x] Run Flow component executes another flow — `@stable` restored 2026-08-11 (#966). The upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is fixed by langflow#14349, present on the nightly line; the shared helper still gates on the flows list having rendered. Hardened for #1548 (daily 2026-08-21 flow-selector click intercepted by two overlays): the spec now seeds the assistant-onboarding suppression (#1220) and drags the Run Flow node to the upper-right canvas region so the flow-name popup stays clear of the canvas-controls band; re-validated on `1.12.0.dev33` → `flow-functionality/run-flow.spec.ts`
+- [x] Run Flow component executes another flow — restored to `@stable` 2026-09-10 (#1787), and the bullet had been over-reporting until then: it read `[x]` with "`@stable` restored 2026-08-11 (#966)" while the spec carried `test.fixme` and no tag from `ecf96d29` onward, which no guard detects (`check:checklist-coverage` enforces spec→bullet, never bullet→spec). Sequence, because it explains the gap: promoted, quarantined for #966, hardened once the upstream `New Flow` dead-click ([LE-2019](https://datastax.jira.com/browse/LE-2019)) was fixed by langflow#14349, then the 2026-08-21 daily hit an `assistant-onboarding-tooltip` overlay and TWO PRs answered it the same day — #1550 hardened the spec against that overlay (`seedAssistantDiscovered` + the upper-right node anchor) and #1553 muted it. #1553 merged second so the mute won, and #1548 — which carried the lift as a deliverable — closed without performing it, leaving the hardening for the mute's own cause unused in the file. Re-validated on `1.13.0.dev8`: 3/3 green with the modifier removed, and 3/3 in the #1784 measurement before that → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [ ] A cyclic graph is refused with a cycle-specific error, and the flow stays editable afterwards (the engine's own contract; a total engine failure is caught indirectly by the 63 `@stable` specs that trigger a run, a subtle one by nothing)
