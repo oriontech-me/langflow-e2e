@@ -206,7 +206,7 @@ Two reasons, and the mechanical one comes first: the test is `test.fixme`, so **
 today means §3's by-hand reproduction, or lifting the quarantine first. And even
 then it would spend CI to confirm what the blob identity above already settles.
 
-It becomes the right move the moment any of those six blobs changes on any watched
+It becomes the right move the moment any of those blobs changes on any watched
 ref — and at that point the order is: reproduce by hand (§3), then lift.
 
 ### What filing it needs
