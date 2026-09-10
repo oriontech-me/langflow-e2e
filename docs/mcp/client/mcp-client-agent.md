@@ -8,7 +8,6 @@
 
 Validates that an LLM agent can discover and call an MCP tool mid-conversation via the MCPTools component. The agent receives a prompt instructing it to call the `echo` tool and the test verifies the echoed value appears in the Playground response. This is the primary real-world use case for MCP client: a user builds a flow where the agent has access to external tools via MCP.
 
-
 > **Proofs #1 and #2 asserted the wrong surface until #1793.** They read
 > `div-tools_tools_metadata` and `tool_echo` with an unscoped `.last()`, on the
 > stated premise that *"this DOM only exists after the agent invoked a tool"*.
@@ -39,7 +38,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 > is the #1187 lesson rather than a weak assertion: instructing the agent
 > *"You MUST NOT call any tool, ever. Reply with exactly: hello mcp"* still
 > produced `tool-status-done` = 1 reading `ECHO` — the model called the tool
-> anyway. A mutation on the model'"'"'s CHOICE is not a mutation on the assertion;
+> anyway. A mutation on the model's CHOICE is not a mutation on the assertion;
 > the prompt that needs no tool is.
 
 ---
@@ -81,7 +80,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 - `src/frontend/src/modals/addMcpServerModal/index.tsx` — JSON tab; testids `json-tab`, `json-input`, `add-mcp-server-button`
 - `src/backend/base/langflow/api/v2/mcp.py` — `GET /api/v2/mcp/servers?action_count=true` and `DELETE /api/v2/mcp/servers/{name}`
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle
-- `src/frontend/src/components/core/chatComponents/ToolCallCard.tsx` — renders the per-call step asserted by Proofs #1–#2: `data-testid={`tool-status-${status}`}` beside the tool title, mounted by `ContentBlockDisplay.tsx` only under `if (run.item.type === "tool_use")`
+- `src/frontend/src/components/core/chatComponents/ToolCallCard.tsx` — renders the per-call step asserted by Proofs #1–#2: a status test id beside the tool title, one of `tool-status-done`, `tool-status-error` or `tool-status-running`, mounted by `ContentBlockDisplay.tsx` only under `if (run.item.type === "tool_use")`
 - `src/frontend/src/components/core/chatComponents/toolStatus.ts` — derives `error | done | running`, with `error` winning over a duration; only `done` satisfies Proof #1
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx`
 - `tests/helpers/flows/agent-credential-settle.ts` — the shared probe, verdict taxonomy and failure formatter this spec's load guard settles on (#1274/#1371). Only the pure functions are shared; the wait loop is this spec's own

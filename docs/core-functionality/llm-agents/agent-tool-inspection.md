@@ -265,7 +265,8 @@ cleanup and the flow count grows.
   the identical slideshow, keeping the output assert deterministic (same
   convention + SSRF-allowlist note as `agent-multi-tool-selection`).
 - `src/frontend/src/components/core/chatComponents/ToolCallCard.tsx` — renders
-  the per-call step: `data-testid={`tool-status-${status}`}` beside the tool
+  the per-call step — a status test id (`tool-status-done`,
+  `tool-status-error` or `tool-status-running`) beside the tool
   title, inside an accordion row. This is the 1.12 tool-USAGE surface, and it is
   rendered only for a call the agent made.
 - `GET /api/v1/monitor/messages` — persisted `content_blocks[].contents[]`
