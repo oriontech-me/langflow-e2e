@@ -6,7 +6,7 @@
 // ## Why it is a script and not `gh issue create` in bash
 //
 // The body is DECISION LOGIC, not a template: four mutually exclusive shapes
-// (failed merge / zero tests / partial / per-test), each with its own title, its
+// (failed merge / zero tests / partial / zero verdicts / per-test), each with its own title, its
 // own triage instruction, and its own reason for existing. Reproducing that with
 // bash heredocs is where the shapes quietly drift apart — and the shape is the
 // whole point. An empty run rendered as a per-test day reads like a clean triage on
@@ -51,6 +51,7 @@
 //   IMAGE, RUN_ID, RUN_DIR, RUN_URL (set on Actions, absent on the VM)
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
+//   COVERAGE_VERDICT, COVERAGE_HEADLINE, COVERAGE_PROVIDERS, COVERAGE_SKIPS (#1456)
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
@@ -100,6 +101,10 @@ export function renderIssue({
   unreadable = false,
   partial = false,
   mergeFailed = false,
+  uncovered = false,
+  coverageHeadline = "",
+  coverageProviders = "",
+  coverageSkips = "0",
   runErrors = "0",
   firstError = "",
   runTests = "0",
@@ -118,8 +123,15 @@ export function renderIssue({
   // 1. ZERO tests executed (#1012): there is no per-test evidence to triage, so
   //    say so instead of rendering the auto-removal line, which reads as a clean
   //    triage on an empty report.
-  // 2. The auto-remove step acted — show what it did.
-  // 3. Neither (it errored, or a guard skipped it) — manual triage.
+  // 2. NO VERDICT (#1456): the report is complete and carries results, but every
+  //    one of them was a provider-health SKIP — nothing executed. It sits below the
+  //    three structural shapes and above the per-test ones because it is the second
+  //    way a GREEN test job can mean no coverage: `partial` and `empty` describe a
+  //    run that broke, this one describes a run that worked and proved nothing.
+  //    Ranked under `partial` deliberately: when a shard also died, the abort is
+  //    what triage must start from.
+  // 3. The auto-remove step acted — show what it did.
+  // 4. Neither (it errored, or a guard skipped it) — manual triage.
   const mergeFailedSection = [
     "### ⚠️ The shards RAN — the MERGE failed",
     "",
@@ -181,6 +193,27 @@ export function renderIssue({
           "the shard logs hold the rest. Known cause of this shape: `Collect models` failing without",
           "importing a provider key as a Langflow global variable — #1058.",
         ]
+      : uncovered
+      ? [
+          "### ⚠️ ZERO verdicts — a dead provider skipped every test that ran",
+          "",
+          `The report is complete and carries **${runTests} result(s)**, and **not one of them is a`,
+          "verdict about Langflow**: every test that produced a result was skipped because a",
+          "provider `collect-models` probed `inactive` could not serve a call.",
+          ...(coverageProviders
+            ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
+            : []),
+          ...(coverageHeadline ? ["", "```", coverageHeadline, "```"] : []),
+          "",
+          "No spec failed, no `@stable` tag was touched and there is **no per-test evidence to",
+          "triage** — the specs never ran. This is NOT the `empty` shape: the shards worked and",
+          "the report is intact, which is exactly why the run would otherwise have read as a",
+          "clean day (#1456).",
+          "",
+          "**Triage this as the provider account, not the suite**: restore the key or the credit,",
+          "then re-run the day. A green run that skipped everything is not evidence that anything",
+          "works (#570/#1012).",
+        ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
         : [
@@ -208,7 +241,9 @@ export function renderIssue({
     ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
     : partial
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
-      : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+      : uncovered
+        ? `[Daily Failure] @stable run produced ZERO verdicts — a dead provider skipped every test on ${today} (${image})`
+        : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and
   // naming the host is what lets a reader find it at all.
@@ -333,6 +368,14 @@ async function main() {
     runErrors: env.RUN_ERRORS || "0",
     firstError: env.RUN_FIRST_ERROR || "",
     runTests: env.RUN_TESTS || "0",
+    // #1456. Absent means "the caller does not track it" — the VM lane passes
+    // nothing today, and an unset verdict must never pick this shape: a shape is
+    // chosen by POSITIVE identification, unlike the run's gate, which is
+    // fail-closed. Mislabelling a day is worse than not labelling it.
+    uncovered: env.COVERAGE_VERDICT === "uncovered",
+    coverageHeadline: env.COVERAGE_HEADLINE || "",
+    coverageProviders: env.COVERAGE_PROVIDERS || "",
+    coverageSkips: env.COVERAGE_SKIPS || "0",
     liveness: env.LIVENESS_MD || "",
     cc: env.ISSUE_CC === undefined ? CC_DEFAULT : env.ISSUE_CC,
   });

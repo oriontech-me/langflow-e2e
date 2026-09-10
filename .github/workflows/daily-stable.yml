@@ -1480,8 +1480,18 @@ jobs:
       # removals without review), its own gates already bar it from an empty or partial
       # report, and widening when it fires is a decision of its own, not a side effect
       # of this one.
+      # The `uncovered` clause (#1456) is the third way this step has to fire on a
+      # run whose `test` job came back GREEN. The other two are the report guards;
+      # this one is a complete report full of provider-health skips. Without it the
+      # last step of the job reddens the run and NOTHING opens an issue naming why —
+      # #1176's lesson, in the direction that costs the triage rather than the gate.
+      #
+      # `== 'uncovered'`, POSITIVE, unlike the fail-closed gate below: an absent or
+      # unknown verdict must fail the run without labelling the day as a dead
+      # provider. Mislabelling is worse than not labelling — the umbrella's title is
+      # the part most people read.
       - name: Create issue on failure
-        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
+        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.verdict == 'uncovered') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
@@ -1528,6 +1538,15 @@ jobs:
           # the wedge out for the triager, and "not measured" says the state is
           # unknown. Only silence would be misleading.
           LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
+          # ZERO VERDICTS (#1456): the report is complete and every result in it is a
+          # provider-health skip. It gets its own shape because it is neither `empty`
+          # (the shards worked) nor a per-test day (no spec ran), and pointing triage
+          # at the merge step or at the specs would both be wrong — the repair is the
+          # provider account.
+          COVERAGE_VERDICT: ${{ steps.coverage.outputs.verdict }}
+          COVERAGE_HEADLINE: ${{ steps.coverage.outputs.headline }}
+          COVERAGE_PROVIDERS: ${{ steps.coverage.outputs.providers }}
+          COVERAGE_SKIPS: ${{ steps.coverage.outputs.provider_skips }}
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be

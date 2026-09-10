@@ -9,10 +9,12 @@
 //
 // Three things are pinned:
 //
-//  1. THE SHAPE. Three mutually exclusive verdicts — zero-tests / partial /
-//     per-test. Announcing "tests failed" on a run that executed ZERO points
-//     triage at specs instead of at the backend (#1012); rendering a partial run
-//     as a normal day reports UNDER-COUNTED totals as the day's numbers (#1058).
+//  1. THE SHAPE. Mutually exclusive verdicts — failed-merge / zero-tests /
+//     partial / zero-verdicts / per-test. Announcing "tests failed" on a run that
+//     executed ZERO points triage at specs instead of at the backend (#1012);
+//     rendering a partial run as a normal day reports UNDER-COUNTED totals as the
+//     day's numbers (#1058); and a run whose every result was a provider-health
+//     skip must not render the per-test shape, because the specs never ran (#1456).
 //  2. THE ACTIONS BODY IS UNCHANGED. The workflow now calls this script instead of
 //     rendering its own copy, so the body it produces on the Actions lane is
 //     asserted byte-for-byte against what the inline `actions/github-script` block
@@ -251,4 +253,92 @@ test("#1176 the umbrella step survives an earlier failed step in the merge job",
   // together rather than separately.
   assert.match(ifLine, /runguard\.outputs\.empty == 'true'/);
   assert.match(ifLine, /github\.event_name == 'schedule'/, "still scheduled-only");
+});
+
+// --- the zero-verdicts shape (#1456) ----------------------------------------
+// The second way a GREEN test job can mean no coverage. `empty` and `partial`
+// describe a run that broke; this one describes a run that worked and proved
+// nothing, which is why it needs a shape of its own rather than the per-test one.
+
+test("a run whose every result was a provider skip gets its own title and shape", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    uncovered: true,
+    runTests: "3",
+    coverageProviders: "openai",
+    coverageSkips: "3",
+    coverageHeadline: "daily-stable produced NO verdict at all: 3 test(s) skipped",
+  });
+  assert.match(title, /ZERO verdicts/);
+  assert.doesNotMatch(title, /tests failed/, "no spec failed — none ran");
+  assert.doesNotMatch(title, /executed ZERO tests/, "tests DID execute — as skips");
+  assert.match(body, /ZERO verdicts/);
+  assert.match(body, /openai/);
+  assert.match(body, /3 test\(s\)/);
+  assert.match(body, /provider account, not the suite/, "triage must point at the key");
+  assert.match(body, /no per-test evidence to/);
+  // The distinction from `empty` has to be in the body: the shards worked, and a
+  // reader sent to the merge step would find nothing wrong with it.
+  assert.match(body, /NOT the `empty` shape/);
+});
+
+test("the structural shapes outrank zero-verdicts, and it outranks the per-test one", () => {
+  // A dead shard is what triage starts from even if the survivors were all skips.
+  const partialWins = renderIssue({ ...ACTIONS, partial: true, uncovered: true, runTests: "3" });
+  assert.match(partialWins.title, /PARTIAL/);
+  const emptyWins = renderIssue({ ...ACTIONS, empty: true, uncovered: true });
+  assert.match(emptyWins.title, /executed ZERO tests/);
+  const mergeWins = renderIssue({ ...ACTIONS, mergeFailed: true, uncovered: true });
+  assert.match(mergeWins.title, /could not MERGE/);
+
+  // And it must beat the auto-removal summary: that section reads as a triaged day.
+  const overAutoRemove = renderIssue({
+    ...ACTIONS,
+    uncovered: true,
+    runTests: "3",
+    arStatus: "ok",
+    arSummary: "removed 3 tags",
+  });
+  assert.match(overAutoRemove.body, /ZERO verdicts/);
+  assert.doesNotMatch(overAutoRemove.body, /removed 3 tags/);
+});
+
+test("an unset coverage verdict cannot pick the shape", () => {
+  // Fail-closed belongs on the run's GATE, not on the issue's LABEL: an unknown
+  // verdict fails the scheduled run (daily-stable.yml's last step) but must not
+  // open an issue claiming a dead provider. Mislabelling a day is worse than not
+  // labelling it.
+  for (const verdict of [undefined, "", "covered", "degraded", "unreadable", "banana"]) {
+    const { title } = renderIssue({ ...ACTIONS, uncovered: verdict === "uncovered" });
+    assert.doesNotMatch(title, /ZERO verdicts/, `verdict ${JSON.stringify(verdict)} picked the shape`);
+  }
+});
+
+test("the zero-verdicts body survives a run that reported no headline", () => {
+  // `continue-on-error` on the guard means the outputs can be missing while the
+  // final gate still fires. The shape must still render something usable.
+  const { body } = renderIssue({ ...ACTIONS, uncovered: true, runTests: "3" });
+  assert.match(body, /ZERO verdicts/);
+  assert.doesNotMatch(body, /undefined/);
+  assert.doesNotMatch(body, /Providers that went uncovered/, "no list when nothing was reported");
+});
+
+test("the daily fires the umbrella on `uncovered` and hands it the verdict", () => {
+  // The wiring half, which no render test can reach: this step is gated on the
+  // TEST job, and an `uncovered` day is green there. Without the extra clause the
+  // job's last step reddens the run and nothing opens an issue naming the cause —
+  // a red day with no triage attached, which is #1176 in the direction that costs
+  // the evidence rather than the gate.
+  const wf = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
+  const step = wf.slice(wf.indexOf("- name: Create issue on failure"));
+  const block = step.slice(0, step.indexOf("\n      - name:", 10));
+
+  assert.match(
+    block.slice(0, block.indexOf("\n", block.indexOf("if:"))),
+    /steps\.coverage\.outputs\.verdict == 'uncovered'/,
+    "an uncovered day leaves the test job GREEN, so the umbrella needs its own clause",
+  );
+  for (const key of ["COVERAGE_VERDICT", "COVERAGE_HEADLINE", "COVERAGE_PROVIDERS", "COVERAGE_SKIPS"]) {
+    assert.match(block, new RegExp(`${key}: `), `the umbrella cannot render the shape without ${key}`);
+  }
 });
