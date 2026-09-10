@@ -749,7 +749,13 @@ phase_preflight() {
   # dies in prep or in a shard never reaches phase_merge. The run that most needs this
   # record would be exactly the one that produced none. First line of the first phase
   # costs nothing and survives every abort after it.
-  info "target env: $(mirrored_target_env)"
+  #
+  # The target's run command is printed from the same composer for the same reason, and
+  # the reason is sharper for it than for the mirrored four: a wrong path there is a
+  # backend that never answers, which reaches the operator as a shard timeout. Which
+  # artifact was ASKED to serve has to be readable without waiting for a metadata file
+  # the run may never write.
+  info "target env: $(mirrored_target_env)$(target_cmd_env)"
 
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives a second machine and will not guess its name."
   command -v node > /dev/null || die "node is not on PATH."

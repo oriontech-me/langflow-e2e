@@ -324,6 +324,16 @@ test("the target's run command crosses on every run, and the sync command never 
   assert.ok(line, "could not find the command that starts the backend on the target");
   assert.match(line, /\$\(target_cmd_env\)/);
 
+  // And it reaches the run's EARLY log, not only its metadata. The preflight line
+  // exists because a run that dies in prep or in a shard never reaches phase_merge, and
+  // that is the run whose record matters most — a wrong run command is a backend that
+  // never answers, which arrives as a shard timeout with nothing naming the cause.
+  const preflight = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes('info "target env:'));
+  assert.ok(preflight, "could not find the preflight line that records the target's environment");
+  assert.match(preflight, /\$\(target_cmd_env\)/, "the run command must be readable before phase_merge");
+
   // Unconditional, EMPTY INCLUDED, and that is the property the metadata field rests
   // on: a value that crosses only sometimes cannot be recorded as the one in force.
   // Turning this back into a conditional makes langflow_target_run_cmd a guess, so it
