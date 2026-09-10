@@ -63,11 +63,12 @@
  * file. A PR editing a single wholly-gated spec during a drain of that spec's provider
  * executes nothing and scores `uncovered`, so one dead key became a merge block for an
  * author who cannot fix it: #980 inverted, on the lane a human is waiting on.
- * THIRTEEN specs are wholly gated that way (measured) — eight on openai, two on google,
- * two on anthropic, one on the pair — and all of them are provider-dependent, so the
+ * TWELVE specs are wholly gated that way (measured) — eight on openai, two on google,
+ * two on anthropic, and none on a pair — and all of them are provider-dependent, so the
  * sweep runs and the gate is armed. Not through their tags: `provider-dependent-specs.mjs`
  * also matches an AREA or a MARKER, and `provider-setup` is a marker that every one of
- * these files hits through the import that gives it `providerSkipGate`.
+ * these files hits through the import that gives it `providerSkipGate`. The derivation
+ * is recorded in `lib/provider-usability.mjs` because the count has been wrong twice.
  *
  * So the failing decision moved to `shouldFail()` and asks what a re-run can answer:
  * the ACCOUNT axis, read from `providers.json` rather than guessed from the report,
@@ -78,7 +79,10 @@
  *
  * On the DAILY this is a widening: `uncovered` needs zero executed tests, which a full
  * `@stable` run never produces, so the gate could not fire at all — and a dry account
- * now fails it.
+ * now fails it. What the daily does NOT give up is the old rule: it passes
+ * `--fail-on-uncovered`, because "the run covered nothing" means a suite defect there
+ * (#1764's class) rather than a narrow selection, and a guard for a state this lane
+ * calls unreachable costs nothing to keep.
  *
  * On the PR lane it is close to a removal, and pretending otherwise would be the
  * dishonest half. `dry` is all but unreachable there because `Collect models` is a HARD
@@ -164,6 +168,12 @@ const HELP = `usage: lane-coverage-verdict.mjs [options]
   --providers-dir D  read every providers-*.json in D and union them — the daily's
                     shards each write one. Absent (either flag) = the account axis is
                     UNKNOWN, which never fails on its own.
+  --fail-on-uncovered  also fail an \`uncovered\` run on a LIVE account. For a lane
+                    whose run is the whole suite (the daily), where covering nothing
+                    is a suite defect the account cannot explain; NOT for a lane whose
+                    run is an import-graph selection.
+  --expect-shards N  with --providers-dir: warn when fewer than N files were read, so
+                    a partial download cannot quietly bias the account toward \`dry\`.
   --fail-closed     exit 1 when the run deserves it (see shouldFail): an unreadable
                     report, a dry account, or a run that covered nothing with no
                     evidence that any provider was reachable
@@ -318,7 +328,13 @@ export function displaySafe(value) {
  * The verdict for one run.
  *
  * @param {unknown} report parsed Playwright JSON report, or `null` when unreadable
- * @param {{ lane?: string, laneProvider?: string|null, reportPath?: string }} [options]
+ * @param {{
+ *   lane?: string,
+ *   laneProvider?: string|null,
+ *   reportPath?: string,
+ *   usability?: import("./lib/provider-usability.mjs").ProviderUsability,
+ *   failOnUncovered?: boolean,
+ * }} [options]
  */
 export function laneCoverageVerdict(report, options = {}) {
   const lane = options.lane || "this lane";
@@ -327,6 +343,10 @@ export function laneCoverageVerdict(report, options = {}) {
   const usability = options.usability ?? { known: false, active: [] };
   const account = usabilityState(usability);
   const usableProviders = usability.active ?? [];
+  // Carried ON the result rather than passed to `shouldFail()`, so the three surfaces
+  // that ask (the summary heading, the `fail_recommended` output and the exit code)
+  // cannot answer differently — the drift #1045 names, one function down.
+  const failOnUncovered = options.failOnUncovered === true;
 
   if (!report || typeof report !== "object" || !Array.isArray(report.suites)) {
     return {
@@ -336,6 +356,7 @@ export function laneCoverageVerdict(report, options = {}) {
       laneProviderSkipped: false,
       account,
       usableProviders,
+      failOnUncovered,
       executed: 0,
       skippedTotal: 0,
       providerSkips: [],
@@ -402,6 +423,7 @@ export function laneCoverageVerdict(report, options = {}) {
     laneProviderSkipped,
     account,
     usableProviders,
+    failOnUncovered,
     executed,
     skippedTotal,
     providerSkips,
@@ -419,7 +441,7 @@ export function laneCoverageVerdict(report, options = {}) {
  * daily means the suite is broken and on the PR lane frequently means the import graph
  * selected one wholly-gated spec. Failing there turns one drained key into a merge
  * block for a PR whose author cannot fix it — #980 inverted, on the lane a human is
- * waiting on, and reachable today through two specs (#1800).
+ * waiting on, and reachable today through twelve wholly-gated specs (#1800).
  *
  * What survives is the question a re-run can answer:
  *
@@ -430,10 +452,13 @@ export function laneCoverageVerdict(report, options = {}) {
  *   uncovered, account NOT alive  → fail. Nothing ran AND nothing says a provider was
  *                                   reachable: fail-closed on the unknown, because
  *                                   `uncovered` alone is already a strong signal.
- *   uncovered, account alive      → do NOT fail. Reported loudly — the summary block
- *                                   and the annotation both fire — but a live account
- *                                   means the selection was narrow, not that the world
- *                                   is down.
+ *   uncovered, account alive      → the LANE decides, via `--fail-on-uncovered`. Where
+ *                                   the run is an import-graph selection it means the
+ *                                   selection was narrow: reported loudly, not failed.
+ *                                   Where the run is the whole suite it means something
+ *                                   collected nothing, which the account cannot explain
+ *                                   and which the pre-#1800 rule caught — so the daily
+ *                                   asks for it and keeps that guard.
  *
  * Note what the second clause adds rather than removes: a `degraded` daily on a dry
  * account now fails, where the old rule could not reach it at all (a full `@stable` run
@@ -448,7 +473,17 @@ export function shouldFail(result) {
   if (result.verdict === UNREADABLE) return true;
   if (result.providerSkips.length === 0) return false;
   if (result.account === "dry") return true;
-  return result.verdict === UNCOVERED && result.account !== "alive";
+  if (result.verdict !== UNCOVERED) return false;
+  // `uncovered` on a demonstrably live account means one of two things, and WHICH one
+  // is a property of the lane's unit of work, not of the run (#1800 review). Where the
+  // "run" is an import-graph selection — frequently one spec file — it means the
+  // selection was narrow, and failing is #980 inverted. Where the run is the whole
+  // `@stable` suite it means something collected nothing (#1764's class), which is a
+  // suite defect the account cannot explain and the one the old rule caught. So the
+  // lane declares it with `--fail-on-uncovered` instead of the policy being guessed
+  // from the account: a guard for a state the daily calls unreachable costs nothing
+  // to keep, while removing it is what needed the argument.
+  return result.failOnUncovered === true || result.account !== "alive";
 }
 
 /**
@@ -484,7 +519,14 @@ export function renderSummary(result) {
       ? shouldFail(result)
         ? "### ❌ This run covered nothing — every test that could have produced a verdict was skipped"
         : "### ⚠️ This run covered nothing — every test in it was skipped on provider health"
-      : "### ⚠️ Provider-health skip — this run covered less than the check status shows",
+      : shouldFail(result)
+        ? // The `degraded` + dry-account case, which is the one the DAILY can actually
+          // reach — and the first version of this fix left it a ⚠️ over an `exit 1`
+          // and an `::error::`, i.e. the same contradiction as the finding above,
+          // inverted. Its old text is wrong here too: "less than the check status
+          // shows" was written for a check that is green.
+          "### ❌ Provider-health skip — and NO provider was recorded usable, so the LLM surface went unmeasured"
+        : "### ⚠️ Provider-health skip — this run covered less than the check status shows",
     "",
     result.headline,
     "",
@@ -563,7 +605,7 @@ export function outputLines(result) {
     // YAML `if:`, which is where two lanes drift apart. Independent of --fail-closed:
     // that flag says whether this process exits non-zero, not what the run deserves.
     `account=${result.account}`,
-    `usable_providers=${result.usableProviders.join(",")}`,
+    `usable_providers=${displaySafe(result.usableProviders.join(","))}`,
     `fail_recommended=${shouldFail(result)}`,
     `headline=${displaySafe(result.headline)}`,
   ];
@@ -576,6 +618,7 @@ const VALUE_FLAGS = new Set([
   "--report",
   "--providers",
   "--providers-dir",
+  "--expect-shards",
 ]);
 
 export function parseArgs(argv) {
@@ -592,6 +635,12 @@ export function parseArgs(argv) {
     // it HERE rather than in the workflow is what makes the wiring testable — see
     // `readUsabilityDir`.
     providersDir: null,
+    // How many shard files the caller expects in `providersDir`. Reported, never
+    // gated on: a partial download can only bias the union toward `dry`, which FAILS
+    // a lane, so the reader must say it read three of four rather than leave the
+    // count to be inferred from a verdict (#1012).
+    expectShards: null,
+    failOnUncovered: false,
     failClosed: false,
     json: false,
     help: false,
@@ -600,6 +649,10 @@ export function parseArgs(argv) {
     const flag = argv[i];
     if (flag === "-h" || flag === "--help") {
       args.help = true;
+      continue;
+    }
+    if (flag === "--fail-on-uncovered") {
+      args.failOnUncovered = true;
       continue;
     }
     if (flag === "--fail-closed") {
@@ -621,8 +674,22 @@ export function parseArgs(argv) {
     else if (flag === "--provider") args.provider = value;
     else if (flag === "--providers") args.providers.push(value);
     else if (flag === "--providers-dir") args.providersDir = value;
+    else if (flag === "--expect-shards") args.expectShards = value;
     else args.report = value;
     i++;
+  }
+  // Refused rather than resolved: the CLI can only read one of the two, and silently
+  // dropping the other would let the caller believe an input decided a verdict it
+  // never reached (#1012). Nothing passes both today, which is exactly when to say so.
+  if (args.providersDir && args.providers.length > 0) {
+    throw new Error("--providers and --providers-dir are mutually exclusive");
+  }
+  if (args.expectShards !== null) {
+    const n = Number(args.expectShards);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error(`--expect-shards needs a non-negative integer, got "${args.expectShards}"`);
+    }
+    args.expectShards = n;
   }
   return args;
 }
@@ -656,12 +723,24 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     process.stdout.write(
       `Provider health read from ${usability.read} shard file(s) in ${args.providersDir}.\n`,
     );
+    // A partial download is not neutral: the union only ever GAINS providers, so a
+    // missing shard file can turn `alive` into `dry` and fail the day — never the
+    // other way round. Said out loud, never gated on (#1012, and #980's trade: a
+    // half-read axis must not be a second way to redden a run).
+    if (args.expectShards !== null && usability.read < args.expectShards) {
+      process.stderr.write(
+        `::warning::lane-coverage-verdict: read ${usability.read} of ${args.expectShards} ` +
+          `expected shard provider file(s) in ${args.providersDir}. The account axis is ` +
+          `built from a UNION, so a missing file can only bias it toward \`dry\`\n`,
+      );
+    }
   }
   const result = laneCoverageVerdict(readReport(args.report), {
     lane: args.lane,
     laneProvider: args.provider,
     reportPath: args.report,
     usability,
+    failOnUncovered: args.failOnUncovered,
   });
 
   // Said out loud rather than folded into the verdict: a providers.json that was asked
@@ -675,10 +754,22 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   // re-created in the lane a human actually reads. With no provider-health skip the
   // verdict is `covered` and no account state can move it.
   if (result.providerSkips.length > 0) {
-    for (const path of usability.unread) {
+    for (const path of usability.unread ?? []) {
       process.stderr.write(
         `::warning::lane-coverage-verdict: ${path} is missing or unreadable, so it ` +
           `contributes nothing to whether any provider was usable\n`,
+      );
+    }
+    // Kept apart from `unread` because it sends the reader somewhere else entirely:
+    // the file IS there and parsed, and what changed is the record shape the producer
+    // writes. `collect-models.ts` and `provider-health.ts` keep that shape in sync by
+    // hand, so naming the file and the expected fields is the whole difference between
+    // a five-minute fix and a day spent on the keys.
+    for (const path of usability.unrecognised ?? []) {
+      process.stderr.write(
+        `::warning::lane-coverage-verdict: ${path} parsed but carries no record with a ` +
+          `\`provider\` and an active/inactive \`status\` — the producer's shape may have ` +
+          `drifted (collect-models.ts / provider-health.ts). Treated as UNKNOWN, never as dry\n`,
       );
     }
   }

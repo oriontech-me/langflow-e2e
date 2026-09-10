@@ -15,17 +15,26 @@
 // `uncovered` — while other providers were alive and the rest of the suite would have
 // run fine.
 //
-// THIRTEEN specs are wholly gated on one provider's health, and the first version of
-// this comment said two, for a reason worth recording because it is the natural
-// mistake: `provider-dependent-specs.mjs` decides `providerDependent` as
-// `consumesModelData || tags.length > 0`, and `consumesModelData` is an AREA or a
+// TWELVE specs are wholly gated on one provider's health — eight on openai, two on
+// google, two on anthropic — and the count has now been wrong TWICE, which is why the
+// derivation is recorded rather than the number alone. The first version said two,
+// missing that `provider-dependent-specs.mjs` decides `providerDependent` as
+// `consumesModelData || tags.length > 0` and that `consumesModelData` is an AREA or a
 // MARKER match — `initialGPTsetup`, `SimpleAgentTemplatePage`, and `provider-setup`,
 // which every one of these files matches through the very import that gives it
-// `providerSkipGate`. So the tag is the least of it: 20 of the 21 specs calling that
-// gate are provider-dependent (measured), all 13 wholly-gated ones among them, and
-// `consumesModelData` specs are never excluded as transitive either. The trigger is
-// therefore any PR whose selection is one of those thirteen, on a drain of the
-// provider it names — openai for eight, google for two, anthropic for two.
+// `providerSkipGate`. So the tag is the least of it: ALL 20 specs that call the gate
+// are provider-dependent (measured; a 21st file names it only in a comment), and
+// `consumesModelData` specs are never excluded as transitive either.
+//
+// The second version said thirteen "one of them on a pair", and there is no pair case:
+// the only `providerSkipGate("openai", "google")` call site is in
+// `language-model-regression.spec.ts`, whose FOURTH test carries no gate at all, so
+// that file is not wholly gated. A thirteenth file, `generalBugs-shard-3.spec.ts`,
+// qualifies only because its other test is a permanent `test.skip` — counted or not
+// it is openai, and the rule below does not move.
+//
+// The trigger is therefore any PR whose selection is one of those twelve, on a drain
+// of the provider it names.
 //
 // So the account axis is read where it is actually recorded: `providers.json`, the
 // file `collect-models` writes and every provider gate in this repo already consumes.
@@ -54,7 +63,47 @@
 
 import fs from "node:fs";
 
-/** @typedef {{ known: boolean, active: string[], unread: string[] }} ProviderUsability */
+/**
+ * @typedef {object} ProviderUsability
+ * @property {boolean} known   whether ANY file said something this reader recognises
+ * @property {string[]} active providers recorded `active` by at least one file
+ * @property {string[]} unread paths that were missing, unparseable, or not an array
+ * @property {string[]} unrecognised paths that parsed but carry no record this reader
+ *   understands — reported apart from `unread` because the two send a reader to
+ *   different places: one is a file that is not there, the other is producer drift
+ * @property {number} read     files that contributed to the fold
+ */
+
+/**
+ * Does this parsed payload carry anything this reader UNDERSTANDS?
+ *
+ * The header's promise is that a shape this module does not recognise degrades to
+ * UNKNOWN, and `Array.isArray(payload) && payload.length > 0` does not deliver it:
+ * a producer that renamed `status` would hand over two healthy providers, match no
+ * record, fold to `active: []` and read as `dry` — which FAILS a lane and sends the
+ * triage at the keys and the sweep, for a shape drift. `collect-models.ts` and
+ * `provider-health.ts` already keep this record in sync BY HAND, so the drift is a
+ * live possibility rather than a hypothetical, and the one direction this module
+ * argues against for an absent file is the same one it must refuse here.
+ *
+ * Recognisable is deliberately weak — a non-empty `provider` and a `status` this
+ * reader has a meaning for. It is not a schema check: an extra field, a missing
+ * `checkedAt` (which `globalSetup`'s credential degradation omits, #1058) and an
+ * unknown provider name all stay recognisable.
+ *
+ * @param {unknown} payload
+ * @returns {boolean}
+ */
+export function isInformative(payload) {
+  if (!Array.isArray(payload)) return false;
+  return payload.some(
+    (record) =>
+      record &&
+      typeof record === "object" &&
+      (record.status === "active" || record.status === "inactive") &&
+      String(record.provider ?? "").trim() !== "",
+  );
+}
 
 /**
  * Fold parsed `providers.json` payloads into one answer about the account.
@@ -66,8 +115,9 @@ export function foldUsability(payloads = []) {
   // An EMPTY array carries no information about the account — the sweep recorded no
   // provider at all — so it counts as unread rather than as "nothing usable". Reading
   // it as `dry` would make a file that says nothing indistinguishable from a file that
-  // says every key is dead, in the one direction that fails a lane.
-  const readable = payloads.filter((payload) => Array.isArray(payload) && payload.length > 0);
+  // says every key is dead, in the one direction that fails a lane. Same reasoning for
+  // a payload whose records this reader cannot interpret — see `isInformative`.
+  const readable = payloads.filter(isInformative);
   if (readable.length === 0) return { known: false, active: [] };
 
   const active = new Set();
@@ -87,7 +137,10 @@ export function foldUsability(payloads = []) {
  *
  * A path that does not exist, does not parse, or is not an array is reported in
  * `unread` and contributes nothing — the caller says so out loud rather than letting
- * a silently-dropped file decide a verdict (#1012).
+ * a silently-dropped file decide a verdict (#1012). A path that parses into an array
+ * carrying no record this reader understands is reported in `unrecognised`, kept
+ * APART from `unread` because it is producer drift and not a missing input, and the
+ * two send a reader to different places.
  *
  * @param {string[]} paths
  * @param {{ readFile?: (p: string) => string }} [io]
@@ -97,6 +150,7 @@ export function readUsability(paths = [], io = {}) {
   const readFile = io.readFile ?? ((p) => fs.readFileSync(p, "utf-8"));
   const payloads = [];
   const unread = [];
+  const unrecognised = [];
 
   for (const path of paths) {
     let parsed;
@@ -110,10 +164,21 @@ export function readUsability(paths = [], io = {}) {
       unread.push(path);
       continue;
     }
+    // An EMPTY array is not drift — the sweep legitimately recorded nothing — so it
+    // stays out of `unrecognised` and simply carries no information.
+    if (parsed.length > 0 && !isInformative(parsed)) {
+      unrecognised.push(path);
+      continue;
+    }
     payloads.push(parsed);
   }
 
-  return { ...foldUsability(payloads), unread, read: payloads.length };
+  return {
+    ...foldUsability(payloads),
+    unread,
+    unrecognised,
+    read: payloads.filter(isInformative).length,
+  };
 }
 
 /**
@@ -140,7 +205,7 @@ export function readUsabilityDir(dir, io = {}) {
   try {
     entries = readdir(dir);
   } catch {
-    return { known: false, active: [], unread: [], read: 0 };
+    return { known: false, active: [], unread: [], unrecognised: [], read: 0 };
   }
   const files = entries
     .filter((name) => /^providers-.*\.json$/.test(name))

@@ -774,7 +774,9 @@ jobs:
       # Token consumption artifacts from every shard (#1197). Flattened like the
       # blob download above: each shard names its files uniquely
       # (token-probes-<shard>.jsonl / token-attrib-<shard>.jsonl /
-      # token-provider-<shard>.txt), so merge-multiple cannot collide them.
+      # token-provider-<shard>.txt / providers-<shard>.json), so merge-multiple
+      # cannot collide them. The last one is the coverage guard's account axis
+      # (#1800) and is read from this same directory by --providers-dir.
       # NOTE: this `path:` is the value merge-token-payload.mjs is given as
       # TOKENS_DIR — the provider files are read from here, so the two must agree.
       # continue-on-error: same reasoning as the liveness download — a shard that
@@ -910,9 +912,22 @@ jobs:
         # YAML is a regex over this step's text, and the tokens it looks for survive
         # that (#1226, in the shape that mattered). Globbing inside the script makes
         # "one file of four", "an empty directory" and "no directory at all" assertable.
+        #
+        # `--fail-on-uncovered` keeps the pre-#1800 rule on THIS lane. `uncovered` on a
+        # live account means a narrow selection where the run is an import-graph
+        # selection, and a suite defect where the run is the whole `@stable` suite —
+        # #1764's class, which the account cannot explain. The state is unreachable
+        # here by the outage route, and a guard for an unreachable state costs nothing
+        # to keep, so the lane declares the policy rather than the script guessing it.
+        #
+        # `--expect-shards` is reporting only: the account axis is a UNION, so a shard
+        # file that never arrived can only bias it toward `dry` — the direction that
+        # fails the day (#1012).
         run: |
           node scripts/lane-coverage-verdict.mjs --lane "daily-stable" \
-            --providers-dir all-tokens
+            --providers-dir all-tokens \
+            --expect-shards "${{ needs.prep.outputs.shard_total }}" \
+            --fail-on-uncovered
         env:
           PLAYWRIGHT_JSON: results.json
 
@@ -1588,7 +1603,11 @@ jobs:
           # per-test failures, and rendered a body carrying neither the failures nor —
           # when the mass-failure guard leaves the auto-removal empty, which is exactly
           # the >5-failure outage day — any account of what was touched.
-          TESTS_FAILED: ${{ needs.test.result == 'failure' }}
+          # `!= 'success'`, not `== 'failure'`: `cancelled` and `skipped` are not
+          # "the test job came back green" either, and the dry shape's body says
+          # that in so many words. Fail-closed in the direction that keeps the
+          # per-test shape, which never claims the specs were exonerated.
+          TESTS_FAILED: ${{ needs.test.result != 'success' }}
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be
@@ -1654,14 +1673,24 @@ jobs:
           # Three messages, because the three causes send triage to different places:
           # a dry account is ops, an all-skip run is the suite, and an unset output is
           # this step's own wiring.
-          if [ "$COVERAGE_ACCOUNT" = "dry" ] && [ "$COVERAGE_FAIL" = "true" ]; then
+          if [ "$COVERAGE_VERDICT" = "unreadable" ]; then
+            # First, because an unreadable report populates the account axis too and
+            # the dry branch below would otherwise claim "every @stable test that needs
+            # one was SKIPPED" on a run with zero recorded skips — the real cause being
+            # that there is no report to read at all.
+            echo "::error::The coverage guard could not read the merged report, so it produced no verdict about what this run covered: $COVERAGE_HEADLINE. Start from the 'Guard — the run covered the providers it was supposed to cover' step and the merge above it (#1456)."
+          elif [ "$COVERAGE_ACCOUNT" = "dry" ] && [ "$COVERAGE_FAIL" = "true" ]; then
             # Deliberately says only what it can observe. `providers.json` is written by
             # the `collect-models` sweep AND by globalSetup's credential degradation
             # (#1058), so "the account is drained" is a cause this cannot see; and the
             # branches above may already have reported an incomplete or partial report,
             # so this one must not also claim the report is complete (#1800 review).
             echo "::error::NO provider was recorded usable on this run, so every @stable test that needs one was SKIPPED and the LLM surface went unmeasured: $COVERAGE_HEADLINE. Check both halves before re-running — whether the keys are live, and whether the sweep imported them; re-running changes nothing until one of them is fixed (#1456/#1800)."
-          elif [ "$COVERAGE_VERDICT" = "uncovered" ]; then
+          elif [ "$COVERAGE_VERDICT" = "uncovered" ] && [ "$COVERAGE_FAIL" = "true" ]; then
+            # Guarded on the fail decision as well: with a live account this verdict
+            # does not fail the run, and one of the branches ABOVE may be why the step
+            # fired — in which case "the report is complete and the tests are not red"
+            # would contradict a message printed four lines earlier.
             echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. The report is complete and the tests are not red; there is simply no evidence in this run (#1456)."
           elif [ "$COVERAGE_FAIL" != "false" ]; then
             echo "::error::The coverage guard reported '${COVERAGE_FAIL:-unset}' for fail_recommended (verdict '${COVERAGE_VERDICT:-unset}') — UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — the run covered the providers it was supposed to cover' step (#1456)."

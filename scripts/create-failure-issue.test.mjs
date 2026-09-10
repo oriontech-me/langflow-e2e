@@ -28,11 +28,16 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderIssue, apiUrlFor, createIssue, CC_DEFAULT } from "./create-failure-issue.mjs";
+
+/** The script itself, for the handful of assertions that must go through `main()`. */
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "create-failure-issue.mjs");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
@@ -344,12 +349,19 @@ test("the daily fires the umbrella on the coverage DECISION and hands it the ver
     /steps\.coverage\.outputs\.fail_recommended == 'true'/,
     "a coverage day leaves the test job GREEN, so the umbrella needs its own clause",
   );
+  // `!= 'success'`, not `== 'failure'`: a CANCELLED test job is not "came back green"
+  // either, and the dry shape's body says that in so many words.
+  assert.match(block, /TESTS_FAILED: \$\{\{ needs\.test\.result != 'success' \}\}/);
   for (const key of [
     "COVERAGE_VERDICT",
     "COVERAGE_HEADLINE",
     "COVERAGE_PROVIDERS",
     "COVERAGE_SKIPS",
     "COVERAGE_ACCOUNT",
+    // Deleting this one line from the workflow left the whole lane green while
+    // restoring the defect the previous round was opened for — the dry shape taking
+    // the title on a day with real per-test failures (#1800 review).
+    "TESTS_FAILED",
   ]) {
     assert.match(block, new RegExp(`${key}: `), `the umbrella cannot render the shape without ${key}`);
   }
@@ -435,13 +447,22 @@ test("the structural shapes outrank the dry-account one too", () => {
     assert.doesNotMatch(title, /NO usable provider/, `${flag} must win the title`);
   }
   // And zero-verdicts outranks it: if nothing ran at all, that is the stronger fact.
+  // `arStatus` is populated on purpose: without it this case could not see the
+  // `!uncovered` guard on the auto-removal block, and dropping that guard survived the
+  // whole lane — rendering "### `@stable` auto-removal" directly under the sentence
+  // "No spec failed, no `@stable` tag was touched", which is the self-contradicting
+  // body #1456 deliberately avoids.
   const bothCoverage = renderIssue({
     ...ACTIONS,
     uncovered: true,
     accountDry: true,
     runTests: "3",
+    arStatus: "ok",
+    arSummary: "Removed @stable from 2 tests",
   });
   assert.match(bothCoverage.title, /ZERO verdicts/);
+  assert.doesNotMatch(bothCoverage.body, /auto-removal/);
+  assert.doesNotMatch(bothCoverage.body, /Removed @stable/);
 });
 
 test("an alive account never selects the dry shape", () => {
@@ -455,4 +476,83 @@ test("an alive account never selects the dry shape", () => {
   });
   assert.match(title, /tests failed/);
   assert.doesNotMatch(body, /NO usable provider|no provider at all/);
+});
+
+test("a dry account on a FAILURE day keeps the per-test shape and still names the outage", () => {
+  // The per-test shape wins the title — the fix for the dry shape hijacking a real
+  // failure day — but the first version of that fix traded one information loss for
+  // its mirror image: every coverage input is rendered inside the dry/uncovered
+  // section, so routing the day elsewhere dropped the outage entirely. Measured on the
+  // exact day the finding names: >5 failures, so the mass-failure guard leaves
+  // `arStatus` empty and the body carried neither the failures nor the account.
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    testsFailed: true,
+    runTests: "412",
+    arStatus: "",
+    coverageProviders: "openai, anthropic, google",
+    coverageSkips: "31",
+    coverageHeadline: "daily-stable did not cover openai, anthropic, google",
+  });
+  assert.match(title, /@stable tests failed on/);
+  assert.doesNotMatch(title, /NO usable provider/);
+  assert.match(body, /NO usable provider on this run/);
+  assert.match(body, /openai, anthropic, google/);
+  assert.match(body, /31 test\(s\)/);
+  assert.match(body, /daily-stable did not cover openai/);
+  // It leads the body for the same reason the liveness block does: the failures below
+  // are plausibly collateral, and triage that starts from them starts wrong.
+  assert.ok(
+    body.indexOf("NO usable provider on this run") < body.indexOf("### Next steps"),
+    "the outage must precede the per-test material",
+  );
+});
+
+test("a LIVE account on a failure day carries no outage banner", () => {
+  const { body } = renderIssue({
+    ...ACTIONS,
+    accountDry: false,
+    testsFailed: true,
+    runTests: "412",
+    coverageProviders: "openai",
+    coverageSkips: "3",
+  });
+  assert.doesNotMatch(body, /NO usable provider on this run/);
+});
+
+test("main() reads TESTS_FAILED as the string 'true', and only that", async () => {
+  // The env→props mapping the render tests cannot reach: inverting this one comparison
+  // left the whole lane green while restoring the hijack. Rendered through the real
+  // process so the mapping, not a re-declaration of it, is what is asserted.
+  // RUN_DIR, because `main()` always writes `$RUN_DIR/issue-body.md` and the default
+  // is the CWD — a test that leaves a file in the repo root is its own defect.
+  const runDir = mkdtempSync(join(tmpdir(), "issue-body-"));
+  const base = {
+    ...process.env,
+    ISSUE_DRY_RUN: "1",
+    RUN_DIR: runDir,
+    COVERAGE_ACCOUNT: "dry",
+    COVERAGE_VERDICT: "degraded",
+    RUN_TESTS: "412",
+    RUN_ID: "1",
+    RUN_URL: "https://example.invalid/1",
+    LANGFLOW_IMAGE: "nightly",
+    AUTO_REMOVE_STATUS: "",
+    LIVENESS_MD: "",
+  };
+  const failed = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...base, TESTS_FAILED: "true" },
+  });
+  const green = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...base, TESTS_FAILED: "false" },
+  });
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.equal(green.status, 0, green.stderr);
+  assert.match(green.stdout, /NO usable provider on/);
+  assert.doesNotMatch(failed.stdout, /@stable run had NO usable provider on/);
+  assert.match(failed.stdout, /@stable tests failed on/);
+  rmSync(runDir, { recursive: true, force: true });
 });

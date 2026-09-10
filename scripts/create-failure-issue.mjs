@@ -120,7 +120,7 @@ export function renderIssue({
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // Four shapes, most specific first.
+  // SIX shapes, most specific first (the count was already stale at four).
   // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
   //    because a failed merge leaves no report and the integrity guard therefore
   //    reports the run as empty and unreadable. "Find why nothing ran" is then a
@@ -135,8 +135,14 @@ export function renderIssue({
   //    run that broke, this one describes a run that worked and proved nothing.
   //    Ranked under `partial` deliberately: when a shard also died, the abort is
   //    what triage must start from.
-  // 3. The auto-remove step acted — show what it did.
-  // 4. Neither (it errored, or a guard skipped it) — manual triage.
+  // 3. NO USABLE PROVIDER (#1800): the report is complete and hundreds of tests DID
+  //    execute, but nothing was recorded usable, so the whole LLM surface went
+  //    unmeasured — the shape this lane can actually reach, where `uncovered` cannot
+  //    fire. Gated on `!testsFailed`, because the account says nothing about whether
+  //    specs also failed and a day with real per-test failures must keep its own
+  //    title and body; on such a day the outage is carried as a banner instead.
+  // 4. The auto-remove step acted — show what it did.
+  // 5. Neither (it errored, or a guard skipped it) — manual triage.
   const mergeFailedSection = [
     "### ⚠️ The shards RAN — the MERGE failed",
     "",
@@ -247,16 +253,12 @@ export function renderIssue({
                 "changes nothing, and a green run that skipped the whole LLM surface is not evidence",
                 "that it works (#570/#1012).",
               ]),
-          // Belt and braces: the shape is now gated on the test job being green, so the
-          // auto-remove step cannot have run — but if it somehow did, dropping its
-          // summary would tell the triager the specs were not implicated on a day tags
-          // had just been stripped, which is the exact review finding this answers.
           // Only on the dry-account branch. `uncovered` deliberately DROPS a stale
           // auto-removal summary (#1456): nothing ran there, so nothing failed, and
           // rendering that section reads as a triaged day. Here the shape is gated on
-          // the test job being green so the step cannot have run either — but if it
-          // somehow did, dropping the summary would tell the triager the specs were
-          // not implicated on a day tags had just been stripped.
+          // the test job being green so the step cannot have run either — belt and
+          // braces — but if it somehow did, dropping the summary would tell the triager
+          // the specs were not implicated on a day tags had just been stripped.
           ...(accountDry && !uncovered && arStatus
             ? [
                 "",
@@ -286,6 +288,31 @@ export function renderIssue({
   // from the collateral specs again (#1030). Empty when the reporting step
   // produced no output at all.
   const livenessSection = liveness.trim() ? [liveness.trim(), ""] : [];
+
+  // A dry account on a day that ALSO had per-test failures keeps the per-test title
+  // and body — the fix for the shape hijacking a real failure day — but the first
+  // version of that fix traded one information loss for its mirror image: every
+  // coverage input is rendered inside the dry/uncovered section, so routing the day
+  // elsewhere dropped the outage entirely, and the umbrella is the triage artifact
+  // (the run's `::error::` lives in a step log nobody opens twice). It leads the body
+  // for the same reason the liveness block does (#1030): the failures below are
+  // plausibly collateral of the outage, and triage that starts from them starts wrong.
+  const accountBanner =
+    accountDry && testsFailed
+      ? [
+          "### ⚠️ NO usable provider on this run — read the failures below against it",
+          "",
+          "No provider was **recorded** usable while these tests ran, so every test that needs",
+          "one was skipped and the failures below may be collateral rather than causes.",
+          "`providers.json` is written by the `collect-models` sweep AND by `globalSetup`'s",
+          "credential degradation (#1058), so this says what was recorded, not why.",
+          ...(coverageProviders
+            ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
+            : []),
+          ...(coverageHeadline ? ["", "```", coverageHeadline, "```"] : []),
+          "",
+        ]
+      : [];
 
   // The title is what gets scanned in the issue list, so an empty run must not
   // claim that tests failed — none ran. Nor may a failed merge claim that nothing
@@ -319,6 +346,7 @@ export function renderIssue({
     ...runLines,
     "",
     ...livenessSection,
+    ...accountBanner,
     ...section,
     ...(cc.trim() ? ["", `/cc ${cc.trim()}`] : []),
   ].join("\n");

@@ -62,16 +62,63 @@ test("no readable file is UNKNOWN, never dry", () => {
   assert.equal(usabilityState(undefined), "unknown");
 });
 
-test("a shape it does not recognise degrades instead of throwing", () => {
+test("a shape it does not recognise degrades to UNKNOWN instead of to `dry`", () => {
   // This consumes a file written by another process on another machine, inside a
-  // reporting step that must not be the thing that reddens a run.
+  // reporting step that must not be the thing that reddens a run. "Does not throw" was
+  // the whole guarantee in the first round, and it is not enough: `known: true` came
+  // from `payload.length > 0` alone, so a producer that renamed `status` handed over
+  // two HEALTHY providers, matched no record, folded to `active: []` and read as
+  // `dry` — which FAILS a lane and sends triage at the keys. The two producers
+  // (`collect-models.ts`, `provider-health.ts`) keep this record in sync BY HAND.
   assert.deepEqual(foldUsability([null, "nope", 42, {}]), { known: false, active: [] });
+  assert.deepEqual(
+    foldUsability([
+      [
+        { provider: "openai", model: "gpt", state: "active" },
+        { provider: "google", model: "g", state: "active" },
+      ],
+    ]),
+    { known: false, active: [] },
+    "a renamed status field must not read as an account with nothing usable",
+  );
+  // Half-formed records inside an otherwise recognisable file are simply ignored.
   assert.deepEqual(foldUsability([[null, "x", { status: "active" }, { provider: "  " }]]), {
+    known: false,
+    active: [],
+  });
+  assert.deepEqual(
+    foldUsability([[{ status: "active" }, { provider: "openai", status: "active" }]]),
+    { known: true, active: ["openai"] },
+  );
+  // `inactive` is recognisable too — that is what makes a genuinely dry account
+  // distinguishable from a file this reader cannot interpret.
+  assert.deepEqual(foldUsability([[{ provider: "openai", status: "inactive" }]]), {
     known: true,
     active: [],
   });
   // An empty array carries no information — see the dedicated test below.
   assert.deepEqual(foldUsability([[]]), { known: false, active: [] });
+});
+
+test("a parsed-but-unrecognised file is reported apart from an unread one", () => {
+  const files = {
+    "drift.json": JSON.stringify([{ provider: "openai", state: "active" }]),
+    "empty.json": "[]",
+    "ok.json": JSON.stringify([record("google", "active")]),
+  };
+  const usability = readUsability(["drift.json", "empty.json", "ok.json", "gone.json"], {
+    readFile: (path) => {
+      if (!(path in files)) throw new Error("ENOENT");
+      return files[path];
+    },
+  });
+  // Kept apart because the two send a reader somewhere else entirely: one file is not
+  // there, the other IS and its producer's shape moved (#1012).
+  assert.deepEqual(usability.unread, ["gone.json"]);
+  assert.deepEqual(usability.unrecognised, ["drift.json"]);
+  // An EMPTY array is not drift — the sweep legitimately recorded nothing.
+  assert.deepEqual(usability.active, ["google"]);
+  assert.equal(usability.read, 1, "only files that informed the fold are counted");
 });
 
 test("readUsability names what it could not read instead of dropping it", () => {
@@ -98,7 +145,13 @@ test("readUsability names what it could not read instead of dropping it", () => 
 
 test("readUsability with no paths is unknown and reports nothing unread", () => {
   const usability = readUsability([], { readFile: () => "[]" });
-  assert.deepEqual(usability, { known: false, active: [], unread: [], read: 0 });
+  assert.deepEqual(usability, {
+    known: false,
+    active: [],
+    unread: [],
+    unrecognised: [],
+    read: 0,
+  });
 });
 
 // --- reading a directory of shard files (#1800 review) ----------------------
@@ -158,6 +211,7 @@ test("an empty or absent directory is UNKNOWN, not dry", () => {
     known: false,
     active: [],
     unread: [],
+    unrecognised: [],
     read: 0,
   });
   assert.deepEqual(
@@ -166,7 +220,7 @@ test("an empty or absent directory is UNKNOWN, not dry", () => {
         throw new Error("ENOENT");
       },
     }),
-    { known: false, active: [], unread: [], read: 0 },
+    { known: false, active: [], unread: [], unrecognised: [], read: 0 },
   );
 });
 

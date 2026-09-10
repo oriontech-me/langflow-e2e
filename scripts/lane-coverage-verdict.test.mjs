@@ -385,7 +385,7 @@ test("--provider is reported, never gated on", () => {
 });
 
 test("parseArgs rejects an unknown flag rather than ignoring it", () => {
-  assert.throws(() => parseArgs(["--fail-on-uncovered"]), /unknown flag/);
+  assert.throws(() => parseArgs(["--no-such-flag"]), /unknown flag/);
   assert.throws(() => parseArgs(["--lane"]), /needs a value/);
   const args = parseArgs(["--lane", "daily-stable", "--provider", "google", "--fail-closed"]);
   assert.equal(args.lane, "daily-stable");
@@ -918,8 +918,27 @@ test("both lanes feed the account axis, and the daily carries it across the shar
   );
 
   const daily = readWorkflow("daily-stable.yml");
-  // The shard writes it onto the artifact the merge job already downloads...
-  assert.match(daily, /tokens\/providers-\$\{\{ matrix\.shard \}\}\.json/);
+  // The shard writes it onto the artifact the merge job already downloads. Anchored to
+  // a line START and scoped to the step, because the loose `assert.match(daily, …)`
+  // this replaces passed with the two `cp` lines COMMENTED OUT, and passed again with
+  // the SOURCE path replaced by one that does not exist — measured. At runtime both
+  // are silent (`2>/dev/null || true`, then an empty directory reads as UNKNOWN), so
+  // the daily half of the mechanism would have been inert with every test green: the
+  // exact shape #1226 names, in the guard written to answer it.
+  const collectIdx = daily.indexOf("- name: Stop and collect token consumption");
+  assert.ok(collectIdx > 0, "the shard's collect step must exist to carry the file");
+  const collectStep = daily.slice(collectIdx, daily.indexOf("\n      - name:", collectIdx + 10));
+  assert.match(
+    collectStep,
+    /^ +cp tests\/helpers\/provider-setup\/data\/providers\.json \\$/m,
+    "the source is collect-models' own PROVIDERS_PATH; a path that does not exist is silent",
+  );
+  assert.match(collectStep, /^ +"tokens\/providers-\$\{\{ matrix\.shard \}\}\.json"/m);
+  // Order matters as much as presence: written before the artifact that carries it.
+  assert.ok(
+    daily.indexOf("- name: Upload token consumption") > collectIdx,
+    "the copy must precede the upload that carries it",
+  );
   // ...and the merge job hands the DIRECTORY to the script. Deliberately not a shell
   // loop building `--providers` args: a mutation that found the files and never
   // passed them survived every guard available in YAML (#1226). The globbing is
@@ -928,6 +947,13 @@ test("both lanes feed the account axis, and the daily carries it across the shar
   const step = daily.slice(idx, daily.indexOf("- name:", idx + 10));
   assert.match(step, /--providers-dir all-tokens/);
   assert.doesNotMatch(step, /for f in/, "the argument list must not be built in YAML");
+  // The daily keeps the pre-#1800 `uncovered` rule, which this lane declares rather
+  // than the script guessing it from the account (#1800 review).
+  assert.match(step, /--fail-on-uncovered/);
+  assert.match(step, /--expect-shards "\$\{\{ needs\.prep\.outputs\.shard_total \}\}"/);
+  // The PR lane must NOT ask for it: its run is an import-graph selection, and that
+  // is the false red this whole change exists to remove.
+  assert.doesNotMatch(prStep, /--fail-on-uncovered/);
 });
 
 test("the umbrella opens on the decision, not on a verdict this lane cannot reach", () => {
@@ -978,4 +1004,230 @@ test("a sweep that disagrees with the run says so instead of contradicting itsel
   assert.match(result.headline, /the sweep and the run disagree/);
   assert.doesNotMatch(result.headline, /openai was still usable/);
   assert.match(renderSummary(result), /disagree/);
+});
+
+// --- #1800 review: the wiring the first round left unasserted -----------------
+//
+// Every test below kills a mutation that survived the full lane. They are grouped
+// because they share one finding: `shouldFail`'s decision matrix was well pinned and
+// everything AROUND it — the flag that reaches it, the output that carries it, the
+// heading that reports it — was not, so the mechanism could be disabled with the
+// suite green.
+
+test("the CLI actually uses --providers-dir, and the glob does not eat its neighbours", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-shards-");
+  fs.writeFileSync(
+    path.join(dir, "providers-1.json"),
+    JSON.stringify([{ provider: "openai", model: null, status: "inactive", error: "no credits" }]),
+  );
+  fs.writeFileSync(
+    path.join(dir, "providers-3.json"),
+    JSON.stringify([{ provider: "google", model: "gemini", status: "active", error: null }]),
+  );
+  // The daily's tokens artifact carries three other file families in the same
+  // directory; the reader must ignore them rather than fail on them.
+  fs.writeFileSync(path.join(dir, "token-provider-1.txt"), "openai");
+  fs.writeFileSync(path.join(dir, "token-probes-1.jsonl"), "{}\n");
+
+  const run = runCli(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), [
+    "--lane",
+    "daily-stable",
+    "--providers-dir",
+    dir,
+    "--expect-shards",
+    "2",
+  ]);
+  try {
+    // Dropping the `providersDir` branch in the CLI — reading `args.providers`, which
+    // is empty — left every test green and made the daily's whole account axis
+    // permanently UNKNOWN, silently. This is the assertion that sees it.
+    assert.match(run.outputs, /account=alive/);
+    assert.match(run.outputs, /usable_providers=google/);
+    assert.match(run.stdout, /Provider health read from 2 shard file\(s\)/);
+    assert.doesNotMatch(run.stderr, /expected shard provider file/);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a partial shard download is named, because the union can only bias toward dry", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-partial-");
+  fs.writeFileSync(
+    path.join(dir, "providers-2.json"),
+    JSON.stringify([{ provider: "openai", model: null, status: "inactive", error: "no credits" }]),
+  );
+
+  const run = runCli(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), [
+    "--lane",
+    "daily-stable",
+    "--providers-dir",
+    dir,
+    "--expect-shards",
+    "4",
+    "--fail-on-uncovered",
+  ]);
+  try {
+    assert.match(run.stderr, /read 1 of 4 expected shard provider file\(s\)/);
+    // Reported, never gated on: the missing files are not a second way to fail a run.
+    assert.match(run.outputs, /account=dry/);
+    assert.match(run.outputs, /fail_recommended=true/);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("`fail_recommended=true` is emitted, not just its `false` half", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-dry-out-");
+  const providers = path.join(dir, "providers.json");
+  fs.writeFileSync(
+    providers,
+    JSON.stringify([{ provider: "openai", model: null, status: "inactive", error: "no credits" }]),
+  );
+
+  const run = runCli(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), [
+    "--lane",
+    "daily-stable",
+    "--providers",
+    providers,
+    "--fail-closed",
+  ]);
+  try {
+    // Hardcoding this output to `false` survived every test in the first round, and
+    // it is the SOLE input to both of the daily's new gates.
+    assert.match(run.outputs, /fail_recommended=true/);
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /^::error::/m);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--fail-on-uncovered is what makes the daily fail an all-skip run on a live account", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-live-uncovered-");
+  const providers = path.join(dir, "providers.json");
+  fs.writeFileSync(
+    providers,
+    JSON.stringify([{ provider: "google", model: "gemini", status: "active", error: null }]),
+  );
+  const args = [
+    "--lane",
+    "daily-stable",
+    "--providers",
+    providers,
+    "--fail-closed",
+  ];
+  const body = report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]);
+
+  const withoutFlag = runCli(body, args);
+  const withFlag = runCli(body, [...args, "--fail-on-uncovered"]);
+  try {
+    // Same run, same account: only the lane's declared unit of work differs. Without
+    // the flag this is a narrow selection (#980); with it, a suite that collected
+    // nothing while a provider was reachable — which the account cannot explain.
+    assert.equal(withoutFlag.status, 0);
+    assert.match(withoutFlag.outputs, /fail_recommended=false/);
+    assert.equal(withFlag.status, 1);
+    assert.match(withFlag.outputs, /fail_recommended=true/);
+  } finally {
+    fs.rmSync(withoutFlag.workdir, { recursive: true, force: true });
+    fs.rmSync(withFlag.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the two account inputs are refused together rather than one being dropped", () => {
+  assert.throws(
+    () => parseArgs(["--providers", "a.json", "--providers-dir", "d"]),
+    /mutually exclusive/,
+  );
+  assert.throws(() => parseArgs(["--expect-shards", "many"]), /non-negative integer/);
+});
+
+test("the heading follows the fail decision on BOTH branches, not only on `uncovered`", () => {
+  const degradedRun = report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]);
+  const uncoveredRun = report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]);
+
+  // degraded + dry: this FAILS, so a ⚠️ heading would sit over an `exit 1` and an
+  // `::error::` — the review's own finding, inverted, on the case the daily reaches.
+  const degradedDry = renderSummary(verdictWith(degradedRun, DRY));
+  assert.match(degradedDry, /^### ❌ Provider-health skip/m);
+  assert.doesNotMatch(degradedDry, /covered less than the check status shows/);
+
+  // degraded + alive: green, so the heading stays a warning.
+  assert.match(
+    renderSummary(verdictWith(degradedRun, ALIVE)),
+    /^### ⚠️ Provider-health skip — this run covered less than the check status shows/m,
+  );
+
+  // uncovered + alive: green here (an import-graph selection), and the body must not
+  // call the run "narrower than the check status shows" — it produced no verdict.
+  const uncoveredAlive = renderSummary(verdictWith(uncoveredRun, ALIVE));
+  assert.match(uncoveredAlive, /^### ⚠️ This run covered nothing/m);
+  assert.doesNotMatch(uncoveredAlive, /not blind/);
+  assert.match(uncoveredAlive, /does not recover by re-running/);
+
+  // ...and red once the LANE says covering nothing is a suite defect.
+  assert.match(
+    renderSummary(verdictWith(uncoveredRun, ALIVE, { failOnUncovered: true })),
+    /^### ❌ This run covered nothing/m,
+  );
+});
+
+test("the unread warning stays off an LLM-free run", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  // No provider-health skip: the account axis can decide nothing, so naming an absent
+  // providers.json is #1252's `mode=count` in the lane a human actually reads.
+  const run = runCli(report("tests/a.spec.ts", [executed("one")]), [
+    "--lane",
+    "pr-validation",
+    "--providers",
+    "definitely/not/here.json",
+  ]);
+  try {
+    assert.doesNotMatch(run.stderr, /missing or unreadable/);
+    assert.match(run.outputs, /verdict=covered/);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+  }
+});
+
+test("a providers.json whose record shape drifted is UNKNOWN, never dry", () => {
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-drift-");
+  const providers = path.join(dir, "providers.json");
+  // Two HEALTHY providers, under a renamed status field. Read as `dry` this fails the
+  // daily and sends triage at the keys and the sweep — for producer drift. The two
+  // producers keep this shape in sync BY HAND, so the drift is a live possibility.
+  fs.writeFileSync(
+    providers,
+    JSON.stringify([
+      { provider: "openai", model: "gpt", state: "active", error: null },
+      { provider: "google", model: "g", state: "active", error: null },
+    ]),
+  );
+
+  const run = runCli(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), [
+    "--lane",
+    "daily-stable",
+    "--providers",
+    providers,
+    "--fail-closed",
+  ]);
+  try {
+    assert.match(run.outputs, /account=unknown/);
+    assert.match(run.stderr, /the producer's shape may have\s+drifted/);
+    // `degraded` + unknown does not fail; only `uncovered` + unknown does.
+    assert.match(run.outputs, /fail_recommended=false/);
+    assert.equal(run.status, 0);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
