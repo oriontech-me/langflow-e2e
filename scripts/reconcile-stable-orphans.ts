@@ -57,6 +57,23 @@ import {
   type DeclaredTest,
 } from "./lib/stable-tests";
 import {
+  candidateSpecs,
+  checklistBullets,
+  classifyGates,
+  extractRefs,
+  hasGateFindings,
+  refKey,
+  renderGateSection,
+  tagsSection,
+  type CitedRef,
+  type GateDecl,
+  type GateVerdict,
+  type JustificationSource,
+  type RefState,
+  type SpecJustification,
+  type TrackedBy,
+} from "./lib/gate-justifications";
+import {
   hasFindings,
   historyKey,
   reconcile,
@@ -83,6 +100,17 @@ export const ORPHAN_ISSUE_TITLE =
   "[@stable] removals with no owner — tests that run in no scheduled lane";
 
 export const EXEMPTIONS_PATH = "scripts/lib/stable-orphan-exemptions.json";
+
+/** Declared PROVENANCE citations for the gate-justification check (#1783). */
+export const GATE_DECLARATIONS_PATH =
+  "scripts/lib/gate-justification-declarations.json";
+
+/**
+ * The upstream repository this repo's docs cite. A bare `#N` is resolved
+ * against OUR repo and an `owner/repo#N` against the one it names; this
+ * constant only decides where an `upstream` reference is looked up.
+ */
+const UPSTREAM_REPO = "langflow-ai/langflow";
 
 /**
  * Cap on how far back one spec's history is walked. Well above the deepest
@@ -486,6 +514,298 @@ function fetchOpenIssues(): RawIssue[] {
   return pages.flat();
 }
 
+// ─── Gate justifications (#1783) ─────────────────────────────────────────────
+
+/**
+ * Read a file, or return "" when it is absent.
+ *
+ * Absent is a legitimate state for the checklist only in a stripped checkout,
+ * and it degrades this check to the doc source alone rather than crashing the
+ * whole reconciliation — the orphan half is the release-relevant one and must
+ * not be lost to a missing markdown file (#980's coverage-first trade).
+ */
+function readTextOrEmpty(file: string): string {
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
+}
+
+
+/**
+ * Which OPEN issues name which candidate SPEC.
+ *
+ * The per-test index above answers "who owns this removal"; this answers "does
+ * anyone own this file at all", which is the question a spec-level
+ * justification needs. Same generous criterion and the same boundary rule — a
+ * bare `includes` on `run-flow.spec.ts` matches inside `api-run-flow.spec.ts`,
+ * and this tree has three such pairs.
+ */
+export function buildSpecTrackerIndex(
+  issues: RawIssue[],
+  specs: string[],
+  ownTitle: string = ORPHAN_ISSUE_TITLE,
+): Record<string, TrackedBy[]> {
+  const index: Record<string, TrackedBy[]> = {};
+  const real = issues.filter((i) => !i.pull_request && i.title !== ownTitle);
+  for (const spec of specs) {
+    const basename = spec.split("/").pop() as string;
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9_.\\-])${basename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    );
+    const refs: TrackedBy[] = [];
+    for (const issue of real) {
+      const haystack = `${issue.title}\n${issue.body ?? ""}`;
+      if (!haystack.includes(spec) && !pattern.test(haystack)) continue;
+      refs.push({ number: issue.number, url: issue.html_url });
+    }
+    if (refs.length > 0) index[spec] = refs;
+  }
+  return index;
+}
+
+/**
+ * Read each candidate spec's written justification off disk.
+ *
+ * Two sources, both required by `CONTRIBUTING.md` → "Exceptions": the spec
+ * doc's `## Tags` section and the `QA-CHECKLIST.md` Part II bullets naming the
+ * spec. A MISSING doc is not an error — `check-checklist-coverage.ts` records
+ * that docs resolve by content reference rather than by filename, so most specs
+ * legitimately have none and the checklist is then the only source. An
+ * UNREADABLE one is different, and is carried as `readError` so the spec is
+ * reported undecidable instead of "cites nothing" (#1012).
+ */
+export function collectJustifications(
+  specs: string[],
+  opts: {
+    docsRoot: string;
+    checklistText: string;
+    readDoc: (path: string) => string | null;
+  },
+): Record<string, SpecJustification> {
+  const out: Record<string, SpecJustification> = {};
+  for (const spec of specs) {
+    const docPath = path.join(
+      opts.docsRoot,
+      spec.replace(/\.spec\.ts$/, ".md"),
+    );
+    // The report is rendered into a GitHub issue, where an absolute path from
+    // whichever machine ran the check means nothing to the reader.
+    const docLabel = path.relative(REPO_ROOT, docPath);
+    const sources: JustificationSource[] = [];
+    let readError: string | undefined;
+    let docText: string | null = null;
+    try {
+      docText = opts.readDoc(docPath);
+    } catch (e) {
+      readError = `the spec doc \`${docLabel}\` exists but could not be read (${(e as Error).message})`;
+    }
+    if (docText !== null && docText !== undefined) {
+      const tags = tagsSection(docText);
+      if (tags !== null) {
+        const line =
+          docText.split("\n").findIndex((l) => /^#{2,}\s+Tags\b/.test(l)) + 1;
+        sources.push({ kind: "doc-tags", file: docLabel, line, text: tags });
+      }
+    }
+    sources.push(...checklistBullets(opts.checklistText, spec));
+    out[spec] = { spec, sources, ...(readError ? { readError } : {}) };
+  }
+  return out;
+}
+
+interface GraphQlRefNode {
+  __typename?: string;
+  state?: string;
+}
+
+/**
+ * Resolve every cited reference to its live state, in one GraphQL round trip
+ * per repository.
+ *
+ * REST would need one request per number and cannot say whether a number is an
+ * issue or a pull request without trying both; GraphQL's `issueOrPullRequest`
+ * answers both in a single aliased batch. A number that resolves to nothing
+ * comes back as `unresolved` WITH that reason rather than as an error, because
+ * the commonest cause is benign and specific: this repo's prose cites upstream
+ * pull requests without their `langflow-ai/langflow#` prefix (`#14512`), and
+ * resolving such a ref against our repo is exactly how a live upstream gate
+ * would be reported dead.
+ */
+export function resolveRefStates(
+  refs: CitedRef[],
+  query: (repo: string, numbers: number[]) => Record<number, GraphQlRefNode | null>,
+): Record<string, RefState> {
+  const byRepo = new Map<string, number[]>();
+  for (const r of refs) {
+    const repo = r.repo === "self" ? "self" : UPSTREAM_REPO;
+    const list = byRepo.get(repo) ?? [];
+    if (!list.includes(r.number)) list.push(r.number);
+    byRepo.set(repo, list);
+  }
+
+  const out: Record<string, RefState> = {};
+  for (const [repo, numbers] of byRepo) {
+    let nodes: Record<number, GraphQlRefNode | null>;
+    try {
+      nodes = query(repo, numbers);
+    } catch (e) {
+      const reason = (e as Error).message.split("\n")[0];
+      for (const n of numbers) {
+        out[refKey({ repo: repo === "self" ? "self" : "upstream", number: n })] =
+          { kind: "unresolved", reason: `lookup failed: ${reason}` };
+      }
+      continue;
+    }
+    for (const n of numbers) {
+      const key = refKey({
+        repo: repo === "self" ? "self" : "upstream",
+        number: n,
+      });
+      const node = nodes[n];
+      if (!node) {
+        out[key] =
+          repo === "self"
+            ? {
+                kind: "unresolved",
+                reason:
+                  "no issue or pull request with this number exists in THIS repo — most likely an upstream reference written without its `langflow-ai/langflow#` prefix",
+              }
+            : {
+                kind: "unresolved",
+                reason: `no issue or pull request with this number exists in ${repo}`,
+              };
+        continue;
+      }
+      // MERGED is the strongest form of "this gate is gone" (rule 4); a CLOSED
+      // pull request was abandoned, which is also not a live gate.
+      if (node.state === "OPEN") out[key] = { kind: "open" };
+      else if (node.state === "MERGED") out[key] = { kind: "merged" };
+      else if (node.state === "CLOSED") out[key] = { kind: "closed" };
+      else
+        out[key] = {
+          kind: "unresolved",
+          reason: `unrecognised state ${JSON.stringify(node.state)}`,
+        };
+    }
+  }
+  return out;
+}
+
+function queryRefsViaGh(
+  repo: string,
+  numbers: number[],
+): Record<number, GraphQlRefNode | null> {
+  const target =
+    repo === "self"
+      ? "repository(owner: $owner, name: $name)"
+      : `repository(owner: "${UPSTREAM_REPO.split("/")[0]}", name: "${UPSTREAM_REPO.split("/")[1]}")`;
+  const fields = numbers
+    .map(
+      (n) =>
+        `n${n}: issueOrPullRequest(number: ${n}) { __typename ... on Issue { state } ... on PullRequest { state } }`,
+    )
+    .join("\n");
+  const query =
+    repo === "self"
+      ? `query($owner:String!,$name:String!){ ${target} { ${fields} } }`
+      : `query{ ${target} { ${fields} } }`;
+
+  const args = ["api", "graphql", "-f", `query=${query}`];
+  if (repo === "self") {
+    // `{owner}` and `{repo}` are the placeholders `gh` substitutes from the
+    // current repository. `{name}` is NOT one — it is passed through verbatim,
+    // which resolves the query against `owner/{name}` and fails with a
+    // NOT_FOUND naming that literal string.
+    args.push("-F", "owner={owner}", "-F", "name={repo}");
+  }
+
+  // A number that resolves to nothing makes `gh` EXIT NON-ZERO even though the
+  // response carries `data` with every other alias resolved. That is not an
+  // edge case here: the reference this check exists to handle correctly —
+  // a bare `#14512` that is really an upstream PR — produces exactly that
+  // partial failure on every run, so treating a non-zero exit as "the batch
+  // failed" would report a whole spec undecidable because ONE of its citations
+  // is unresolvable. stdout is therefore parsed either way, and only a response
+  // with no usable `data` is an error.
+  let out: string;
+  try {
+    out = execFileSync("gh", args, {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (e) {
+    const partial = (e as { stdout?: string }).stdout;
+    if (!partial) throw e;
+    out = partial;
+  }
+
+  let parsed: {
+    data?: { repository?: Record<string, GraphQlRefNode | null> | null };
+  };
+  try {
+    parsed = JSON.parse(out);
+  } catch {
+    throw new Error(`gh returned unparseable output for ${repo}`);
+  }
+  // `repository: null` means the REPOSITORY did not resolve — a different
+  // failure from a number that did not, and one that must not silently mark
+  // every reference in the batch as nonexistent.
+  const repoNode = parsed.data?.repository;
+  if (!repoNode) {
+    throw new Error(
+      `the repository itself did not resolve for ${repo === "self" ? "this repo" : repo}`,
+    );
+  }
+  const result: Record<number, GraphQlRefNode | null> = {};
+  for (const n of numbers) result[n] = repoNode[`n${n}`] ?? null;
+  return result;
+}
+
+/**
+ * Parse and validate the declarations file. A declaration with no reason is the
+ * silent expiry this check exists to prevent (#1084), so it is refused here
+ * rather than honoured.
+ */
+export function parseGateDeclarations(raw: string, where: string): GateDecl[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${where}: not valid JSON (${(e as Error).message})`);
+  }
+  const list = (parsed as { declarations?: unknown }).declarations;
+  if (!Array.isArray(list)) {
+    throw new Error(`${where}: missing a "declarations" array`);
+  }
+  return list.map((entry, i) => {
+    const d = entry as Partial<GateDecl>;
+    for (const field of ["spec", "reason"] as const) {
+      if (typeof d[field] !== "string" || !d[field]) {
+        throw new Error(
+          `${where}: declaration #${i} is missing a non-empty "${field}". A declaration with no reason is the silent expiry this check exists to prevent (#1084).`,
+        );
+      }
+    }
+    if (
+      !Array.isArray(d.refs) ||
+      d.refs.length === 0 ||
+      d.refs.some((r) => typeof r !== "string" || !r)
+    ) {
+      throw new Error(
+        `${where}: declaration #${i} must list the references it covers in a non-empty "refs" array of strings — a declaration that names no reference cannot be verified in the other direction.`,
+      );
+    }
+    if (d.ref !== undefined && typeof d.ref !== "string") {
+      throw new Error(`${where}: declaration #${i} has a non-string "ref"`);
+    }
+    return {
+      spec: d.spec as string,
+      refs: d.refs as string[],
+      reason: d.reason as string,
+      ...(d.ref ? { ref: d.ref } : {}),
+    };
+  });
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 function argValue(argv: string[], flag: string): string | undefined {
@@ -543,11 +863,16 @@ export function run(argv: string[]): number {
 
   let trackers: Record<string, TrackerRef[]> = {};
   let trackerLookupError: string | undefined;
+  // Fetched once and reused by BOTH finding classes: two identical paginated
+  // sweeps would double the run's only expensive call, and — worse — could
+  // disagree with each other if an issue closes between them.
+  let openIssues: RawIssue[] | undefined;
   if (noTrackers) {
     trackerLookupError = "tracker lookup was disabled with --no-trackers";
   } else {
     try {
-      trackers = buildTrackerIndex(fetchOpenIssues(), candidates);
+      openIssues = fetchOpenIssues();
+      trackers = buildTrackerIndex(openIssues, candidates);
     } catch (e) {
       trackerLookupError = (e as Error).message.split("\n")[0];
     }
@@ -561,11 +886,54 @@ export function run(argv: string[]): number {
     trackerLookupError,
   });
 
-  const runLabel = process.env.RUN_LABEL || undefined;
-  const markdown = renderReport(verdict, {
-    runLabel,
-    exemptionsPath: EXEMPTIONS_PATH,
+  // ─── Second finding class: gate justifications (#1783) ───────────────────
+  //
+  // Deliberately computed from the SAME `tests` parse and the SAME issue
+  // fetch, and deliberately kept in its own module: it answers a different
+  // question (is the written reason still live?) about a different unit (the
+  // spec file, not the test), and folding it into `reconcile()` would couple
+  // two verdicts that fail for unrelated causes.
+  const gateSpecs = candidateSpecs(tests);
+  const justifications = collectJustifications(gateSpecs, {
+    docsRoot: path.join(REPO_ROOT, "docs"),
+    checklistText: readTextOrEmpty(path.join(REPO_ROOT, "QA-CHECKLIST.md")),
+    readDoc: (p) => (fs.existsSync(p) ? fs.readFileSync(p, "utf-8") : null),
   });
+  const declarations = parseGateDeclarations(
+    fs.readFileSync(path.join(REPO_ROOT, GATE_DECLARATIONS_PATH), "utf-8"),
+    GATE_DECLARATIONS_PATH,
+  );
+  const citedRefs = Object.values(justifications).flatMap((j) =>
+    extractRefs(j.sources.map((s) => s.text).join("\n")),
+  );
+  let refStates: Record<string, RefState> = {};
+  let gateLookupError: string | undefined;
+  if (noTrackers) {
+    gateLookupError = "reference lookup was disabled with --no-trackers";
+  } else if (citedRefs.length > 0) {
+    refStates = resolveRefStates(citedRefs, queryRefsViaGh);
+  }
+  const gateVerdict: GateVerdict = classifyGates({
+    tests,
+    justifications,
+    refStates,
+    trackedSpecs: noTrackers
+      ? {}
+      : buildSpecTrackerIndex(openIssues ?? [], gateSpecs),
+    declarations,
+    lookupError: gateLookupError ?? trackerLookupError,
+  });
+
+  const runLabel = process.env.RUN_LABEL || undefined;
+  const markdown =
+    renderReport(verdict, {
+      runLabel,
+      exemptionsPath: EXEMPTIONS_PATH,
+    }) +
+    "\n\n---\n\n" +
+    renderGateSection(gateVerdict, {
+      declarationsPath: GATE_DECLARATIONS_PATH,
+    });
 
   const mdOut = argValue(argv, "--markdown");
   if (mdOut) fs.writeFileSync(mdOut, markdown + "\n");
@@ -578,7 +946,10 @@ export function run(argv: string[]): number {
     verdict.orphaned.length +
     verdict.unknown.length +
     verdict.staleExemptions.length +
-    verdict.unverifiedExemptions.length;
+    verdict.unverifiedExemptions.length +
+    gateVerdict.expired.length +
+    gateVerdict.unknown.length +
+    gateVerdict.staleDeclarations.length;
 
   if (process.env.GITHUB_OUTPUT) {
     // Per-run, because the body carries repo-authored text (test titles,
@@ -590,7 +961,8 @@ export function run(argv: string[]): number {
       [
         `orphan_count=${verdict.orphaned.length}`,
         `finding_count=${findings}`,
-        `has_findings=${hasFindings(verdict)}`,
+        `has_findings=${hasFindings(verdict) || hasGateFindings(gateVerdict)}`,
+        `expired_gate_count=${gateVerdict.expired.length}`,
         // The workflow uses this to leave a standing report ALONE rather than
         // overwriting it with "we could not ask GitHub": an outage decides
         // nothing about ownership, and a body rewrite is destructive.
