@@ -551,3 +551,90 @@ test("a REAL Playwright run puts the skip reason where the verdict reads it", ()
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- the wiring, and what it cannot prove -----------------------------------
+//
+// Everything above pins the verdict itself, which is the part #1456 asks to be
+// covered "by a unit test over the verdict, not by a regex over the workflow text".
+// These last tests ARE regexes over the workflow text, and they are here for the
+// half that no behavioural test can reach: whether the lanes still call the script
+// at all, and whether the PR lane still writes the report it reads. #1176 is the
+// precedent — a step whose `if:` silently never fired, with every test green — and
+// #1159 is the other half: a lane can be rewired with every check passing.
+//
+// What they prove: the call sites exist, with the flags that carry the decision.
+// What they cannot prove: that the step RUNS in a real job, that the report lands
+// where it is read, or that the gate expression evaluates as intended. The first CI
+// run on this branch is the only thing that proves those, which is stated in the PR
+// rather than implied here.
+
+const WORKFLOWS = path.join(REPO_ROOT, ".github", "workflows");
+const readWorkflow = (name) => fs.readFileSync(path.join(WORKFLOWS, name), "utf-8");
+
+test("the PR lane writes the JSON report the verdict reads", () => {
+  // `--reporter=github` alone REPLACES the config's reporter list, which is why this
+  // lane produced no machine-readable report at all before #1456. Both halves are
+  // needed: the reporter, and the path it writes to.
+  const yml = readWorkflow("pr-validation.yml");
+  const runStep = yml.slice(yml.indexOf("- name: Run impacted specs"));
+  const step = runStep.slice(0, runStep.indexOf("- name:", 10));
+  assert.match(step, /--reporter=github,json/, "the json reporter is gone from the PR run");
+  assert.match(step, /PLAYWRIGHT_JSON_OUTPUT_NAME:\s*results\.json/);
+});
+
+test("the PR lane runs the verdict fail-closed, on the same condition as the run", () => {
+  const yml = readWorkflow("pr-validation.yml");
+  const idx = yml.indexOf("- name: Coverage verdict");
+  assert.ok(idx > -1, "pr-validation.yml no longer runs the coverage verdict");
+  const step = yml.slice(idx, yml.indexOf("- name:", idx + 10));
+  assert.match(step, /lane-coverage-verdict\.mjs/);
+  assert.match(step, /--fail-closed/, "the PR lane's gate is the whole point (#1456)");
+  assert.match(step, /--provider "\$PR_LANE_PROVIDER"/, "read the pin from one place (#1370)");
+  // The destructive-only case skips the run step, so there would be no report.
+  assert.match(step, /excluded_only != 'true'/);
+});
+
+test("every PR-lane step after the verdict survives its failure", () => {
+  // The placement guarantee the step's own comment claims, pinned structurally
+  // rather than reviewed: a failing verdict must not skip an upload, the token
+  // summary, or the destructive lane. That is only true while every step after it
+  // carries `always()` (or `failure()`), and nothing stops someone appending one
+  // that does not.
+  const yml = readWorkflow("pr-validation.yml");
+  const after = yml.slice(yml.indexOf("- name: Coverage verdict"));
+  const steps = after.split(/\n      - name: /).slice(1);
+  assert.ok(steps.length >= 5, "the e2e job lost the steps that follow the verdict");
+  for (const step of steps) {
+    const title = step.split("\n")[0];
+    assert.match(
+      step,
+      /if: (always\(\)|failure\(\))/,
+      `"${title}" runs after the coverage verdict without always()/failure(), so a ` +
+        `failing verdict would skip it`,
+    );
+  }
+});
+
+test("the daily runs the verdict report-only, and the last step gates on it", () => {
+  const yml = readWorkflow("daily-stable.yml");
+  const idx = yml.indexOf("- name: Guard — the run covered the providers");
+  assert.ok(idx > -1, "daily-stable.yml no longer runs the coverage verdict");
+  const step = yml.slice(idx, yml.indexOf("- name:", idx + 10));
+  assert.match(step, /id: coverage/);
+  assert.match(step, /if: always\(\)/);
+  assert.match(step, /continue-on-error: true/);
+  assert.doesNotMatch(
+    step,
+    /--fail-closed/,
+    "failing HERE would skip the @stable auto-removal and the umbrella issue (#1176)",
+  );
+
+  // FAIL-CLOSED at the gate: `covered` and `degraded` pass, everything else — an
+  // `uncovered` run, an unreadable report, or an absent output because the step was
+  // skipped or crashed — fails. A `== 'uncovered'` test would go green on silence.
+  const gate = yml.slice(yml.indexOf("- name: Fail scheduled run on an incomplete"));
+  const gateStep = gate.slice(0, gate.indexOf("\n      - name:", 10) + 1 || undefined);
+  assert.match(gateStep, /steps\.coverage\.outputs\.verdict != 'covered'/);
+  assert.match(gateStep, /steps\.coverage\.outputs\.verdict != 'degraded'/);
+  assert.doesNotMatch(gateStep, /steps\.coverage\.outputs\.verdict == 'uncovered'/);
+});
