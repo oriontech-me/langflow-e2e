@@ -1449,20 +1449,20 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 100 | 90 | 5 | 3 | 2 |
-| `core-components/` — Component Config | 28 | 25 | 3 | 0 | 0 |
-| `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
+| `api/flows/` — REST API | 100 | 94 | 1 | 3 | 2 |
+| `core-components/` — Component Config | 28 | 26 | 2 | 0 | 0 |
+| `core-components/` — Core Components | 92 | 90 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
-| `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
+| `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
+| `core-functionality/project-management/` | 12 | 7 | 5 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
 | `flow-functionality/` | 33 | 27 | 1 | 1 | 4 |
-| `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
+| `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
@@ -1472,7 +1472,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **520 (79%)** | **52 (8%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **531 (81%)** | **41 (6%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1488,7 +1488,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 598 `test()` calls carrying the `@stable` tag, distributed across 228 spec
+> 610 `test()` calls carrying the `@stable` tag, distributed across 234 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1579,6 +1579,11 @@
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
 - [x] a different session persists separately, so the counts above are not vacuous → `serving-end-user-identity-default.spec.ts`
+- [x] batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working → `workflows-v2-job-lifecycle.spec.ts`
+- [x] batch create refuses a duplicate endpoint_name with its own message → `workflows-v2-job-lifecycle.spec.ts`
+- [x] a completed background run reports the session it was given → `workflows-v2-job-lifecycle.spec.ts`
+- [x] a completed sync run answers its own status query with the session and outputs it returned → `workflows-v2-job-lifecycle.spec.ts`
+- [x] attribution control: the sync read-back is correct once the job's rows settle → `workflows-v2-job-lifecycle.spec.ts`
 
 #### api/instance/
 - [x] the three health routes are not synonyms of each other → `api-instance-identity.spec.ts`
@@ -1652,6 +1657,8 @@
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
+- [x] configureMcpServer registers an MCP server via the HTTP form → `configure-mcp-and-custom-component.spec.ts`
+- [x] configureCustomComponent compiles code into a node with its declared interface → `configure-mcp-and-custom-component.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] Data Operations Text mode returns the Case Conversion result as a Message → `data-operations-component.spec.ts`
 - [x] Data Operations Word Count switches the Text-mode output to JSON and counts the text → `data-operations-component.spec.ts`
@@ -1667,6 +1674,8 @@
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a stale node-update response does not revert the action edits → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
+- [x] user must be able to see api key in webhook component when auto login is disabled → `general-bugs-component-webhook-api-key-display.spec.ts`
+- [x] user must be able to not see api key in webhook component when auto login is enabled → `general-bugs-component-webhook-api-key-display.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
@@ -1839,6 +1848,7 @@
 - [x] Playground names the tool used and captures its input/output → `agent-tool-inspection.spec.ts`
 - [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
+- [x] user must be able to send an image on chat → `chatInputOutputUser-shard-0.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
 - [x] language model must respond with Google provider → `language-model-regression.spec.ts`
@@ -1956,6 +1966,7 @@
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
 - [x] Playground run is delivered over an SSE (text/event-stream) response → `playground-response-streaming-sse.spec.ts`
+- [x] input is locked while a run is in progress and recovers after it completes → `playground-send-while-in-progress.spec.ts`
 - [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
 - [x] a session renamed in the playground is the session its messages are stored under → `playground-session-id.spec.ts`
 - [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
@@ -1972,6 +1983,7 @@
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
+- [x] navigating between two folders scopes the listing to each folder's flows → `flow-navigation-between-folders.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
@@ -2146,14 +2158,14 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 5 | 2 |
-| `core-components/` — Component Config | 3 | 0 |
-| `core-components/` — Core Components | 3 | 1 |
+| `api/flows/` — REST API | 1 | 2 |
+| `core-components/` — Component Config | 2 | 0 |
+| `core-components/` — Core Components | 1 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
 | `core-functionality/llm-agents/` | 2 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
-| `core-functionality/playground/` | 3 | 1 |
-| `mcp/client/` | 2 | 2 |
+| `core-functionality/playground/` | 1 | 1 |
+| `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
 
@@ -2168,6 +2180,6 @@
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 1 | 4 |
-| `core-functionality/project-management/` | 6 | 0 |
+| `core-functionality/project-management/` | 5 | 0 |
 | `core-functionality/templates/` | 0 | 28 |
 | `ui-ux/` — Settings | 0 | 0 |
