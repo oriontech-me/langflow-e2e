@@ -1450,7 +1450,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 100 | 94 | 1 | 3 | 2 |
-| `core-components/` — Component Config | 28 | 26 | 2 | 0 | 0 |
+| `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 90 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
@@ -1458,10 +1458,10 @@
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
-| `core-functionality/project-management/` | 12 | 7 | 5 | 0 | 0 |
+| `core-functionality/project-management/` | 12 | 8 | 4 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
-| `flow-functionality/` | 33 | 27 | 1 | 1 | 4 |
+| `flow-functionality/` | 33 | 28 | 0 | 1 | 4 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
@@ -1472,7 +1472,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **531 (81%)** | **41 (6%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **534 (82%)** | **38 (6%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1488,7 +1488,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 609 `test()` calls carrying the `@stable` tag, distributed across 234 spec
+> 614 `test()` calls carrying the `@stable` tag, distributed across 238 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2016,6 +2016,8 @@
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
+- [x] dropping a collection file imports every flow it contains → `dragAndDrop.spec.ts`
+- [x] dropping a single flow file imports that flow → `dragAndDrop.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
 - [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
@@ -2028,12 +2030,15 @@
 - [x] should show correct lock/unlock icon in settings based on state → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] user should not be able to hide connected inputs → `general-bugs-hidden-input-edges.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
+- [x] importing an outdated flow via the UI upload button surfaces the outdated notification on open → `import-outdated-flow.spec.ts`
 - [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
+- [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
@@ -2158,7 +2163,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 1 | 2 |
-| `core-components/` — Component Config | 2 | 0 |
+| `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
 | `core-functionality/auth/` | 2 | 0 |
 | `core-functionality/llm-agents/` | 2 | 3 |
@@ -2178,7 +2183,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 1 | 4 |
-| `core-functionality/project-management/` | 5 | 0 |
+| `flow-functionality/` | 0 | 4 |
+| `core-functionality/project-management/` | 4 | 0 |
 | `core-functionality/templates/` | 0 | 28 |
 | `ui-ux/` — Settings | 0 | 0 |
