@@ -25,10 +25,22 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 > was the only one that could fail — which is why the spec was weakened rather
 > than useless, and why the gap went unnoticed.
 >
-> **Not measured, and left as the open half of #1793:** whether the MCPTools
-> node's `tools_metadata` actually carries an `echo` entry. That decides whether
-> Proof #2 specifically was a no-op or merely unsound in its premise, and it
-> needs the `everything` server running.
+> **Measured here, closing the open half of #1793: both old proofs were
+> no-ops, not merely unsound.** On `1.12.1` with the `everything` server
+> registered and the agent asked *"What is 2+2? Answer with the number only. Do
+> not use any tool."*, at the assertion point:
+> `div-tools_tools_metadata` **visible**, `tool_echo` **visible**,
+> `tool-status-done` count **0**. The canvas chips enumerate every attached
+> tool — `tool_echo`, `tool_get-env`, `tool_get-resource-links`,
+> `tool_get-annotated-message` from the server plus the template's own
+> `tool_fetch_content` / `tool_perform_search` — with no invocation involved.
+>
+> One force-failure is worth recording because it did NOT fail, and the reason
+> is the #1187 lesson rather than a weak assertion: instructing the agent
+> *"You MUST NOT call any tool, ever. Reply with exactly: hello mcp"* still
+> produced `tool-status-done` = 1 reading `ECHO` — the model called the tool
+> anyway. A mutation on the model'"'"'s CHOICE is not a mutation on the assertion;
+> the prompt that needs no tool is.
 
 ---
 
