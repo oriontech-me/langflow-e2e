@@ -1140,7 +1140,13 @@ test("the metadata names the command that served the target, so two artifacts ar
   assert.equal(meta.langflow_target_run_cmd, "/root/venv-dev8/bin/langflow run");
 
   // Empty is not "unknown": it is the starter's own default, uv against the clone.
-  const { meta: dflt } = metadataFrom({ ...BLANKED });
+  //
+  // The name is blanked EXPLICITLY, for the reason the mirrored test states three
+  // paragraphs down: `sourced()` forwards process.env, and BLANKED only neutralises the
+  // four mirrored names. Without this the default case asserts "" against whatever the
+  // operator exported — so the test would go red on exactly the machine this feature is
+  // for, the qa VM whose wrapper carries the override. Found by review, reproduced.
+  const { meta: dflt } = metadataFrom({ ...BLANKED, LANGFLOW_SRC_RUN_CMD: "" });
   assert.equal(dflt.langflow_target_run_cmd, "");
 });
 
