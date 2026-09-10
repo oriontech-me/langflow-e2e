@@ -313,6 +313,63 @@ test("the mirrored values cross the ssh boundary, which a default alone does not
   }
 });
 
+test("the target's RUN command crosses the ssh boundary, and the SYNC override keeps its off switch", () => {
+  // A measured need rather than a knob for its own sake: on 2026-09-10 the PUBLISHED
+  // distribution served the traces family with tracing ON — 23 of 23, no gunicorn
+  // WORKER TIMEOUT — where the source clone wedges under the same selection on the same
+  // machine (7, 8 and 9 failures across three attribution runs, #1720). The starter
+  // already accepted LANGFLOW_SRC_RUN_CMD; this script composed the remote environment
+  // from a fixed list, so the override existed on one side of the connection only.
+  const line = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes("bash -s; sleep 86400"));
+  assert.ok(line, "could not find the command that starts the backend on the target");
+  assert.match(line, /\$\(target_cmd_env\)/);
+
+  // Nothing forwarded when the caller names nothing — the starter's own default (uv
+  // against the clone) has to stay reachable — and the composition must not return
+  // non-zero, because it runs inside a command substitution under `set -e`.
+  const none = sourced(`(unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_SYNC_CMD; target_cmd_env); echo "rc=$?"`);
+  assert.equal(none.status, 0, none.stderr);
+  assert.match(none.stdout, /^rc=0$/m, "an empty composition must still succeed");
+  assert.doesNotMatch(none.stdout, /LANGFLOW_SRC_(RUN|SYNC)_CMD=/);
+
+  // The asymmetry, and it is the whole reason this is a function instead of two more
+  // entries on the ssh line. The starter reads the SYNC override as `${VAR-default}`
+  // DELIBERATELY, so empty-but-SET means "skip the sync entirely". Forwarding it
+  // unconditionally would silently disable `uv sync --frozen` on every run of the
+  // source path — a mutation of the thing under test, arriving from a line that reads
+  // like plumbing.
+  const runOnly = sourced(
+    `(unset LANGFLOW_SRC_SYNC_CMD; LANGFLOW_SRC_RUN_CMD="/opt/venv/bin/langflow run" target_cmd_env)`,
+  );
+  assert.equal(runOnly.status, 0, runOnly.stderr);
+  assert.match(runOnly.stdout, /(^|\s)LANGFLOW_SRC_RUN_CMD=/);
+  assert.doesNotMatch(runOnly.stdout, /LANGFLOW_SRC_SYNC_CMD=/, "an UNSET sync override must not cross as empty");
+
+  const emptySync = sourced(`(unset LANGFLOW_SRC_RUN_CMD; LANGFLOW_SRC_SYNC_CMD= target_cmd_env)`);
+  assert.equal(emptySync.status, 0, emptySync.stderr);
+  assert.match(
+    emptySync.stdout,
+    /(^|\s)LANGFLOW_SRC_SYNC_CMD=/,
+    "empty-but-SET is how the caller asks for no sync at all, so it has to cross",
+  );
+
+  // Parsed on the far side rather than string-matched here. A command with a space is
+  // the ORDINARY case ("/…/bin/langflow run"), so the quoting is load-bearing from the
+  // first use — not on the day someone gets exotic.
+  const cmd = "/opt/venv with space/bin/langflow run";
+  const round = sourced(
+    [
+      `remote="$(target_cmd_env)bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_SRC_RUN_CMD"' | env -u LANGFLOW_SRC_RUN_CMD bash -c "$remote"`,
+    ].join("\n"),
+    { LANGFLOW_SRC_RUN_CMD: cmd },
+  );
+  assert.equal(round.status, 0, round.stderr);
+  assert.equal(round.stdout, cmd, "the far side must READ the command back, spaces included");
+});
+
 test("the remote quoting survives a value carrying a quote, which no current value does", () => {
   // The branch none of today's values reach, and therefore the one that will be wrong
   // when it is first needed — the day someone overrides a mirrored variable from the

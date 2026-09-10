@@ -422,6 +422,39 @@ mirrored_target_env() {
   done
 }
 
+# The command that SERVES the target, passed through to the starter when the caller
+# names one. The starter already accepts it — LANGFLOW_SRC_RUN_CMD is how a machine
+# without uv, or a run against the PUBLISHED distribution rather than the clone, is
+# served — but the remote environment above is composed from a fixed list, so an
+# override exported on the qa wrapper never crossed the ssh boundary. The knob existed
+# on one side of the connection and not the other.
+#
+# Why this lane needs it, measured rather than supposed: on 2026-09-10 the published
+# distribution served the traces family with tracing ON, 23 of 23 and no gunicorn
+# WORKER TIMEOUT, where the source clone wedges under the same selection on the same
+# machine (7, 8 and 9 failures across the three attribution runs of #1720). Which artifact
+# serves is therefore a property of the run, not a detail of how it was launched.
+#
+# The two overrides are NOT symmetric, and that asymmetry is the reason this is a
+# function instead of two more entries on the line above:
+#
+#   LANGFLOW_SRC_RUN_CMD   the starter tests it with `-n "${VAR:-}"`, so an empty value
+#                          is indistinguishable from an absent one. Safe either way.
+#   LANGFLOW_SRC_SYNC_CMD  the starter reads it as `${VAR-default}` DELIBERATELY, so
+#                          empty-but-SET means "skip the sync entirely". Forwarding it
+#                          unconditionally would silently disable `uv sync --frozen` on
+#                          every run of the source path — a mutation of what is under
+#                          test, arriving from a line that looks like plumbing.
+#
+# Hence: RUN_CMD forwarded when non-empty, SYNC_CMD forwarded when SET. `return 0`
+# because the last `[` fails whenever nothing is forwarded, and this runs inside a
+# command substitution under `set -e`.
+target_cmd_env() {
+  [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] && printf 'LANGFLOW_SRC_RUN_CMD=%s ' "$(shq "$LANGFLOW_SRC_RUN_CMD")"
+  [ -n "${LANGFLOW_SRC_SYNC_CMD+set}" ] && printf 'LANGFLOW_SRC_SYNC_CMD=%s ' "$(shq "$LANGFLOW_SRC_SYNC_CMD")"
+  return 0
+}
+
 # Should this run place the target's clone, and if not, why not?
 #
 # Split out of phase_preflight so the decision is testable without ssh — the phase
@@ -1014,7 +1047,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
