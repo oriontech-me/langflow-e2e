@@ -280,9 +280,11 @@ next occurrence is not a fifth nameless "signature" (#1012/#1626).
 Test 2 disables a model in Settings, which is **account-wide** — not per-flow and not
 per-worker. Until #1464 that mutation was unreachable (the provider-prefixed model name
 made the test skip before the disable), so no failure-path restore existed; waking the
-test makes one mandatory. The spec arms `disabledModel` the moment the toggle goes off,
-disarms it when the test re-enables the model itself, and a `test.afterEach` restores
-anything still armed through `POST /api/v1/models/enabled_models`
+test makes one mandatory. Each test adds its model to `pendingRestores` **before** the
+disabling click — the click, its optimistic assertion and the write wait are all inside
+the window a throw has to be covered for — removes it when it re-enables the model
+itself, and a `test.afterEach` restores everything still owed through
+`POST /api/v1/models/enabled_models`
 (`[{provider, model_id, enabled: true, model_type: "llm"}]`) — over the **API**, because
 after a mid-test failure the page can be anywhere and a restore needing Settings to
 render is one that fails exactly when it is needed. A failed restore is **logged loudly**
@@ -295,7 +297,17 @@ rotation does not guarantee), and `setup-language-model-openai.ts` enables a sin
 and repairs nothing. **Both** tests arm the restore: test 2 because #1464 made its mutation
 reachable, and test 1 because it disables the panel's *first* toggle — one of the five
 defaults — which its own `aria-checked="true"` assertion then requires, so an interrupted
-run would make it fail deterministically on that instance forever (#1679).
+run would make it fail deterministically on that instance forever (#1679). It is a
+**set** rather than one slot for the same reason: with both tests arming it, a single
+slot dropped test 1's leftover the moment test 2 overwrote it with its own target —
+reachable whenever test 1's three restore attempts all fail, which only logs and leaves
+the test passing. Test 1's teardown runs before test 2, so a leftover it could not
+restore is retried by test 2's hook instead of being lost.
+
+One leftover costs more than this file: `api/models/api-models-selection.spec.ts`
+asserts the shared superuser's `disabled_models` is empty, and would report the
+leftover as its own throwaway user leaking. That test used to be repaired by the same
+whole-panel sweep, by the same accident, and is not any more.
 
 Behavioral force-fail contract: leave the model disabled with the restore no-op'd, and a
 sibling spec pinning that model skips or fails.

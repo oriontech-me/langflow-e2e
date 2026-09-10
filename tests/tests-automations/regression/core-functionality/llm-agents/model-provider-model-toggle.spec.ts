@@ -85,7 +85,7 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Model set to DISABLED by a test body and not yet restored by it.
+// Models set to DISABLED by a test body and not yet restored by it.
 //
 // BOTH tests mutate ACCOUNT-GLOBAL state and both arm this. Until #1464 test 2's
 // mutation was unreachable — the provider-prefixed model name made it skip before
@@ -101,56 +101,71 @@ test.afterEach(async ({ request }) => {
 // backend down and persisted nothing), and `setup-language-model-openai.ts` has
 // always enabled one model and repaired nothing. The restore below is the only
 // mechanism.
-let disabledModel: string | null = null;
+//
+// A SET, not a single slot, and that is a consequence of both tests arming it:
+// test 1's leftover was silently dropped the moment test 2 overwrote the slot with
+// its own target — reachable whenever test 1's restore exhausts its three attempts
+// (it only logs; the test still passes). Two different models can be owed a
+// restore at the same time, so the teardown owes both.
+const pendingRestores = new Set<string>();
 
 // Restored over the API, not the UI: after a mid-test failure the page can be
 // anywhere, and a restore that needs Settings to render is a restore that fails
 // exactly when it is needed. Payload shape shared with
 // model-provider/openai-compatible-provider-setup.spec.ts.
 test.afterEach(async ({ request }) => {
-  const model = disabledModel;
-  if (!model || !provider) {
-    disabledModel = null;
+  if (pendingRestores.size === 0) return;
+  if (!provider) {
+    pendingRestores.clear();
     return;
   }
 
-  // Retried HERE rather than deferred to a later test's hook. Test 2 is the only
-  // test that arms this flag and it is the LAST test in a serial file, so "the next
+  // Retried HERE rather than deferred to a later test's hook. Test 2 arms this too
+  // and it is the LAST test in a serial file, so for its leftover "the next
   // afterEach will retry" describes a hook that never runs — the transient 5xx or
   // transport throw has to be survived on the spot or not at all.
-  let lastOutcome = "";
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const bearer = await getAuthToken(request);
-      const res = await request.post(ENABLED_MODELS_ENDPOINT, {
-        headers: { Authorization: bearer, "Content-Type": "application/json" },
-        data: [
-          {
-            provider: providerLabel,
-            model_id: model,
-            enabled: true,
-            model_type: "llm",
-          },
-        ],
-      });
-      if (res.status() === 200) {
-        disabledModel = null;
-        return;
+  for (const model of [...pendingRestores]) {
+    let lastOutcome = "";
+    let restored = false;
+    for (let attempt = 1; attempt <= 3 && !restored; attempt++) {
+      try {
+        const bearer = await getAuthToken(request);
+        const res = await request.post(ENABLED_MODELS_ENDPOINT, {
+          headers: { Authorization: bearer, "Content-Type": "application/json" },
+          data: [
+            {
+              provider: providerLabel,
+              model_id: model,
+              enabled: true,
+              model_type: "llm",
+            },
+          ],
+        });
+        if (res.status() === 200) {
+          pendingRestores.delete(model);
+          restored = true;
+          break;
+        }
+        lastOutcome = `${res.status()} ${(await res.text()).slice(0, 200)}`;
+      } catch (error) {
+        lastOutcome = `threw: ${(error as Error)?.message ?? String(error)}`;
       }
-      lastOutcome = `${res.status()} ${(await res.text()).slice(0, 200)}`;
-    } catch (error) {
-      lastOutcome = `threw: ${(error as Error)?.message ?? String(error)}`;
     }
-  }
+    if (restored) continue;
 
-  // Left ARMED deliberately. Nothing in this file will act on it today, but a test
-  // added after Test 2 would restore it in its own teardown, and an armed flag costs
-  // nothing when nothing follows. Loud, never swallowed: a silent failure hands every
-  // later spec a disabled model with nothing in the log naming why (#1012).
-  console.log(
-    `⚠️  could not restore "${model}" for ${providerLabel} after 3 attempts — POST ` +
-      `${ENABLED_MODELS_ENDPOINT} -> ${lastOutcome}. Later specs pinning it may skip or fail.`,
-  );
+    // Left ARMED deliberately, and now that is load-bearing rather than a courtesy:
+    // test 1's teardown runs BEFORE test 2, so a leftover it could not restore is
+    // retried by test 2's hook — which is exactly the case a single slot used to
+    // lose. Loud, never swallowed: a silent failure hands every later spec a
+    // disabled model with nothing in the log naming why (#1012). One such leftover
+    // also reddens `api/models/api-models-selection.spec.ts`, which asserts the
+    // shared superuser's `disabled_models` is empty and blames its own throwaway
+    // user for it — the sweep used to repair that by accident too (#1679).
+    console.log(
+      `⚠️  could not restore "${model}" for ${providerLabel} after 3 attempts — POST ` +
+        `${ENABLED_MODELS_ENDPOINT} -> ${lastOutcome}. Later specs pinning it may skip or fail.`,
+    );
+  }
 });
 
 // Load the Simple Agent template with the configured provider. This configures the
@@ -387,7 +402,7 @@ test.describe("Model Provider Model Toggle", () => {
         // test 2 is skipped and nothing else notices. It used to self-heal because
         // the sibling provider setups re-enabled the whole panel; since #1679 they
         // enable only the model they pick, so nothing repairs it but this.
-        disabledModel = modelName;
+        pendingRestores.add(modelName);
         await setToggle(page, toggle, false, modelName);
       });
 
@@ -400,7 +415,7 @@ test.describe("Model Provider Model Toggle", () => {
         // Restore the baseline so the model stays enabled for other specs.
         await setToggle(page, reopened, true, modelName);
         await expect(reopened).toHaveAttribute("aria-checked", "true");
-        disabledModel = null;
+        pendingRestores.delete(modelName);
       });
     },
   );
@@ -550,10 +565,13 @@ test.describe("Model Provider Model Toggle", () => {
         ).toBeGreaterThan(0);
 
         const toggle = await toggleForModel(page, targetModel);
+        // Armed BEFORE the click, as test 1 arms it, and the order is the whole
+        // point: `setToggle` clicks, asserts the optimistic `aria-checked` and then
+        // waits for the write, so arming after it left the disable's own window
+        // unprotected — a throw from any of those three steps leaves the model off
+        // with nothing owed. Disarmed by the re-enable step below on the normal path.
+        pendingRestores.add(targetModel);
         await setToggle(page, toggle, false, targetModel);
-        // Armed for the failure-path restore in afterEach; disarmed by the re-enable
-        // step below when the test completes normally.
-        disabledModel = targetModel;
       });
 
       await test.step("target model no longer appears in the component dropdown", async () => {
@@ -612,7 +630,7 @@ test.describe("Model Provider Model Toggle", () => {
         const toggle = await toggleForModel(page, targetModel);
         await setToggle(page, toggle, true, targetModel);
         // Restored by the test itself — the afterEach net is no longer needed.
-        disabledModel = null;
+        pendingRestores.delete(targetModel);
 
         await page.goto(flowUrl);
         await expect(modelTrigger).toBeVisible({ timeout: 30000 });
