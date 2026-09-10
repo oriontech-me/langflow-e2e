@@ -1,6 +1,6 @@
 # Configure an MCP server & Configure a Custom Component — reusable config helpers
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev7`)
 
 ---
 

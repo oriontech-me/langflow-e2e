@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/general-bugs-component-webhook-api-key-display.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev7`)
 
 ---
 
@@ -15,7 +15,10 @@ includes the `x-api-key` header depends on the instance's webhook-auth config:
    the generated cURL **must** contain `x-api-key` so the user knows an API key
    is required to call the webhook.
 2. **Webhook auth disabled** (`webhook_auth_enable: false`) — the cURL **must
-   not** contain `x-api-key` (no key is needed).
+   not** contain `x-api-key` (no key is needed) — asserted **only after** the
+   value is confirmed to be a generated cURL, because an absent key and an
+   absent cURL are otherwise the same observation. See *The absence needs an
+   anchor* below.
 
 Both cases are driven by mocking `GET /api/v1/config` (and, for case 1, forcing
 `auto_login` off), then reading the generated cURL out of the component's cURL
@@ -63,8 +66,33 @@ component. Every flow the page creates is captured from its
 
 | Case | Criterion |
 |---|---|
-| `webhook_auth_enable: true` | the generated cURL (`text-area-modal` value) contains `x-api-key` |
-| `webhook_auth_enable: false` | the generated cURL does **not** contain `x-api-key` |
+| both | the `text-area-modal` value is a generated cURL — it contains `curl -X POST` |
+| `webhook_auth_enable: true` | that cURL contains `x-api-key` |
+| `webhook_auth_enable: false` | that cURL does **not** contain `x-api-key` |
+
+### The absence needs an anchor
+
+Case 2's criterion used to be *"the generated cURL does not contain
+`x-api-key`"* and nothing more, which is satisfied by the **empty string** —
+`"".includes("x-api-key")` is `false`. A modal that opened without populating,
+or populated with something else entirely, therefore read as a pass: the test
+could be green having verified nothing.
+
+The failure mode is concrete rather than hypothetical. The component declares
+the field as a **placeholder the frontend substitutes** —
+`MultilineInput(name="curl", value="CURL_WEBHOOK")` in
+`lfx/components/input_output/webhook.py` — and the real command is assembled in
+the frontend as `curl -X POST '<endpoint>' …` with the auth header in a
+conditional slot. So if substitution ever fails, the field reads the literal
+`CURL_WEBHOOK`, which contains no `x-api-key` and would have **passed** case 2
+while the feature was broken.
+
+The anchor is therefore `curl -X POST`, asserted in **both** cases before the
+key claim: it is present in every generated command and absent from the
+unsubstituted sentinel (`"CURL_WEBHOOK".includes("curl")` is `false` — the
+sentinel is upper-case). Case 1 needs no anchor of its own for correctness, but
+carries it so the two tests fail the same way when generation breaks, instead of
+one failing on the key and the other passing.
 
 ---
 
@@ -96,6 +124,11 @@ component. Every flow the page creates is captured from its
 
 ## Notes
 
+- 1.13.0.dev7 (2026-09-09, issue #1786): promoted to `@stable`. The measured
+  evidence is 3/3 green across nine `manual.yml` dispatches, recorded in
+  `docs/triage/inherited-spec-triage.md`. The promotion added case 2's payload
+  anchor (above), found by the force-failability audit design §3 requires before
+  a green baseline is trusted — the assertion was green-able on an empty value.
 - dev46 migration (issue #818): removed the dead `enable`/`disableInspectPanel`
   calls (the inspect-panel toggle feature was removed upstream), added the
   `inspector-add-curl` step (the cURL field became advanced), and renamed the

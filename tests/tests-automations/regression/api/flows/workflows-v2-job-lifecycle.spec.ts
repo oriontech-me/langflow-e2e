@@ -145,7 +145,7 @@ test.describe("Workflows v2 — the job lifecycle", () => {
 
   test(
     "batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const base = unique("batch-unique");
       let seededName = "";
@@ -229,7 +229,7 @@ test.describe("Workflows v2 — the job lifecycle", () => {
 
   test(
     "batch create refuses a duplicate endpoint_name with its own message",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const sharedEndpoint = `ep${Date.now().toString(36)}${Math.random()
         .toString(36)
@@ -254,7 +254,7 @@ test.describe("Workflows v2 — the job lifecycle", () => {
 
   test(
     "a completed background run reports the session it was given",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const sessionId = unique("bg-session");
       let jobId = "";
@@ -303,7 +303,7 @@ test.describe("Workflows v2 — the job lifecycle", () => {
 
   test(
     "a completed sync run answers its own status query with the session and outputs it returned",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // DECLARED FAILING, and the declaration is the alarm in both directions.
       //
@@ -380,7 +380,7 @@ test.describe("Workflows v2 — the job lifecycle", () => {
 
   test(
     "attribution control: the sync read-back is correct once the job's rows settle",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // This test exists to make the previous one's failure attributable, and
       // the pair is the diagnosis: previous red + this green is a race between

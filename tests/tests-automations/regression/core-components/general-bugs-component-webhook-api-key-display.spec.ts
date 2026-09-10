@@ -43,7 +43,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must be able to see api key in webhook component when auto login is disabled",
-  { tag: ["@release"] },
+  { tag: ["@stable", "@release"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await page.route("**/api/v1/auto_login", (route) => {
@@ -108,6 +108,17 @@ test(
 
     const curl = await page.getByTestId("text-area-modal").inputValue();
 
+    // Anchor both key claims on the payload existing. The component declares
+    // this field as a placeholder the frontend substitutes --
+    // MultilineInput(name="curl", value="CURL_WEBHOOK") in
+    // lfx/components/input_output/webhook.py -- and the real command is
+    // assembled in the frontend as `curl -X POST '<endpoint>' ...` with the
+    // auth header in a conditional slot. `curl -X POST` is present in every
+    // generated command and absent from the unsubstituted sentinel, so it
+    // separates "no key" from "no cURL at all". Carried here as well as in the
+    // absence test so both fail the same way when generation breaks.
+    expect(curl).toContain("curl -X POST");
+
     expect(curl).toContain("x-api-key");
 
     await page.getByText("Close", { exact: true }).last().click();
@@ -116,7 +127,7 @@ test(
 
 test(
   "user must be able to not see api key in webhook component when auto login is enabled",
-  { tag: ["@release"] },
+  { tag: ["@stable", "@release"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await page.route("**/api/v1/config", (route) => {
@@ -168,6 +179,13 @@ test(
     await page.getByTestId("button_open_text_area_modal_str_curl").click();
 
     const curl = await page.getByTestId("text-area-modal").inputValue();
+
+    // Without this the assertion below is satisfied by the EMPTY STRING --
+    // "".includes("x-api-key") is false -- so a modal that opened without
+    // populating, or populated with the unsubstituted `CURL_WEBHOOK`
+    // sentinel, read as a pass while cURL generation was broken. See the
+    // sibling test above for the substitution mechanism.
+    expect(curl).toContain("curl -X POST");
 
     expect(curl).not.toContain("x-api-key");
 

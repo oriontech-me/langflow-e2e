@@ -1,6 +1,6 @@
 # Workflows v2 — the job lifecycle
 
-**Last validated:** Langflow 1.12.0.dev37 — `langflowai/langflow-nightly@sha256:b672ab7e91981c6f1719b2932bfa7e2255324d4cfac18b7fedf0dbf5722761de`, the digest `:latest` resolves to (`docker inspect --format '{{index .RepoDigests 0}}'`); upstream revision `50340f2a4322eca624b7ef5684237d87f863fc1b`.
+**Last validated:** Langflow 1.13.0.dev7 — `langflowai/langflow-nightly@sha256:080f47f85f4788f321b63ce5fc82920ea499407ce0f89d67a93b5dbd54675535`, the digest `:latest` resolves to (`docker inspect --format '{{index .RepoDigests 0}}'`). Same version the nine #1784 measurement dispatches ran against.
 
 ---
 

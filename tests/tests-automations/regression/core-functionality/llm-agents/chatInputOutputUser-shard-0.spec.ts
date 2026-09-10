@@ -46,7 +46,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must be able to send an image on chat",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
   async ({ page }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
