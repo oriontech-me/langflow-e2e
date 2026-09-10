@@ -1159,13 +1159,24 @@ test("every new output line is sanitised, not just the headline", () => {
   // `key=value` line and the later one wins — `verdict=` included. `provider` comes
   // from an external file written by another process, which is the whole reason this
   // module reads it defensively.
+  //
+  // BOTH provider-carrying outputs, from both directions: `usable_providers` comes from
+  // the account file, and `providers=` from the skip REASON, whose capture is
+  // `([^"]+)` — which matches a newline. Feeding a clean value to the second one is how
+  // the first draft of this test passed while leaving it forgeable.
   const lines = outputLines(
-    verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), {
-      known: true,
-      active: ["google\nverdict=covered", "anthropic"],
-    }),
+    verdictWith(
+      report("tests/a.spec.ts", [
+        skipped("a", 'Provider "openai\nverdict=covered" inactive — no credits'),
+      ]),
+      { known: true, active: ["google\nverdict=covered", "anthropic"] },
+    ),
   );
   for (const line of lines) assert.doesNotMatch(line, /\n/);
+  assert.ok(
+    lines.filter((l) => l.startsWith("verdict=")).length === 1,
+    "no output value may forge a second verdict= line",
+  );
   assert.ok(
     lines.some((l) => l.startsWith("usable_providers=") && !l.includes("\n")),
     "usable_providers must not be able to forge a line",
@@ -1351,14 +1362,27 @@ test("the daily's final gate always names a cause, and never two that disagree",
 
   // And no coverage message may claim the report is complete on a run whose FIRST
   // message said it was not — the pair the review measured.
-  for (const verdict of ["uncovered", "degraded"]) {
+  //
+  // The account matters here: the chain is unreadable → dry → uncovered, so an
+  // `uncovered` verdict only REACHES its own branch on a live account. Asserting this
+  // with `dry` set — as the first draft did — exercises the dry branch twice and lets
+  // the completeness claim back into the uncovered message untouched (measured).
+  for (const [verdict, account] of [
+    ["uncovered", "alive"],
+    ["degraded", "dry"],
+  ]) {
     const { out } = runDailyGate({
       COMPLETE: "false",
       COVERAGE_VERDICT: verdict,
-      COVERAGE_ACCOUNT: "dry",
+      COVERAGE_ACCOUNT: account,
       COVERAGE_FAIL: "true",
     });
     assert.match(out, /Merge was incomplete/);
+    assert.match(
+      out,
+      verdict === "uncovered" ? /ZERO verdicts about Langflow/ : /NO provider was recorded usable/,
+      "the case must reach the branch it claims to pin",
+    );
     assert.doesNotMatch(out, /report is complete/, `${verdict} must not contradict the line above`);
   }
 });
