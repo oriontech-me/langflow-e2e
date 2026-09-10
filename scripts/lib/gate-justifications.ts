@@ -19,9 +19,21 @@
  *
  * #1451 proposed a sweep over `QA-CHECKLIST.md` and `docs/**` for issue refs in
  * a gating construction (`gated on #N`, `blocked on #N`, `until #N lands`).
- * Measured on `main` at `787cd420`, that selects **149 lines across 85 files**,
+ * Measured at **149 lines across 85 files** on `787cd420` and **151 / 86** on
+ * `a2250fdb` — the figure counts OUR OWN PROSE and moves whenever a doc gains a
+ * sentence, so re-run it rather than quoting it:
+ *
+ *     node -e 'const{readFileSync}=require("fs"),{execSync}=require("child_process");
+ *       const K=/\b(gated on|gating|gate|blocked on|blocked by|blocks|depends on|dependent on|until|pending|waiting on|awaiting|deferred|tracked in|tracked by|guarded by|contingent on|once .{0,20} lands|when .{0,20} lands)\b/i;
+ *       const R=/(?:(langflow-ai.langflow)?#(\d{1,6}))/g; let n=0; const f=new Set();
+ *       for (const p of execSync("git ls-files QA-CHECKLIST.md docs",{encoding:"utf8"}).trim().split("\n"))
+ *         if (p.endsWith(".md")) for (const l of readFileSync(p,"utf8").split("\n"))
+ *           if (K.test(l) && [...l.matchAll(R)].length) { n++; f.add(p); }
+ *       console.log(n, f.size)'
+ *
+ * Whatever the exact count, the shape is what decides it: the hits are
  * overwhelmingly legitimate history (`tracked in #1600`, `promoted by #682`),
- * and it MISSES real gates that use no gating verb —
+ * and the sweep MISSES real gates that use no gating verb —
  * `general-bugs-agent-sum-duplicate-message-playground.md` reads "its absence is
  * why this spec sat broken on `main` (#1465) — a call the issue asks to revisit
  * once it is green". Precision and recall both fail, so there is no keyword
@@ -112,12 +124,29 @@ export interface SpecJustification {
   readError?: string;
 }
 
+/**
+ * Why a reference could not be resolved.
+ *
+ * `lookup-failed` and `not-found` render identically to a reader but must never
+ * be conflated by CODE: a reference that does not EXIST is a finding, while one
+ * we could not ASK about is an outage, and the workflow bars the destructive
+ * issue-refresh and issue-close paths on the second. An earlier version derived
+ * that distinction from `reason.startsWith("lookup failed:")` — a string
+ * contract with a message produced sixty lines away, where a reword would have
+ * silently re-opened the close-the-issue path during a real outage.
+ */
+export type UnresolvedCause =
+  | "lookup-failed"
+  | "not-found"
+  | "no-state"
+  | "bad-state";
+
 /** The live state of one cited reference. */
 export type RefState =
   | { kind: "open" }
   | { kind: "closed" }
   | { kind: "merged" }
-  | { kind: "unresolved"; reason: string };
+  | { kind: "unresolved"; cause: UnresolvedCause; reason: string };
 
 /** A declared, deliberate citation that is provenance rather than a gate. */
 export interface GateDecl {
@@ -249,8 +278,11 @@ export function refLabel(ref: CitedRef): string {
  *
  * Markdown links to a GitHub issue are deliberately NOT matched: the repo's
  * prose cites by number, and a URL in an `External dependencies` list is a
- * different kind of statement. Anything that reads as a heading anchor
- * (`#section`) has no digits and cannot match.
+ * different kind of statement. A heading anchor usually cannot match because it
+ * starts with a letter — but a DIGIT-initial one (`](#1-overview)`) does, and
+ * so would a numeric colour literal. No instance exists in this repo's prose
+ * today; the failure mode is one spurious `unknown` row naming the number,
+ * never a false `expired`, so it is recorded rather than guarded.
  */
 export function extractRefs(text: string): CitedRef[] {
   const seen = new Set<string>();
@@ -287,12 +319,23 @@ export function tagsSection(docText: string): string | null {
 }
 
 /**
- * The `QA-CHECKLIST.md` bullets that name a spec.
+ * The `QA-CHECKLIST.md` bullets that name a spec AND could carry a
+ * justification for the tag's absence.
  *
- * Matched on the BASENAME with a boundary, for the reason
- * `buildTrackerIndex` documents: a bare `includes` on `run-flow.spec.ts` also
- * matches inside `api-run-flow.spec.ts`, and this tree contains three such
- * pairs.
+ * Matched on the BASENAME with a boundary, for the reason `buildTrackerIndex`
+ * documents: a bare `includes` on `run-flow.spec.ts` also matches inside
+ * `api-run-flow.spec.ts`, and this tree contains three such pairs.
+ *
+ * **A `[x]` bullet is excluded, and that is a correctness fix rather than a
+ * tidy-up.** `[x]` means the coverage is complete; the references on such a
+ * line are HISTORY, and `CONTRIBUTING.md` puts the absence justification in the
+ * `[-]` bullet or the doc's `## Tags` section. Reading them as a justification
+ * fails in the silent direction: `QA-CHECKLIST.md`'s Run Flow bullet is `[x]`
+ * and reads "`@stable` restored 2026-08-11 (#966) … Hardened for #1548 … seeds
+ * the assistant-onboarding suppression (#1220)" — none of it a gate, and the
+ * restore it claims never happened (`run-flow.spec.ts` carries no `@stable`).
+ * With those three counted, ONE of them being reopened would file the spec as
+ * `live` and silence a justification that really has expired.
  */
 export function checklistBullets(
   checklistText: string,
@@ -304,6 +347,7 @@ export function checklistBullets(
   );
   const out: JustificationSource[] = [];
   checklistText.split("\n").forEach((line, i) => {
+    if (/^\s*[-*]\s*\[x\]/i.test(line)) return;
     if (!pattern.test(line)) return;
     out.push({
       kind: "checklist",
@@ -408,7 +452,11 @@ export function classifyGates(input: GateInput): GateVerdict {
         state: "unknown",
         refs: refs.map((ref) => ({
           ref,
-          state: { kind: "unresolved", reason: lookupError } as RefState,
+          state: {
+            kind: "unresolved",
+            cause: "lookup-failed",
+            reason: lookupError,
+          } as RefState,
         })),
         reason: `the reference lookup failed (${lookupError}), so it is unknown whether the cited gate is still open`,
       });
@@ -419,6 +467,7 @@ export function classifyGates(input: GateInput): GateVerdict {
       ref,
       state: refStates[refKey(ref)] ?? {
         kind: "unresolved",
+        cause: "no-state",
         reason: "no state was produced for this reference",
       },
     }));
@@ -507,6 +556,17 @@ export function classifyGates(input: GateInput): GateVerdict {
 export function normalizeDeclRef(raw: string): string {
   const refs = extractRefs(raw.startsWith("#") ? ` ${raw}` : raw);
   return refs.length > 0 ? refKey(refs[0]) : raw;
+}
+
+/**
+ * Whether any reference went unresolved because the LOOKUP failed, as opposed
+ * to the reference not existing. The workflow bars its two destructive paths on
+ * this: refreshing a standing report, and closing it.
+ */
+export function hadLookupFailure(states: Record<string, RefState>): boolean {
+  return Object.values(states).some(
+    (s) => s.kind === "unresolved" && s.cause === "lookup-failed",
+  );
 }
 
 /** Whether the verdict has anything a human must act on. */

@@ -10,6 +10,11 @@
 //     commit, so nothing downstream can notice;
 //   * `buildTrackerIndex` — counting this check's OWN report issue as a tracker
 //     would mark every orphan owned on the next run and empty the report.
+//
+// The gate-justification I/O half (#1783) is covered at the bottom of this
+// file: reference resolution against `gh`, the declarations parser, the
+// justification reader and the spec-level tracker index. Its PURE half lives in
+// `scripts/lib/gate-justifications.test.ts`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "child_process";
@@ -20,17 +25,26 @@ import {
   EXEMPTIONS_PATH,
   GIT_LOG_FORMAT,
   ORPHAN_ISSUE_TITLE,
+  buildSpecTrackerIndex,
   buildTrackerIndex,
+  collectJustifications,
   isShallowRepository,
   parseExemptions,
+  parseGateDeclarations,
   parseGitLogRaw,
   readBlobs,
+  resolveRefStates,
   walkSpec,
   type RawIssue,
   type Revision,
 } from "./reconcile-stable-orphans";
 import { REPO_ROOT, type DeclaredTest } from "./lib/stable-tests";
 import { historyKey } from "./lib/stable-orphans";
+import {
+  hadLookupFailure,
+  refKey,
+  type CitedRef,
+} from "./lib/gate-justifications";
 
 const RS = "\u001e";
 const FS_ = "\u001f";
@@ -662,4 +676,212 @@ test("the same basename at a real path boundary still owns it", () => {
       `"${body}" names the spec`,
     );
   }
+});
+
+
+// ─── Gate justifications, the I/O half (#1783) ───────────────────────────────
+//
+// This half is what talks to `gh` and the filesystem, and two of its bugs were
+// found by a REAL run rather than by reasoning, so both are pinned here:
+// `gh api graphql` substitutes `{owner}` and `{repo}` but NOT `{name}`, and it
+// exits non-zero on a PARTIAL resolution while still returning every alias that
+// did resolve. An earlier revision of this branch claimed these were "covered
+// there" while nothing referenced any of these functions.
+
+const ref = (n: number, repo: CitedRef["repo"] = "self"): CitedRef => ({
+  repo,
+  number: n,
+});
+
+test("resolveRefStates maps each GraphQL state, and an absent node is NOT-FOUND", () => {
+  const states = resolveRefStates(
+    [ref(1), ref(2), ref(3), ref(4)],
+    () => ({
+      1: { state: "OPEN" },
+      2: { state: "CLOSED" },
+      3: { state: "MERGED" },
+      4: null,
+    }),
+  );
+  assert.deepEqual(states["#1"], { kind: "open" });
+  assert.deepEqual(states["#2"], { kind: "closed" });
+  assert.deepEqual(states["#3"], { kind: "merged" });
+  assert.equal(states["#4"].kind, "unresolved");
+  assert.equal(
+    states["#4"].kind === "unresolved" ? states["#4"].cause : "",
+    "not-found",
+    "a number that does not exist is a FINDING's input, not an outage",
+  );
+  assert.equal(hadLookupFailure(states), false);
+});
+
+test("resolveRefStates marks a thrown query as LOOKUP-FAILED, which bars the destructive paths", () => {
+  // The distinction the workflow's `gate_lookup_failed` gate rests on. It was
+  // derived from `reason.startsWith("lookup failed:")` — a string contract with
+  // a message produced sixty lines away — until this test existed.
+  const states = resolveRefStates([ref(1)], () => {
+    throw new Error("gh: API rate limit exceeded\nsecond line");
+  });
+  assert.equal(states["#1"].kind, "unresolved");
+  assert.equal(
+    states["#1"].kind === "unresolved" ? states["#1"].cause : "",
+    "lookup-failed",
+  );
+  assert.equal(hadLookupFailure(states), true);
+  assert.doesNotMatch(
+    states["#1"].kind === "unresolved" ? states["#1"].reason : "",
+    /second line/,
+    "only the first line of gh's error is carried",
+  );
+});
+
+test("resolveRefStates reports an unrecognised state rather than guessing", () => {
+  const states = resolveRefStates([ref(1)], () => ({ 1: { state: "DRAFT" } }));
+  assert.equal(
+    states["#1"].kind === "unresolved" ? states["#1"].cause : "",
+    "bad-state",
+  );
+});
+
+test("resolveRefStates asks each repository separately and keeps the same number apart", () => {
+  // `#14512` and `langflow-ai/langflow#14512` are different references. Asking
+  // one repo for both, or letting one answer overwrite the other, is the false
+  // verdict the whole upstream-prefix rule exists to prevent.
+  const asked: Array<[string, number[]]> = [];
+  const states = resolveRefStates(
+    [ref(14512), ref(14512, "upstream")],
+    (repo, numbers) => {
+      asked.push([repo, numbers]);
+      return { 14512: repo === "self" ? null : { state: "MERGED" } };
+    },
+  );
+  assert.equal(asked.length, 2, "one query per repository");
+  assert.deepEqual(
+    asked.map(([r]) => r).sort(),
+    ["langflow-ai/langflow", "self"],
+  );
+  assert.equal(states[refKey(ref(14512))].kind, "unresolved");
+  assert.deepEqual(states[refKey(ref(14512, "upstream"))], { kind: "merged" });
+});
+
+test("resolveRefStates de-duplicates a number cited twice in the same repo", () => {
+  let calls = 0;
+  resolveRefStates([ref(7), ref(7)], (_repo, numbers) => {
+    calls++;
+    assert.deepEqual(numbers, [7]);
+    return { 7: { state: "OPEN" } };
+  });
+  assert.equal(calls, 1);
+});
+
+test("resolveRefStates confines a failed repository to its own references", () => {
+  // The upstream repo is public and ours is not: a token that can read one and
+  // not the other must not take the whole verdict down with it.
+  const states = resolveRefStates([ref(1), ref(2, "upstream")], (repo) => {
+    if (repo !== "self") throw new Error("no access");
+    return { 1: { state: "CLOSED" } };
+  });
+  assert.deepEqual(states["#1"], { kind: "closed" });
+  assert.equal(
+    states["upstream#2"].kind === "unresolved"
+      ? states["upstream#2"].cause
+      : "",
+    "lookup-failed",
+  );
+});
+
+test("parseGateDeclarations refuses a declaration that cannot be verified back", () => {
+  const ok = parseGateDeclarations(
+    JSON.stringify({
+      declarations: [{ spec: "a/x.spec.ts", refs: ["#1"], reason: "why" }],
+    }),
+    "d.json",
+  );
+  assert.equal(ok.length, 1);
+
+  for (const [bad, why] of [
+    [{ declarations: [{ spec: "a/x.spec.ts", refs: ["#1"] }] }, /reason/],
+    [{ declarations: [{ spec: "a/x.spec.ts", reason: "why" }] }, /refs/],
+    [{ declarations: [{ spec: "a/x.spec.ts", refs: [], reason: "why" }] }, /refs/],
+    [{ declarations: [{ refs: ["#1"], reason: "why" }] }, /spec/],
+    [{ nope: [] }, /declarations/],
+  ] as Array<[unknown, RegExp]>) {
+    assert.throws(
+      () => parseGateDeclarations(JSON.stringify(bad), "d.json"),
+      why,
+    );
+  }
+  assert.throws(() => parseGateDeclarations("{", "d.json"), /valid JSON/);
+});
+
+test("the committed declarations file parses and every entry names a real spec", () => {
+  const raw = fs.readFileSync(
+    path.join(REPO_ROOT, "scripts/lib/gate-justification-declarations.json"),
+    "utf-8",
+  );
+  for (const d of parseGateDeclarations(raw, "committed")) {
+    assert.ok(
+      fs.existsSync(
+        path.join(REPO_ROOT, "tests/tests-automations/regression", d.spec),
+      ),
+      `${d.spec} exists`,
+    );
+  }
+});
+
+test("collectJustifications labels the doc RELATIVE to the repo, and survives an absent one", () => {
+  // The report is rendered into a GitHub issue, where `/Users/<someone>/…` from
+  // whichever machine ran the check means nothing.
+  const j = collectJustifications(["a/x.spec.ts", "a/none.spec.ts"], {
+    docsRoot: path.join(REPO_ROOT, "docs"),
+    checklistText: "- [-] b → `x.spec.ts` (#5)",
+    readDoc: (p) => (p.endsWith("a/x.md") ? "## Tags\n\ngated on #9\n" : null),
+  });
+  const doc = j["a/x.spec.ts"].sources.find((s) => s.kind === "doc-tags");
+  assert.ok(doc);
+  assert.equal(doc.file, "docs/a/x.md");
+  assert.doesNotMatch(doc.file, /^\//);
+  assert.equal(j["a/none.spec.ts"].sources.length, 0);
+  assert.equal(j["a/none.spec.ts"].readError, undefined);
+});
+
+test("collectJustifications reports an UNREADABLE doc rather than treating it as citing nothing", () => {
+  const j = collectJustifications(["a/x.spec.ts"], {
+    docsRoot: path.join(REPO_ROOT, "docs"),
+    checklistText: "",
+    readDoc: () => {
+      throw new Error("EACCES");
+    },
+  });
+  assert.match(j["a/x.spec.ts"].readError ?? "", /EACCES/);
+});
+
+test("collectJustifications takes the checklist bullet even when there is no doc", () => {
+  const j = collectJustifications(["a/x.spec.ts"], {
+    docsRoot: path.join(REPO_ROOT, "docs"),
+    checklistText: "- [-] b → `x.spec.ts` (#5)",
+    readDoc: () => null,
+  });
+  assert.equal(j["a/x.spec.ts"].sources.length, 1);
+  assert.equal(j["a/x.spec.ts"].sources[0].kind, "checklist");
+});
+
+test("buildSpecTrackerIndex excludes PRs and this check's OWN report issue", () => {
+  const issues: RawIssue[] = [
+    { number: 1, title: "about x.spec.ts", html_url: "u1" },
+    { number: 2, title: "a PR", body: "x.spec.ts", html_url: "u2", pull_request: {} },
+    { number: 3, title: ORPHAN_ISSUE_TITLE, body: "x.spec.ts", html_url: "u3" },
+  ];
+  const idx = buildSpecTrackerIndex(issues, ["a/x.spec.ts"]);
+  assert.deepEqual(idx["a/x.spec.ts"].map((t) => t.number), [1]);
+});
+
+test("buildSpecTrackerIndex matches the basename on a boundary, not as a substring", () => {
+  const issues: RawIssue[] = [
+    { number: 1, title: "about api-run-flow.spec.ts", html_url: "u" },
+  ];
+  const idx = buildSpecTrackerIndex(issues, [
+    "flow-functionality/run-flow.spec.ts",
+  ]);
+  assert.equal(idx["flow-functionality/run-flow.spec.ts"], undefined);
 });

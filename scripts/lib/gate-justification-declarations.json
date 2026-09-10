@@ -3,7 +3,8 @@
     "Citations that are PROVENANCE rather than a live gate, read by scripts/reconcile-stable-orphans.ts (#1783).",
     "An entry silences exactly one spec's citations, and must list every reference it covers.",
     "It is verified in BOTH directions (#1084's lesson): if the spec carries @stable again, becomes lane-gated, is renamed away, or stops citing a declared reference, the declaration is REPORTED as expired instead of being honoured silently — otherwise this check grows the exact silent-expiry problem it exists to close.",
-    "A LIVE gate does not belong here. Cite an open issue in the justification instead: one open reference is enough for the check to leave the spec alone."
+    "A LIVE gate does not belong here. Cite an open issue in the justification instead: one open reference is enough for the check to leave the spec alone.",
+    "NOT every closed citation is provenance. The two shapes look alike and are not: `starter-projects` and `userSettings` cite #820 inside a COVERAGE NOTE (\"covered by x.spec.ts, y.spec.ts (#820)\"), which says nothing about the tag, while `dragAndDrop` cites #938 inside the sentence explaining the ABSENCE (\"would flip a checklist bullet outside the scope of #938\"). The second is reported rather than declared: a citation in the tag-absence rationale is exactly what this check is for, and the fix there is to point the prose at something live — not to silence it."
   ],
   "declarations": [
     {

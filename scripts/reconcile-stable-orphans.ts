@@ -61,6 +61,7 @@ import {
   checklistBullets,
   classifyGates,
   extractRefs,
+  hadLookupFailure,
   hasGateFindings,
   refKey,
   renderGateSection,
@@ -650,7 +651,11 @@ export function resolveRefStates(
       const reason = (e as Error).message.split("\n")[0];
       for (const n of numbers) {
         out[refKey({ repo: repo === "self" ? "self" : "upstream", number: n })] =
-          { kind: "unresolved", reason: `lookup failed: ${reason}` };
+          {
+            kind: "unresolved",
+            cause: "lookup-failed",
+            reason: `lookup failed: ${reason}`,
+          };
       }
       continue;
     }
@@ -665,11 +670,13 @@ export function resolveRefStates(
           repo === "self"
             ? {
                 kind: "unresolved",
+                cause: "not-found",
                 reason:
                   "no issue or pull request with this number exists in THIS repo — most likely an upstream reference written without its `langflow-ai/langflow#` prefix",
               }
             : {
                 kind: "unresolved",
+                cause: "not-found",
                 reason: `no issue or pull request with this number exists in ${repo}`,
               };
         continue;
@@ -682,6 +689,7 @@ export function resolveRefStates(
       else
         out[key] = {
           kind: "unresolved",
+          cause: "bad-state",
           reason: `unrecognised state ${JSON.stringify(node.state)}`,
         };
     }
@@ -919,9 +927,7 @@ export function run(argv: string[]): number {
   // with "we could not ask" — the same rule the tracker lookup already follows,
   // and for the same reason: a body rewrite is destructive and an outage
   // decides nothing.
-  const gateLookupFailed = Object.values(refStates).some(
-    (s) => s.kind === "unresolved" && s.reason.startsWith("lookup failed:"),
-  );
+  const gateLookupFailed = hadLookupFailure(refStates);
   const gateVerdict: GateVerdict = classifyGates({
     tests,
     justifications,
@@ -930,7 +936,15 @@ export function run(argv: string[]): number {
       ? {}
       : buildSpecTrackerIndex(openIssues ?? [], gateSpecs),
     declarations,
-    lookupError: gateLookupError ?? trackerLookupError,
+    // Only a REFERENCE-lookup problem may be reported as one. When it is the
+    // open-issue sweep that failed, the row's reason has to say that instead —
+    // #1012 asks for the reason NAMED, and naming the wrong one is its own
+    // false statement.
+    lookupError:
+      gateLookupError ??
+      (trackerLookupError
+        ? `the open-issue lookup failed (${trackerLookupError}), so the context this check reads alongside the citations is undecided`
+        : undefined),
   });
 
   const runLabel = process.env.RUN_LABEL || undefined;
@@ -947,7 +961,15 @@ export function run(argv: string[]): number {
   const mdOut = argValue(argv, "--markdown");
   if (mdOut) fs.writeFileSync(mdOut, markdown + "\n");
   const jsonOut = argValue(argv, "--json");
-  if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify(verdict, null, 2) + "\n");
+  if (jsonOut) {
+    // BOTH halves: `finding_count` and `has_findings` already include the gate
+    // verdict, and the two `::warning::` steps send the reader to "the uploaded
+    // verdict" — which carried only the orphan half.
+    fs.writeFileSync(
+      jsonOut,
+      JSON.stringify({ orphans: verdict, gates: gateVerdict }, null, 2) + "\n",
+    );
+  }
 
   console.log(markdown);
 
@@ -971,7 +993,6 @@ export function run(argv: string[]): number {
         `orphan_count=${verdict.orphaned.length}`,
         `finding_count=${findings}`,
         `has_findings=${hasFindings(verdict) || hasGateFindings(gateVerdict)}`,
-        `expired_gate_count=${gateVerdict.expired.length}`,
         `gate_lookup_failed=${gateLookupFailed ? "true" : "false"}`,
         // The workflow uses this to leave a standing report ALONE rather than
         // overwriting it with "we could not ask GitHub": an outage decides

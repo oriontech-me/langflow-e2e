@@ -265,7 +265,11 @@ describe("classifyGates", () => {
           },
         },
         refStates: {
-          "#14512": { kind: "unresolved", reason: "does not exist here" },
+          "#14512": {
+            kind: "unresolved",
+            cause: "not-found",
+            reason: "does not exist here",
+          },
         },
       }),
     );
@@ -287,7 +291,7 @@ describe("classifyGates", () => {
         },
         refStates: {
           "#1575": closed,
-          "#14512": { kind: "unresolved", reason: "nope" },
+          "#14512": { kind: "unresolved", cause: "not-found", reason: "nope" },
         },
       }),
     );
@@ -491,7 +495,7 @@ describe("renderGateSection", () => {
           },
         },
         refStates: {
-          "#1": { kind: "unresolved", reason: "a | b" },
+          "#1": { kind: "unresolved", cause: "not-found", reason: "a | b" },
         },
       }),
     );

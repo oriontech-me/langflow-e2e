@@ -135,6 +135,11 @@ jobs:
         run: |
           echo "::warning::The open-issue lookup failed, so ownership is undecided for every removal. The report issue was left untouched — see the job summary and the uploaded verdict."
 
+      # This freezes publication of the ORPHAN half too, whose own lookup may
+      # have succeeded — the two share one issue body, so there is no way to
+      # refresh half of it. Fail-closed is the right direction (an outage must
+      # not overwrite standing findings) and the full verdict is still in the
+      # job summary and the artifact.
       - name: Warn when a cited reference could not be resolved
         if: always() && steps.reconcile.outputs.gate_lookup_failed == 'true'
         run: |
