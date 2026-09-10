@@ -1,8 +1,8 @@
-# `POST /api/v1/flows/download/` drops the credential variable binding — exported flows no longer import with their secrets bound
+# `POST /api/v1/flows/download/` drops the credential variable binding — exported flows no longer import with their variables bound
 
 | Field | Value |
 |---|---|
-| **Filed upstream** | _still pending_ (draft in §6; owner: QA team) — **the blocking deliverable**: nothing has been reported to the people who can fix this, and the quarantine hides it from our own dailies |
+| **Filed upstream** | _still pending_ (report in §1–§4, suggested title in §6; owner: QA team) — **the blocking deliverable**: nothing has been reported to the people who can fix this, and the quarantine hides it from our own dailies |
 | **Last re-checked** | 2026-09-10 — **no upstream fix has landed**; the quarantine stands. Evidence in §6 |
 | **Repo issue** | [oriontech-me/langflow-e2e#1546](https://github.com/oriontech-me/langflow-e2e/issues/1546) (spun out of daily triage #1544) |
 | **Affected builds** | `langflowai/langflow-nightly:latest` since `2026-08-20` (first nightly cut after the causing merge); reproduced 5/5 on `1.12.0.dev33` |
@@ -121,38 +121,88 @@ mode; the fix is plausibly one line per call site
 
 **2026-09-10 — no upstream fix. The quarantine stands and nothing about the
 product has changed.** Checked against `langflow-ai/langflow` rather than against
-a nightly, because the question "did the fix land" is answerable from the history
-of the three paths this defect lives in:
+a nightly, because "did the fix land" is answerable from the code itself.
 
-| Path | Commits since 2026-08-19 |
-|---|---|
-| `src/backend/base/langflow/utils/flow_secrets.py` (the scrubber) | `fc3810da` only — **the commit that caused this** (#14639) |
-| `src/backend/base/langflow/api/v1/flows_helpers.py` (the `POST /api/v1/flows/download/` call site) | `fc3810da` only |
-| `src/backend/base/langflow/api/v1/projects.py` (sibling surface) | `c3bfdb7d`, a `release-1.12.0` → `main` back-merge |
+**Named refs, because the answer is ref-dependent and this repo has been bitten
+by that**: the nightly is cut from the release line under development, *not* from
+`main`, and merge-back is sporadic — so a `main`-only walk can report "not fixed"
+about a fix that shipped. Checked on `origin/main` **and** `origin/release-1.12.0`,
+`release-1.12.1`, `release-1.12.2`, `release-1.13.0`.
 
-**Reading the current file alone is misleading here, and that trap is worth
-recording so the next check does not fall into it.** `flow_secrets.py` on `main`
-today carries `load_from_db` handling (`_is_variable_reference`) and a scrub
-narrowed to fields that are `password`-marked *and* named like a secret — which
-reads exactly like the repair §4 asks for. It is not: the history shows both
-arrived **inside the causing commit**, which replaced the legacy `remove_api_keys`
-(that narrow rule) with the metadata-driven scrubber. So the file looks fixed
-because it looks *deliberate*, not because it changed.
+**Every file the causing commit touched is byte-identical to its own tree, on all
+five refs.** This is stronger than a commit walk and immune to the two mistakes
+the first version of this section made (below):
 
-A `manual.yml` dispatch to re-measure was considered and declined: the code path
-is byte-identical to the one that reproduced 5/5 on `1.12.0.dev33`, so a run would
-spend CI to confirm what an untouched path already settles. It becomes the right
-move the moment any of the three rows above gains a commit.
+```bash
+for p in utils/flow_secrets.py api/v1/flows_helpers.py \
+         api/v1/projects_files.py api/v1/flow_version.py; do
+  for r in fc3810da origin/main origin/release-1.12.{0,1,2} origin/release-1.13.0; do
+    git rev-parse "$r:src/backend/base/langflow/$p"
+  done
+done
+# flow_secrets.py    12f2a5e … (identical on all six)
+# flows_helpers.py   96dab51 … (identical on all six)
+# projects_files.py  05ecd47 … (identical on all six)
+# flow_version.py    b946d66 … (identical on all six)
+```
+
+The paths are **the three export call sites plus the scrubber** — `flows_helpers.py`
+(`POST /api/v1/flows/download/`), `projects_files.py` (`download_project_flows`,
+i.e. `GET /api/v1/projects/download/{id}`) and `flow_version.py`
+(`strip_version_data`). An earlier version of this table watched
+`api/v1/projects.py`, which only *imports* `download_project_flows` and was not
+touched by the cause, and omitted `flow_version.py` altogether — so its stated
+trigger was blind to a fix landing on either real sibling surface. It also listed
+`c3bfdb7d` (a `release-1.12.0` → `main` back-merge) as a commit "since 2026-08-19"
+when it is dated 2026-08-18, i.e. *before* the cause.
+
+### The trap: the binding-preserving mode predates the bug
+
+**Reading `flow_secrets.py` and concluding "already fixed" is the mistake to avoid,
+and the true story is not the one this section first recorded.** The file carries
+`_is_variable_reference` and a `variable_references` mode that preserves
+`load_from_db` bindings — which reads exactly like the repair §4 asks for. Both
+arrived in `0a1833f234` (#14437, *deterministic project deployment artifacts*,
+2026-08-10), **nine days before** the cause:
+
+```bash
+git log origin/main --reverse -S'_is_variable_reference' --oneline \
+  -- src/backend/base/langflow/utils/flow_secrets.py
+# 0a1833f234 feat: add deterministic project deployment artifacts (#14437)
+git show fc3810da^:src/backend/base/langflow/utils/flow_secrets.py | grep -c _is_variable_reference
+# 3   ← already there, pre-cause
+```
+
+`fc3810da`'s entire change to that file is adding `strip_flow_secrets` (+24/−1).
+What it did was move the export call sites off the legacy `remove_api_keys`
+(`password`-marked **and** API-key-named) onto the broader metadata-driven scrubber
+— `password` **or** secret-named, `flow_secrets.py:308` — **without** passing the
+`variable_references` mode #14437 had already added. So the correct machinery is
+sitting in the file, unreferenced by the export path. (§2 point 3 credits #14437
+correctly; an earlier version of this section contradicted it.)
+
+### Why a re-measurement is not the next step
+
+Two reasons, and the mechanical one comes first: the test is `test.fixme`, so **no
+`manual.yml` dispatch runs it at all** — not by tag, not by `--grep`. Re-measuring
+today means §3's by-hand reproduction, or lifting the quarantine first. And even
+then it would spend CI to confirm what the blob identity above already settles.
+
+It becomes the right move the moment any of those four blobs changes on any watched
+ref — and at that point the order is: reproduce by hand (§3), then lift.
 
 ### What filing it needs
 
 §1–§4 are the report; §3 is a deterministic reproduction that needs no LLM key.
-The one thing missing is the act of posting, which is deliberately left to a human
-with an upstream account: it is a public statement in a third-party repository,
-made in someone's name. Suggested title:
+The one thing missing is the act of posting. **The usual channel here is DataStax
+Jira** — six of the eight docs in this directory carry an `LE-####`, and
+`REGRESSIONS.md` accepts either a Jira ticket or a `langflow-ai/langflow` issue —
+so this does not require an upstream GitHub account or a public statement; a Jira
+ticket is enough to unblock the deliverable. Suggested title, covering all three
+surfaces rather than only the one the H1 names:
 
-> `POST /api/v1/flows/download/` nulls `load_from_db` credential bindings — exported flows no longer import with their variables bound
+> Flow and project export null `load_from_db` credential bindings — `POST /api/v1/flows/download/`, `GET /api/v1/projects/download/{id}` and `strip_version_data` all drop the variable name
 
-Once posted, put the issue URL in the **Filed upstream** row above and, if
-upstream disputes the intent (§2), record the answer in §4 rather than in the
-issue thread alone — the quarantine's lifetime depends on it.
+Once filed, put the ticket in the **Filed upstream** row above and, if upstream
+disputes the intent (§2), record the answer in §4 rather than in the ticket thread
+alone — the quarantine's lifetime depends on it.
