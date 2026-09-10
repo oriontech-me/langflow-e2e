@@ -313,52 +313,41 @@ test("the mirrored values cross the ssh boundary, which a default alone does not
   }
 });
 
-test("the target's RUN command crosses the ssh boundary, and the SYNC override keeps its off switch", () => {
+test("the target's run command crosses on every run, and the sync command never crosses", () => {
   // A measured need rather than a knob for its own sake: on 2026-09-10 the PUBLISHED
   // distribution served the traces family with tracing ON — 23 of 23, no gunicorn
   // WORKER TIMEOUT — where the source clone wedges under the same selection on the same
-  // machine (7, 8 and 9 failures across three attribution runs, #1720). The starter
-  // already accepted LANGFLOW_SRC_RUN_CMD; this script composed the remote environment
-  // from a fixed list, so the override existed on one side of the connection only.
+  // machine (7, 8 and 9 failures across the three attribution runs of #1720).
   const line = readFileSync(SCRIPT, "utf8")
     .split("\n")
     .find((l) => l.includes("bash -s; sleep 86400"));
   assert.ok(line, "could not find the command that starts the backend on the target");
   assert.match(line, /\$\(target_cmd_env\)/);
 
-  // Nothing forwarded when the caller names nothing — the starter's own default (uv
-  // against the clone) has to stay reachable — and the composition must not return
-  // non-zero, because it runs inside a command substitution under `set -e`.
-  const none = sourced(`(unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_SYNC_CMD; target_cmd_env); echo "rc=$?"`);
-  assert.equal(none.status, 0, none.stderr);
-  assert.match(none.stdout, /^rc=0$/m, "an empty composition must still succeed");
-  assert.doesNotMatch(none.stdout, /LANGFLOW_SRC_(RUN|SYNC)_CMD=/);
+  // Unconditional, EMPTY INCLUDED, and that is the property the metadata field rests
+  // on: a value that crosses only sometimes cannot be recorded as the one in force.
+  // Turning this back into a conditional makes langflow_target_run_cmd a guess, so it
+  // is pinned here and not only where the field is written.
+  const unset = sourced(`(unset LANGFLOW_SRC_RUN_CMD; target_cmd_env)`);
+  assert.equal(unset.status, 0, unset.stderr);
+  assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_RUN_CMD=/, "an unset command still has to cross, as empty");
 
-  // The asymmetry, and it is the whole reason this is a function instead of two more
-  // entries on the ssh line. The starter reads the SYNC override as `${VAR-default}`
-  // DELIBERATELY, so empty-but-SET means "skip the sync entirely". Forwarding it
-  // unconditionally would silently disable `uv sync --frozen` on every run of the
-  // source path — a mutation of the thing under test, arriving from a line that reads
-  // like plumbing.
-  const runOnly = sourced(
-    `(unset LANGFLOW_SRC_SYNC_CMD; LANGFLOW_SRC_RUN_CMD="/opt/venv/bin/langflow run" target_cmd_env)`,
-  );
-  assert.equal(runOnly.status, 0, runOnly.stderr);
-  assert.match(runOnly.stdout, /(^|\s)LANGFLOW_SRC_RUN_CMD=/);
-  assert.doesNotMatch(runOnly.stdout, /LANGFLOW_SRC_SYNC_CMD=/, "an UNSET sync override must not cross as empty");
+  // The sync command is a deliberate NON-feature. The starter reads it as
+  // `${VAR-default}`, so empty-but-SET means "skip `uv sync --frozen` entirely", and a
+  // workflow `env:` block cannot express "unset" — an absent input arrives as
+  // empty-but-set. Forwarding it would put a silent skip of the dependency
+  // reconciliation one typo away.
+  for (const env of [{}, { LANGFLOW_SRC_SYNC_CMD: "" }, { LANGFLOW_SRC_SYNC_CMD: "uv sync --frozen --offline" }]) {
+    const r = sourced(`target_cmd_env`, env);
+    assert.doesNotMatch(r.stdout, /LANGFLOW_SRC_SYNC_CMD/, `sync must not cross: ${JSON.stringify(env)}`);
+  }
 
-  const emptySync = sourced(`(unset LANGFLOW_SRC_RUN_CMD; LANGFLOW_SRC_SYNC_CMD= target_cmd_env)`);
-  assert.equal(emptySync.status, 0, emptySync.stderr);
-  assert.match(
-    emptySync.stdout,
-    /(^|\s)LANGFLOW_SRC_SYNC_CMD=/,
-    "empty-but-SET is how the caller asks for no sync at all, so it has to cross",
-  );
-
-  // Parsed on the far side rather than string-matched here. A command with a space is
-  // the ORDINARY case ("/…/bin/langflow run"), so the quoting is load-bearing from the
-  // first use — not on the day someone gets exotic.
-  const cmd = "/opt/venv with space/bin/langflow run";
+  // Read back on the far side rather than string-matched here. The ordinary value
+  // carries a space (`…/bin/langflow run`), so the quoting is load-bearing from the
+  // first use. Only the ARGUMENT separator is supported, and deliberately so: the
+  // starter launches `${RUN_CMD}` unquoted, so `cmd arg` splits into words — a path
+  // that itself contains a space could never serve, whatever this test proved.
+  const cmd = "/opt/venv/bin/langflow run --extra 'a b'";
   const round = sourced(
     [
       `remote="$(target_cmd_env)bash -s"`,
@@ -367,7 +356,21 @@ test("the target's RUN command crosses the ssh boundary, and the SYNC override k
     { LANGFLOW_SRC_RUN_CMD: cmd },
   );
   assert.equal(round.status, 0, round.stderr);
-  assert.equal(round.stdout, cmd, "the far side must READ the command back, spaces included");
+  assert.equal(round.stdout, cmd, "the far side must READ the command back, quoting included");
+
+  // The trailing space is part of the contract, because the caller concatenates. Drop
+  // it and the assignment glues onto the next one, producing a single corrupt
+  // assignment out of two — a failure that reaches the operator as "the backend did not
+  // answer", which is the wrong message for the right reason.
+  const glued = sourced(
+    [
+      `remote="$(target_cmd_env)LANGFLOW_PORT=7999 bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_PORT"' | env -u LANGFLOW_PORT bash -c "$remote"`,
+    ].join("\n"),
+    { LANGFLOW_SRC_RUN_CMD: "/opt/venv/bin/langflow run" },
+  );
+  assert.equal(glued.status, 0, glued.stderr);
+  assert.equal(glued.stdout, "7999", "the assignment that follows has to survive");
 });
 
 test("the remote quoting survives a value carrying a quote, which no current value does", () => {
