@@ -142,9 +142,14 @@ export type TogglePlanInput = {
    * panel's, not this function's. It is the panel's own query
    * (`include_deprecated=true&include_unsupported=true`), so it is WIDER than the
    * picker's: measured on 1.13.0.dev8 it carries 45 google / 56 openai / 28
-   * anthropic llm rows against 36 / 42 / 14 under `purpose=configure`, the surplus
-   * being 9 / 9+6 / 14 deprecated-or-unsupported rows the endpoint REFUSES to enable
-   * (`400 Cannot enable deprecated model: …`). So a plan is a request, not a
+   * anthropic llm rows against 36 / 42 / 14 under `purpose=configure`, so the
+   * surplus the endpoint REFUSES to enable is 9 / 14 / 14 rows
+   * (`400 Cannot enable deprecated model: …`, or `… not supported model: …`).
+   * Stated as the subtraction rather than by category on purpose: the two
+   * categories counted separately for OpenAI — 9 deprecated rows in the collapsed
+   * disclosure plus 6 rendered `not_supported` ones, both measured — come to 15,
+   * one more than the difference, and nothing here establishes which row is in
+   * both sets (#1012). So a plan is a request, not a
    * guarantee — a refused write leaves the model off and the picker read at the end
    * of the setup is what reports it, with the server's own words.
    *

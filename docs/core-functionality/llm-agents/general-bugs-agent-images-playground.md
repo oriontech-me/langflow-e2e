@@ -1,6 +1,6 @@
 # Agent Component — Image Input in Playground
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (re-run twice on `1.13.0.dev8` for the scoped toggle write, #1679 — once with `gpt-4o-mini` deliberately disabled, to exercise the enable path the ladder decides. Earlier: 1.12.x)
 
 ---
 

@@ -80,8 +80,9 @@ export async function setupOpenAI(
   // and closing the panel inside that window takes the flush path that never
   // refreshes the model picker (#1649). The helper clicks and then waits for the
   // product's own write to go quiet, so Step 6 below cannot close on top of it.
-  // What it must NOT do is click every toggle: OpenAI's panel is the LARGEST of the
-  // three (42 llm models on 1.13.0.dev8), and the endpoint validates the key once
+  // What it must NOT do is click every toggle: OpenAI's catalog is the LARGEST of
+  // the three (42 llm models under `purpose=configure` on 1.13.0.dev8, and 56 rows
+  // in the panel's own wider query), and the endpoint validates the key once
   // per model, synchronously, inside the request — 29 of them measured 93 s of a
   // blocked single worker ending in gunicorn's SIGKILL, with nothing persisted
   // (#1679 — measured in model-toggle-batch.ts).

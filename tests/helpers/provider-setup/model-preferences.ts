@@ -2,8 +2,10 @@
  * What each provider setup will accept when no pinned model resolves (#1679).
  *
  * These are the ladders `planToggleTargets` walks, and for OpenAI the same ladder
- * its post-close picker ranking walks — one list read twice, so the setup cannot
- * enable one model and then select another.
+ * its post-close picker ranking walks — one list read twice, so THAT setup cannot
+ * enable one model and then select another. Google's and Anthropic's picker sides
+ * still take the first `gemini` / `claude` option offered, so for those two the
+ * ladder governs the plan only; each of their docstrings below says so.
  *
  * ## Why they live in their own module
  *
@@ -69,9 +71,14 @@ export const OPENAI_MODEL_PREFERENCES: Array<(model: string) => boolean> = [
 export const GOOGLE_NON_CHAT_MODEL = /image|tts|audio|preview/;
 
 /**
- * Mirrors `setup-google.ts`'s picker-side `find` (the first `gemini` option) with
- * one refinement the sweep used to make unnecessary: prefer a flash chat model when
- * one is listed.
+ * Google's plan-side ladder. It is STRICTER than `setup-google.ts`'s picker-side
+ * `find`, which takes the first `gemini` option and applies no chat filter — so
+ * unlike OpenAI, this provider does NOT read one list twice, and a plan that
+ * enables a flash chat model can be followed by a picker that selects some other
+ * gemini. Latent on the measured catalogs, where the plan clicks nothing at all
+ * and every option the picker can offer is one of the five defaults; recorded
+ * rather than fixed because aligning the picker side is a behaviour change these
+ * ladders' own callers would have to be re-measured for.
  */
 export const GOOGLE_MODEL_PREFERENCES: Array<(model: string) => boolean> = [
   (m) => /gemini/.test(m) && /flash/.test(m) && !GOOGLE_NON_CHAT_MODEL.test(m),
@@ -79,9 +86,11 @@ export const GOOGLE_MODEL_PREFERENCES: Array<(model: string) => boolean> = [
 ];
 
 /**
- * Mirrors `setup-anthropic.ts`'s picker-side `find` (the first `claude` option),
- * preferring a non-opus model: a spec that only needs a completion should not pay
- * for the largest one.
+ * Anthropic's plan-side ladder, preferring a non-opus model: a spec that only
+ * needs a completion should not pay for the largest one. Same caveat as Google's
+ * above — `setup-anthropic.ts`'s picker-side `find` takes the first `claude`
+ * option with no opus preference, so the two sides can disagree; only
+ * `setup-openai` reads one ladder for both.
  */
 export const ANTHROPIC_MODEL_PREFERENCES: Array<(model: string) => boolean> = [
   (m) => /claude/.test(m) && !/opus/.test(m),

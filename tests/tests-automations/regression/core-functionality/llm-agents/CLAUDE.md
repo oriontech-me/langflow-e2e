@@ -216,11 +216,18 @@ Two consequences, both measured rather than argued:
   `MIN_DEFAULT_MODELS` five afterwards. The sweep is not a slow success that later
   specs ride for free — it is a guaranteed failure every spec on that instance
   re-pays in full;
-- **the spec that pays it usually still passes**, which is why this hid for four
-  dailies. Reproduced end to end on the pre-fix helper: `agent-component-regression
-  [google]` printed `30 toggle(s) clicked, 1 write(s) started, 0 finished`, took the
-  backend down for **109 s**, and then **passed** — because its pinned model was
-  already enabled. On the daily that outage is charged to whatever else was running.
+- **the spec that pays it usually still passes**, which is why this hid for five
+  dailies (2026-08-31, 09-01, 09-02, 09-03 and 09-08, under three different
+  signature names). Reproduced end to end on the pre-fix helper:
+  `agent-component-regression [google]` printed `30 toggle(s) clicked, 1 write(s)
+  started, 0 finished`, took the backend down for **109 s**, and then **passed** —
+  because its pinned model was already enabled — and NOT because the pin is one of
+  the five defaults, which is the reading to avoid here: the parametrized agent
+  specs pin the model the key axis SETTLED on, locally `gemini-2.5-flash`, which is
+  not a default. What enables it on a lane is `ensureTargetModelsEnabled`, the API
+  write #1666 put in `collect-models`; with that taken away the same path reports
+  `MODEL_NOT_ENABLED: "gemini-2.5-flash" … its toggle is OFF`, which is #1679's own
+  force-fail. On the daily the outage is charged to whatever else was running.
 
 So a setup enables **the one model it is about to pick**, through
 `planToggleTargets` (`tests/helpers/provider-setup/model-toggle-batch.ts`), and
@@ -228,7 +235,9 @@ usually not even that: `get_unified_models_detailed` stamps `default = i <
 default_model_count` **after** its sort, so the five defaults are catalog positions
 0-4 for all three providers by construction (`unified_models/model_catalog.py` —
 not `MIN_DEFAULT_MODELS`, which is the same 5 for the live-discovery providers), and
-a pinned model that happens to be one of them costs zero clicks. Same spec after the change: **28.7 s**, zero probes down, and one probe
+a pinned model that happens to be one of them costs zero clicks.
+
+Same spec after the change: **28.7 s**, zero probes down, and one probe
 slowed to 0.633 s — the single one-model write, and the only trace of it. (A later
 run of the same spec from a freshly reset instance measured 24.0 s and one 0.769 s
 probe; the two numbers are two runs, not a discrepancy.)
