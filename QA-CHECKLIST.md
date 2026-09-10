@@ -128,11 +128,11 @@
 
 > `POST /api/v2/workflows` is the run path the product itself uses, and this suite already **observes** it — `tests/fixtures/flow-error-policy.ts` classifies its stream and eight specs trigger it incidentally — but until now nothing **drove it as an API contract**. The submit half was exercised constantly; the read-back half by nothing. Spec doc: `docs/api/flows/workflows-v2-job-lifecycle.md`.
 
-- [-] A batch create with a duplicate name is refused `409 "Name must be unique"` rather than stalling on the SQLite write lock, the body renders no SQL or bound parameters, and the **next write still succeeds** — the last clause is the one that matters: a `409` that left the lock held satisfies every other assertion and is still the defect `langflow-ai/langflow#14634` fixed, because the caller sees a clean conflict and the *next* writer dies with "database is locked" → `api/flows/workflows-v2-job-lifecycle.spec.ts`
-- [-] A batch create with a duplicate `endpoint_name` is refused with its **own** message (`"Endpoint name must be unique"`), asserted as not equal to the name guard's — two guards, one status, so the message is the only thing separating them → `api/flows/workflows-v2-job-lifecycle.spec.ts`
-- [-] A completed `mode=background` run reports the `session_id` it was submitted with, and its outputs, on the **first** status read that says `completed` — asserted as "not the flow id" too, since the flow id is the specific degradation `langflow-ai/langflow#14512` names → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [x] A batch create with a duplicate name is refused `409 "Name must be unique"` rather than stalling on the SQLite write lock, the body renders no SQL or bound parameters, and the **next write still succeeds** — the last clause is the one that matters: a `409` that left the lock held satisfies every other assertion and is still the defect `langflow-ai/langflow#14634` fixed, because the caller sees a clean conflict and the *next* writer dies with "database is locked" → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [x] A batch create with a duplicate `endpoint_name` is refused with its **own** message (`"Endpoint name must be unique"`), asserted as not equal to the name guard's — two guards, one status, so the message is the only thing separating them → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [x] A completed `mode=background` run reports the `session_id` it was submitted with, and its outputs, on the **first** status read that says `completed` — asserted as "not the flow id" too, since the flow id is the specific degradation `langflow-ai/langflow#14512` names → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 - [!] A completed `mode=sync` run answers its own status query with the session and outputs it just returned — **declared failing (`test.fail()`) against a live defect, 15/15 on `1.12.0.dev37`**; it flips to an *unexpected pass* the day upstream fixes it, which is the alarm to remove the annotation: the read-back reports `status: "completed"` alongside `session_id == flow_id` and `outputs: {}`, self-healing in 250–463 ms (median 434, 12/12 cold jobs). #14512's fix is present (its `sync_result_storage_enabled` setting reads `False`, the default) but the flag-off path races the `vertex_build` commit it reconstructs from. Detection depends on issuing the two calls back to back — with assertions interleaved between them the defect went unseen in 1 of 13 runs → `api/flows/workflows-v2-job-lifecycle.spec.ts`
-- [-] Attribution control: the same sync read-back **is** correct once the job's rows settle (≤10 s). Paired with the row above on purpose — that red plus this green is the race; *both* red would be a strictly worse regression, reconstruction unavailable at any time, and without the pair the two would report as one finding → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [x] Attribution control: the same sync read-back **is** correct once the job's rows settle (≤10 s). Paired with the row above on purpose — that red plus this green is the race; *both* red would be a strictly worse regression, reconstruction unavailable at any time, and without the pair the two would report as one finding → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 
 #### 1.10 Files API — the whole family, as a contract (1.13)
 
@@ -276,7 +276,7 @@
 #### 2.4 Code Editing
 - [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
 - [x] Full custom component → `core-components/full-custom-component.spec.ts`
-- [-] `configureCustomComponent` helper compiles code into a node with its declared interface → `core-components/configure-mcp-and-custom-component.spec.ts`
+- [x] `configureCustomComponent` helper compiles code into a node with its declared interface → `core-components/configure-mcp-and-custom-component.spec.ts`
 
 ---
 
@@ -353,8 +353,8 @@
 - [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
 - [x] Webhook is a singleton — adding one removes both the Webhook and Chat Input `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
 - [x] Webhook cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
-- [-] Generated cURL includes the `x-api-key` header when webhook auth is enabled (mocked `GET /api/v1/config`, auto-login off) → `core-components/general-bugs-component-webhook-api-key-display.spec.ts`
-- [-] Generated cURL omits `x-api-key` when webhook auth is disabled → `core-components/general-bugs-component-webhook-api-key-display.spec.ts`
+- [x] Generated cURL includes the `x-api-key` header when webhook auth is enabled (mocked `GET /api/v1/config`, auto-login off) → `core-components/general-bugs-component-webhook-api-key-display.spec.ts`
+- [x] Generated cURL omits `x-api-key` when webhook auth is disabled → `core-components/general-bugs-component-webhook-api-key-display.spec.ts`
 
 #### 3.5 Agent (Component)
 - [x] Agent component renders on canvas with title, handles and default fields → `core-components/agent-component-regression.spec.ts`
@@ -616,7 +616,7 @@
 - [x] Direct response → `api/flows/api-build-direct-response.spec.ts`
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
-- [-] Send message while response is in progress — should wait or queue → `playground/playground-send-while-in-progress.spec.ts`
+- [x] Send message while response is in progress — should wait or queue → `playground/playground-send-while-in-progress.spec.ts`
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Attach non-image file (.txt) in chat — preview tile renders (delete button visible, no `<img>`) → `core-functionality/playground/playground-non-image-attachment.spec.ts`
@@ -629,7 +629,7 @@
 - [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
-- [-] Attach and send an image on a live LLM flow (Basic Prompting) — the image renders in the chat messages → `core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts`
+- [x] Attach and send an image on a live LLM flow (Basic Prompting) — the image renders in the chat messages → `core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts`
 - [-] Custom `sender_name` on Chat Input/Output is applied to a live LLM turn — messages render as `chat-message-<custom name>` after a default-label turn → `core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
 
 #### 9.2 History and Session
@@ -687,7 +687,7 @@
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
-- [-] Navigate between folders → `core-functionality/project-management/flow-navigation-between-folders.spec.ts`
+- [x] Navigate between folders → `core-functionality/project-management/flow-navigation-between-folders.spec.ts`
 - [-] Search flow by name filters results correctly
 - [-] Folders in navigation sidebar
 
@@ -845,7 +845,7 @@
 - [x] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
 - [x] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
-- [-] `configureMcpServer` helper registers an MCP server via the HTTP form → `core-components/configure-mcp-and-custom-component.spec.ts`
+- [x] `configureMcpServer` helper registers an MCP server via the HTTP form → `core-components/configure-mcp-and-custom-component.spec.ts`
 - [x] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`

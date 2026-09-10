@@ -85,7 +85,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "configureMcpServer registers an MCP server via the HTTP form",
-  { tag: ["@regression", "@mcp"] },
+  { tag: ["@stable", "@regression", "@mcp"] },
   async ({ page, request }) => {
     trackCreatedFlows(page);
 
@@ -135,7 +135,7 @@ test(
 
 test(
   "configureCustomComponent compiles code into a node with its declared interface",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
