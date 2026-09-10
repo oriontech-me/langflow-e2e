@@ -297,6 +297,16 @@ every parametrized spec has to enable the model through the provider panel itsel
 which is the fragile path #1649 documents and which cost the 2026-09-01 daily four
 attempts across three specs.
 
+**The spec side of that path was swept until #1679, and the cost measured below is
+the reason it is not any more.** The three provider setups clicked every unchecked
+toggle — the very batch this section rejects — once per `setupGoogle` /
+`setupOpenAI` / `setupAnthropic`, so the decision here held for the collector and
+not for the 40-odd specs that call those helpers. They now enable the one model the
+spec is about to pick (`planToggleTargets`), which on a google panel is 0 or 1 write
+instead of 29. Re-measured there on `1.13.0.dev8`: a 29-model google batch never
+answers and takes the instance down for ~100 s, an idle-container openai batch of 37
+answers in 27.8 s and still takes it down for 24 s, and one model costs 0.86 s.
+
 The sweep used to click every unchecked toggle in the panel. Every toggle feeds
 `useModelToggleQueue`, which batches the write behind a 1000 ms debounce and cancels +
 **discards** the pending batch on both paths the sweep takes — its unmount cleanup

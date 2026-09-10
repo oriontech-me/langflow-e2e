@@ -186,6 +186,58 @@ still fail — they name the instance instead of accusing the picker. The
 confirming 0 of 74 enable writes, so every provider sits on its five defaults)
 is #1666, not this.
 
+#### 5.2 …and the batch must never be the whole panel (#1679)
+
+The setups used to click **every** unchecked toggle. That is not merely slow — it
+takes the whole instance down, and then persists nothing.
+`POST /api/v1/models/enabled_models` is an `async def` handler that calls
+`validate_model_provider_key` once **per enabled update**, synchronously, and that
+call ends in `llm.invoke("test")`: a blocking provider round trip on the event loop
+of the single uvicorn worker every lane pins (`LANGFLOW_WORKERS=1`). While it runs,
+nothing else on that instance runs — including uvicorn's `callback_notify`, which
+is gunicorn's heartbeat.
+
+Measured on `1.13.0.dev8`, one idle container, `LANGFLOW_WORKERS=1`,
+`LANGFLOW_WORKER_TIMEOUT=120`, `/health_check` probed at 1 Hz, the batch issued
+exactly as the panel's debounced queue issues it (**one** request carrying every
+toggle):
+
+| Enable batch | Result | `/health_check` |
+|---|---|---|
+| 1 model | HTTP 200 in **0.86 s** | never down; the one overlapping probe answered in 0.796 s against 0.018 s idle |
+| 29 models (google) | **never answered** — connection closed at **93.2 s** | **26 consecutive probes DOWN over 97 s**, ending in `WORKER TIMEOUT` → `Worker was sent SIGKILL!` |
+| 37 models (openai) | HTTP 200 in **27.8 s** (0.75 s/model) | 7 consecutive probes DOWN over 24 s |
+| **disable** 31 models | HTTP 200 in **0.02 s** | never down (that path does no validation) |
+
+Two consequences, both measured rather than argued:
+
+- **the killed batch persists nothing.** `_update_model_sets` runs *after* the
+  validation loop, so `GET /models/enabled_models` still reported exactly the
+  `MIN_DEFAULT_MODELS` five afterwards. The sweep is not a slow success that later
+  specs ride for free — it is a guaranteed failure every spec on that instance
+  re-pays in full;
+- **the spec that pays it usually still passes**, which is why this hid for four
+  dailies. Reproduced end to end on the pre-fix helper: `agent-component-regression
+  [google]` printed `30 toggle(s) clicked, 1 write(s) started, 0 finished`, took the
+  backend down for **109 s**, and then **passed** — because its pinned model was
+  already enabled. On the daily that outage is charged to whatever else was running.
+
+So a setup enables **the one model it is about to pick**, through
+`planToggleTargets` (`tests/helpers/provider-setup/model-toggle-batch.ts`), and
+usually not even that: the five `default: true` models are catalog positions 0-4 for
+all three providers, so a pinned model that happens to be one of them costs zero
+clicks. Same spec after the change: **28.7 s**, one 0.633 s probe, zero probes down.
+
+Two things NOT to do when touching this:
+
+1. **Do not enable "a few more, just in case."** Every extra model is another
+   ~1-3 s of a frozen instance, and every spec pays it again.
+2. **Do not let a caller enable nothing on the no-pin path.** OpenAI's five
+   defaults are `gpt-6-astra` and four `gpt-5.6-*`, none of which `setup-openai`'s
+   ranking accepts, so a no-pin caller would silently get a frontier model where it
+   used to get `gpt-4o-mini` — measured, and the reason the plan takes a preference
+   ladder rather than a single id.
+
 ### 6. Run with --workers=1
 
 ```bash
