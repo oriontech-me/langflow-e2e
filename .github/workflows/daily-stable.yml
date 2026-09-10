@@ -525,6 +525,13 @@ jobs:
       # `Collect models` above already makes.
       - name: Rotate the lane to this weekday's provider
         continue-on-error: true
+        env:
+          # The run-summary BLOCK is written by ONE shard (#1801): this step runs in
+          # every matrix job, and a displaced day was rendering the same heading and
+          # table 4-10 times down the run page — the #1252 artifact the block exists
+          # to avoid. The `::warning::` lines stay on every shard, so the fact
+          # survives a shard 1 that dies before this step; only the rendering is lost.
+          ROTATION_SUMMARY: ${{ matrix.shard == 1 && '1' || '0' }}
         run: node scripts/select-daily-model-target.mjs
 
       # In-run token consumption recorder (#1197). Langflow computes what each flow
@@ -1596,7 +1603,7 @@ jobs:
           # step was skipped or crashed — fails it. A guard whose silence reads as
           # "all good" is the failure this mechanism exists to remove.
           if [ "$COVERAGE_VERDICT" = "uncovered" ]; then
-            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. The report is complete and the tests are not red; there is simply no evidence in this run. Fix the provider account, then re-run the day (#1456)."
+            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider it needed was recorded inactive: $COVERAGE_HEADLINE. The report is complete and the tests are not red; there is simply no evidence in this run. Repair whatever that reason names — a drained account, or a Collect models that never imported the key as a Langflow global variable (#1058) — then re-run the day (#1456/#1801)."
           elif [ "$COVERAGE_VERDICT" != "covered" ] && [ "$COVERAGE_VERDICT" != "degraded" ]; then
             echo "::error::The coverage verdict is '${COVERAGE_VERDICT:-unset}' — UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — the run covered the providers it was supposed to cover' step (#1456)."
           fi
