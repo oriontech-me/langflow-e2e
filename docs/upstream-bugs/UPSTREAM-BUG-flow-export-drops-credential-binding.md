@@ -129,11 +129,9 @@ by that**: the nightly is cut from the release line under development, *not* fro
 about a fix that shipped. Checked on `origin/main` **and** `origin/release-1.12.0`,
 `release-1.12.1`, `release-1.12.2`, `release-1.13.0`.
 
-**Every one of the six product files the causing commit touched is byte-identical
-to its own tree, on all five refs.** This is stronger than a commit walk and
-immune to the two mistakes the first version of this section made (below). The
-loop covers all six rather than the four that carry the logic, because the point
-is a trigger the next re-check can trust:
+**Every file the causing commit touched is byte-identical to its own tree, on all
+five refs** — the six product files and its own unit test. That is stronger than a
+commit walk, and it is what the trigger below keys on:
 
 ```bash
 for p in utils/flow_secrets.py api/v1/flows_helpers.py api/v1/projects_files.py \
@@ -142,39 +140,37 @@ for p in utils/flow_secrets.py api/v1/flows_helpers.py api/v1/projects_files.py 
     git rev-parse "$r:src/backend/base/langflow/$p"
   done
 done
-# flow_secrets.py    12f2a5e … (identical on all six refs)
-# flows_helpers.py   96dab51 …
-# projects_files.py  05ecd47 …
-# flow_version.py    b946d66 …
-# api/utils/core.py  a7e336c …
-# api/utils/__init__ d78506f …
+# flow_secrets.py    12f2a5e   flow_version.py     b946d66
+# flows_helpers.py   96dab51   api/utils/core.py   a7e336c
+# projects_files.py  05ecd47   api/utils/__init__  d78506f
+# each identical on fc3810da and on all five watched refs
 ```
 
-(The seventh file is the cause's own unit test,
-`tests/unit/api/v1/test_export_secret_sanitization.py` — also unchanged, and §2
-point 2 already records what it does not assert.)
+Four of the six carry the logic: the scrubber, plus the three call sites the cause
+migrated onto it — `flows_helpers.py` (`POST /api/v1/flows/download/`),
+`projects_files.py` (`download_project_flows`, i.e.
+`GET /api/v1/projects/download/{id}`) and `flow_version.py` (`strip_version_data`,
+which serves `GET /api/v1/flows/{flow_id}/versions/{version_id}`; the header row
+lists it under *Sibling surfaces* because the same PR moved it onto the same
+scrubber, not because it is an export endpoint). `api/utils/` contributes
+`normalize_flow_for_export`, which runs **after** `strip_flow_secrets` on both
+download surfaces (`flows_helpers.py:808`, `projects_files.py:78`) and so cannot
+restore a value already nulled.
 
-The two `api/utils/` files are an `__all__` list and four alias assignments, so
-they carry no logic a fix could land in; they are in the loop anyway because a
-trigger that skips files "unlikely to matter" is how the first version of this
-section went blind. The one piece of export-path logic outside the six is
-`normalize_flow_for_export` (`api/utils/core.py:158`), which runs **after**
-`strip_flow_secrets` on both download surfaces and therefore cannot restore a
-value already nulled — and there is no `lfx` copy of the scrubber
-(`git grep -l strip_secret_field_values origin/main -- 'src/lfx/**'` is empty).
+Outside the six sit the two route handlers — `flows.py:1292`
+(`download_multiple_file`) and `projects.py:1074` (`download_file`) — which fetch
+and authorize but hold no scrubber call. There is no `lfx` copy of the scrubber
+either: `git grep -l strip_secret_field_values <ref> -- 'src/lfx/**'` is empty on
+all five refs, where the control `secret_value_to_str` returns four files.
 
-The paths are **the three export call sites plus the scrubber** — `flows_helpers.py`
-(`POST /api/v1/flows/download/`), `projects_files.py` (`download_project_flows`,
-i.e. `GET /api/v1/projects/download/{id}`) and `flow_version.py`
-(`strip_version_data`, which is a version **read** rather than an export endpoint —
-the header row calls it a sibling surface for that reason). An earlier version of this table watched
-`api/v1/projects.py` — which *declares* the `GET /download/{project_id}` route and
-calls `download_project_flows` (`projects.py:1103`), but holds no scrubber call of
-its own and was not touched by the cause — and omitted `flow_version.py`
-altogether — so its stated
-trigger was blind to a fix landing on either real sibling surface. It also listed
-`c3bfdb7d` (a `release-1.12.0` → `main` back-merge) as a commit "since 2026-08-19"
-when it is dated 2026-08-18, i.e. *before* the cause.
+**Two mistakes the first version of this section made**, recorded because both
+made the trigger narrower than it looked. Its watch table omitted
+`flow_version.py` and watched `api/v1/projects.py` instead — which declares the
+`GET /download/{project_id}` route and calls `download_project_flows`
+(`projects.py:1103`), but holds no scrubber call and was not touched by the cause
+— so a fix landing on either real sibling surface was invisible to it. And it
+listed `c3bfdb7d` as a commit "since 2026-08-19" when it is dated 2026-08-18,
+before the cause.
 
 ### The trap: the binding-preserving mode predates the bug
 
@@ -217,9 +213,10 @@ ref — and at that point the order is: reproduce by hand (§3), then lift.
 
 §1–§4 are the report; §3 is a deterministic reproduction that needs no LLM key.
 The one thing missing is the act of posting. **The usual channel here is DataStax
-Jira** — seven of the eight other upstream-bug docs in this directory name an
-`LE-####` (the eighth reads *"Not yet — evidence collected here first"*), and
-`REGRESSIONS.md:12` accepts either a Jira ticket or a `langflow-ai/langflow` issue —
+Jira** — every other `UPSTREAM-BUG-*` file in this directory names an `LE-####`
+except one, which reads *"Not yet — evidence collected here first"* — and
+`REGRESSIONS.md:12` accepts either a Jira ticket or a `langflow-ai/langflow`
+issue —
 so this does not require an upstream GitHub account or a public statement; a Jira
 ticket is enough to unblock the deliverable. Suggested title, covering all three
 surfaces rather than only the one the H1 names:
