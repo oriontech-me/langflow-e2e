@@ -286,11 +286,18 @@ export function rotationDisplacement(result, options = {}) {
     weekday: WEEKDAY_NAMES[date.getUTCDay()],
     day: isoDay(date),
     resolved: result.ok ? result.provider : null,
-    displaced: skipped.map((entry) => {
-      const next = nextScheduledSlot(entry.provider, order, date);
+    // `skipped` holds EVERY candidate the rotation tried, and only the first owns
+    // this weekday — the rest are fallbacks it reached for and also found unusable
+    // (#1801). Describing all of them as "this weekday's slot" produced a line that
+    // contradicted itself inside one sentence on a two-dead-provider day, and gave
+    // a fallback a next-slot gap it does not have.
+    displaced: skipped.map((entry, index) => {
+      const owns = index === 0;
+      const next = owns ? nextScheduledSlot(entry.provider, order, date) : null;
       return {
         provider: entry.provider,
         reason: entry.reason,
+        owns,
         nextDay: next ? isoDay(next.date) : null,
         nextWeekday: next ? WEEKDAY_NAMES[next.date.getUTCDay()] : null,
         days: next ? next.days : null,
@@ -308,15 +315,23 @@ export function rotationDisplacement(result, options = {}) {
  */
 export function displacementLines(displacement) {
   if (!displacement) return [];
+  const instead = displacement.resolved
+    ? `the lane ran ${displacement.resolved} instead`
+    : "the lane declined to pin at all";
   return displacement.displaced.map((entry) => {
+    if (!entry.owns) {
+      // A fallback, not this weekday's provider: it loses no slot of its own here,
+      // so it gets no gap and no ownership claim (#1801).
+      return (
+        `rotation: the fallback "${entry.provider}" was also unusable, so it was ` +
+        `passed over too. Cause: ${entry.reason}`
+      );
+    }
     const cost =
       entry.days === null
         ? "it has no further slot in the next fortnight"
         : `its next slot is ${entry.nextWeekday} ${entry.nextDay}, ${entry.days} day(s) ` +
           `from this run — nothing runs an agent spec against it until then`;
-    const instead = displacement.resolved
-      ? `the lane ran ${displacement.resolved} instead`
-      : "the lane declined to pin at all";
     return (
       `rotation: ${displacement.weekday} is "${entry.provider}"'s slot and ` +
       `${instead}; ${cost}. Cause: ${entry.reason}`
@@ -337,6 +352,11 @@ export function displacementLines(displacement) {
  */
 export function renderRotationSummary(displacement) {
   if (!displacement) return "";
+  // The weekday's own provider, and the fallbacks the rotation walked past. Only the
+  // first is losing a slot; conflating them is what #1801 fixed.
+  const owner = displacement.displaced.find((d) => d.owns);
+  const fallbacks = displacement.displaced.filter((d) => !d.owns);
+
   const lines = [
     displacement.resolved
       ? `### ⚠️ Rotation displaced — ${displacement.weekday}'s provider could not run`
@@ -345,20 +365,33 @@ export function renderRotationSummary(displacement) {
     displacement.resolved
       ? `\`daily-stable\` runs ONE provider per weekday (#1185). ` +
         `${displacement.weekday} ${displacement.day} belongs to ` +
-        `${displacement.displaced.map((d) => `\`${d.provider}\``).join(", ")}, which ` +
-        `could not serve this run, so the lane advanced to ` +
-        `**${displacement.resolved}**. The day is not lost; that provider's is.`
+        `\`${owner ? owner.provider : "?"}\`, which could not serve this run, so the ` +
+        `lane advanced to **${displacement.resolved}**` +
+        (fallbacks.length > 0
+          ? ` — past ${fallbacks
+              .map((d) => `\`${d.provider}\``)
+              .join(", ")}, also unusable`
+          : "") +
+        `. The day is not lost; that provider's is.`
       : `\`daily-stable\` found no usable provider in the rotation, so it kept its ` +
         `default per-provider parametrization.`,
     "",
-    "| Provider | Next scheduled slot | Gap | Why it could not run |",
-    "|---|---|---|---|",
+    "| Provider | Role today | Next scheduled slot | Gap | Why it could not run |",
+    "|---|---|---|---|---|",
   ];
   for (const entry of displacement.displaced) {
     lines.push(
       `| \`${entry.provider}\` | ${
-        entry.nextDay ? `${entry.nextWeekday} ${entry.nextDay}` : "none in the next fortnight"
-      } | ${entry.days === null ? "—" : `${entry.days} day(s)`} | ${entry.reason} |`,
+        entry.owns ? `this weekday's slot` : "fallback, passed over"
+      } | ${
+        !entry.owns
+          ? "—"
+          : entry.nextDay
+            ? `${entry.nextWeekday} ${entry.nextDay}`
+            : "none in the next fortnight"
+      } | ${!entry.owns || entry.days === null ? "—" : `${entry.days} day(s)`} | ${
+        String(entry.reason ?? "").replace(/\|/g, "\\|")
+      } |`,
     );
   }
   lines.push(
@@ -452,7 +485,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const line of displacementLines(displacement)) {
     process.stderr.write(`::warning::select-daily-model-target: ${line}\n`);
   }
-  if (displacement && process.env.GITHUB_STEP_SUMMARY) {
+  // ROTATION_SUMMARY=0 suppresses the BLOCK (never the warnings above) — #1801.
+  // This script runs in the `test` job, which is one job per shard, so a displaced
+  // day rendered the identical heading and table 4-10 times across the run page:
+  // exactly the #1252 shape this block's own docstring invokes as its reason to
+  // exist. One shard writes it; every shard still logs the fact, so a dead shard 1
+  // costs the rendering and nothing else. Unset (local, VM) means "write it".
+  if (displacement && process.env.ROTATION_SUMMARY !== "0" && process.env.GITHUB_STEP_SUMMARY) {
     // Best effort: a summary that cannot be written must not cost the lane its pin.
     try {
       fs.appendFileSync(

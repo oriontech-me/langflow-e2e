@@ -14,7 +14,7 @@
 //    #1169 wrote a script to avoid. The pair is asserted at the CLI boundary.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -472,4 +472,98 @@ test("the CLI writes the block to \$GITHUB_STEP_SUMMARY, and only when displaced
   const written = fs.readFileSync(summaryFile, "utf-8");
   assert.match(written, /Rotation displaced/);
   assert.match(written, /7 day\(s\)/);
+});
+
+// --- a fallback is not the weekday's slot (issue #1801) ---------------------
+// `skipped` holds every candidate the rotation tried. Only the first owns the day;
+// describing the rest the same way produced a line that contradicted itself and
+// gave a fallback a gap it does not have.
+
+test("two dead providers: the first owns the day, the second is a passed-over fallback", () => {
+  const providers = healthy().map((p) =>
+    p.provider === "openai"
+      ? { ...p, status: "inactive", model: null, error: "credit balance too low" }
+      : p.provider === "anthropic"
+        ? { ...p, status: "inactive", model: null, error: "no credit" }
+        : p,
+  );
+  // Monday is openai's slot; anthropic is the first fallback and also dead.
+  const result = selectDailyModelTarget(providers, { date: MON });
+  assert.equal(result.provider, "google");
+
+  const displacement = rotationDisplacement(result, { date: MON });
+  assert.deepEqual(
+    displacement.displaced.map((d) => [d.provider, d.owns, d.days]),
+    [
+      ["openai", true, 3], // Mon → Thu
+      ["anthropic", false, null], // a fallback loses no slot of its own here
+    ],
+  );
+
+  const [ownerLine, fallbackLine] = displacementLines(displacement);
+  assert.match(ownerLine, /Monday is "openai"'s slot/);
+  assert.match(ownerLine, /3 day\(s\)/);
+  assert.match(fallbackLine, /fallback "anthropic" was also unusable/);
+  assert.doesNotMatch(fallbackLine, /Monday is "anthropic"/, "a fallback does not own the day");
+  assert.doesNotMatch(fallbackLine, /day\(s\) from this run/, "and it has no gap to claim");
+
+  const summary = renderRotationSummary(displacement);
+  assert.match(summary, /belongs to `openai`/);
+  assert.match(summary, /past `anthropic`, also unusable/);
+  assert.match(summary, /\| `openai` \| this weekday's slot \| Thursday/);
+  assert.match(summary, /\| `anthropic` \| fallback, passed over \| — \| — \|/);
+});
+
+test("a reason carrying a pipe cannot split the rotation table", () => {
+  const providers = healthy().map((p) =>
+    p.provider === "openai"
+      ? { ...p, status: "inactive", model: null, error: "403 Forbidden | check billing" }
+      : p,
+  );
+  const result = selectDailyModelTarget(providers, { date: MON });
+  const summary = renderRotationSummary(rotationDisplacement(result, { date: MON }));
+  const row = summary.split("\n").find((l) => l.startsWith("| `openai`"));
+  assert.match(row, /403 Forbidden \\\| check billing/, "the pipe must be escaped");
+  assert.equal(row.split(/(?<!\\)\|/).length - 2, 5, "the row must keep its five columns");
+});
+
+test("ROTATION_SUMMARY=0 suppresses the block but never the warning", () => {
+  // One shard writes the block; every shard logs the fact (#1801).
+  const dir = makeTempDir("rotation-1801-");
+  const providersFile = path.join(dir, "providers.json");
+  const summaryFile = path.join(dir, "summary.md");
+  fs.writeFileSync(
+    providersFile,
+    JSON.stringify(
+      healthy().map((p) =>
+        p.provider === "google"
+          ? { ...p, status: "inactive", model: null, error: "monthly spending cap" }
+          : p,
+      ),
+    ),
+  );
+
+  const run = (rotationSummary) => {
+    fs.writeFileSync(summaryFile, "");
+    const env = {
+      ...process.env,
+      GITHUB_STEP_SUMMARY: summaryFile,
+      GITHUB_ENV: path.join(dir, "env.txt"),
+    };
+    if (rotationSummary !== undefined) env.ROTATION_SUMMARY = rotationSummary;
+    const proc = spawnSync(
+      process.execPath,
+      [SCRIPT, "--providers-file", providersFile, "--date", WED.toISOString()],
+      { encoding: "utf-8", env },
+    );
+    return { summary: fs.readFileSync(summaryFile, "utf-8"), stderr: proc.stderr };
+  };
+
+  const off = run("0");
+  assert.equal(off.summary, "", "the block must be suppressed");
+  assert.match(off.stderr, /::warning::/, "the fact must still reach the log");
+  assert.match(off.stderr, /google/);
+
+  assert.match(run("1").summary, /Rotation displaced/);
+  assert.match(run(undefined).summary, /Rotation displaced/, "unset means write it");
 });
