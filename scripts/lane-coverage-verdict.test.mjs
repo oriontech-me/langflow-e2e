@@ -1239,6 +1239,41 @@ test("the unread warning stays off an LLM-free run", () => {
   }
 });
 
+test("drift is reported on a run with NO provider-health skip — the case it exists for", () => {
+  // The hoist that took this warning out of the skip gate was itself unpinned: the
+  // test below carries a provider-health skip, so it passed under both gatings while
+  // the scenario the hoist exists for had no test at all. That scenario is this one —
+  // a renamed `status` ALSO defeats `providerSkipGate`'s own `status === "inactive"`,
+  // so nothing skips, the verdict is `covered`, and this warning is the only signal
+  // that the account axis went unread.
+  fs.mkdirSync(TMP_ROOT, { recursive: true });
+  const dir = makeTempDir("coverage-drift-covered-");
+  const providers = path.join(dir, "providers.json");
+  fs.writeFileSync(
+    providers,
+    JSON.stringify([{ provider: "openai", model: "gpt", state: "active", error: null }]),
+  );
+
+  const run = runCli(report("tests/a.spec.ts", [executed("one")]), [
+    "--lane",
+    "pr-validation",
+    "--providers",
+    providers,
+    "--fail-closed",
+  ]);
+  try {
+    assert.match(run.outputs, /verdict=covered/);
+    assert.match(run.stderr, /the producer's shape may have\s+drifted/);
+    // ...while an ABSENT file on the same run stays silent: #1252's noise argument
+    // covers a missing optional input, never a shape that drifted.
+    assert.doesNotMatch(run.stderr, /missing or unreadable/);
+    assert.equal(run.status, 0);
+  } finally {
+    fs.rmSync(run.workdir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a providers.json whose record shape drifted is UNKNOWN, never dry", () => {
   fs.mkdirSync(TMP_ROOT, { recursive: true });
   const dir = makeTempDir("coverage-drift-");
@@ -1387,13 +1422,30 @@ test("the daily's final gate always names a cause, and never two that disagree",
   }
 });
 
-test("the daily's final gate stays silent on a run that deserves to pass", () => {
-  // It is only ever REACHED on a failing shape (its `if:` is asserted elsewhere), but
-  // `exit 1` is unconditional inside it — so a shape that prints nothing would fail the
-  // day with no cause named, which is the #1176 failure in the direction that costs the
-  // triage. Every branch above is therefore exhaustive by construction, and this pins
-  // that the healthy-looking combination still names something.
+test("the daily's final gate's branch set is exhaustive over the states that reach it", () => {
+  // `exit 1` is unconditional inside this step, so a state that reaches it and prints
+  // nothing would fail the day with no cause named — #1176 in the direction that costs
+  // the triage. The branches are exhaustive today: `runguard.empty` is a stringified
+  // boolean or `""` (all three print), and the coverage chain's last `elif` catches
+  // everything that is not `false`. So the combination below is the one that names
+  // nothing, and it is also one the step's `if:` cannot select.
+  //
+  // Asserted as the ABSENCE OF THE KNOWN MESSAGES rather than of `::error::` itself:
+  // an earlier version forbade `::error::` outright, which made the test refuse the
+  // belt-and-braces catch-all its own comment argued for — an anti-pin, measured.
   const { status, out } = runDailyGate({ COVERAGE_FAIL: "false", RUN_EMPTY: "false" });
-  assert.equal(status, 1);
-  assert.doesNotMatch(out, /::error::/, "nothing to report, so nothing is claimed");
+  assert.equal(status, 1, "the step is a gate: reaching it fails the run");
+  for (const claim of [
+    /Merge was incomplete/,
+    /missing or unparseable/,
+    /ZERO tests executed/,
+    /PARTIAL run/,
+    /reported nothing/,
+    /could not read the merged report/,
+    /NO provider was recorded usable/,
+    /ZERO verdicts about Langflow/,
+    /for fail_recommended/,
+  ]) {
+    assert.doesNotMatch(out, claim, "no branch may claim a cause this state does not have");
+  }
 });

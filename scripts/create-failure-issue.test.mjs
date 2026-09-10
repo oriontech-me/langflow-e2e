@@ -582,5 +582,30 @@ test("the outage banner stays off the shapes that have no failures below it", ()
     if (flag === "uncovered") {
       assert.equal(body.match(/Providers that went uncovered/g)?.length, 1);
     }
+    // ...but the FACT must survive where nothing else reports it. On `empty` and
+    // `mergeFailed` the run's own `::error::` needs a provider-health skip an aborted
+    // run never produced, and the summary block is empty on a `covered` verdict, so
+    // dropping it here dropped it everywhere.
+    if (flag === "empty" || flag === "mergeFailed") {
+      assert.match(body, /no provider was \*\*recorded\*\* usable on this run/);
+    }
   }
+});
+
+test("the dry shape never renders its own material twice", () => {
+  // Dropping `testsFailed` from the banner gate makes it fire on the dry shape itself,
+  // which already renders every one of these lines — measured: "NO usable provider"
+  // and "Providers that went uncovered" both appeared twice.
+  const { body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    testsFailed: false,
+    runTests: "412",
+    coverageProviders: "openai, anthropic, google",
+    coverageSkips: "31",
+    coverageHeadline: "daily-stable did not cover openai",
+  });
+  assert.equal(body.match(/NO usable provider/g)?.length, 1);
+  assert.equal(body.match(/Providers that went uncovered/g)?.length, 1);
+  assert.doesNotMatch(body, /read the failures below/);
 });

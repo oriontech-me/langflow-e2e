@@ -535,7 +535,7 @@ export function renderSummary(result) {
   );
   for (const provider of result.providers) {
     lines.push(
-      `| \`${provider.provider}\`${
+      `| \`${displaySafe(provider.provider)}\`${
         provider.provider === result.laneProvider ? " (lane pin)" : ""
       } | ${provider.reasons.map((r) => displaySafe(r)).join(" — also: ")} | ${
         provider.tests.length

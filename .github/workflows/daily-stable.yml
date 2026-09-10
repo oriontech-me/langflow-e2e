@@ -1684,8 +1684,12 @@ jobs:
             # the `collect-models` sweep AND by globalSetup's credential degradation
             # (#1058), so "the account is drained" is a cause this cannot see; and the
             # branches above may already have reported an incomplete or partial report,
-            # so this one must not also claim the report is complete (#1800 review).
-            echo "::error::NO provider was recorded usable on this run, so every @stable test that needs one was SKIPPED and the LLM surface went unmeasured: $COVERAGE_HEADLINE. Check both halves before re-running — whether the keys are live, and whether the sweep imported them; re-running changes nothing until one of them is fixed (#1456/#1800)."
+            # so this one must not also claim the report is complete (#1800 review) —
+            # nor speak for tests that never ran. "every @stable test that needs one AND
+            # PRODUCED A RESULT" is the same scoping the uncovered message carries, and
+            # it is what keeps this line from overclaiming over a report the line above
+            # just called UNDER-COUNTED (`partial`, `complete=false`).
+            echo "::error::NO provider was recorded usable on this run, so every @stable test that needs one AND produced a result was SKIPPED and the LLM surface went unmeasured: $COVERAGE_HEADLINE. Check both halves before re-running — whether the keys are live, and whether the sweep imported them; re-running changes nothing until one of them is fixed (#1456/#1800)."
           elif [ "$COVERAGE_VERDICT" = "uncovered" ] && [ "$COVERAGE_FAIL" = "true" ]; then
             # The completeness claim is GONE, for the same reason the dry branch never
             # made one: the branches above may already have reported an incomplete,
