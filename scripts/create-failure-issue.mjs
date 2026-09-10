@@ -195,11 +195,11 @@ export function renderIssue({
         ]
       : uncovered
       ? [
-          "### ⚠️ ZERO verdicts — a dead provider skipped every test that ran",
+          "### ⚠️ ZERO verdicts — provider health skipped every test that ran",
           "",
           `The report is complete and carries **${runTests} result(s)**, and **not one of them is a`,
           "verdict about Langflow**: every test that produced a result was skipped because a",
-          "provider `collect-models` probed `inactive` could not serve a call.",
+          "provider it needed was recorded `inactive` by `collect-models`.",
           ...(coverageProviders
             ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
             : []),
@@ -210,9 +210,19 @@ export function renderIssue({
           "the report is intact, which is exactly why the run would otherwise have read as a",
           "clean day (#1456).",
           "",
-          "**Triage this as the provider account, not the suite**: restore the key or the credit,",
-          "then re-run the day. A green run that skipped everything is not evidence that anything",
-          "works (#570/#1012).",
+          // The reason is QUOTED and the diagnosis left to the reader (#1801). This
+          // used to read "restore the key or the credit", which is wrong for one of
+          // the two ways a provider gets recorded `inactive`: a key that exists but
+          // was never imported as a Langflow global variable is degraded through the
+          // same record (#1058), and there the repair is the import, not the billing
+          // page. Sending triage to the wrong repair in the one place it reads on
+          // that day is worse than saying less.
+          `**Triage ${coverageHeadline ? "the reason above" : "the reason the coverage-verdict step recorded"}, not the suite**: the specs never ran, so`,
+          "none of them is implicated. The repair is whatever that reason names — a drained",
+          "account, a revoked key, a spend cap, or a `Collect models` that never imported the",
+          "key as a Langflow global variable (#1058, whose degraded record reads the same way",
+          "here). Then re-run the day: a green run that skipped everything is not evidence that",
+          "anything works (#570/#1012).",
         ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
@@ -242,7 +252,7 @@ export function renderIssue({
     : partial
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
       : uncovered
-        ? `[Daily Failure] @stable run produced ZERO verdicts — a dead provider skipped every test on ${today} (${image})`
+        ? `[Daily Failure] @stable run produced ZERO verdicts — provider health skipped every test on ${today} (${image})`
         : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and

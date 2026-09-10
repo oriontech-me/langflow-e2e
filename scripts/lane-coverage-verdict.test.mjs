@@ -31,6 +31,8 @@ import {
   groupByProvider,
   laneCoverageVerdict,
   outputLines,
+  providerPhrase,
+  tableCell,
   parseArgs,
   renderSummary,
 } from "./lane-coverage-verdict.mjs";
@@ -613,6 +615,81 @@ test("the skip reason survives `merge-reports`, which is what the daily reads", 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- the reason is quoted, never diagnosed (issue #1801) --------------------
+// The same `inactive` record is written for a key that was never imported as a
+// Langflow global variable (`degradeProviders`, #1058). On that day the repair is
+// the import, not the account — so no surface may assert a cause from the fact of a
+// skip.
+
+const NOT_IMPORTED = formatProviderInactiveReason(
+  "openai",
+  "OPENAI_API_KEY is set in the environment but was never imported as a Langflow " +
+    "global variable — `Collect models` did not complete",
+);
+
+test("the headline quotes the measured reason instead of asserting a dead account", () => {
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [skipped("openai target", NOT_IMPORTED)]),
+    { lane: "pr-validation", laneProvider: "openai" },
+  );
+  assert.equal(result.verdict, UNCOVERED, "coverage really is zero — the gate stays");
+  assert.match(result.headline, /never imported/, "the measured reason must reach the line");
+  assert.doesNotMatch(
+    result.headline,
+    /could not serve a call/,
+    "that is a diagnosis, and it is the wrong one for a structural degrade (#1801)",
+  );
+});
+
+test("a long reason is capped in the phrase, and the counts survive", () => {
+  const long = formatProviderInactiveReason("openai", "x".repeat(400));
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [executed("one"), skipped("openai target", long)]),
+    { lane: "pr-validation" },
+  );
+  assert.ok(result.headline.length < 320, `headline is ${result.headline.length} chars`);
+  assert.match(result.headline, /1 of 2 test\(s\)/, "the counts must not be pushed off");
+  assert.match(result.headline, /…/, "and the reason must say it was cut");
+});
+
+test("providerPhrase degrades to the bare name when nothing was recorded", () => {
+  assert.equal(providerPhrase({ provider: "openai", reasons: [] }), "openai");
+  assert.equal(providerPhrase({ provider: "openai" }), "openai");
+});
+
+test("a provider NAME carrying a newline cannot forge a step output", () => {
+  // `parseProviderInactiveReason`'s capture is `([^"]+)`, which matches newlines.
+  // Sanitising happens at the output boundary, deliberately NOT in the parser: a
+  // name the parser rejected would stop being a provider-health skip at all, which
+  // is the silent-green direction this mechanism exists to remove (#1801).
+  const forged = 'Provider "openai\nverdict=covered" inactive — dead key';
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [executed("one"), skipped("target", forged)]),
+    { lane: "pr-validation" },
+  );
+  assert.equal(result.providerSkips.length, 1, "it is still classified as a skip");
+  const lines = outputLines(result);
+  for (const line of lines) {
+    assert.equal(line.split("\n").length, 1, `multi-line output: ${JSON.stringify(line)}`);
+  }
+  assert.equal(lines.filter((l) => l.startsWith("verdict=")).length, 1);
+  assert.ok(lines.includes(`verdict=${DEGRADED}`), "and the verdict cannot be flipped");
+});
+
+test("a reason carrying a pipe cannot split the summary table", () => {
+  const piped = formatProviderInactiveReason("google", "403 Forbidden | check your billing");
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [executed("one"), skipped("target", piped)]),
+    { lane: "daily-stable" },
+  );
+  const row = renderSummary(result)
+    .split("\n")
+    .find((l) => l.startsWith("| `google`"));
+  assert.match(row, /403 Forbidden \\\| check your billing/);
+  assert.equal(row.split(/(?<!\\)\|/).length - 2, 3, "the row must keep its three columns");
+  assert.equal(tableCell("a | b"), "a \\| b");
 });
 
 // --- the wiring, and what it cannot prove -----------------------------------

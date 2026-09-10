@@ -268,6 +268,42 @@ export function displaySafe(value) {
 }
 
 /**
+ * A reason as it can safely appear INSIDE a markdown table cell (#1801).
+ *
+ * `displaySafe` answers the `$GITHUB_OUTPUT` threat (newlines forging a second
+ * `key=value` line) and stops there, which left the table that renders the reason
+ * splittable by a single `|` — a provider answering `403 Forbidden | check your
+ * billing` pushes the count out of its column, in the one block the design says the
+ * reviewer actually reads.
+ */
+export function tableCell(value) {
+  return displaySafe(value).replace(/\|/g, "\\|");
+}
+
+/**
+ * `provider ("the reason the sweep measured")`, capped (#1801).
+ *
+ * The headline used to assert a cause — "could not serve a call" — from the mere
+ * fact of a skip. It cannot: the same `inactive` record is written for a key that
+ * was never imported as a Langflow global variable (`degradeProviders`, #1058), and
+ * on that day the repair is the import, not the account. So the headline quotes what
+ * was measured and leaves the diagnosis to the reader.
+ *
+ * Capped because this string reaches a step output and the umbrella issue's body: a
+ * provider error body is not bounded, and one long reason must not push the counts
+ * off the line. 140 rather than a rounder 90, measured against the reasons this repo
+ * actually records — `degradeProviders`' structural line reaches ~130 characters, and
+ * a cap that truncates it at "…global vari…" keeps the quote while dropping the only
+ * part that tells the reader which repair to make.
+ */
+export function providerPhrase(entry, reasonCap = 140) {
+  const reason = displaySafe(entry.reasons?.[0] ?? "");
+  if (!reason) return entry.provider;
+  const short = reason.length > reasonCap ? `${reason.slice(0, reasonCap - 1)}…` : reason;
+  return `${entry.provider} ("${short}")`;
+}
+
+/**
  * The verdict for one run.
  *
  * @param {unknown} report parsed Playwright JSON report, or `null` when unreadable
@@ -304,18 +340,20 @@ export function laneCoverageVerdict(report, options = {}) {
   if (providerSkips.length > 0) verdict = executed === 0 ? UNCOVERED : DEGRADED;
 
   const names = providers.map((p) => p.provider).join(", ");
+  // QUOTED, never diagnosed (#1801) — see `providerPhrase`.
+  const quoted = providers.map((p) => providerPhrase(p)).join("; ");
   const headline =
     verdict === COVERED
       ? `${lane}: no provider-health skip — all ${executed} executed test(s) ` +
         `produced a verdict`
       : verdict === UNCOVERED
         ? `${lane} produced NO verdict at all: ${providerSkips.length} test(s) ` +
-          `skipped because ${names} could not serve a call, and 0 executed. This ` +
-          `run is not evidence that anything works`
+          `skipped on provider health and 0 executed — ${quoted}. This run is not ` +
+          `evidence that anything works`
         : `${lane} did not cover ${names}: ${providerSkips.length} of ` +
-          `${executed + skippedTotal} test(s) skipped on provider health` +
+          `${executed + skippedTotal} test(s) skipped on provider health — ${quoted}` +
           (laneProviderSkipped
-            ? `, including the provider this lane pins itself to (${laneProvider})`
+            ? `; including the provider this lane pins itself to (${laneProvider})`
             : "");
 
   return {
@@ -366,9 +404,9 @@ export function renderSummary(result) {
   );
   for (const provider of result.providers) {
     lines.push(
-      `| \`${provider.provider}\`${
+      `| \`${tableCell(provider.provider)}\`${
         provider.provider === result.laneProvider ? " (lane pin)" : ""
-      } | ${provider.reasons.map((r) => displaySafe(r)).join(" — also: ")} | ${
+      } | ${provider.reasons.map((r) => tableCell(r)).join(" — also: ")} | ${
         provider.tests.length
       } |`,
     );
@@ -397,7 +435,13 @@ export function outputLines(result) {
     `executed=${result.executed}`,
     `skipped_total=${result.skippedTotal}`,
     `provider_skips=${result.providerSkips.length}`,
-    `providers=${result.providers.map((p) => p.provider).join(",")}`,
+    // displaySafe per NAME, not on the joined string: the parser's capture is
+    // `([^"]+)`, which matches a newline, so a provider name carrying one could
+    // forge a second `key=value` line — `verdict=covered` included, which is what
+    // the daily's fail-closed gate reads (#1801). Sanitising here rather than
+    // tightening the capture is deliberate: a name the parser rejected would stop
+    // being a provider-health skip at all, which is the silent-green direction.
+    `providers=${result.providers.map((p) => displaySafe(p.provider)).join(",")}`,
     `lane_provider_skipped=${result.laneProviderSkipped}`,
     `headline=${displaySafe(result.headline)}`,
   ];

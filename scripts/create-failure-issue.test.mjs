@@ -271,11 +271,21 @@ test("a run whose every result was a provider skip gets its own title and shape"
   });
   assert.match(title, /ZERO verdicts/);
   assert.doesNotMatch(title, /tests failed/, "no spec failed — none ran");
+  assert.doesNotMatch(title, /dead provider/, "the title cannot diagnose either (#1801)");
   assert.doesNotMatch(title, /executed ZERO tests/, "tests DID execute — as skips");
   assert.match(body, /ZERO verdicts/);
   assert.match(body, /openai/);
   assert.match(body, /3 test\(s\)/);
-  assert.match(body, /provider account, not the suite/, "triage must point at the key");
+  // Triage points at the REASON, not at a diagnosis (#1801). The same `inactive`
+  // record is written for a key that was never imported as a Langflow global
+  // variable (#1058), where the repair is the import and not the billing page.
+  assert.match(body, /Triage the reason above, not the suite/);
+  assert.match(body, /never imported the/, "the other repair must be named too");
+  assert.doesNotMatch(
+    body,
+    /restore the key or the credit/,
+    "that is a diagnosis this shape cannot make from a skip alone",
+  );
   assert.match(body, /no per-test evidence to/);
   // The distinction from `empty` has to be in the body: the shards worked, and a
   // reader sent to the merge step would find nothing wrong with it.
