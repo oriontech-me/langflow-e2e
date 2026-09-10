@@ -1009,6 +1009,7 @@
       in the trace detail (`langflow-ai/langflow#7313` — TracingService exposing secrets)
       → security/credential-secret-exposure.spec.ts
 - [!] The same secret is absent from the exported flow JSON
+      (**quarantined** — `test.fixme` against the upstream export regression, #1546)
       → security/credential-secret-exposure.spec.ts
 - [x] The same secret is absent from the API response of a run
       → security/credential-secret-exposure.spec.ts

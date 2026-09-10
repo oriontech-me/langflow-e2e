@@ -1,8 +1,9 @@
-# `POST /api/v1/flows/download/` drops the credential variable binding — exported flows no longer import with their secrets bound
+# `POST /api/v1/flows/download/` drops the credential variable binding — exported flows no longer import with their variables bound
 
 | Field | Value |
 |---|---|
-| **Filed upstream** | _pending_ (draft below; owner: QA team) |
+| **Filed upstream** | _still pending_ (report in §1–§4, suggested title in §6; owner: QA team) — **the blocking deliverable**: nothing has been reported to the people who can fix this, and the quarantine hides it from our own dailies |
+| **Last re-checked** | 2026-09-10 — **no upstream fix has landed**; the quarantine stands. Evidence in §6 |
 | **Repo issue** | [oriontech-me/langflow-e2e#1546](https://github.com/oriontech-me/langflow-e2e/issues/1546) (spun out of daily triage #1544) |
 | **Affected builds** | `langflowai/langflow-nightly:latest` since `2026-08-20` (first nightly cut after the causing merge); reproduced 5/5 on `1.12.0.dev33` |
 | **Introduced by** | [langflow-ai/langflow#14639](https://github.com/langflow-ai/langflow/pull/14639) — *fix(security): scrub all secret fields on flow and project export* (commit `fc3810da0`, merged 2026-08-19T17:36Z into `release-1.12.0`) |
@@ -115,3 +116,113 @@ mode; the fix is plausibly one line per call site
   lands in `langflowai/langflow-nightly:latest`.
 - The serial sibling *"the run resolves the credential without echoing it"*
   resumes running (it was cascade-skipped while the export test hard-failed).
+
+## 6. Re-check log, and why re-measuring is not the next step
+
+**2026-09-10 — no upstream fix. The quarantine stands and nothing about the
+product has changed.** Checked against `langflow-ai/langflow` rather than against
+a nightly, because "did the fix land" is answerable from the code itself.
+
+**Named refs, because the answer is ref-dependent and this repo has been bitten
+by that**: the nightly is cut from the release line under development, *not* from
+`main`, and merge-back is sporadic — so a `main`-only walk can report "not fixed"
+about a fix that shipped. Checked on `origin/main` **and** `origin/release-1.12.0`,
+`release-1.12.1`, `release-1.12.2`, `release-1.13.0`.
+
+**Every file the causing commit touched is byte-identical to its own tree, on all
+five refs** — the six product files and its own unit test. That is stronger than a
+commit walk, and it is what the trigger below keys on:
+
+```bash
+for p in utils/flow_secrets.py api/v1/flows_helpers.py api/v1/projects_files.py \
+         api/v1/flow_version.py api/utils/core.py api/utils/__init__.py; do
+  for r in fc3810da origin/main origin/release-1.12.{0,1,2} origin/release-1.13.0; do
+    git rev-parse "$r:src/backend/base/langflow/$p"
+  done
+done
+# flow_secrets.py    12f2a5e   flow_version.py     b946d66
+# flows_helpers.py   96dab51   api/utils/core.py   a7e336c
+# projects_files.py  05ecd47   api/utils/__init__  d78506f
+# each identical on fc3810da and on all five watched refs
+```
+
+Four of the six carry the logic: the scrubber, plus the three call sites the cause
+migrated onto it — `flows_helpers.py` (`POST /api/v1/flows/download/`),
+`projects_files.py` (`download_project_flows`, i.e.
+`GET /api/v1/projects/download/{id}`) and `flow_version.py` (`strip_version_data`,
+which serves `GET /api/v1/flows/{flow_id}/versions/{version_id}`; the header row
+lists it under *Sibling surfaces* because the same PR moved it onto the same
+scrubber, not because it is an export endpoint). `api/utils/` contributes
+`normalize_flow_for_export`, which runs **after** `strip_flow_secrets` on both
+download surfaces (`flows_helpers.py:808`, `projects_files.py:78`) and so cannot
+restore a value already nulled.
+
+Outside the six sit the two route handlers — `flows.py:1292`
+(`download_multiple_file`) and `projects.py:1074` (`download_file`) — which fetch
+and authorize but hold no scrubber call. There is no `lfx` copy of the scrubber
+either: `git grep -l strip_secret_field_values <ref> -- 'src/lfx/**'` is empty on
+all five refs, where the control `secret_value_to_str` returns four files.
+
+**Two mistakes the first version of this section made**, recorded because both
+made the trigger narrower than it looked. Its watch table omitted
+`flow_version.py` and watched `api/v1/projects.py` instead — which declares the
+`GET /download/{project_id}` route and calls `download_project_flows`
+(`projects.py:1103`), but holds no scrubber call and was not touched by the cause
+— so a fix landing on either real sibling surface was invisible to it. And it
+listed `c3bfdb7d` as a commit "since 2026-08-19" when it is dated 2026-08-18,
+before the cause.
+
+### The trap: the binding-preserving mode predates the bug
+
+**Reading `flow_secrets.py` and concluding "already fixed" is the mistake to avoid,
+and the true story is not the one this section first recorded.** The file carries
+`_is_variable_reference` and a `variable_references` mode that preserves
+`load_from_db` bindings — which reads exactly like the repair §4 asks for. Both
+arrived in `0a1833f234` (#14437, *deterministic project deployment artifacts*,
+2026-08-10), **nine days before** the cause:
+
+```bash
+git log origin/main --reverse -S'_is_variable_reference' --oneline \
+  -- src/backend/base/langflow/utils/flow_secrets.py
+# 0a1833f234 feat: add deterministic project deployment artifacts (#14437)
+git show fc3810da^:src/backend/base/langflow/utils/flow_secrets.py | grep -c _is_variable_reference
+# 3   ← already there, pre-cause
+```
+
+`fc3810da`'s change to that file is +24/−1: it adds `strip_flow_secrets` and
+tightens `strip_secret_field_values`'s short-circuit from `if not flow_data:` to
+`if flow_data is None:`.
+What it did was move the export call sites off the legacy `remove_api_keys`
+(`password`-marked **and** API-key-named) onto the broader metadata-driven scrubber
+— `password` **or** secret-named, `flow_secrets.py:308` — **without** passing the
+`variable_references` mode #14437 had already added. So the correct machinery is
+sitting in the file, unreferenced by the export path. (§2 point 3 credits #14437
+correctly; an earlier version of this section contradicted it.)
+
+### Why a re-measurement is not the next step
+
+Two reasons, and the mechanical one comes first: the test is `test.fixme`, so **no
+`manual.yml` dispatch runs it at all** — not by tag, not by `--grep`. Re-measuring
+today means §3's by-hand reproduction, or lifting the quarantine first. And even
+then it would spend CI to confirm what the blob identity above already settles.
+
+It becomes the right move the moment any of those blobs changes on any watched
+ref — and at that point the order is: reproduce by hand (§3), then lift.
+
+### What filing it needs
+
+§1–§4 are the report; §3 is a deterministic reproduction that needs no LLM key.
+The one thing missing is the act of posting. **The usual channel here is DataStax
+Jira** — every other `UPSTREAM-BUG-*` file in this directory names an `LE-####`
+except one, which reads *"Not yet — evidence collected here first"* — and
+`REGRESSIONS.md:12` accepts either a Jira ticket or a `langflow-ai/langflow`
+issue —
+so this does not require an upstream GitHub account or a public statement; a Jira
+ticket is enough to unblock the deliverable. Suggested title, covering all three
+surfaces rather than only the one the H1 names:
+
+> Flow and project export null `load_from_db` credential bindings — `POST /api/v1/flows/download/` and `GET /api/v1/projects/download/{id}` drop the variable name, and version reads (`strip_version_data`) do the same
+
+Once filed, put the ticket in the **Filed upstream** row above and, if upstream
+disputes the intent (§2), record the answer in §4 rather than in the ticket thread
+alone — the quarantine's lifetime depends on it.
