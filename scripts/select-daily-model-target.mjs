@@ -92,6 +92,7 @@
  * it pins. Always prints the decision as JSON on stdout.
  */
 import * as fs from "fs";
+import { tableCell } from "./lib/display-text.mjs";
 import {
   readProvidersFile,
   // Named for the lane that first needed it (#1169); it is really
@@ -191,9 +192,14 @@ export function selectDailyModelTarget(providers, options = {}) {
         provider: attempt.provider,
         model: attempt.model,
         reason: null,
-        warnings: skipped.map(
-          (s) =>
-            `rotation advanced past "${s.provider}" (this weekday's slot): ${s.reason}`,
+        // Index-aware (#1801): only the FIRST candidate owns this weekday. Saying
+        // "(this weekday's slot)" for the fallbacks made the run contradict itself
+        // inside one annotation stream — the very defect `displacementLines` was
+        // fixed for, still being emitted two lines above it.
+        warnings: skipped.map((s, index) =>
+          index === 0
+            ? `rotation advanced past "${s.provider}", this weekday's slot: ${s.reason}`
+            : `rotation also passed over the fallback "${s.provider}": ${s.reason}`,
         ),
         skipped,
       };
@@ -340,6 +346,41 @@ export function displacementLines(displacement) {
 }
 
 /**
+ * The one-line form, for the shards that are not rendering the table (#1801).
+ *
+ * The first shape of this fix pinned the block to shard 1 and SUPPRESSED it
+ * everywhere else, which made the only rendered surface depend on shard 1 reaching
+ * step six of its job — and this workflow's own comments record shards dying before
+ * that (#1011, 2026-07-28). On a day a provider key is drained AND shard 1's backend
+ * never recovers, the run page would have shown the displacement nowhere at all,
+ * which is strictly worse than showing it four times: #1252's lesson is that a fact
+ * only in the log is not a signal.
+ *
+ * So every shard writes something to the summary; only one writes the table. The
+ * line carries the provider, the gap and the cause, so a lost table costs detail
+ * rather than the fact.
+ *
+ * @param {ReturnType<typeof rotationDisplacement>} displacement
+ * @returns {string}
+ */
+function renderCompactRotationNote(displacement) {
+  const owner = displacement.displaced.find((d) => d.owns);
+  if (!owner) return "";
+  const gap =
+    owner.days === null
+      ? "no further slot in the next fortnight"
+      : `next ${owner.nextWeekday} ${owner.nextDay}, ${owner.days} day(s)`;
+  const outcome = displacement.resolved
+    ? `the lane ran \`${displacement.resolved}\``
+    : "the lane declined to pin at all";
+  return (
+    `> ${displacement.resolved ? "⚠️" : "❌"} Rotation displaced — ` +
+    `\`${owner.provider}\` lost ${displacement.weekday}'s slot (${gap}); ${outcome}. ` +
+    `Full table in this run's shard-1 summary. Cause: ${tableCell(owner.reason)}\n\n`
+  );
+}
+
+/**
  * The run-summary block for a displaced rotation (#1456).
  *
  * The rotation already emitted a `::warning::` for this before, which is precisely
@@ -350,8 +391,9 @@ export function displacementLines(displacement) {
  * @param {ReturnType<typeof rotationDisplacement>} displacement
  * @returns {string} markdown, or "" when the rotation ran its own weekday's provider
  */
-export function renderRotationSummary(displacement) {
+export function renderRotationSummary(displacement, { compact = false } = {}) {
   if (!displacement) return "";
+  if (compact) return renderCompactRotationNote(displacement);
   // The weekday's own provider, and the fallbacks the rotation walked past. Only the
   // first is losing a slot; conflating them is what #1801 fixed.
   const owner = displacement.displaced.find((d) => d.owns);
@@ -382,7 +424,13 @@ export function renderRotationSummary(displacement) {
   for (const entry of displacement.displaced) {
     lines.push(
       `| \`${entry.provider}\` | ${
-        entry.owns ? `this weekday's slot` : "fallback, passed over"
+        entry.owns
+          ? `this weekday's slot`
+          : // "passed over" claims the lane advanced to something. On a declined
+            // pin nothing was passed over — it kept multi-provider (#1801).
+            displacement.resolved
+            ? "fallback, passed over"
+            : "also unusable"
       } | ${
         !entry.owns
           ? "—"
@@ -390,7 +438,7 @@ export function renderRotationSummary(displacement) {
             ? `${entry.nextWeekday} ${entry.nextDay}`
             : "none in the next fortnight"
       } | ${!entry.owns || entry.days === null ? "—" : `${entry.days} day(s)`} | ${
-        String(entry.reason ?? "").replace(/\|/g, "\\|")
+        tableCell(entry.reason)
       } |`,
     );
   }
@@ -469,10 +517,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(2);
   }
 
-  // Deviations first, so they are visible even when the pin succeeded.
-  for (const warning of result.warnings) {
-    process.stderr.write(`::warning::select-daily-model-target: ${warning}\n`);
-  }
+  // `result.warnings` is NOT printed here: on the path that produces it, every one
+  // of its entries is the same fact `displacementLines` below states with the gap
+  // attached, so printing both put two phrasings of one deviation in the same
+  // annotation stream (#1801). The field stays on the returned JSON for consumers.
 
   // A displaced slot costs a provider up to a week of coverage, and until #1456 the
   // only trace of it was the `::warning::` above. The run summary is where a human
@@ -485,18 +533,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const line of displacementLines(displacement)) {
     process.stderr.write(`::warning::select-daily-model-target: ${line}\n`);
   }
-  // ROTATION_SUMMARY=0 suppresses the BLOCK (never the warnings above) — #1801.
-  // This script runs in the `test` job, which is one job per shard, so a displaced
-  // day rendered the identical heading and table 4-10 times across the run page:
-  // exactly the #1252 shape this block's own docstring invokes as its reason to
-  // exist. One shard writes it; every shard still logs the fact, so a dead shard 1
-  // costs the rendering and nothing else. Unset (local, VM) means "write it".
-  if (displacement && process.env.ROTATION_SUMMARY !== "0" && process.env.GITHUB_STEP_SUMMARY) {
+  // ROTATION_SUMMARY=0 asks for the COMPACT line rather than the table — it does
+  // not suppress. This script runs in the `test` job, one job per shard, so the full
+  // block rendered 4-10 identical times across the run page (#1252's own shape); but
+  // pinning it to shard 1 and writing nothing elsewhere made the only rendered
+  // surface depend on that shard surviving to step six, which this workflow records
+  // shards failing to do (#1011). Every shard writes something; one writes the table.
+  // Unset (local, VM) means the full block.
+  if (displacement && process.env.GITHUB_STEP_SUMMARY) {
     // Best effort: a summary that cannot be written must not cost the lane its pin.
     try {
       fs.appendFileSync(
         process.env.GITHUB_STEP_SUMMARY,
-        renderRotationSummary(displacement),
+        renderRotationSummary(displacement, {
+          compact: process.env.ROTATION_SUMMARY === "0",
+        }),
       );
     } catch (error) {
       process.stderr.write(

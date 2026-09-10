@@ -105,6 +105,11 @@ import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { parseProviderInactiveReason } from "./lib/provider-health-reason.mjs";
+import { displaySafe, tableCell } from "./lib/display-text.mjs";
+
+// Re-exported: this module owned both until #1801 moved them next to the SECOND
+// consumer that needed them, and the call sites (and tests) read them from here.
+export { displaySafe, tableCell };
 
 export const COVERED = "covered";
 export const DEGRADED = "degraded";
@@ -247,38 +252,7 @@ export function groupByProvider(skips) {
   return [...grouped.values()];
 }
 
-/**
- * Strip what must not reach `$GITHUB_OUTPUT` or an `::error::` annotation.
- *
- * Same care as `check-run-integrity.mjs`'s `displaySignature`: the runner reads
- * `$GITHUB_OUTPUT` line-wise, so a newline inside a value could forge a second
- * `key=value` line — `verdict=covered` included. The reasons here come from a
- * provider's error body, which is not guaranteed to be one line.
- *
- * @param {string} value
- */
-export function displaySafe(value) {
-  return String(value ?? "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
-/**
- * A reason as it can safely appear INSIDE a markdown table cell (#1801).
- *
- * `displaySafe` answers the `$GITHUB_OUTPUT` threat (newlines forging a second
- * `key=value` line) and stops there, which left the table that renders the reason
- * splittable by a single `|` — a provider answering `403 Forbidden | check your
- * billing` pushes the count out of its column, in the one block the design says the
- * reviewer actually reads.
- */
-export function tableCell(value) {
-  return displaySafe(value).replace(/\|/g, "\\|");
-}
 
 /**
  * `provider ("the reason the sweep measured")`, capped (#1801).
@@ -291,10 +265,12 @@ export function tableCell(value) {
  *
  * Capped because this string reaches a step output and the umbrella issue's body: a
  * provider error body is not bounded, and one long reason must not push the counts
- * off the line. 140 rather than a rounder 90, measured against the reasons this repo
- * actually records — `degradeProviders`' structural line reaches ~130 characters, and
- * a cap that truncates it at "…global vari…" keeps the quote while dropping the only
- * part that tells the reader which repair to make.
+ * off the line. 140 rather than a rounder 90 — and the figure behind that choice was
+ * MEASURED after this comment first guessed it (#1801): `globalSetup`'s structural
+ * reason is **249** characters, not the ~130 originally claimed here. 140 still
+ * truncates it, and that is fine: the clause naming the repair ("never imported as
+ * a Langflow global variable") lands inside the first 90, whereas a 90-char cap cut
+ * it at "…global vari…" — keeping the quote and dropping its only useful part.
  */
 export function providerPhrase(entry, reasonCap = 140) {
   const reason = displaySafe(entry.reasons?.[0] ?? "");

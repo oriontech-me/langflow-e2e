@@ -526,11 +526,18 @@ jobs:
       - name: Rotate the lane to this weekday's provider
         continue-on-error: true
         env:
-          # The run-summary BLOCK is written by ONE shard (#1801): this step runs in
-          # every matrix job, and a displaced day was rendering the same heading and
-          # table 4-10 times down the run page — the #1252 artifact the block exists
-          # to avoid. The `::warning::` lines stay on every shard, so the fact
-          # survives a shard 1 that dies before this step; only the rendering is lost.
+          # Which FORM of the rotation note this shard writes (#1801). The step runs in
+          # every matrix job, so the full block rendered 4-10 identical times down the
+          # run page — the #1252 artifact it exists to avoid. Shard 1 writes the table;
+          # every other shard writes a one-line note carrying the provider, the gap and
+          # the cause.
+          #
+          # NOT a suppression, and that distinction is the whole point: the first shape
+          # of this fix wrote nothing on the other shards, which made the only rendered
+          # surface depend on shard 1 reaching this step — and the steps before it carry
+          # no `continue-on-error`, on a lane whose own comments record shards dying
+          # exactly there (#1011). A drained key plus a shard-1 abort would then have
+          # rendered the displacement NOWHERE, on the day the cost statement matters.
           ROTATION_SUMMARY: ${{ matrix.shard == 1 && '1' || '0' }}
         run: node scripts/select-daily-model-target.mjs
 
@@ -1547,9 +1554,13 @@ jobs:
           LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
           # ZERO VERDICTS (#1456): the report is complete and every result in it is a
           # provider-health skip. It gets its own shape because it is neither `empty`
-          # (the shards worked) nor a per-test day (no spec ran), and pointing triage
-          # at the merge step or at the specs would both be wrong — the repair is the
-          # provider account.
+          # (the shards worked) nor a per-test day (no spec ran), so pointing triage
+          # at the merge step or at the specs would both be wrong. What the shape must
+          # NOT do either is name the repair (#1801): the same `inactive` record is
+          # written when a key was never imported as a Langflow global variable
+          # (#1058), where the fix is the import and not the account — so the body
+          # quotes the reason the sweep measured and leaves the diagnosis to the
+          # reader.
           COVERAGE_VERDICT: ${{ steps.coverage.outputs.verdict }}
           COVERAGE_HEADLINE: ${{ steps.coverage.outputs.headline }}
           COVERAGE_PROVIDERS: ${{ steps.coverage.outputs.providers }}

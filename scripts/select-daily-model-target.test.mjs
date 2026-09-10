@@ -429,6 +429,10 @@ test("declining to pin renders as a decline, not as an advance", () => {
   const summary = renderRotationSummary(displacement);
   assert.match(summary, /could not pin/);
   assert.doesNotMatch(summary, /advanced to/);
+  // "passed over" would claim the lane advanced to something. It did not — it kept
+  // multi-provider parametrization, so nothing was passed over (#1801).
+  assert.doesNotMatch(summary, /passed over/);
+  assert.match(summary, /also unusable/);
 });
 
 test("the CLI writes the block to \$GITHUB_STEP_SUMMARY, and only when displaced", () => {
@@ -527,7 +531,7 @@ test("a reason carrying a pipe cannot split the rotation table", () => {
   assert.equal(row.split(/(?<!\\)\|/).length - 2, 5, "the row must keep its five columns");
 });
 
-test("ROTATION_SUMMARY=0 suppresses the block but never the warning", () => {
+test("ROTATION_SUMMARY=0 writes the COMPACT note, never nothing", () => {
   // One shard writes the block; every shard logs the fact (#1801).
   const dir = makeTempDir("rotation-1801-");
   const providersFile = path.join(dir, "providers.json");
@@ -550,7 +554,11 @@ test("ROTATION_SUMMARY=0 suppresses the block but never the warning", () => {
       GITHUB_STEP_SUMMARY: summaryFile,
       GITHUB_ENV: path.join(dir, "env.txt"),
     };
-    if (rotationSummary !== undefined) env.ROTATION_SUMMARY = rotationSummary;
+    // DELETED, not just left unassigned (#1801): `{...process.env}` inherits, so the
+    // "unset" case was asserting whatever the ambient shell exported — vacuous at
+    // best, and spuriously red for anyone who exports ROTATION_SUMMARY=0.
+    if (rotationSummary === undefined) delete env.ROTATION_SUMMARY;
+    else env.ROTATION_SUMMARY = rotationSummary;
     const proc = spawnSync(
       process.execPath,
       [SCRIPT, "--providers-file", providersFile, "--date", WED.toISOString()],
@@ -559,11 +567,62 @@ test("ROTATION_SUMMARY=0 suppresses the block but never the warning", () => {
     return { summary: fs.readFileSync(summaryFile, "utf-8"), stderr: proc.stderr };
   };
 
-  const off = run("0");
-  assert.equal(off.summary, "", "the block must be suppressed");
-  assert.match(off.stderr, /::warning::/, "the fact must still reach the log");
-  assert.match(off.stderr, /google/);
+  // Suppressing it here was the first shape of this fix and it was wrong: the only
+  // rendered surface would then depend on shard 1 surviving to this step (#1801).
+  const compact = run("0");
+  assert.match(compact.summary, /Rotation displaced/, "every shard writes SOMETHING");
+  assert.match(compact.summary, /^> /, "the compact form is a one-line blockquote");
+  assert.doesNotMatch(compact.summary, /\| Provider \|/, "and not the table");
+  assert.match(compact.summary, /7 day\(s\)/, "the gap is the part worth keeping");
+  assert.match(compact.summary, /monthly spending cap/, "so is the cause");
+  assert.equal(
+    compact.summary.trim().split("\n").length,
+    1,
+    "one line, so four shards cost four lines",
+  );
+  assert.match(compact.stderr, /::warning::/, "and the log still carries it");
 
-  assert.match(run("1").summary, /Rotation displaced/);
-  assert.match(run(undefined).summary, /Rotation displaced/, "unset means write it");
+  const full = run("1");
+  assert.match(full.summary, /^### /, "shard 1 writes the table");
+  assert.match(full.summary, /\| Provider \|/);
+  assert.match(run(undefined).summary, /\| Provider \|/, "unset means the full block");
+});
+
+test("the rotation's own warnings stop claiming a fallback owns the day (#1801)", () => {
+  // The renderers were fixed first and this array was left behind, so the run
+  // contradicted itself two lines apart in the same annotation stream.
+  const providers = healthy().map((p) =>
+    p.provider === "openai" || p.provider === "anthropic"
+      ? { ...p, status: "inactive", model: null, error: "dead" }
+      : p,
+  );
+  const result = selectDailyModelTarget(providers, { date: MON });
+  assert.equal(result.provider, "google");
+  const [first, second] = result.warnings;
+  assert.match(first, /"openai", this weekday's slot/);
+  assert.match(second, /passed over the fallback "anthropic"/);
+  assert.doesNotMatch(second, /this weekday's slot/, "a fallback never owns the day");
+});
+
+test("a multi-line reason cannot terminate the rotation table (#1801)", () => {
+  // `collect-models` records a collector STALL through `formatSaveBusyFailure()`,
+  // which is deliberately several lines. Unescaped, the table ended at that row and
+  // every row after it fell out of it.
+  const providers = healthy().map((p) =>
+    p.provider === "google"
+      ? {
+          ...p,
+          status: "inactive",
+          model: null,
+          error: "collector stalled\n  aria-busy stayed true\n  verdict: save-busy",
+        }
+      : p,
+  );
+  const result = selectDailyModelTarget(providers, { date: WED });
+  const summary = renderRotationSummary(rotationDisplacement(result, { date: WED }));
+  const rows = summary.split("\n").filter((l) => l.startsWith("| `"));
+  assert.equal(rows.length, 1, "the row must survive as ONE row");
+  assert.match(rows[0], /aria-busy stayed true/, "and keep the measured text");
+  assert.equal(rows[0].split(/(?<!\\)\|/).length - 2, 5, "with its five columns");
+  assert.ok(summary.trim().endsWith("(#1456)."), "and the table must not end the doc");
 });
