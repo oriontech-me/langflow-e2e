@@ -1,6 +1,6 @@
 # Use Global Variable in Component (API key)
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
 
 ---
 
@@ -30,11 +30,14 @@ typed directly into fields.
 
 ## Tags *(required)*
 
-`@release` `@workspace` `@regression`
+`@stable` `@release` `@workspace` `@regression`
 
-> `@stable` intentionally withheld until the full 7-step validation pipeline
-> (typecheck, lint, run `--retries=0`, force-fail, `--trace=on`, backend-error audit)
-> has been executed and the team has reviewed the spec.
+`@stable` was added by #1788, after the validation the tag requires actually ran:
+3/3 green in the inherited-spec triage table
+(`docs/triage/inherited-spec-triage.md`), then a force-fail run per test and the
+id-scoped flow cleanup. The promotion also **fixed a latent strict-mode defect the
+table could not see** — see *The `.or()` gate was flaky by construction* below.
+No lane selector is present, so the tag cannot silence the spec (#1010).
 
 ---
 
@@ -147,6 +150,14 @@ Confirmed testids (verified against the live DOM):
 - `try/finally` cleanup deletes the created variable via the REST API (looked up by name),
   so it runs even when assertions fail mid-test, preventing cross-run pollution. Uses the
   `request` fixture with a Bearer token from `getAuthToken`.
+- **The secret-absence assertion is narrower than it reads.** `expect(page.getByText(sentinelValue)).toHaveCount(0)`
+  matches **text nodes** only. The sentinel is typed into an `<input>`, and
+  `getByText` never reads an input's `value`, so a leak of the resolved credential
+  *into a field value* would not fail this. It is kept because it does cover the
+  case that matters most here — the secret rendered as visible page text, e.g. in
+  the bound-value badge or a tooltip — but "never leaks the secret" is not what it
+  proves. Widening it would take a `toHaveValue`/`inputValue` assertion on the
+  specific field, which is a separate piece of work.
 - **Indirect mechanism justified:** in the auto-bound state the field's dropdown-trigger
   button (the next sibling of the badge wrapper) has its icon fail to render — an upstream
   Langflow gap — leaving it a zero-width/zero-height but fully attached, click-functional
@@ -154,3 +165,78 @@ Confirmed testids (verified against the live DOM):
   the helper asserts `toBeAttached()` and fires `dispatchEvent("click")` (Playwright's
   documented geometry-independent click). The clean/empty-field path (no pre-existing
   variable, as on fresh CI) uses the normal visible `icon-Globe` + `.click()`.
+
+---
+
+## The `.or()` gate was flaky by construction *(optional)*
+
+`createAndBindCredentialVariable` waits for "the variable is bound **or** it is
+listed in the still-open dropdown" before binding. That was written as
+`expect(boundValue.or(optionRow)).toBeVisible()`, which asserts more than it means:
+`.or()` resolving to two elements is a **strict mode violation**, and the two states
+are not mutually exclusive.
+
+Measured on `1.13.0.dev8`, creating the variable from the field's own dropdown does
+**both** — it auto-binds the variable *and* leaves the dropdown open listing it — so
+the locator resolves to 2 elements and the assertion fails:
+
+```
+strict mode violation: ...getByText('gv-api-key-…').or(getByTestId('option-gv-api-key-…'))
+resolved to 2 elements
+```
+
+2/2 red locally on the spec the triage table recorded 3/3 green: CI happened to poll
+in the window where only the option row had rendered. This is a race, not a version
+regression, and promoting it unchanged would have imported a flake into the daily.
+
+Two changes fix it. The wait takes `.first()`, so it means "whichever of the two"
+rather than "exactly one of the two exists". And the explicit bind is guarded on the
+field **not** already showing the variable — clicking the option row of an
+already-bound variable is a second toggle on the same value, which is how a passing
+bind gets undone. After the fix: 2/2 green, and the real postcondition
+(`boundValue` visible) is asserted unconditionally, unchanged.
+
+---
+
+## What the force-fail audit changed *(optional)*
+
+#1788's force-fail run is the reason this spec grew an assertion, and the finding is
+worth keeping rather than just the fix.
+
+The test is titled *bind a **Credential** global variable*, and nothing in it verified
+the type. Removing the `credential-tab` click — the one line whose comment claimed it
+is what stops a **Generic** variable being created — left the test **green**: the
+bound value the field renders is the variable **name**, which is identical either way.
+A regression that made that tab write the wrong type would have gone unnoticed.
+
+`expectCredentialVariable(request, varName)` now reads the variable back over
+`GET /api/v1/variables/` and asserts `type === "Credential"`, because the type is not
+rendered anywhere on the canvas once the variable is bound.
+
+**The second half of that measurement corrected the spec's own comment.** With the
+type assertion in place, removing the `credential-tab` click *still* passes on
+`1.13.0.dev8`: opening "Add New Variable" from a `SecretStrInput`'s own dropdown
+already creates a Credential. So the click is belt-and-braces, not the thing that
+decides the type — the comment asserting otherwise was wrong, and is now corrected in
+the spec.
+
+The force-fail that does discriminate test 1 is creating and binding a
+**differently-named** variable than the one the assertions name: both the bound-value
+assertion and the type readback go red. For test 2 it is removing the autosave wait
+before the reload, which confirms the persistence claim is real — the rehydrated node
+comes back **without** the binding, so auto-bind does not silently rescue the
+assertion.
+
+---
+
+## Flow cleanup *(optional)*
+
+The `try/finally` deletes the global **variable**, and always did. It never deleted
+the **flows**. Measured on 2026-09-10 against a purged instance, one run of this file
+left **4** behind: `New Flow` and `Basic Prompting` (created by `awaitBootstrapTest`
+→ `addFlowToTestOnEmptyLangflow` when the default project is empty), plus one blank
+flow per test.
+
+`trackCreatedFlows(page)` now captures every `POST /api/v1/flows/` → `201` the page
+performs, and `afterEach` deletes exactly those ids. The variable deletion stays in
+each test's own `finally`, since it is scoped to that test's `varName`.

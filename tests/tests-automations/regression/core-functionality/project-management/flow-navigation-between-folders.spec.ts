@@ -29,10 +29,32 @@ import { MainPage } from "../../../../pages/MainPage";
 
 test(
   "navigating between two folders scopes the listing to each folder's flows",
-  { tag: ["@release", "@workspace", "@mainpage", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
     const authToken = await getAuthToken(request);
     const headers = { Authorization: authToken };
+
+    // The API setup below names every flow it creates, but `awaitBootstrapTest`
+    // creates its own -- measured on 1.13.0.dev7: a green run left `New Flow`
+    // and a second `Basic Prompting` behind, ids this test never saw and so
+    // could never delete (#1786). Capture the PAGE's creates too. The setup
+    // issues its own through `request.post`, a separate APIRequestContext, so
+    // the two sets are disjoint and nothing is deleted twice.
+    const pageCreatedFlowIds: string[] = [];
+    page.on("response", (resp) => {
+      if (
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201
+      ) {
+        resp
+          .json()
+          .then((body: { id?: string }) => {
+            if (body?.id) pageCreatedFlowIds.push(body.id);
+          })
+          .catch(() => {});
+      }
+    });
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const folderAName = `nav-folderA-${stamp}`;
     const folderBName = `nav-folderB-${stamp}`;
@@ -111,6 +133,12 @@ test(
     } finally {
       if (flowAId) await deleteFlow(request, flowAId, { headers });
       if (flowBId) await deleteFlow(request, flowBId, { headers });
+      // Id-scoped, never a global sweep: the suite runs fullyParallel, so
+      // deleting anything this run did not create would wipe a concurrent
+      // worker's flow.
+      for (const id of pageCreatedFlowIds.splice(0)) {
+        await deleteFlow(request, id, { headers }).catch(() => {});
+      }
       // deleteProject retries the 500 the endpoint returns under concurrent
       // writes (#965) — the bare request.delete here resolved on that status and
       // left both folders on the instance permanently.

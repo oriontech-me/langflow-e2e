@@ -1,6 +1,6 @@
 # Flow Functionality — Run Flow
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev23`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
 
 ---
 

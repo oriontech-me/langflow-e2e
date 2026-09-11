@@ -168,20 +168,33 @@ async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
 //
 // `ContentBlockDisplay.tsx` splits a message's content two ways. GROUPED blocks
 // render inside `{(hideHeader || isExpanded) && <Accordion …>}`, behind a header
-// (`{!hideHeader && …}`, and neither call site passes `hideHeader`, which
-// defaults to false) whose title is "Steps"/"Finished" and whose `.cursor-pointer`
-// chevron toggles `isExpanded` — initialised to `false`. On that branch the tool
-// cards are NOT IN THE DOM until the chevron is clicked, and this helper's
-// selector matches that row exactly. FLAT items take the other path
-// (`looseItems`), rendered above it with no header gate at all, and the file
-// says which one we get: "The agent emits tool_use items flat (not inside a
-// group), so they get their own ToolCallCard wrapper".
+// (`{!hideHeader && …}`) whose title is "Steps"/"Finished" and whose
+// `.cursor-pointer` chevron toggles `isExpanded` — initialised to `false`. On
+// that branch the tool cards are NOT IN THE DOM until the chevron is clicked,
+// and this helper's selector matches that row exactly. FLAT items take the
+// other path (`looseItems`), rendered above it with no header gate at all.
 //
-// So the helper is dead only for as long as the agent keeps emitting flat. An
-// earlier revision of this spec deleted it and justified that with
+// **`hideHeader` is what decides it, and an earlier revision of this comment
+// got that wrong** (#1793). It claimed "neither call site passes `hideHeader`,
+// which defaults to false", so the helper was dead only while the agent kept
+// emitting flat. There are two call sites and they differ:
+// `modals/IOModal/…/chat-message.tsx` passes nothing (header shown, grouped
+// cards gated), while `components/core/playgroundComponent/…/bot-message.tsx`
+// passes `hideHeader={true}` — no header at all, and the gate satisfied
+// unconditionally, so grouped cards render too.
+//
+// The Playground this spec drives is the SECOND one, and that is measured
+// rather than read off the imports: on a run with a completed tool call, zero
+// rows matched this helper's selector while `tool-status-done` was already
+// present — and `ToolCallCard` only ever renders inside `ContentBlockDisplay`,
+// so the component rendered with no header. Hence the helper is dead here for a
+// reason no producer change can revive, and it is kept only for the other call
+// site's layout.
+//
+// (A revision before that one deleted the helper and justified it with
 // `ToolCallCard.tsx`'s "collapses to header-only once the producer attaches a
-// duration" — the WRONG mechanism: that comment is about the per-card accordion
-// holding the args/result body, not about the Steps accordion this targets.
+// duration" — a third wrong mechanism: that comment is about the per-card
+// accordion holding the args/result body.)
 async function expandAgentSteps(page: Page): Promise<void> {
   await page.evaluate(() => {
     const rows = Array.from(

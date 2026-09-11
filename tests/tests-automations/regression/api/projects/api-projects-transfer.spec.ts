@@ -91,7 +91,7 @@ test.describe("Projects API — download and upload", () => {
 
   test(
     "download refuses an empty project and returns a ZIP for a populated one",
-    { tag: ["@stable", "@api", "@workspace"] },
+    { tag: ["@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["GET /api/v1/projects/download/{project_id}"]);
       const headers = { Authorization: await getAuthToken(request) };

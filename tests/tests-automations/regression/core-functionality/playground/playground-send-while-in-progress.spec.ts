@@ -40,7 +40,7 @@ test.describe("Playground — send while a response is in progress", () => {
 
   test(
     "input is locked while a run is in progress and recovers after it completes",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       flow = await createRunnableChatFlowViaApi(request, { Authorization: bearer });

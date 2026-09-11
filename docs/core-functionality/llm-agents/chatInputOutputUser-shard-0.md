@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev7`)
 
 ---
 

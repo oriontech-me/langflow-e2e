@@ -1045,10 +1045,68 @@ jobs:
           # daily-stable.yml: with this unset (local runs) the helper makes no
           # request and writes no file.
           TOKENS_ATTRIB: token-attrib.jsonl
+          # Where the `json` reporter added below writes. Same variable and same
+          # filename the daily's merge job and the shared run-e2e action already use,
+          # so every consumer of a report in this repo reads one path (#1456).
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
         run: |
           echo "Running specs: $SPECS"
+          # `github,json`, not `github`: the CLI reporter list REPLACES the config's,
+          # so this lane produced no machine-readable report at all and the coverage
+          # verdict below had nothing to read (#1456). `json` writes only to
+          # PLAYWRIGHT_JSON_OUTPUT_NAME — measured, the log gains nothing but the
+          # usual `::notice::` line, so the annotations the reviewer reads are
+          # unchanged. HTML stays unwritten here, as before.
           # shellcheck disable=SC2086
-          npx playwright test $SPECS --reporter=github
+          npx playwright test $SPECS --reporter=github,json
+
+      # Did this run cover the providers it was supposed to cover? (#1456)
+      #
+      # A provider-health skip is CORRECT per test — a dead key cannot produce a
+      # verdict about Langflow — and #980 is right that it must not kill the specs
+      # that never touch the provider. What neither answers is how the LANE reports:
+      # on run 31698035402 (2026-08-13, PR #1381) this check said SUCCESS over
+      # 3 skipped / 5 passed / 1 flaky, where the three skips were the openai targets
+      # of `agent-multi-tool-selection.spec.ts` — openai being the provider this lane
+      # pins itself to. Nothing in the status told that apart from a run that covered
+      # them.
+      #
+      # So: `degraded` (something else executed) keeps this check GREEN and states
+      # what it did not cover in the run summary, which is where a reviewer already
+      # looks — a `::warning::` here would be #1252's `mode=count` again.
+      #
+      # What FAILS is `shouldFail()`, not the verdict (#1800). `uncovered` alone was
+      # too wide HERE and only here: this lane's "run" is whatever the import graph
+      # selected, frequently one spec file, so a PR editing a single wholly-gated spec
+      # during a drain of that spec's provider executed nothing, scored `uncovered`
+      # and could not be merged — one dead key blocking an author who cannot fix it,
+      # which is #980 inverted on the lane a human is waiting on. `--providers` is
+      # what makes the honest question answerable: a HEALTHY provider leaves no trace
+      # in the report, so whether the account was up at all can only come from the
+      # file `Collect models` wrote. Absent (an LLM-free PR, a canary whose sweep was
+      # allowed to fail) the account reads UNKNOWN, which never fails on its own.
+      #
+      # Placed here on purpose, and the placement carries two guarantees:
+      #  - it runs under the implicit `success()`, so it only ever speaks on a run
+      #    that was about to report SUCCESS. A red spec run needs no help from it.
+      #  - every step after it carries `always()` (or `failure()`), so a failure here
+      #    skips no upload, no token summary and no artifact. Verified against the
+      #    step list below — #1176's lesson, in the direction that costs evidence.
+      #
+      # `excluded_only`: the same condition "Run impacted specs" carries, because a
+      # destructive-only selection skips that step and there is then no report to
+      # read. Copied rather than derived, so the two are legible side by side.
+      - name: Coverage verdict — did a provider-health skip hollow out this run?
+        id: coverage
+        if: needs.detect-specs.outputs.excluded_only != 'true'
+        env:
+          PLAYWRIGHT_JSON: results.json
+        run: |
+          node scripts/lane-coverage-verdict.mjs \
+            --lane "pr-validation" \
+            --provider "$PR_LANE_PROVIDER" \
+            --providers tests/helpers/provider-setup/data/providers.json \
+            --fail-closed
 
       # Destructive lane (#1010). `@destructive` tests wipe account-wide state, so
       # playwright.config.ts keeps them out of the run above and pins this lane to

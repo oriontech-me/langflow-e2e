@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/flow-functionality/general-bugs-hidden-input-edges.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
 
 ---
 

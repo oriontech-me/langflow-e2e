@@ -1,6 +1,6 @@
 # Project Management – Navigate Between Folders
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev20`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev7`)
 
 ---
 
@@ -45,7 +45,26 @@ list.
 5. Bootstrap the session (`awaitBootstrapTest(page, { skipModal: true })`); assert both folders' sidebar entries are visible.
 6. `clickProject(folderA)` → assert flow **A** name is visible **and** flow **B** name is hidden (`toBeHidden` / `toHaveCount(0)`).
 7. `clickProject(folderB)` → assert flow **B** name is visible **and** flow **A** name is hidden.
-8. **Cleanup (finally):** delete `flowAId`, `flowBId` (id-scoped, ignored if already gone), then folders `folderAId`, `folderBId` via `DELETE /api/v1/projects/{id}`.
+8. **Cleanup (finally):** delete `flowAId`, `flowBId` (id-scoped, ignored if already gone), **plus every flow the PAGE created**, then folders `folderAId`, `folderBId` via `DELETE /api/v1/projects/{id}`.
+
+### The two flows the API-created pair does not account for
+
+Measured on `1.13.0.dev7` while promoting this spec to `@stable` (#1786): a green
+run left the instance **two flows heavier** — one named `New Flow` and a second
+copy of `Basic Prompting` — even though every id this spec creates through
+`request.post` was deleted. They come from `awaitBootstrapTest`, not from the
+API setup, so `flowAId`/`flowBId` never named them and the `finally` could not
+delete what it had never seen. The spec's own docblock claimed id-scoped
+cleanup, which was true of the ids it knew about and false of the instance.
+
+The fix is the pattern the sibling specs already use rather than a new one:
+capture every `POST /api/v1/flows` → `201` **on the page** and delete those ids
+in the same `finally`. The API setup issues its creates through
+`request.post` (a separate `APIRequestContext`), so the page-side capture cannot
+double-count them — the two sets are disjoint by construction.
+
+Never a global sweep: the suite runs `fullyParallel`, so deleting anything this
+run did not create would wipe a concurrent worker's flow.
 
 ---
 

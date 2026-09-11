@@ -167,6 +167,48 @@ export function readProvidersFile(providersFile, { readFile, exists } = {}) {
   return { providers: JSON.parse(read(providersFile)), missing: false };
 }
 
+/**
+ * The run-summary block for a pin this lane could NOT make (#1456).
+ *
+ * Declining is the right call — pinning to a dead provider trades spend for zero
+ * coverage, so the lane falls back to the costlier multi-provider run (#980). What
+ * was missing is that the fallback was announced only as a `::warning::`, the
+ * surface #1252 measured nobody reading, so a PR paid 20-25x per token for an
+ * anthropic variant of every impacted agent spec and nothing said why.
+ *
+ * It states the COST, because that is the part a reader cannot derive: the pin is
+ * what makes this lane cheap, and the day it declines is the day the bill is not.
+ * What the run did not COVER is a different question, and the coverage verdict
+ * answers it from the report — this block points at it rather than guessing.
+ *
+ * Returns "" when the pin succeeded: a block on every run is the artifact, not the
+ * signal.
+ *
+ * @param {{ ok: boolean, provider: string, reason: string|null }} result
+ * @returns {string} markdown, or ""
+ */
+export function renderDeclineSummary(result) {
+  if (!result || result.ok) return "";
+  return `${[
+    `### ⚠️ The lane could not pin \`${result.provider}\` — this run is the costly path`,
+    "",
+    `\`pr-validation.yml\` pins its LLM specs to one provider's settled model (#1169).` +
+      ` That pin was declined for this run, so every impacted agent spec ran once per` +
+      ` ACTIVE provider instead — real coverage, at up to 20-25x the price per token,` +
+      ` on a day a provider key was already broken. Declining is deliberate: pinning to` +
+      " an unusable provider would trade the spend for zero coverage (#980).",
+    "",
+    "| | |",
+    "|---|---|",
+    `| Provider asked for | \`${result.provider}\` |`,
+    `| Why it could not be pinned | ${result.reason ?? "no reason recorded"} |`,
+    "",
+    "What this run did not COVER is a separate question — the coverage verdict step" +
+      " answers it from the report, and names the providers whose tests skipped (#1456).",
+    "",
+  ].join("\n")}\n`;
+}
+
 function parseArgs(argv) {
   const args = { providersFile: DEFAULT_PROVIDERS_FILE, provider: "openai" };
   for (let i = 0; i < argv.length; i++) {
@@ -237,6 +279,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     );
   } else {
     process.stderr.write(`::warning::select-pr-model-target: ${result.reason}\n`);
+    // And in the run summary, where a reviewer already looks (#1456). Best effort:
+    // a summary that cannot be written must not cost the lane its fallback run.
+    const summary = renderDeclineSummary(result);
+    if (summary && process.env.GITHUB_STEP_SUMMARY) {
+      try {
+        fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+      } catch (error) {
+        process.stderr.write(
+          `::warning::select-pr-model-target: could not write the run summary: ${error.message}\n`,
+        );
+      }
+    }
   }
 
   process.stdout.write(`${JSON.stringify(result)}\n`);

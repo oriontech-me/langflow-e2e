@@ -197,6 +197,20 @@ but was drained still made the live call. On run 30374528125 that hung two Googl
 tests past gunicorn's 300s timeout, killed shard 2's Langflow worker six times, and
 produced 14 collateral timeouts in specs that never touch Google.
 
+A **third consumer** arrived with #1456, and it is not a spec: the LANE. Once the
+skips exist, nothing in a check status distinguishes a run where three tests skipped
+on a dead key from one where they ran and passed — run 31698035402 reported SUCCESS
+over 3 skipped / 5 passed / 1 flaky. `scripts/lane-coverage-verdict.mjs` reads the
+skips back out of the run's own Playwright JSON report and classifies the run
+`covered`, `degraded` or `uncovered`, so a run whose provider-health skips left
+**nothing** executed can no longer report success. It deliberately does not read
+`providers.json`: what a lane owes is a statement about what it covered, not about
+what it expected to skip. That makes the skip REASON a contract rather than prose —
+`inactiveReason()` here and the verdict there both go through
+`scripts/lib/provider-health-reason.mjs`, with the round trip unit-tested from both
+ends, because a reader carrying its own copy of the pattern would fail by finding no
+provider-health skip at all and calling the run fully covered.
+
 ### What the health gate does NOT cover
 
 `collect-models` records a **point-in-time probe**. The gate therefore covers a
@@ -282,6 +296,16 @@ neither a default. A run whose target model is not enabled takes the **cold path
 every parametrized spec has to enable the model through the provider panel itself,
 which is the fragile path #1649 documents and which cost the 2026-09-01 daily four
 attempts across three specs.
+
+**The spec side of that path was swept until #1679, and the cost measured below is
+the reason it is not any more.** The three provider setups clicked every unchecked
+toggle — the very batch this section rejects — once per `setupGoogle` /
+`setupOpenAI` / `setupAnthropic`, so the decision here held for the collector and
+not for the 40-odd specs that call those helpers. They now enable the one model the
+spec is about to pick (`planToggleTargets`), which on a google panel is 0 or 1 write
+instead of 29. Re-measured there on `1.13.0.dev8`: a 29-model google batch never
+answers and takes the instance down for ~100 s, an idle-container openai batch of 37
+answers in 27.8 s and still takes it down for 24 s, and one model costs 0.86 s.
 
 The sweep used to click every unchecked toggle in the panel. Every toggle feeds
 `useModelToggleQueue`, which batches the write behind a 1000 ms debounce and cancels +

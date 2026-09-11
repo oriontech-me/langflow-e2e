@@ -48,10 +48,12 @@ const LISTING_STEP = "Compute duration-balanced shard matrix";
 const SHARD_STEP = "Run @stable tests (shard ${{ matrix.shard }})";
 const PROVIDER_CONFIG = "tests/helpers/provider-setup/provider-config.ts";
 
-// Normalised at the boundary: `trimStart()` does not strip a trailing `\r`, so on a
-// CRLF checkout the step is never FOUND and every entry-level tolerance below is
-// unreachable — the guard reds on a correct workflow with "has no step named …".
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8").replace(/\r\n/g, "\n");
+// Every read goes through this. `trimStart()` does not strip a trailing `\r`, so on a
+// CRLF checkout the STEP is never found and every tolerance below is unreachable —
+// the guard reds on a correct workflow with "has no step named …". Split out from
+// `read` so the property is assertable without a CRLF fixture on disk.
+const normalise = (text) => text.replace(/\r\n/g, "\n");
+const read = (rel) => normalise(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"));
 
 /**
  * The lines of one named step, and the indent its own keys sit at.
@@ -97,31 +99,18 @@ function stepBody(workflowText, stepName) {
  */
 function envEntries(lines, keyIndent) {
   const open = new RegExp(`^ {${keyIndent}}env:\\s*$`);
-  // `\r?$`: without it a CRLF checkout misses EVERY entry and the guard reds on a
-  // correctly-wired workflow — `.` does not match `\r`.
-  const entry = new RegExp(`^ {${keyIndent + 2}}([A-Za-z_][A-Za-z0-9_]*):(.*?)\\r?$`);
+  const entry = new RegExp(`^ {${keyIndent + 2}}([A-Za-z_][A-Za-z0-9_]*):(.*?)$`);
   const outdent = new RegExp(`^ {0,${keyIndent + 1}}\\S`);
-  // `run: |`, `if: >-`, … — everything under one is DATA, not YAML, and a shell
-  // heredoc inside it can print a line reading `env:`. Measured: with such a line in
-  // the listing step's script and the real block moved below `run:`, the scan locked
-  // onto the heredoc and reported the correctly-wired keys as absent — a false red
-  // naming #1764 on a workflow that does not have it.
-  const blockScalar = new RegExp(`^ {${keyIndent}}[A-Za-z_][A-Za-z0-9_-]*:\\s*[|>][-+0-9]*\\s*$`);
-  const deeper = new RegExp(`^ {${keyIndent + 1},}\\S`);
+  // No block-scalar guard, deliberately. An earlier version carried one and claimed a
+  // measurement for it; both were wrong. A block scalar's body must be indented
+  // DEEPER than its key, and `open` matches at exactly `keyIndent`, so no body line
+  // can ever be read as an `env:` block — removing the guard changed no input, and a
+  // differential run over random fragments found none either. A heredoc printing an
+  // env block is already handled by that arithmetic, which is what the tests pin.
 
   const found = new Map();
   let inside = false;
-  let inBlockScalar = false;
   for (const line of lines) {
-    if (inBlockScalar) {
-      if (line.trim() === "" || deeper.test(line)) continue;
-      inBlockScalar = false; // outdented back out — fall through and read this line
-    }
-    if (blockScalar.test(line)) {
-      inBlockScalar = true;
-      inside = false;
-      continue;
-    }
     if (open.test(line)) {
       inside = true;
       continue;
@@ -253,11 +242,19 @@ function runScript(lines, keyIndent) {
   // red for a false GREEN of the same shape: on an inline `run:` — a plain YAML
   // scalar, where ` #` really is a comment — `run: … --reporter=json # was --list`
   // satisfied the gate on a step that no longer lists anything.
-  const body = [lines[at].slice(lines[at].indexOf("run:") + 4).replace(/\s+#.*$/, "")];
+  // Trailing comments are stripped on EVERY line, inline seed and block body alike.
+  // Stripping only the seed closed a shape this repo does not use while leaving the
+  // one it does: the real listing step is `run: |`, and demoting its command to
+  // `… --reporter=json  # was --list` passed the gate on a step that lists nothing.
+  // Not a YAML comment inside a block scalar — a SHELL one — which is why the body
+  // loop already dropped full-line `#`, and why this file's own script carries
+  // `esac      # non-numeric → default 4` two lines from the command.
+  const decomment = (line) => line.replace(/\s+#.*$/, "");
+  const body = [decomment(lines[at].slice(lines[at].indexOf("run:") + 4))];
   for (const line of lines.slice(at + 1)) {
     if (line.trim() !== "" && outdent.test(line)) break;
     if (/^\s*#/.test(line)) continue;
-    body.push(line);
+    body.push(decomment(line));
   }
   return body.join("\n");
 }
@@ -360,7 +357,10 @@ test("envEntries reads a step's env: and nothing that merely looks like one", ()
     [...entries(`        env:\n          A: 1\n          B: two words  # note\n`)],
     [["A", "1"], ["B", "two words  # note"]],
   );
-  // A block scalar's body is DATA: a heredoc printing an env block declares nothing.
+  // A heredoc printing an env block declares nothing — because a block scalar's body
+  // is indented deeper than its key and `open` matches at the key's own indent. That
+  // arithmetic is the whole mechanism; an earlier version added a guard for this and
+  // claimed a measurement, and removing the guard changed no input.
   assert.deepEqual(
     [...entries(`        run: |\n          cat <<'EOF'\n            env:\n              A: 1\n          EOF\n`)],
     [],
@@ -370,11 +370,33 @@ test("envEntries reads a step's env: and nothing that merely looks like one", ()
     [...entries(`        run: |\n          echo hi\n        env:\n          A: 1\n`)],
     [["A", "1"]],
   );
-  // A comment inside the block is not an entry; the block ends at an OUTDENT, never
-  // at the first line that is not one.
+  // A comment inside the block is not an entry, and the case has to sit at the KEY's
+  // own indent: at the entry indent `entry` already rejects it and `outdent` cannot
+  // match, so the assertion passes with the comment-skip removed and proves nothing.
+  // At indent 8 the skip is the only thing standing between a maintainer's separator
+  // comment and a false red on a correctly-wired workflow.
   assert.deepEqual(
-    [...entries(`        env:\n          # why\n          A: >-\n            folded\n          B: 2\n`)],
+    [...entries(`        env:\n        # --- the collection gate ---\n          A: 1\n`)],
+    [["A", "1"]],
+  );
+  // The block ends at an OUTDENT, never at the first line that is not an entry — a
+  // folded value continues on a deeper line.
+  assert.deepEqual(
+    [...entries(`        env:\n          A: >-\n            folded\n          B: 2\n`)],
     [["A", ">-"], ["B", "2"]],
+  );
+});
+
+test("a CRLF checkout is normalised before anything tries to find a step", () => {
+  // `trimStart()` does not strip `\r`, so without this the STEP is never found and
+  // every tolerance below it is unreachable — the guard reds on a correct workflow
+  // with "has no step named …", which is how the first attempt at this fix looked
+  // like it worked while changing nothing a reader would see.
+  const yaml = STEP(`        env:\n          A: 1\n`);
+  assert.throws(() => stepBody(yaml.replace(/\n/g, "\r\n"), "S"), /has no step named/);
+  assert.deepEqual(
+    [...envEntries(stepBody(normalise(yaml.replace(/\n/g, "\r\n")), "S").lines, 8)],
+    [["A", "1"]],
   );
 });
 
@@ -398,6 +420,15 @@ test("runScript returns the command, inline or block, without its comments", () 
   assert.doesNotMatch(script(`        run: npx playwright test --reporter=json # was --list\n`), /--list/);
   assert.doesNotMatch(script(`        run: |\n          # was --list\n          npx playwright test\n`), /--list/);
   assert.match(script(`        run: |\n          npx playwright test --list\n`), /--list/);
+  // The block form is the one the real listing step uses, and stripping only the
+  // inline seed left this open: a trailing shell comment on a body line laundered
+  // `--list` onto a step that no longer lists.
+  assert.doesNotMatch(
+    script(`        run: |\n          npx playwright test --reporter=json  # was --list\n`),
+    /--list/,
+  );
+  // ...while a `#` that is part of the command survives.
+  assert.match(script(`        run: |\n          npx playwright test --list --grep "a#b"\n`), /--list/);
 });
 
 test("the derivation is anchored at column 0 and refuses to guess", () => {

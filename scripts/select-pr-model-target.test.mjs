@@ -22,7 +22,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { selectPrModelTarget, readProvidersFile } from "./select-pr-model-target.mjs";
+import {
+  readProvidersFile,
+  renderDeclineSummary,
+  selectPrModelTarget,
+} from "./select-pr-model-target.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -273,4 +277,59 @@ test("daily-stable.yml does NOT narrow the collector-stall gate (#1370)", () => 
     /COLLECT_REQUIRED_PROVIDERS:/,
     "daily-stable.yml must leave the collector-stall gate at its default (every env-keyed provider)",
   );
+});
+
+// --- what a DECLINED pin costs (issue #1456) --------------------------------
+// Declining is right (#980) — the tests above pin that. What was missing is that
+// the fallback was announced only as a `::warning::`: the PR paid up to 20-25x per
+// token for the multi-provider run and nothing a reviewer opens said why.
+
+test("a declined pin renders the cost, and a successful one renders nothing", () => {
+  const declined = selectPrModelTarget(
+    [{ provider: "openai", status: "inactive", model: null, error: "credit balance is too low" }],
+    { provider: "openai" },
+  );
+  const summary = renderDeclineSummary(declined);
+  assert.match(summary, /^### /, "the block leads with a heading");
+  assert.match(summary, /could not pin `openai`/);
+  assert.match(summary, /20-25x/, "the cost is the part a reader cannot derive");
+  assert.match(summary, /credit balance is too low/, "and the cause the sweep measured");
+  assert.match(summary, /coverage verdict/, "what was not COVERED is the other question");
+
+  const pinned = selectPrModelTarget(
+    [{ provider: "openai", status: "active", model: "gpt-4o-mini" }],
+    { provider: "openai" },
+  );
+  assert.equal(pinned.ok, true);
+  assert.equal(renderDeclineSummary(pinned), "", "a block on every run is the artifact");
+  assert.equal(renderDeclineSummary(null), "");
+});
+
+test("the CLI writes the block to $GITHUB_STEP_SUMMARY only when it declines", () => {
+  const dir = makeTempDir("pr-model-target-1456-");
+  const providersFile = path.join(dir, "providers.json");
+  const summaryFile = path.join(dir, "summary.md");
+  const envFile = path.join(dir, "env.txt");
+
+  const run = (providers) => {
+    fs.writeFileSync(providersFile, JSON.stringify(providers));
+    fs.writeFileSync(summaryFile, "");
+    execFileSync(process.execPath, [SCRIPT, "--providers-file", providersFile], {
+      encoding: "utf-8",
+      env: { ...process.env, GITHUB_STEP_SUMMARY: summaryFile, GITHUB_ENV: envFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return fs.readFileSync(summaryFile, "utf-8");
+  };
+
+  assert.equal(
+    run([{ provider: "openai", status: "active", model: "gpt-4o-mini" }]),
+    "",
+    "a pinned run must add nothing to the run summary",
+  );
+  const written = run([
+    { provider: "openai", status: "inactive", model: null, error: "credit balance is too low" },
+  ]);
+  assert.match(written, /could not pin `openai`/);
+  assert.match(written, /20-25x/);
 });

@@ -47,9 +47,14 @@ const MCP_JSON_CONFIG = JSON.stringify({
 let createdFlowId: string | undefined;
 
 // Picks the pinned model from the Agent dropdown without opening the Model Providers
-// panel, whose setup enables EVERY model of the provider — each enable runs a live
-// synchronous credential validation that blocks the single-worker backend for ~35s when
-// the provider throttles it (#922/#927). Returns false when the model is not offered.
+// panel at all. That panel's setup used to enable EVERY model of the provider, and each
+// enable runs a live synchronous credential validation inside the request, on the single
+// worker the lanes pin — 0.75 to 3.2 s per model, measured on 1.13.0.dev8, so a
+// whole-panel batch blocked the backend for 28 to 93 s and sometimes died on gunicorn's
+// timeout (#922/#927/#1679). Since #1679 the setup enables one model, so the saving here
+// is smaller than the comment used to claim; skipping the panel entirely is still
+// cheaper, and this path also avoids the post-close picker refresh. Returns false when
+// the model is not offered.
 async function selectPinnedModel(page: Page, model: string): Promise<boolean> {
   await hideInspectorPanel(page);
   // With no provider configured (fresh instance), 1.12 renders a "Setup Provider"
@@ -390,52 +395,59 @@ for (const { label, options, skipReason } of targets) {
         await test.step("Verify agent invoked the echo MCP tool and returned echoed text", async () => {
           await waitForAgentToFinish(page);
 
-          // Try to expand any collapsed "Steps" accordions in the chat history.
-          // chat-message.tsx renders ContentBlockDisplay with hideHeader=false (collapsed
-          // by default — chevron click required); bot-message.tsx renders it with
-          // hideHeader=true (accordion items always visible). The expansion is best-effort:
-          // if items are already visible the click is a no-op; the assertions below cover
-          // both layouts.
+          // Proof #1: the agent actually INVOKED a tool.
           //
-          // The chevron motion.div has class "cursor-pointer" and sits in the same header
-          // row as the "Finished" / "Steps" text — click via DOM scoped to that row only,
-          // to avoid clicking unrelated cursor-pointer chevrons elsewhere in the UI.
-          await page.evaluate(() => {
-            const rows = Array.from(
-              document.querySelectorAll<HTMLElement>(
-                'div.flex.items-center.justify-between',
-              ),
-            ).filter((row) => {
-              const text = row.textContent ?? "";
-              return text.includes("Finished") || text.includes("Steps");
-            });
-            for (const row of rows) {
-              // Tag-agnostic: the accordion trigger is a <div> on older builds
-              // and a <button> on 1.11.0.dev38+ (see NOTE below).
-              const chevron = row.querySelector<HTMLElement>(".cursor-pointer");
-              chevron?.click();
-            }
-          });
-
-          // Proof #1: the Playground rendered a tool-invocation block.
-          // On 1.12 the tool call surfaces as a `tool_<name>` testid inside a
-          // `div-tools_tools_metadata` block (under an "Agent Steps" header) — this
-          // DOM only exists after the agent invoked a tool, so if the LLM
-          // hallucinated a text-only answer the block is absent. (Through ~1.11 the
-          // same signal was a `.cursor-pointer` accordion row reading "Called tool
-          // ECHO"; that text-based selector was stale drift, not a product change —
-          // the tool round-trip is verified healthy via GET /api/v1/monitor/messages,
-          // `content_blocks: ["tool_use|text|text"]`, `tool_use name=echo`. #894.)
-          // Ref: src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx
+          // `tool-status-done` (`chatComponents/ToolCallCard.tsx`) is rendered
+          // per tool CALL — `ContentBlockDisplay` mounts a `ToolCallCard` only
+          // under `if (run.item.type === "tool_use")`. That is the whole point
+          // of this assertion, and the two test ids it replaced could not carry
+          // it (#1793).
+          //
+          // WHAT THIS REPLACED, and why it was a no-op. Proofs #1 and #2 used
+          // to assert `div-tools_tools_metadata` and `tool_echo` with an
+          // unscoped `.last()`, on the premise that "this DOM only exists after
+          // the agent invoked a tool". It does not: both come from
+          // `parameterRenderComponent/components/ToolsComponent/index.tsx` —
+          // `data-testid={"div-" + id}` and a `<Badge>` per entry of
+          // `visibleActions` — i.e. the `tools_metadata` FIELD of the MCPTools
+          // NODE on the canvas, which stays mounted behind the Playground modal
+          // and is matched by an unscoped locator (Playwright visibility is a
+          // bounding box, not "on top"). They enumerate the tools ATTACHED to
+          // the component and exist BEFORE any run. Measured on the sibling
+          // spec at 1.12.1 (#1451/PR #1792): an agent instructed never to call
+          // a tool still rendered both, with no `tool_use` block persisted, and
+          // the equivalent assertions PASSED.
+          //
+          // NO "expand the Steps accordion" step. This Playground renders
+          // through `bot-message.tsx`, which passes `hideHeader={true}` to
+          // `ContentBlockDisplay` — so no "Steps"/"Finished" header exists to
+          // click, and the `{(hideHeader || isExpanded) && …}` gate that hides
+          // GROUPED tool cards behind that chevron is satisfied unconditionally
+          // here. Measured: on a run with a completed tool call, zero rows
+          // matched the old helper's selector while `tool-status-done` was
+          // already present. (The other call site, `chat-message.tsx`, does not
+          // pass `hideHeader` and would need the chevron — which is why the
+          // helper existed at all.)
+          const completedToolSteps = page
+            .getByTestId("tool-status-done")
+            .locator("xpath=..");
           await expect(
-            page.getByTestId("div-tools_tools_metadata").last(),
-            "Playground must show a tool-invocation block — agent answered without invoking any tool",
+            completedToolSteps.first(),
+            "Playground must show a COMPLETED tool step (`tool-status-done`). " +
+              "Either the agent invoked no tool at all, or the call it made " +
+              "errored (`tool-status-error`, which wins over a duration), or it " +
+              "never resolved (`tool-status-running`, no duration attached)",
           ).toBeVisible({ timeout: 120000 });
 
-          // Proof #2: the tool called was 'echo' — the per-tool testid is
-          // `tool_<rawToolName>` (lowercase; the visible label uppercases to "ECHO").
+          // Proof #2: the tool called was 'echo'.
+          //
+          // The status dot's parent is the title cell, whose text is the tool
+          // NAME alone (the duration is a sibling). `formatToolTitle` replaces
+          // `_` with a space and uppercases IN JS — not CSS `text-transform` —
+          // so the row's textContent really is matchable; the pattern is
+          // tolerant of both spellings rather than pinning the display form.
           await expect(
-            page.getByTestId("tool_echo").last(),
+            completedToolSteps.filter({ hasText: /\becho\b/i }).first(),
             "The MCP tool invoked must be 'echo' — agent picked a different tool from the everything server",
           ).toBeVisible({ timeout: 5000 });
 

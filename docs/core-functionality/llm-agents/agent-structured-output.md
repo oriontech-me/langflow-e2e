@@ -137,7 +137,9 @@ persisted output — never on the model's wording.
   untouched by both guards.
   - **#724 fix — the poll must check the SELECTED value, not the serialized
     field.** `template.model` embeds an `options` list of every enabled model
-    (~59 on a multi-provider nightly), so the original substring check over
+    (~59 on a multi-provider nightly when the setups enabled whole panels; ~5-6
+    per provider since #1679, which changes the size and none of the reasoning),
+    so the original substring check over
     the stringified field matched `expectedModel` inside `options` regardless
     of what was actually selected — the poll returned "ready" on the first
     GET even before the autosave, and the PATCH clobbered the selection with

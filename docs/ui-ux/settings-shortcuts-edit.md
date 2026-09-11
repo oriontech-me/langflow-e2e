@@ -12,9 +12,13 @@ Key implementation detail: the shortcut store (`useShortcutsStore`) writes to `l
 
 ## Tags
 
-`@release` `@regression` `@settings` `@ui-ux`
+`@stable` `@release` `@regression` `@settings` `@ui-ux`
 
-<!-- @stable will be added in a follow-up PR after the full validation pipeline passes against a current Langflow nightly. -->
+`@stable` was added by #1788, on the evidence the inherited-spec triage table
+produced (`docs/triage/inherited-spec-triage.md`): 3/3 green over nine
+`manual.yml` dispatches at `retries=0`, plus the force-fail run and the
+id-scoped cleanup that promotion also requires. No lane selector is present, so
+the tag cannot silence the spec (#1010).
 
 ## Validation criterion
 
@@ -32,6 +36,24 @@ Key implementation detail: the shortcut store (`useShortcutsStore`) writes to `l
 - `src/frontend/src/stores/shortcuts.ts` — Zustand store persisting to `localStorage["langflow-shortcuts"]`.
 - `src/frontend/src/components/core/appHeaderComponent/components/AccountMenu/index.tsx` — `user-profile-settings` testid (entry point to Settings).
 
+## Flow cleanup
+
+The test creates flows on two paths and used to delete neither. Measured on
+2026-09-10 against a purged instance (0 user flows, default project empty), one
+run left **3** behind: `New Flow` and `Basic Prompting` — created by
+`awaitBootstrapTest` → `addFlowToTestOnEmptyLangflow` when the default project is
+empty — plus `New Flow (2)`, the blank flow the test itself opens to reach the
+canvas.
+
+`trackCreatedFlows(page)` now captures every `POST /api/v1/flows/` → `201` the
+page performs and `afterEach` deletes exactly those ids. The pre-existing
+`afterEach` still restores the shortcut table (UI **Restore**, with a
+`localStorage` fallback); the two teardowns are independent and both run.
+
+Reading this off a source grep does not work: the two bootstrap flows are created
+by a helper, so a file that never spells `deleteFlow` and a file that leaks are not
+the same set. The audit is purge → run one spec → diff the flow list.
+
 ## Last validated
 
-1.11.x
+1.13.x (nightly `1.13.0.dev8`)
