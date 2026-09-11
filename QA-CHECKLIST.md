@@ -1456,17 +1456,17 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 100 | 93 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
-| `core-components/` — Core Components | 92 | 90 | 1 | 0 | 1 |
+| `core-components/` — Core Components | 92 | 91 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
-| `core-functionality/project-management/` | 14 | 10 | 4 | 0 | 0 |
+| `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
-| `flow-functionality/` | 33 | 28 | 0 | 1 | 4 |
+| `flow-functionality/` | 33 | 29 | 0 | 0 | 4 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
@@ -1477,7 +1477,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **658** | **537 (82%)** | **37 (6%)** | **19 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **659** | **541 (82%)** | **35 (5%)** | **18 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1493,7 +1493,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 619 `test()` calls carrying the `@stable` tag, distributed across 242 spec
+> 627 `test()` calls carrying the `@stable` tag, distributed across 246 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1987,6 +1987,8 @@
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 - [x] navigating between two folders scopes the listing to each folder's flows → `flow-navigation-between-folders.spec.ts`
+- [x] flows created via API appear on the home listing → `flow-navigation-folders.spec.ts`
+- [x] searching flows by name filters results correctly → `flow-navigation-folders.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
@@ -2036,7 +2038,13 @@
 - [x] should show correct lock/unlock icon in settings based on state → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] a frozen component serves its cached output instead of recomputing → `freeze-and-state.spec.ts`
+- [x] freezing a component also freezes every component upstream of it → `freeze-and-state.spec.ts`
+- [x] unfreezing releases the whole path and the component recomputes → `freeze-and-state.spec.ts`
 - [x] user should not be able to hide connected inputs → `general-bugs-hidden-input-edges.spec.ts`
+- [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
+- [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
+- [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
@@ -2174,7 +2182,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 1 | 2 |
 | `core-components/` — Component Config | 1 | 0 |
-| `core-components/` — Core Components | 1 | 1 |
+| `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 2 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
@@ -2194,6 +2202,6 @@
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 0 | 4 |
-| `core-functionality/project-management/` | 4 | 0 |
+| `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 28 |
 | `ui-ux/` — Settings | 0 | 0 |
