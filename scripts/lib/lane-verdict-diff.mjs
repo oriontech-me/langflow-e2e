@@ -567,43 +567,56 @@ export function compareRuns({
   };
   const ciListing = listingOf(ci);
   const vmListing = listingOf(vm);
-  const lostIn = (l) => (Array.isArray(l?.missing) ? l.missing : []);
-  const ciLost = lostIn(ciListing);
-  const vmLost = lostIn(vmListing);
-  if (ciListing && vmListing) {
-    if (ciLost.length || vmLost.length) {
-      listingMismatch = { ci: ciLost, vm: vmLost };
-      warnings.push(
-        `a lane's MATRIX WAS MISSING SPEC FILE(S) that declare an @stable test - ` +
-          `${[
-            ciLost.length ? `Actions lost ${ciLost.join(", ")}` : null,
-            vmLost.length ? `the VM lost ${vmLost.join(", ")}` : null,
-          ]
-            .filter(Boolean)
-            .join("; ")}. ` +
-          `Those files entered no shard, so they are absent from that lane's totals outright - no skip, ` +
-          `no error, nothing to subtract them from (#1764).`,
-      );
-    }
-    // A lane that could not CHECK is not a lane that found nothing (#1012).
-    const unverified = [!ciListing.verified ? "Actions" : null, !vmListing.verified ? "the VM" : null].filter(Boolean);
-    if (unverified.length) {
-      warnings.push(
-        `listing-completeness UNVERIFIED on ${unverified.join(" and ")}: the check could not be made, so whether a ` +
-          `spec file left that lane's matrix is unknown - which is not the same as no.`,
-      );
-    }
-  } else {
-    const missingSide =
-      !ciListing && !vmListing
-        ? "neither row carries"
-        : !ciListing
-          ? "the Actions row does not carry"
-          : "the VM row does not carry";
+  const ciLost = ciListing ? ciListing.missing : [];
+  const vmLost = vmListing ? vmListing.missing : [];
+
+  // A KNOWN LOSS IS REPORTED ON ITS OWN, never gated on the other lane also having a
+  // block. The first version required both, so a lane that named a lost file next to a
+  // row predating the field (rollout skew — guaranteed for at least one day) had the
+  // finding dropped: the render printed `MATRIX MISSING 1 declared spec file(s): …`
+  // and the count-difference line ten lines below still said "they may not have run
+  // the same suite revision", contradicting it. Parity-unverified and a named loss are
+  // different statements and both can be true.
+  if (ciLost.length || vmLost.length) {
+    listingMismatch = { ci: ciLost, vm: vmLost };
     warnings.push(
-      `listing-completeness parity UNVERIFIED: ${missingSide} a listing_completeness block. A spec file can leave a ` +
-        `lane's shard matrix with no skip, no error and no row to be missing from (#1764), and a row written before ` +
-        `that field existed cannot say whether it did.`,
+      `a lane's MATRIX WAS MISSING SPEC FILE(S) that declare an @stable test - ` +
+        `${[
+          ciLost.length ? `Actions lost ${ciLost.join(", ")}` : null,
+          vmLost.length ? `the VM lost ${vmLost.join(", ")}` : null,
+        ]
+          .filter(Boolean)
+          .join("; ")}. ` +
+        `Those files entered no shard, so they are absent from that lane's totals outright - no skip, ` +
+        `no error, nothing to subtract them from (#1764).`,
+    );
+  }
+  // A lane that could not CHECK is not a lane that found nothing (#1012).
+  const unverified = [
+    ciListing && !ciListing.verified ? "Actions" : null,
+    vmListing && !vmListing.verified ? "the VM" : null,
+  ].filter(Boolean);
+  if (unverified.length) {
+    warnings.push(
+      `listing-completeness UNVERIFIED on ${unverified.join(" and ")}: the check could not be made, so whether a ` +
+        `spec file left that lane's matrix is unknown - which is not the same as no.`,
+    );
+  }
+  if (!ciListing || !vmListing) {
+    // ABSENT and MALFORMED are different diagnoses and the first version gave both the
+    // absent one — telling a reader that a row "written before that field existed"
+    // could not say, about a row that carries a corrupt block and can be repaired.
+    const describe = (label, row, parsed) =>
+      parsed
+        ? null
+        : row?.listing_completeness
+          ? `${label} carries an UNREADABLE listing_completeness block`
+          : `${label} carries no listing_completeness block`;
+    const sides = [describe("the Actions row", ci, ciListing), describe("the VM row", vm, vmListing)].filter(Boolean);
+    warnings.push(
+      `listing-completeness parity UNVERIFIED: ${sides.join("; ")}. A spec file can leave a lane's shard matrix with ` +
+        `no skip, no error and no row to be missing from (#1764), and a row that cannot answer for that lane - ` +
+        `written before the field existed, or written wrong - leaves the question open rather than answered "no".`,
     );
   }
 

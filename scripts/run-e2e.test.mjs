@@ -55,7 +55,7 @@ function verdict({
   listingVerified = "true",
   listingMissing = "[]",
   listingUnexpected = "[]",
-  gatePlan = "complete",
+  gatePlan = "",
 }) {
   const r = sourced(
     [
@@ -65,7 +65,8 @@ function verdict({
       // and for a sharper one: it is read FAIL-CLOSED, so leaving it unset makes every
       // case here fail for a reason that is not the case's. It has its own tests.
       `LISTING_VERIFIED=${listingVerified} LISTING_MISSING='${listingMissing}' LISTING_UNEXPECTED='${listingUnexpected}'`,
-      `COLLECTION_GATE_PLAN=${gatePlan} COLLECTION_GATE_KEYS_ABSENT=GOOGLE_API_KEY`,
+      // The gate plan is deliberately NOT read by phase_verdict — see the test below.
+      `COLLECTION_GATE_PLAN='${gatePlan}' COLLECTION_GATE_KEYS_ABSENT=GOOGLE_API_KEY`,
       // The version dimension is neutralised on purpose. With enforcement on by
       // default, leaving this unset makes it "unchecked" — fatal — so every case
       // below would fail for the version reason instead of its own, and the ones
@@ -145,33 +146,48 @@ test("a spec file absent from the listing fails the run and is NAMED", () => {
   assert.match(r.stderr, /Not skipped, not red — absent/);
 });
 
-test("a run that ACCEPTED a narrower listing is not failed for the narrowing", () => {
-  // REQUIRE_PROVIDER_KEYS=0 tells the operator, in so many words, to "accept the
-  // narrower comparison". A spec generated entirely from an absent key is the
-  // CONSEQUENCE of that acceptance — measured: with all three keys blank this clone
-  // lists 246 of 247 and the missing file is the one those keys generate. Failing
-  // there reddens a state the operator opted into, on a lane whose own escape hatch
-  // promises the opposite.
-  const r = verdict({ gatePlan: "narrow", listingMissing: '["a/lost.spec.ts"]' });
-  assert.equal(r.code, 0);
-  // Reported, never silent: the file is still named and the trade is stated.
-  assert.match(r.stderr, /ABSENT from this run's listing/);
-  assert.match(r.stderr, /a\/lost\.spec\.ts/);
-  assert.match(r.stderr, /ACCEPTED a narrower listing/);
-  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1/);
-});
-
-test("an UNVERIFIABLE listing fails on every plan, narrow included", () => {
-  // Nothing opted into "the check could not be made", and REQUIRE_PROVIDER_KEYS says
-  // nothing about it.
-  for (const gatePlan of ["complete", "narrow"]) {
-    const r = verdict({ gatePlan, listingVerified: "false" });
-    assert.equal(r.code, 1, gatePlan);
-    assert.match(r.stderr, /could not verify that its listing contained/);
+test("the listing verdict does NOT depend on the collection-gate plan", () => {
+  // The first fix for this downgraded a missing file to a report on the `narrow`
+  // plan, reasoning that REQUIRE_PROVIDER_KEYS=0 invites the operator to "accept the
+  // narrower comparison". Measured, that killed the mechanism on the only lane it was
+  // added for: the flag DEFAULTS to 0 and this VM has no GOOGLE_API_KEY on purpose,
+  // so `narrow` is not an opt-in here — it is the lane's permanent state, and the
+  // downgrade would have covered every cause, including the ones #1812 exists to
+  // catch. It also had no motive: only GOOGLE absent loses ZERO files (247/247); it
+  // takes all three blank to lose one.
+  for (const gatePlan of ["", "complete", "narrow", "refuse", "banana"]) {
+    const missing = verdict({ gatePlan, listingMissing: '["a/lost.spec.ts"]' });
+    assert.equal(missing.code, 1, `missing under plan '${gatePlan}'`);
+    assert.match(missing.stderr, /ABSENT from this run's listing/);
+    assert.match(missing.stderr, /a\/lost\.spec\.ts/);
+    const unverified = verdict({ gatePlan, listingVerified: "false" });
+    assert.equal(unverified.code, 1, `unverified under plan '${gatePlan}'`);
   }
 });
 
-test("an unverifiable listing fails the run — UNKNOWN is not no", () => {
+test("a narrow gate declares what it costs, and still produces a run", () => {
+  // Declaring rather than refusing is the default ON PURPOSE: this lane has no
+  // GOOGLE_API_KEY (#1764), and a refusing default would fail every run at 08:00 over
+  // a state that is known, accepted, and not fixable from inside the run.
+  const r = prepWithGate(NARROW);
+  assert.match(r.stderr, /NARROWER suite.*GOOGLE_API_KEY absent/s);
+  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1 refuses up front instead/);
+  assert.match(r.stderr, /STUB_NPX playwright test --grep @stable --list/);
+});
+
+test("the narrow warning states its consequence instead of promising a passing run", () => {
+  // The wording matters because it is the only place the trade is offered. The first
+  // attempt at #1818 read this warning as a licence and downgraded the
+  // listing-completeness failure on this plan — which, since the flag defaults to 0
+  // and this lane is permanently `narrow`, killed the mechanism on the only lane it
+  // was added for. What the narrowing buys is a comparison whose COUNTS are not
+  // comparable; it is not a licence to report the lane green over specs it did not
+  // run (#1010/#1012, one level down).
+  const r = prepWithGate(NARROW);
+  assert.match(r.stderr, /NAMES it and FAILS the run/);
+  assert.match(r.stderr, /Set the key, or/);
+  assert.doesNotMatch(r.stderr, /without failing the run/);
+});test("an unverifiable listing fails the run — UNKNOWN is not no", () => {
   // FAIL-CLOSED, the same reading the Actions gate uses, and the reason `phase_prep`
   // can afford to degrade instead of dying on a broken derivation.
   for (const listingVerified of ["", "false", "yes", "TRUE"]) {
@@ -957,8 +973,22 @@ test("a narrow gate declares what it costs, and still produces a run", () => {
   // a state that is known, accepted, and not fixable from inside the run.
   const r = prepWithGate(NARROW);
   assert.match(r.stderr, /NARROWER suite.*GOOGLE_API_KEY absent/s);
-  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1 refuses instead/);
+  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1 refuses up front instead/);
   assert.match(r.stderr, /STUB_NPX playwright test --grep @stable --list/);
+});
+
+test("the narrow warning states its consequence instead of promising a passing run", () => {
+  // The wording matters because it is the only place the trade is offered. The first
+  // attempt at #1818 read this warning as a licence and downgraded the
+  // listing-completeness failure on this plan — which, since the flag defaults to 0
+  // and this lane is permanently `narrow`, killed the mechanism on the only lane it
+  // was added for. What the narrowing buys is a comparison whose COUNTS are not
+  // comparable; it is not a licence to report the lane green over specs it did not
+  // run (#1010/#1012, one level down).
+  const r = prepWithGate(NARROW);
+  assert.match(r.stderr, /NAMES it and FAILS the run/);
+  assert.match(r.stderr, /Set the key, or/);
+  assert.doesNotMatch(r.stderr, /without failing the run/);
 });
 
 test("under REQUIRE_PROVIDER_KEYS the run refuses, and never lists at all", () => {

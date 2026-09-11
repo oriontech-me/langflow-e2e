@@ -1159,9 +1159,13 @@ test("a lane that could not CHECK is not a lane that found nothing", () => {
 
 test("a row written before the field existed reports parity as UNVERIFIED", () => {
   for (const [ci, vm, expected] of [
-    [row("daily-stable"), row("vm-daily"), /neither row carries/],
-    [row("daily-stable"), row("vm-daily", listing(true)), /the Actions row does not carry/],
-    [row("daily-stable", listing(true)), row("vm-daily"), /the VM row does not carry/],
+    [
+      row("daily-stable"),
+      row("vm-daily"),
+      /the Actions row carries no listing_completeness block; the VM row carries no listing_completeness block/,
+    ],
+    [row("daily-stable"), row("vm-daily", listing(true)), /the Actions row carries no listing_completeness block/],
+    [row("daily-stable", listing(true)), row("vm-daily"), /the VM row carries no listing_completeness block/],
   ]) {
     const w = compare(ci, vm).warnings.join("\n");
     assert.match(w, /listing-completeness parity UNVERIFIED/);
@@ -1228,4 +1232,47 @@ test("a row with a malformed listing block is treated as absent, never as clean"
     );
     assert.doesNotMatch(renderReport(result), /listing complete[\s\S]*listing complete/);
   }
+});
+
+test("a known loss is reported even when the OTHER lane has no block", () => {
+  // Rollout skew is guaranteed for at least one day, and the first version gated the
+  // finding on both rows having a block: the render printed `MATRIX MISSING 1 …` while
+  // the count-difference line ten lines below still said "they may not have run the
+  // same suite revision", contradicting it. Parity-unverified and a named loss are
+  // different statements and both can be true.
+  const result = compare(
+    row("daily-stable", {
+      listing_completeness: { verified: true, missing: ["a/lost.spec.ts"] },
+      totals: { passed: 9, failed: 0, flaky: 0, skipped: 2 },
+    }),
+    row("vm-daily"),
+  );
+  const w = result.warnings.join("\n");
+  assert.match(w, /MATRIX WAS MISSING SPEC FILE\(S\)/);
+  assert.match(w, /Actions lost a\/lost\.spec\.ts/);
+  assert.match(w, /parity UNVERIFIED/);
+  assert.deepEqual(result.listingMismatch, { ci: ["a/lost.spec.ts"], vm: [] });
+  // And the count line must use the sharper answer, not the guess it contradicts.
+  const delta = result.warnings.find((x) => x.includes("accounted for different test counts"));
+  assert.ok(delta);
+  assert.match(delta, /missing the spec file\(s\) named above/);
+});
+
+test("an unreadable block is named as unreadable, not as one that predates the field", () => {
+  // Absent and malformed are different diagnoses: one is history, the other is a bug
+  // somebody can fix. Telling a reader the row "was written before that field existed"
+  // about a corrupt block sends triage to the wrong place.
+  const w = compare(
+    row("daily-stable", { listing_completeness: { verified: true, missing: [] } }),
+    row("vm-daily", { listing_completeness: { verified: true, missing: "a/lost.spec.ts" } }),
+  ).warnings.join("\n");
+  assert.match(w, /the VM row carries an UNREADABLE listing_completeness block/);
+  assert.doesNotMatch(w, /the VM row carries no listing_completeness block/);
+});
+
+test("an UNVERIFIED lane is named even when the other lane has no block at all", () => {
+  const w = compare(row("daily-stable", { listing_completeness: { verified: false, missing: [] } }), row("vm-daily"))
+    .warnings.join("\n");
+  assert.match(w, /listing-completeness UNVERIFIED on Actions/);
+  assert.match(w, /parity UNVERIFIED/);
 });
