@@ -1,6 +1,6 @@
 # Freeze and State — freeze component, freeze path, unfreeze
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev9`)
 
 ---
 
@@ -40,11 +40,13 @@ The last row is the trap that made the inherited spec a false green (see **Notes
 
 ## Tags *(required)*
 
-`@release` `@regression` `@components` `@workspace` `@ui-ux`
+`@stable` `@release` `@regression` `@components` `@workspace` `@ui-ux`
 
 `@components` / `@workspace` (cross-cutting — canvas component state) · `@ui-ux`
-(functional area). `@stable` is added only after the team validation run; the three
-inherited specs this replaces carried **no** functional tag at all.
+(functional area). `@stable` since #1791, which resolved the one condition design §3
+still held against it — the third test's 2/3 measurement — by root-causing it to the
+spec rather than to the product (see *The write this assertion depends on* below).
+The three inherited specs this replaces carried **no** functional tag at all.
 
 ---
 
@@ -153,6 +155,44 @@ inherited specs this replaces carried **no** functional tag at all.
 ---
 
 ## Notes *(optional)*
+
+### The write this assertion depends on, awaited instead of guessed at
+
+The triage table (#1784) measured the third test **2/3 green**, failing its own
+message — *"unfreezing downstream should release the whole path"* — on a
+deep-equality diff. The issue that batched it (#1791) read that as a behavioural
+claim about freeze propagation and offered PARK-with-a-ticket as the likely
+outcome. The artifact says otherwise, and the direction of the refutation is the
+useful part: the diff is **2 elements**, both nodes still `true` on the server,
+while the assertion **immediately above it** — `icon-Snowflake` reaching
+`toHaveCount(0)` — had already passed. A product that released only the clicked
+node would have produced a **1**-element diff with the canvas agreeing. What the
+evidence describes is the canvas released and the server not yet written.
+
+Measured on `1.13.0.dev9`: a toggle flips the canvas indicator in **~110 ms**; the
+`PATCH /api/v1/flows/{id}` that persists it is issued **~2.1 s** later and answers
+`200` in ~40 ms; the server then reads the new flags. A 19× gap, and the spec was
+polling the server against a **fixed 20 s budget** that waited for nothing in
+particular. The mechanism was proven by forcing the race rather than by re-running:
+holding **only** the unfreeze PATCH for 25 s reproduces the CI artifact exactly —
+same message, same `- Expected - 2 / + Received + 2` shape, both nodes `true` — and
+the same request, once released, writes `{false, false}`. That last clause is what
+rules the product out. Re-running proves nothing here: the spec is **5/5 green** on
+a workstation at `--workers=1`, while the failing lane ran 2 workers.
+
+`awaitFrozenWrite()` therefore waits for the PATCH **whose payload carries the
+expected flags**, armed before the click and awaited before the server read. Two
+things it deliberately is not. It is not a raised timeout: a write that never
+happens now fails at the barrier naming the PATCH that never came, instead of
+surfacing 20 s later as a diff that blames freeze propagation — so the test gets
+*stricter*, not more tolerant. And it matches on the payload rather than on any
+PATCH to this flow, because the third test rewrites the prompt template a moment
+earlier and that edit's own debounced write would otherwise satisfy the wait.
+
+No `Backend Error` appears in the red CI run, so LE-2020's
+`PATCH /flows/{id}` → `500 database is locked` under contention is **excluded** as
+the reason the write was late; what made it late on that runner is not directly
+measured, and the barrier does not depend on knowing.
 
 ### Product observation — an untranslated i18n key in the output panel
 

@@ -2,12 +2,38 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
+
+// `skipModal: true` on every bootstrap here is load-bearing, not a tidy-up. The
+// default branch opens the templates modal by clicking "New Flow", which on this
+// build NAVIGATES INTO a freshly created flow instead of returning home — so the
+// page ends up in the editor, `mainpage_title` can never appear, and both tests
+// died on a 30 s timeout naming a home-page testid (#1791, measured 2/2 locally;
+// the captured snapshot reads `Starter Project / New Flow (1)` over a
+// `Flow canvas`). Its retry loop also creates one flow per attempt, which is the
+// other half of the same defect — see the tracker below. The sibling
+// `flow-navigation-between-folders.spec.ts` already bootstraps this way.
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(async ({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+// The API setup issues its creates through `request.post`, a separate
+// APIRequestContext, so this page-side capture cannot double-count them — the two
+// sets are disjoint by construction. Never a global sweep: the suite runs
+// `fullyParallel` and deleting a flow this run did not create would wipe a
+// concurrent worker's.
+test.afterEach(async ({ request }) => {
+  await flows.cleanup(request);
+  flows.dispose();
+});
 
 test(
   "flows created via API appear on the home listing",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
-    await awaitBootstrapTest(page);
+    await awaitBootstrapTest(page, { skipModal: true });
 
     const authToken = await getAuthToken(request);
     const flowName = `nav-test-flow-${Date.now()}`;
@@ -44,9 +70,9 @@ test(
 
 test(
   "searching flows by name filters results correctly",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
-    await awaitBootstrapTest(page);
+    await awaitBootstrapTest(page, { skipModal: true });
 
     const authToken = await getAuthToken(request);
 

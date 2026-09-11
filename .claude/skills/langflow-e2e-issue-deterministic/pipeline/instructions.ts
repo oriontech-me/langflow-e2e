@@ -69,7 +69,8 @@ export function instructionFor(s: PipelineState): string {
         `Decide the verdict with evidence per the langflow-e2e-issues taxonomy: test-defect | langflow-regression | product-changed | transient-saturation | cross-worker-wiper | stale-confirmed-bug.`,
         `ONE VERDICT PER SYMPTOM ROW: an issue's table can list failures with different causes (#1060's second row was another issue's auto_login timeout). Give each row its own entry; a row that belongs elsewhere carries ownedBy:"#NNNN" and must be referenced in the PR body.`,
         `Any verdict other than test-defect: STOP and present evidence to the user; their decision goes in evidence.decision.`,
-        done('DEBUG', '{"verdict":"<verdict>","summary":"<root cause>","symptoms":[{"row":"<spec.ts:line>","verdict":"<verdict>","ownedBy":"#NNNN (only if another issue owns it)"}],"decision":"<required unless test-defect>","mechanismProof":"<only if the baseline never reproduced>"}'),
+        `A langflow-regression verdict OWES REGRESSIONS.md an entry — mandatory, not a follow-up. Ticket filed ⇒ a "## Ledger" row whose Upstream cell names it; not filed yet ⇒ a "## Candidates" entry naming #${n}. Record the ticket in evidence.upstreamTicket ("LE-####" or "langflow#NNNNN") as soon as it exists; the PR gate verifies the entry against it.`,
+        done('DEBUG', '{"verdict":"<verdict>","summary":"<root cause>","symptoms":[{"row":"<spec.ts:line>","verdict":"<verdict>","ownedBy":"#NNNN (only if another issue owns it)"}],"decision":"<required unless test-defect>","mechanismProof":"<only if the baseline never reproduced>","upstreamTicket":"<LE-#### | langflow#NNNNN — only under a langflow-regression verdict, once filed>"}'),
       ].join('\n')
 
     case 'IMPLEMENT':
@@ -99,9 +100,13 @@ export function instructionFor(s: PipelineState): string {
       ].join('\n')
 
     case 'REPORT': {
+      const verdict = (s.steps.DEBUG?.evidence as { verdict?: string } | undefined)?.verdict
       const lines = [
         `Write the PT-BR report: (1) what the issue is about; (2) what was done, with real output and resolved nightly; (3) the REQUIRED per-test table (skeleton in status — fill "O que faz" / "O que valida" with concrete observables) + one FF: line per mutation; (4) end with the manual --debug run command.`,
       ]
+      if (verdict === 'langflow-regression') {
+        lines.push(`langflow-regression: REGRESSIONS.md names THIS phase as an owner of the mandatory row — write it now, not after the PR. Ticket filed ⇒ a "## Ledger" row (newest first, exactly 9 columns, no "|" inside any cell, "Area / Test" as "area · spec-file", Status Open|Fixed), then "npm run regressions:summary" and commit the table WITH the generated block. Not filed yet ⇒ a "## Candidates" entry naming #${n} (not counted in the indicator, promoted the moment a ticket exists). The PR gate refuses to close without one.`)
+      }
       if (s.type === 'file-watcher') {
         lines.push(`File-watcher: no drift ⇒ close the issue with an evidence comment (the pipeline fast-exits to DONE, no PR); drift fixed ⇒ continue to PR authorization as usual.`)
       }
@@ -121,9 +126,10 @@ export function instructionFor(s: PipelineState): string {
         `Authorized. Follow langflow-e2e/references/pr-guide.md: branch type/issue-NNN-desc, Conventional-Commit title with (#${n}), body with "Closes #${n}" + the correct template + the REAL Validation block.`,
         `The complete gate fetches the REAL PR body via "gh pr view" and verifies branch name, Closes line, and roadmap label mechanically against it.`,
         `It also checks BRANCH PURITY (git diff origin/main..HEAD must carry only the files this pipeline touched — rebasing onto a local main that another session committed to absorbs their work) and the CI verdict.`,
+        `Under a langflow-regression verdict it additionally requires the REGRESSIONS.md entry: a Ledger row whose Upstream cell names the ticket, or a Candidates entry naming #${n} when none is filed. The ticket is read from evidence.upstreamTicket here, falling back to what DEBUG recorded — pass it here if it was filed after that phase closed.`,
         `Wait for the checks. All green → ciVerdict "green". Red for a cause outside this PR → comment on the PR naming the cause, the evidence that it is ambient and why merging is still right, then pass ciVerdict "ambient-red" with that comment's URL.`,
         `Post-merge: verify the issue actually closed (edited-Fixes GitHub quirk) and delete the branch.`,
-        done('PR', '{"prUrl":"<url>","ciVerdict":"green|ambient-red","justificationCommentUrl":"<required when ambient-red>"}'),
+        done('PR', '{"prUrl":"<url>","ciVerdict":"green|ambient-red","justificationCommentUrl":"<required when ambient-red>","upstreamTicket":"<LE-#### | langflow#NNNNN — only if the ticket was filed after DEBUG closed>"}'),
       ].join('\n')
 
     case 'DISPATCH':

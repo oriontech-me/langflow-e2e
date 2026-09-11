@@ -618,6 +618,20 @@ jobs:
       # `Collect models` above already makes.
       - name: Rotate the lane to this weekday's provider
         continue-on-error: true
+        env:
+          # Which FORM of the rotation note this shard writes (#1801). The step runs in
+          # every matrix job, so the full block rendered 4-10 identical times down the
+          # run page — the #1252 artifact it exists to avoid. Shard 1 writes the table;
+          # every other shard writes a one-line note carrying the provider, the gap and
+          # the cause.
+          #
+          # NOT a suppression, and that distinction is the whole point: the first shape
+          # of this fix wrote nothing on the other shards, which made the only rendered
+          # surface depend on shard 1 reaching this step — and the steps before it carry
+          # no `continue-on-error`, on a lane whose own comments record shards dying
+          # exactly there (#1011). A drained key plus a shard-1 abort would then have
+          # rendered the displacement NOWHERE, on the day the cost statement matters.
+          ROTATION_SUMMARY: ${{ matrix.shard == 1 && '1' || '0' }}
         run: node scripts/select-daily-model-target.mjs
 
       # In-run token consumption recorder (#1197). Langflow computes what each flow
@@ -1696,9 +1710,13 @@ jobs:
           LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
           # ZERO VERDICTS (#1456): the report is complete and every result in it is a
           # provider-health skip. It gets its own shape because it is neither `empty`
-          # (the shards worked) nor a per-test day (no spec ran), and pointing triage
-          # at the merge step or at the specs would both be wrong — the repair is the
-          # provider account.
+          # (the shards worked) nor a per-test day (no spec ran), so pointing triage
+          # at the merge step or at the specs would both be wrong. What the shape must
+          # NOT do either is name the repair (#1801): the same `inactive` record is
+          # written when a key was never imported as a Langflow global variable
+          # (#1058), where the fix is the import and not the account — so the body
+          # quotes the reason the sweep measured and leaves the diagnosis to the
+          # reader.
           COVERAGE_VERDICT: ${{ steps.coverage.outputs.verdict }}
           COVERAGE_HEADLINE: ${{ steps.coverage.outputs.headline }}
           COVERAGE_PROVIDERS: ${{ steps.coverage.outputs.providers }}
@@ -1824,7 +1842,17 @@ jobs:
             # `uncovered` verdict, so it is never false when this branch is taken. It
             # stays as documentation of the policy the message belongs to, not as the
             # thing that makes the sentence honest; the wording is what does that.
-            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider could not serve a call: $COVERAGE_HEADLINE. No spec is implicated; there is simply no evidence in this run (#1456)."
+            # "was recorded inactive", not "could not serve a call" (#1801). The same
+            # `inactive` record is written by `Collect models` on a drained key AND by
+            # globalSetup's credential degradation when a key was never imported as a
+            # Langflow global variable (#1058) — and on the second the repair is the
+            # import, not the account. So this quotes the reason the sweep measured and
+            # leaves the diagnosis to the reader: it names the two repairs the record
+            # cannot choose between, rather than picking one. The completeness claim
+            # #1800 removed from this line stays removed — that was a different fix,
+            # for a different reason, and re-adding it here would contradict the
+            # `partial` / incomplete messages printed above.
+            echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider it needed was RECORDED INACTIVE: $COVERAGE_HEADLINE. No spec is implicated; there is simply no evidence in this run. Repair whatever that reason names — a drained account, or a Collect models that never imported the key as a Langflow global variable (#1058) — then re-run the day (#1456/#1801)."
           elif [ "$COVERAGE_FAIL" != "false" ]; then
             echo "::error::The coverage guard reported '${COVERAGE_FAIL:-unset}' for fail_recommended (verdict '${COVERAGE_VERDICT:-unset}') — UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — the run covered the providers it was supposed to cover' step (#1456)."
           fi

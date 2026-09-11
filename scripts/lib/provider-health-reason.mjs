@@ -30,9 +30,20 @@
 // `"<KEY> required to run this test"` (an env key absent altogether). That is a
 // different failure — the key is missing, not dead — and on both lanes wired to the
 // verdict the keys come from repo secrets, so its meaning there is a workflow
-// misconfiguration, which `globalSetup`'s credential pre-flight (#884) already
-// hard-fails on and #1764's collection gate already guards. Recognising it here
-// would widen the verdict's trigger to a case that cannot reach a green run.
+// misconfiguration, which #1764's collection gate guards from the other side.
+//
+// What this parser DOES match, and what the first version of this comment got wrong
+// (#1801): a provider `globalSetup` degraded because its key was never imported as a
+// Langflow global variable. That path writes the same `inactive` record through
+// `degradeProviders()` (#1058), so it is formatted by the same function and parsed
+// here as a provider-health skip. The classification is right — coverage is genuinely
+// zero and the skip is genuinely provider health — but it is NOT a dead account, and
+// this comment used to claim the case could not arrive at all, on the strength of a
+// pre-flight that "already hard-fails". It does not: `tests/globalSetup.ts` stopped
+// throwing in CI precisely so one provider could not kill the shard (#980/#1058).
+// Consumers must therefore QUOTE the reason the sweep recorded rather than assert a
+// cause from the fact of a skip — which is what `lane-coverage-verdict.mjs` and
+// `create-failure-issue.mjs` now do.
 
 /** What an `inactive` record with no `error` reads as. Kept identical to the string
  *  `provider-health.ts` has always emitted, so no skip line changes wording. */

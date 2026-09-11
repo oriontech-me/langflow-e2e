@@ -46,7 +46,7 @@ test.afterEach(async ({ request }) => {
 test(
   "should copy code from playground modal",
   {
-    tag: ["@release"],
+    tag: ["@stable", "@release", "@playground"],
   },
   async ({ page }) => {
     trackCreatedFlows(page);
@@ -167,19 +167,24 @@ test(
   },
 );
 
-// TODO: review and re-enable this test.
-// This test had assertions that executed no actual checks (no-op).
-// After fixing them, the test started failing — indicating that the current
-// Langflow behavior may not match what was originally expected.
-//
-// To review:
-// 1. Run the test manually with `--debug` and observe the real state of the elements
-// 2. Check if the playground-btn-flow button should be disabled with an empty flow
-// 3. Fix the assertions to reflect the correct behavior and remove the skip
-test.skip(
+// The quarantine's TODO guessed that "current Langflow behavior may not match what
+// was originally expected". Measured on 1.13.0.dev9, the product is fine and the
+// EXPECTATION was stale: `getByText("Langflow Chat")` targets the i18n value of
+// `misc.chatTitle`, a key that occurs exactly ONCE in the whole frontend bundle —
+// inside the translation dictionary, with zero call sites — so the string is never
+// rendered and the assertion could not pass at any timeout (#1791; same shape as
+// the dead `viewExchange` key). Both testids the test drives are live:
+// `playground-btn-flow-io` is the Playground trigger 10+ specs already click, and
+// `playground-btn-flow` is its disabled twin, rendered with
+// `cursor-not-allowed text-muted-foreground` — which is exactly what the first
+// assertion wants. The modal is therefore asserted by its own dialog role/name.
+const PLAYGROUND_DIALOG = { role: "dialog" as const, name: "Playground" };
+
+test(
   "playground button should be enabled or disabled",
-  { tag: ["@release", "@api", "@workspace"] },
+  { tag: ["@stable", "@release", "@workspace", "@playground"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await page.waitForSelector('[data-testid="blank-flow"]', {
@@ -190,7 +195,9 @@ test.skip(
 
     await expect(page.getByTestId("playground-btn-flow")).toBeDisabled();
 
-    await expect(page.getByText("Langflow Chat")).toBeHidden();
+    await expect(
+      page.getByRole(PLAYGROUND_DIALOG.role, { name: PLAYGROUND_DIALOG.name }),
+    ).toBeHidden();
 
     await page.getByTestId("sidebar-search-input").click();
     await page.getByTestId("sidebar-search-input").fill("chat output");
@@ -201,13 +208,13 @@ test.skip(
     await page
       .locator('//*[@id="input_outputChat Output"]')
       .dragTo(page.locator('//*[@id="react-flow-id"]'));
-    await page.mouse.up();
-    await page.mouse.down();
 
     await adjustScreenView(page);
 
-    await page.getByTestId("playground-btn-flow-io").click({ force: true });
+    await page.getByTestId("playground-btn-flow-io").click();
 
-    await expect(page.getByText("Langflow Chat")).toBeVisible();
+    await expect(
+      page.getByRole(PLAYGROUND_DIALOG.role, { name: PLAYGROUND_DIALOG.name }),
+    ).toBeVisible({ timeout: 30000 });
   },
 );
