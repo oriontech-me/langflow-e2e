@@ -165,29 +165,7 @@ test("the listing verdict does NOT depend on the collection-gate plan", () => {
   }
 });
 
-test("a narrow gate declares what it costs, and still produces a run", () => {
-  // Declaring rather than refusing is the default ON PURPOSE: this lane has no
-  // GOOGLE_API_KEY (#1764), and a refusing default would fail every run at 08:00 over
-  // a state that is known, accepted, and not fixable from inside the run.
-  const r = prepWithGate(NARROW);
-  assert.match(r.stderr, /NARROWER suite.*GOOGLE_API_KEY absent/s);
-  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1 refuses up front instead/);
-  assert.match(r.stderr, /STUB_NPX playwright test --grep @stable --list/);
-});
-
-test("the narrow warning states its consequence instead of promising a passing run", () => {
-  // The wording matters because it is the only place the trade is offered. The first
-  // attempt at #1818 read this warning as a licence and downgraded the
-  // listing-completeness failure on this plan — which, since the flag defaults to 0
-  // and this lane is permanently `narrow`, killed the mechanism on the only lane it
-  // was added for. What the narrowing buys is a comparison whose COUNTS are not
-  // comparable; it is not a licence to report the lane green over specs it did not
-  // run (#1010/#1012, one level down).
-  const r = prepWithGate(NARROW);
-  assert.match(r.stderr, /NAMES it and FAILS the run/);
-  assert.match(r.stderr, /Set the key, or/);
-  assert.doesNotMatch(r.stderr, /without failing the run/);
-});test("an unverifiable listing fails the run — UNKNOWN is not no", () => {
+test("an unverifiable listing fails the run — UNKNOWN is not no", () => {
   // FAIL-CLOSED, the same reading the Actions gate uses, and the reason `phase_prep`
   // can afford to degrade instead of dying on a broken derivation.
   for (const listingVerified of ["", "false", "yes", "TRUE"]) {

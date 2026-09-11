@@ -1268,6 +1268,26 @@ test("an unreadable block is named as unreadable, not as one that predates the f
   ).warnings.join("\n");
   assert.match(w, /the VM row carries an UNREADABLE listing_completeness block/);
   assert.doesNotMatch(w, /the VM row carries no listing_completeness block/);
+  // And the lane whose block IS readable must not be named at all. Without this the
+  // guard that decides "did this side parse" is unpinned: dropping it makes a valid
+  // block report as absent — the same false cause, in the other direction (measured,
+  // the whole suite stayed green).
+  assert.doesNotMatch(w, /the Actions row carries/);
+});
+
+test("a lane with an ABSENT block is not also reported as UNVERIFIED", () => {
+  // Two different statements about two different states, and the split into
+  // independent blocks is exactly what makes double-reporting possible: "the check
+  // could not be made" is about a lane that RAN the check, not about a row that
+  // carries no answer. Rewriting the guards to `!listing?.verified` warns twice about
+  // the same lane and survived the whole suite (measured).
+  const ws = compare(row("daily-stable"), row("vm-daily", listing(true))).warnings;
+  assert.match(ws.join("\n"), /the Actions row carries no listing_completeness block/);
+  assert.equal(
+    ws.filter((x) => x.includes("listing-completeness UNVERIFIED on")).length,
+    0,
+    "an absent block is a parity gap, not an unverified check",
+  );
 });
 
 test("an UNVERIFIED lane is named even when the other lane has no block at all", () => {
