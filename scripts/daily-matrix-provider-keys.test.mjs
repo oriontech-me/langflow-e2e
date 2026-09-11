@@ -48,7 +48,10 @@ const LISTING_STEP = "Compute duration-balanced shard matrix";
 const SHARD_STEP = "Run @stable tests (shard ${{ matrix.shard }})";
 const PROVIDER_CONFIG = "tests/helpers/provider-setup/provider-config.ts";
 
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+// Normalised at the boundary: `trimStart()` does not strip a trailing `\r`, so on a
+// CRLF checkout the step is never FOUND and every entry-level tolerance below is
+// unreachable — the guard reds on a correct workflow with "has no step named …".
+const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 
 /**
  * The lines of one named step, and the indent its own keys sit at.
@@ -176,15 +179,24 @@ function effectiveEnv(workflowText, stepName) {
  * listing time can empty a spec file. `declared` is counted without the entry-shape
  * regex, so the vacuity check can compare the parse against the config itself.
  */
-function collectionGateKeys() {
-  const source = read(PROVIDER_CONFIG);
+function collectionGateKeys(sourceText) {
+  const source = sourceText ?? read(PROVIDER_CONFIG);
   const start = source.indexOf("export const providerConfigMap = {");
   // Bounded at the map's close, not run to EOF: any later `credential: "api-key"` —
   // one sentence added to a doc comment does it — inflated `declared`, and the
   // vacuity test then reported "the parse, not the config, is what changed", which
   // is precisely backwards.
-  const close = source.indexOf("} satisfies", start);
-  const map = source.slice(start, close === -1 ? undefined : close);
+  // Column-0 anchored: `} satisfies` matched anywhere truncated the map at the first
+  // occurrence, hiding every provider declared after it while `parsed === declared`
+  // still held — the vacuity hole, reopened by the bound that was meant to close it.
+  const close = source.indexOf("\n} satisfies", start);
+  // And an anchor that cannot be found is UNKNOWN, not a pass-through (#1012):
+  // running to EOF restored the very false red this bound exists to prevent.
+  assert.ok(
+    close !== -1,
+    `${PROVIDER_CONFIG}: no column-0 \`} satisfies\` closes providerConfigMap — the parse, not the config, changed`,
+  );
+  const map = source.slice(start, close);
   const keys = [];
   let parsed = 0;
   for (const [, body] of map.matchAll(/^ {2}\w+: \{$([\s\S]*?)^ {2}\},$/gm)) {
@@ -200,6 +212,10 @@ function collectionGateKeys() {
     // rather than this one spelling.
     for (const [, name] of envKeys[1].matchAll(/["']([^"']+)["']/g)) keys.push(name);
     assert.ok(
+      envKeys[1].trim() !== "",
+      `a keyed provider in ${PROVIDER_CONFIG} declares an EMPTY envKeys — decide what gates it before this guard can mirror it`,
+    );
+    assert.ok(
       keys.length > before,
       `envKeys for a keyed provider in ${PROVIDER_CONFIG} parsed to zero names — the parse, not the config, changed`,
     );
@@ -212,8 +228,8 @@ function collectionGateKeys() {
  * One env value, read the way YAML reads it.
  *
  * A trailing `# comment` is not part of a plain scalar, and `"${{ … }}"` is the same
- * expression as `${{ … }}` — this very step block already writes `CI: "true"` and
- * `PLAYWRIGHT_BASE_URL: "http://localhost:7860/"`. Matching the raw text reddened
+ * expression as `${{ … }}` — the shard step this guard also reads already writes
+ * `CI: "true"` and `PLAYWRIGHT_BASE_URL: "http://localhost:7860/"`. Matching the raw text reddened
  * both shapes with a message asserting the opposite of what had happened, which is
  * the failure mode this guard exists to avoid being.
  */
@@ -233,7 +249,11 @@ function runScript(lines, keyIndent) {
   // The inline remainder counts: `run: npx playwright test … --list` is a shape this
   // file already uses elsewhere, and dropping it reported a step that does run
   // `--list` as one that does not.
-  const body = [lines[at].slice(lines[at].indexOf("run:") + 4)];
+  // Comment-stripped like the body lines below it. Seeding it raw traded one false
+  // red for a false GREEN of the same shape: on an inline `run:` — a plain YAML
+  // scalar, where ` #` really is a comment — `run: … --reporter=json # was --list`
+  // satisfied the gate on a step that no longer lists anything.
+  const body = [lines[at].slice(lines[at].indexOf("run:") + 4).replace(/\s+#.*$/, "")];
   for (const line of lines.slice(at + 1)) {
     if (line.trim() !== "" && outdent.test(line)) break;
     if (/^\s*#/.test(line)) continue;
@@ -317,5 +337,95 @@ test("the env block belongs to the step that actually lists the suite", () => {
     runScript(lines, keyIndent),
     /--list/,
     `${LISTING_STEP} no longer runs \`--list\` — the provider keys are guarding a step that does not build the matrix`,
+  );
+});
+
+// --- the helpers, on synthetic YAML ------------------------------------------
+//
+// The four tests above read the REAL workflow, which is what they are for — but it
+// means every regression in the parser has only ever been found by someone mutating
+// that workflow by hand. Three review rounds each found one this way, and each fix
+// opened the next: a tolerance added for a correct shape turned into a false GREEN on
+// a broken one. These pin the helpers directly, so the next one fails in the lane.
+//
+// Each case names the shape it stands for; none of them touches the real file.
+
+const STEP = (body) => `jobs:\n  prep:\n    steps:\n      - name: S\n${body}`;
+
+test("envEntries reads a step's env: and nothing that merely looks like one", () => {
+  const entries = (body) => envEntries(stepBody(STEP(body), "S").lines, 8);
+
+  // The value is taken whole, comments and all — `scalar()` decides what it means.
+  assert.deepEqual(
+    [...entries(`        env:\n          A: 1\n          B: two words  # note\n`)],
+    [["A", "1"], ["B", "two words  # note"]],
+  );
+  // A block scalar's body is DATA: a heredoc printing an env block declares nothing.
+  assert.deepEqual(
+    [...entries(`        run: |\n          cat <<'EOF'\n            env:\n              A: 1\n          EOF\n`)],
+    [],
+  );
+  // ...and the real block after it is still found.
+  assert.deepEqual(
+    [...entries(`        run: |\n          echo hi\n        env:\n          A: 1\n`)],
+    [["A", "1"]],
+  );
+  // A comment inside the block is not an entry; the block ends at an OUTDENT, never
+  // at the first line that is not one.
+  assert.deepEqual(
+    [...entries(`        env:\n          # why\n          A: >-\n            folded\n          B: 2\n`)],
+    [["A", ">-"], ["B", "2"]],
+  );
+});
+
+test("scalar reads a value the way YAML does, and cannot launder a wrong one", () => {
+  assert.equal(scalar("${{ secrets.X }}"), "${{ secrets.X }}");
+  assert.equal(scalar('"${{ secrets.X }}"'), "${{ secrets.X }}");
+  assert.equal(scalar("${{ secrets.X }}  # the third gate"), "${{ secrets.X }}");
+  // A `#` without leading whitespace is part of the value, not a comment.
+  assert.equal(scalar("sk-a#b"), "sk-a#b");
+  // The laundering attempt: a comment cannot complete a broken quote pair.
+  assert.notEqual(scalar('"${{ secrets.X }} # tail'), "${{ secrets.X }}");
+  assert.equal(scalar(undefined), "");
+});
+
+test("runScript returns the command, inline or block, without its comments", () => {
+  const script = (body) => runScript(stepBody(STEP(body), "S").lines, 8);
+  assert.match(script(`        run: npx playwright test --list\n`), /--list/);
+  // The seed is comment-stripped like the body: this is the false GREEN that a raw
+  // seed introduced — an inline command that no longer lists, with `--list` surviving
+  // only in its trailing comment.
+  assert.doesNotMatch(script(`        run: npx playwright test --reporter=json # was --list\n`), /--list/);
+  assert.doesNotMatch(script(`        run: |\n          # was --list\n          npx playwright test\n`), /--list/);
+  assert.match(script(`        run: |\n          npx playwright test --list\n`), /--list/);
+});
+
+test("the derivation is anchored at column 0 and refuses to guess", () => {
+  const map = (extra = "", tail = "\n} satisfies Record<Provider, ProviderConfig>;\n") =>
+    `export const providerConfigMap = {\n` +
+    `  openai: {\n    credential: "api-key",\n    envKeys: ["OPENAI_API_KEY"],\n  },\n` +
+    extra +
+    tail;
+
+  assert.deepEqual(collectionGateKeys(map()).keys, ["OPENAI_API_KEY"]);
+  // Either quote style: the repo lints neither, and a double-quote-only match parsed
+  // a single-quoted array to zero names while every other check still held.
+  assert.deepEqual(
+    collectionGateKeys(map(`  cohere: {\n    credential: "api-key",\n    envKeys: ['COHERE_API_KEY'],\n  },\n`)).keys,
+    ["OPENAI_API_KEY", "COHERE_API_KEY"],
+  );
+  // An INDENTED `} satisfies` must not truncate the map and hide what follows it.
+  assert.equal(
+    collectionGateKeys(
+      map(`  // helper } satisfies nothing\n  cohere: {\n    credential: "api-key",\n    envKeys: ["COHERE_API_KEY"],\n  },\n`),
+    ).declared,
+    2,
+  );
+  // No column-0 close is UNKNOWN, not "run to end of file" (#1012).
+  assert.throws(() => collectionGateKeys(map("", "\n  } satisfies X;\n")), /no column-0/);
+  // An empty envKeys is the CONFIG changing, and says so.
+  assert.throws(
+    () => collectionGateKeys(map(`  cohere: {\n    credential: "api-key",\n    envKeys: [],\n  },\n`)),
+    /declares an EMPTY envKeys/,
   );
 });
