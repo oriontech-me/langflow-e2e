@@ -107,10 +107,30 @@ jobs:
           # describes and from the same process — which is the only placement that can
           # be right, since the answer is a property of this shell's environment. Names
           # only; the resolver never reads a key's value.
-          npx ts-node scripts/collection-gate-keys.ts > /tmp/collection-gate.txt
-          sed -n 's/^summary=/listing gate: /p' /tmp/collection-gate.txt
-          sed -n 's/^present=/collection_gate_keys=/p'        /tmp/collection-gate.txt >> "$GITHUB_OUTPUT"
-          sed -n 's/^absent=/collection_gate_keys_absent=/p'  /tmp/collection-gate.txt >> "$GITHUB_OUTPUT"
+          #
+          # REPORTING, so it must not be able to kill the day. This step runs under
+          # `bash -eo pipefail` and its product is the shard matrix: an unresolved gate
+          # taken as fatal would abort `prep`, and a daily that never ran is a far
+          # worse outcome than a row that cannot say which suite it listed. The VM twin
+          # DOES die on the same state (scripts/run-e2e.sh) and the asymmetry is the
+          # point — there the run's whole product is the cross-lane comparison, here it
+          # is the test run. Degrading is already designed for: with no output the row
+          # carries no `collection_gate_keys` block and the comparator reports parity
+          # UNVERIFIED, which is the pre-#1813 state plus a warning.
+          #
+          # A zero exit is not the only way it can fail to answer: a field renamed on
+          # the TypeScript side leaves these `sed`s matching nothing, which would write
+          # "never measured" onto a run that measured fine. So both field names are
+          # required before either is trusted, and the same warning covers both.
+          if npx ts-node scripts/collection-gate-keys.ts > /tmp/collection-gate.txt \
+            && grep -q '^present=' /tmp/collection-gate.txt \
+            && grep -q '^absent=' /tmp/collection-gate.txt; then
+            sed -n 's/^summary=/listing gate: /p' /tmp/collection-gate.txt
+            sed -n 's/^present=/collection_gate_keys=/p'        /tmp/collection-gate.txt >> "$GITHUB_OUTPUT"
+            sed -n 's/^absent=/collection_gate_keys_absent=/p'  /tmp/collection-gate.txt >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not resolve the collection-gating provider keys (#1813) - this run's history row will carry no collection_gate_keys block, and the lane comparison will report collection-gate parity UNVERIFIED for the day."
+          fi
           npx playwright test --grep "@stable" --list --reporter=json > /tmp/stable-list.json
           MATRIX="$(node scripts/partition-shards.mjs matrix /tmp/stable-list.json reports/spec-durations.json "$N")"
           # Extract just the include array for strategy.matrix.include.
