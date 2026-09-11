@@ -54,6 +54,14 @@ jobs:
       # carrying its explicit space-separated spec-file list (issue #936).
       matrix: ${{ steps.mk.outputs.matrix }}
       shard_total: ${{ steps.mk.outputs.shard_total }}
+      # Which collection-gating provider keys THIS listing resolved, and which it did
+      # not (#1813). Recorded on the day's history row so a test-count difference
+      # between this lane and the VM one resolves to a cause rather than a hypothesis:
+      # these keys decide which spec FILES exist at all, and a file generated entirely
+      # from a missing one is absent from the matrix with no skip and no error to show
+      # for it (#1764).
+      collection_gate_keys: ${{ steps.mk.outputs.collection_gate_keys }}
+      collection_gate_keys_absent: ${{ steps.mk.outputs.collection_gate_keys_absent }}
     steps:
       - uses: actions/checkout@v7
 
@@ -76,6 +84,14 @@ jobs:
           N="$SHARDS"
           case "$N" in ''|*[!0-9]*) N=4 ;; esac      # non-numeric → default 4
           if [ "$N" -lt 1 ]; then N=4; fi
+          # What this step's environment actually resolves, read BEFORE the listing it
+          # describes and from the same process — which is the only placement that can
+          # be right, since the answer is a property of this shell's environment. Names
+          # only; the resolver never reads a key's value.
+          npx ts-node scripts/collection-gate-keys.ts > /tmp/collection-gate.txt
+          sed -n 's/^summary=/listing gate: /p' /tmp/collection-gate.txt
+          sed -n 's/^present=/collection_gate_keys=/p'        /tmp/collection-gate.txt >> "$GITHUB_OUTPUT"
+          sed -n 's/^absent=/collection_gate_keys_absent=/p'  /tmp/collection-gate.txt >> "$GITHUB_OUTPUT"
           npx playwright test --grep "@stable" --list --reporter=json > /tmp/stable-list.json
           MATRIX="$(node scripts/partition-shards.mjs matrix /tmp/stable-list.json reports/spec-durations.json "$N")"
           # Extract just the include array for strategy.matrix.include.
@@ -1376,6 +1392,14 @@ jobs:
           # shard whose job died before writing a summary disappears from the row
           # instead of reading as a gap.
           SHARD_TOTAL: ${{ needs.prep.outputs.shard_total }}
+          # The gate the MATRIX was built under, both halves (#1813). Read as a pair by
+          # the appender: a lane that resolved nothing and a lane that never measured
+          # both send an empty string, and only the absent list separates them. Recorded
+          # because the VM daily appends to this same series, and two rows whose
+          # listings saw different suites are not comparable by count — the 2026-09-07
+          # and 09-08 comparisons filed exactly that difference as a catalog problem.
+          COLLECTION_GATE_KEYS: ${{ needs.prep.outputs.collection_gate_keys }}
+          COLLECTION_GATE_KEYS_ABSENT: ${{ needs.prep.outputs.collection_gate_keys_absent }}
 
       - name: Commit daily history
         if: always() && github.event_name == 'schedule'
