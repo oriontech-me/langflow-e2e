@@ -30,6 +30,21 @@ import { declaredStableSpecFiles } from "./lib/stable-tests";
 function main(): number {
   try {
     const declared = declaredStableSpecFiles();
+    // A floor, for the reason `snapshotCatalog` has `--min-categories`: the check
+    // this feeds is ONE-SIDED. It sees the listing shrink; it cannot see THIS side
+    // shrink, because an under-reported declaration yields `missing: []` and reads
+    // as agreement. Zero is the degenerate case a broken producer actually reaches
+    // (a walk pointed at the wrong root, a parser that stopped matching), and it
+    // would certify every possible listing as complete.
+    if (declared.files.length === 0) {
+      process.stderr.write(
+        "[declared-stable-specs] walked " +
+          `${declared.root} and found NO spec file declaring an @stable test. That is ` +
+          "a broken derivation, not an empty suite, and a caller must not compare a " +
+          "listing against it — refusing rather than certifying everything.\n",
+      );
+      return 2;
+    }
     process.stdout.write(JSON.stringify({ version: 1, ...declared }, null, 2) + "\n");
     process.stderr.write(
       `declared: ${declared.files.length} spec file(s) carry an @stable test ` +
@@ -52,5 +67,11 @@ function main(): number {
 }
 
 if (require.main === module) {
-  process.exit(main());
+  // `process.exitCode`, never `process.exit(...)`. Writes to a PIPE are async, and
+  // `process.exit` discards whatever has not flushed — measured here: the ~19 KB
+  // payload came back truncated at exactly 8192 bytes through `spawnSync`, which
+  // `JSON.parse` then rejects. The daily redirects to a FILE, where the write is
+  // synchronous and the bug is invisible, so this would have sat latent until the
+  // first caller piped it. Setting the code and returning lets Node drain first.
+  process.exitCode = main();
 }

@@ -407,6 +407,38 @@ export function compareListing(listing, declared) {
     return unverified(
       "the listing report carries no config.rootDir, so its file paths cannot be resolved",
     );
+  // Element TYPES, not just the array. `path.resolve` THROWS on a non-string, and a
+  // throw here does not degrade to UNVERIFIED — it leaves `main()` as exit 1 with
+  // empty stdout, which under the prep step's `MATRIX="$(…)"` and `bash -eo pipefail`
+  // aborts the step and loses the whole daily. That is the exact outcome this
+  // function's placement promises cannot happen, so the guard is the promise.
+  // Reachable from BOTH sides: a hand-edited or half-written declaration, and a
+  // report whose @stable spec carries no `file` and has no ancestor suite that does
+  // (`stableFilesFromReport` then yields `undefined`) — the latter being a state the
+  // script tolerated before this check existed.
+  const badEntry = (arr) => arr.find((f) => typeof f !== "string" || f === "");
+  const badDeclared = badEntry(declared.files);
+  if (badDeclared !== undefined || declared.files.some((f) => typeof f !== "string"))
+    return unverified(
+      `the declared-spec set contains an entry that is not a file path (${JSON.stringify(badDeclared ?? null)})`,
+    );
+  const badListed = badEntry(listing.files);
+  if (badListed !== undefined || listing.files.some((f) => typeof f !== "string"))
+    return unverified(
+      `the listing contains a spec with no resolvable file path (${JSON.stringify(badListed ?? null)})`,
+    );
+  // A floor, for the reason `snapshotCatalog` has `--min-categories`: this check is
+  // one-sided. It sees the LISTING shrink; it cannot see the DECLARATION shrink,
+  // because a declaration that under-reports produces `missing: []` and reads as
+  // agreement while `unexpected` quietly grows — and `unexpected` deliberately does
+  // not fail. An EMPTY declaration is the degenerate case of that and the one a
+  // broken producer actually reaches, so it is refused here as well as in
+  // `declared-stable-specs.ts` itself. A PARTIAL declaration stays undetectable by
+  // construction and is what the `unexpected` list is for.
+  if (declared.files.length === 0)
+    return unverified(
+      "the declared-spec set is empty — a listing cannot be shown complete against nothing",
+    );
 
   const abs = (root, f) => path.resolve(root, f);
   const listedAbs = new Map(listing.files.map((f) => [abs(listing.root, f), f]));
@@ -527,6 +559,33 @@ export function renderListingVerdict(v, asked = true) {
   return { lines, warnings };
 }
 
+/**
+ * The `key=value` lines the daily's `prep` job publishes as step outputs (#1812).
+ *
+ * In the script rather than in a `node -e` inside the workflow, and that is the
+ * whole point: the one-liner it replaces was pinned by NOTHING. Mutating
+ * `listing_verified=${l.verified===true}` to a literal `true`, or
+ * `listing_missing` to a literal `[]`, disables the entire mechanism — the gate
+ * reads exactly these two values — and both mutations survived the full
+ * `npm run test:scripts` suite. A guard over workflow TEXT does not pin a
+ * behaviour (#1226); a function whose output is asserted does.
+ *
+ * `listing_verified` is `${v.verified === true}` and not `${v.verified}`, so a
+ * shape change that made the field absent emits `false` rather than `undefined`
+ * — the gate's `!= 'true'` would fail on either, but only one of them says what
+ * happened.
+ *
+ * @param {ReturnType<typeof compareListing>} v
+ * @returns {string[]}
+ */
+export function listingOutputLines(v) {
+  return [
+    `listing_verified=${v.verified === true}`,
+    `listing_missing=${JSON.stringify(v.missing || [])}`,
+    `listing_unexpected=${JSON.stringify(v.unexpected || [])}`,
+  ];
+}
+
 // ---- CLI -------------------------------------------------------------------
 
 function readJSON(path) {
@@ -587,14 +646,33 @@ function main(argv) {
     // --declared    is `scripts/declared-stable-specs.ts`'s output — what the listing
     //               above is EXPECTED to contain (#1812). Optional, but its absence is
     //               reported as UNVERIFIED, never as agreement.
-    const flagAt = rest.indexOf("--declared");
-    const declaredPath = flagAt === -1 ? "" : rest[flagAt + 1] || "";
-    const positional = flagAt === -1 ? rest : [...rest.slice(0, flagAt), ...rest.slice(flagAt + 2)];
-    const [listPath, durPath, nRaw] = positional;
+    // --github-output  append the listing verdict as `key=value` step outputs (the
+    //               daily passes `$GITHUB_OUTPUT`). Here rather than in a workflow
+    //               one-liner because the values are what the final gate reads.
+    const takeFlag = (argv, name) => {
+      const at = argv.indexOf(name);
+      if (at === -1) return { value: "", rest: argv, given: false };
+      return {
+        value: argv[at + 1] || "",
+        rest: [...argv.slice(0, at), ...argv.slice(at + 2)],
+        given: true,
+      };
+    };
+    const declaredFlag = takeFlag(rest, "--declared");
+    const outputFlag = takeFlag(declaredFlag.rest, "--github-output");
+    const declaredPath = declaredFlag.value;
+    const [listPath, durPath, nRaw] = outputFlag.rest;
     const n = Number(nRaw || 4);
-    if (!listPath || !Number.isInteger(n) || n < 1 || (flagAt !== -1 && !declaredPath))
+    if (
+      !listPath ||
+      !Number.isInteger(n) ||
+      n < 1 ||
+      (declaredFlag.given && !declaredPath) ||
+      (outputFlag.given && !outputFlag.value)
+    )
       throw new Error(
-        "usage: partition-shards.mjs matrix <list.json> <durations.json|-> <N> [--declared <declared.json>]",
+        "usage: partition-shards.mjs matrix <list.json> <durations.json|-> <N> " +
+          "[--declared <declared.json>] [--github-output <path>]",
       );
 
     const listReport = readJSON(listPath);
@@ -687,6 +765,21 @@ function main(argv) {
     const verdict = renderListingVerdict(listing, !!declaredPath && declaredPath !== "-");
     process.stderr.write(verdict.lines.join("\n") + "\n");
     for (const w of verdict.warnings) process.stderr.write(w + "\n");
+    if (outputFlag.value) {
+      // Guarded for the same reason the declaration read is: this runs inside the
+      // step that produces the shard matrix. An unwritable path leaves the outputs
+      // ABSENT, which the gate reads fail-closed — the safe outcome — where a throw
+      // would take the day with it.
+      try {
+        fs.appendFileSync(outputFlag.value, listingOutputLines(listing).join("\n") + "\n");
+      } catch (e) {
+        process.stderr.write(
+          `::warning::could not write the listing verdict to ${outputFlag.value} (${e.message}) — ` +
+            `the scheduled run will fail at the end of the merge job, because an absent ` +
+            `verdict is read fail-closed (#1812).\n`,
+        );
+      }
+    }
 
     process.stdout.write(JSON.stringify({ shard_total: n, mode, include, listing }) + "\n");
     return;

@@ -163,15 +163,18 @@ jobs:
           if ! npx ts-node scripts/declared-stable-specs.ts > /tmp/declared-specs.json; then
             echo "::warning::could not derive the declared @stable spec set (#1812) - this run cannot verify that the listing contains every spec file that declares an @stable test. The scheduled run is failed at the end of the merge job."
           fi
-          MATRIX="$(node scripts/partition-shards.mjs matrix /tmp/stable-list.json reports/spec-durations.json "$N" --declared /tmp/declared-specs.json)"
+          # `--github-output` and not a `node -e` reading the JSON back: the two values
+          # the final gate reads are the whole mechanism, and a one-liner here is
+          # pinned by nothing — swapping `${l.verified===true}` for a literal `true`,
+          # or `listing_missing` for a literal `[]`, disables the detector entirely
+          # and survives the full unit suite (measured). #1226's lesson: a guard over
+          # workflow TEXT does not pin a behaviour, so the emission lives in the
+          # script, where `listingOutputLines` is asserted on its output.
+          MATRIX="$(node scripts/partition-shards.mjs matrix /tmp/stable-list.json reports/spec-durations.json "$N" --declared /tmp/declared-specs.json --github-output "$GITHUB_OUTPUT")"
           # Extract just the include array for strategy.matrix.include.
           INCLUDE="$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.stringify(JSON.parse(d).include)))' <<<"$MATRIX")"
           echo "matrix=$INCLUDE"  >> "$GITHUB_OUTPUT"
           echo "shard_total=$N"   >> "$GITHUB_OUTPUT"
-          # The completeness verdict, emitted UNCONDITIONALLY so that its absence means
-          # the wiring broke rather than "nothing was lost" — which is what the final
-          # gate's `!= 'true'` reads (#1812).
-          node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const l=JSON.parse(d).listing||{};process.stdout.write(`listing_verified=${l.verified===true}\nlisting_missing=${JSON.stringify(l.missing||[])}\nlisting_unexpected=${JSON.stringify(l.unexpected||[])}\n`)})' <<<"$MATRIX" >> "$GITHUB_OUTPUT"
 
   test:
     name: "Shard ${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }} (${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }})"
@@ -1636,7 +1639,15 @@ jobs:
       # fires now is the reachable case — a complete report, hundreds of green tests,
       # and NO usable provider, so the whole LLM surface went unmeasured.
       - name: Create issue on failure
-        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.fail_recommended == 'true') && github.event_name == 'schedule'
+        # The listing clauses (#1812) are the third and fourth way this step has to
+        # fire on a run whose `test` job came back GREEN. A spec file that never
+        # entered the matrix fails the day at the job's LAST step, and without them
+        # the run reddens with one `::error::` annotation and nothing durable naming
+        # the cause — #1176's defect, on a fourth axis. Read the same way the gate
+        # reads them (`!= 'true'`, `!= '[]'`), so the two cannot disagree about
+        # whether the day had a finding; which SHAPE the umbrella takes is then
+        # decided by positive identification inside the script.
+        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.fail_recommended == 'true' || needs.prep.outputs.listing_verified != 'true' || needs.prep.outputs.listing_missing != '[]') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
@@ -1706,6 +1717,12 @@ jobs:
           # that in so many words. Fail-closed in the direction that keeps the
           # per-test shape, which never claims the specs were exonerated.
           TESTS_FAILED: ${{ needs.test.result != 'success' }}
+          # #1812. Absent means "this lane does not track it" and selects no shape —
+          # the opposite reading from the gate's, deliberately: the gate must FAIL on
+          # an unknown, while a shape must never be chosen on one (mislabelling a day
+          # is worse than not labelling it, the rule #1456 set for `uncovered`).
+          LISTING_VERIFIED: ${{ needs.prep.outputs.listing_verified }}
+          LISTING_MISSING: ${{ needs.prep.outputs.listing_missing }}
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be
@@ -1820,14 +1837,21 @@ jobs:
           # coverage, not a slower shard, so #980's "do not lose a day over an
           # optimisation" does not cover it; but failing `prep` loses 247 files to
           # report one, and a `::warning::` nobody reads is `mode=count` again (#1252).
-          # This step runs LAST, after the history row, the QA POST, the @stable
-          # auto-removal and the umbrella issue have all recorded the day, so the run's
-          # entire product survives — it just stops reading as clean.
+          # This step runs LAST, after the history row, the QA POST and the @stable
+          # auto-removal have recorded the day, so the run's entire product survives —
+          # it just stops reading as clean. The umbrella is NOT "already recorded" by
+          # the other axes on this one: `Create issue on failure` is green-path on a
+          # missing-file day, so it carries the same two clauses explicitly (#1812) —
+          # without that, the day reddens here with nothing durable naming why, which
+          # is #1176's defect on a fourth axis.
           #
-          # `listing_unexpected` deliberately does NOT fail: a listed-but-undeclared
-          # file is coverage the run HAS and the predicate did not predict. It is
-          # printed alongside, because while it is non-empty the missing list is a
-          # LOWER BOUND — those files are the detector's own blind spot.
+          # `listing_unexpected` deliberately does NOT fail, and is deliberately NOT in
+          # the `if:` either: a listed-but-undeclared file is coverage the run HAS and
+          # the predicate did not predict. The state where it is the ONLY finding is
+          # therefore reported by `prep`'s own `::warning::`, not here; what this line
+          # adds is the rider on a day that failed for some other reason, where it says
+          # the missing list above is a LOWER BOUND — those files are the detector's
+          # own blind spot.
           if [ "$LISTING_VERIFIED" != "true" ]; then
             echo "::error::The shard matrix could not verify that its listing contained every spec file declaring an @stable test (listing_verified='${LISTING_VERIFIED:-unset}'), so this run cannot be trusted as a clean pass: a file may have left the matrix with no skip, no failure and no row in the report to be missing from (#1764/#1812). Start from the 'Compute duration-balanced shard matrix' step in the prep job."
           elif [ "$LISTING_MISSING" != "[]" ]; then

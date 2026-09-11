@@ -15,12 +15,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
+import { spawnSync } from "child_process";
 import {
   LANE_TAGS,
   REGRESSION_ROOT,
   REPO_ROOT,
   SPEC_FILE_PATTERN,
   STABLE_TAG,
+  TESTS_ROOT,
   declaredStableSpecFiles,
   collectDeclaredCounts,
   collectDeclaredTests,
@@ -673,14 +675,88 @@ test("declaredStableSpecFiles agrees with collectStableTests on the real regress
   // `regression/`, this one lists FILES under `tests/`. Restricted to the
   // regression tree the file sets must be identical — a divergence means one of
   // them has drifted, and the daily's matrix reads this one.
+  const declared = declaredStableSpecFiles();
   const fromFiles = new Set(
-    declaredStableSpecFiles()
-      .files.filter((f) => f.startsWith("tests-automations/regression/"))
+    declared.files
+      .filter((f) => f.startsWith("tests-automations/regression/"))
       .map((f) => f.replace("tests-automations/regression/", "")),
   );
-  const fromTests = new Set(collectStableTests().tests.map((t) => t.relativePath));
+  // The Phase 0 collector does NOT filter lane tags, so a file whose every @stable
+  // test is lane-tagged is a legitimate difference and must not break this lane —
+  // the first `@stable @enterprise` test anyone writes would otherwise fail a unit
+  // test rather than the detector. There are none today (CLAUDE.md forbids the
+  // combination, #1010); this keeps the assertion about the thing it is about.
+  const laneOnly = new Set(
+    declared.laneOnly
+      .filter((f) => f.startsWith("tests-automations/regression/"))
+      .map((f) => f.replace("tests-automations/regression/", "")),
+  );
+  const fromTests = new Set(
+    collectStableTests()
+      .tests.map((t) => t.relativePath)
+      .filter((f) => !laneOnly.has(f)),
+  );
   // `fromFiles` may legitimately be the larger of the two — it counts a
   // describe-inherited or fixme'd @stable that the Phase 0 parser reports as a
   // warning rather than a test — so the direction that must hold is this one.
   for (const f of fromTests) assert.ok(fromFiles.has(f), `${f} is @stable but not declared`);
+});
+
+test("declaredStableSpecFiles treats a lane tag in the TITLE as lane-only", () => {
+  // Playwright matches --grep / grepInvert against the title AND the tags, so a
+  // test titled "@destructive …" is inverted out of every normal listing however
+  // it is tagged. Reading only the `tag` array reports such a file as MISSING —
+  // a false red, which is the expensive direction: it is how a detector gets
+  // switched off. None exist today; this is what keeps that true.
+  withTree(
+    {
+      "t.spec.ts": `test("@destructive wipes the account", { tag: ["${STABLE_TAG}"] }, async () => {});`,
+    },
+    (root) => {
+      const d = declaredStableSpecFiles(root);
+      assert.deepEqual(d.files, []);
+      assert.deepEqual(d.laneOnly, ["t.spec.ts"]);
+    },
+  );
+});
+
+test("declaredStableSpecFiles keeps a file whose OTHER @stable test has no lane tag in its title", () => {
+  withTree(
+    {
+      "t.spec.ts": `
+        test("@serving isolates identities", { tag: ["${STABLE_TAG}"] }, async () => {});
+        ${stableTest("ordinary")}
+      `,
+    },
+    (root) => {
+      assert.deepEqual(declaredStableSpecFiles(root).files, ["t.spec.ts"]);
+    },
+  );
+});
+
+test("declaredStableSpecFiles returns an empty set rather than inventing one, and the CLI refuses it", () => {
+  // The floor `snapshotCatalog` has as --min-categories, and for the same reason:
+  // the completeness check is ONE-SIDED, so an empty declaration certifies every
+  // possible listing as complete. Refused by the producer as well as by the
+  // comparison, because a caller that never sees the exit code still gets an
+  // UNVERIFIED verdict out of the diff.
+  withTree({ "notaspec.ts": stableTest("x") }, (root) => {
+    assert.deepEqual(declaredStableSpecFiles(root).files, []);
+  });
+  // And the producer end-to-end: the daily reads this process's STDOUT, so the
+  // shape and the exit code are the contract. It walks the root derived from its
+  // own location, so it reports the real tree whatever the cwd.
+  const r = spawnSync(
+    process.execPath,
+    ["-r", "ts-node/register", path.join(REPO_ROOT, "scripts", "declared-stable-specs.ts")],
+    { cwd: REPO_ROOT, encoding: "utf-8" },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.ok(out.files.length > 0, "the real tree must declare @stable spec files");
+  assert.equal(out.version, 1);
+  assert.equal(out.root, TESTS_ROOT);
+  assert.ok(Array.isArray(out.laneOnly) && Array.isArray(out.unparseable));
+  // Diagnostics must never reach stdout — the caller parses it.
+  assert.match(r.stderr, /declared: \d+ spec file\(s\)/);
 });

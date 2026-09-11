@@ -582,7 +582,16 @@ export function declaredStableSpecFiles(
   const files: string[] = [];
   const laneOnly: string[] = [];
   const unparseable: string[] = [];
-  const isLane = (t: string) => (LANE_TAGS as readonly string[]).includes(t);
+  // A lane tag reaches `--grep`/`grepInvert` through the TITLE as well as through
+  // the `tag` array — Playwright matches both against the same string — so a test
+  // titled "@destructive wipes the account" is grepInverted out of every normal
+  // listing however it is tagged. Reading only the tags would report such a file
+  // as MISSING, which is the expensive direction: a false red on the daily is how
+  // a detector gets switched off. There are none today; this keeps it that way.
+  const laneInTitle = (t: { title: string }) =>
+    (LANE_TAGS as readonly string[]).some((lane) => t.title.includes(lane));
+  const isLaneOnly = (t: { title: string; tags: string[] }) =>
+    t.tags.some((tag) => (LANE_TAGS as readonly string[]).includes(tag)) || laneInTitle(t);
 
   for (const abs of walkCollectableSpecs(root)) {
     const rel = path.relative(root, abs).split(path.sep).join("/");
@@ -590,7 +599,7 @@ export function declaredStableSpecFiles(
     if (tests.some((t) => t.unparseableTags)) unparseable.push(rel);
     const stable = tests.filter((t) => t.stable);
     if (stable.length === 0) continue;
-    if (stable.some((t) => !t.tags.some(isLane))) files.push(rel);
+    if (stable.some((t) => !isLaneOnly(t))) files.push(rel);
     else laneOnly.push(rel);
   }
   const sort = (a: string, b: string) => a.localeCompare(b);

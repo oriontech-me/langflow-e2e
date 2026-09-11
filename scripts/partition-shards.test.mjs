@@ -10,6 +10,7 @@ import {
   buildShards,
   classifyDurations,
   compareListing,
+  listingOutputLines,
   refreshDurations,
   renderListingVerdict,
   weighting,
@@ -820,4 +821,210 @@ test("the listing gate does not fire on listed-only files", () => {
   const gate = DAILY.slice(DAILY.indexOf("- name: Fail scheduled run on an incomplete"));
   const condition = gate.slice(gate.indexOf("if:"), gate.indexOf("env:"));
   assert.doesNotMatch(condition, /listing_unexpected/);
+});
+
+// ---- #1812, round two: the three ways the detector could still lose ----------
+//
+// From the independent review of the first version. Each of these was a live
+// defect, and the first one was the worst kind: it made the detector able to
+// kill the day it exists to protect.
+
+test("compareListing is UNVERIFIED — never a throw — on a non-string entry, from either side", () => {
+  // `path.resolve` THROWS on a non-string. A throw does not degrade to
+  // UNVERIFIED: it leaves the CLI at exit 1 with empty stdout, and the prep
+  // step's `MATRIX="$(…)"` under `bash -eo pipefail` then aborts, losing the
+  // whole daily. Measured on the first version, with `[null]`, `[1]` and a
+  // report whose @stable spec carries no `file`.
+  const cases = [
+    [null], [1], [{}], ["ok.spec.ts", null], [undefined], [""],
+  ];
+  for (const files of cases) {
+    const v = compareListing(listingOf(["a.spec.ts"]), declaredOf(files));
+    assert.equal(v.verified, false, `declared ${JSON.stringify(files)}`);
+    assert.match(v.reason, /not a file path/);
+    const w = compareListing({ files, root: "/repo/tests" }, declaredOf(["a.spec.ts"]));
+    assert.equal(w.verified, false, `listed ${JSON.stringify(files)}`);
+    assert.match(w.reason, /no resolvable file path/);
+  }
+});
+
+test("matrix survives a declaration with a non-string entry, and still prints the partition", () => {
+  // The property that matters is not the message, it is the exit code and the
+  // stdout: `prep` reads the matrix out of this process's stdout.
+  const dir = makeTempDir("partition-listing-nonstring-");
+  const listPath = path.join(dir, "list.json");
+  const declaredPath = path.join(dir, "declared.json");
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [{ file: "a.spec.ts", specs: [{ tags: ["stable"], tests: [{ results: [] }] }] }],
+    }),
+  );
+  fs.writeFileSync(declaredPath, JSON.stringify({ root: "/repo/tests", files: [null] }));
+  const r = spawnSync(process.execPath, [CLI, "matrix", listPath, "-", "2", "--declared", declaredPath], {
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 0, `the matrix must still be produced: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.listing.verified, false);
+  assert.equal(out.include.length, 2);
+});
+
+test("matrix survives a listing whose @stable spec has no file path at all", () => {
+  const dir = makeTempDir("partition-listing-nofile-");
+  const listPath = path.join(dir, "list.json");
+  const declaredPath = path.join(dir, "declared.json");
+  // No `file` on the suite and none on the spec: `stableFilesFromReport` yields
+  // `undefined`. The parent commit tolerated this report at exit 0, so the first
+  // version of the check was a NEW way to abort the day.
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [{ specs: [{ tags: ["stable"], tests: [{ results: [] }] }] }],
+    }),
+  );
+  fs.writeFileSync(declaredPath, JSON.stringify({ root: "/repo/tests", files: ["a.spec.ts"] }));
+  const r = spawnSync(process.execPath, [CLI, "matrix", listPath, "-", "2", "--declared", declaredPath], {
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).listing.verified, false);
+});
+
+test("compareListing refuses an EMPTY declaration instead of certifying every listing", () => {
+  // The check is one-sided: it sees the listing shrink, never the declaration.
+  // An empty declaration produces `missing: []` over ANY listing — measured
+  // against the real key-less listing, which really had lost a file, it reported
+  // `0 missing, 246 listed-only` and `listing_verified=true`, and the gate passed.
+  const v = compareListing(listingOf(["a.spec.ts", "b.spec.ts"]), declaredOf([]));
+  assert.equal(v.verified, false);
+  assert.match(v.reason, /empty/);
+  assert.deepEqual(v.missing, []);
+});
+
+test("listingOutputLines emits exactly the values the daily's gate reads", () => {
+  // The one-liner this replaces was pinned by nothing: swapping the verified
+  // expression for a literal `true`, or the missing list for a literal `[]`,
+  // disabled the mechanism and survived the whole suite (#1226).
+  assert.deepEqual(
+    listingOutputLines(compareListing(listingOf(["a.spec.ts"]), declaredOf(["a.spec.ts", "gone.spec.ts"]))),
+    [
+      "listing_verified=true",
+      'listing_missing=["gone.spec.ts"]',
+      "listing_unexpected=[]",
+    ],
+  );
+  assert.deepEqual(listingOutputLines(compareListing(listingOf(["a.spec.ts"]), null)), [
+    "listing_verified=false",
+    "listing_missing=[]",
+    "listing_unexpected=[]",
+  ]);
+});
+
+test("listingOutputLines never emits a value that spans two lines", () => {
+  // `$GITHUB_OUTPUT` is line-oriented: a raw newline inside a value would inject
+  // an output key. `JSON.stringify` escapes it — assert that, do not assume it.
+  const lines = listingOutputLines(
+    compareListing(listingOf([]), declaredOf(["we\nird.spec.ts", 'qu"ote.spec.ts'])),
+  );
+  assert.equal(lines.length, 3);
+  for (const l of lines) assert.equal(l.includes("\n"), false);
+  assert.match(lines[1], /listing_missing=\[.*\]$/);
+});
+
+test("matrix --github-output appends the verdict to the file the caller names", () => {
+  const dir = makeTempDir("partition-listing-out-");
+  const listPath = path.join(dir, "list.json");
+  const declaredPath = path.join(dir, "declared.json");
+  const outPath = path.join(dir, "outputs.txt");
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [{ file: "a.spec.ts", specs: [{ tags: ["stable"], tests: [{ results: [] }] }] }],
+    }),
+  );
+  fs.writeFileSync(
+    declaredPath,
+    JSON.stringify({ root: "/repo/tests", files: ["a.spec.ts", "gone.spec.ts"] }),
+  );
+  fs.writeFileSync(outPath, "existing=1\n");
+  const r = spawnSync(
+    process.execPath,
+    [CLI, "matrix", listPath, "-", "2", "--declared", declaredPath, "--github-output", outPath],
+    { encoding: "utf8" },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  // APPEND, never truncate: the step writes `matrix=` and `shard_total=` to the
+  // same file.
+  assert.deepEqual(fs.readFileSync(outPath, "utf8").trim().split("\n"), [
+    "existing=1",
+    "listing_verified=true",
+    'listing_missing=["gone.spec.ts"]',
+    "listing_unexpected=[]",
+  ]);
+});
+
+test("matrix warns rather than dying when the output file cannot be written", () => {
+  const dir = makeTempDir("partition-listing-outbad-");
+  const listPath = path.join(dir, "list.json");
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [{ file: "a.spec.ts", specs: [{ tags: ["stable"], tests: [{ results: [] }] }] }],
+    }),
+  );
+  const r = spawnSync(
+    process.execPath,
+    [CLI, "matrix", listPath, "-", "2", "--github-output", path.join(dir, "no", "such", "dir", "o.txt")],
+    { encoding: "utf8" },
+  );
+  // Absent outputs are read fail-closed by the gate; an abort here loses the day.
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /::warning::could not write the listing verdict/);
+  assert.equal(JSON.parse(r.stdout).shard_total, 2);
+});
+
+test("matrix refuses --github-output with no value", () => {
+  const dir = makeTempDir("partition-listing-outusage-");
+  const listPath = path.join(dir, "list.json");
+  fs.writeFileSync(listPath, JSON.stringify({ config: { rootDir: "/r" }, suites: [] }));
+  const r = spawnSync(process.execPath, [CLI, "matrix", listPath, "-", "2", "--github-output"], {
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /usage:/);
+});
+
+test("the daily emits the listing outputs from the script, not from a workflow one-liner", () => {
+  assert.match(DAILY, /partition-shards\.mjs matrix .*--github-output "\$GITHUB_OUTPUT"/);
+  // And the one-liner it replaced must not come back: a `node -e` composing
+  // `listing_verified=` in YAML is exactly the shape two disabling mutations
+  // survived (#1226).
+  const prep = DAILY.slice(
+    DAILY.indexOf("name: Compute duration-balanced shard matrix"),
+    DAILY.indexOf('name: "Shard ${{ matrix.shard }}'),
+  );
+  assert.doesNotMatch(prep, /node -e[^\n]*listing_verified/);
+});
+
+test("the daily's umbrella step fires on the listing axis too", () => {
+  // The gate reddens the day, but `Create issue on failure` is gated on the TEST
+  // job (plus the two report guards) — and a missing-file day has a green test
+  // job. Without these clauses the run goes red with one annotation and nothing
+  // durable naming why: #1176's defect, on a fourth axis. Read exactly as the
+  // gate reads them, so the two cannot disagree about whether the day had a
+  // finding.
+  const step = DAILY.slice(
+    DAILY.indexOf("- name: Create issue on failure"),
+    DAILY.indexOf("- name: Fail scheduled run on an incomplete"),
+  );
+  const condition = step.slice(step.indexOf("if:"), step.indexOf("run:"));
+  assert.match(condition, /needs\.prep\.outputs\.listing_verified != 'true'/);
+  assert.match(condition, /needs\.prep\.outputs\.listing_missing != '\[\]'/);
+  assert.match(step, /LISTING_VERIFIED: \$\{\{ needs\.prep\.outputs\.listing_verified \}\}/);
+  assert.match(step, /LISTING_MISSING: \$\{\{ needs\.prep\.outputs\.listing_missing \}\}/);
 });

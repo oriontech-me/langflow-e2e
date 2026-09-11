@@ -33,7 +33,13 @@ import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { renderIssue, apiUrlFor, createIssue, CC_DEFAULT } from "./create-failure-issue.mjs";
+import {
+  renderIssue,
+  apiUrlFor,
+  createIssue,
+  parseListingMissing,
+  CC_DEFAULT,
+} from "./create-failure-issue.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 /** The script itself, for the handful of assertions that must go through `main()`. */
@@ -625,4 +631,128 @@ test("the dry shape never renders its own material twice", () => {
   assert.equal(body.match(/NO usable provider/g)?.length, 1);
   assert.equal(body.match(/Providers that went uncovered/g)?.length, 1);
   assert.doesNotMatch(body, /read the failures below/);
+});
+
+// ---- #1812: the listing gap has to reach the umbrella -----------------------
+//
+// The daily's final gate reddens the day when a spec file never entered the shard
+// matrix. On that day the `test` job is GREEN, so without these the run has one
+// `::error::` annotation and nothing durable naming the cause — #1176's defect on
+// a fourth axis.
+
+const listingBase = {
+  today: "2026-09-11",
+  image: "langflowai/langflow-nightly:latest",
+  runId: "42",
+  runUrl: "https://github.com/o/r/actions/runs/42",
+};
+
+test("a missing spec file takes the title when nothing else did", () => {
+  const { title, body } = renderIssue({
+    ...listingBase,
+    listingMissing: ["core-functionality/llm-agents/provider-invalid-auth-error.spec.ts"],
+  });
+  assert.match(title, /1 @stable spec file\(s\) never entered the shard matrix/);
+  assert.match(body, /they ran nowhere/);
+  // The file is NAMED: a count alone leaves the reader hand-diffing the matrix.
+  assert.match(body, /provider-invalid-auth-error\.spec\.ts/);
+  // And it must not claim the specs were implicated — nothing below it ran wrong.
+  assert.match(body, /cannot have influenced the files that did/);
+});
+
+test("an UNVERIFIED listing says unknown, not no", () => {
+  const { title, body } = renderIssue({ ...listingBase, listingVerified: false });
+  assert.match(title, /could not be shown complete/);
+  assert.match(body, /\*\*unknown\*\* — which is not the same as no/);
+  assert.doesNotMatch(body, /never entered the shard matrix — they ran nowhere/);
+});
+
+test("a real failure day keeps its own title and carries the listing gap as a banner", () => {
+  const { title, body } = renderIssue({
+    ...listingBase,
+    testsFailed: true,
+    arStatus: "removed",
+    arSummary: "- removed @stable from 2 tests",
+    listingMissing: ["a/lost.spec.ts"],
+  });
+  assert.match(title, /@stable tests failed on/);
+  assert.match(body, /never entered the shard matrix on this run/);
+  // The per-test material still renders — the banner must not displace it.
+  assert.match(body, /removed @stable from 2 tests/);
+  // The banner sits ABOVE the section it does not explain.
+  assert.ok(
+    body.indexOf("never entered the shard matrix on this run") < body.indexOf("auto-removal"),
+  );
+});
+
+test("the listing banner is NOT scoped away from the abort shapes", () => {
+  // Unlike the dry-account banner. Those bodies say no spec is implicated, and a
+  // file that never entered the matrix is a fact about the run's INPUT rather than
+  // about the report — true and reported nowhere else on exactly those shapes.
+  for (const shape of [
+    { empty: true },
+    { partial: true, runTests: "300", runErrors: "1" },
+    { mergeFailed: true },
+    { uncovered: true },
+    { accountDry: true },
+  ]) {
+    const { body } = renderIssue({ ...listingBase, ...shape, listingMissing: ["a/lost.spec.ts"] });
+    assert.match(
+      body,
+      /never entered the shard matrix on this run/,
+      `the gap must be reported on ${JSON.stringify(shape)}`,
+    );
+    assert.match(body, /a\/lost\.spec\.ts/);
+  }
+});
+
+test("every shape that is not the listing shape gets the banner — not just the failure day", () => {
+  // The first version derived the banner as "incomplete and not the shape", which
+  // silently reduced to `incomplete && testsFailed` and dropped it on every other
+  // green-test shape. Measured; this is the case that caught it.
+  const { title, body } = renderIssue({
+    ...listingBase,
+    accountDry: true,
+    listingMissing: ["a/lost.spec.ts"],
+  });
+  assert.match(title, /NO usable provider/);
+  assert.match(body, /never entered the shard matrix on this run/);
+});
+
+test("a complete listing adds nothing at all to the umbrella", () => {
+  const { title, body } = renderIssue({
+    ...listingBase,
+    testsFailed: true,
+    arStatus: "removed",
+    arSummary: "- removed @stable from 2 tests",
+  });
+  assert.match(title, /@stable tests failed on/);
+  assert.doesNotMatch(body, /shard matrix/);
+});
+
+test("an untracked listing verdict selects no shape and renders nothing", () => {
+  // The VM lane passes neither variable. An absent verdict must not LABEL the day:
+  // a shape is chosen by positive identification, unlike the run's gate (#1456).
+  assert.equal(parseListingMissing(undefined).length, 0);
+  const { title, body } = renderIssue({ ...listingBase, testsFailed: true });
+  assert.match(title, /@stable tests failed on/);
+  assert.doesNotMatch(body, /shard matrix/);
+});
+
+test("parseListingMissing never throws, whatever the daily hands it", () => {
+  // This script runs with ISSUE_STRICT=1 on an ALREADY RED day, so a throw here
+  // costs the umbrella for whatever really failed.
+  for (const raw of ["", "[]", "not json", "{}", '["a",null,2,""]', "null", "[[]]"]) {
+    assert.ok(Array.isArray(parseListingMissing(raw)), raw);
+  }
+  assert.deepEqual(parseListingMissing('["a",null,2,""]'), ["a"]);
+  assert.deepEqual(parseListingMissing("not json"), []);
+});
+
+test("the umbrella caps the named files at 30 and says how many it elided", () => {
+  const lost = Array.from({ length: 41 }, (_, i) => `lost-${String(i).padStart(2, "0")}.spec.ts`);
+  const { body } = renderIssue({ ...listingBase, listingMissing: lost });
+  assert.match(body, /lost-00\.spec\.ts/);
+  assert.doesNotMatch(body, /lost-40\.spec\.ts/);
+  assert.match(body, /… and 11 more/);
 });
