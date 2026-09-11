@@ -29,7 +29,9 @@ No **functional** tag applies: the tag table has no security area, and the sibli
 
 **Test 2 currently runs without `@stable`** — quarantined via `test.fixme` against the upstream export regression tracked by issue #1546 (see the note on Test 2 below). Tests 1 and 3 keep `@stable`.
 
-The three `QA-CHECKLIST.md` §17.3 bullets therefore become `[x]`.
+Bullets 1 and 3 of `QA-CHECKLIST.md` §17.3 are therefore `[x]`; bullet 2 is `[!]`
+while Test 2 is quarantined (#1546). Re-checked 2026-09-10 — the upstream fix has
+not landed; see §6 of `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md`.
 
 ---
 

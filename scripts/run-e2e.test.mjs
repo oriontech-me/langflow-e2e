@@ -313,6 +313,120 @@ test("the mirrored values cross the ssh boundary, which a default alone does not
   }
 });
 
+test("the target's run command crosses on every run, and the sync command never crosses", () => {
+  // A measured need rather than a knob for its own sake: on 2026-09-10 the PUBLISHED
+  // distribution served the traces family with tracing ON — 23 of 23, no gunicorn
+  // WORKER TIMEOUT — where the source clone wedges under the same selection on the same
+  // machine (7, 8 and 9 failures across the three attribution runs of #1720).
+  const line = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes("bash -s; sleep 86400"));
+  assert.ok(line, "could not find the command that starts the backend on the target");
+  assert.match(line, /\$\(target_cmd_env\)/);
+
+  // And it reaches the run's EARLY log, not only its metadata. The preflight line
+  // exists because a run that dies in prep or in a shard never reaches phase_merge, and
+  // that is the run whose record matters most — a wrong run command is a backend that
+  // never answers, which arrives as a shard timeout with nothing naming the cause.
+  const preflight = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .find((l) => l.includes('info "target env:'));
+  assert.ok(preflight, "could not find the preflight line that records the target's environment");
+  assert.match(preflight, /\$\(target_cmd_env\)/, "the run command must be readable before phase_merge");
+
+  // Unconditional, EMPTY INCLUDED, and that is the property the metadata field rests
+  // on: a value that crosses only sometimes cannot be recorded as the one in force.
+  // Turning this back into a conditional makes langflow_target_run_cmd a guess, so it
+  // is pinned here and not only where the field is written.
+  const unset = sourced(`(unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR; target_cmd_env)`);
+  assert.equal(unset.status, 0, unset.stderr);
+  assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_RUN_CMD=/, "an unset command still has to cross, as empty");
+
+  // The frontend directory travels with the command, because without it the command
+  // cannot reach the state it was added for: the starter refuses a clone with no built
+  // UI, and it looks for those assets under the CLONE, while a published distribution
+  // ships its own inside the package. Naming what serves and not naming the assets it
+  // serves would be half a knob.
+  assert.match(unset.stdout, /(^|\s)LANGFLOW_SRC_FRONTEND_DIR=/, "the frontend dir has to cross too");
+  const fe = sourced(`target_cmd_env`, {
+    LANGFLOW_SRC_RUN_CMD: "/root/venv-dev8/bin/langflow run",
+    LANGFLOW_SRC_FRONTEND_DIR: "/root/venv-dev8/lib/python3.14/site-packages/langflow/frontend",
+  });
+  assert.match(fe.stdout, /LANGFLOW_SRC_FRONTEND_DIR='?\/root\/venv-dev8/, "and carry the value it was given");
+
+  // The sync command is a deliberate NON-feature. The starter reads it as
+  // `${VAR-default}`, so empty-but-SET means "skip `uv sync --frozen` entirely", and a
+  // workflow `env:` block cannot express "unset" — an absent input arrives as
+  // empty-but-set. Forwarding it would put a silent skip of the dependency
+  // reconciliation one typo away.
+  for (const env of [{}, { LANGFLOW_SRC_SYNC_CMD: "" }, { LANGFLOW_SRC_SYNC_CMD: "uv sync --frozen --offline" }]) {
+    const r = sourced(`target_cmd_env`, env);
+    assert.doesNotMatch(r.stdout, /LANGFLOW_SRC_SYNC_CMD/, `sync must not cross: ${JSON.stringify(env)}`);
+  }
+
+  // Read back on the far side rather than string-matched here. The ordinary value
+  // carries a space (`…/bin/langflow run`), so the quoting is load-bearing from the
+  // first use. Only the ARGUMENT separator is supported, and deliberately so: the
+  // starter launches `${RUN_CMD}` unquoted, so `cmd arg` splits into words — a path
+  // that itself contains a space could never serve, whatever this test proved.
+  const cmd = "/opt/venv/bin/langflow run --extra 'a b'";
+  const round = sourced(
+    [
+      `remote="$(target_cmd_env)bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_SRC_RUN_CMD"' | env -u LANGFLOW_SRC_RUN_CMD bash -c "$remote"`,
+    ].join("\n"),
+    { LANGFLOW_SRC_RUN_CMD: cmd },
+  );
+  assert.equal(round.status, 0, round.stderr);
+  assert.equal(round.stdout, cmd, "the far side must READ the command back, quoting included");
+
+  // The trailing space is part of the contract, because the caller concatenates. Drop
+  // it and the assignment glues onto the next one, producing a single corrupt
+  // assignment out of two — a failure that reaches the operator as "the backend did not
+  // answer", which is the wrong message for the right reason.
+  const glued = sourced(
+    [
+      `remote="$(target_cmd_env)LANGFLOW_PORT=7999 bash -s"`,
+      `printf '%s\\n' 'printf "%s" "$LANGFLOW_PORT"' | env -u LANGFLOW_PORT bash -c "$remote"`,
+    ].join("\n"),
+    { LANGFLOW_SRC_RUN_CMD: "/opt/venv/bin/langflow run" },
+  );
+  assert.equal(glued.status, 0, glued.stderr);
+  assert.equal(glued.stdout, "7999", "the assignment that follows has to survive");
+});
+
+test("a run command set against the default switches is warned about, in the phase that can still act", () => {
+  // Both collisions are silent and neither names itself as the cause. PREPARE_TARGET=1
+  // rebuilds the clone that is not going to serve, and then run-metadata.json carries a
+  // prepared sha describing a tree nobody ran. REQUIRE_TARGET_VERSION=1 compares the
+  // LIVE instance's version against upstream's nightly resolution, which moves daily,
+  // so a pinned distribution fails the verdict on a difference the operator introduced
+  // — with a message about authoritative version checks.
+  const cmd = "/root/venv-dev8/bin/langflow run";
+
+  const both = sourced(`PREPARE_TARGET=1 REQUIRE_TARGET_VERSION=1 LANGFLOW_SRC_RUN_CMD="${cmd}" warn_target_cmd_conflicts`);
+  assert.equal(both.status, 0, both.stderr);
+  assert.match(both.stderr, /PREPARE_TARGET=0/, "the warning has to name the switch that stops the rebuild");
+  assert.match(both.stderr, /REQUIRE_TARGET_VERSION=1/, "and the one that fails the verdict");
+
+  // Silent when the caller has already dealt with both — a warning that fires anyway is
+  // a warning nobody reads.
+  const handled = sourced(`PREPARE_TARGET=0 REQUIRE_TARGET_VERSION=0 LANGFLOW_SRC_RUN_CMD="${cmd}" warn_target_cmd_conflicts`);
+  assert.equal(handled.status, 0, handled.stderr);
+  assert.doesNotMatch(handled.stderr, /LANGFLOW_SRC_RUN_CMD is set/);
+
+  // And silent on the default path, which is how this script runs every weekday: no
+  // run command, nothing to warn about, whatever the other two switches say.
+  const none = sourced(`(unset LANGFLOW_SRC_RUN_CMD; PREPARE_TARGET=1 REQUIRE_TARGET_VERSION=1 warn_target_cmd_conflicts)`);
+  assert.equal(none.status, 0, none.stderr);
+  assert.doesNotMatch(none.stderr, /LANGFLOW_SRC_RUN_CMD is set/);
+
+  // Wired into the phase, not merely defined: a guard nothing calls is a guard that
+  // does not exist.
+  const body = readFileSync(SCRIPT, "utf8");
+  assert.match(body, /^\s+warn_target_cmd_conflicts$/m, "phase_preflight has to call it");
+});
+
 test("the remote quoting survives a value carrying a quote, which no current value does", () => {
   // The branch none of today's values reach, and therefore the one that will be wrong
   // when it is first needed — the day someone overrides a mirrored variable from the
@@ -559,6 +673,209 @@ test("with REQUIRE explicitly off, none of the version states fail the run", () 
     );
     assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 0, match);
   }
+});
+
+// ---------------------------------------------------------------------------
+// THE COLLECTION GATE (#1813)
+// ---------------------------------------------------------------------------
+// The listing's provider keys decide which spec FILES exist at all: a file whose every
+// test is generated from a missing key collects zero tests, never enters the partition
+// and is handed to no shard — not skipped, not red, absent (#1764). On this lane they
+// come from an untracked `.env` via playwright.config.ts's `dotenv.config()`, so the
+// matrix is a function of a file on the machine and nothing said so. What is pinned
+// here is that the run STATES the gate before it partitions, and that a missing key is
+// a decision rather than a default.
+
+/**
+ * Runs phase_prep with a stubbed `npx`, so the gate can be driven without a listing.
+ *
+ * The stub answers `npx ts-node …` with a canned report and refuses everything else
+ * loudly — which is what lets a test tell "the run got past the gate and went on to
+ * list" from "the run stopped at the gate", the only distinction these cases are about.
+ */
+function prepWithGate(block, env = {}, rc = 0) {
+  const dir = makeTempDir("gate-");
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(dir, "gate.txt"), block);
+  writeFileSync(
+    join(bin, "npx"),
+    [
+      "#!/usr/bin/env bash",
+      `if [ "$1" = "ts-node" ]; then cat ${JSON.stringify(join(dir, "gate.txt"))}; exit ${rc}; fi`,
+      'echo "STUB_NPX $*" >&2',
+      "exit 9",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return sourced(`RUN_DIR=${JSON.stringify(dir)}; phase_prep`, {
+    PATH: `${bin}:${process.env.PATH}`,
+    ...env,
+  });
+}
+
+const GATE_BLOCK = (present, absent, complete) =>
+  [
+    `keys=OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY`,
+    `present=${present}`,
+    `absent=${absent}`,
+    `providers_listed=`,
+    `providers_absent=`,
+    `complete=${complete}`,
+    `summary=listing with openai, anthropic; GOOGLE_API_KEY absent`,
+    "",
+  ].join("\n");
+
+const FULL = GATE_BLOCK("OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY", "", "true");
+const NARROW = GATE_BLOCK("OPENAI_API_KEY ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "false");
+
+test("a missing key is a decision: declared by default, refused on request", () => {
+  const r = sourced(
+    [
+      `collection_gate_plan true`,
+      `collection_gate_plan false`,
+      `REQUIRE_PROVIDER_KEYS=1 collection_gate_plan false`,
+    ].join("\n"),
+  );
+  assert.deepEqual(r.stdout.trim().split("\n"), ["complete", "narrow", "refuse"]);
+});
+
+test("only an explicit `true` reads as a complete gate", () => {
+  // The one way this can be dangerously wrong is calling a narrowed listing whole, so
+  // everything that is not the word the report writes — empty, a missing field, a
+  // capitalised variant — must fall on the narrow side.
+  for (const value of ["", "false", "True", "1", "yes"]) {
+    const r = sourced(`collection_gate_plan ${JSON.stringify(value)}`);
+    assert.equal(r.stdout.trim(), "narrow", `${JSON.stringify(value)} was read as complete`);
+  }
+  assert.equal(sourced(`collection_gate_plan`).stdout.trim(), "narrow");
+});
+
+test("REQUIRE_PROVIDER_KEYS defaults to declaring, and is validated like the other flags", () => {
+  assert.equal(sourced(`echo "$REQUIRE_PROVIDER_KEYS"`).stdout.trim(), "0");
+  const r = sourced(`echo REACHED`, { REQUIRE_PROVIDER_KEYS: "true" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS must be exactly '0' or '1'/);
+});
+
+test("the gate is resolved BEFORE the suite is listed, which is the whole contract", () => {
+  // A report produced after the partition describes an environment nobody can act on,
+  // and one produced from another working directory describes a different `.env`
+  // entirely — the resolver reads it relative to the cwd, exactly as the config does.
+  // Read with COMMENT LINES DROPPED, not off the raw text: the comment above the
+  // resolver names the `--list` it runs before, and an ordering read off the prose
+  // would pass on a script whose commands are in the wrong order (#1226's shape).
+  const text = readFileSync(SCRIPT, "utf8");
+  const prep = text
+    .slice(text.indexOf("phase_prep() {"), text.indexOf("start_backend_for_shard() {"))
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+  const gate = prep.indexOf("npx ts-node scripts/collection-gate-keys.ts");
+  const list = prep.indexOf("npx playwright test");
+  assert.ok(gate > -1, "phase_prep no longer resolves the collection gate");
+  assert.ok(list > -1, "phase_prep no longer lists the suite");
+  assert.ok(gate < list, "the gate is resolved after the listing it describes");
+});
+
+test("a complete gate is reported and the run goes on to list", () => {
+  const r = prepWithGate(FULL);
+  assert.match(r.stdout, /listing with openai, anthropic/);
+  assert.doesNotMatch(r.stderr, /NARROWER/);
+  assert.match(r.stderr, /STUB_NPX playwright test --grep @stable --list/);
+});
+
+test("a narrow gate declares what it costs, and still produces a run", () => {
+  // Declaring rather than refusing is the default ON PURPOSE: this lane has no
+  // GOOGLE_API_KEY (#1764), and a refusing default would fail every run at 08:00 over
+  // a state that is known, accepted, and not fixable from inside the run.
+  const r = prepWithGate(NARROW);
+  assert.match(r.stderr, /NARROWER suite.*GOOGLE_API_KEY absent/s);
+  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1 refuses instead/);
+  assert.match(r.stderr, /STUB_NPX playwright test --grep @stable --list/);
+});
+
+test("under REQUIRE_PROVIDER_KEYS the run refuses, and never lists at all", () => {
+  const r = prepWithGate(NARROW, { REQUIRE_PROVIDER_KEYS: "1" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /absent: GOOGLE_API_KEY/);
+  assert.match(r.stderr, /collection-gating provider key is missing/);
+  assert.doesNotMatch(r.stderr, /STUB_NPX playwright/, "it listed a suite it had refused");
+});
+
+test("an unanswerable gate stops the run, whatever REQUIRE_PROVIDER_KEYS says", () => {
+  // A resolver that cannot decide must never read as "nothing is missing": the run
+  // would then partition a suite it cannot name, and every count it produced would be
+  // uninterpretable beside the Actions lane's.
+  for (const env of [{}, { REQUIRE_PROVIDER_KEYS: "1" }]) {
+    const r = prepWithGate("", env, 2);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /could not resolve the collection-gating provider keys \(exit 2\)/);
+    assert.doesNotMatch(r.stderr, /STUB_NPX playwright/);
+  }
+});
+
+test("a report that parses to nothing stops the run, rather than reading as a bare environment", () => {
+  // Exit 0 with a block this parse cannot read is the drift case: `complete` comes back
+  // empty too, which would demote a fully-keyed lane to narrow, and both lists come
+  // back empty, which would write a row saying the gate was never measured.
+  for (const block of ["", "unexpected=shape\n", "PRESENT=OPENAI_API_KEY\n"]) {
+    const r = prepWithGate(block, {}, 0);
+    assert.equal(r.status, 1, `block ${JSON.stringify(block)} was accepted`);
+    assert.match(r.stderr, /named no key at all/);
+    assert.doesNotMatch(r.stderr, /STUB_NPX playwright/);
+  }
+});
+
+test("the field names this script parses are the ones the resolver actually emits", () => {
+  // The seam. Every case above feeds phase_prep a HAND-WRITTEN block, so a field
+  // renamed on the TypeScript side would leave all of them green while the real run
+  // parsed nothing — the drift the guard above turns into a `die`, here caught at the
+  // source instead. So the real resolver is run once, and the names the shell greps for
+  // are read out of the shell itself rather than restated.
+  const emitted = execFileSync("npx", ["ts-node", "scripts/collection-gate-keys.ts"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, OPENAI_API_KEY: "a" },
+  })
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.slice(0, line.indexOf("=")));
+
+  const text = readFileSync(SCRIPT, "utf8");
+  const prep = text.slice(text.indexOf("phase_prep() {"), text.indexOf("start_backend_for_shard() {"));
+  const parsed = [...prep.matchAll(/sed -n 's\/\^([a-z_]+)=\/\/p'/g)].map((m) => m[1]);
+
+  assert.ok(parsed.length >= 4, `phase_prep parses only ${parsed.length} field(s) — this test is reading the wrong place`);
+  for (const field of parsed) {
+    assert.ok(emitted.includes(field), `phase_prep parses \`${field}=\`, which the resolver does not emit (it emits: ${emitted.join(", ")})`);
+  }
+});
+
+test("the gate report never carries a key's value into the run log", () => {
+  // This output is printed into a log that gets pasted into comparison issues. The
+  // resolver's own units pin that it prints names; this pins that the orchestrator
+  // reads the NAME lines and not something it would have to redact.
+  const text = readFileSync(SCRIPT, "utf8");
+  const prep = text.slice(text.indexOf("phase_prep() {"), text.indexOf("start_backend_for_shard() {"));
+  for (const key of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"]) {
+    assert.ok(
+      !new RegExp(`\\$\\{?${key}\\b`).test(prep),
+      `phase_prep expands ${key}, which puts a secret one \`info\` away from the log`,
+    );
+  }
+});
+
+test("the resolved gate travels with the verdict, into the metadata AND the row", () => {
+  // Recording it in one place only is the failure mode: the metadata is read by whoever
+  // opens the run directory, and the history row is what the lane comparison reads. A
+  // gate on the run that never reaches the row leaves the comparator guessing exactly
+  // as before.
+  const text = readFileSync(SCRIPT, "utf8");
+  assert.match(text, /collection_gate_keys "\$\{COLLECTION_GATE_KEYS:-\}"/);
+  assert.match(text, /collection_gate_keys_absent "\$\{COLLECTION_GATE_KEYS_ABSENT:-\}"/);
+  assert.match(text, /COLLECTION_GATE_KEYS="\$\{COLLECTION_GATE_KEYS:-\}"/);
+  assert.match(text, /COLLECTION_GATE_KEYS_ABSENT="\$\{COLLECTION_GATE_KEYS_ABSENT:-\}"/);
 });
 
 test("the tunnel probe leaves the shell's stderr alone", () => {
@@ -1068,6 +1385,27 @@ function metadataFrom(env, after = "") {
   assert.ok(existsSync(file), `phase_merge wrote no metadata\n${r.stdout}\n${r.stderr}`);
   return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr };
 }
+
+test("the metadata names the command that served the target, so two artifacts are not one run", () => {
+  // Without this field a run against the published distribution is byte-identical to
+  // one against the clone: same version string, same suite sha, same mirrored env. It
+  // is the "green run against the wrong instance" class the starter's build stamp
+  // exists for (#1658), arriving through the ARTIFACT instead of through stale assets —
+  // and the comparison this lane produces is only about the environment if both sides
+  // are known to have run the same product.
+  const { meta } = metadataFrom({ ...BLANKED, LANGFLOW_SRC_RUN_CMD: "/root/venv-dev8/bin/langflow run" });
+  assert.equal(meta.langflow_target_run_cmd, "/root/venv-dev8/bin/langflow run");
+
+  // Empty is not "unknown": it is the starter's own default, uv against the clone.
+  //
+  // The name is blanked EXPLICITLY, for the reason the mirrored test states three
+  // paragraphs down: `sourced()` forwards process.env, and BLANKED only neutralises the
+  // four mirrored names. Without this the default case asserts "" against whatever the
+  // operator exported — so the test would go red on exactly the machine this feature is
+  // for, the qa VM whose wrapper carries the override. Found by review, reproduced.
+  const { meta: dflt } = metadataFrom({ ...BLANKED, LANGFLOW_SRC_RUN_CMD: "" });
+  assert.equal(dflt.langflow_target_run_cmd, "");
+});
 
 test("the metadata records the mirrored values that were IN FORCE, not the defaults", () => {
   // The property #1748 exists for. On 2026-09-07 the instance under test ran with

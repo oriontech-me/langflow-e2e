@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-10
+> **Last updated:** 2026-09-11
 
 ---
 
@@ -165,7 +165,7 @@
 - [x] `POST /api/v1/flows/expand/` (hidden from the schema) refuses `{}` with **`400`** and a text report naming `CompactFlowData`, and expands `{nodes:[],edges:[]}` to itself → `api/flows/api-flows-public-and-metadata.spec.ts`
 - [x] `GET /api/v1/flows/{id}/events` on a fresh flow is `{"events": [], "settled": true}` — plain JSON, not the stream #1699 feared → `api/flows/api-flows-events.spec.ts`
 - [x] `POST /api/v1/flows/{id}/events` refuses a missing or unknown `type` with `422` whose message enumerates the **seven** literals (asserted by name), records a valid one as `201 {type, timestamp, summary}`, drops extra fields, and the log then lists both events in order with **`settled: false`** → `api/flows/api-flows-events.spec.ts`
-- [x] Versions lifecycle (`{id}/versions/`, five hidden operations): empty list `{entries:[], max_entries:50}`; `POST {}` → v1; `POST {name, description}` → v2 with `name` **ignored**; `GET one` carries `data` and `is_deployed`; **activate returns the flow and auto-snapshots the replaced state** as v3 `"Auto-saved before activating v1"`; `DELETE` → `204` removing only that entry → `api/flows/api-flows-versions.spec.ts`
+- [!] Versions lifecycle (`{id}/versions/`, five hidden operations): empty list `{entries:[], max_entries:50}`; `POST {}` → v1; `POST {name, description}` → v2 with `name` **ignored**; `GET one` carries `data` and `is_deployed`; **activate returns the flow and auto-snapshots the replaced state** as v3 `"Auto-saved before activating v1"`; `DELETE` → `204` removing only that entry — `@stable` off while the first read-back hits `LE-2598` (#1777: writes answer 2xx before their commit) → `api/flows/api-flows-versions.spec.ts`
 - [x] Unknown version ids answer `404` with two **different** messages (`"Version entry not found"` on GET, `"Version entry <id> not found"` on DELETE), each pinned as measured → `api/flows/api-flows-versions.spec.ts`
 - [x] `POST /api/v1/flows/batch/` creates every flow in `{"flows": [...]}` (`201` list, each readable by id), refuses a duplicate name `409 "Name must be unique"`, accepts `[]` as `201 []`, and **without the trailing slash answers `405`** — the trap the file's first version fell into → `api/flows/api-flows-batch.spec.ts`
 - [~] `GET /api/v1/flows/?page=1&size=2` returns a plain array of **every** flow — `page`/`size` are ignored on `1.13.0.dev0`. The former "pagination" test asserted `length >= 0` on that array and could not fail; dropped rather than pinned, since asserting either behaviour would defend a defect or invent one. Recorded here so the finding is not lost.
@@ -256,7 +256,7 @@
 - [x] Edit table input → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
-- [-] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
+- [x] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
 - [x] Two nodes on the canvas exposing the same field name render distinct DOM ids, while `data-testid` stays unscoped so both nodes remain selectable (LE-2037 / langflow#14312) → `core-components/duplicate-dom-ids-regression.spec.ts`
 
 #### 2.2 Tool Mode
@@ -429,7 +429,7 @@
 
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable
-- [-] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
+- [x] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
 - [x] Edit existing global variable — quarantine lifted 2026-08-11 (#1235). The row click was silently dropped while the RBAC permission query loaded, so the Update Variable modal never opened (dailies 2026-07-27 and 2026-08-03, [LE-2123](https://datastax.jira.com/browse/LE-2123)); fixed upstream by langflow#14404 (permission loading state) and re-validated on `1.12.0.dev23`. The provider-credential removal below (§7.5) was grouped here at triage and proved to be a separate *test* defect, fixed in #1276 → `ui-ux/global-variable-edit.spec.ts`
 - [x] Delete global variable → `ui-ux/global-variables-crud.spec.ts`
 - [x] Create global variable of type "Generic" → `ui-ux/global-variables-crud.spec.ts`
@@ -683,11 +683,13 @@
 - [x] Integrity after deletion — the deleted folder leaves the sidebar immediately, the page stays functional, and a sibling folder is untouched and still clickable → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
 - [x] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
 - [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010; stays `[-]` permanently, since `[x]` requires `@stable` and `@destructive` must never carry it — the pair would mean "runs nowhere")
-- [-] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
+- [x] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
+- [x] Create a flow inside a specific folder via API — `POST /api/v1/flows/` with an explicit `folder_id` echoes back that same `folder_id`, so the flow lands in the folder and not in the default project → `core-functionality/project-management/folder-drag-drop-flow.spec.ts`
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
 - [x] Navigate between folders → `core-functionality/project-management/flow-navigation-between-folders.spec.ts`
+- [x] A folder lists the flows it contains — the folder created over the API appears in the home sidebar under either testid spelling (#1363) and clicking it lists the flow created inside it, addressed by its own unique name → `core-functionality/project-management/folder-drag-drop-flow.spec.ts`
 - [-] Search flow by name filters results correctly
 - [-] Folders in navigation sidebar
 
@@ -810,7 +812,7 @@
 - [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
 - [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
 - [x] Re-importing a live flow's own export through the UI adds a **copy** (`"<name> (1)"`, new id) instead of updating it — the UI import posts `POST /api/v1/flows/` and discards the export's id, unlike `POST /api/v1/flows/upload/`, which upserts → `flow-functionality/export-import-flow.spec.ts` (#1773)
-- [-] Import flow with outdated components → `flow-functionality/import-outdated-flow.spec.ts`
+- [x] Import flow with outdated components → `flow-functionality/import-outdated-flow.spec.ts`
 - [x] Import invalid JSON — should display error message → `flow-functionality/import-invalid-json.spec.ts`
 
 #### 12.5 Flow Operations
@@ -821,7 +823,7 @@
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
 #### 12.6 Flow Execution
-- [x] Run Flow component executes another flow — `@stable` restored 2026-08-11 (#966). The upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is fixed by langflow#14349, present on the nightly line; the shared helper still gates on the flows list having rendered. Hardened for #1548 (daily 2026-08-21 flow-selector click intercepted by two overlays): the spec now seeds the assistant-onboarding suppression (#1220) and drags the Run Flow node to the upper-right canvas region so the flow-name popup stays clear of the canvas-controls band; re-validated on `1.12.0.dev33` → `flow-functionality/run-flow.spec.ts`
+- [x] Run Flow component executes another flow — restored to `@stable` 2026-09-10 (#1787), and the bullet had been over-reporting until then: it read `[x]` with "`@stable` restored 2026-08-11 (#966)" while the spec carried `test.fixme` and no tag from `ecf96d29` onward, which no guard detects (`check:checklist-coverage` enforces spec→bullet, never bullet→spec). Sequence, because it explains the gap: promoted, quarantined for #966, hardened once the upstream `New Flow` dead-click ([LE-2019](https://datastax.jira.com/browse/LE-2019)) was fixed by langflow#14349, then the 2026-08-21 daily hit an `assistant-onboarding-tooltip` overlay and TWO PRs answered it the same day — #1550 hardened the spec against that overlay (`seedAssistantDiscovered` + the upper-right node anchor) and #1553 muted it. #1553 merged second so the mute won, and #1548 — which carried the lift as a deliverable — closed without performing it, leaving the hardening for the mute's own cause unused in the file. Re-validated on `1.13.0.dev8`: 3/3 green with the modifier removed, and 3/3 in the #1784 measurement before that → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [ ] A cyclic graph is refused with a cycle-specific error, and the flow stays editable afterwards (the engine's own contract; a total engine failure is caught indirectly by the 63 `@stable` specs that trigger a run, a subtle one by nothing)
@@ -864,6 +866,7 @@
 - [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
 - [x] Flow exposed as MCP server — verify generated endpoint, and that the transport takes an API key: the same `initialize` with no credential is refused `403` (#1522) → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
+- [x] A flow created MCP-enabled is exposed end to end — it is listed by name in the MCP Server tab's tool list, the JSON config advertises the project's `mcp/project/<id>/streamable` URL, and that endpoint answers a JSON-RPC `initialize` with `200` when carrying an `x-api-key` → `mcp/server/mcp-server-regression.spec.ts`
 - [x] Register an external MCP server through the stdio form — `command` + `args` resolves the server's real tools into the MCPTools node → `mcp/server/mcp-server.spec.ts`
 - [x] Add-server modal fields persist across save → reopen-for-edit — stdio (name, command, 4 args, 2 env pairs) and HTTP/SSE (name, URL, 2 headers, 2 env pairs) → `mcp/server/mcp-server.spec.ts`
 - [x] Tool list refreshes when a registered server is edited to run a different package → `mcp/server/mcp-server.spec.ts`
@@ -1006,6 +1009,7 @@
       in the trace detail (`langflow-ai/langflow#7313` — TracingService exposing secrets)
       → security/credential-secret-exposure.spec.ts
 - [!] The same secret is absent from the exported flow JSON
+      (**quarantined** — `test.fixme` against the upstream export regression, #1546)
       → security/credential-secret-exposure.spec.ts
 - [x] The same secret is absent from the API response of a run
       → security/credential-secret-exposure.spec.ts
@@ -1449,21 +1453,21 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 100 | 94 | 1 | 3 | 2 |
-| `core-components/` — Component Config | 28 | 26 | 2 | 0 | 0 |
+| `api/flows/` — REST API | 100 | 93 | 1 | 4 | 2 |
+| `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 90 | 1 | 0 | 1 |
-| `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
+| `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
-| `core-functionality/project-management/` | 12 | 7 | 5 | 0 | 0 |
+| `core-functionality/project-management/` | 14 | 10 | 4 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
-| `flow-functionality/` | 33 | 27 | 1 | 1 | 4 |
+| `flow-functionality/` | 33 | 28 | 0 | 1 | 4 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
-| `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
+| `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 29 | 23 | 0 | 1 | 5 |
@@ -1472,7 +1476,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **655** | **531 (81%)** | **41 (6%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **658** | **537 (82%)** | **37 (6%)** | **19 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1488,7 +1492,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 610 `test()` calls carrying the `@stable` tag, distributed across 234 spec
+> 619 `test()` calls carrying the `@stable` tag, distributed across 242 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1616,7 +1620,6 @@
 - [x] a project is created, listed, read with its flows and deleted by id → `api-projects-crud.spec.ts`
 - [x] PATCH is partial, PUT merges but refuses a body without a name → `api-projects-crud.spec.ts`
 - [x] a duplicate name is suffixed and the required field is enforced → `api-projects-crud.spec.ts`
-- [x] download refuses an empty project and returns a ZIP for a populated one → `api-projects-transfer.spec.ts`
 - [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
 
 #### core-components/
@@ -1892,7 +1895,6 @@
 - [x] a registered memory base is exposed through the Memory Base API, never through the knowledge-base list → `memory-base-registration.spec.ts`
 
 #### core-functionality/model-provider/
-- [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
 - [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] Azure AI Foundry is offered with a two-variable form and a Foundry-only deployment surface → `azure-ai-foundry-provider-setup.spec.ts`
@@ -1990,6 +1992,8 @@
 - [x] deleting a folder should update the folder list immediately → `folder-deletion-integrity.spec.ts`
 - [x] deleting one folder should not affect other folders → `folder-deletion-integrity.spec.ts`
 - [x] creating a new folder after deletion should work correctly → `folder-deletion-integrity.spec.ts`
+- [x] creating a flow in a specific folder via API places it in that folder → `folder-drag-drop-flow.spec.ts`
+- [x] folder listing shows flows correctly via UI → `folder-drag-drop-flow.spec.ts`
 - [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
 
 #### flow-functionality/
@@ -2017,6 +2021,8 @@
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
+- [x] dropping a collection file imports every flow it contains → `dragAndDrop.spec.ts`
+- [x] dropping a single flow file imports that flow → `dragAndDrop.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
 - [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
@@ -2029,12 +2035,15 @@
 - [x] should show correct lock/unlock icon in settings based on state → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] user should not be able to hide connected inputs → `general-bugs-hidden-input-edges.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
+- [x] importing an outdated flow via the UI upload button surfaces the outdated notification on open → `import-outdated-flow.spec.ts`
 - [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
+- [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
@@ -2063,6 +2072,7 @@
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
+- [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
@@ -2138,6 +2148,7 @@
 - [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
 - [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
 - [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
+- [x] editing the Duplicate shortcut persists and triggers the action on canvas → `settings-shortcuts-edit.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
 - [x] dragging a sidebar component drops the node at the pointer → `sidebar-add-component.spec.ts`
@@ -2149,6 +2160,8 @@
 - [x] adding a sticky note places it on the canvas and in the flow → `sticky-notes.spec.ts`
 - [x] changing a sticky note colour repaints it and persists the choice → `sticky-notes.spec.ts`
 - [x] resizing a sticky note grows it and persists the new size → `sticky-notes.spec.ts`
+- [x] bind a Credential global variable to a component secret field → `use-global-variable-in-component.spec.ts`
+- [x] component secret-field global-variable binding persists across reload → `use-global-variable-in-component.spec.ts`
 
 ---
 
@@ -2159,9 +2172,9 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 1 | 2 |
-| `core-components/` — Component Config | 2 | 0 |
+| `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 1 | 1 |
-| `core-functionality/auth/` | 2 | 0 |
+| `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 2 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 1 | 1 |
@@ -2179,7 +2192,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 1 | 4 |
-| `core-functionality/project-management/` | 5 | 0 |
+| `flow-functionality/` | 0 | 4 |
+| `core-functionality/project-management/` | 4 | 0 |
 | `core-functionality/templates/` | 0 | 28 |
 | `ui-ux/` — Settings | 0 | 0 |

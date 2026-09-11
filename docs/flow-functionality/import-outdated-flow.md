@@ -1,6 +1,6 @@
 # Import Flow with Outdated Components — UI Upload Path (§12.4 Export / Import Flow)
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
 
 ---
 
@@ -144,3 +144,17 @@ sibling `outdated-component-notification.spec.ts`'s concern, not this spec's.
 - **Flow cleanup.** The imported flow is a real persisted flow — its id is
   captured from the `POST /api/v1/flows` response and deleted id-scoped in
   `afterEach` (#490/#681), so no "Memory Chatbot" orphan leaks across runs.
+  **Since #1787 the bootstrap's own creates are captured too**, and the reason
+  is worth carrying because it hid itself: `awaitBootstrapTest` creates `New
+  Flow` plus a `Basic Prompting` when the project is empty, and only the upload
+  response was ever captured, so a run left the instance two flows heavier.
+  Measured on `1.13.0.dev8`, green path as well as red — this was never a
+  red-only defect.
+
+  **It was invisible while a sibling spec leaked.** A first audit ran the four
+  promoted specs in sequence and charged this one 0: `dragAndDrop` leaked the
+  same pair first, which left the project non-empty, so this spec's bootstrap
+  created nothing. Fixing `dragAndDrop` is what exposed it. Any per-spec flow
+  audit therefore has to **purge before each spec**, not once before the batch —
+  otherwise one leak masks the next and the clean specs are the ones that look
+  guilty.

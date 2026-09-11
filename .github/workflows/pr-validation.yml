@@ -1073,10 +1073,18 @@ jobs:
       #
       # So: `degraded` (something else executed) keeps this check GREEN and states
       # what it did not cover in the run summary, which is where a reviewer already
-      # looks — a `::warning::` here would be #1252's `mode=count` again. `uncovered`
-      # (a provider-health skip and ZERO tests executed) FAILS: the PR received no
-      # evidence about its own diff, which is the all-skip green #570/#1012 exist to
-      # prevent, arriving by a route neither covered.
+      # looks — a `::warning::` here would be #1252's `mode=count` again.
+      #
+      # What FAILS is `shouldFail()`, not the verdict (#1800). `uncovered` alone was
+      # too wide HERE and only here: this lane's "run" is whatever the import graph
+      # selected, frequently one spec file, so a PR editing a single wholly-gated spec
+      # during a drain of that spec's provider executed nothing, scored `uncovered`
+      # and could not be merged — one dead key blocking an author who cannot fix it,
+      # which is #980 inverted on the lane a human is waiting on. `--providers` is
+      # what makes the honest question answerable: a HEALTHY provider leaves no trace
+      # in the report, so whether the account was up at all can only come from the
+      # file `Collect models` wrote. Absent (an LLM-free PR, a canary whose sweep was
+      # allowed to fail) the account reads UNKNOWN, which never fails on its own.
       #
       # Placed here on purpose, and the placement carries two guarantees:
       #  - it runs under the implicit `success()`, so it only ever speaks on a run
@@ -1097,6 +1105,7 @@ jobs:
           node scripts/lane-coverage-verdict.mjs \
             --lane "pr-validation" \
             --provider "$PR_LANE_PROVIDER" \
+            --providers tests/helpers/provider-setup/data/providers.json \
             --fail-closed
 
       # Destructive lane (#1010). `@destructive` tests wipe account-wide state, so

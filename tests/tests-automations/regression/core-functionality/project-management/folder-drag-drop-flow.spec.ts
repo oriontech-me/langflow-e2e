@@ -3,10 +3,11 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { projectSidebarEntry } from "../../../../helpers/ui/project-sidebar";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 
 test(
   "creating a flow in a specific folder via API places it in that folder",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -76,11 +77,12 @@ test(
 
 test(
   "folder listing shows flows correctly via UI",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page, request }) => {
     const authToken = await getAuthToken(request);
     const folderName = `ui-folder-${Date.now()}`;
     const flowName = `ui-flow-${Date.now()}`;
+    let pageFlows: ReturnType<typeof trackCreatedFlows> | undefined;
 
     // Create folder and flow via API
     const folderRes = await request.post("/api/v1/folders/", {
@@ -108,6 +110,15 @@ test(
       expect(flowRes.status()).toBe(201);
       const flow = await flowRes.json();
       flowId = flow.id;
+
+      // The explicit deletes below only reach what THIS file created over the API.
+      // `awaitBootstrapTest` also creates `New Flow` and `Basic Prompting` whenever
+      // the default project is empty, and nothing here ever saw those ids — measured
+      // 2 leaked flows per run against a purged instance, on a spec a source grep
+      // reports as id-scoped precisely because the creation happens inside a helper
+      // (#1788). Installed BEFORE the navigation, so the bootstrap's own creations
+      // are captured.
+      pageFlows = trackCreatedFlows(page);
 
       // Navigate to the home page and wait for it to load
       await awaitBootstrapTest(page, { skipModal: true });
@@ -137,6 +148,12 @@ test(
           headers: { Authorization: authToken },
         })
         .catch(() => {});
+      // Last, and unconditional: the folder delete above cascades only over flows
+      // INSIDE that folder, while the bootstrap's two land in the default project.
+      if (pageFlows) {
+        await pageFlows.cleanup(request);
+        pageFlows.dispose();
+      }
     }
   },
 );

@@ -32,10 +32,48 @@ test.describe("flow import by file drop on the home page", () => {
   let token: string;
   // Every flow the drop created, collected from the create responses.
   let importedIds: string[];
+  // Every flow the BOOTSTRAP created, kept apart from the line above on purpose:
+  // these are deleted like any other id this page made, and no assertion ever
+  // counts them (#1787). Measured on 1.13.0.dev7 before this split existed: a
+  // green run left `New Flow` plus a second `Basic Prompting` behind, once per
+  // run, because the import listener goes up only after the bootstrap and so
+  // never saw them. The old comment called them "shared bootstrap state, not
+  // ours to delete" -- but a parallel worker's bootstrap creates a DIFFERENT id,
+  // so deleting by id cannot reach it; what was actually load-bearing is that
+  // their 201s must stay out of the import count, which this split preserves.
+  let bootstrapIds: string[];
+  // Flips once the bootstrap has finished. Read SYNCHRONOUSLY inside the
+  // handler, never inside the `.then()`: `res.json()` settles on a later tick,
+  // so a bootstrap 201 whose body resolves after the flip would otherwise be
+  // misfiled -- and the reverse (deciding by "is the import array still empty")
+  // is a race between the two handlers' promises during the drop itself.
+  let bootstrapDone: boolean;
 
   test.beforeEach(async ({ page, request }) => {
     token = await getAuthToken(request);
     importedIds = [];
+    bootstrapIds = [];
+    bootstrapDone = false;
+
+    // Installed BEFORE the bootstrap so its own creates are captured for
+    // cleanup; feeds a separate array, so the import count is untouched.
+    page.on("response", (res) => {
+      if (
+        res.request().method() === "POST" &&
+        res.url().includes("/api/v1/flows/") &&
+        res.status() === 201
+      ) {
+        if (bootstrapDone) return;
+        res
+          .json()
+          .then((body: { id?: string }) => {
+            if (body?.id) bootstrapIds.push(body.id);
+          })
+          .catch(() => {
+            /* a non-JSON 201 cannot carry an id to clean up */
+          });
+      }
+    });
 
     // Home page with the flow list rendered. skipModal: the templates modal is
     // not part of this journey, and opening a template would create an extra
@@ -44,6 +82,8 @@ test.describe("flow import by file drop on the home page", () => {
     await expect(page.getByTestId(DROPZONE_TESTID)).toBeVisible({
       timeout: 30000,
     });
+    // Bootstrap is over: from here every 201 belongs to the drop under test.
+    bootstrapDone = true;
 
     // Listener installed only AFTER the bootstrap: on a freshly empty instance
     // awaitBootstrapTest itself creates a flow (shared bootstrap state, not ours
@@ -68,13 +108,15 @@ test.describe("flow import by file drop on the home page", () => {
   });
 
   test.afterEach(async ({ request }) => {
-    for (const id of importedIds) {
+    // Id-scoped, never a global sweep: under fullyParallel, deleting anything
+    // this page did not create would wipe a concurrent worker's flow.
+    for (const id of [...importedIds, ...bootstrapIds]) {
       await deleteFlow(request, id, { headers: { Authorization: token } });
     }
   });
 
   test("dropping a collection file imports every flow it contains",
-    { tag: ["@release", "@workspace", "@mainpage"] },
+    { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
     async ({ page, request }) => {
       // Read the expected count from the asset itself, so adding a flow to the
       // fixture updates the expectation instead of reddening the test.
@@ -121,7 +163,7 @@ test.describe("flow import by file drop on the home page", () => {
     });
 
   test("dropping a single flow file imports that flow",
-    { tag: ["@release", "@workspace", "@mainpage"] },
+    { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
     async ({ page, request }) => {
       const uniqueName = `dnd-flow-${Date.now()}-${Math.random()
         .toString(36)

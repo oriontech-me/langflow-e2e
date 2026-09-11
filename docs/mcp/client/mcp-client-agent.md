@@ -119,9 +119,13 @@ whether this spec used the shared, already-migrated guard would read the doc, se
 page object named, and conclude it did.
 
 **Why it loads the agent itself.** `SimpleAgentTemplatePage.load()` always runs
-`providerSetupMap[provider]`, which opens the Model Providers panel and enables *every*
-model of the provider — each enable is a live synchronous credential validation that
-blocks the single-worker backend for ~35 s when the provider throttles it (#922/#927).
+`providerSetupMap[provider]`, which opens the Model Providers panel. That panel used to
+enable *every* model of the provider, and each enable is a live synchronous credential
+validation inside the request, on the single worker the lanes pin — 0.75 to 3.2 s per
+model measured on `1.13.0.dev8`, so a whole-panel batch blocked the backend for 28 to
+93 s and sometimes died on gunicorn's timeout (#922/#927/#1679). Since #1679 the setup
+enables the one model it picks, so the saving is smaller than it was; skipping the panel
+is still cheaper, and it also avoids the post-close picker refresh.
 This spec's `selectPinnedModel` picks the pinned model straight from the Agent dropdown
 and falls back to the shared setup only when the model is not offered. Adopting `load()`
 outright would delete the divergence at the cost of that, so the guard is re-pointed onto

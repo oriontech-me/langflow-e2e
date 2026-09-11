@@ -32,16 +32,27 @@ test.beforeEach(async ({ page }) => {
 // the product fix itself landed upstream in langflow#14349 (*stop flow route request
 // storm*), whose files are present on `release-1.12.0`, so `@stable` is restored here
 // after re-validation on `1.12.0.dev23` (#966). See docs/flow-functionality/run-flow.md.
-// Quarantined at triage (daily #1544): hard failure on all three attempts — the
-// click on `refresh-dropdown-list-flow_name_selected` is refused by two overlays
-// taking the pointer events, `main_canvas_controls` and an
-// `assistant-onboarding-tooltip` popper this repository references nowhere. It
-// ran on shard 1, which the in-run liveness recorder measured at zero outages,
-// so the day's mass-failure verdict does not cover it. Lifting the quarantine
-// (remove test.fixme + restore @stable) is a deliverable of #1548.
-test.fixme(
+// Quarantine LIFTED 2026-09-10 (#1787), and the reason it outlived its cause is
+// worth recording. The 2026-08-21 daily (#1544) hard-failed all three attempts:
+// the click on `refresh-dropdown-list-flow_name_selected` was refused by two
+// overlays taking the pointer events, `main_canvas_controls` and an
+// `assistant-onboarding-tooltip` popper the suite referenced nowhere. TWO PRs
+// answered that on the same day — #1550 HARDENED the spec against exactly that
+// overlay (the `seedAssistantDiscovered` beforeEach above, plus dragging the node
+// to the upper-right canvas region so the flow-name popup clears the controls
+// band) and #1553 QUARANTINED it. #1553 merged second, so the mute won, and
+// #1548 — which carried the lift as a checklist deliverable — closed without
+// performing it. The mute has therefore been redundant since the day it landed:
+// the hardening for its own stated cause is in this file.
+//
+// The lift is evidence-backed, not optimism: with the modifier removed the test
+// measured 3/3 green across the nine #1784 dispatches on `1.13.0.dev7`
+// (`docs/triage/inherited-spec-triage.md`) and 3/3 again in this promotion's
+// burst on the same version. #1746's reconciler had already flagged this spec as
+// an orphaned removal, and #1783 listed it as such.
+test(
   "user should be able to use Run Flow without any issues",
-  { tag: ["@release", "@workspace", "@api", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });

@@ -29,10 +29,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { renderIssue, apiUrlFor, createIssue, CC_DEFAULT } from "./create-failure-issue.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
+
+/** The script itself, for the handful of assertions that must go through `main()`. */
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "create-failure-issue.mjs");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
@@ -333,22 +338,301 @@ test("the zero-verdicts body survives a run that reported no headline", () => {
   assert.doesNotMatch(body, /Providers that went uncovered/, "no list when nothing was reported");
 });
 
-test("the daily fires the umbrella on `uncovered` and hands it the verdict", () => {
+test("the daily fires the umbrella on the coverage DECISION and hands it the verdict", () => {
   // The wiring half, which no render test can reach: this step is gated on the
-  // TEST job, and an `uncovered` day is green there. Without the extra clause the
+  // TEST job, and a coverage day is green there. Without the extra clause the
   // job's last step reddens the run and nothing opens an issue naming the cause —
   // a red day with no triage attached, which is #1176 in the direction that costs
   // the evidence rather than the gate.
+  //
+  // #1800 moved the clause from `verdict == 'uncovered'` to `fail_recommended`,
+  // because `uncovered` requires ZERO executed tests and a full `@stable` run always
+  // executes hundreds of non-LLM ones — so the clause could not fire on this lane at
+  // all. What fires now is the reachable case: a complete report and NO usable
+  // provider.
   const wf = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
   const step = wf.slice(wf.indexOf("- name: Create issue on failure"));
   const block = step.slice(0, step.indexOf("\n      - name:", 10));
 
   assert.match(
     block.slice(0, block.indexOf("\n", block.indexOf("if:"))),
-    /steps\.coverage\.outputs\.verdict == 'uncovered'/,
-    "an uncovered day leaves the test job GREEN, so the umbrella needs its own clause",
+    /steps\.coverage\.outputs\.fail_recommended == 'true'/,
+    "a coverage day leaves the test job GREEN, so the umbrella needs its own clause",
   );
-  for (const key of ["COVERAGE_VERDICT", "COVERAGE_HEADLINE", "COVERAGE_PROVIDERS", "COVERAGE_SKIPS"]) {
+  // `!= 'success'`, not `== 'failure'`: a CANCELLED test job is not "came back green"
+  // either, and the dry shape's body says that in so many words.
+  assert.match(block, /TESTS_FAILED: \$\{\{ needs\.test\.result != 'success' \}\}/);
+  for (const key of [
+    "COVERAGE_VERDICT",
+    "COVERAGE_HEADLINE",
+    "COVERAGE_PROVIDERS",
+    "COVERAGE_SKIPS",
+    "COVERAGE_ACCOUNT",
+    // Deleting this one line from the workflow left the whole lane green while
+    // restoring the defect the previous round was opened for — the dry shape taking
+    // the title on a day with real per-test failures (#1800 review).
+    "TESTS_FAILED",
+  ]) {
     assert.match(block, new RegExp(`${key}: `), `the umbrella cannot render the shape without ${key}`);
   }
+});
+
+// --- the dry-account shape (#1800) ------------------------------------------
+// The reachable sibling of the zero-verdicts shape. `uncovered` needs ZERO executed
+// tests, which a full `@stable` run never produces; a DRY account is what the daily
+// can actually hit — hundreds of green non-LLM tests and no provider reachable at all.
+
+test("a dry account gets its own title and does not claim nothing ran", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    runTests: "412",
+    coverageProviders: "openai, anthropic, google",
+    coverageSkips: "31",
+    coverageHeadline: "daily-stable did not cover openai, anthropic, google",
+  });
+
+  assert.match(title, /NO usable provider/);
+  assert.doesNotMatch(title, /ZERO verdicts/, "tests DID produce verdicts — just not LLM ones");
+  assert.doesNotMatch(title, /tests failed/);
+  assert.match(body, /no provider was\n?\s*recorded usable/i);
+  assert.match(body, /The rest of the suite did run/);
+  assert.match(body, /31 test\(s\)/);
+  // Its own triage line, not the zero-verdicts one: `providers.json` is written by the
+  // sweep AND by `globalSetup`'s credential degradation (#1058), so "restore the key
+  // or the credit" would misdirect on half the states that produce this shape.
+  assert.match(body, /provider configuration, not the suite/);
+  assert.match(body, /whether the sweep imported them/);
+  assert.match(body, /globalSetup/);
+  // It must NOT borrow the zero-verdicts claims, which are false here.
+  assert.doesNotMatch(body, /not one of them is a/);
+  assert.doesNotMatch(body, /no per-test evidence to/);
+  assert.doesNotMatch(body, /restore the key or the credit/);
+});
+
+// Review finding: the account says nothing about whether tests ALSO failed, and this
+// shape sits above the per-test one — so a real failure day with a dry account took a
+// title that omitted the failures and a body that told the triager to ignore the
+// suite, with no failure list and (when the mass-failure guard leaves `arStatus`
+// empty, which is exactly the >5-failure outage day) no auto-removal block either.
+// The shape is now gated on the test job being GREEN.
+test("a dry account that ALSO had failures keeps the per-test shape", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    testsFailed: true,
+    runTests: "412",
+    coverageProviders: "openai",
+    coverageSkips: "31",
+    arStatus: "success",
+    arSummary: "Removed @stable from 3 tests: a, b, c",
+  });
+
+  assert.match(title, /@stable tests failed/, "the failures own the title");
+  assert.doesNotMatch(title, /NO usable provider/);
+  assert.match(body, /### `@stable` auto-removal/);
+  assert.match(body, /Removed @stable from 3 tests/);
+  assert.doesNotMatch(body, /Triage this as provider configuration/);
+});
+
+// And the belt: if the auto-remove step somehow ran on a green test job, its summary
+// is carried rather than dropped — the shape must never assert that no tag was
+// touched while one was.
+test("a dry account carries an unexpected auto-removal instead of hiding it", () => {
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    runTests: "412",
+    arStatus: "success",
+    arSummary: "Removed @stable from 3 tests: a, b, c",
+  });
+  assert.match(title, /NO usable provider/);
+  assert.match(body, /Removed @stable from 3 tests/);
+  assert.match(body, /Unexpected on this shape/);
+});
+
+test("the structural shapes outrank the dry-account one too", () => {
+  for (const flag of ["partial", "empty", "mergeFailed"]) {
+    const { title } = renderIssue({ ...ACTIONS, [flag]: true, accountDry: true, runTests: "3" });
+    assert.doesNotMatch(title, /NO usable provider/, `${flag} must win the title`);
+  }
+  // And zero-verdicts outranks it: if nothing ran at all, that is the stronger fact.
+  // `arStatus` is populated on purpose: without it this case could not see the
+  // `!uncovered` guard on the auto-removal block, and dropping that guard survived the
+  // whole lane — rendering "### `@stable` auto-removal" directly under the sentence
+  // "No spec failed, no `@stable` tag was touched", which is the self-contradicting
+  // body #1456 deliberately avoids.
+  const bothCoverage = renderIssue({
+    ...ACTIONS,
+    uncovered: true,
+    accountDry: true,
+    runTests: "3",
+    arStatus: "ok",
+    arSummary: "Removed @stable from 2 tests",
+  });
+  assert.match(bothCoverage.title, /ZERO verdicts/);
+  assert.doesNotMatch(bothCoverage.body, /auto-removal/);
+  assert.doesNotMatch(bothCoverage.body, /Removed @stable/);
+});
+
+test("an alive account never selects the dry shape", () => {
+  // The discriminator is the account state, not the presence of unverified providers:
+  // a `degraded` day on a live account is an ordinary umbrella.
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: false,
+    coverageProviders: "openai",
+    coverageSkips: "3",
+  });
+  assert.match(title, /tests failed/);
+  assert.doesNotMatch(body, /NO usable provider|no provider at all/);
+});
+
+test("a dry account on a FAILURE day keeps the per-test shape and still names the outage", () => {
+  // The per-test shape wins the title — the fix for the dry shape hijacking a real
+  // failure day — but the first version of that fix traded one information loss for
+  // its mirror image: every coverage input is rendered inside the dry/uncovered
+  // section, so routing the day elsewhere dropped the outage entirely. Measured on the
+  // exact day the finding names: >5 failures, so the mass-failure guard leaves
+  // `arStatus` empty and the body carried neither the failures nor the account.
+  const { title, body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    testsFailed: true,
+    runTests: "412",
+    arStatus: "",
+    coverageProviders: "openai, anthropic, google",
+    coverageSkips: "31",
+    coverageHeadline: "daily-stable did not cover openai, anthropic, google",
+  });
+  assert.match(title, /@stable tests failed on/);
+  assert.doesNotMatch(title, /NO usable provider/);
+  assert.match(body, /NO usable provider on this run/);
+  assert.match(body, /openai, anthropic, google/);
+  assert.match(body, /31 test\(s\)/);
+  assert.match(body, /daily-stable did not cover openai/);
+  // It leads the body for the same reason the liveness block does: the failures below
+  // are plausibly collateral, and triage that starts from them starts wrong.
+  assert.ok(
+    body.indexOf("NO usable provider on this run") < body.indexOf("### Next steps"),
+    "the outage must precede the per-test material",
+  );
+});
+
+test("a LIVE account on a failure day carries no outage banner", () => {
+  const { body } = renderIssue({
+    ...ACTIONS,
+    accountDry: false,
+    testsFailed: true,
+    runTests: "412",
+    coverageProviders: "openai",
+    coverageSkips: "3",
+  });
+  assert.doesNotMatch(body, /NO usable provider on this run/);
+});
+
+test("main() reads TESTS_FAILED as the string 'true', and only that", async () => {
+  // The env→props mapping the render tests cannot reach: inverting this one comparison
+  // left the whole lane green while restoring the hijack. Rendered through the real
+  // process so the mapping, not a re-declaration of it, is what is asserted.
+  // RUN_DIR, because `main()` always writes `$RUN_DIR/issue-body.md` and the default
+  // is the CWD — a test that leaves a file in the repo root is its own defect.
+  const runDir = makeTempDir("issue-body-");
+  const base = {
+    ...process.env,
+    ISSUE_DRY_RUN: "1",
+    RUN_DIR: runDir,
+    COVERAGE_ACCOUNT: "dry",
+    COVERAGE_VERDICT: "degraded",
+    RUN_TESTS: "412",
+    RUN_ID: "1",
+    RUN_URL: "https://example.invalid/1",
+    LANGFLOW_IMAGE: "nightly",
+    AUTO_REMOVE_STATUS: "",
+    LIVENESS_MD: "",
+  };
+  const failed = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...base, TESTS_FAILED: "true" },
+  });
+  const green = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...base, TESTS_FAILED: "false" },
+  });
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.equal(green.status, 0, green.stderr);
+  assert.match(green.stdout, /NO usable provider on/);
+  assert.doesNotMatch(failed.stdout, /@stable run had NO usable provider on/);
+  assert.match(failed.stdout, /@stable tests failed on/);
+});
+
+test("the outage banner stays off the shapes that have no failures below it", () => {
+  // Reachable on the #1058 day, not exotic: `Collect models` failing to import a key
+  // aborts shards (`partial`) while the same sweep records every provider `inactive`
+  // (`accountDry`). The banner says "read the failures below against it" and those
+  // bodies say there are none — one of them four lines under its own "Triage the
+  // abort first".
+  for (const flag of ["empty", "partial", "mergeFailed", "uncovered"]) {
+    const { body } = renderIssue({
+      ...ACTIONS,
+      [flag]: true,
+      accountDry: true,
+      testsFailed: true,
+      runTests: "3",
+      coverageProviders: "openai",
+      coverageSkips: "12",
+      coverageHeadline: "daily-stable did not cover openai",
+    });
+    assert.doesNotMatch(
+      body,
+      /NO usable provider on this run — read the failures below/,
+      `${flag} has no per-test material for the banner to point at`,
+    );
+    // And the coverage material must not be rendered twice on the shape that owns it.
+    if (flag === "uncovered") {
+      assert.equal(body.match(/Providers that went uncovered/g)?.length, 1);
+    }
+    // ...but the FACT must survive where nothing else reports it. On `empty` and
+    // `mergeFailed` the run's own `::error::` needs a provider-health skip an aborted
+    // run never produced, and the summary block is empty on a `covered` verdict, so
+    // dropping it here dropped it everywhere.
+    if (flag === "empty" || flag === "mergeFailed") {
+      assert.match(body, /no provider was \*\*recorded\*\* usable on this run/);
+    }
+    // The CAUSE hint is `empty`'s alone. #1058 aborts the shards, which is a cause
+    // `mergeFailed` demonstrably does not have — its own text says every shard
+    // finished and no spec is implicated, so the hint would contradict it three lines
+    // down, which is the defect this whole PR keeps removing from other messages.
+    if (flag === "mergeFailed") {
+      assert.doesNotMatch(body, /can abort the shards/);
+    }
+    if (flag === "empty") {
+      assert.match(body, /can abort the shards in the same run/);
+    }
+  }
+
+  // ...and the note must be ABSENT on a live account, or it becomes a false claim on
+  // every aborted run — the #1012 class it exists to satisfy, inverted.
+  for (const flag of ["empty", "mergeFailed"]) {
+    const { body } = renderIssue({ ...ACTIONS, [flag]: true, accountDry: false, runTests: "3" });
+    assert.doesNotMatch(body, /no provider was \*\*recorded\*\* usable/, `${flag} on a live account`);
+  }
+});
+
+test("the dry shape never renders its own material twice", () => {
+  // Dropping `testsFailed` from the banner gate makes it fire on the dry shape itself,
+  // which already renders every one of these lines — measured: "NO usable provider"
+  // and "Providers that went uncovered" both appeared twice.
+  const { body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    testsFailed: false,
+    runTests: "412",
+    coverageProviders: "openai, anthropic, google",
+    coverageSkips: "31",
+    coverageHeadline: "daily-stable did not cover openai",
+  });
+  assert.equal(body.match(/NO usable provider/g)?.length, 1);
+  assert.equal(body.match(/Providers that went uncovered/g)?.length, 1);
+  assert.doesNotMatch(body, /read the failures below/);
 });

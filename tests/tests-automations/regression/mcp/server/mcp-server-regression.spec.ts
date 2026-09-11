@@ -19,7 +19,7 @@ test.describe("MCP Server – Flow Exposed as MCP Tool", () => {
 
   test(
     "flow appears as MCP tool in MCP Server tab and endpoint responds",
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@stable", "@mcp", "@regression"] },
     async ({ page }) => {
       let flowName = "";
 
@@ -52,9 +52,16 @@ test.describe("MCP Server – Flow Exposed as MCP Tool", () => {
         await expect(page.getByTestId("div-mcp-server-tools")).toBeVisible({
           timeout: 10000,
         });
-        // Langflow renders flow names in the MCP tools list as uppercase slugs
-        // (e.g. "New Flow" → "NEW_FLOW"). Build the same slug to pinpoint THIS flow
-        // instead of asserting a generic count > 0 which can pass for any prior flow.
+        // Build the flow's own tool slug to pinpoint THIS flow, instead of
+        // asserting a generic count > 0 which can pass for any prior flow.
+        //
+        // The slug is NOT uppercase, as an earlier version of this comment said:
+        // `lfx.base.mcp.util.sanitize_mcp_name` lowercases, so the flow
+        // "E2E Slug Probe abcdef0123456789" is exposed as
+        // `e2e_slug_probe_abcdef0123456789` (measured on 1.13.0.dev8 via
+        // GET /api/v1/mcp/project/{id}). The uppercase expectation matches only
+        // because `getByText(..., { exact: false })` is case-insensitive; the
+        // discriminating part is the 16 hex digits, not the casing.
         const flowSlug = flowName.toUpperCase().replace(/\s+/g, "_");
         await expect(
           page.getByTestId("div-mcp-server-tools").getByText(flowSlug, { exact: false }),

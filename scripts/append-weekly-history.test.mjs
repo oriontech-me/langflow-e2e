@@ -249,6 +249,60 @@ test("an absent version is null, never omitted, so a reader can tell 'unknown' f
   assert.ok("langflow_version" in entry);
 });
 
+// ---------- the listing's provider gate rides on the row (#1813) ----------
+
+// These keys gate COLLECTION: a spec file generated entirely from a missing one yields
+// zero tests, leaves the file-level partition and is run by no shard. The row's totals
+// shrink with nothing to point at — no failure, no skip, no error — so the two-lane
+// comparison has to read the cause off the row or invent one, which it did twice.
+
+const passing = () => report([{ title: "t", status: "expected", results: [result("passed")] }]);
+
+test("the resolved and absent key sets are both recorded, as names", () => {
+  const entry = append(passing(), {
+    COLLECTION_GATE_KEYS: "OPENAI_API_KEY ANTHROPIC_API_KEY",
+    COLLECTION_GATE_KEYS_ABSENT: "GOOGLE_API_KEY",
+  });
+  assert.deepEqual(entry.collection_gate_keys, {
+    present: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+    absent: ["GOOGLE_API_KEY"],
+  });
+});
+
+test("a run that resolved NOTHING records an empty present, which is not the same as no block", () => {
+  // The distinction the whole pair exists for. `present: []` is a measured lane that
+  // will list no key-gated file at all; an absent block is a lane that never asked.
+  const entry = append(passing(), {
+    COLLECTION_GATE_KEYS: "",
+    COLLECTION_GATE_KEYS_ABSENT: "OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY",
+  });
+  assert.deepEqual(entry.collection_gate_keys.present, []);
+  assert.equal(entry.collection_gate_keys.absent.length, 3);
+});
+
+test("a run that did not measure its gate carries no block at all", () => {
+  for (const envOver of [
+    {},
+    { COLLECTION_GATE_KEYS: "", COLLECTION_GATE_KEYS_ABSENT: "" },
+    { COLLECTION_GATE_KEYS: "   ", COLLECTION_GATE_KEYS_ABSENT: "  " },
+  ]) {
+    const entry = append(passing(), envOver);
+    assert.ok(!("collection_gate_keys" in entry), JSON.stringify(entry.collection_gate_keys));
+  }
+});
+
+test("whitespace never becomes a key name", () => {
+  // The lists arrive from a shell that produced them with `sed`, so a trailing space is
+  // routine. `"".split(/\s+/)` is `[""]`, and a key named "" would compare unequal to
+  // every real set — a permanent, unexplained mismatch on both lanes.
+  const entry = append(passing(), {
+    COLLECTION_GATE_KEYS: "  OPENAI_API_KEY   ANTHROPIC_API_KEY  ",
+    COLLECTION_GATE_KEYS_ABSENT: " GOOGLE_API_KEY ",
+  });
+  assert.deepEqual(entry.collection_gate_keys.present, ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
+  assert.deepEqual(entry.collection_gate_keys.absent, ["GOOGLE_API_KEY"]);
+});
+
 // ---------- an ABSENT report is an infra abort, not a skipped day (#1176) ----------
 
 // On 2026-07-31 every shard aborted before its first test, so no blob existed and the

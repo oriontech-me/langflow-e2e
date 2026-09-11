@@ -448,10 +448,11 @@ export function compareRuns({
   const blockers = [];
   const warnings = [];
   let versionMismatch = null;
+  let gateMismatch = null;
 
   if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
   if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the VM lane did not record a run.`);
-  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, comparable: false };
+  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, comparable: false };
 
   for (const [label, row] of [["Actions", ci], ["VM", vm]]) {
     const errs = row.run_errors ?? [];
@@ -492,6 +493,54 @@ export function compareRuns({
     );
   }
 
+  // WHICH SUITE EACH LANE LISTED, before any count below is read as a product fact.
+  //
+  // These keys gate COLLECTION, not execution: a spec file whose every test is
+  // generated from a provider key collects zero tests without it, never enters the
+  // file-level partition, and is run by no shard - no row, no skip, no error, just a
+  // smaller total (#1764). So two lanes with different key sets are not comparable by
+  // count, and the difference has to be STATED here: the 2026-09-07 and 09-08
+  // comparisons recorded exactly this delta as "no catalog on the Actions side", which
+  // is the hypothesis a reader reaches for when the row carries no cause.
+  //
+  // A warning, never a blocker. The VM has no GOOGLE_API_KEY and lists two of the three
+  // variants on purpose (#1764); blocking would throw away every comparison this lane
+  // exists to produce, to report a state both lanes already agreed to.
+  const gateOf = (row) => {
+    const gate = row?.collection_gate_keys;
+    return gate && Array.isArray(gate.present) ? gate : null;
+  };
+  const ciGate = gateOf(ci);
+  const vmGate = gateOf(vm);
+  const named = (keys) => (keys.length ? keys.join(", ") : "no provider key");
+  if (ciGate && vmGate) {
+    const ciOnly = ciGate.present.filter((k) => !vmGate.present.includes(k));
+    const vmOnly = vmGate.present.filter((k) => !ciGate.present.includes(k));
+    if (ciOnly.length || vmOnly.length) {
+      gateMismatch = { ci: ciGate.present, vm: vmGate.present, ciOnly, vmOnly };
+      warnings.push(
+        `the lanes LISTED DIFFERENT SUITES - Actions resolved ${named(ciGate.present)}, VM resolved ${named(vmGate.present)}. ` +
+          `${[ciOnly.length ? `Only Actions had ${ciOnly.join(", ")}` : null, vmOnly.length ? `only the VM had ${vmOnly.join(", ")}` : null]
+            .filter(Boolean)
+            .join("; ")}. ` +
+          `Whole spec files are generated from those keys at collection time, so the lane without one has fewer ` +
+          `tests for a reason that is not the product and appears nowhere as a failure or a skip.`,
+      );
+    }
+  } else {
+    const missing =
+      !ciGate && !vmGate
+        ? "neither row carries"
+        : !ciGate
+          ? "the Actions row does not carry"
+          : "the VM row does not carry";
+    warnings.push(
+      `collection-gate parity UNVERIFIED: ${missing} a collection_gate_keys block. A listing without a provider ` +
+        `key drops whole spec files from its matrix silently (#1764), and a row written before that field existed ` +
+        `cannot say whether it did.`,
+    );
+  }
+
   if (ciExtra || vmExtra) {
     warnings.push(
       `more than one row for this date (Actions +${ciExtra}, VM +${vmExtra}); the last append of each lane was used.`,
@@ -516,6 +565,16 @@ export function compareRuns({
       `the lanes SKIPPED different numbers of tests (Actions ${ci.totals?.skipped ?? 0}, VM ${vm.totals?.skipped ?? 0}). ` +
         `A history row does not name skipped tests, so those ${Math.abs(skipDelta)} are invisible below - ` +
         `${skipDelta > 0 ? "the VM ran fewer specs than Actions did" : "Actions ran fewer specs than the VM did"}. ` +
+        // DELIBERATELY not pointed at the gate, and this line is the reason the
+        // distinction is worth stating twice. A skip happens at RUN time;
+        // `collection_gate_keys` records the LISTING environment, and those are not
+        // the same environment. On Actions the listing is the `prep` job, carrying
+        // exactly the three collection-gating secrets (#1796), while its shard jobs
+        // carry those plus Groq, Mistral and the Azure trio - so the gate is silent
+        // about most of what can skip, and a skip difference read off it names a lane
+        // narrow on an axis this field never measured. Pointing a reader at the wrong
+        // machine is exactly the failure the field was added to end, so it is better
+        // to keep offering the honest guess here.
         `A missing provider key is the usual cause.`,
     );
   }
@@ -524,7 +583,12 @@ export function compareRuns({
   if (execDelta !== 0) {
     warnings.push(
       `the lanes accounted for different test counts (Actions ${executed(ci.totals)}, VM ${executed(vm.totals)}); ` +
-        `they may not have run the same suite revision.`,
+        // This one the gate CAN explain: collection decides which spec files enter the
+        // matrix at all, so a file only one lane listed is missing from the other's
+        // total outright - no skip, no error, nothing to subtract it from.
+        (gateMismatch
+          ? `the listing keys above differ, so the two matrices did not contain the same spec files.`
+          : `they may not have run the same suite revision.`),
     );
   }
 
@@ -559,7 +623,7 @@ export function compareRuns({
   // Leaving the array populated would let the two surfaces tell different stories
   // about one run, and the machine-readable one would be the fiction.
   if (blockers.length) {
-    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, comparable: false };
+    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, comparable: false };
   }
 
   const divergences = [];
@@ -619,7 +683,7 @@ export function compareRuns({
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, comparable: blockers.length === 0 };
+  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, gateMismatch, comparable: blockers.length === 0 };
 }
 
 const KIND_LABEL = {
@@ -646,8 +710,22 @@ export function renderReport(result, { sources = [] } = {}) {
         `${row.totals?.flaky ?? 0} flaky, ${row.totals?.skipped ?? 0} skipped` +
         `${row.langflow_version ? ` | Langflow ${row.langflow_version}` : ""}`
       : `  ${label.padEnd(8)} (no row)`;
-  L.push(line("Actions", ci));
-  L.push(line("VM", vm));
+  // The key set rides with the counts, on its own line under the lane it belongs to.
+  // The whole point of recording it is that a reader looking at two different totals
+  // sees the listing difference in the same glance, instead of reaching for the
+  // catalog explanation the two mis-attributed comparisons reached for (#1764).
+  const pushLane = (label, row) => {
+    L.push(line(label, row));
+    const gate = row?.collection_gate_keys;
+    if (!gate || !Array.isArray(gate.present)) return;
+    const absent = Array.isArray(gate.absent) ? gate.absent : [];
+    L.push(
+      `${" ".repeat(11)}listed with ${gate.present.length ? gate.present.join(", ") : "no provider key"}` +
+        (absent.length ? ` | absent: ${absent.join(", ")}` : ""),
+    );
+  };
+  pushLane("Actions", ci);
+  pushLane("VM", vm);
 
   // The stamp rides at the head, not buried in the warning list: a report produced
   // across two different products has to say so where it cannot be scrolled past.

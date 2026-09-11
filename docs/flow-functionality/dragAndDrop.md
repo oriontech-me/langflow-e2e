@@ -39,6 +39,22 @@ Two independent tests:
   `POST /api/v1/flows/` 201 response and deleted in `afterEach`; the workspace
   precondition comes from `awaitBootstrapTest(page, { skipModal: true })` instead
   of opening a template.
+
+  **Corrected 2026-09-10 (#1787): "every 201" was the intent, not the behaviour.**
+  The capture listener was installed *after* `awaitBootstrapTest`, on the stated
+  grounds that the bootstrap's own flows are "shared bootstrap state, not ours to
+  delete" and that counting their 201s would break the import-count assertion.
+  The second half of that is right and is preserved; the first half conflates a
+  flow **this page created** with a flow another worker owns — the bootstrap of a
+  parallel worker creates a different id, so deleting by id can never touch it.
+  Measured on `1.13.0.dev7`: a green run left the instance two flows heavier,
+  `New Flow` plus a second `Basic Prompting`, once per run.
+
+  The fix keeps both reasons intact by separating the two populations. A
+  **bootstrap** listener is installed *before* `awaitBootstrapTest` and feeds its
+  own array, which `afterEach` deletes and no assertion ever counts; the
+  **import** listener still goes up afterwards and still feeds the array the count
+  assertion reads. Never a global sweep — the suite runs `fullyParallel`.
 - **Assertions anchored by id, not by list position or free text** — per the
   home-cards convention (the list sorts by `updated_at` DESC, so a positional
   match is another worker's flow under parallel CI).
@@ -75,4 +91,4 @@ clean and force-failed as part of that change.
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev6`)
+1.13.x (nightly `1.13.0.dev8`)

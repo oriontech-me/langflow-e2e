@@ -1,0 +1,226 @@
+// Could ANY provider have served a call on this run? (issue #1800)
+//
+// ## The question the report cannot answer
+//
+// `lane-coverage-verdict.mjs` classifies a run from its Playwright report, which is
+// the right substrate for "what did this run cover": a skip carries its reason, and
+// the reason names the provider that could not serve it. What a report structurally
+// cannot say is whether ANY provider was alive — a healthy provider leaves no trace
+// in it at all. Its absence of evidence and a dead account's are the same bytes.
+//
+// That gap is what made `executed === 0` stand in for it, and the substitution has a
+// false positive that reddens a PR (#1800): the PR lane's "run" is whatever the
+// import graph selected, frequently ONE spec file, so a PR editing a single wholly-
+// gated spec during a drain of that spec's provider executes nothing and scores
+// `uncovered` — while other providers were alive and the rest of the suite would have
+// run fine.
+//
+// TWELVE specs are wholly gated on one provider's health — eight on openai, two on
+// google, two on anthropic — and the count has now been wrong TWICE, which is why the
+// derivation is recorded rather than the number alone. The first version said two,
+// missing that `provider-dependent-specs.mjs` decides `providerDependent` as
+// `consumesModelData || tags.length > 0` and that `consumesModelData` is an AREA or a
+// MARKER match — `initialGPTsetup`, `SimpleAgentTemplatePage`, and `provider-setup`,
+// which every one of these files matches through the very import that gives it
+// `providerSkipGate`. So the tag is the least of it: ALL 20 specs that call the gate
+// are provider-dependent (measured; a 21st file names it only in a comment), and
+// `consumesModelData` specs are never excluded as transitive either.
+//
+// The second version said thirteen "one of them on a pair", and there is no pair case:
+// the only `providerSkipGate("openai", "google")` call site is in
+// `language-model-regression.spec.ts`, whose FOURTH test carries no gate at all, so
+// that file is not wholly gated. A thirteenth file, `generalBugs-shard-3.spec.ts`,
+// qualifies only because its other test is a permanent `test.skip` — counted or not
+// it is openai, and the rule below does not move.
+//
+// The trigger is therefore any PR whose selection is one of those twelve, on a drain
+// of the provider it names.
+//
+// So the account axis is read where it is actually recorded: `providers.json`, the
+// file `collect-models` writes and every provider gate in this repo already consumes.
+//
+// ## Union, not intersection
+//
+// The daily collects health per SHARD — four sweeps, four files, and they can
+// legitimately disagree when a key recovers (or drains) mid-run. A provider counts as
+// usable if ANY shard reached it, because one shard reaching it proves the ACCOUNT
+// could. The opposite reading would let one shard's transient failure report the
+// account as dead and fail a run the other three covered.
+//
+// ## Unknown is a third state, and it must not fail a lane
+//
+// `providers.json` is gitignored and only exists after `collect-models`, which is
+// legitimately skipped (an LLM-free PR) and legitimately allowed to fail (a canary,
+// #1159). So "no readable file" is UNKNOWN, never "dry" — the verdict reports the gap
+// and declines to fail on it. This is the one place the coverage guard does not fail
+// closed, and the reason is asymmetric: a wrong `dry` blocks a merge over a file that
+// was never meant to be there, while a wrong `unknown` costs one loud warning.
+//
+// Deliberately NOT re-declared here: the record shape. Only `provider` and `status`
+// are read, both defensively, because this consumes a file written by a different
+// process on a different machine and a shape it does not recognise must degrade to
+// UNKNOWN rather than throw inside a reporting step.
+
+import fs from "node:fs";
+
+/**
+ * @typedef {object} ProviderUsability
+ * @property {boolean} known   whether ANY file said something this reader recognises
+ * @property {string[]} active providers recorded `active` by at least one file
+ * @property {string[]} unread paths that were missing, unparseable, or not an array
+ * @property {string[]} unrecognised paths that parsed but carry no record this reader
+ *   understands — reported apart from `unread` because the two send a reader to
+ *   different places: one is a file that is not there, the other is producer drift
+ * @property {number} read     files that contributed to the fold
+ */
+
+/**
+ * Does this parsed payload carry anything this reader UNDERSTANDS?
+ *
+ * The header's promise is that a shape this module does not recognise degrades to
+ * UNKNOWN, and `Array.isArray(payload) && payload.length > 0` does not deliver it:
+ * a producer that renamed `status` would hand over two healthy providers, match no
+ * record, fold to `active: []` and read as `dry` — which FAILS a lane and sends the
+ * triage at the keys and the sweep, for a shape drift. `collect-models.ts` and
+ * `provider-health.ts` already keep this record in sync BY HAND, so the drift is a
+ * live possibility rather than a hypothetical, and the one direction this module
+ * argues against for an absent file is the same one it must refuse here.
+ *
+ * Recognisable is deliberately weak — a non-empty `provider` and a `status` this
+ * reader has a meaning for. It is not a schema check: an extra field, a missing
+ * `checkedAt` (which `globalSetup`'s credential degradation omits, #1058) and an
+ * unknown provider name all stay recognisable.
+ *
+ * @param {unknown} payload
+ * @returns {boolean}
+ */
+export function isInformative(payload) {
+  if (!Array.isArray(payload)) return false;
+  return payload.some(
+    (record) =>
+      record &&
+      typeof record === "object" &&
+      (record.status === "active" || record.status === "inactive") &&
+      String(record.provider ?? "").trim() !== "",
+  );
+}
+
+/**
+ * Fold parsed `providers.json` payloads into one answer about the account.
+ *
+ * @param {unknown[]} payloads parsed file contents, in any order
+ * @returns {{ known: boolean, active: string[] }}
+ */
+export function foldUsability(payloads = []) {
+  // An EMPTY array carries no information about the account — the sweep recorded no
+  // provider at all — so it counts as unread rather than as "nothing usable". Reading
+  // it as `dry` would make a file that says nothing indistinguishable from a file that
+  // says every key is dead, in the one direction that fails a lane. Same reasoning for
+  // a payload whose records this reader cannot interpret — see `isInformative`.
+  const readable = payloads.filter(isInformative);
+  if (readable.length === 0) return { known: false, active: [] };
+
+  const active = new Set();
+  for (const records of readable) {
+    for (const record of records) {
+      if (!record || typeof record !== "object") continue;
+      if (record.status !== "active") continue;
+      const provider = String(record.provider ?? "").trim();
+      if (provider) active.add(provider);
+    }
+  }
+  return { known: true, active: [...active].sort() };
+}
+
+/**
+ * Read every given `providers.json` and fold them.
+ *
+ * A path that does not exist, does not parse, or is not an array is reported in
+ * `unread` and contributes nothing — the caller says so out loud rather than letting
+ * a silently-dropped file decide a verdict (#1012). A path that parses into an array
+ * carrying no record this reader understands is reported in `unrecognised`, kept
+ * APART from `unread` because it is producer drift and not a missing input, and the
+ * two send a reader to different places.
+ *
+ * @param {string[]} paths
+ * @param {{ readFile?: (p: string) => string }} [io]
+ * @returns {ProviderUsability}
+ */
+export function readUsability(paths = [], io = {}) {
+  const readFile = io.readFile ?? ((p) => fs.readFileSync(p, "utf-8"));
+  const payloads = [];
+  const unread = [];
+  const unrecognised = [];
+
+  for (const path of paths) {
+    let parsed;
+    try {
+      parsed = JSON.parse(readFile(path));
+    } catch {
+      unread.push(path);
+      continue;
+    }
+    if (!Array.isArray(parsed)) {
+      unread.push(path);
+      continue;
+    }
+    // An EMPTY array is not drift — the sweep legitimately recorded nothing — so it
+    // stays out of `unrecognised` and simply carries no information.
+    if (parsed.length > 0 && !isInformative(parsed)) {
+      unrecognised.push(path);
+      continue;
+    }
+    payloads.push(parsed);
+  }
+
+  return {
+    ...foldUsability(payloads),
+    unread,
+    unrecognised,
+    read: payloads.filter(isInformative).length,
+  };
+}
+
+/**
+ * Every `providers-*.json` in a directory, folded.
+ *
+ * The daily's merge job downloads four shards' files into one directory, and building
+ * that argument list in YAML was a real gap: a mutation that found the files, counted
+ * them and then never passed them left every test green, because the only guard
+ * available there is a regex over the step text and the tokens it looks for survive
+ * (#1226's lesson, in the shape that mattered). Globbing HERE makes the behaviour
+ * unit-testable — an empty directory, a missing one, and one file among four all have
+ * asserted outcomes.
+ *
+ * A directory that does not exist is not an error: the artifact download is
+ * `continue-on-error`, and no file simply means the account axis is UNKNOWN.
+ *
+ * @param {string} dir
+ * @param {{ readFile?: (p: string) => string, readdir?: (d: string) => string[] }} [io]
+ * @returns {ProviderUsability & { read: number }}
+ */
+export function readUsabilityDir(dir, io = {}) {
+  const readdir = io.readdir ?? ((d) => fs.readdirSync(d));
+  let entries;
+  try {
+    entries = readdir(dir);
+  } catch {
+    return { known: false, active: [], unread: [], unrecognised: [], read: 0 };
+  }
+  const files = entries
+    .filter((name) => /^providers-.*\.json$/.test(name))
+    .sort()
+    .map((name) => `${dir.replace(/\/$/, "")}/${name}`);
+  return readUsability(files, io);
+}
+
+/**
+ * The account's state as one word, which is what the outputs and the summary speak.
+ *
+ * @param {{ known: boolean, active: string[] }} usability
+ * @returns {"dry"|"alive"|"unknown"}
+ */
+export function usabilityState(usability) {
+  if (!usability?.known) return "unknown";
+  return usability.active.length > 0 ? "alive" : "dry";
+}

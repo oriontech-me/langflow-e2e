@@ -183,7 +183,7 @@ test.describe.configure({ mode: "serial" });
 test.describe("Anthropic Provider", () => {
   test(
     "Anthropic API key is configured via Settings → Model Providers",
-    { tag: ["@stable", "@model-provider", "@settings"] },
+    { tag: ["@model-provider", "@settings"] },
     async ({ page }) => {
       // Env presence, NOT provider health — deliberate (#1415). This test makes
       // no completion call, and the backend's validate_model_provider_key

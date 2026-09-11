@@ -52,6 +52,9 @@
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   COVERAGE_VERDICT, COVERAGE_HEADLINE, COVERAGE_PROVIDERS, COVERAGE_SKIPS (#1456)
+//   COVERAGE_ACCOUNT="dry" — no provider was recorded usable (#1800)
+//   TESTS_FAILED="true" — the `test` job failed, so the dry-account shape must not
+//     take the title away from the per-test one (#1800)
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
@@ -102,6 +105,8 @@ export function renderIssue({
   partial = false,
   mergeFailed = false,
   uncovered = false,
+  accountDry = false,
+  testsFailed = false,
   coverageHeadline = "",
   coverageProviders = "",
   coverageSkips = "0",
@@ -115,7 +120,9 @@ export function renderIssue({
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // Four shapes, most specific first.
+  // SEVEN shapes, most specific first. The count has been stale twice — it read
+  // "four" while there were six, and "six" while omitting `partial`, which has its
+  // own title and its own body — so it is enumerated exhaustively below.
   // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
   //    because a failed merge leaves no report and the integrity guard therefore
   //    reports the run as empty and unreadable. "Find why nothing ran" is then a
@@ -130,8 +137,44 @@ export function renderIssue({
   //    run that broke, this one describes a run that worked and proved nothing.
   //    Ranked under `partial` deliberately: when a shard also died, the abort is
   //    what triage must start from.
-  // 3. The auto-remove step acted — show what it did.
-  // 4. Neither (it errored, or a guard skipped it) — manual triage.
+  // 2b. PARTIAL (#1726): a shard never ran its tests, so the report under-counts.
+  //    Above the coverage shapes for the same reason `empty` is: triage must start
+  //    from the abort, not from what the surviving shards happened to cover.
+  // 3. NO USABLE PROVIDER (#1800): the report is complete and hundreds of tests DID
+  //    execute, but nothing was recorded usable, so the whole LLM surface went
+  //    unmeasured — the shape this lane can actually reach, where `uncovered` cannot
+  //    fire. Gated on `!testsFailed`, because the account says nothing about whether
+  //    specs also failed and a day with real per-test failures must keep its own
+  //    title and body; on such a day the outage is carried as a banner instead.
+  // 4. The auto-remove step acted — show what it did.
+  // 5. Neither (it errored, or a guard skipped it) — manual triage.
+  // The account fact, without the banner's framing. On `empty` and `mergeFailed` the
+  // dry account is reported by nothing else at all: the banner is scoped away (there
+  // are no failures to read against it), the run's own `::error::` needs a
+  // provider-health skip that an aborted run never produced, and `renderSummary`
+  // returns "" for the `covered` verdict such a report yields. So the FACT is carried
+  // on both — as a note rather than a heading, since neither shape is about it
+  // (#1012: it has to exist somewhere a human reads).
+  //
+  // The CAUSE HINT is `empty`'s alone, and the split is the point. #1058 is one sweep
+  // that can record every provider `inactive` AND abort the shards, which makes the
+  // hint worth printing where the shards aborted — and false where they did not:
+  // `mergeFailed`'s own text says every shard finished and no spec is implicated, so
+  // offering "can abort the shards in the same run" three lines below it names a cause
+  // that shape does not have. The same defect this round removed from the daily's dry
+  // `::error::`, in the umbrella.
+  const dryAccountFact =
+    "Note: no provider was **recorded** usable on this run (`providers.json`).";
+  const dryAccountNote = accountDry ? ["", dryAccountFact] : [];
+  const dryAccountNoteWithCause = accountDry
+    ? [
+        "",
+        `${dryAccountFact} Possibly the same cause —`,
+        "`Collect models` failing to import the keys records every provider `inactive` and",
+        "can abort the shards in the same run (#1058/#1800).",
+      ]
+    : [];
+
   const mergeFailedSection = [
     "### ⚠️ The shards RAN — the MERGE failed",
     "",
@@ -146,6 +189,7 @@ export function renderIssue({
       : `**Triage this as the merge step**: start from \`${join(runDir, "logs/merge.log")}\`. The blobs are kept under \`${join(runDir, "all-blobs")}\` and can be merged again by hand.`,
     "Known cause of this shape: per-shard working copies recording different `testDir`",
     "values, which `merge-reports` refuses to combine — #1726.",
+    ...dryAccountNote,
   ];
 
   const section = mergeFailed
@@ -160,6 +204,7 @@ export function renderIssue({
             : "The merged report was **missing or unparseable** — the run produced no readable result at all. Suspect the merge step and the per-shard blob files first."
           : `The merged report carries **no test results at all** (${runErrors} top-level report error(s)) — the shards aborted before the first test.`,
         "No spec failed and no `@stable` tag was touched, so there is **no per-test evidence to triage**.",
+        ...dryAccountNoteWithCause,
         ...(firstError ? ["", "```", firstError, "```"] : []),
         "",
         "**Triage this as infrastructure**: find why nothing ran, not which test broke.",
@@ -193,36 +238,84 @@ export function renderIssue({
           "the shard logs hold the rest. Known cause of this shape: `Collect models` failing without",
           "importing a provider key as a Langflow global variable — #1058.",
         ]
-      : uncovered
+      : uncovered || (accountDry && !testsFailed)
       ? [
-          "### ⚠️ ZERO verdicts — provider health skipped every test that ran",
+          uncovered
+            ? "### ⚠️ ZERO verdicts — provider health skipped every test that ran"
+            : "### ⚠️ NO usable provider — the LLM surface of this run went unmeasured",
           "",
-          `The report is complete and carries **${runTests} result(s)**, and **not one of them is a`,
-          "verdict about Langflow**: every test that produced a result was skipped because a",
-          "provider it needed was recorded `inactive` by `collect-models`.",
+          ...(uncovered
+            ? [
+                `The report is complete and carries **${runTests} result(s)**, and **not one of them is a`,
+                "verdict about Langflow**: every test that produced a result was skipped because a",
+                // QUOTED, never diagnosed (#1801) — `inactive` is what was RECORDED, and
+                // the record does not say which of its two causes produced it.
+                "provider it needed was recorded `inactive` by `collect-models`.",
+              ]
+            : [
+                `The report is complete and carries **${runTests} result(s)**, and **no provider was`,
+                "recorded usable** — so every test that needs one was skipped and this run is not",
+                "evidence about any of them. The rest of the suite did run (#1800).",
+              ]),
           ...(coverageProviders
             ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
             : []),
           ...(coverageHeadline ? ["", "```", coverageHeadline, "```"] : []),
           "",
-          "No spec failed, no `@stable` tag was touched and there is **no per-test evidence to",
-          "triage** — the specs never ran. This is NOT the `empty` shape: the shards worked and",
-          "the report is intact, which is exactly why the run would otherwise have read as a",
-          "clean day (#1456).",
+          ...(uncovered
+            ? [
+                "No spec failed, no `@stable` tag was touched and there is **no per-test evidence to",
+                "triage** — the specs never ran. This is NOT the `empty` shape: the shards worked and",
+                "the report is intact, which is exactly why the run would otherwise have read as a",
+                "clean day (#1456).",
+              ]
+            : [
+                "No spec failed on this run — this shape is only chosen when the `test` job came",
+                "back green, so a day with real per-test failures keeps its own title and body.",
+                "`providers.json` is written by the `collect-models` sweep AND by `globalSetup`'s",
+                "credential degradation (#1058), so this says what was RECORDED, not why: a drained",
+                "account and a sweep that never imported the keys both produce it.",
+              ]),
           "",
-          // The reason is QUOTED and the diagnosis left to the reader (#1801). This
-          // used to read "restore the key or the credit", which is wrong for one of
-          // the two ways a provider gets recorded `inactive`: a key that exists but
-          // was never imported as a Langflow global variable is degraded through the
-          // same record (#1058), and there the repair is the import, not the billing
-          // page. Sending triage to the wrong repair in the one place it reads on
-          // that day is worse than saying less.
-          `**Triage ${coverageHeadline ? "the reason above" : "the reason the coverage-verdict step recorded"}, not the suite**: the specs never ran, so`,
-          "none of them is implicated. The repair is whatever that reason names — a drained",
-          "account, a revoked key, a spend cap, or a `Collect models` that never imported the",
-          "key as a Langflow global variable (#1058, whose degraded record reads the same way",
-          "here). Then re-run the day: a green run that skipped everything is not evidence that",
-          "anything works (#570/#1012).",
+          ...(uncovered
+            ? [
+                // The reason is QUOTED and the diagnosis left to the reader (#1801).
+                // This used to read "restore the key or the credit", which is wrong for
+                // one of the two ways a provider gets recorded `inactive`: a key that
+                // exists but was never imported as a Langflow global variable is
+                // degraded through the same record (#1058), and there the repair is the
+                // import, not the billing page. Sending triage to the wrong repair in
+                // the one place it reads on that day is worse than saying less.
+                `**Triage ${coverageHeadline ? "the reason above" : "the reason the coverage-verdict step recorded"}, not the suite**: the specs never ran, so`,
+                "none of them is implicated. The repair is whatever that reason names — a drained",
+                "account, a revoked key, a spend cap, or a `Collect models` that never imported the",
+                "key as a Langflow global variable (#1058, whose degraded record reads the same way",
+                "here). Then re-run the day: a green run that skipped everything is not evidence that",
+                "anything works (#570/#1012).",
+              ]
+            : [
+                "**Triage this as provider configuration, not the suite**: check whether the keys are",
+                "live AND whether the sweep imported them, then re-run the day. Re-running before that",
+                "changes nothing, and a green run that skipped the whole LLM surface is not evidence",
+                "that it works (#570/#1012).",
+              ]),
+          // Only on the dry-account branch. `uncovered` deliberately DROPS a stale
+          // auto-removal summary (#1456): nothing ran there, so nothing failed, and
+          // rendering that section reads as a triaged day. Here the shape is gated on
+          // the test job being green so the step cannot have run either — belt and
+          // braces — but if it somehow did, dropping the summary would tell the triager
+          // the specs were not implicated on a day tags had just been stripped.
+          ...(accountDry && !uncovered && arStatus
+            ? [
+                "",
+                "### `@stable` auto-removal",
+                "",
+                arSummary,
+                "",
+                "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
+                "the removal against the outage above before accepting it.",
+              ]
+            : []),
         ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
@@ -242,6 +335,41 @@ export function renderIssue({
   // produced no output at all.
   const livenessSection = liveness.trim() ? [liveness.trim(), ""] : [];
 
+  // A dry account on a day that ALSO had per-test failures keeps the per-test title
+  // and body — the fix for the shape hijacking a real failure day — but the first
+  // version of that fix traded one information loss for its mirror image: every
+  // coverage input is rendered inside the dry/uncovered section, so routing the day
+  // elsewhere dropped the outage entirely, and the umbrella is the triage artifact
+  // (the run's `::error::` lives in a step log nobody opens twice). It leads the body
+  // for the same reason the liveness block does (#1030): the failures below are
+  // plausibly collateral of the outage, and triage that starts from them starts wrong.
+  //
+  // Scoped to the shapes that actually carry per-test material. On `empty`, `partial`
+  // and `mergeFailed` there ARE no failures below — those bodies say so themselves
+  // ("no per-test evidence to triage", "no spec is implicated") — and the banner's
+  // "start here" would sit above the section's own "Triage the abort first". The
+  // combination is not exotic: `Collect models` failing to import a key (#1058) aborts
+  // shards (`partial`) while the same sweep records every provider `inactive`
+  // (`accountDry`), and the shard-side copy runs under `if: always()`, so the file
+  // reaches the merge job even from a dead shard. `uncovered` is excluded too, since
+  // its own section already renders every one of these lines.
+  const accountBanner =
+    accountDry && testsFailed && !empty && !partial && !mergeFailed && !uncovered
+      ? [
+          "### ⚠️ NO usable provider on this run — read the failures below against it",
+          "",
+          "No provider was **recorded** usable while these tests ran, so every test that needs",
+          "one was skipped and the failures below may be collateral rather than causes.",
+          "`providers.json` is written by the `collect-models` sweep AND by `globalSetup`'s",
+          "credential degradation (#1058), so this says what was recorded, not why.",
+          ...(coverageProviders
+            ? ["", `Providers that went uncovered: **${coverageProviders}** (${coverageSkips} test(s)).`]
+            : []),
+          ...(coverageHeadline ? ["", "```", coverageHeadline, "```"] : []),
+          "",
+        ]
+      : [];
+
   // The title is what gets scanned in the issue list, so an empty run must not
   // claim that tests failed — none ran. Nor may a failed merge claim that nothing
   // ran: every shard did, and the title is the only part most people read (#1726).
@@ -253,7 +381,9 @@ export function renderIssue({
       ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
       : uncovered
         ? `[Daily Failure] @stable run produced ZERO verdicts — provider health skipped every test on ${today} (${image})`
-        : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+        : accountDry && !testsFailed
+          ? `[Daily Failure] @stable run had NO usable provider on ${today} (${image})`
+          : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and
   // naming the host is what lets a reader find it at all.
@@ -272,6 +402,7 @@ export function renderIssue({
     ...runLines,
     "",
     ...livenessSection,
+    ...accountBanner,
     ...section,
     ...(cc.trim() ? ["", `/cc ${cc.trim()}`] : []),
   ].join("\n");
@@ -383,6 +514,16 @@ async function main() {
     // chosen by POSITIVE identification, unlike the run's gate, which is
     // fail-closed. Mislabelling a day is worse than not labelling it.
     uncovered: env.COVERAGE_VERDICT === "uncovered",
+    // #1800. The account axis, which the verdict cannot carry: a run can be
+    // `degraded` — hundreds of tests executed — while no provider was reachable at
+    // all, and that is the shape this lane can actually reach.
+    accountDry: env.COVERAGE_ACCOUNT === "dry",
+    // Whether SPECS also failed, which the coverage axis cannot tell (#1800 review).
+    // Without it a dry account took the title on a day with real per-test failures and
+    // rendered a body carrying neither the failures nor — when the mass-failure guard
+    // left `arStatus` empty, which is exactly the >5-failure outage day — an
+    // auto-removal block its own hedge pointed at.
+    testsFailed: env.TESTS_FAILED === "true",
     coverageHeadline: env.COVERAGE_HEADLINE || "",
     coverageProviders: env.COVERAGE_PROVIDERS || "",
     coverageSkips: env.COVERAGE_SKIPS || "0",

@@ -179,6 +179,43 @@ LEDGER_DURATIONS="${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}"
 # default.)
 USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
 
+# ---------------------------------------------------------------------------
+# THE COLLECTION GATE — which suite this lane's listing will even see
+# ---------------------------------------------------------------------------
+# A few specs generate their tests while the suite is being LISTED, from the provider
+# keys in the environment — `provider-invalid-auth-error.spec.ts` iterates the keyed
+# providers filtered by `hasProviderEnvKeys`. Without a key, such a file collects zero
+# tests, never enters the file-level partition, and is handed to no shard: not skipped,
+# not red, ABSENT (#1764).
+#
+# Nothing in this file names OPENAI_API_KEY, ANTHROPIC_API_KEY or GOOGLE_API_KEY, and
+# that is not an omission to fix by adding them — the VM has no secrets store. What
+# supplies them is playwright.config.ts's unconditional `dotenv.config()`, i.e. the
+# `.env` of whatever working copy this runs from, plus whatever the operator exported.
+# So the matrix this lane partitions is a function of an untracked file on the machine,
+# and a clone whose `.env` loses a key produces a smaller suite with nothing said
+# (#1813). Measured on main: 247 files / 710 @stable tests with `.env`, 246 / 707
+# without, the same one-file delta #1764 measured on Actions.
+#
+# The fix is not a mirrored secret block. It is that the run STATES the gate it
+# resolved before it partitions, and that a difference from the Actions lane is a
+# decision rather than a default:
+#
+#   REQUIRE_PROVIDER_KEYS=0 (default) — say it and continue. The run declares it is
+#     comparing a narrower suite, and the key set travels with the verdict, so a
+#     test-count difference resolves to a cause instead of a hypothesis.
+#   REQUIRE_PROVIDER_KEYS=1 — refuse, the way the Playwright pin refuses a browser the
+#     comparison does not assume.
+#
+# The default is 0 and stays there until this lane HAS all three keys, for the same
+# reason the version check reported before it enforced: the VM has no GOOGLE_API_KEY
+# (#1764), so a refusing default would fail every run at 08:00 over a state that is
+# known, accepted and not fixable from inside the run — and a day of comparison is
+# worth more than a red that tells the operator what the log already said. A lane whose
+# three keys are present sets it to 1, and then a key falling out of `.env` cannot
+# shrink the matrix quietly.
+REQUIRE_PROVIDER_KEYS="${REQUIRE_PROVIDER_KEYS:-0}"
+
 # Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
 # `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
 # it. Here the run only REPORTS the gap: moving and rebuilding the clone is a second
@@ -314,6 +351,7 @@ require_flag() {
 # exists.
 require_flag KEEP_LEDGER "$KEEP_LEDGER"
 require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
+require_flag REQUIRE_PROVIDER_KEYS "$REQUIRE_PROVIDER_KEYS"
 
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
 # specs assert against a traced instance. Both starters default it OFF — right for a
@@ -422,6 +460,77 @@ mirrored_target_env() {
   done
 }
 
+# The command that SERVES the target, forwarded to the starter on every run.
+#
+# The starter has accepted LANGFLOW_SRC_RUN_CMD since #1658 — it is how a machine
+# without uv, or a run against the PUBLISHED distribution rather than the clone, is
+# served — but the remote environment above is composed from a fixed list, so an
+# override exported on the qa wrapper never crossed the ssh boundary. The knob existed
+# on one side of the connection and not the other.
+#
+# Why the lane needs it, measured rather than supposed: on 2026-09-10 the published
+# distribution served the traces family with tracing ON, 23 of 23 and no gunicorn
+# WORKER TIMEOUT, where the source clone wedges under the same selection on the same
+# machine — 7, 8 and 9 failures across the three attribution runs of #1720.
+#
+# Sent UNCONDITIONALLY, including empty, for the reason mirrored_target_env sends its
+# four the same way: a value that crosses only sometimes cannot be recorded as the one
+# in force, and run-metadata.json records this one. The starter tests it with
+# `-n "${VAR:-}"`, so an empty assignment is indistinguishable from no assignment on
+# the far side — unconditional forwarding is therefore free, and it gives the field the
+# same standing the mirrored four have: what this side holds is what the starter reads,
+# unless the target's own profile re-exports it. Same standing, same residual.
+#
+# The SYNC command is deliberately NOT forwarded, and that is a decision rather than an
+# omission. The starter reads it as `${VAR-default}` on purpose, so empty-but-SET means
+# "skip `uv sync --frozen` entirely" — and a caller cannot express "unset" through a
+# workflow `env:` block, where an absent input arrives as empty-but-set. Forwarding it
+# would put a silent skip of the dependency reconciliation one typo away, to serve a
+# knob nothing in this repository sets today.
+#
+# LANGFLOW_SRC_FRONTEND_DIR travels with it, and without it the run command does not
+# actually reach the state it was added for. The starter refuses to serve a clone with
+# no built UI — a backend answering /health_check while every browser spec dies at page
+# load is the failure it exists to prevent — and it looks for those assets under the
+# CLONE. A published distribution ships its own built frontend inside the package, so
+# the two knobs are one decision: name the command that serves and the assets it serves.
+# Forwarded the same way and for the same reason, and just as safely: the starter reads
+# it as `${VAR:-default}`, so empty falls back to the clone's path.
+target_cmd_env() {
+  printf 'LANGFLOW_SRC_RUN_CMD=%s ' "$(shq "${LANGFLOW_SRC_RUN_CMD:-}")"
+  printf 'LANGFLOW_SRC_FRONTEND_DIR=%s ' "$(shq "${LANGFLOW_SRC_FRONTEND_DIR:-}")"
+}
+
+# The two switches a run command silently collides with, warned about once, in the
+# phase where there is still time to act.
+#
+# Neither collision is hypothetical, and neither announces itself as the cause:
+#
+#   PREPARE_TARGET=1 (the default) still checks out and REBUILDS the clone — the
+#   longest thing this run does — for a tree that is not going to serve. Worse than the
+#   wasted minutes, run-metadata.json then carries langflow_prepared_sha beside
+#   langflow_target_run_cmd, and the prepared sha describes something nobody ran.
+#
+#   REQUIRE_TARGET_VERSION=1 (the default) compares the version scraped from the LIVE
+#   instance against the one resolved from upstream's nightly, which moves daily. A
+#   pinned distribution therefore fails the verdict on a difference the operator
+#   introduced on purpose, and the message it fails with talks about authoritative
+#   version checks rather than about the pin.
+#
+# A warning and not a `die`: both combinations are legitimate — a venv pinned to the
+# resolved version passes the gate, and someone may want the clone placed anyway. What
+# is not legitimate is discovering either one from a shard timeout or a red verdict.
+warn_target_cmd_conflicts() {
+  [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || return 0
+  if [ "${PREPARE_TARGET:-1}" = "1" ]; then
+    warn "LANGFLOW_SRC_RUN_CMD is set, and PREPARE_TARGET=1: this run will still place and rebuild the clone, which is not what will serve. Set PREPARE_TARGET=0 unless you mean both."
+  fi
+  if [ "${REQUIRE_TARGET_VERSION:-1}" = "1" ]; then
+    warn "LANGFLOW_SRC_RUN_CMD is set, and REQUIRE_TARGET_VERSION=1: the served version must equal the one resolved from upstream, or the verdict fails on a difference you introduced. Pin the distribution to the resolved version, or set REQUIRE_TARGET_VERSION=0 and accept the blind axis."
+  fi
+  return 0
+}
+
 # Should this run place the target's clone, and if not, why not?
 #
 # Split out of phase_preflight so the decision is testable without ssh — the phase
@@ -467,6 +576,27 @@ stamp_demand_for_plan() {
     echo 1
   else
     echo 0
+  fi
+  return 0
+}
+
+# What an incomplete collection gate costs this run — see THE COLLECTION GATE above.
+#
+# A function rather than an `if` inside phase_prep, for the same reason
+# target_preparation_plan() is one: the decision is the part worth pinning, and pinning
+# it must not require a machine, a listing or a `.env`.
+#
+# "complete" is the ONLY value that reads as a full suite. The gate's own report says
+# `complete=true`; anything else — false, empty, a word this script did not write — is
+# not complete, because the one way this can be dangerously wrong is calling a narrowed
+# listing whole.
+collection_gate_plan() {
+  if [ "${1:-}" = "true" ]; then
+    echo "complete"
+  elif [ "${REQUIRE_PROVIDER_KEYS:-0}" = "1" ]; then
+    echo "refuse"
+  else
+    echo "narrow"
   fi
   return 0
 }
@@ -718,7 +848,14 @@ phase_preflight() {
   # dies in prep or in a shard never reaches phase_merge. The run that most needs this
   # record would be exactly the one that produced none. First line of the first phase
   # costs nothing and survives every abort after it.
-  info "target env: $(mirrored_target_env)"
+  #
+  # The target's run command is printed from the same composer for the same reason, and
+  # the reason is sharper for it than for the mirrored four: a wrong path there is a
+  # backend that never answers, which reaches the operator as a shard timeout. Which
+  # artifact was ASKED to serve has to be readable without waiting for a metadata file
+  # the run may never write.
+  info "target env: $(mirrored_target_env)$(target_cmd_env)"
+  warn_target_cmd_conflicts
 
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives a second machine and will not guess its name."
   command -v node > /dev/null || die "node is not on PATH."
@@ -974,6 +1111,74 @@ phase_prep() {
   case "$SHARDS" in '' | *[!0-9]*) SHARDS=4 ;; esac
   [ "$SHARDS" -ge 1 ] || SHARDS=4
 
+  # WHICH SUITE THIS LISTING WILL SEE, said before it is partitioned (#1813).
+  #
+  # Run HERE — same shell, same working directory, immediately before the `--list` it
+  # describes — and that placement is the whole contract. `.env` is read relative to the
+  # working directory by the same `dotenv.config()` playwright.config.ts makes, so a
+  # report produced anywhere else would describe an environment this listing does not
+  # have. The report carries NAMES only; no key's value is ever read out.
+  #
+  # That placement has a COST, stated because it looks like an oversight next to
+  # phase_hygiene's "cheaper to refuse up front": phase_services has already brought up
+  # one Langflow per shard by the time this runs, so a REQUIRE_PROVIDER_KEYS=1 refusal
+  # pays the full bring-up and teardown before aborting on something knowable at
+  # preflight. It stays here anyway. Resolving earlier and listing later would leave two
+  # points that must agree about one environment, and the day `--list` moves, an
+  # adjacent resolver moves with it while a preflight one silently stops describing it.
+  # The cost is one wasted bring-up, on a lane that has opted into refusing, on a day it
+  # is already failing; the property is that this report cannot describe another run.
+  local gate gate_rc=0
+  gate="$(npx ts-node scripts/collection-gate-keys.ts)" || gate_rc=$?
+  if [ "$gate_rc" != "0" ]; then
+    # An unanswerable gate is worse than a narrow one: the run cannot state which suite
+    # it partitioned, so every count it produces is uninterpretable next to the Actions
+    # lane's. That is the comparison this whole script exists for, so it stops.
+    die "could not resolve the collection-gating provider keys (exit $gate_rc) — this run cannot say which suite it is about to partition."
+  fi
+  COLLECTION_GATE_KEYS="$(printf '%s\n' "$gate" | sed -n 's/^present=//p')"
+  COLLECTION_GATE_KEYS_ABSENT="$(printf '%s\n' "$gate" | sed -n 's/^absent=//p')"
+  local gate_complete gate_summary
+  gate_complete="$(printf '%s\n' "$gate" | sed -n 's/^complete=//p')"
+  gate_summary="$(printf '%s\n' "$gate" | sed -n 's/^summary=//p')"
+
+  # An exit code is not the only way this can fail to answer. The resolver guarantees
+  # at least one key name on one side — it refuses to report an empty derivation at all
+  # — so BOTH lists coming back empty means the parse missed, not that the environment
+  # is bare. Left alone it fails in two directions at once: `gate_complete` is empty
+  # too, which demotes a fully-keyed lane to `narrow` (or refuses it outright under
+  # REQUIRE_PROVIDER_KEYS=1), and the row is appended with no block, so it reads as
+  # "this run never measured its gate" — the exact state the two-variable pair exists to
+  # distinguish from "measured and resolved nothing".
+  if [ -z "${COLLECTION_GATE_KEYS}${COLLECTION_GATE_KEYS_ABSENT}" ]; then
+    die "the collection-gate report named no key at all — its field names and this parse have drifted, so the gate is unknown rather than empty."
+  fi
+  info "$gate_summary"
+
+  case "$(collection_gate_plan "$gate_complete")" in
+    refuse)
+      err "the listing would resolve ${COLLECTION_GATE_KEYS:-no provider key at all}; absent: ${COLLECTION_GATE_KEYS_ABSENT}."
+      err "A spec file generated entirely from a missing key collects zero tests, leaves"
+      err "the partition, and is run by no shard — not skipped, not red, absent. The"
+      err "verdict would then differ from the Actions lane's for a reason that is not the"
+      err "product, which is the one difference this lane must never produce silently."
+      err "Put the key in this clone's .env (or export it), or accept the narrower"
+      err "comparison with REQUIRE_PROVIDER_KEYS=0, which records what it costs."
+      die "a collection-gating provider key is missing"
+      ;;
+    narrow)
+      # Not a failure and not a footnote. The run declares what it is comparing, and the
+      # key set travels into the metadata and the history row below, so the day a
+      # test-count difference shows up the comparator can name this instead of
+      # hypothesising a catalog — the mis-attribution #1764 records twice.
+      warn "listing a NARROWER suite than a fully-keyed lane: ${COLLECTION_GATE_KEYS_ABSENT} absent."
+      warn "Whole spec files generated from those keys collect zero tests and enter no"
+      warn "shard, so this run's test counts are not comparable to a lane that has them"
+      warn "unless the difference is read as this. The key set is recorded with the"
+      warn "verdict. REQUIRE_PROVIDER_KEYS=1 refuses instead."
+      ;;
+  esac
+
   # `--list` stdout is a machine contract: playwright.config.ts sends its warnings to
   # stderr precisely because of this (#1024).
   npx playwright test --grep "@stable" --list --reporter=json > "$RUN_DIR/stable-list.json"
@@ -1014,7 +1219,7 @@ start_backend_for_shard() {
   # clone, and its absence fails with the right message for the wrong reason.
   # shellcheck disable=SC2086
   ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
+    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
     < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
   HELD_SESSIONS+=("$!")
 
@@ -1378,8 +1583,11 @@ phase_merge() {
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
+    langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
+    collection_gate_keys "${COLLECTION_GATE_KEYS:-}" \
+    collection_gate_keys_absent "${COLLECTION_GATE_KEYS_ABSENT:-}" \
     tests_total "${RUN_TESTS:-0}" \
     merge_ok "${MERGE_OK:-true}"
 
@@ -1507,6 +1715,12 @@ phase_publish() {
   # them: without the expected count a shard that died before writing its summary
   # vanishes from the row instead of reading as a gap (#1012), and the wedge this lane
   # is measuring (#1720) is exactly what those fields carry.
+  #
+  # COLLECTION_GATE_KEYS carries the listing's provider gate onto the row, and BOTH
+  # halves travel because only the pair distinguishes "measured, nothing resolved" from
+  # "not measured at all" — the empty-versus-absent distinction this lane keeps having
+  # to make. Without it the comparator can only guess at a test-count difference, which
+  # is how the missing invalid-auth pair was filed as a catalog problem twice (#1764).
   if ledger_active; then
     log "Recording the daily history"
     ledger_seed "$LEDGER_HISTORY" reports/daily-history.jsonl
@@ -1517,6 +1731,8 @@ phase_publish() {
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
+    COLLECTION_GATE_KEYS="${COLLECTION_GATE_KEYS:-}" \
+    COLLECTION_GATE_KEYS_ABSENT="${COLLECTION_GATE_KEYS_ABSENT:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 
