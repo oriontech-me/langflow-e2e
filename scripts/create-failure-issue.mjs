@@ -107,6 +107,11 @@ export function renderIssue({
   uncovered = false,
   accountDry = false,
   testsFailed = false,
+  // #1812: the shard matrix's own completeness. `true` means the listing the
+  // matrix was built from contained every spec file declaring an @stable test;
+  // anything else — including "the check could not run" — is not that.
+  listingVerified = true,
+  listingMissing = [],
   coverageHeadline = "",
   coverageProviders = "",
   coverageSkips = "0",
@@ -120,9 +125,9 @@ export function renderIssue({
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // SEVEN shapes, most specific first. The count has been stale twice — it read
-  // "four" while there were six, and "six" while omitting `partial`, which has its
-  // own title and its own body — so it is enumerated exhaustively below.
+  // EIGHT shapes, most specific first. The count has been stale three times — it
+  // read "four" while there were six, "six" while omitting `partial`, and "seven"
+  // while omitting the listing shape — so it is enumerated exhaustively below.
   // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
   //    because a failed merge leaves no report and the integrity guard therefore
   //    reports the run as empty and unreadable. "Find why nothing ran" is then a
@@ -146,6 +151,14 @@ export function renderIssue({
   //    fire. Gated on `!testsFailed`, because the account says nothing about whether
   //    specs also failed and a day with real per-test failures must keep its own
   //    title and body; on such a day the outage is carried as a banner instead.
+  // 3b. A spec file NEVER ENTERED THE SHARD MATRIX (#1812), or the matrix could not
+  //    be shown complete. LAST among the green-test shapes on purpose: every one
+  //    above is a bigger story, and this one reports information the run never had
+  //    rather than a run that went wrong. It needs a shape at all because the
+  //    daily's final gate reddens the day for it while the `test` job is GREEN —
+  //    without one, the run goes red with a single annotation and nothing durable
+  //    names why, which is #1176 on a fourth axis. On every other shape it is
+  //    carried as a banner instead (see `listingBanner`).
   // 4. The auto-remove step acted — show what it did.
   // 5. Neither (it errored, or a guard skipped it) — manual triage.
   // The account fact, without the banner's framing. On `empty` and `mergeFailed` the
@@ -174,6 +187,51 @@ export function renderIssue({
         "can abort the shards in the same run (#1058/#1800).",
       ]
     : [];
+
+  // #1812. A spec file that never entered the shard matrix is the one failure
+  // this lane can have that leaves NO trace in the merged report: no skip, no
+  // failure, no row to be missing from. It is therefore reported from `prep`'s
+  // verdict rather than derived here — and it has to be reported at all, because
+  // the daily's final gate reddens the day for it while `Create issue on failure`
+  // would otherwise open nothing (the `test` job is green on exactly this shape).
+  // That is #1176's defect, on a fourth axis.
+  const listingLost = Array.isArray(listingMissing) ? listingMissing.filter(Boolean) : [];
+  const listingIncomplete = listingLost.length > 0 || listingVerified !== true;
+  // Whether the listing gap TAKES the title, computed once and read twice. The
+  // first version derived the banner as "incomplete and not the shape", spelled
+  // as the negation of the shape's own two clauses — which silently reduced to
+  // `incomplete && testsFailed` and dropped the banner on every OTHER green-test
+  // shape (an abort, a dry account, a partial run). It is last among the
+  // green-test shapes because every one of those is a bigger story: this one
+  // reports information the run never had, not a run that went wrong.
+  const listingShape =
+    listingIncomplete && !testsFailed && !empty && !partial && !mergeFailed && !uncovered && !accountDry;
+  const listingLines = [
+    ...(listingLost.length
+      ? [
+          `**${listingLost.length} spec file(s)** declaring an \`@stable\` test were **absent from`,
+          "this run's listing**, so the shard matrix never contained them and no shard ran them.",
+          "Not skipped, not red — **absent** (#1764/#1812):",
+          "",
+          ...listingLost.slice(0, 30).map((f) => `- \`${f}\``),
+          ...(listingLost.length > 30 ? [`- … and ${listingLost.length - 30} more`] : []),
+        ]
+      : [
+          "The shard matrix **could not verify** that its listing contained every spec file",
+          "declaring an `@stable` test, so whether a file left the matrix on this run is",
+          "**unknown** — which is not the same as no (#1012/#1812).",
+        ]),
+    "",
+    "The usual cause is the listing environment missing something a spec gates its",
+    "**collection** on — `provider-invalid-auth-error.spec.ts` generates every one of its",
+    "tests from `hasProviderEnvKeys` at collection time, which is how three `@stable` tests",
+    "went unexecuted from this lane's first day (#1764). Start from the",
+    "`Compute duration-balanced shard matrix` step in the `prep` job, which prints the",
+    "verdict in full — including whether a named file has a TITLE the check cannot",
+    "evaluate (one built from a variable, on the test or on an enclosing `test.describe`),",
+    "in which case a lane tag reaching that title at run time would look identical to a",
+    "lost file and should be ruled out first (#1812).",
+  ];
 
   const mergeFailedSection = [
     "### ⚠️ The shards RAN — the MERGE failed",
@@ -317,6 +375,23 @@ export function renderIssue({
               ]
             : []),
         ]
+      : listingShape
+      ? [
+          listingLost.length
+            ? "### ⚠️ Spec file(s) never entered the shard matrix — they ran nowhere"
+            : "### ⚠️ The shard matrix could not be shown complete",
+          "",
+          ...listingLines,
+          "",
+          "No spec failed on this run — this shape is only chosen when the `test` job came",
+          "back green, so a day with real per-test failures keeps its own title and body and",
+          "carries this as a banner instead. Nothing below is collateral of it: a file that",
+          "never entered the matrix cannot have influenced the files that did.",
+          "",
+          "**Triage this as the listing, not the suite.** Re-running changes nothing until the",
+          "`prep` job collects the missing file; and a green day that silently ran 246 of 247",
+          "files is not evidence about the 247th (#1012).",
+        ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]
         : [
@@ -370,6 +445,27 @@ export function renderIssue({
         ]
       : [];
 
+  // #1812, the other half. When some OTHER shape took the title — a real failure
+  // day, an abort, a dry account — the listing gap still has to be recorded, and
+  // this is the only artifact a triager reads twice (the run's `::error::` lives in
+  // a step log). Unlike `accountBanner` it is NOT scoped away from `empty` /
+  // `partial` / `mergeFailed`: those bodies say no spec is implicated, and a file
+  // that never entered the matrix is a fact about the RUN'S INPUT rather than about
+  // the report, so it is true and unreported on exactly those shapes. It sits below
+  // the account banner because it explains nothing below it — it is information
+  // loss, never a cause.
+  const listingBanner =
+    listingIncomplete && !listingShape
+      ? [
+          listingLost.length
+            ? "### ⚠️ Spec file(s) never entered the shard matrix on this run"
+            : "### ⚠️ The shard matrix could not be shown complete on this run",
+          "",
+          ...listingLines,
+          "",
+        ]
+      : [];
+
   // The title is what gets scanned in the issue list, so an empty run must not
   // claim that tests failed — none ran. Nor may a failed merge claim that nothing
   // ran: every shard did, and the title is the only part most people read (#1726).
@@ -383,7 +479,11 @@ export function renderIssue({
         ? `[Daily Failure] @stable run produced ZERO verdicts — provider health skipped every test on ${today} (${image})`
         : accountDry && !testsFailed
           ? `[Daily Failure] @stable run had NO usable provider on ${today} (${image})`
-          : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+          : listingShape
+            ? listingLost.length
+              ? `[Daily Failure] ${listingLost.length} @stable spec file(s) never entered the shard matrix on ${today} (${image})`
+              : `[Daily Failure] @stable shard matrix could not be shown complete on ${today} (${image})`
+            : `[Daily Failure] @stable tests failed on ${today} (${image})`;
 
   // On Actions the run link IS the evidence. On a VM the evidence is a path, and
   // naming the host is what lets a reader find it at all.
@@ -403,6 +503,7 @@ export function renderIssue({
     "",
     ...livenessSection,
     ...accountBanner,
+    ...listingBanner,
     ...section,
     ...(cc.trim() ? ["", `/cc ${cc.trim()}`] : []),
   ].join("\n");
@@ -486,6 +587,25 @@ export async function createIssue({ title, body, repo, host = "github.com", toke
   return { ok: true, url: (gh.stdout || "").trim(), how: "gh", reason: "" };
 }
 
+/**
+ * `LISTING_MISSING` as the daily writes it: a JSON array of spec paths (#1812).
+ *
+ * Guarded, and not because the producer is untrusted — because this script runs
+ * with `ISSUE_STRICT=1` on an ALREADY RED day, so a throw here costs the umbrella
+ * for whatever really failed. A value it cannot read is reported as "the check
+ * could not be verified", which is the honest reading and the one the shape
+ * already renders.
+ */
+export function parseListingMissing(raw) {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((f) => typeof f === "string" && f) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function main() {
   const env = process.env;
   const runDir = env.RUN_DIR || ".";
@@ -524,6 +644,13 @@ async function main() {
     // left `arStatus` empty, which is exactly the >5-failure outage day — an
     // auto-removal block its own hedge pointed at.
     testsFailed: env.TESTS_FAILED === "true",
+    // #1812. `!== "false"` would be wrong here for the reason the run's GATE reads
+    // it the other way round: the gate must fail on an unknown, this must not LABEL
+    // on one — a shape is chosen by positive identification. So an absent
+    // `LISTING_VERIFIED` (the VM lane, which does not run the check) means "not
+    // tracked" and selects nothing, while an explicit "false" is reported.
+    listingVerified: env.LISTING_VERIFIED === undefined ? true : env.LISTING_VERIFIED === "true",
+    listingMissing: parseListingMissing(env.LISTING_MISSING),
     coverageHeadline: env.COVERAGE_HEADLINE || "",
     coverageProviders: env.COVERAGE_PROVIDERS || "",
     coverageSkips: env.COVERAGE_SKIPS || "0",

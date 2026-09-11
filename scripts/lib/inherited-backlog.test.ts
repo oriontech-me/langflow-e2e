@@ -52,6 +52,9 @@ function t(
     fixme: modifier === "fixme" || modifier === "skip",
     modifier,
     unparseableTags: false,
+    // What Playwright greps: title then tags, joined (#1812). Derived here, not
+    // stubbed, so a fixture cannot drift from the parser's own composition.
+    grepTitle: [title, ...tags].join(" "),
   };
 }
 const NO_FACTS = () => ({ hasMirroredDoc: false, hasIdScopedCleanup: false });

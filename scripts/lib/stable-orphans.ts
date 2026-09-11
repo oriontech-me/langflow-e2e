@@ -242,7 +242,9 @@ export function reconcile(input: ReconcileInput): Verdict {
         state: "unknown",
         removal: null,
         reason:
-          "the `tag` option is not an inline array of string literals, so whether this test is `@stable` cannot be read from the source",
+          // Inherited since #1812: the unreadable option may be on an enclosing
+          // `test.describe` rather than on the line this row cites.
+          "its own `tag` option, or that of an enclosing `test.describe`, is not a string or an inline array of string literals, so whether this test is `@stable` cannot be read from the source",
       });
       continue;
     }

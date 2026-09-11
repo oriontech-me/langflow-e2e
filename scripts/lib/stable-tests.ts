@@ -19,6 +19,12 @@ import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
 
+// `playwright.config.ts`'s own lane exclusion, imported rather than restated so
+// the completeness check (#1812) and the runner cannot disagree about which
+// tests a normal listing contains. `lane.ts` is dependency-free by design — it
+// imports nothing, Playwright included — so a script can read it.
+import { resolveLane } from "../../tests/fixtures/lane";
+
 export const REPO_ROOT = path.resolve(__dirname, "..", "..");
 export const REGRESSION_ROOT = path.join(
   REPO_ROOT,
@@ -86,6 +92,25 @@ function literalText(node: ts.Node): string | null {
   return null;
 }
 
+/**
+ * A TAG's literal text, or `null` when the value is not statically known.
+ *
+ * Deliberately stricter than `literalText`, which renders a template with
+ * substitutions as its SOURCE (`"@${T}"`) — right for a title, where Phase 0
+ * publishes the placeholder on purpose, and wrong for a tag, where it produces
+ * a string the parser knows is not the runtime value and hands it back as if
+ * it were read successfully. That defused three fail-closed guards at once
+ * (`check-checklist-coverage`, `stable-tests --check`, `assertNoWarnings`), so
+ * `` tag: `@${T}` `` went from a loud refusal to silence — the "runs in the
+ * daily, invisible to the generator" gap those guards exist for. UNKNOWN here
+ * means unparseable, which is the fail-closed direction (#1812).
+ */
+function literalTagText(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node)) return node.text;
+  if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
 interface TagReadResult {
   /** Tags extracted from the inline array literal, or null if no `tag` property was found. */
   tags: string[] | null;
@@ -106,12 +131,20 @@ function readTagsArray(node: ts.Node): TagReadResult {
       continue;
     }
     const init = prop.initializer;
+    // Playwright's `tag` option is `string | string[]`, and the string form is as
+    // real as the array one — it reaches `grepInvert` identically. Reading only
+    // the array meant `{ tag: "@destructive" }` on a describe was invisible here
+    // while the runner excluded the file: a false `missing` and a red daily
+    // (#1812). Zero occurrences in this suite today, which is why widening it
+    // changes no count anywhere.
+    const single = literalTagText(init);
+    if (single !== null) return { tags: [single], unparseable: false };
     if (!ts.isArrayLiteralExpression(init)) {
       return { tags: null, unparseable: true };
     }
     const tags: string[] = [];
     for (const el of init.elements) {
-      const t = literalText(el);
+      const t = literalTagText(el);
       if (t !== null) tags.push(t);
       else {
         // Non-literal element (spread, identifier, etc.) — treat as unparseable
@@ -180,9 +213,10 @@ function parseStableTestsInFile(
         );
         if (unparseable) {
           warnings.push(
-            `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string literals; ` +
-              "the script cannot determine if this test is `@stable`. Inline the array " +
-              '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.',
+            `${relativePath}:${line + 1} — \`tag\` option is not a string or an inline array of ` +
+              "string literals; the script cannot determine if this test is `@stable`. Inline it " +
+              '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0 — a template ' +
+              "substitution counts as unreadable, because the runtime value is what Playwright greps.",
           );
         }
         if (title !== null && tags && tags.includes(STABLE_TAG)) {
@@ -378,6 +412,24 @@ export interface DeclaredTest {
   modifier: string;
   /** A `tag` option existed but could not be read as an inline array of literals. */
   unparseableTags: boolean;
+  /**
+   * The string Playwright matches `--grep` / `grepInvert` against, minus the
+   * file and project prefixes the caller knows and this parser does not.
+   *
+   * Playwright does NOT grep the tag array: `TestCase._grepTitleWithTags()`
+   * joins every ancestor suite's title AND tags, then the test's own title and
+   * tags, with spaces, and runs the pattern over that one string
+   * (`node_modules/playwright/lib/common/test.js`). So a lane tag reaches
+   * `grepInvert` through a `test.describe` TITLE, through a describe's tag
+   * array, through the test's own title, and as a SUBSTRING of a longer token
+   * (`@serving-identity`) — four routes an exact match over `tags` cannot see,
+   * and every one of them a FALSE `missing` for #1812's detector, which is the
+   * direction that gets a detector switched off.
+   *
+   * Reproduced rather than approximated, because the consumer's whole claim is
+   * that it can predict what the listing will contain.
+   */
+  grepTitle: string;
 }
 
 /**
@@ -397,6 +449,41 @@ export interface DeclaredTest {
  * title-plus-body shape either.
  */
 const DECLARING_SKIP_MODIFIERS = ["fixme", "skip"] as const;
+
+/**
+ * Stands in for a suite title this parser cannot evaluate AT ALL — an
+ * identifier, a call — inside `DeclaredTest.grepTitle`. Deliberately not a
+ * template substitution: `literalText` renders one as its `${…}` source, so
+ * that shape never reaches here and is caught by the other branch of
+ * `hasUnresolvedTitleSegment`.
+ *
+ * Playwright greps the RUNTIME title, so such a segment could hold anything,
+ * a lane tag included. Omitting it silently is what turns an unknown into a
+ * confident "this file should have been listed" (#1812/#1012); the marker is
+ * chosen so it can never match a lane pattern on its own.
+ */
+export const UNRESOLVED_TITLE = "\u27e8unresolved\u27e9";
+
+/**
+ * Does this grep string contain a segment whose RUNTIME value this parser could
+ * not determine?
+ *
+ * Two shapes, because `literalText` renders them differently: a `test.describe`
+ * title the parser cannot read at all (an identifier, a call) becomes
+ * `UNRESOLVED_TITLE`, while a template with substitutions comes back with its
+ * `${expr}` source text in place of the value. Only the second occurs in this
+ * suite today — which is why every rendered surface is worded over the CAUSE
+ * ("built from a variable") rather than over that shape: a report naming an
+ * interpolation misdirects the identifier case exactly as a report naming a
+ * `test.describe` misdirects the test-title case. The string covers the test's own
+ * title as well as its suites', so both are checked — 20 files here have an
+ * interpolated DESCRIBE title and 19 have an `@stable` test with an unresolved
+ * segment anywhere; the two sets are near-identical and are not the same set,
+ * which is why the report is worded over "a title" rather than over a construct.
+ */
+export function hasUnresolvedTitleSegment(grepTitle: string): boolean {
+  return grepTitle.includes(UNRESOLVED_TITLE) || grepTitle.includes("${");
+}
 
 function isSkippedDeclaration(call: ts.CallExpression): boolean {
   return (
@@ -439,18 +526,45 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
     node: ts.Node,
     inheritedStable: boolean,
     inheritedLane: string[],
+    inheritedGrep: string[],
+    inheritedUnparseable: boolean,
   ): void {
     let childrenStable = inheritedStable;
     let childrenLane = inheritedLane;
+    let childrenGrep = inheritedGrep;
+    let childrenUnparseable = inheritedUnparseable;
 
     if (ts.isCallExpression(node)) {
       if (isDescribeCall(node) && node.arguments.length >= 2) {
-        const { tags } = readTagsArray(node.arguments[1]);
+        const { tags, unparseable: describeUnparseable } = readTagsArray(
+          node.arguments[1],
+        );
         if (tags?.includes(STABLE_TAG)) childrenStable = true;
         const lane = (tags ?? []).filter((t) =>
           (LANE_TAGS as readonly string[]).includes(t),
         );
         if (lane.length > 0) childrenLane = [...inheritedLane, ...lane];
+        // A suite `tag` this parser cannot read hides whatever it holds from
+        // every child, INCLUDING a lane tag — and the child is what the report
+        // is keyed on, so the unreadability has to travel down with it or the
+        // file is counted as fully understood (#1812).
+        if (describeUnparseable) childrenUnparseable = true;
+        // The suite's TITLE and its WHOLE tag array, in Playwright's own order,
+        // because that is what `_collectGrepTitlePath` pushes — not just the
+        // lane tags `childrenLane` keeps for the reconciler.
+        //
+        // A title this parser cannot evaluate (a template substitution, an
+        // identifier) becomes an explicit marker rather than being omitted:
+        // Playwright greps the RUNTIME string, so the segment could hold
+        // anything, and a silent omission is the shape that reports a file the
+        // runner excluded as MISSING. The marker can never match a lane pattern
+        // itself; `declaredStableSpecFiles` reads it to say so out loud.
+        const describeTitle = literalText(node.arguments[0]);
+        childrenGrep = [
+          ...inheritedGrep,
+          describeTitle !== null ? describeTitle : UNRESOLVED_TITLE,
+          ...(tags ?? []),
+        ];
       } else if (isPlainTestCall(node) || isSkippedDeclaration(node)) {
         const title = literalText(node.arguments[0]);
         if (title !== null) {
@@ -477,18 +591,19 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             stable: inheritedStable || own.includes(STABLE_TAG),
             fixme: isSkippedDeclaration(node),
             modifier,
-            unparseableTags: unparseable,
+            unparseableTags: unparseable || inheritedUnparseable,
+            grepTitle: [...inheritedGrep, title, ...own].join(" "),
           });
         }
       }
     }
 
     ts.forEachChild(node, (child) =>
-      visit(child, childrenStable, childrenLane),
+      visit(child, childrenStable, childrenLane, childrenGrep, childrenUnparseable),
     );
   }
 
-  visit(source, false, []);
+  visit(source, false, [], [], false);
   return out;
 }
 
@@ -504,4 +619,153 @@ export function collectDeclaredTests(): DeclaredTest[] {
       : a.line - b.line,
   );
   return all;
+}
+
+// ─── What the shard matrix EXPECTS the listing to contain (#1812) ────────────
+
+/**
+ * Playwright's own `testMatch`, copied from `playwright.config.ts`.
+ *
+ * Deliberately not `walkSpecs`'s `.spec.ts` suffix test. The two answer different
+ * questions and must not be merged: `walkSpecs` feeds the Phase 0 / checklist
+ * blocks, which are scoped to `regression/` and count what the repo publishes,
+ * while this one has to reproduce EXACTLY the file set Playwright collects — a
+ * `.spec.mts` is collected by the config (its comment says so in as many words)
+ * and would otherwise read as a file the listing invented.
+ */
+export const SPEC_FILE_PATTERN = /\.spec\.[cm]?[jt]s$/;
+
+/** `testDir` from `playwright.config.ts` — the root the JSON report's paths are relative to. */
+export const TESTS_ROOT = path.join(REPO_ROOT, "tests");
+
+/** Absolute paths of every Playwright-collectable spec under `dir`, recursively. */
+export function walkCollectableSpecs(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkCollectableSpecs(full));
+    else if (entry.isFile() && SPEC_FILE_PATTERN.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+export interface DeclaredStableSpecs {
+  /** Absolute root the paths below are relative to. */
+  root: string;
+  /**
+   * Files declaring at least one `@stable` test a NORMAL lane can select, POSIX
+   * and sorted — i.e. what `playwright test --grep @stable --list` must contain.
+   */
+  files: string[];
+  /**
+   * Files whose every `@stable` test also carries a lane tag. Excluded from
+   * `files` because `config.grepInvert` removes them from every normal listing,
+   * and reported because `CLAUDE.md` forbids that combination (#1010): an entry
+   * here is a spec that runs in no scheduled lane, not a detector artefact.
+   */
+  laneOnly: string[];
+  /**
+   * Files carrying a `tag` option this parser could not read — on a test or on
+   * an enclosing `test.describe`. Their `@stable` membership AND their lane
+   * membership are both UNKNOWN, so such a test counts toward neither `files`
+   * nor `laneOnly`: a file whose every `@stable` test is undecidable appears
+   * here alone, and may then show up as listed-only, which is the benign
+   * direction (#1012).
+   */
+  unparseable: string[];
+  /**
+   * Files with an `@stable` test whose grep string this parser cannot fully
+   * evaluate — a TITLE built from a template substitution or from an
+   * identifier, on the test itself or on any enclosing `test.describe`. Both
+   * halves matter and the first draft said only "describe": the grep string
+   * carries the test's own title too, and `file-types-upload.spec.ts` is in
+   * here with no `test.describe` in it at all, so a report naming a describe
+   * would send the reader looking for a construct the file does not have.
+   *
+   * They ARE counted in `files`, deliberately: 19 of this suite's declared
+   * files land here, most of them the provider-parametrized specs — #1764's own
+   * family — and dropping them would blind the detector on exactly the specs it
+   * exists for.
+   *
+   * What the unknown costs is one direction of certainty: if such a file turns
+   * up as MISSING, the cause may be a lane tag arriving through the
+   * interpolation, which Playwright greps and this parser cannot see. The
+   * verdict says so rather than leaving the reader to discover it (#1012).
+   */
+  unresolvedTitles: string[];
+}
+
+/**
+ * The spec files the daily's `--grep @stable --list` is expected to produce.
+ *
+ * Derived from the AST, never from a grep for the token: `@stable` appears in
+ * prose all over this suite, and `CLAUDE.md` records that the loose substring
+ * test overcounts by 8 files — one of whose only occurrence is the comment
+ * "`@release`, never `@stable`".
+ *
+ * Scoped to `tests/`, not to `regression/`. Five listed files live outside the
+ * regression tree (`collect-models.spec.ts` and the four `fixtures/*-gate.spec.ts`),
+ * so the narrower scope reports them as phantom losses — measured, 242 against the
+ * listing's 247.
+ *
+ * A test declared under a `test.describe` tagged `@stable` counts, because
+ * Playwright's `--grep` honours the inherited tag and the daily therefore really
+ * does run it; `parseDeclaredTests` already resolves that inheritance, and the
+ * lane tags with it.
+ */
+export function declaredStableSpecFiles(
+  root: string = TESTS_ROOT,
+): DeclaredStableSpecs {
+  const files: string[] = [];
+  const laneOnly: string[] = [];
+  const unparseable: string[] = [];
+  const unresolvedTitles: string[] = [];
+  // Which tests a normal listing EXCLUDES, decided by the same regex the config
+  // excludes them with and over the same string Playwright matches it against.
+  //
+  // The first version tested `LANE_TAGS` for exact membership in the `tag` array
+  // and, after one review, `String.includes` on the test's own title. Both are
+  // narrower than Playwright, in the direction that costs a red day: the engine
+  // runs `config.grepInvert` over `_grepTitleWithTags()` — every ancestor suite's
+  // title AND tags, then the test's title and tags, space-joined, with the FILE
+  // suite's title (the path relative to `testDir`) at the front — so a lane tag
+  // reaches it through a `test.describe` title, through a describe's tag array,
+  // and as a substring of a longer token (`@serving-identity`). Each of those was
+  // measured against a real `--list`: the file was excluded from the listing and
+  // counted by the declaration, i.e. a false `missing`, i.e. a red daily and an
+  // umbrella naming a file that nothing lost.
+  //
+  // `resolveLane({})` rather than a regex of our own: the exclusion is
+  // `playwright.config.ts`'s, so a fourth lane tag must not need a second edit
+  // here to stay correct. `{}` is the normal run — no lane flag set — which is
+  // the listing the daily's matrix is built from.
+  const grepInvert = resolveLane({}).grepInvert;
+  const excluded = (rel: string, t: DeclaredTest) =>
+    !!grepInvert && grepInvert.test(`${rel} ${t.grepTitle}`);
+
+  for (const abs of walkCollectableSpecs(root)) {
+    const rel = path.relative(root, abs).split(path.sep).join("/");
+    const tests = parseDeclaredTests(abs, fs.readFileSync(abs, "utf-8"));
+    if (tests.some((t) => t.unparseableTags)) unparseable.push(rel);
+    const stable = tests.filter((t) => t.stable);
+    if (stable.length === 0) continue;
+    // An unreadable tag option leaves the lane question UNDECIDABLE, so such a
+    // test votes for neither bucket: claiming the file should have been listed
+    // is the false-red direction, and claiming it is lane-only would hide a real
+    // loss. It is reported in `unparseable` either way.
+    const decidable = stable.filter((t) => !t.unparseableTags);
+    if (stable.some((t) => hasUnresolvedTitleSegment(t.grepTitle)))
+      unresolvedTitles.push(rel);
+    if (decidable.length === 0) continue;
+    if (decidable.some((t) => !excluded(rel, t))) files.push(rel);
+    else laneOnly.push(rel);
+  }
+  const sort = (a: string, b: string) => a.localeCompare(b);
+  return {
+    root,
+    files: files.sort(sort),
+    laneOnly: laneOnly.sort(sort),
+    unparseable: unparseable.sort(sort),
+    unresolvedTitles: unresolvedTitles.sort(sort),
+  };
 }

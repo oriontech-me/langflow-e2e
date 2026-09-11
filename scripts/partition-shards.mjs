@@ -15,7 +15,9 @@
 //   matrix   — at "Prepare shard matrix" time, read the current @stable file set
 //              (from `playwright test --grep @stable --list --reporter=json`) and
 //              the committed durations, then print the GitHub Actions matrix with
-//              an explicit file list per shard.
+//              an explicit file list per shard. With `--declared` it also answers
+//              whether that listing CONTAINED every spec file declaring an @stable
+//              test — see "The listing is an input, and it can be short" below.
 //
 // ## The loop never closed, and that is what #1252 fixes
 //
@@ -111,10 +113,34 @@
 // the combination — #1010). Both halves are pinned in the test file, because the
 // claim is only true while they hold.
 //
+// ## The listing is an input, and it can be short (#1812)
+//
+// Everything above partitions the file set the `--list` produced. What none of it
+// asks is whether that listing was COMPLETE. Sharding is by FILE, so the listing
+// decides which files exist at all, and a spec whose tests are generated at
+// COLLECTION time from something the environment did not supply collects zero
+// tests, leaves the partition and is handed to no shard — not skipped, not red,
+// ABSENT, with `--pass-with-no-tests` keeping every shard green and the merged
+// report holding no row to be missing from. That is how three @stable tests went
+// unexecuted from the lane's first day (#1764).
+//
+// #1796 closed that instance by giving the listing step the three keys that gate
+// collection. This closes the class: `--declared <file>` takes the set of spec
+// files that DECLARE an @stable test, read from the AST by
+// `scripts/declared-stable-specs.ts`, and reports what the listing does not
+// contain — in the same breath as the partition, whose file count is the number
+// this makes meaningful.
+//
+// It never fails the prep step. This script's product is the shard matrix, so a
+// detector able to abort it would lose 247 files to report one; an absent,
+// unreadable or malformed declaration degrades to UNVERIFIED, which the merge
+// job's LAST step reads fail-closed. See `compareListing` for the rest.
+//
 // Pure, dependency-free ESM so the prep job runs it with plain `node` (no ts-node).
 // Unit tests: scripts/partition-shards.test.mjs (node --test).
 
 import fs from "node:fs";
+import path from "node:path";
 
 /**
  * Walk a Playwright JSON report (nested suites -> specs) and collect the unique
@@ -324,6 +350,269 @@ export function buildShards(files, durations, n) {
   return bins.map(({ shard, files }) => ({ shard, files }));
 }
 
+/**
+ * Does the listing contain every spec file that DECLARES an `@stable` test (#1812)?
+ *
+ * The daily shards by FILE, so the `--list` this partition is built from decides
+ * which files exist at all. Some specs generate their tests at COLLECTION time
+ * from the environment — `provider-invalid-auth-error.spec.ts` is generated
+ * entirely from `hasProviderEnvKeys` — so a listing run without what they gate on
+ * collects ZERO tests from them, keeps them out of the partition, and hands them
+ * to no shard. Not skipped, not red: ABSENT, with `--pass-with-no-tests` keeping
+ * every shard green and the merged report holding no row to be missing from.
+ * Three `@stable` tests were lost that way from the lane's first day until a
+ * cross-lane comparison happened to notice (#1764).
+ *
+ * #1796 closed that INSTANCE by giving the listing step the three keys. This is
+ * the CLASS: the two steps can agree perfectly and still lose a file — all three
+ * secrets rotated away on the same day, a future spec gating collection on a file
+ * or a capability probe, a listing that dies halfway and still exits 0.
+ *
+ * Comparison is on ABSOLUTE paths, resolved through each side's own root, rather
+ * than on the strings. The listing's paths are relative to Playwright's
+ * `config.rootDir` (today `<repo>/tests`) and the declaration's to the root it
+ * walked; pinning the comparison to a spelling means a Playwright release that
+ * reports paths from the config directory instead would report all 247 files as
+ * simultaneously lost and invented.
+ *
+ * Fail-closed on everything it cannot resolve. A missing, unreadable or rootless
+ * input makes the verdict UNVERIFIED, never agreement — an exemption whose
+ * justification expired silently is the failure this repo keeps re-learning
+ * (#1084), and a detector that cannot look must not read as a detector that
+ * found nothing (#1012).
+ *
+ * @param {{files: string[], root: string|undefined}} listing
+ * @param {{root?: string, files?: string[], laneOnly?: string[], unparseable?: string[], unresolvedTitles?: string[]}|null} declared
+ * @returns {{verified: boolean, reason: string, missing: string[], unexpected: string[], declaredCount: number, listedCount: number, laneOnly: string[], unparseable: string[], unresolvedMissing: string[]}}
+ */
+export function compareListing(listing, declared) {
+  const listedCount = listing.files.length;
+  const unverified = (reason) => ({
+    verified: false,
+    reason,
+    missing: [],
+    unexpected: [],
+    declaredCount: 0,
+    listedCount,
+    laneOnly: [],
+    unparseable: [],
+    unresolvedMissing: [],
+  });
+
+  if (!declared) return unverified("no declared-spec set was passed");
+  if (typeof declared.root !== "string" || !declared.root)
+    return unverified("the declared-spec set carries no root");
+  if (!Array.isArray(declared.files))
+    return unverified("the declared-spec set carries no file list");
+  if (typeof listing.root !== "string" || !listing.root)
+    return unverified(
+      "the listing report carries no config.rootDir, so its file paths cannot be resolved",
+    );
+  // Element TYPES, not just the array. `path.resolve` THROWS on a non-string, and a
+  // throw here does not degrade to UNVERIFIED — it leaves `main()` as exit 1 with
+  // empty stdout, which under the prep step's `MATRIX="$(…)"` and `bash -eo pipefail`
+  // aborts the step and loses the whole daily. That is the exact outcome this
+  // function's placement promises cannot happen, so the guard is the promise.
+  // Reachable from BOTH sides: a hand-edited or half-written declaration, and a
+  // report whose @stable spec carries no `file` and has no ancestor suite that does
+  // (`stableFilesFromReport` then yields `undefined`) — the latter being a state the
+  // script tolerated before this check existed.
+  const badEntry = (arr) => arr.find((f) => typeof f !== "string" || f === "");
+  const badDeclared = badEntry(declared.files);
+  if (badDeclared !== undefined || declared.files.some((f) => typeof f !== "string"))
+    return unverified(
+      `the declared-spec set contains an entry that is not a file path (${JSON.stringify(badDeclared ?? null)})`,
+    );
+  const badListed = badEntry(listing.files);
+  if (badListed !== undefined || listing.files.some((f) => typeof f !== "string"))
+    return unverified(
+      `the listing contains a spec with no resolvable file path (${JSON.stringify(badListed ?? null)})`,
+    );
+  // A floor, for the reason `snapshotCatalog` has `--min-categories`: this check is
+  // one-sided. It sees the LISTING shrink; it cannot see the DECLARATION shrink,
+  // because a declaration that under-reports produces `missing: []` and reads as
+  // agreement while `unexpected` quietly grows — and `unexpected` deliberately does
+  // not fail. An EMPTY declaration is the degenerate case of that and the one a
+  // broken producer actually reaches, so it is refused here as well as in
+  // `declared-stable-specs.ts` itself. A PARTIAL declaration stays undetectable by
+  // construction and is what the `unexpected` list is for.
+  if (declared.files.length === 0)
+    return unverified(
+      "the declared-spec set is empty — a listing cannot be shown complete against nothing",
+    );
+
+  const abs = (root, f) => path.resolve(root, f);
+  const listedAbs = new Map(listing.files.map((f) => [abs(listing.root, f), f]));
+  const declaredAbs = new Map(declared.files.map((f) => [abs(declared.root, f), f]));
+
+  const missing = [...declaredAbs]
+    .filter(([a]) => !listedAbs.has(a))
+    .map(([, f]) => f)
+    .sort();
+  const unexpected = [...listedAbs]
+    .filter(([a]) => !declaredAbs.has(a))
+    .map(([, f]) => f)
+    .sort();
+
+  // Which of the MISSING files the declaration could not fully evaluate. A title
+  // built from a variable — a template substitution, or a `test.describe` title
+  // that is an identifier or a call, on the test or on any enclosing suite; all
+  // of them reach Playwright's grep string, and one real file here has the first
+  // with no describe at all — is known at run time and opaque here, so a lane tag
+  // reaching such a title would look exactly like a lost file. Worded over the
+  // CAUSE and not over one of its shapes: the previous round fixed "test.describe"
+  // and left "the interpolation", which misdirects the identifier case just as
+  // thoroughly.
+  // The intersection is where that doubt applies, and naming it is what keeps a
+  // rare false red attributable in one line instead of mysterious (#1012).
+  // Reported, never subtracted: 19 of this suite's files carry such a title,
+  // almost all of them the provider-parametrized specs — #1764's own family — so
+  // excusing them would blind the check where it matters most.
+  const unresolved = new Set(
+    Array.isArray(declared.unresolvedTitles) ? declared.unresolvedTitles : [],
+  );
+  return {
+    verified: true,
+    reason: "",
+    missing,
+    unexpected,
+    declaredCount: declaredAbs.size,
+    listedCount,
+    laneOnly: Array.isArray(declared.laneOnly) ? declared.laneOnly : [],
+    unparseable: Array.isArray(declared.unparseable) ? declared.unparseable : [],
+    unresolvedMissing: missing.filter((f) => unresolved.has(f)),
+  };
+}
+
+/**
+ * The stderr block for a `compareListing` verdict, and the `::warning::` lines
+ * that go with it.
+ *
+ * Split out of the CLI so the wording is assertable. A guard that pins a
+ * SPELLING in the workflow text does not pin a BEHAVIOUR (#1226), so the rule
+ * these tests enforce is the one that matters: a lost file is NAMED, and a
+ * verdict that could not be reached never renders as agreement.
+ *
+ * `asked` mirrors how the durations table is handled two functions down: a caller
+ * that ASKED for the check and did not get it is a different event from a caller
+ * that never passed `--declared`, and only the first is worth a `::warning::`. The
+ * verdict itself is UNVERIFIED either way — the daily's gate reads that fail-closed,
+ * so nothing is softened; what is avoided is a permanent warning on every caller
+ * that does not run the check, which is how `mode=count` became unreadable (#1252).
+ *
+ * @param {ReturnType<typeof compareListing>} v
+ * @param {boolean} asked  did the caller pass `--declared`?
+ * @returns {{lines: string[], warnings: string[]}}
+ */
+export function renderListingVerdict(v, asked = true) {
+  const lines = [];
+  const warnings = [];
+  const CAP = 30;
+  const list = (files) => {
+    const out = files.slice(0, CAP).map((f) => `    ${f}`);
+    if (files.length > CAP) out.push(`    … and ${files.length - CAP} more not listed here`);
+    return out;
+  };
+
+  if (!v.verified) {
+    lines.push(`listing completeness: UNVERIFIED — ${v.reason}`);
+    if (!asked) return { lines, warnings };
+    warnings.push(
+      `::warning::The shard matrix could not verify that the listing contains every ` +
+        `spec file declaring an @stable test (#1812): ${v.reason}. The run proceeds on ` +
+        `the ${v.listedCount} file(s) the listing did produce, but nothing establishes ` +
+        `that a file did not silently leave the matrix (#1764).`,
+    );
+    return { lines, warnings };
+  }
+
+  lines.push(
+    `listing completeness: ${v.listedCount} listed / ${v.declaredCount} declared on disk` +
+      (v.missing.length || v.unexpected.length
+        ? ` — ${v.missing.length} missing, ${v.unexpected.length} listed-only`
+        : " — exact match"),
+  );
+  if (v.laneOnly.length)
+    lines.push(
+      `  ${v.laneOnly.length} file(s) declare @stable only on lane-tagged tests and are ` +
+        `excluded from both sides (CLAUDE.md forbids that combination — #1010):`,
+      ...list(v.laneOnly),
+    );
+  if (v.unparseable.length)
+    lines.push(
+      `  ${v.unparseable.length} file(s) carry a tag option the parser cannot read, so ` +
+        `their @stable membership is unknown and they may show up as listed-only:`,
+      ...list(v.unparseable),
+    );
+  if (v.missing.length) {
+    lines.push(`  MISSING from the listing — declared on disk, handed to no shard:`, ...list(v.missing));
+    if (v.unresolvedMissing?.length)
+      lines.push(
+        `  of those, ${v.unresolvedMissing.length} carry a title this check cannot evaluate ` +
+          `— built from a variable, on the test or on an enclosing \`test.describe\` — so a ` +
+          `lane tag reaching the title at run time would look identical to a lost file. ` +
+          `Rule that out first:`,
+        ...list(v.unresolvedMissing),
+      );
+    warnings.push(
+      `::warning::${v.missing.length} spec file(s) declare an @stable test but are ABSENT ` +
+        `from this listing, so no shard will run them and nothing downstream will say so ` +
+        `(#1764/#1812): ${v.missing.slice(0, CAP).join(", ")}` +
+        (v.missing.length > CAP ? `, … and ${v.missing.length - CAP} more` : "") +
+        `. Most likely the listing environment is missing something a spec gates its ` +
+        `COLLECTION on. The scheduled run is failed at the end of the merge job.`,
+    );
+  }
+  if (v.unexpected.length) {
+    // Deliberately NOT a failure. A listed-only file is coverage the run HAS and
+    // the predicate did not predict — a test declared by a shared factory rather
+    // than inline, say. Reddening the day for it inverts the trade this check
+    // exists to make (#980). It is loud because it is the blind spot: a file the
+    // predicate cannot see is a file whose later disappearance it cannot report,
+    // so `missing` is a LOWER BOUND while this list is non-empty.
+    lines.push(
+      `  listed but NOT declared on disk — the on-disk predicate does not recognise ` +
+        `these, so the missing list above is a lower bound:`,
+      ...list(v.unexpected),
+    );
+    warnings.push(
+      `::warning::${v.unexpected.length} spec file(s) were listed but carry no @stable ` +
+        `test this check can see (#1812): ${v.unexpected.slice(0, CAP).join(", ")}` +
+        (v.unexpected.length > CAP ? `, … and ${v.unexpected.length - CAP} more` : "") +
+        `. No coverage is lost — but the detector is blind to these files, so it cannot ` +
+        `report them if they leave the matrix later.`,
+    );
+  }
+  return { lines, warnings };
+}
+
+/**
+ * The `key=value` lines the daily's `prep` job publishes as step outputs (#1812).
+ *
+ * In the script rather than in a `node -e` inside the workflow, and that is the
+ * whole point: the one-liner it replaces was pinned by NOTHING. Mutating
+ * `listing_verified=${l.verified===true}` to a literal `true`, or
+ * `listing_missing` to a literal `[]`, disables the entire mechanism — the gate
+ * reads exactly these two values — and both mutations survived the full
+ * `npm run test:scripts` suite. A guard over workflow TEXT does not pin a
+ * behaviour (#1226); a function whose output is asserted does.
+ *
+ * `listing_verified` is `${v.verified === true}` and not `${v.verified}`, so a
+ * shape change that made the field absent emits `false` rather than `undefined`
+ * — the gate's `!= 'true'` would fail on either, but only one of them says what
+ * happened.
+ *
+ * @param {ReturnType<typeof compareListing>} v
+ * @returns {string[]}
+ */
+export function listingOutputLines(v) {
+  return [
+    `listing_verified=${v.verified === true}`,
+    `listing_missing=${JSON.stringify(v.missing || [])}`,
+    `listing_unexpected=${JSON.stringify(v.unexpected || [])}`,
+  ];
+}
+
 // ---- CLI -------------------------------------------------------------------
 
 function readJSON(path) {
@@ -377,15 +666,54 @@ function main(argv) {
   }
 
   if (cmd === "matrix") {
-    // matrix <list.json> <spec-durations.json|-> <N>  ->  { shard_total, include:[{shard,files}] }
+    // matrix <list.json> <spec-durations.json|-> <N> [--declared <declared.json>]
+    //   ->  { shard_total, mode, include:[{shard,files}], listing:{...} }
     // <list.json>  is the output of `playwright test --grep @stable --list --reporter=json`.
     // <spec-durations.json> may be "-" or a missing path (cold start) -> empty durations.
-    const [listPath, durPath, nRaw] = rest;
+    // --declared    is `scripts/declared-stable-specs.ts`'s output — what the listing
+    //               above is EXPECTED to contain (#1812). Optional, but its absence is
+    //               reported as UNVERIFIED, never as agreement.
+    // --github-output  append the listing verdict as `key=value` step outputs (the
+    //               daily passes `$GITHUB_OUTPUT`). Here rather than in a workflow
+    //               one-liner because the values are what the final gate reads.
+    //
+    // A flag with an EMPTY value is not a usage error, and the distinction is the
+    // one this function exists for. `--github-output "$GITHUB_OUTPUT"` with the
+    // variable unset reaches here as `["--github-output", ""]`, and refusing it
+    // throws — exit 1, empty stdout — which under the prep step's `MATRIX="$(…)"`
+    // and `bash -eo pipefail` aborts the day. So an empty value DEGRADES (the
+    // verdict goes unwritten, which the gate reads fail-closed) while a flag with
+    // no following argument at all stays a usage error: that is a malformed
+    // command line, caught before any caller depends on it.
+    const takeFlag = (argv, name) => {
+      const at = argv.indexOf(name);
+      if (at === -1) return { value: "", rest: argv, given: false, missingValue: false };
+      return {
+        value: argv[at + 1] ?? "",
+        rest: [...argv.slice(0, at), ...argv.slice(at + 2)],
+        given: true,
+        missingValue: at === argv.length - 1,
+      };
+    };
+    const declaredFlag = takeFlag(rest, "--declared");
+    const outputFlag = takeFlag(declaredFlag.rest, "--github-output");
+    const declaredPath = declaredFlag.value;
+    const [listPath, durPath, nRaw] = outputFlag.rest;
     const n = Number(nRaw || 4);
-    if (!listPath || !Number.isInteger(n) || n < 1)
-      throw new Error("usage: partition-shards.mjs matrix <list.json> <durations.json|-> <N>");
+    if (
+      !listPath ||
+      !Number.isInteger(n) ||
+      n < 1 ||
+      declaredFlag.missingValue ||
+      outputFlag.missingValue
+    )
+      throw new Error(
+        "usage: partition-shards.mjs matrix <list.json> <durations.json|-> <N> " +
+          "[--declared <declared.json>] [--github-output <path>]",
+      );
 
-    const files = stableFilesFromReport(readJSON(listPath));
+    const listReport = readJSON(listPath);
+    const files = stableFilesFromReport(listReport);
     let durations = {};
     const expected = !!durPath && durPath !== "-";
     const present = expected && fs.existsSync(durPath);
@@ -449,7 +777,62 @@ function main(argv) {
           `step is not running, or it is not recording these files (#1252).\n`,
       );
     }
-    process.stdout.write(JSON.stringify({ shard_total: n, mode, include }) + "\n");
+    // Listing completeness (#1812), reported in the SAME breath as the partition:
+    // the file count above is the number this check exists to make meaningful.
+    //
+    // Reading the declaration is guarded rather than allowed to throw, and that is
+    // the point of the whole placement: this step's product is the shard matrix, and
+    // a detector that can abort `prep` would cost the day it was added to protect —
+    // the asymmetry #1813 settled for the sibling reporter in this same step. A file
+    // that is absent, unreadable or malformed degrades to UNVERIFIED, which the
+    // merge job's final gate reads FAIL-CLOSED.
+    let declared = null;
+    let declaredError = "";
+    if (declaredFlag.given && !declaredPath) {
+      // Asked for, and the caller handed an empty path — an unset variable, almost
+      // always. Reported as UNVERIFIED with the cause named rather than silently
+      // treated as "nobody asked", which would drop the warning too.
+      declaredError = "the --declared path is empty (an unset variable?)";
+    } else if (declaredPath && declaredPath !== "-") {
+      try {
+        declared = readJSON(declaredPath);
+      } catch (e) {
+        declaredError = `the declared-spec set at ${declaredPath} could not be read (${e.message})`;
+      }
+    }
+    const listing = declaredError
+      ? compareListing({ files, root: undefined }, null)
+      : compareListing({ files, root: listReport.config?.rootDir }, declared);
+    if (declaredError) listing.reason = declaredError;
+    const verdict = renderListingVerdict(
+      listing,
+      declaredFlag.given && declaredPath !== "-",
+    );
+    process.stderr.write(verdict.lines.join("\n") + "\n");
+    for (const w of verdict.warnings) process.stderr.write(w + "\n");
+    if (outputFlag.given && !outputFlag.value) {
+      process.stderr.write(
+        `::warning::--github-output was given an empty path (an unset variable?), so the ` +
+          `listing verdict was not published as a step output. The scheduled run will fail ` +
+          `at the end of the merge job, because an absent verdict is read fail-closed (#1812).\n`,
+      );
+    } else if (outputFlag.value) {
+      // Guarded for the same reason the declaration read is: this runs inside the
+      // step that produces the shard matrix. An unwritable path leaves the outputs
+      // ABSENT, which the gate reads fail-closed — the safe outcome — where a throw
+      // would take the day with it.
+      try {
+        fs.appendFileSync(outputFlag.value, listingOutputLines(listing).join("\n") + "\n");
+      } catch (e) {
+        process.stderr.write(
+          `::warning::could not write the listing verdict to ${outputFlag.value} (${e.message}) — ` +
+            `the scheduled run will fail at the end of the merge job, because an absent ` +
+            `verdict is read fail-closed (#1812).\n`,
+        );
+      }
+    }
+
+    process.stdout.write(JSON.stringify({ shard_total: n, mode, include, listing }) + "\n");
     return;
   }
 
