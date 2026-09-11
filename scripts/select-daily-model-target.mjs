@@ -585,7 +585,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         `today.\n`,
     );
   } else {
-    process.stderr.write(`::warning::select-daily-model-target: ${result.reason}\n`);
+    // `displaySafe` for the same reason `displacementLines` has it: an annotation is
+    // LINE-ORIENTED, and `result.reason` carries the provider's own error body — a
+    // collector stall reason is deliberately several lines, so the annotation
+    // terminated at its first and the rest fell into plain log. The first fix of
+    // #1801's defect 4 reached `displacementLines` and missed this one, on the same
+    // stream and on the day it matters more: this is the line that fires when NO
+    // provider in the rotation is usable.
+    process.stderr.write(
+      `::warning::select-daily-model-target: ${displaySafe(result.reason)}\n`,
+    );
   }
 
   process.stdout.write(`${JSON.stringify(result)}\n`);

@@ -332,10 +332,19 @@ test("daily-stable.yml asks exactly one shard for the full rotation block", () =
     path.join(import.meta.dirname, "..", ".github", "workflows", "daily-stable.yml"),
     "utf-8",
   );
-  const step = yml.slice(
-    yml.lastIndexOf("- name:", yml.indexOf("select-daily-model-target.mjs")),
-    yml.indexOf("select-daily-model-target.mjs"),
-  );
+  const step = yml
+    .slice(
+      yml.lastIndexOf("- name:", yml.indexOf("select-daily-model-target.mjs")),
+      yml.indexOf("select-daily-model-target.mjs"),
+    )
+    // COMMENTS STRIPPED, and that is the whole difference between a pin and a spelling
+    // check (#1226). Measured on the first version of this test: commenting the line
+    // out — `# ROTATION_SUMMARY: ...` — restores the #1252 artifact (every shard
+    // renders the full table) and left the entire lane green, as did keeping the old
+    // expression in a comment above a hardcoded `ROTATION_SUMMARY: '1'`.
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
   assert.match(step, /ROTATION_SUMMARY:/, "the rotation step no longer chooses a shape");
   // `'1'` for shard 1 and `'0'` elsewhere — NOT a suppression, which is the half of
   // this the first shape got wrong: writing nothing on the other shards made the only

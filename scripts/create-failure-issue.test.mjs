@@ -284,17 +284,35 @@ test("a run whose every result was a provider skip gets its own title and shape"
   // The BODY's heading and its causal sentence, not only the title. Those are the two
   // strings #1801 changed for this shape, and both reverted silently under mutation:
   // the title pin two lines up does not reach them.
-  assert.doesNotMatch(
-    body,
-    /dead provider skipped every test/,
-    "the body heading cannot diagnose either (#1801)",
-  );
   assert.match(body, /recorded `inactive` by `collect-models`/, "the body quotes what was RECORDED");
-  assert.doesNotMatch(
-    body,
+  // SCOPED to the heading and the statement of fact, which is everything before the
+  // triage paragraph. That paragraph legitimately ENUMERATES the possible repairs —
+  // it is the enumeration #1801 asked for — so a body-wide blocklist would refuse the
+  // fix itself.
+  //
+  // A blocklist, and the reason it is one is worth stating: a literal `doesNotMatch`
+  // on the old wording is a revert detector, not a pin. Measured — re-diagnosing the
+  // heading as "a drained provider account skipped every test that ran", or appending
+  // "— the account is out of credit" to the sentence, both left the whole lane green.
+  // The positive `match` above is the load-bearing half; this catches the wordings
+  // that have actually been written here, which is what a blocklist can honestly do.
+  const statedFact = body.slice(body.indexOf("### ⚠️ ZERO verdicts"), body.indexOf("**Triage"));
+  assert.ok(statedFact.length > 0, "the uncovered section moved — this pin is scoped to it");
+  for (const diagnosis of [
+    /dead provider/,
     /could not serve a call/,
-    "that is a cause the record does not carry (#1801)",
-  );
+    /drained/i,
+    /out of credit/i,
+    /billing/i,
+    /revoked/i,
+    /spend cap/i,
+  ]) {
+    assert.doesNotMatch(
+      statedFact,
+      diagnosis,
+      `the shape states what was recorded; it cannot diagnose ${diagnosis} from a skip (#1801)`,
+    );
+  }
   // Triage points at the REASON, not at a diagnosis (#1801). The same `inactive`
   // record is written for a key that was never imported as a Langflow global
   // variable (#1058), where the repair is the import and not the billing page.

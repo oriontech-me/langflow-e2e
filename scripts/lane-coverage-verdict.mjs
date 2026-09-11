@@ -325,17 +325,21 @@ export function groupByProvider(skips) {
  * off the line. 140 rather than a rounder 90 — and the figure behind that choice was
  * MEASURED after this comment first guessed it (#1801): `globalSetup`'s structural
  * reason is **249** characters, not the ~130 originally claimed here. 140 still
- * truncates it, and that is fine. Measured on what THIS function caps, which is the
- * whole `Provider "x" inactive — …` record (278 chars; the error text inside it is the
- * 249): the clause naming the repair ("never imported as a Langflow global variable")
- * ends at character 122, so a 140-cap keeps it whole and a 90-cap stops at "…never
- * impor…" — keeping the quote and dropping its only useful part.
+ * truncates it, and that is fine.
  *
- * Two wrong versions of this sentence are worth the line they cost. The first said the
- * clause "lands inside the first 90", which contradicted the very cap it explained; the
- * second corrected it to "spans 49-93", which are the offsets in the ERROR text and not
- * in the string this function actually truncates. The conclusion survived both, and
- * that is the trap: a figure can be wrong in a sentence whose verdict is right.
+ * WHICH STRING IS CAPPED, since three versions of this sentence got it wrong: not the
+ * `Provider "x" inactive — …` record (278 chars) but the ERROR TEXT inside it (249).
+ * `parseProviderInactiveReason` returns capture group 2, `groupByProvider` pushes that
+ * into `reasons`, and this function caps `reasons[0]` — so the prefix is already gone
+ * before it gets here. Measured by driving `laneCoverageVerdict` over a report whose
+ * skip annotation carries the real record, not by calling this function by hand, which
+ * is exactly how the second wrong version was produced.
+ *
+ * On that string the clause naming the repair ("never imported as a Langflow global
+ * variable") spans characters 49-93, so a 140-cap keeps it whole while a 90-cap stops
+ * at "…global vari…" — keeping the quote and dropping its only useful part. The three
+ * wrong versions said it "lands inside the first 90" (93 > 90, so it does not), then
+ * that 49-93 were offsets in some other string, then that the clause ended at 122.
  */
 export function providerPhrase(entry, reasonCap = 140) {
   const reason = displaySafe(entry.reasons?.[0] ?? "");
@@ -596,12 +600,26 @@ export function renderSummary(result) {
             // the key is perfectly live — and a re-run whose `Collect models` completes
             // IS the repair. The answer depends on the reason, which this surface has
             // quoted two lines above, so it points there instead of deciding.
+            //
+            // TWO claims, kept apart, because the first version welded them into one
+            // sentence and it contradicted itself: "…a `Collect models` that never
+            // imported the key does; a provider that could not serve a call does not,
+            // and 12 specs hardcode their provider, so for those a re-dispatch changes
+            // nothing either way" — "either way" denied, for those specs, the recovery
+            // the same sentence had asserted fifteen words earlier.
+            //
+            // Whether a RE-RUN helps is a question about the reason. Whether a
+            // still-usable provider COVERS for the skipped one is a question about the
+            // fallback, and it only has an antecedent in the arm that names one — so it
+            // lives there, not in the shared scope.
             const scope =
               result.verdict === UNCOVERED
-                ? "This run still produced no verdict. Whether a re-run recovers it depends on the reason above — a `Collect models` that never imported the key (#1058) does; a provider that genuinely could not serve a call does not, and 12 specs hardcode their provider, so for those a re-dispatch changes nothing either way."
+                ? "This run still produced no verdict. Whether a re-run recovers it depends on the reason above: a `Collect models` that never imported the key (#1058) is repaired by re-running the sweep; a provider that genuinely could not serve a call is not."
                 : "So this run is narrower than the check status shows, not blind.";
+            const noCover =
+              " A still-usable provider does not cover for the skipped one either — 12 specs hardcode the provider they need.";
             return stillUsable.length > 0
-              ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}`
+              ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}${noCover}`
               : `The account is up (**${displaySafe(result.usableProviders.join(", "))}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;
           })()
         : "Whether any provider was usable is **UNKNOWN** (no readable `providers.json`). Unknown is not clean (#1012).",
