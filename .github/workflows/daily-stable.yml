@@ -1785,9 +1785,11 @@ jobs:
             # globalSetup's credential degradation when a key was never imported as a
             # Langflow global variable (#1058) — and on the second the repair is the
             # import, not the account. So this quotes the reason the sweep measured and
-            # leaves the diagnosis to the reader, which is also why it still names no
-            # repair: #1800 removed that from here for its own reason and #1801 would
-            # have removed it for this one.
+            # leaves the diagnosis to the reader: it names the two repairs the record
+            # cannot choose between, rather than picking one. The completeness claim
+            # #1800 removed from this line stays removed — that was a different fix,
+            # for a different reason, and re-adding it here would contradict the
+            # `partial` / incomplete messages printed above.
             echo "::error::ZERO verdicts about Langflow — every @stable test that produced a result was SKIPPED because a provider it needed was RECORDED INACTIVE: $COVERAGE_HEADLINE. No spec is implicated; there is simply no evidence in this run. Repair whatever that reason names — a drained account, or a Collect models that never imported the key as a Langflow global variable (#1058) — then re-run the day (#1456/#1801)."
           elif [ "$COVERAGE_FAIL" != "false" ]; then
             echo "::error::The coverage guard reported '${COVERAGE_FAIL:-unset}' for fail_recommended (verdict '${COVERAGE_VERDICT:-unset}') — UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — the run covered the providers it was supposed to cover' step (#1456)."

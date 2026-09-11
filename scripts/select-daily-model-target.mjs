@@ -92,7 +92,7 @@
  * it pins. Always prints the decision as JSON on stdout.
  */
 import * as fs from "fs";
-import { tableCell } from "./lib/display-text.mjs";
+import { displaySafe, tableCell } from "./lib/display-text.mjs";
 import {
   readProvidersFile,
   // Named for the lane that first needed it (#1169); it is really
@@ -319,6 +319,18 @@ export function rotationDisplacement(result, options = {}) {
  * @param {ReturnType<typeof rotationDisplacement>} displacement
  * @returns {string[]}
  */
+/**
+ * `displaySafe`, not `tableCell`: these lines become `::warning::` ANNOTATIONS, which
+ * are line-oriented — a newline inside the reason ends the annotation and drops the
+ * rest into plain log. Not hypothetical, and it is the case `lib/display-text.mjs`'s
+ * own header names: `collect-models.ts` writes a collector STALL reason built by
+ * `formatSaveBusyFailure()`, which is deliberately several lines, so on a stall day
+ * the annotation terminated at "…over 120 poll(s)." and its seven remaining lines —
+ * including "Most likely: the credential write is still in flight." — fell out of it.
+ *
+ * The pipe is left alone here on purpose: nothing downstream renders these as a table,
+ * and `\|` inside an annotation is noise. The table has `tableCell` for that.
+ */
 export function displacementLines(displacement) {
   if (!displacement) return [];
   const instead = displacement.resolved
@@ -330,7 +342,7 @@ export function displacementLines(displacement) {
       // so it gets no gap and no ownership claim (#1801).
       return (
         `rotation: the fallback "${entry.provider}" was also unusable, so it was ` +
-        `passed over too. Cause: ${entry.reason}`
+        `passed over too. Cause: ${displaySafe(entry.reason)}`
       );
     }
     const cost =
@@ -340,7 +352,7 @@ export function displacementLines(displacement) {
           `from this run — nothing runs an agent spec against it until then`;
     return (
       `rotation: ${displacement.weekday} is "${entry.provider}"'s slot and ` +
-      `${instead}; ${cost}. Cause: ${entry.reason}`
+      `${instead}; ${cost}. Cause: ${displaySafe(entry.reason)}`
     );
   });
 }

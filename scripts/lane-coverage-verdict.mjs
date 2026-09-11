@@ -325,9 +325,17 @@ export function groupByProvider(skips) {
  * off the line. 140 rather than a rounder 90 — and the figure behind that choice was
  * MEASURED after this comment first guessed it (#1801): `globalSetup`'s structural
  * reason is **249** characters, not the ~130 originally claimed here. 140 still
- * truncates it, and that is fine: the clause naming the repair ("never imported as
- * a Langflow global variable") lands inside the first 90, whereas a 90-char cap cut
- * it at "…global vari…" — keeping the quote and dropping its only useful part.
+ * truncates it, and that is fine. Measured on what THIS function caps, which is the
+ * whole `Provider "x" inactive — …` record (278 chars; the error text inside it is the
+ * 249): the clause naming the repair ("never imported as a Langflow global variable")
+ * ends at character 122, so a 140-cap keeps it whole and a 90-cap stops at "…never
+ * impor…" — keeping the quote and dropping its only useful part.
+ *
+ * Two wrong versions of this sentence are worth the line they cost. The first said the
+ * clause "lands inside the first 90", which contradicted the very cap it explained; the
+ * second corrected it to "spans 49-93", which are the offsets in the ERROR text and not
+ * in the string this function actually truncates. The conclusion survived both, and
+ * that is the trap: a figure can be wrong in a sentence whose verdict is right.
  */
 export function providerPhrase(entry, reasonCap = 140) {
   const reason = displaySafe(entry.reasons?.[0] ?? "");
@@ -576,12 +584,21 @@ export function renderSummary(result) {
             const stillUsable = result.usableProviders.filter((p) => !skippedNames.has(p));
             // NOT "narrow, not blind": on an `uncovered` run it was blind, and the
             // heading two lines above says so. What the live account establishes is
-            // only that the account is not the thing to fix — and for a spec that
-            // HARDCODES the dead provider (12 of them do) a re-dispatch recovers
-            // nothing either, so this must not read as "just re-run it".
+            // only that the account is not the thing to fix.
+            //
+            // What it must NOT then do is answer whether a RE-RUN helps (#1801). This
+            // arm arrived from #1800 after that issue was filed and the merge took
+            // main's structure whole, so the third surface kept the assertion the
+            // other two lost. It read "a spec hardcoded to the dead provider does not
+            // recover by re-running", and on #1801's own motivating input both halves
+            // are wrong: a structural degrade (`degradeProviders`, #1058) only degrades
+            // the providers whose keys are missing, so the account reads `alive` while
+            // the key is perfectly live — and a re-run whose `Collect models` completes
+            // IS the repair. The answer depends on the reason, which this surface has
+            // quoted two lines above, so it points there instead of deciding.
             const scope =
               result.verdict === UNCOVERED
-                ? "This run still produced no verdict — a spec hardcoded to the dead provider does not recover by re-running."
+                ? "This run still produced no verdict. Whether a re-run recovers it depends on the reason above — a `Collect models` that never imported the key (#1058) does; a provider that genuinely could not serve a call does not, and 12 specs hardcode their provider, so for those a re-dispatch changes nothing either way."
                 : "So this run is narrower than the check status shows, not blind.";
             return stillUsable.length > 0
               ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}`

@@ -322,6 +322,28 @@ test("daily-stable.yml runs the rotation between the health gate and the @stable
   assert.ok(pin < run, "the rotation must run BEFORE the @stable run");
 });
 
+test("daily-stable.yml asks exactly one shard for the full rotation block", () => {
+  // The script's own default is the FULL block (local, and the VM twin, which calls it
+  // once), so the one-shard behaviour lives entirely in this `env:` line — remove it
+  // and every shard renders the table again, which is the #1252 artifact #1801 came to
+  // remove. Measured: the whole unit suite stays green with the line deleted, so the
+  // script-side test two hundred lines down does not reach it.
+  const yml = fs.readFileSync(
+    path.join(import.meta.dirname, "..", ".github", "workflows", "daily-stable.yml"),
+    "utf-8",
+  );
+  const step = yml.slice(
+    yml.lastIndexOf("- name:", yml.indexOf("select-daily-model-target.mjs")),
+    yml.indexOf("select-daily-model-target.mjs"),
+  );
+  assert.match(step, /ROTATION_SUMMARY:/, "the rotation step no longer chooses a shape");
+  // `'1'` for shard 1 and `'0'` elsewhere — NOT a suppression, which is the half of
+  // this the first shape got wrong: writing nothing on the other shards made the only
+  // rendered surface depend on shard 1 surviving to this step, on a lane whose own
+  // comments record shards dying before it (#1011).
+  assert.match(step, /matrix\.shard == 1 && '1' \|\| '0'/);
+});
+
 test("the daily emits the provider/model pair from the script, not from inline env", () => {
   // Two inline `env:` lines would reintroduce both failure modes the script exists
   // to prevent: a hardcoded id that skips silently when access is lost (#570/#1012),

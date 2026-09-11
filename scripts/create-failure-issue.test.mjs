@@ -281,6 +281,20 @@ test("a run whose every result was a provider skip gets its own title and shape"
   assert.match(body, /ZERO verdicts/);
   assert.match(body, /openai/);
   assert.match(body, /3 test\(s\)/);
+  // The BODY's heading and its causal sentence, not only the title. Those are the two
+  // strings #1801 changed for this shape, and both reverted silently under mutation:
+  // the title pin two lines up does not reach them.
+  assert.doesNotMatch(
+    body,
+    /dead provider skipped every test/,
+    "the body heading cannot diagnose either (#1801)",
+  );
+  assert.match(body, /recorded `inactive` by `collect-models`/, "the body quotes what was RECORDED");
+  assert.doesNotMatch(
+    body,
+    /could not serve a call/,
+    "that is a cause the record does not carry (#1801)",
+  );
   // Triage points at the REASON, not at a diagnosis (#1801). The same `inactive`
   // record is written for a key that was never imported as a Langflow global
   // variable (#1058), where the repair is the import and not the billing page.

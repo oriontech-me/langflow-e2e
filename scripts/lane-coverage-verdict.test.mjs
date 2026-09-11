@@ -1321,7 +1321,10 @@ test("the heading follows the fail decision on BOTH branches, not only on `uncov
   const uncoveredAlive = renderSummary(verdictWith(uncoveredRun, ALIVE));
   assert.match(uncoveredAlive, /^### ⚠️ This run covered nothing/m);
   assert.doesNotMatch(uncoveredAlive, /not blind/);
-  assert.match(uncoveredAlive, /does not recover by re-running/);
+  // It used to assert "does not recover by re-running" here. That is a DIAGNOSIS, and
+  // #1801's own input falsifies it — see the dedicated test below; what this case
+  // still pins is that the line refuses the "narrower, not blind" framing.
+  assert.match(uncoveredAlive, /still produced no verdict/);
 
   // ...and red once the LANE says covering nothing is a suite defect.
   assert.match(
@@ -1542,6 +1545,24 @@ test("the daily's final gate always names a cause, and never two that disagree",
   }
 });
 
+test("the daily's gate QUOTES what was recorded instead of asserting a cause", () => {
+  // The gate's `uncovered` line is the third place #1801 had to change, and it is
+  // spelled in the WORKFLOW, so no script test reaches it: reverting it to "a provider
+  // could not serve a call" left the entire unit suite green (measured). The same
+  // `inactive` record is written when a key was never imported as a Langflow global
+  // variable (#1058), where the repair is the import and not the account.
+  const { out } = runDailyGate({
+    COVERAGE_VERDICT: "uncovered",
+    COVERAGE_ACCOUNT: "alive",
+    COVERAGE_FAIL: "true",
+  });
+  assert.match(out, /RECORDED INACTIVE/);
+  assert.doesNotMatch(out, /could not serve a call/);
+  // And it points at BOTH repairs the record cannot choose between, rather than one.
+  assert.match(out, /never imported the key as a Langflow global variable/);
+  assert.match(out, /drained account/);
+});
+
 test("the daily's final gate's branch set is exhaustive over the states that reach it", () => {
   // `exit 1` is unconditional inside this step, so a state that reaches it and prints
   // nothing would fail the day with no cause named — #1176 in the direction that costs
@@ -1575,4 +1596,30 @@ test("the daily's final gate's branch set is exhaustive over the states that rea
   for (const line of out.split("\n").filter((l) => l.includes("::error::"))) {
     assert.match(line, /no branch named a cause/, `unexpected specific claim: ${line}`);
   }
+});
+
+test("the run summary does not decide whether a re-run helps", () => {
+  // The THIRD surface. `renderSummary`'s `alive` arm arrived from #1800 after #1801
+  // was filed, so it kept the assertion the headline and the umbrella had lost: "a
+  // spec hardcoded to the dead provider does not recover by re-running". On #1801's
+  // own motivating input both halves are wrong — a structural degrade only degrades
+  // the providers whose keys are missing, so the account reads `alive` with a live
+  // key, and a re-run whose `Collect models` completes IS the repair.
+  // A structural degrade only degrades the providers whose keys are missing
+  // (`providersForEnvKeys`), so the OTHER providers stay active and the account reads
+  // `alive` — which is precisely why this surface is reachable on that input.
+  const result = verdictWith(
+    report("tests/a.spec.ts", [skipped("openai target", NOT_IMPORTED)]),
+    ALIVE,
+  );
+  assert.equal(result.verdict, UNCOVERED);
+  const summary = renderSummary(result);
+  assert.match(summary, /Still usable: \*\*anthropic, google\*\*/, "the account fact still lands");
+  assert.doesNotMatch(summary, /the dead provider/, "a live key is not a dead provider (#1801)");
+  assert.doesNotMatch(
+    summary,
+    /does not recover by re-running/,
+    "whether a re-run helps depends on the reason, which this surface has already quoted",
+  );
+  assert.match(summary, /depends on the reason above/);
 });
