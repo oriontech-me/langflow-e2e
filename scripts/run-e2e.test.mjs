@@ -815,6 +815,43 @@ test("an unanswerable gate stops the run, whatever REQUIRE_PROVIDER_KEYS says", 
   }
 });
 
+test("a report that parses to nothing stops the run, rather than reading as a bare environment", () => {
+  // Exit 0 with a block this parse cannot read is the drift case: `complete` comes back
+  // empty too, which would demote a fully-keyed lane to narrow, and both lists come
+  // back empty, which would write a row saying the gate was never measured.
+  for (const block of ["", "unexpected=shape\n", "PRESENT=OPENAI_API_KEY\n"]) {
+    const r = prepWithGate(block, {}, 0);
+    assert.equal(r.status, 1, `block ${JSON.stringify(block)} was accepted`);
+    assert.match(r.stderr, /named no key at all/);
+    assert.doesNotMatch(r.stderr, /STUB_NPX playwright/);
+  }
+});
+
+test("the field names this script parses are the ones the resolver actually emits", () => {
+  // The seam. Every case above feeds phase_prep a HAND-WRITTEN block, so a field
+  // renamed on the TypeScript side would leave all of them green while the real run
+  // parsed nothing — the drift the guard above turns into a `die`, here caught at the
+  // source instead. So the real resolver is run once, and the names the shell greps for
+  // are read out of the shell itself rather than restated.
+  const emitted = execFileSync("npx", ["ts-node", "scripts/collection-gate-keys.ts"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, OPENAI_API_KEY: "a" },
+  })
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.slice(0, line.indexOf("=")));
+
+  const text = readFileSync(SCRIPT, "utf8");
+  const prep = text.slice(text.indexOf("phase_prep() {"), text.indexOf("start_backend_for_shard() {"));
+  const parsed = [...prep.matchAll(/sed -n 's\/\^([a-z_]+)=\/\/p'/g)].map((m) => m[1]);
+
+  assert.ok(parsed.length >= 4, `phase_prep parses only ${parsed.length} field(s) — this test is reading the wrong place`);
+  for (const field of parsed) {
+    assert.ok(emitted.includes(field), `phase_prep parses \`${field}=\`, which the resolver does not emit (it emits: ${emitted.join(", ")})`);
+  }
+});
+
 test("the gate report never carries a key's value into the run log", () => {
   // This output is printed into a log that gets pasted into comparison issues. The
   // resolver's own units pin that it prints names; this pins that the orchestrator

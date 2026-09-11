@@ -565,12 +565,16 @@ export function compareRuns({
       `the lanes SKIPPED different numbers of tests (Actions ${ci.totals?.skipped ?? 0}, VM ${vm.totals?.skipped ?? 0}). ` +
         `A history row does not name skipped tests, so those ${Math.abs(skipDelta)} are invisible below - ` +
         `${skipDelta > 0 ? "the VM ran fewer specs than Actions did" : "Actions ran fewer specs than the VM did"}. ` +
-        // Named rather than guessed at, when the rows can say. "The usual cause" is
-        // what this line used to offer, and a reader who acts on the usual cause when
-        // the measured one is on the row is being sent to the wrong machine.
-        (gateMismatch
-          ? `The lanes' listing keys differ (see above), which accounts for some or all of it.`
-          : `A missing provider key is the usual cause.`),
+        // DELIBERATELY not pointed at the gate, and this line is the reason the
+        // distinction is worth stating twice. A skip happens at RUN time, and
+        // `collection_gate_keys` records the LISTING environment - on Actions that is
+        // the `prep` job, which carries no provider keys, while its shard jobs get all
+        // three from secrets. So the Actions row reads `present: []` for a lane whose
+        // tests ran fully keyed, and a skip difference blamed on that gate names
+        // Actions as the narrower side when at run time it is the wider one. Pointing
+        // a reader at the wrong machine is exactly the failure this field was added to
+        // end, so it is better to keep offering the honest guess here.
+        `A missing provider key is the usual cause.`,
     );
   }
 
@@ -578,6 +582,9 @@ export function compareRuns({
   if (execDelta !== 0) {
     warnings.push(
       `the lanes accounted for different test counts (Actions ${executed(ci.totals)}, VM ${executed(vm.totals)}); ` +
+        // This one the gate CAN explain: collection decides which spec files enter the
+        // matrix at all, so a file only one lane listed is missing from the other's
+        // total outright - no skip, no error, nothing to subtract it from.
         (gateMismatch
           ? `the listing keys above differ, so the two matrices did not contain the same spec files.`
           : `they may not have run the same suite revision.`),

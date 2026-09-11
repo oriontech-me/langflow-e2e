@@ -1031,7 +1031,13 @@ test("a malformed block is treated as absent, not as an empty key set", () => {
   );
 });
 
-test("a count difference points at the measured cause instead of the usual one", () => {
+test("a count difference points at the measured cause, and a SKIP difference does not", () => {
+  // The two deltas are not the same question, and conflating them re-creates the
+  // defect this field exists to end. Collection decides which FILES exist, so a
+  // test-count difference really is explained by the listing gate. A skip happens at
+  // RUN time, and the Actions row's gate describes its `prep` job — which carries no
+  // provider keys while its shards carry all three. Blaming a skip difference on that
+  // gate names Actions as the narrower lane when at run time it is the wider one.
   const result = compare(
     row("daily-stable", { ...gate(THREE, []), totals: { passed: 13, failed: 0, flaky: 0, skipped: 2 } }),
     row("daily-stable-vm", {
@@ -1041,9 +1047,10 @@ test("a count difference points at the measured cause instead of the usual one",
   );
   const counts = result.warnings.find((w) => w.includes("different test counts"));
   assert.match(counts, /the listing keys above differ/);
+
   const skips = result.warnings.find((w) => w.includes("SKIPPED different numbers"));
-  assert.match(skips, /The lanes' listing keys differ/);
-  assert.ok(!skips.includes("usual cause"), skips);
+  assert.match(skips, /A missing provider key is the usual cause/);
+  assert.ok(!skips.includes("listing keys"), skips);
 });
 
 test("with no gate recorded, the count warnings keep their original hypothesis", () => {

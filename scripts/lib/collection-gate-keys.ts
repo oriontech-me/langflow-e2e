@@ -12,8 +12,10 @@
  *
  * WHY THIS MODULE EXISTS SEPARATELY FROM THE SUITE
  *
- * The Actions lane's silent input was an empty `env:` block, pinned structurally by
- * `scripts/daily-matrix-provider-keys.test.mjs` (#1796). The VM twin's silent input is
+ * The Actions lane's silent input was an empty `env:` block (#1764). #1796 proposes a
+ * structural guard over it — `scripts/daily-matrix-provider-keys.test.mjs`, which does
+ * NOT exist in this tree and lands only if that PR does, so nothing guards the Actions
+ * side today. The VM twin's silent input is
  * `.env` — `playwright.config.ts` calls `dotenv.config()` unconditionally, so
  * `scripts/run-e2e.sh` lists whatever the operator's working copy happens to carry,
  * and names none of the three keys anywhere (#1813). A run cannot state which suite it

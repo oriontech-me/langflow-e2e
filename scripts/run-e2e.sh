@@ -1118,6 +1118,16 @@ phase_prep() {
   # working directory by the same `dotenv.config()` playwright.config.ts makes, so a
   # report produced anywhere else would describe an environment this listing does not
   # have. The report carries NAMES only; no key's value is ever read out.
+  #
+  # That placement has a COST, stated because it looks like an oversight next to
+  # phase_hygiene's "cheaper to refuse up front": phase_services has already brought up
+  # one Langflow per shard by the time this runs, so a REQUIRE_PROVIDER_KEYS=1 refusal
+  # pays the full bring-up and teardown before aborting on something knowable at
+  # preflight. It stays here anyway. Resolving earlier and listing later would leave two
+  # points that must agree about one environment, and the day `--list` moves, an
+  # adjacent resolver moves with it while a preflight one silently stops describing it.
+  # The cost is one wasted bring-up, on a lane that has opted into refusing, on a day it
+  # is already failing; the property is that this report cannot describe another run.
   local gate gate_rc=0
   gate="$(npx ts-node scripts/collection-gate-keys.ts)" || gate_rc=$?
   if [ "$gate_rc" != "0" ]; then
@@ -1131,6 +1141,18 @@ phase_prep() {
   local gate_complete gate_summary
   gate_complete="$(printf '%s\n' "$gate" | sed -n 's/^complete=//p')"
   gate_summary="$(printf '%s\n' "$gate" | sed -n 's/^summary=//p')"
+
+  # An exit code is not the only way this can fail to answer. The resolver guarantees
+  # at least one key name on one side — it refuses to report an empty derivation at all
+  # — so BOTH lists coming back empty means the parse missed, not that the environment
+  # is bare. Left alone it fails in two directions at once: `gate_complete` is empty
+  # too, which demotes a fully-keyed lane to `narrow` (or refuses it outright under
+  # REQUIRE_PROVIDER_KEYS=1), and the row is appended with no block, so it reads as
+  # "this run never measured its gate" — the exact state the two-variable pair exists to
+  # distinguish from "measured and resolved nothing".
+  if [ -z "${COLLECTION_GATE_KEYS}${COLLECTION_GATE_KEYS_ABSENT}" ]; then
+    die "the collection-gate report named no key at all — its field names and this parse have drifted, so the gate is unknown rather than empty."
+  fi
   info "$gate_summary"
 
   case "$(collection_gate_plan "$gate_complete")" in

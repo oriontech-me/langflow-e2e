@@ -76,7 +76,11 @@
 //   that says so instead of leaving it to be inferred (#1764 inferred it wrongly
 //   twice). The BLOCK's absence means the run did not measure its gate; `present: []`
 //   inside it means it measured and resolved nothing — a distinction the counts alone
-//   cannot make.
+//   cannot make. And it describes the LISTING's environment, not the run's: on Actions
+//   that is the `prep` job, whose `test` shards take the same keys from secrets
+//   independently, so a row can legitimately read `present: []` for a lane whose tests
+//   ran fully keyed. That is why the comparator explains a TEST-COUNT difference with
+//   this field and refuses to explain a SKIP difference with it.
 //   `langflow_version` (optional, additive to schema v1) is the resolved version
 //   string the run tested, as opposed to the tag it asked for. It exists for the
 //   two-lane comparison of the VM migration: the Actions daily and the VM daily each
