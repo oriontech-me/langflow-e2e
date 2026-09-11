@@ -455,10 +455,14 @@ export function compareListing(listing, declared) {
     .sort();
 
   // Which of the MISSING files the declaration could not fully evaluate. A title
-  // built from a template substitution — on the test or on an enclosing
-  // `test.describe`; both reach Playwright's grep string, and one real file here
-  // has the first with no describe at all — is greppable at run time and opaque
-  // here, so a lane tag arriving through one would look exactly like a lost file.
+  // built from a variable — a template substitution, or a `test.describe` title
+  // that is an identifier or a call, on the test or on any enclosing suite; all
+  // of them reach Playwright's grep string, and one real file here has the first
+  // with no describe at all — is known at run time and opaque here, so a lane tag
+  // reaching such a title would look exactly like a lost file. Worded over the
+  // CAUSE and not over one of its shapes: the previous round fixed "test.describe"
+  // and left "the interpolation", which misdirects the identifier case just as
+  // thoroughly.
   // The intersection is where that doubt applies, and naming it is what keeps a
   // rare false red attributable in one line instead of mysterious (#1012).
   // Reported, never subtracted: 19 of this suite's files carry such a title,
@@ -545,8 +549,8 @@ export function renderListingVerdict(v, asked = true) {
     if (v.unresolvedMissing?.length)
       lines.push(
         `  of those, ${v.unresolvedMissing.length} carry a title this check cannot evaluate ` +
-          `— a template substitution, on the test or on an enclosing \`test.describe\` — so a ` +
-          `lane tag arriving through the interpolation would look identical to a lost file. ` +
+          `— built from a variable, on the test or on an enclosing \`test.describe\` — so a ` +
+          `lane tag reaching the title at run time would look identical to a lost file. ` +
           `Rule that out first:`,
         ...list(v.unresolvedMissing),
       );

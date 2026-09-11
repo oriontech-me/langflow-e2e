@@ -1047,7 +1047,12 @@ test("compareListing flags the MISSING files whose titles it could not evaluate"
   const { lines } = renderListingVerdict(v);
   const text = lines.join("\n");
   assert.match(text, /carry a title this check cannot evaluate/);
-  assert.match(text, /template substitution/);
+  // The CAUSE, not one of its shapes: "a template substitution" misdirects the
+  // identifier case (a describe title the parser cannot read at all reaches the
+  // same bucket by the other branch), exactly as "`test.describe`" misdirects
+  // the test-title case.
+  assert.match(text, /built from a variable/);
+  assert.doesNotMatch(text, /a template substitution, on the test/);
   // Never worded over a construct the file may not contain: one real file in
   // `unresolvedTitles` has no `test.describe` at all, its interpolation being in
   // the TEST title, so naming a describe would send the reader looking for

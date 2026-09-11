@@ -228,9 +228,9 @@ export function renderIssue({
     "went unexecuted from this lane's first day (#1764). Start from the",
     "`Compute duration-balanced shard matrix` step in the `prep` job, which prints the",
     "verdict in full — including whether a named file has a TITLE the check cannot",
-    "evaluate (a template substitution, on the test or on an enclosing `test.describe`),",
-    "in which case a lane tag arriving through the interpolation would look identical to",
-    "a lost file and should be ruled out first (#1812).",
+    "evaluate (one built from a variable, on the test or on an enclosing `test.describe`),",
+    "in which case a lane tag reaching that title at run time would look identical to a",
+    "lost file and should be ruled out first (#1812).",
   ];
 
   const mergeFailedSection = [

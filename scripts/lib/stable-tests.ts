@@ -451,8 +451,11 @@ export interface DeclaredTest {
 const DECLARING_SKIP_MODIFIERS = ["fixme", "skip"] as const;
 
 /**
- * Stands in for a suite title this parser cannot evaluate — a template
- * substitution, an identifier, a call — inside `DeclaredTest.grepTitle`.
+ * Stands in for a suite title this parser cannot evaluate AT ALL — an
+ * identifier, a call — inside `DeclaredTest.grepTitle`. Deliberately not a
+ * template substitution: `literalText` renders one as its `${…}` source, so
+ * that shape never reaches here and is caught by the other branch of
+ * `hasUnresolvedTitleSegment`.
  *
  * Playwright greps the RUNTIME title, so such a segment could hold anything,
  * a lane tag included. Omitting it silently is what turns an unknown into a
@@ -465,10 +468,14 @@ export const UNRESOLVED_TITLE = "\u27e8unresolved\u27e9";
  * Does this grep string contain a segment whose RUNTIME value this parser could
  * not determine?
  *
- * Two shapes, because `literalText` renders them differently and both are real
- * in this suite: a `test.describe` title the parser cannot read at all becomes
+ * Two shapes, because `literalText` renders them differently: a `test.describe`
+ * title the parser cannot read at all (an identifier, a call) becomes
  * `UNRESOLVED_TITLE`, while a template with substitutions comes back with its
- * `${expr}` source text in place of the value. The string covers the test's own
+ * `${expr}` source text in place of the value. Only the second occurs in this
+ * suite today — which is why every rendered surface is worded over the CAUSE
+ * ("built from a variable") rather than over that shape: a report naming an
+ * interpolation misdirects the identifier case exactly as a report naming a
+ * `test.describe` misdirects the test-title case. The string covers the test's own
  * title as well as its suites', so both are checked — 20 files here have an
  * interpolated DESCRIBE title and 19 have an `@stable` test with an unresolved
  * segment anywhere; the two sets are near-identical and are not the same set,

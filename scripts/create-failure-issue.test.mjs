@@ -813,3 +813,15 @@ test("main() reads LISTING_MISSING off the env as the daily writes it", async ()
   assert.match(body, /never entered the shard matrix/);
   assert.match(body, /provider-invalid-auth-error\.spec\.ts/);
 });
+
+test("the listing shape's triage pointer names the cause, not one of its shapes", () => {
+  // Two passes to word this: naming `test.describe` misdirects the test-title
+  // case, and naming "the interpolation" misdirects the identifier case — a
+  // suite title the parser cannot read at all reaches the same bucket by a
+  // different branch of `hasUnresolvedTitleSegment`. Pinned because this line
+  // is the only one a triager reads, and mutating it survived both unit lanes.
+  const { body } = renderIssue({ ...listingBase, listingMissing: ["a/lost.spec.ts"] });
+  assert.match(body, /built from a variable/);
+  assert.doesNotMatch(body, /a template substitution, on the test/);
+  assert.doesNotMatch(body, /arriving through the interpolation/);
+});
