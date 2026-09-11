@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-10
+> **Last updated:** 2026-09-11
 
 ---
 
@@ -165,7 +165,7 @@
 - [x] `POST /api/v1/flows/expand/` (hidden from the schema) refuses `{}` with **`400`** and a text report naming `CompactFlowData`, and expands `{nodes:[],edges:[]}` to itself → `api/flows/api-flows-public-and-metadata.spec.ts`
 - [x] `GET /api/v1/flows/{id}/events` on a fresh flow is `{"events": [], "settled": true}` — plain JSON, not the stream #1699 feared → `api/flows/api-flows-events.spec.ts`
 - [x] `POST /api/v1/flows/{id}/events` refuses a missing or unknown `type` with `422` whose message enumerates the **seven** literals (asserted by name), records a valid one as `201 {type, timestamp, summary}`, drops extra fields, and the log then lists both events in order with **`settled: false`** → `api/flows/api-flows-events.spec.ts`
-- [x] Versions lifecycle (`{id}/versions/`, five hidden operations): empty list `{entries:[], max_entries:50}`; `POST {}` → v1; `POST {name, description}` → v2 with `name` **ignored**; `GET one` carries `data` and `is_deployed`; **activate returns the flow and auto-snapshots the replaced state** as v3 `"Auto-saved before activating v1"`; `DELETE` → `204` removing only that entry → `api/flows/api-flows-versions.spec.ts`
+- [!] Versions lifecycle (`{id}/versions/`, five hidden operations): empty list `{entries:[], max_entries:50}`; `POST {}` → v1; `POST {name, description}` → v2 with `name` **ignored**; `GET one` carries `data` and `is_deployed`; **activate returns the flow and auto-snapshots the replaced state** as v3 `"Auto-saved before activating v1"`; `DELETE` → `204` removing only that entry — `@stable` off while the first read-back hits `LE-2598` (#1777: writes answer 2xx before their commit) → `api/flows/api-flows-versions.spec.ts`
 - [x] Unknown version ids answer `404` with two **different** messages (`"Version entry not found"` on GET, `"Version entry <id> not found"` on DELETE), each pinned as measured → `api/flows/api-flows-versions.spec.ts`
 - [x] `POST /api/v1/flows/batch/` creates every flow in `{"flows": [...]}` (`201` list, each readable by id), refuses a duplicate name `409 "Name must be unique"`, accepts `[]` as `201 []`, and **without the trailing slash answers `405`** — the trap the file's first version fell into → `api/flows/api-flows-batch.spec.ts`
 - [~] `GET /api/v1/flows/?page=1&size=2` returns a plain array of **every** flow — `page`/`size` are ignored on `1.13.0.dev0`. The former "pagination" test asserted `length >= 0` on that array and could not fail; dropped rather than pinned, since asserting either behaviour would defend a defect or invent one. Recorded here so the finding is not lost.
@@ -1453,7 +1453,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 100 | 94 | 1 | 3 | 2 |
+| `api/flows/` — REST API | 100 | 93 | 1 | 4 | 2 |
 | `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 90 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
@@ -1476,7 +1476,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **658** | **538 (82%)** | **37 (6%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **658** | **537 (82%)** | **37 (6%)** | **19 (3%)** | **65 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to

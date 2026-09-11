@@ -80,6 +80,25 @@ jobs:
         shell: bash
         env:
           SHARDS: ${{ inputs.shards || '4' }}
+          # The three keys that gate COLLECTION, not execution (#1764). Every test
+          # in provider-invalid-auth-error.spec.ts is generated while the suite is
+          # being listed, from `hasProviderEnvKeys` over `providerConfigMap` — so a
+          # key-less listing makes that file yield zero tests, keeps it out of the
+          # partition, and hands it to no shard. Not skipped, not red: absent, and
+          # `--pass-with-no-tests` on the shard command means nothing says so. Only
+          # files whose ENTIRE content is key-gated vanish this way; the other
+          # provider-parametrized specs keep a keyless @stable test, so their file
+          # survives the listing and their variants are generated at run time.
+          #
+          # Deliberately NOT the whole provider block the shard step carries: Groq,
+          # Mistral and Azure are read at RUN time (their specs declare their tests
+          # unconditionally and skip with a reason), so listing them here would put
+          # secrets in a step that cannot use them. What must agree between the two
+          # steps is the collection gate, and that is what
+          # scripts/daily-matrix-provider-keys.test.mjs asserts.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           N="$SHARDS"
           case "$N" in ''|*[!0-9]*) N=4 ;; esac      # non-numeric → default 4
