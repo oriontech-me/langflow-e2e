@@ -338,12 +338,26 @@ test("daily-stable.yml asks exactly one shard for the full rotation block", () =
       yml.indexOf("select-daily-model-target.mjs"),
     )
     // COMMENTS STRIPPED, and that is the whole difference between a pin and a spelling
-    // check (#1226). Measured on the first version of this test: commenting the line
-    // out — `# ROTATION_SUMMARY: ...` — restores the #1252 artifact (every shard
-    // renders the full table) and left the entire lane green, as did keeping the old
-    // expression in a comment above a hardcoded `ROTATION_SUMMARY: '1'`.
+    // check (#1226). Three evasions were measured against earlier versions of this
+    // test, each changing the behaviour while keeping the matched spelling on the
+    // page: commenting the line out (every shard renders the full table again — the
+    // #1252 artifact), parking the old expression in a full-line comment above a
+    // hardcoded `ROTATION_SUMMARY: '1'`, and — the one a line-anchored filter still
+    // let through — parking it in a TRAILING comment beside one:
+    //
+    //     ROTATION_SUMMARY: '1'  # was ${{ matrix.shard == 1 && '1' || '0' }}
+    //
+    // Trailing comments after a mapping value are ordinary in this workflow
+    // (`daily-stable.yml` has them), so that is the natural way to park an old value
+    // rather than a contrived one. Both forms go.
+    //
+    // A string strip rather than a YAML parse because this repo has no YAML
+    // dependency. It is imprecise in one direction only — a `#` inside a quoted value
+    // would be cut — and that costs a false FAILURE, never a false pass, which is the
+    // side a guard may be wrong on.
     .split("\n")
     .filter((l) => !/^\s*#/.test(l))
+    .map((l) => l.replace(/\s+#.*$/, ""))
     .join("\n");
   assert.match(step, /ROTATION_SUMMARY:/, "the rotation step no longer chooses a shape");
   // `'1'` for shard 1 and `'0'` elsewhere — NOT a suppression, which is the half of

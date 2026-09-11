@@ -616,8 +616,19 @@ export function renderSummary(result) {
               result.verdict === UNCOVERED
                 ? "This run still produced no verdict. Whether a re-run recovers it depends on the reason above: a `Collect models` that never imported the key (#1058) is repaired by re-running the sweep; a provider that genuinely could not serve a call is not."
                 : "So this run is narrower than the check status shows, not blind.";
+            //
+            // UNCOVERED only, and moving it out of the shared scope is what made that
+            // easy to get wrong: on `degraded` something DID execute, and for a
+            // parametrized spec that something is routinely the other providers'
+            // targets of the very spec that skipped — `agent-multi-tool-selection`
+            // on run 31698035402 skipped its openai targets and ran its anthropic and
+            // google ones. So the clause would be contradicted by the run's own data
+            // three lines above it, and would undercut the "narrower, not blind"
+            // sentence it followed. "either" has no antecedent there either.
             const noCover =
-              " A still-usable provider does not cover for the skipped one either — 12 specs hardcode the provider they need.";
+              result.verdict === UNCOVERED
+                ? " A still-usable provider does not cover for the skipped one either — 12 specs hardcode the provider they need."
+                : "";
             return stillUsable.length > 0
               ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}${noCover}`
               : `The account is up (**${displaySafe(result.usableProviders.join(", "))}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;

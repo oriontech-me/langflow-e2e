@@ -285,32 +285,43 @@ test("a run whose every result was a provider skip gets its own title and shape"
   // strings #1801 changed for this shape, and both reverted silently under mutation:
   // the title pin two lines up does not reach them.
   assert.match(body, /recorded `inactive` by `collect-models`/, "the body quotes what was RECORDED");
-  // SCOPED to the heading and the statement of fact, which is everything before the
-  // triage paragraph. That paragraph legitimately ENUMERATES the possible repairs —
-  // it is the enumeration #1801 asked for — so a body-wide blocklist would refuse the
-  // fix itself.
-  //
   // A blocklist, and the reason it is one is worth stating: a literal `doesNotMatch`
   // on the old wording is a revert detector, not a pin. Measured — re-diagnosing the
   // heading as "a drained provider account skipped every test that ran", or appending
   // "— the account is out of credit" to the sentence, both left the whole lane green.
   // The positive `match` above is the load-bearing half; this catches the wordings
   // that have actually been written here, which is what a blocklist can honestly do.
-  const statedFact = body.slice(body.indexOf("### ⚠️ ZERO verdicts"), body.indexOf("**Triage"));
-  assert.ok(statedFact.length > 0, "the uncovered section moved — this pin is scoped to it");
-  for (const diagnosis of [
-    /dead provider/,
-    /could not serve a call/,
-    /drained/i,
-    /out of credit/i,
-    /billing/i,
-    /revoked/i,
-    /spend cap/i,
-  ]) {
+  //
+  // TWO SCOPES, because scoping all of it was a loosening. The triage paragraph
+  // legitimately ENUMERATES the possible repairs — that enumeration IS what #1801
+  // asked for — so the words it uses can only be refused before it. Every other
+  // wording has no business anywhere in the body, and two of them were body-wide
+  // before this test was rewritten: measured, putting "The provider could not serve a
+  // call." in the triage paragraph passed while the assertion it replaced caught it.
+  const headingAt = body.indexOf("### ⚠️ ZERO verdicts");
+  const triageAt = body.indexOf("**Triage");
+  // Both markers, not one: `slice(a, -1)` on a missing `**Triage` returns the whole
+  // rest of the body, which passes a length check and then trips the blocklist on the
+  // triage paragraph's own correct prose — failing for the wrong reason while the
+  // guard written for this case stays silent.
+  assert.ok(headingAt > -1, "the uncovered heading moved — this pin is scoped to it");
+  assert.ok(triageAt > headingAt, "the triage paragraph moved — this pin is scoped to it");
+  const statedFact = body.slice(headingAt, triageAt);
+  // Vocabulary the enumeration needs, refused only in the statement of fact.
+  for (const diagnosis of [/drained/i, /revoked/i, /spend cap/i]) {
     assert.doesNotMatch(
       statedFact,
       diagnosis,
       `the shape states what was recorded; it cannot diagnose ${diagnosis} from a skip (#1801)`,
+    );
+  }
+  // Vocabulary that is a DIAGNOSIS wherever it appears, including in the paragraph a
+  // triager acts on.
+  for (const diagnosis of [/dead provider/, /could not serve a call/, /out of credit/i, /billing/i]) {
+    assert.doesNotMatch(
+      body,
+      diagnosis,
+      `nothing in this shape may assert ${diagnosis} from a skip alone (#1801)`,
     );
   }
   // Triage points at the REASON, not at a diagnosis (#1801). The same `inactive`
