@@ -6,6 +6,7 @@ import {
   checkQuarantineLifted, extractSymptomRows, checkSymptomCoverage,
   symptomsOwnedElsewhere, checkDebugEvidence, checkBranchPurity, checkCiVerdict,
   checkFinalGreenCoverage, finalGreenTargets, resolveClassification,
+  checkRegressionLedger, normalizeUpstreamTicket, LEDGER_FILE,
 } from './gates.ts'
 import type { RunRecord } from './types.ts'
 
@@ -618,4 +619,167 @@ test('resolveClassification still fails when no heuristic ran and nothing was su
   const d = resolveClassification(undefined, {})
   assert.equal(d.set, undefined)
   assert.deepEqual(d.problems, ['no type: heuristic failed and none supplied'])
+})
+
+// ---------- Regression Ledger ----------
+//
+// `REGRESSIONS.md` calls the row "a mandatory step" and names the pipeline
+// REPORT phase as one of its two owners, but nothing read the DEBUG verdict for
+// it. The gap cost two rows: #1777/LE-2598 reached a PR without one, and
+// #1759/LE-2552 still has none.
+
+const LEDGER_MD = `# Regression Ledger
+
+<!-- REGRESSIONS:START -->
+**Regressions caught:** 2
+<!-- REGRESSIONS:END -->
+
+## Ledger
+
+| Found | Area / Test | Regression | Severity | Detected by | Upstream | Status | Fixed in | Report |
+|-------|-------------|------------|----------|-------------|----------|--------|----------|--------|
+| 2026-09-09 | api · api-flows-versions.spec.ts | The 2xx precedes the commit. Route-agnostic: DELETE /flows/{id} answers 404 (#1759, \`LE-2552\`'s sibling symptom) | Medium | daily 09-09 · #1776 → #1777 | [LE-2598](https://datastax.jira.com/browse/LE-2598) | Open | — | #1777 |
+| 2026-07-24 | mcp · mcp-server-resources.spec.ts | resources/read crashes | Medium | #948 spec validation | [langflow#14253](https://github.com/langflow-ai/langflow/pull/14253) | Fixed | — | #948 |
+
+## Candidates — pending upstream ticket
+
+| Found | Area / Test | Regression | Severity | Report |
+|-------|-------------|------------|----------|--------|
+| 2026-08-21 | security · credential-secret-exposure.spec.ts | export nulls load_from_db bindings | Medium | [#1546](https://github.com/oriontech-me/langflow-e2e/issues/1546) |
+
+## Not listed — validated non-regression
+
+- nothing to see here
+`
+
+test('the ledger gate is silent for every verdict that is not a product defect', () => {
+  for (const verdict of [
+    'test-defect', 'product-changed', 'transient-saturation',
+    'cross-worker-wiper', 'stale-confirmed-bug', undefined,
+  ]) {
+    // No ledger row anywhere, no ticket: still silent — the gate keys on the
+    // verdict alone, so it cannot redden an issue that found no regression.
+    assert.deepEqual(
+      checkRegressionLedger({ verdict, issue: 1759, ledger: LEDGER_MD }), [],
+      `verdict ${String(verdict)} must not arm the ledger gate`)
+  }
+})
+
+test('a product defect whose ticket has a Ledger row passes', () => {
+  assert.deepEqual(checkRegressionLedger({
+    verdict: REGRESSION, issue: 1777, upstreamTicket: 'LE-2598', ledger: LEDGER_MD,
+  }), [])
+})
+
+test('a product defect with NO row fails, naming the file and the ticket (#1759)', () => {
+  const problems = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1759, upstreamTicket: 'LE-2552', ledger: LEDGER_MD,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], new RegExp(LEDGER_FILE))
+  assert.match(problems[0], /LE-2552/)
+  assert.match(problems[0], /#1759/)
+  assert.match(problems[0], /regressions:summary/)
+})
+
+// The trap that makes cell-scoping load-bearing rather than tidy: LE-2552 IS a
+// substring of the real ledger — quoted in the #1777 row's PROSE as "LE-2552's
+// sibling symptom". A whole-row search reports #1759's missing row as present,
+// i.e. it passes the one case the gate exists for.
+test('a ticket named only in a description cell does NOT count as a row', () => {
+  assert.match(LEDGER_MD, /LE-2552/, 'fixture must quote the ticket in prose')
+  const problems = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1759, upstreamTicket: 'LE-2552', ledger: LEDGER_MD,
+  })
+  assert.equal(problems.length, 1)
+})
+
+test('a product defect whose row carries a DIFFERENT ticket fails', () => {
+  const problems = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1780, upstreamTicket: 'LE-9999', ledger: LEDGER_MD,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /LE-9999/)
+  assert.doesNotMatch(problems[0], /LE-2598/)
+})
+
+test('an upstream GitHub ticket matches its Ledger row, and a bare number does not', () => {
+  for (const ticket of [
+    'langflow#14253',
+    'langflow-ai/langflow#14253',
+    'https://github.com/langflow-ai/langflow/pull/14253',
+    'https://github.com/langflow-ai/langflow/issues/14253',
+  ]) {
+    assert.deepEqual(checkRegressionLedger({
+      verdict: REGRESSION, issue: 948, upstreamTicket: ticket, ledger: LEDGER_MD,
+    }), [], `${ticket} should resolve to the langflow#14253 row`)
+  }
+  // A bare "#14253" is ambiguous — this repo writes that spelling for its own
+  // issues — so it is refused rather than resolved.
+  const problems = checkRegressionLedger({
+    verdict: REGRESSION, issue: 948, upstreamTicket: '#14253', ledger: LEDGER_MD,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /ambiguous/i)
+})
+
+test('no ticket yet: a Candidates entry naming the issue satisfies the gate', () => {
+  assert.deepEqual(checkRegressionLedger({
+    verdict: REGRESSION, issue: 1546, ledger: LEDGER_MD,
+  }), [])
+})
+
+test('no ticket and no Candidates entry fails, pointing at both routes', () => {
+  const problems = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1759, ledger: LEDGER_MD,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /Candidates/)
+  assert.match(problems[0], /#1759/)
+  assert.match(problems[0], /upstreamTicket/)
+})
+
+test('a filed ticket does not stay a candidate — the gate asks for a promotion', () => {
+  const problems = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1546, upstreamTicket: 'LE-2300', ledger: LEDGER_MD,
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /PROMOTED|promote/i)
+  assert.match(problems[0], /LE-2300/)
+})
+
+test('the ledger gate fails closed on inputs it cannot read', () => {
+  const unreadable = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1759, upstreamTicket: 'LE-2552', ledger: null,
+  })
+  assert.equal(unreadable.length, 1)
+  assert.match(unreadable[0], /could not read/)
+
+  // A file with no `## Ledger` section must not read as "no rows, nothing owed".
+  const noSection = checkRegressionLedger({
+    verdict: REGRESSION, issue: 1759, upstreamTicket: 'LE-2552',
+    ledger: '# Regression Ledger\n\nprose only\n',
+  })
+  assert.equal(noSection.length, 1)
+  assert.match(noSection[0], /## Ledger/)
+
+  // A typo must not silently degrade to the weaker Candidates branch.
+  for (const bad of ['LE2552', 'the jira one', '', 42, { id: 'LE-2552' }]) {
+    const problems = checkRegressionLedger({
+      verdict: REGRESSION, issue: 1546, upstreamTicket: bad, ledger: LEDGER_MD,
+    })
+    assert.equal(problems.length, 1, `${JSON.stringify(bad)} must be refused`)
+    assert.match(problems[0], /upstreamTicket/)
+  }
+})
+
+test('normalizeUpstreamTicket accepts both ticket families and only those', () => {
+  assert.deepEqual(normalizeUpstreamTicket(undefined), {})
+  assert.deepEqual(normalizeUpstreamTicket(null), {})
+  assert.equal(normalizeUpstreamTicket('le-2552').ref?.id, 'LE-2552')
+  assert.equal(
+    normalizeUpstreamTicket('https://datastax.jira.com/browse/LE-2552').ref?.id, 'LE-2552')
+  assert.equal(normalizeUpstreamTicket('langflow#14741').ref?.label, 'langflow#14741')
+  assert.equal(normalizeUpstreamTicket('nonsense').ref, undefined)
+  assert.match(String(normalizeUpstreamTicket('nonsense').problem), /LE-2552|langflow#/)
 })

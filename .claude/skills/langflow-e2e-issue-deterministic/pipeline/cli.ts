@@ -19,7 +19,7 @@ import {
   checkSpecDoc, checkQaDiff, checkForceFailCoverage, checkNoMutationMarkers,
   checkPrReadiness, checkQuarantineLifted, checkDebugEvidence, checkBranchPurity,
   checkCiVerdict, symptomsOwnedElsewhere, checkFinalGreenCoverage, finalGreenTargets,
-  resolveClassification,
+  resolveClassification, checkRegressionLedger, LEDGER_FILE,
 } from './gates.ts'
 import { summarizeRunArtifact } from './artifacts.ts'
 import { instructionFor } from './instructions.ts'
@@ -70,6 +70,19 @@ export function releaseCycleOf(version: string): string {
 function fail(msg: string): never {
   console.error(`✖ ${msg}`)
   process.exit(1)
+}
+
+/**
+ * Repo-root file content, or `null` when it cannot be read. The gates that
+ * consume it fail closed on `null`, so an unreadable file is never the same
+ * thing as a file with nothing in it (#1012).
+ */
+function readRepoFile(rel: string): string | null {
+  try {
+    return fs.readFileSync(rel, 'utf8')
+  } catch {
+    return null
+  }
 }
 
 function load(issue: number): PipelineState {
@@ -146,6 +159,13 @@ export function allowedBranchFiles(s: PipelineState): string[] {
     ...(spec?.affectedSpecs ?? []),
     ...(impl?.files ?? []),
     'QA-CHECKLIST.md',
+    // Same class as the checklist: a repo-wide bookkeeping file the pipeline
+    // REQUIRES an edit to, which SPECIFY/IMPLEMENT never list. Without it the
+    // two gates contradict each other — checkRegressionLedger demands the row
+    // and checkBranchPurity then rejects the file that carries it. Unlike the
+    // checklist, its generated block IS committed in the PR (CLAUDE.md), so the
+    // one path covers both the table edit and `npm run regressions:summary`.
+    LEDGER_FILE,
   ])]
 }
 
@@ -499,6 +519,19 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
           gitChangedVsBase(), allowedBranchFiles(s),
           evidence as { extraFiles?: unknown; extraFilesReason?: unknown }))
         problems.push(...checkCiVerdict(evidence, commentUrls))
+        // A confirmed product defect owes REGRESSIONS.md a row, and no phase
+        // enforced it: #1777/LE-2598 reached a PR without one (caught only
+        // because the user asked) and #1759/LE-2552 has none at all. The ticket
+        // is read from THIS call first and from DEBUG second, because it is
+        // usually filed after the user's DEBUG decision and that step is closed
+        // by then — rewinding a completed phase to declare it is not an option.
+        problems.push(...checkRegressionLedger({
+          verdict: (s.steps?.DEBUG?.evidence as { verdict?: string } | undefined)?.verdict,
+          issue: s.issue,
+          upstreamTicket: evidence.upstreamTicket
+            ?? (s.steps?.DEBUG?.evidence as { upstreamTicket?: unknown } | undefined)?.upstreamTicket,
+          ledger: readRepoFile(LEDGER_FILE),
+        }))
         // A symptom another issue owns must be visible to the reviewer, or the
         // PR reads as if it closed a cause it never touched.
         for (const owner of symptomsOwnedElsewhere(
