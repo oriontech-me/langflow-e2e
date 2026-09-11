@@ -31,6 +31,8 @@ import {
   groupByProvider,
   laneCoverageVerdict,
   outputLines,
+  providerPhrase,
+  tableCell,
   parseArgs,
   renderSummary,
   shouldFail,
@@ -616,6 +618,81 @@ test("the skip reason survives `merge-reports`, which is what the daily reads", 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- the reason is quoted, never diagnosed (issue #1801) --------------------
+// The same `inactive` record is written for a key that was never imported as a
+// Langflow global variable (`degradeProviders`, #1058). On that day the repair is
+// the import, not the account — so no surface may assert a cause from the fact of a
+// skip.
+
+const NOT_IMPORTED = formatProviderInactiveReason(
+  "openai",
+  "OPENAI_API_KEY is set in the environment but was never imported as a Langflow " +
+    "global variable — `Collect models` did not complete",
+);
+
+test("the headline quotes the measured reason instead of asserting a dead account", () => {
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [skipped("openai target", NOT_IMPORTED)]),
+    { lane: "pr-validation", laneProvider: "openai" },
+  );
+  assert.equal(result.verdict, UNCOVERED, "coverage really is zero — the gate stays");
+  assert.match(result.headline, /never imported/, "the measured reason must reach the line");
+  assert.doesNotMatch(
+    result.headline,
+    /could not serve a call/,
+    "that is a diagnosis, and it is the wrong one for a structural degrade (#1801)",
+  );
+});
+
+test("a long reason is capped in the phrase, and the counts survive", () => {
+  const long = formatProviderInactiveReason("openai", "x".repeat(400));
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [executed("one"), skipped("openai target", long)]),
+    { lane: "pr-validation" },
+  );
+  assert.ok(result.headline.length < 320, `headline is ${result.headline.length} chars`);
+  assert.match(result.headline, /1 of 2 test\(s\)/, "the counts must not be pushed off");
+  assert.match(result.headline, /…/, "and the reason must say it was cut");
+});
+
+test("providerPhrase degrades to the bare name when nothing was recorded", () => {
+  assert.equal(providerPhrase({ provider: "openai", reasons: [] }), "openai");
+  assert.equal(providerPhrase({ provider: "openai" }), "openai");
+});
+
+test("a provider NAME carrying a newline cannot forge a step output", () => {
+  // `parseProviderInactiveReason`'s capture is `([^"]+)`, which matches newlines.
+  // Sanitising happens at the output boundary, deliberately NOT in the parser: a
+  // name the parser rejected would stop being a provider-health skip at all, which
+  // is the silent-green direction this mechanism exists to remove (#1801).
+  const forged = 'Provider "openai\nverdict=covered" inactive — dead key';
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [executed("one"), skipped("target", forged)]),
+    { lane: "pr-validation" },
+  );
+  assert.equal(result.providerSkips.length, 1, "it is still classified as a skip");
+  const lines = outputLines(result);
+  for (const line of lines) {
+    assert.equal(line.split("\n").length, 1, `multi-line output: ${JSON.stringify(line)}`);
+  }
+  assert.equal(lines.filter((l) => l.startsWith("verdict=")).length, 1);
+  assert.ok(lines.includes(`verdict=${DEGRADED}`), "and the verdict cannot be flipped");
+});
+
+test("a reason carrying a pipe cannot split the summary table", () => {
+  const piped = formatProviderInactiveReason("google", "403 Forbidden | check your billing");
+  const result = laneCoverageVerdict(
+    report("tests/a.spec.ts", [executed("one"), skipped("target", piped)]),
+    { lane: "daily-stable" },
+  );
+  const row = renderSummary(result)
+    .split("\n")
+    .find((l) => l.startsWith("| `google`"));
+  assert.match(row, /403 Forbidden \\\| check your billing/);
+  assert.equal(row.split(/(?<!\\)\|/).length - 2, 3, "the row must keep its three columns");
+  assert.equal(tableCell("a | b"), "a \\| b");
 });
 
 // --- the wiring, and what it cannot prove -----------------------------------
@@ -1244,7 +1321,10 @@ test("the heading follows the fail decision on BOTH branches, not only on `uncov
   const uncoveredAlive = renderSummary(verdictWith(uncoveredRun, ALIVE));
   assert.match(uncoveredAlive, /^### ⚠️ This run covered nothing/m);
   assert.doesNotMatch(uncoveredAlive, /not blind/);
-  assert.match(uncoveredAlive, /does not recover by re-running/);
+  // It used to assert "does not recover by re-running" here. That is a DIAGNOSIS, and
+  // #1801's own input falsifies it — see the dedicated test below; what this case
+  // still pins is that the line refuses the "narrower, not blind" framing.
+  assert.match(uncoveredAlive, /still produced no verdict/);
 
   // ...and red once the LANE says covering nothing is a suite defect.
   assert.match(
@@ -1465,6 +1545,24 @@ test("the daily's final gate always names a cause, and never two that disagree",
   }
 });
 
+test("the daily's gate QUOTES what was recorded instead of asserting a cause", () => {
+  // The gate's `uncovered` line is the third place #1801 had to change, and it is
+  // spelled in the WORKFLOW, so no script test reaches it: reverting it to "a provider
+  // could not serve a call" left the entire unit suite green (measured). The same
+  // `inactive` record is written when a key was never imported as a Langflow global
+  // variable (#1058), where the repair is the import and not the account.
+  const { out } = runDailyGate({
+    COVERAGE_VERDICT: "uncovered",
+    COVERAGE_ACCOUNT: "alive",
+    COVERAGE_FAIL: "true",
+  });
+  assert.match(out, /RECORDED INACTIVE/);
+  assert.doesNotMatch(out, /could not serve a call/);
+  // And it points at BOTH repairs the record cannot choose between, rather than one.
+  assert.match(out, /never imported the key as a Langflow global variable/);
+  assert.match(out, /drained account/);
+});
+
 test("the daily's final gate's branch set is exhaustive over the states that reach it", () => {
   // `exit 1` is unconditional inside this step, so a state that reaches it and prints
   // nothing would fail the day with no cause named — #1176 in the direction that costs
@@ -1498,4 +1596,75 @@ test("the daily's final gate's branch set is exhaustive over the states that rea
   for (const line of out.split("\n").filter((l) => l.includes("::error::"))) {
     assert.match(line, /no branch named a cause/, `unexpected specific claim: ${line}`);
   }
+});
+
+test("the still-usable line makes no claim about what the fallback covered", () => {
+  // Four rounds, four formulations, four defects — all in one clause that tried to
+  // stop "Still usable: anthropic, google" reading as "so we are fine", and all of
+  // them contradicted by the counter line two rows above them. It is gone; what this
+  // pins is that it stays gone, in both arms, and that the sentence which does the
+  // work is still there.
+  //
+  // The last formulation is the one worth naming, because it looked like pure data:
+  // "every test that produced a result skipped on provider health" is false whenever
+  // an ordinary `test.skip` or a `fixme` is in the report, and `UNCOVERED` is
+  // `providerSkips > 0 && executed === 0` — it says nothing about the other skips.
+  const arms = {
+    degraded: renderSummary(
+      verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), ALIVE),
+    ),
+    uncovered: renderSummary(
+      verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), ALIVE),
+    ),
+  };
+  for (const [arm, text] of Object.entries(arms)) {
+    assert.match(text, /Still usable: \*\*anthropic, google\*\*/, `${arm}: the arm under test is the one with a fallback`);
+    assert.doesNotMatch(text, /did not cover for it/, `${arm}: no claim about what the fallback covered`);
+    assert.doesNotMatch(text, /hardcode/, `${arm}: no claim about why`);
+    assert.doesNotMatch(text, /does not recover by re-running/, `${arm}: no claim about a re-run`);
+  }
+  // The sentences that carry the meaning are untouched.
+  assert.match(arms.uncovered, /still produced no verdict/);
+  assert.match(arms.degraded, /narrower than the check status shows, not blind/);
+});
+
+test("a MIXED-skip uncovered run is described by counts, not by a claim about them", () => {
+  // `generalBugs-shard-3.spec.ts`'s shape today: one provider-gated test and one
+  // permanent `test.skip`. The run is `uncovered` with 1 of 2 skips on provider
+  // health, and the summary must not say otherwise.
+  const mixed = renderSummary(
+    verdictWith(
+      report("tests/a.spec.ts", [skipped("gated", OPENAI_DEAD), skipped("quarantined", "no backend here")]),
+      ALIVE,
+    ),
+  );
+  assert.match(mixed, /provider health: \*\*1\*\*/);
+  assert.match(mixed, /skipped in total: \*\*2\*\*/);
+  assert.doesNotMatch(mixed, /every test that produced a result/);
+});
+
+test("the run summary does not decide whether a re-run helps", () => {
+  // The THIRD surface. `renderSummary`'s `alive` arm arrived from #1800 after #1801
+  // was filed, so it kept the assertion the headline and the umbrella had lost: "a
+  // spec hardcoded to the dead provider does not recover by re-running". On #1801's
+  // own motivating input both halves are wrong — a structural degrade only degrades
+  // the providers whose keys are missing, so the account reads `alive` with a live
+  // key, and a re-run whose `Collect models` completes IS the repair.
+  // A structural degrade only degrades the providers whose keys are missing
+  // (`providersForEnvKeys`), so the OTHER providers stay active and the account reads
+  // `alive` — which is precisely why this surface is reachable on that input.
+  const result = verdictWith(
+    report("tests/a.spec.ts", [skipped("openai target", NOT_IMPORTED)]),
+    ALIVE,
+  );
+  assert.equal(result.verdict, UNCOVERED);
+  const summary = renderSummary(result);
+  assert.match(summary, /Still usable: \*\*anthropic, google\*\*/, "the account fact still lands");
+  assert.doesNotMatch(summary, /the dead provider/, "a live key is not a dead provider (#1801)");
+  assert.doesNotMatch(
+    summary,
+    /does not recover by re-running/,
+    "whether a re-run helps depends on the reason, which this surface has already quoted",
+  );
+  assert.match(summary, /depends on the reason above/);
 });
