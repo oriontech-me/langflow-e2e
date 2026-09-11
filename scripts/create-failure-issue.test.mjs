@@ -282,11 +282,80 @@ test("a run whose every result was a provider skip gets its own title and shape"
   });
   assert.match(title, /ZERO verdicts/);
   assert.doesNotMatch(title, /tests failed/, "no spec failed — none ran");
+  assert.doesNotMatch(title, /dead provider/, "the title cannot diagnose either (#1801)");
   assert.doesNotMatch(title, /executed ZERO tests/, "tests DID execute — as skips");
   assert.match(body, /ZERO verdicts/);
   assert.match(body, /openai/);
   assert.match(body, /3 test\(s\)/);
-  assert.match(body, /provider account, not the suite/, "triage must point at the key");
+  // The BODY's heading and its causal sentence, not only the title. Those are the two
+  // strings #1801 changed for this shape, and both reverted silently under mutation:
+  // the title pin two lines up does not reach them.
+  assert.match(body, /recorded `inactive` by `collect-models`/, "the body quotes what was RECORDED");
+  // A blocklist, and the reason it is one is worth stating: a literal `doesNotMatch`
+  // on the old wording is a revert detector, not a pin. Measured — re-diagnosing the
+  // heading as "a drained provider account skipped every test that ran", or appending
+  // "— the account is out of credit" to the sentence, both left the whole lane green.
+  // The positive `match` above is the load-bearing half; this catches the wordings
+  // that have actually been written here, which is what a blocklist can honestly do.
+  //
+  // TWO SCOPES, because scoping all of it was a loosening. The triage paragraph
+  // legitimately ENUMERATES the possible repairs — that enumeration IS what #1801
+  // asked for — so the words it uses can only be refused before it. Every other
+  // wording has no business anywhere in the body, and two of them were body-wide
+  // before this test was rewritten: measured, putting "The provider could not serve a
+  // call." in the triage paragraph passed while the assertion it replaced caught it.
+  const headingAt = body.indexOf("### ⚠️ ZERO verdicts");
+  const triageAt = body.indexOf("**Triage");
+  // Both markers, not one: `slice(a, -1)` on a missing `**Triage` returns the whole
+  // rest of the body, which passes a length check and then trips the blocklist on the
+  // triage paragraph's own correct prose — failing for the wrong reason while the
+  // guard written for this case stays silent.
+  assert.ok(headingAt > -1, "the uncovered heading moved — this pin is scoped to it");
+  assert.ok(triageAt > headingAt, "the triage paragraph moved — this pin is scoped to it");
+  // The shape's OWN PROSE, which is what "may not diagnose" is a rule about — not the
+  // whole body. The body also carries regions copied verbatim from inputs: the fenced
+  // `coverageHeadline` and the liveness block above the heading. A body-wide rule
+  // asserts something the code cannot honour, because the headline is a QUOTATION of
+  // the provider's error: `lane-coverage-verdict` exists to put that text there, and
+  // OpenAI's own 429 body reads "…please check your plan and billing details." — an
+  // account that has drained twice here (#772/#1450). Asserting "nothing in this shape
+  // may assert /billing/" over a quotation is the same over-claim #1801 is about, one
+  // level up.
+  const ownProse = (region) => region.replace(/```[\s\S]*?```/g, "");
+  const statedFact = ownProse(body.slice(headingAt, triageAt));
+  const triageParagraph = ownProse(body.slice(triageAt));
+  // Vocabulary the enumeration needs, refused only in the statement of fact.
+  for (const diagnosis of [/drained/i, /revoked/i, /spend cap/i]) {
+    assert.doesNotMatch(
+      statedFact,
+      diagnosis,
+      `the shape states what was recorded; it cannot diagnose ${diagnosis} from a skip (#1801)`,
+    );
+  }
+  // Vocabulary that is a DIAGNOSIS wherever this shape writes it, including in the
+  // paragraph a triager acts on.
+  for (const diagnosis of [/dead provider/, /could not serve a call/, /out of credit/i, /billing/i]) {
+    for (const [where, region] of [
+      ["the statement of fact", statedFact],
+      ["the triage paragraph", triageParagraph],
+    ]) {
+      assert.doesNotMatch(
+        region,
+        diagnosis,
+        `${where} may not assert ${diagnosis} from a skip alone (#1801)`,
+      );
+    }
+  }
+  // Triage points at the REASON, not at a diagnosis (#1801). The same `inactive`
+  // record is written for a key that was never imported as a Langflow global
+  // variable (#1058), where the repair is the import and not the billing page.
+  assert.match(body, /Triage the reason above, not the suite/);
+  assert.match(body, /never imported the/, "the other repair must be named too");
+  assert.doesNotMatch(
+    body,
+    /restore the key or the credit/,
+    "that is a diagnosis this shape cannot make from a skip alone",
+  );
   assert.match(body, /no per-test evidence to/);
   // The distinction from `empty` has to be in the body: the shards worked, and a
   // reader sent to the merge step would find nothing wrong with it.
@@ -404,6 +473,46 @@ test("a dry account gets its own title and does not claim nothing ran", () => {
   assert.doesNotMatch(body, /not one of them is a/);
   assert.doesNotMatch(body, /no per-test evidence to/);
   assert.doesNotMatch(body, /restore the key or the credit/);
+
+  // And it may not DIAGNOSE either — the rule is the shape's, not the uncovered
+  // shape's, and this is the one the daily can actually reach. It had no blocklist at
+  // all: measured, injecting "the provider could not serve a call, the account is out
+  // of credit; check billing" into this branch left the whole lane green.
+  //
+  // ONE region, not two: the four patterns below are refused everywhere this shape
+  // writes prose, so the statement of fact and the triage paragraph need no separate
+  // treatment. (The uncovered test splits them because three further patterns are its
+  // enumeration's own vocabulary; this shape's enumeration word, `drained`, is simply
+  // left out — see below.)
+  //
+  // BOUNDED at the auto-removal section, and the fenced blocks stripped, for the same
+  // reason the uncovered scope excludes them: both are ECHOED INPUT. `arSummary`
+  // renders each removed test's own error verbatim in a code SPAN, which the fence
+  // strip does not touch, so a 429 body quoted there would trip `/billing/i` with a
+  // message that is false of the code. That section is unreachable on this shape in
+  // production (it needs `arStatus`, which needs a failed test job, which makes
+  // `testsFailed` true and routes the day elsewhere) — but it is kept deliberately as
+  // belt and braces, and an assertion must not depend on a branch staying dead.
+  const dryHeadingAt = body.indexOf("### ⚠️ NO usable provider");
+  const dryTriageAt = body.indexOf("**Triage");
+  assert.ok(dryHeadingAt > -1, "the dry heading moved — this pin is scoped to it");
+  assert.ok(dryTriageAt > dryHeadingAt, "the dry triage paragraph moved — this pin is scoped to it");
+  const autoRemoveAt = body.indexOf("### `@stable` auto-removal", dryHeadingAt);
+  const dryProse = body
+    .slice(dryHeadingAt, autoRemoveAt > -1 ? autoRemoveAt : undefined)
+    .replace(/```[\s\S]*?```/g, "");
+  // `/drained/i` is deliberately NOT in this set: the dry shape's own prose ENUMERATES
+  // the two causes ("a drained account and a sweep that never imported the keys both
+  // produce it"), which is the same enumeration #1801 asked the uncovered shape for,
+  // and refusing it here would refuse the fix. The four below are diagnosis wherever
+  // they appear.
+  for (const diagnosis of [/dead provider/, /could not serve a call/, /out of credit/i, /billing/i]) {
+    assert.doesNotMatch(
+      dryProse,
+      diagnosis,
+      `the dry shape reports what providers.json RECORDED; it cannot diagnose ${diagnosis} (#1801)`,
+    );
+  }
 });
 
 // Review finding: the account says nothing about whether tests ALSO failed, and this

@@ -124,6 +124,26 @@ rate of a flake on the unmodified spec (it refuses a dirty spec file).
   quarantined a test, VALIDATE fails while a `test.fixme` survives in a touched
   spec — and, when the issue asks for the tag back, while a quarantined title
   lacks `@stable`.
+- **A confirmed `langflow-regression` owes `REGRESSIONS.md` an entry, and it is
+  gated.** The ledger's own header calls the row *"a mandatory step"* and names
+  the REPORT phase as one of its two owners, but no phase mentioned the file and
+  no gate read the verdict — which cost two rows: #1777/`LE-2598` went through
+  REPORT, AWAIT_PR_AUTH and PR without one and was caught only because the user
+  asked, and #1759/`LE-2552` has none at all. The PR gate now accepts two shapes,
+  which is the ledger's own rule rather than a loosening: a **filed ticket**
+  needs a `## Ledger` row whose `Upstream` cell names it (declare the ticket in
+  `evidence.upstreamTicket` — `"LE-####"` or `"langflow#NNNNN"`, at DEBUG or at
+  PR, since it is usually filed after the DEBUG decision closes that step); a
+  verdict whose ticket is **not filed yet** needs a `## Candidates` entry naming
+  the issue, promoted to a row the moment a ticket exists. Declaring a ticket and
+  leaving the entry under Candidates is reported as the promotion it owes, not as
+  a missing row. The match is scoped to the `Upstream` **cell**, which is
+  load-bearing: the ledger's prose cells quote neighbouring tickets — the #1777
+  row says *"`LE-2552`'s sibling symptom"* — so a whole-row search would report
+  #1759's missing row as present. Schema (9 columns, severity, status, the
+  `area · spec-file` separator) stays with `npm run regressions:check`; this gate
+  only answers whether the row exists at all. `REGRESSIONS.md` is allowed by
+  branch purity for the same reason `QA-CHECKLIST.md` is.
 - **Never bypass the CLI**: no `gh pr create`, no commit/push, no phase
   skipping, no editing files under `.claude/issue-pipeline/`.
 - **The branch carries this issue's files and nothing else.** The PR gate diffs
@@ -179,7 +199,7 @@ Both delegate test authoring to `langflow-e2e`.
 ## Changing the pipeline itself
 
 `pipeline/` is 2.8k lines of TypeScript that owns every gate. It has its own
-lane — `npm run test:pipeline` (119 tests + `tsc -p` against the pipeline's own
+lane — `npm run test:pipeline` (152 tests + `tsc -p` against the pipeline's own
 tsconfig), wired into `pr-validation.yml`. Run it before and after any edit.
 
 It needs a separate runner from `npm run test:units`: the pipeline imports with

@@ -461,3 +461,178 @@ export function checkPrReadiness(e: {
   }
   return problems
 }
+
+// ---------- Regression Ledger ----------
+
+/** Repo-root path of the ledger, so the gate and the CLI never spell it twice. */
+export const LEDGER_FILE = 'REGRESSIONS.md'
+
+const LEDGER_HEADING = '## Ledger'
+const CANDIDATES_HEADING_RE = /^## Candidates\b/
+/**
+ * Column index of `Upstream` in the 9-column Ledger schema
+ * `[Found, Area/Test, Regression, Severity, Detected by, Upstream, Status, Fixed in, Report]`.
+ *
+ * Scoping the search to this ONE cell is the load-bearing half, not a tidiness
+ * preference: the ledger's `Regression` cells quote neighbouring tickets in
+ * prose, and the row added for #1777 says *"`LE-2552`'s sibling symptom"* — so
+ * a whole-row substring search would have reported #1759's missing row as
+ * present, which is the exact defect this gate exists to catch.
+ */
+const UPSTREAM_COL = 5
+
+/**
+ * A recognised upstream ticket. `kind` decides how a cell is matched: a Jira id
+ * is unique on its own, an upstream GitHub number is NOT — this repo writes
+ * `#1777` for its own issues and `langflow#14741` for upstream ones (CLAUDE.md
+ * records that spelling), so a bare number must be qualified by the word
+ * `langflow` in the same cell.
+ */
+export interface TicketRef {
+  kind: 'jira' | 'langflow'
+  id: string
+  /** How to write it back to the author. */
+  label: string
+}
+
+/**
+ * Reads the ticket the author declared. A string that carries no recognisable
+ * ticket is a PROBLEM, never silently the unticketed path: defaulting a typo to
+ * "no ticket yet" would route a filed regression onto the weaker Candidates
+ * branch, and #1012's rule says an unreadable input is unknown, not clean.
+ */
+export function normalizeUpstreamTicket(raw: unknown): { ref?: TicketRef; problem?: string } {
+  if (raw === undefined || raw === null) return {}
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { problem: `evidence.upstreamTicket ${JSON.stringify(raw)} is not a ticket string — omit it entirely when no ticket is filed yet` }
+  }
+  const s = raw.trim()
+  const jira = s.match(/\bLE-(\d+)\b/i)
+  if (jira) {
+    const id = `LE-${jira[1]}`
+    return { ref: { kind: 'jira', id, label: id } }
+  }
+  const gh = s.match(/langflow-ai\/langflow(?:\/(?:issues|pull)\/|#)(\d+)\b/i)
+    ?? s.match(/\blangflow#(\d+)\b/i)
+  if (gh) return { ref: { kind: 'langflow', id: gh[1], label: `langflow#${gh[1]}` } }
+  return {
+    problem: `evidence.upstreamTicket ${JSON.stringify(raw)} is not a recognised upstream ticket — `
+      + `write the Jira id ("LE-2552"), the upstream reference ("langflow#14741") or either one's URL. `
+      + `A bare "#NNNN" is ambiguous here: this repo writes that for its OWN issues.`,
+  }
+}
+
+/**
+ * Data rows of the markdown table under the first heading `isHeading` accepts,
+ * as trimmed cell arrays. `null` means the section is absent — distinct from an
+ * empty `[]`, because a missing `## Ledger` must fail closed rather than read as
+ * "no rows, nothing to check". Section boundaries and cell splitting mirror
+ * `scripts/regressions-summary.ts`, which is the authority on the schema and
+ * already forbids a `|` inside any cell.
+ */
+function tableRows(md: string, isHeading: (line: string) => boolean): string[][] | null {
+  const lines = md.split('\n')
+  const start = lines.findIndex(l => isHeading(l.trim()))
+  if (start === -1) return null
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) { end = i; break }
+  }
+  const rows: string[][] = []
+  let seenSeparator = false
+  for (const line of lines.slice(start + 1, end)) {
+    const t = line.trim()
+    if (!t.startsWith('|')) continue
+    if (/^\|[-\s|]+\|$/.test(t)) { seenSeparator = true; continue }
+    if (!seenSeparator) continue
+    rows.push(t.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim()))
+  }
+  return rows
+}
+
+function cellNamesTicket(cell: string, ref: TicketRef): boolean {
+  if (ref.kind === 'jira') return new RegExp(`\\b${ref.id}\\b`, 'i').test(cell)
+  return /langflow/i.test(cell) && new RegExp(`\\b${ref.id}\\b`).test(cell)
+}
+
+/**
+ * Whether a Candidates row is THIS issue's. Matched across the whole row rather
+ * than one cell, because the Candidates table has no `Detected by` column and
+ * its `Report` cell may legitimately carry only a committed evidence file — the
+ * ledger's own header allows either shape. The looser match is the accepted
+ * trade on the WEAKER branch (no ticket filed, nothing counted in the
+ * indicator); the ticketed branch is cell-scoped.
+ */
+function rowNamesIssue(cells: string[], issue: number): boolean {
+  const row = cells.join(' ')
+  return new RegExp(`#${issue}\\b`).test(row) || new RegExp(`/issues/${issue}\\b`).test(row)
+}
+
+/**
+ * A confirmed `langflow-regression` must not reach a PR without its ledger
+ * entry. `REGRESSIONS.md` calls the row *"a mandatory step"* of the resolution
+ * and names the pipeline REPORT phase as one of the two places it is owed — but
+ * no phase instruction mentioned the file and no gate read the DEBUG verdict for
+ * it, and the gap has cost two rows: #1777 (`LE-2598`) went through REPORT,
+ * AWAIT_PR_AUTH and PR with no row and was only caught because the user asked,
+ * and #1759 (`LE-2552`) has none at all although PR #1768 confirmed the verdict
+ * and filed the ticket.
+ *
+ * Two accepting shapes, which is the ledger's own rule rather than a loosening:
+ * a **filed ticket** demands a `## Ledger` row whose `Upstream` cell names it,
+ * and a verdict whose ticket is **not filed yet** demands a `## Candidates`
+ * entry naming this issue — *"confirmed but not yet ticketed goes under
+ * Candidates until a ticket is filed"*. Declaring a ticket and leaving the entry
+ * under Candidates is its own problem, reported as a promotion rather than as a
+ * missing row, because that is the action owed.
+ *
+ * Fail-closed on every input it cannot read: an unreadable file, a file with no
+ * `## Ledger` section, and a `upstreamTicket` string carrying no recognisable
+ * ticket all report rather than pass.
+ *
+ * Deliberately NOT checked here: the row's severity, status, column count and
+ * `area · spec-file` separator. `npm run regressions:check` owns the schema and
+ * already fails the PR on all of them — duplicating it would put two sources of
+ * truth on the same table, and the one thing that gate cannot see is whether the
+ * row exists AT ALL for the verdict this pipeline just confirmed.
+ */
+export function checkRegressionLedger(e: {
+  verdict?: string
+  issue: number
+  upstreamTicket?: unknown
+  ledger: string | null
+}): string[] {
+  if (e.verdict !== 'langflow-regression') return []
+  if (e.ledger === null) {
+    return [`could not read ${LEDGER_FILE} — a langflow-regression verdict owes it a row, and this gate must not pass on a file it never read`]
+  }
+  const { ref, problem } = normalizeUpstreamTicket(e.upstreamTicket)
+  if (problem) return [problem]
+  const ledgerRows = tableRows(e.ledger, l => l === LEDGER_HEADING)
+  if (ledgerRows === null) {
+    return [`${LEDGER_FILE} has no "${LEDGER_HEADING}" section — the mandatory row cannot be verified`]
+  }
+  const candidateEntry = (tableRows(e.ledger, l => CANDIDATES_HEADING_RE.test(l)) ?? [])
+    .some(c => rowNamesIssue(c, e.issue))
+
+  if (!ref) {
+    if (candidateEntry) return []
+    return [
+      `verdict is langflow-regression and no upstream ticket is recorded, so ${LEDGER_FILE} needs a `
+      + `"## Candidates" entry naming #${e.issue} (promoted to a Ledger row the moment a ticket is filed). `
+      + `If the ticket IS filed, declare it instead — --evidence-json '{"upstreamTicket":"LE-####"}' — `
+      + `and add the Ledger row.`,
+    ]
+  }
+  if (ledgerRows.some(c => cellNamesTicket(c[UPSTREAM_COL] ?? '', ref))) return []
+  return [
+    candidateEntry
+      ? `${ref.label} is filed, so the ${LEDGER_FILE} "## Candidates" entry for #${e.issue} must be PROMOTED `
+        + `to a Ledger row whose Upstream cell names ${ref.label} — a ticketed regression does not stay a `
+        + `candidate. Then run "npm run regressions:summary" and commit the table and the generated block together.`
+      : `${LEDGER_FILE} has no Ledger row whose Upstream cell names ${ref.label} — adding one is a MANDATORY `
+        + `step of a confirmed langflow-regression (#${e.issue}), not a follow-up. Newest row first, exactly 9 `
+        + `columns, no "|" inside any cell, "Area / Test" as "area · spec-file", Status Open|Fixed. Then run `
+        + `"npm run regressions:summary" and commit the table and the generated block together.`,
+  ]
+}

@@ -107,6 +107,52 @@ async function readFrozenFlags(
   );
 }
 
+/**
+ * The persisting write, awaited instead of guessed at.
+ *
+ * The canvas is optimistic and the autosave is debounced: measured on
+ * `1.13.0.dev9`, a toggle flips `icon-Snowflake` in ~110 ms while the PATCH that
+ * persists it is issued ~2.1 s later. Polling `GET /api/v1/flows/{id}` against a
+ * fixed budget therefore asserts a write nothing waited for — and when that write
+ * ran late (#1791, on the 2-worker CI lane) the poll expired with the canvas
+ * already released and the server still frozen. That reads as a freeze-propagation
+ * defect and is not one: the same PATCH, once it lands, writes the expected flags,
+ * which is what a forced 25 s delay on exactly this request reproduced.
+ *
+ * Arm it BEFORE the click, await it before reading the server. It weakens nothing —
+ * a write that never happens now fails HERE, naming the PATCH that never came,
+ * instead of surfacing 20 s later as a deep-equality diff that blames the product.
+ * Matching on the payload's own flags rather than on any PATCH to this flow is
+ * deliberate: a debounced write still in flight from an earlier edit (the template
+ * rewrite in the third test) would otherwise satisfy the wait.
+ */
+function awaitFrozenWrite(
+  page: Page,
+  flowId: string,
+  expected: Record<string, boolean>,
+): Promise<unknown> {
+  return page.waitForResponse(
+    (res) => {
+      if (res.request().method() !== "PATCH") return false;
+      if (new URL(res.url()).pathname !== `/api/v1/flows/${flowId}`) return false;
+      if (!res.ok()) return false;
+      let body: {
+        data?: { nodes?: Array<{ id: string; data?: { node?: { frozen?: boolean } } }> };
+      };
+      try {
+        body = JSON.parse(res.request().postData() ?? "");
+      } catch {
+        return false;
+      }
+      const flags = Object.fromEntries(
+        (body.data?.nodes ?? []).map((n) => [n.id, n.data?.node?.frozen === true]),
+      );
+      return Object.entries(expected).every(([id, value]) => flags[id] === value);
+    },
+    { timeout: 60000 },
+  );
+}
+
 // The control toggles: the same entry unfreezes, and its label stays "Freeze" even
 // while the node is frozen — it never reads "Unfreeze".
 //
@@ -188,7 +234,16 @@ test.describe("Freeze and State", () => {
 
   test(
     "a frozen component serves its cached output instead of recomputing",
-    { tag: ["@release", "@regression", "@components", "@workspace", "@ui-ux"] },
+    {
+      tag: [
+        "@stable",
+        "@release",
+        "@regression",
+        "@components",
+        "@workspace",
+        "@ui-ux",
+      ],
+    },
     async ({ page }) => {
       const sentinel = `FROZEN-SENTINEL-${Date.now()}`;
       let cachedOutput = "";
@@ -236,11 +291,16 @@ test.describe("Freeze and State", () => {
       });
 
       await test.step("Freeze the Prompt Template and assert the frozen state on canvas and on the server", async () => {
+        const written = awaitFrozenWrite(page, createdFlowId!, {
+          [PROMPT_NODE]: true,
+          [MODEL_NODE]: false,
+        });
         await toggleFreezeFromContextMenu(page, "title-Prompt Template");
 
         await expect(page.locator(FROZEN_INDICATOR)).toHaveCount(1, {
           timeout: 10000,
         });
+        await written;
         // Only this node freezes: it is the upstream-most component, so its path
         // is itself. The downstream model must stay untouched.
         await expect
@@ -267,7 +327,16 @@ test.describe("Freeze and State", () => {
 
   test(
     "freezing a component also freezes every component upstream of it",
-    { tag: ["@release", "@regression", "@components", "@workspace", "@ui-ux"] },
+    {
+      tag: [
+        "@stable",
+        "@release",
+        "@regression",
+        "@components",
+        "@workspace",
+        "@ui-ux",
+      ],
+    },
     async ({ page }) => {
       await test.step("Create the two-node flow and confirm nothing starts frozen", async () => {
         createdFlowId = await createTwoNodeFlow(page);
@@ -280,7 +349,13 @@ test.describe("Freeze and State", () => {
           .toEqual({ [PROMPT_NODE]: false, [MODEL_NODE]: false });
       });
 
+      let frozenWritten: Promise<unknown>;
+
       await test.step("Freeze the DOWNSTREAM Language Model", async () => {
+        frozenWritten = awaitFrozenWrite(page, createdFlowId!, {
+          [PROMPT_NODE]: true,
+          [MODEL_NODE]: true,
+        });
         await toggleFreezeFromToolbar(page, "title-Language Model");
       });
 
@@ -288,6 +363,7 @@ test.describe("Freeze and State", () => {
         await expect(page.locator(FROZEN_INDICATOR)).toHaveCount(2, {
           timeout: 10000,
         });
+        await frozenWritten;
         // Asserting both at once is the point: checking only the clicked node
         // would pass identically for a component-only freeze.
         await expect
@@ -302,7 +378,16 @@ test.describe("Freeze and State", () => {
 
   test(
     "unfreezing releases the whole path and the component recomputes",
-    { tag: ["@release", "@regression", "@components", "@workspace", "@ui-ux"] },
+    {
+      tag: [
+        "@stable",
+        "@release",
+        "@regression",
+        "@components",
+        "@workspace",
+        "@ui-ux",
+      ],
+    },
     async ({ page }) => {
       const sentinel = `UNFROZEN-SENTINEL-${Date.now()}`;
       let cachedOutput = "";
@@ -316,7 +401,12 @@ test.describe("Freeze and State", () => {
         );
         await setPromptTemplate(page, sentinel);
 
+        const frozenWritten = awaitFrozenWrite(page, createdFlowId!, {
+          [PROMPT_NODE]: true,
+          [MODEL_NODE]: true,
+        });
         await toggleFreezeFromToolbar(page, "title-Language Model");
+        await frozenWritten;
         await expect
           .poll(async () => readFrozenFlags(page, createdFlowId!), {
             timeout: 20000,
@@ -325,7 +415,13 @@ test.describe("Freeze and State", () => {
           .toEqual({ [PROMPT_NODE]: true, [MODEL_NODE]: true });
       });
 
+      let releaseWritten: Promise<unknown>;
+
       await test.step("Click the same control again to unfreeze", async () => {
+        releaseWritten = awaitFrozenWrite(page, createdFlowId!, {
+          [PROMPT_NODE]: false,
+          [MODEL_NODE]: false,
+        });
         await toggleFreezeFromToolbar(page, "title-Language Model");
       });
 
@@ -333,6 +429,7 @@ test.describe("Freeze and State", () => {
         await expect(page.locator(FROZEN_INDICATOR)).toHaveCount(0, {
           timeout: 10000,
         });
+        await releaseWritten;
         await expect
           .poll(async () => readFrozenFlags(page, createdFlowId!), {
             timeout: 20000,

@@ -150,6 +150,11 @@ import {
   readUsabilityDir,
   usabilityState,
 } from "./lib/provider-usability.mjs";
+import { displaySafe, tableCell } from "./lib/display-text.mjs";
+
+// Re-exported: this module owned both until #1801 moved them next to the SECOND
+// consumer that needed them, and the call sites (and tests) read them from here.
+export { displaySafe, tableCell };
 
 export const COVERED = "covered";
 export const DEGRADED = "degraded";
@@ -304,24 +309,43 @@ export function groupByProvider(skips) {
   return [...grouped.values()];
 }
 
+
+
 /**
- * Strip what must not reach `$GITHUB_OUTPUT` or an `::error::` annotation.
+ * `provider ("the reason the sweep measured")`, capped (#1801).
  *
- * Same care as `check-run-integrity.mjs`'s `displaySignature`: the runner reads
- * `$GITHUB_OUTPUT` line-wise, so a newline inside a value could forge a second
- * `key=value` line — `verdict=covered` included. The reasons here come from a
- * provider's error body, which is not guaranteed to be one line.
+ * The headline used to assert a cause — "could not serve a call" — from the mere
+ * fact of a skip. It cannot: the same `inactive` record is written for a key that
+ * was never imported as a Langflow global variable (`degradeProviders`, #1058), and
+ * on that day the repair is the import, not the account. So the headline quotes what
+ * was measured and leaves the diagnosis to the reader.
  *
- * @param {string} value
+ * Capped because this string reaches a step output and the umbrella issue's body: a
+ * provider error body is not bounded, and one long reason must not push the counts
+ * off the line. 140 rather than a rounder 90 — and the figure behind that choice was
+ * MEASURED after this comment first guessed it (#1801): `globalSetup`'s structural
+ * reason is **249** characters, not the ~130 originally claimed here. 140 still
+ * truncates it, and that is fine.
+ *
+ * WHICH STRING IS CAPPED, since three versions of this sentence got it wrong: not the
+ * `Provider "x" inactive — …` record (278 chars) but the ERROR TEXT inside it (249).
+ * `parseProviderInactiveReason` returns capture group 2, `groupByProvider` pushes that
+ * into `reasons`, and this function caps `reasons[0]` — so the prefix is already gone
+ * before it gets here. Measured by driving `laneCoverageVerdict` over a report whose
+ * skip annotation carries the real record, not by calling this function by hand, which
+ * is exactly how the second wrong version was produced.
+ *
+ * On that string the clause naming the repair ("never imported as a Langflow global
+ * variable") spans characters 49-93, so a 140-cap keeps it whole while a 90-cap stops
+ * at "…global vari…" — keeping the quote and dropping its only useful part. The three
+ * wrong versions said it "lands inside the first 90" (93 > 90, so it does not), then
+ * that 49-93 were offsets in some other string, then that the clause ended at 122.
  */
-export function displaySafe(value) {
-  return String(value ?? "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+export function providerPhrase(entry, reasonCap = 140) {
+  const reason = displaySafe(entry.reasons?.[0] ?? "");
+  if (!reason) return entry.provider;
+  const short = reason.length > reasonCap ? `${reason.slice(0, reasonCap - 1)}…` : reason;
+  return `${entry.provider} ("${short}")`;
 }
 
 /**
@@ -381,8 +405,10 @@ export function laneCoverageVerdict(report, options = {}) {
   // What to NAME as still usable, which is not the same set as what decides `dry` vs
   // `alive`. The decision is about the account and stays on the raw record; the
   // sentence is about this run, and a provider that skipped here is not evidence of
-  // anything, so listing it produced "openai could not serve a call … openai was still
-  // usable" in one line — measured while proving the fix. The two sets can legitimately
+  // anything, so listing it contradicted the clause above it in one line — measured
+  // while proving the fix, against a headline that then read "openai could not serve a
+  // call"; #1801 replaced that half with the quoted reason, which changes the wording
+  // and not the contradiction. The two sets can legitimately
   // differ: the daily unions four shards, and one shard reaching a provider another
   // shard could not is exactly the disagreement the union exists to keep.
   const skippedNames = new Set(providers.map((p) => p.provider));
@@ -401,19 +427,20 @@ export function laneCoverageVerdict(report, options = {}) {
             ? `. ${stillUsable.join(", ")} ${stillUsable.length === 1 ? "was" : "were"} still usable`
             : `. The account was not down — collect-models recorded ${usableProviders.join(", ")} usable, and the same provider(s) skipped here, so the sweep and the run disagree`
           : ". Whether any provider was usable is UNKNOWN — no providers.json was readable";
-
+  // QUOTED, never diagnosed (#1801) — see `providerPhrase`.
+  const quoted = providers.map((p) => providerPhrase(p)).join("; ");
   const headline =
     (verdict === COVERED
       ? `${lane}: no provider-health skip — all ${executed} executed test(s) ` +
         `produced a verdict`
       : verdict === UNCOVERED
         ? `${lane} produced NO verdict at all: ${providerSkips.length} test(s) ` +
-          `skipped because ${names} could not serve a call, and 0 executed. This ` +
-          `run is not evidence that anything works`
+          `skipped on provider health and 0 executed — ${quoted}. This run is not ` +
+          `evidence that anything works`
         : `${lane} did not cover ${names}: ${providerSkips.length} of ` +
-          `${executed + skippedTotal} test(s) skipped on provider health` +
+          `${executed + skippedTotal} test(s) skipped on provider health — ${quoted}` +
           (laneProviderSkipped
-            ? `, including the provider this lane pins itself to (${laneProvider})`
+            ? `; including the provider this lane pins itself to (${laneProvider})`
             : "")) + accountClause;
 
   return {
@@ -535,9 +562,9 @@ export function renderSummary(result) {
   );
   for (const provider of result.providers) {
     lines.push(
-      `| \`${displaySafe(provider.provider)}\`${
+      `| \`${tableCell(provider.provider)}\`${
         provider.provider === result.laneProvider ? " (lane pin)" : ""
-      } | ${provider.reasons.map((r) => displaySafe(r)).join(" — also: ")} | ${
+      } | ${provider.reasons.map((r) => tableCell(r)).join(" — also: ")} | ${
         provider.tests.length
       } |`,
     );
@@ -561,13 +588,64 @@ export function renderSummary(result) {
             const stillUsable = result.usableProviders.filter((p) => !skippedNames.has(p));
             // NOT "narrow, not blind": on an `uncovered` run it was blind, and the
             // heading two lines above says so. What the live account establishes is
-            // only that the account is not the thing to fix — and for a spec that
-            // HARDCODES the dead provider (12 of them do) a re-dispatch recovers
-            // nothing either, so this must not read as "just re-run it".
+            // only that the account is not the thing to fix.
+            //
+            // What it must NOT then do is answer whether a RE-RUN helps (#1801). This
+            // arm arrived from #1800 after that issue was filed and the merge took
+            // main's structure whole, so the third surface kept the assertion the
+            // other two lost. It read "a spec hardcoded to the dead provider does not
+            // recover by re-running", and on #1801's own motivating input both halves
+            // are wrong: a structural degrade (`degradeProviders`, #1058) only degrades
+            // the providers whose keys are missing, so the account reads `alive` while
+            // the key is perfectly live — and a re-run whose `Collect models` completes
+            // IS the repair. The answer depends on the reason, which this surface has
+            // quoted two lines above, so it points there instead of deciding.
+            //
+            // TWO claims, kept apart, because the first version welded them into one
+            // sentence and it contradicted itself: "…a `Collect models` that never
+            // imported the key does; a provider that could not serve a call does not,
+            // and 12 specs hardcode their provider, so for those a re-dispatch changes
+            // nothing either way" — "either way" denied, for those specs, the recovery
+            // the same sentence had asserted fifteen words earlier.
+            //
+            // Whether a RE-RUN helps is a question about the reason. Whether a
+            // still-usable provider COVERS for the skipped one is a question about the
+            // fallback, and it only has an antecedent in the arm that names one — so it
+            // lives there, not in the shared scope.
             const scope =
               result.verdict === UNCOVERED
-                ? "This run still produced no verdict — a spec hardcoded to the dead provider does not recover by re-running."
+                ? "This run still produced no verdict. Whether a re-run recovers it depends on the reason above: a `Collect models` that never imported the key (#1058) is repaired by re-running the sweep; a provider that genuinely could not serve a call is not."
                 : "So this run is narrower than the check status shows, not blind.";
+            //
+            // UNCOVERED only, and moving it out of the shared scope is what made that
+            // easy to get wrong: on `degraded` something DID execute, and for a
+            // parametrized spec that something is routinely the other providers'
+            // targets of the very spec that skipped — `agent-multi-tool-selection`
+            // on run 31698035402 skipped its openai targets and ran its anthropic and
+            // google ones. So the clause would be contradicted by the run's own data
+            // three lines above it, and would undercut the "narrower, not blind"
+            // sentence it followed. "either" has no antecedent there either.
+            // THERE IS NO FALLBACK CLAUSE HERE, and its four-round history is the
+            // reason it is gone rather than reworded a fifth time.
+            //
+            // The intent was to stop "Still usable: anthropic, google" reading as
+            // "so we are fine". Every formulation asserted something the run cannot
+            // support: "a spec hardcoded to the dead provider does not recover by
+            // re-running" (false on a #1058 degrade, where the key is live and the
+            // repair IS a re-run); "12 specs hardcode the provider they need" (false
+            // on `degraded`, where a parametrized spec's other targets ran, and false
+            // on `uncovered`, which the lane's provider pin reaches with the same
+            // parametrized spec); and "every test that produced a result skipped on
+            // provider health" (false whenever an ordinary `test.skip` or a `fixme`
+            // is in the report — `UNCOVERED` is `providerSkips > 0 && executed === 0`
+            // and says nothing about the other skips, which is the shape
+            // `generalBugs-shard-3.spec.ts` has today: one gated test, one permanent
+            // skip). Each was contradicted by the counter line two rows above it.
+            //
+            // Nothing is lost by dropping it: `scope` already says this run produced
+            // no verdict, and the heading says it covered nothing. The clause only
+            // ever added a REASON, and a reason is the one thing #1801 says this
+            // surface may not supply.
             return stillUsable.length > 0
               ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}`
               : `The account is up (**${displaySafe(result.usableProviders.join(", "))}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;
@@ -598,7 +676,13 @@ export function outputLines(result) {
     `executed=${result.executed}`,
     `skipped_total=${result.skippedTotal}`,
     `provider_skips=${result.providerSkips.length}`,
-    `providers=${displaySafe(result.providers.map((p) => p.provider).join(","))}`,
+    // displaySafe per NAME, not on the joined string: the parser's capture is
+    // `([^"]+)`, which matches a newline, so a provider name carrying one could
+    // forge a second `key=value` line — `verdict=covered` included, which is what
+    // the daily's fail-closed gate reads (#1801). Sanitising here rather than
+    // tightening the capture is deliberate: a name the parser rejected would stop
+    // being a provider-health skip at all, which is the silent-green direction.
+    `providers=${result.providers.map((p) => displaySafe(p.provider)).join(",")}`,
     `lane_provider_skipped=${result.laneProviderSkipped}`,
     // #1800. `account` is the state, `fail_recommended` is the DECISION — emitted so
     // the workflows read one computed answer instead of re-deriving the policy in a
