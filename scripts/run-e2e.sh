@@ -716,6 +716,31 @@ preflight_ledger() {
 # Which duration table balances the matrix. A switch that is ON and finds nothing must
 # say so: falling back in silence is how a run comes to be balanced by numbers nobody
 # chose, and the symptom — shards of uneven length — looks like the suite's own drift.
+# The listing-completeness verdict out of the partitioner's own output, as one
+# KEY=VALUE per line (#1812/#1818). A function so the composition is testable rather
+# than read — the same reason `tokens_history_env` below is one.
+#
+# The lists stay JSON, the exact string the Actions lane publishes as a step output, so
+# the two lanes' gates read identically (`!= "[]"`) and the rows they append are the
+# same shape. A space-separated variant for display would be a second format the two
+# sides have to agree about, which is the shape this lane keeps finding defects in.
+#
+# `verified` is stringified `true`/`false` and read FAIL-CLOSED by `phase_verdict`, so
+# every way this can fail to answer — an unreadable matrix, a shape change that dropped
+# the block — yields the empty string, which is not `true`.
+listing_verdict_from() {
+  local matrix="$1" out
+  out="$(node -p '
+    const l = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).listing || {};
+    [
+      "LISTING_VERIFIED=" + (l.verified === true),
+      "LISTING_MISSING=" + JSON.stringify(l.missing || []),
+      "LISTING_UNEXPECTED=" + JSON.stringify(l.unexpected || []),
+    ].join("\n");
+  ' "$matrix" 2>/dev/null)" || out=""
+  printf '%s\n' "$out"
+}
+
 durations_table() {
   if [ "$USE_LEDGER_DURATIONS" = "1" ]; then
     if [ -n "$LEDGER_DURATIONS" ] && [ -f "$LEDGER_DURATIONS" ]; then
@@ -1175,7 +1200,11 @@ phase_prep() {
       warn "Whole spec files generated from those keys collect zero tests and enter no"
       warn "shard, so this run's test counts are not comparable to a lane that has them"
       warn "unless the difference is read as this. The key set is recorded with the"
-      warn "verdict. REQUIRE_PROVIDER_KEYS=1 refuses instead."
+      warn "verdict. What it buys is a comparison whose COUNTS are not comparable to a"
+      warn "fully-keyed lane — it is not a licence to report this lane green over specs it"
+      warn "did not run: if a whole spec file is generated from an absent key, the"
+      warn "completeness check at the end NAMES it and FAILS the run. Set the key, or"
+      warn "accept a red verdict. REQUIRE_PROVIDER_KEYS=1 refuses up front instead."
       ;;
   esac
 
@@ -1193,11 +1222,50 @@ phase_prep() {
   durations="$(durations_table)"
   info "durations: $durations"
 
+  # WHETHER THAT LISTING CONTAINED EVERY SPEC FILE THAT DECLARES ONE (#1812/#1818).
+  #
+  # The gate above says which suite this environment would list. It cannot say whether
+  # the listing then produced it: a spec generated at COLLECTION time from something
+  # the environment did not supply collects zero tests, leaves the partition and is run
+  # by no shard — not skipped, not red, ABSENT, with `--pass-with-no-tests` keeping
+  # every shard green and no row in the merged report to be missing from (#1764). The
+  # declaration is the other half: every spec file under `tests/` that declares an
+  # `@stable` test, read from the AST, diffed against what was actually listed.
+  #
+  # NOT fatal here, and the asymmetry with the gate three blocks up is deliberate
+  # rather than an oversight. The gate is an INPUT to every count this run produces, so
+  # an unanswerable one makes the whole comparison uninterpretable and the run stops.
+  # This is an AUDIT of the listing, and `phase_verdict` — which runs last, after the
+  # report, the metadata and the history row are all written — can fail the run on it
+  # without throwing away the artefacts that make the day diagnosable. That is the same
+  # placement the Actions lane chose for the same reason, and an audit that aborts the
+  # run it audits is the shape #1812 spent a review round removing.
+  #
+  # `|| true` so a broken derivation degrades to UNVERIFIED instead of tripping `set -e`.
+  # An empty or truncated file is refused by `compareListing`, so the two failures land
+  # in the same place.
+  if ! npx ts-node scripts/declared-stable-specs.ts > "$RUN_DIR/declared-specs.json"; then
+    warn "could not derive the declared @stable spec set — this run cannot verify that its"
+    warn "listing contained every spec file that declares one (#1812). The verdict fails on"
+    warn "it at the end; the run continues so the day is still diagnosable."
+  fi
+
   node scripts/partition-shards.mjs matrix \
-    "$RUN_DIR/stable-list.json" "$durations" "$SHARDS" > "$RUN_DIR/matrix.json"
+    "$RUN_DIR/stable-list.json" "$durations" "$SHARDS" \
+    --declared "$RUN_DIR/declared-specs.json" > "$RUN_DIR/matrix.json"
 
   SHARD_TOTAL="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).shard_total" "$RUN_DIR/matrix.json")"
   info "$SHARD_TOTAL shard(s)"
+
+  # Read back as three shell variables, because `phase_verdict` and the two records
+  # below are the consumers and none of them should re-parse the matrix. `verified`
+  # is stringified as `true`/`false` and read FAIL-CLOSED downstream, so a shape change
+  # that dropped the field leaves the empty string — which is not `true`.
+  local listing
+  listing="$(listing_verdict_from "$RUN_DIR/matrix.json")"
+  LISTING_VERIFIED="$(printf '%s\n' "$listing" | sed -n 's/^LISTING_VERIFIED=//p')"
+  LISTING_MISSING="$(printf '%s\n' "$listing" | sed -n 's/^LISTING_MISSING=//p')"
+  LISTING_UNEXPECTED="$(printf '%s\n' "$listing" | sed -n 's/^LISTING_UNEXPECTED=//p')"
 }
 
 # ---------------------------------------------------------------------------
@@ -1588,6 +1656,8 @@ phase_merge() {
     tunnel "$LANGFLOW_TUNNEL" \
     collection_gate_keys "${COLLECTION_GATE_KEYS:-}" \
     collection_gate_keys_absent "${COLLECTION_GATE_KEYS_ABSENT:-}" \
+    listing_verified "${LISTING_VERIFIED:-}" \
+    listing_missing "${LISTING_MISSING:-}" \
     tests_total "${RUN_TESTS:-0}" \
     merge_ok "${MERGE_OK:-true}"
 
@@ -1733,6 +1803,8 @@ phase_publish() {
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
     COLLECTION_GATE_KEYS="${COLLECTION_GATE_KEYS:-}" \
     COLLECTION_GATE_KEYS_ABSENT="${COLLECTION_GATE_KEYS_ABSENT:-}" \
+    LISTING_VERIFIED="${LISTING_VERIFIED:-}" \
+    LISTING_MISSING="${LISTING_MISSING:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 
@@ -1810,6 +1882,62 @@ phase_verdict() {
   if [ "${TEST_JOB_FAILED:-0}" = "1" ]; then
     err "at least one shard had a failing test."
     failed=1
+  fi
+  # LISTING COMPLETENESS (#1812/#1818). Its own `if`, never an `elif` of the report
+  # chain above: a file that never entered the matrix is a fact about this run's INPUT,
+  # and the chain above is about its output. Both can be true, and on a day the report
+  # also broke this is the only place the gap is stated at all.
+  #
+  # FAIL-CLOSED on `verified`: `true` is the only value that lets the run pass, so an
+  # empty one — the derivation never ran, a shape change dropped the field — fails
+  # rather than reading as agreement. That is the same reading the Actions gate uses,
+  # and it is why `phase_prep` can afford to degrade instead of dying.
+  if [ "${LISTING_MISSING:-[]}" != "[]" ]; then
+    # FAILS ON EVERY GATE PLAN, and the first attempt at this made it conditional —
+    # worth recording, because the conditional version is the tempting one.
+    #
+    # The contradiction it was answering is real: `REQUIRE_PROVIDER_KEYS=0` invites the
+    # operator to "accept the narrower comparison", and a spec generated entirely from
+    # an absent key is what that costs. So the first fix downgraded a missing file to a
+    # report on the `narrow` plan. Measured, that killed the mechanism on the only lane
+    # it was added for: `REQUIRE_PROVIDER_KEYS` DEFAULTS to 0 and this VM has no
+    # GOOGLE_API_KEY on purpose, so `narrow` is not an opt-in here — it is the lane's
+    # permanent state, and the downgrade would have applied to every cause, including
+    # the ones #1812 exists to catch (a listing that dies halfway and exits 0, a spec
+    # gating collection on something that is not a key at all). The same measurement
+    # removes the motive: with only GOOGLE_API_KEY absent this clone lists 247 of 247
+    # — the narrowing that triggers the plan costs zero files — and it takes all three
+    # keys blank to lose one.
+    #
+    # What the narrowing buys is a comparison whose COUNTS are not comparable to a
+    # fully-keyed lane. It was never a licence to report a lane as green over specs it
+    # did not run: that is the green-all-skip #1010/#1012 exist to prevent, one level
+    # down. So the contradiction is resolved in the PROSE — the `narrow` warning in
+    # phase_prep now states this consequence instead of promising a passing run.
+    err "spec file(s) declaring an @stable test were ABSENT from this run's listing:"
+    err "${LISTING_MISSING}"
+    err "No shard ran them and nothing in the report is missing on their account."
+    err "Not skipped, not red — absent (#1764)."
+    err "The usual cause is this clone's environment missing something a spec gates its"
+    err "COLLECTION on; the listing gate above names what it could resolve."
+    failed=1
+  elif [ "${LISTING_VERIFIED:-}" != "true" ]; then
+    err "this run could not verify that its listing contained every spec file declaring an"
+    err "@stable test (listing_verified='${LISTING_VERIFIED:-unset}'), so whether a file left"
+    err "the matrix is UNKNOWN — which is not the same as no (#1012/#1812)."
+    err "Triage: the 'Computing the duration-balanced shard matrix' phase, and"
+    err "$RUN_DIR/declared-specs.json."
+    failed=1
+  fi
+  # Listed but NOT declared: coverage this run HAS and the predicate did not predict.
+  # Never a failure — reddening a comparison for it inverts the trade — but never
+  # silent either, because while it is non-empty the missing list above is a LOWER
+  # BOUND: a file the predicate cannot see is a file whose later disappearance it
+  # cannot report.
+  if [ "${LISTING_UNEXPECTED:-[]}" != "[]" ]; then
+    warn "listed but not declared on disk: ${LISTING_UNEXPECTED}"
+    warn "No coverage is lost, but the completeness check is blind to these files, so its"
+    warn "missing list is a lower bound (#1812)."
   fi
   if [ "$REQUIRE_TARGET_VERSION" = "1" ]; then
     case "${TARGET_VERSION_MATCH:-unchecked}" in

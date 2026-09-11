@@ -1491,6 +1491,15 @@ jobs:
           # and 09-08 comparisons filed exactly that difference as a catalog problem.
           COLLECTION_GATE_KEYS: ${{ needs.prep.outputs.collection_gate_keys }}
           COLLECTION_GATE_KEYS_ABSENT: ${{ needs.prep.outputs.collection_gate_keys_absent }}
+          # The other half of that gate (#1812/#1818): whether the listing CONTAINED the
+          # suite those keys say it would produce. Recorded on the row for the same
+          # reason and with the same consumer — the lane comparison. Without both lanes
+          # writing it, the comparator has one side and must report the parity as
+          # UNVERIFIED, which is the state this pair exists to leave behind. The daily's
+          # own gate already fails the run on a non-empty `listing_missing`; this is the
+          # durable record, since an artifact expires and a step log is not a series.
+          LISTING_VERIFIED: ${{ needs.prep.outputs.listing_verified }}
+          LISTING_MISSING: ${{ needs.prep.outputs.listing_missing }}
 
       - name: Commit daily history
         if: always() && github.event_name == 'schedule'
