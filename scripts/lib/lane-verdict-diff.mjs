@@ -566,14 +566,15 @@ export function compareRuns({
         `A history row does not name skipped tests, so those ${Math.abs(skipDelta)} are invisible below - ` +
         `${skipDelta > 0 ? "the VM ran fewer specs than Actions did" : "Actions ran fewer specs than the VM did"}. ` +
         // DELIBERATELY not pointed at the gate, and this line is the reason the
-        // distinction is worth stating twice. A skip happens at RUN time, and
-        // `collection_gate_keys` records the LISTING environment - on Actions that is
-        // the `prep` job, which carries no provider keys, while its shard jobs get all
-        // three from secrets. So the Actions row reads `present: []` for a lane whose
-        // tests ran fully keyed, and a skip difference blamed on that gate names
-        // Actions as the narrower side when at run time it is the wider one. Pointing
-        // a reader at the wrong machine is exactly the failure this field was added to
-        // end, so it is better to keep offering the honest guess here.
+        // distinction is worth stating twice. A skip happens at RUN time;
+        // `collection_gate_keys` records the LISTING environment, and those are not
+        // the same environment. On Actions the listing is the `prep` job, carrying
+        // exactly the three collection-gating secrets (#1796), while its shard jobs
+        // carry those plus Groq, Mistral and the Azure trio - so the gate is silent
+        // about most of what can skip, and a skip difference read off it names a lane
+        // narrow on an axis this field never measured. Pointing a reader at the wrong
+        // machine is exactly the failure the field was added to end, so it is better
+        // to keep offering the honest guess here.
         `A missing provider key is the usual cause.`,
     );
   }

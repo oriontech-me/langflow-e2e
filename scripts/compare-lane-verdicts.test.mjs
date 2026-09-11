@@ -990,8 +990,10 @@ test("identical key sets raise nothing at all", () => {
 });
 
 test("a lane that resolved NO key is named as that, not as an empty list", () => {
-  // "Actions resolved " followed by nothing is a sentence the reader finishes wrongly,
-  // and it is the state main is actually in until #1796's env block lands.
+  // "Actions resolved " followed by nothing is a sentence the reader finishes wrongly.
+  // Reachable on either lane: a VM clone with a bare `.env`, or an Actions run whose
+  // secrets did not render — #1796 gave the listing step its keys, and an unknown
+  // secret still renders as the empty string.
   const result = compare(
     row("daily-stable", gate([], THREE)),
     row("daily-stable-vm", gate(["OPENAI_API_KEY"], ["ANTHROPIC_API_KEY", "GOOGLE_API_KEY"])),

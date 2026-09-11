@@ -12,14 +12,23 @@
  *
  * WHY THIS MODULE EXISTS SEPARATELY FROM THE SUITE
  *
- * The Actions lane's silent input was an empty `env:` block (#1764). #1796 proposes a
- * structural guard over it — `scripts/daily-matrix-provider-keys.test.mjs`, which does
- * NOT exist in this tree and lands only if that PR does, so nothing guards the Actions
- * side today. The VM twin's silent input is
- * `.env` — `playwright.config.ts` calls `dotenv.config()` unconditionally, so
- * `scripts/run-e2e.sh` lists whatever the operator's working copy happens to carry,
- * and names none of the three keys anywhere (#1813). A run cannot state which suite it
- * partitioned without asking this question BEFORE it lists, which is what this answers.
+ * The Actions lane's silent input was an empty `env:` block (#1764), and #1796 closed
+ * it: the listing step carries the three secrets, and
+ * `scripts/daily-matrix-provider-keys.test.mjs` pins them structurally against
+ * `providerConfigMap`. That guard answers "does the listing step HAVE the keys"; this
+ * module answers "which ones did this process actually RESOLVE", which is the question
+ * a run has to be able to write onto its own row — a declared secret still renders as
+ * the empty string, and no guard over a workflow can see that.
+ *
+ * The VM twin has neither guard nor secret store. `playwright.config.ts` calls
+ * `dotenv.config()` unconditionally, so `scripts/run-e2e.sh` lists whatever the
+ * operator's working copy happens to carry, and names none of the three keys anywhere
+ * (#1813). A run cannot state which suite it partitioned without asking this question
+ * BEFORE it lists, which is what this answers.
+ *
+ * Two derivations of one set now exist and must not diverge: that guard PARSES
+ * `provider-config.ts` for names, this IMPORTS it. The follow-up is for the guard to
+ * read this module instead of keeping its own copy of the rule.
  *
  * DERIVED, never re-listed. `providerConfigMap` is the single source of per-provider
  * configuration, and a provider added there with `credential: "api-key"` becomes a
