@@ -939,3 +939,138 @@ test("one missing source is skipped with a warning, not fatal, while the other i
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stderr, /no history at .*gone\.jsonl, skipped/);
 });
+
+// ---------------------------------------------------------------------------
+// The collection gate (#1813)
+// ---------------------------------------------------------------------------
+// A history row's totals cannot distinguish "this lane ran fewer tests" from "this
+// lane never listed the file those tests are in". The second is what a missing
+// provider key does, and it is the shape that got filed as a catalog problem twice.
+// These pin that the comparison names it.
+
+const gate = (present, absent) => ({ collection_gate_keys: { present, absent } });
+const THREE = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"];
+
+test("two lanes that listed with different keys are told so, by name", () => {
+  const result = compare(
+    row("daily-stable", gate(THREE, [])),
+    row("daily-stable-vm", gate(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"], ["GOOGLE_API_KEY"])),
+  );
+  assert.deepEqual(result.gateMismatch, {
+    ci: THREE,
+    vm: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+    ciOnly: ["GOOGLE_API_KEY"],
+    vmOnly: [],
+  });
+  const warning = result.warnings.find((w) => w.includes("LISTED DIFFERENT SUITES"));
+  assert.ok(warning, result.warnings.join("\n"));
+  assert.match(warning, /Only Actions had GOOGLE_API_KEY/);
+  // A warning, never a blocker: the VM has no Google key today and the comparison is
+  // still the product of the stage.
+  assert.equal(result.comparable, true);
+});
+
+test("the asymmetry is reported whichever lane is the narrower one", () => {
+  const result = compare(
+    row("daily-stable", gate(["OPENAI_API_KEY"], ["ANTHROPIC_API_KEY", "GOOGLE_API_KEY"])),
+    row("daily-stable-vm", gate(THREE, [])),
+  );
+  assert.deepEqual(result.gateMismatch.vmOnly, ["ANTHROPIC_API_KEY", "GOOGLE_API_KEY"]);
+  assert.match(
+    result.warnings.find((w) => w.includes("LISTED DIFFERENT SUITES")),
+    /only the VM had ANTHROPIC_API_KEY, GOOGLE_API_KEY/,
+  );
+});
+
+test("identical key sets raise nothing at all", () => {
+  const result = compare(row("daily-stable", gate(THREE, [])), row("daily-stable-vm", gate(THREE, [])));
+  assert.equal(result.gateMismatch, null);
+  assert.ok(!result.warnings.some((w) => w.includes("collection-gate")), result.warnings.join("\n"));
+  assert.ok(!result.warnings.some((w) => w.includes("LISTED DIFFERENT SUITES")));
+});
+
+test("a lane that resolved NO key is named as that, not as an empty list", () => {
+  // "Actions resolved " followed by nothing is a sentence the reader finishes wrongly,
+  // and it is the state main is actually in until #1796's env block lands.
+  const result = compare(
+    row("daily-stable", gate([], THREE)),
+    row("daily-stable-vm", gate(["OPENAI_API_KEY"], ["ANTHROPIC_API_KEY", "GOOGLE_API_KEY"])),
+  );
+  assert.match(
+    result.warnings.find((w) => w.includes("LISTED DIFFERENT SUITES")),
+    /Actions resolved no provider key/,
+  );
+});
+
+test("a row without the block leaves parity UNVERIFIED rather than assumed equal", () => {
+  // The version field's own precedent: a row written before the field existed cannot
+  // claim the parity, and silence there would read as agreement.
+  for (const [ci, vm, expected] of [
+    [row("daily-stable"), row("daily-stable-vm"), /neither row carries/],
+    [row("daily-stable", gate(THREE, [])), row("daily-stable-vm"), /the VM row does not carry/],
+    [row("daily-stable"), row("daily-stable-vm", gate(THREE, [])), /the Actions row does not carry/],
+  ]) {
+    const warning = compare(ci, vm).warnings.find((w) => w.includes("collection-gate parity UNVERIFIED"));
+    assert.ok(warning, "no unverified warning");
+    assert.match(warning, expected);
+  }
+});
+
+test("a malformed block is treated as absent, not as an empty key set", () => {
+  // `present: []` and "no block" mean different things, and a block whose shape this
+  // comparator cannot read means neither: reading it as an empty set would report a
+  // fully-keyed lane as having listed nothing.
+  const result = compare(
+    row("daily-stable", { collection_gate_keys: { present: "OPENAI_API_KEY" } }),
+    row("daily-stable-vm", gate(THREE, [])),
+  );
+  assert.equal(result.gateMismatch, null);
+  assert.match(
+    result.warnings.find((w) => w.includes("collection-gate parity UNVERIFIED")),
+    /the Actions row does not carry/,
+  );
+});
+
+test("a count difference points at the measured cause instead of the usual one", () => {
+  const result = compare(
+    row("daily-stable", { ...gate(THREE, []), totals: { passed: 13, failed: 0, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", {
+      ...gate(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"], ["GOOGLE_API_KEY"]),
+      totals: { passed: 10, failed: 0, flaky: 0, skipped: 0 },
+    }),
+  );
+  const counts = result.warnings.find((w) => w.includes("different test counts"));
+  assert.match(counts, /the listing keys above differ/);
+  const skips = result.warnings.find((w) => w.includes("SKIPPED different numbers"));
+  assert.match(skips, /The lanes' listing keys differ/);
+  assert.ok(!skips.includes("usual cause"), skips);
+});
+
+test("with no gate recorded, the count warnings keep their original hypothesis", () => {
+  const result = compare(
+    row("daily-stable", { totals: { passed: 13, failed: 0, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { totals: { passed: 10, failed: 0, flaky: 0, skipped: 0 } }),
+  );
+  assert.match(result.warnings.find((w) => w.includes("SKIPPED different numbers")), /usual cause/);
+  assert.match(
+    result.warnings.find((w) => w.includes("different test counts")),
+    /may not have run the same suite revision/,
+  );
+});
+
+test("the report prints each lane's key set under its counts", () => {
+  const text = renderReport(
+    compare(
+      row("daily-stable", gate(THREE, [])),
+      row("daily-stable-vm", gate(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"], ["GOOGLE_API_KEY"])),
+    ),
+  );
+  assert.match(text, /Actions {2}run 111 \| 10 passed/);
+  assert.match(text, /listed with OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY/);
+  assert.match(text, /listed with OPENAI_API_KEY, ANTHROPIC_API_KEY \| absent: GOOGLE_API_KEY/);
+});
+
+test("a lane with no block prints no key line, rather than an empty one", () => {
+  const text = renderReport(compare(row("daily-stable", gate(THREE, [])), row("daily-stable-vm")));
+  assert.equal(text.split("\n").filter((l) => l.includes("listed with")).length, 1);
+});
