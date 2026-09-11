@@ -1169,6 +1169,23 @@ test("a row written before the field existed reports parity as UNVERIFIED", () =
   }
 });
 
+test("every result carries listingMismatch, including the paths that return early", () => {
+  // Three exits build the result object. A consumer reading `result.listingMismatch`
+  // gets `undefined` from the two early ones unless they carry it, and `undefined` is
+  // not `null` — removing it from either survived the whole suite.
+  const complete = compare(row("daily-stable", listing(true)), row("vm-daily", listing(true)));
+  assert.equal(complete.listingMismatch, null);
+  // No row for one lane.
+  assert.ok("listingMismatch" in compare(row("daily-stable", listing(true)), null));
+  // Blocked: two different Langflow versions.
+  const blocked = compare(
+    row("daily-stable", { ...listing(true), langflow_version: "1.13.0.dev3" }),
+    row("vm-daily", { ...listing(true), langflow_version: "1.12.0" }),
+  );
+  assert.equal(blocked.comparable, false);
+  assert.ok("listingMismatch" in blocked);
+});
+
 test("two complete listings say so and warn about nothing", () => {
   const w = compare(row("daily-stable", listing(true)), row("vm-daily", listing(true))).warnings.join("\n");
   assert.doesNotMatch(w, /listing-completeness/);
@@ -1194,11 +1211,21 @@ test("the report says UNVERIFIED rather than complete when the check could not r
 });
 
 test("a row with a malformed listing block is treated as absent, never as clean", () => {
-  for (const bad of [{}, { verified: "true" }, null, { missing: [] }]) {
-    const w = compare(
+  // `/parity UNVERIFIED/` alone is VACUOUS here and was: `row()` carries no
+  // `collection_gate_keys`, so the gate's own parity warning satisfies it whatever the
+  // listing code does — measured, with the shape guard AND the whole listing warning
+  // disabled. Matched on the listing message, and on the rendered line, which is where
+  // a tolerated shape showed up as "listing complete".
+  for (const bad of [{}, { verified: "true" }, null, { missing: [] }, { verified: true, missing: "a.spec.ts" }]) {
+    const result = compare(
       row("daily-stable", { listing_completeness: bad }),
       row("vm-daily", listing(true)),
-    ).warnings.join("\n");
-    assert.match(w, /parity UNVERIFIED/, JSON.stringify(bad));
+    );
+    assert.match(
+      result.warnings.join("\n"),
+      /listing-completeness parity UNVERIFIED/,
+      JSON.stringify(bad),
+    );
+    assert.doesNotMatch(renderReport(result), /listing complete[\s\S]*listing complete/);
   }
 });

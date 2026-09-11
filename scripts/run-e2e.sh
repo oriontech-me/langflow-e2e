@@ -1180,7 +1180,10 @@ phase_prep() {
   fi
   info "$gate_summary"
 
-  case "$(collection_gate_plan "$gate_complete")" in
+  # Recorded, because `phase_verdict` needs it: a run that ACCEPTED a narrower listing
+  # must not then be failed for the narrowing it accepted (see the listing block there).
+  COLLECTION_GATE_PLAN="$(collection_gate_plan "$gate_complete")"
+  case "$COLLECTION_GATE_PLAN" in
     refuse)
       err "the listing would resolve ${COLLECTION_GATE_KEYS:-no provider key at all}; absent: ${COLLECTION_GATE_KEYS_ABSENT}."
       err "A spec file generated entirely from a missing key collects zero tests, leaves"
@@ -1200,7 +1203,9 @@ phase_prep() {
       warn "Whole spec files generated from those keys collect zero tests and enter no"
       warn "shard, so this run's test counts are not comparable to a lane that has them"
       warn "unless the difference is read as this. The key set is recorded with the"
-      warn "verdict. REQUIRE_PROVIDER_KEYS=1 refuses instead."
+      warn "verdict, and so are the files it costs — the completeness check below names"
+      warn "them and, on THIS plan, reports them without failing the run."
+      warn "REQUIRE_PROVIDER_KEYS=1 refuses instead."
       ;;
   esac
 
@@ -1889,14 +1894,41 @@ phase_verdict() {
   # rather than reading as agreement. That is the same reading the Actions gate uses,
   # and it is why `phase_prep` can afford to degrade instead of dying.
   if [ "${LISTING_MISSING:-[]}" != "[]" ]; then
+    # SEVERITY FOLLOWS THE GATE PLAN, and the alternative was a contradiction.
+    #
+    # `narrow` is an operator who set REQUIRE_PROVIDER_KEYS=0 after being told, in so
+    # many words, to "accept the narrower comparison". A spec generated entirely from
+    # an absent key is the CONSEQUENCE of that acceptance — measured: with all three
+    # keys blank this clone lists 246 of 247 and the missing file is
+    # provider-invalid-auth-error.spec.ts, exactly the file those keys generate. Failing
+    # the run there reddens a state the operator opted into, on a lane whose escape
+    # hatch promises the opposite; the fact is already on the row, in two blocks a
+    # comparator reads together.
+    #
+    # It stays a FAILURE on `complete`, which is the fully-keyed lane and the case
+    # #1764 is about: nothing was accepted there, so a missing file is a real loss.
+    # (`refuse` never reaches here — the run stopped in phase_prep.)
+    #
+    # The cost, stated: under `narrow` a file missing for an UNRELATED reason is
+    # downgraded too, because per-file attribution to a key is not something this check
+    # can do. It is loud, named and recorded either way.
     err "spec file(s) declaring an @stable test were ABSENT from this run's listing:"
     err "${LISTING_MISSING}"
     err "No shard ran them and nothing in the report is missing on their account."
     err "Not skipped, not red — absent (#1764)."
-    err "The usual cause is this clone's environment missing something a spec gates its"
-    err "COLLECTION on; the listing gate above names what it could resolve."
-    failed=1
+    if [ "${COLLECTION_GATE_PLAN:-complete}" = "narrow" ]; then
+      err "This run ACCEPTED a narrower listing (REQUIRE_PROVIDER_KEYS=0, absent:"
+      err "${COLLECTION_GATE_KEYS_ABSENT:-none recorded}), and a spec generated entirely from an absent key"
+      err "is what that costs — so this is reported, not failed. Set REQUIRE_PROVIDER_KEYS=1"
+      err "to refuse the narrowing up front instead."
+    else
+      err "The usual cause is this clone's environment missing something a spec gates its"
+      err "COLLECTION on; the listing gate above names what it could resolve."
+      failed=1
+    fi
   elif [ "${LISTING_VERIFIED:-}" != "true" ]; then
+    # Fails on EVERY plan, `narrow` included: an unverifiable check is not a state any
+    # flag opted into, and REQUIRE_PROVIDER_KEYS says nothing about it.
     err "this run could not verify that its listing contained every spec file declaring an"
     err "@stable test (listing_verified='${LISTING_VERIFIED:-unset}'), so whether a file left"
     err "the matrix is UNKNOWN — which is not the same as no (#1012/#1812)."

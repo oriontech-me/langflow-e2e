@@ -55,6 +55,7 @@ function verdict({
   listingVerified = "true",
   listingMissing = "[]",
   listingUnexpected = "[]",
+  gatePlan = "complete",
 }) {
   const r = sourced(
     [
@@ -64,6 +65,7 @@ function verdict({
       // and for a sharper one: it is read FAIL-CLOSED, so leaving it unset makes every
       // case here fail for a reason that is not the case's. It has its own tests.
       `LISTING_VERIFIED=${listingVerified} LISTING_MISSING='${listingMissing}' LISTING_UNEXPECTED='${listingUnexpected}'`,
+      `COLLECTION_GATE_PLAN=${gatePlan} COLLECTION_GATE_KEYS_ABSENT=GOOGLE_API_KEY`,
       // The version dimension is neutralised on purpose. With enforcement on by
       // default, leaving this unset makes it "unchecked" — fatal — so every case
       // below would fail for the version reason instead of its own, and the ones
@@ -143,6 +145,32 @@ test("a spec file absent from the listing fails the run and is NAMED", () => {
   assert.match(r.stderr, /Not skipped, not red — absent/);
 });
 
+test("a run that ACCEPTED a narrower listing is not failed for the narrowing", () => {
+  // REQUIRE_PROVIDER_KEYS=0 tells the operator, in so many words, to "accept the
+  // narrower comparison". A spec generated entirely from an absent key is the
+  // CONSEQUENCE of that acceptance — measured: with all three keys blank this clone
+  // lists 246 of 247 and the missing file is the one those keys generate. Failing
+  // there reddens a state the operator opted into, on a lane whose own escape hatch
+  // promises the opposite.
+  const r = verdict({ gatePlan: "narrow", listingMissing: '["a/lost.spec.ts"]' });
+  assert.equal(r.code, 0);
+  // Reported, never silent: the file is still named and the trade is stated.
+  assert.match(r.stderr, /ABSENT from this run's listing/);
+  assert.match(r.stderr, /a\/lost\.spec\.ts/);
+  assert.match(r.stderr, /ACCEPTED a narrower listing/);
+  assert.match(r.stderr, /REQUIRE_PROVIDER_KEYS=1/);
+});
+
+test("an UNVERIFIABLE listing fails on every plan, narrow included", () => {
+  // Nothing opted into "the check could not be made", and REQUIRE_PROVIDER_KEYS says
+  // nothing about it.
+  for (const gatePlan of ["complete", "narrow"]) {
+    const r = verdict({ gatePlan, listingVerified: "false" });
+    assert.equal(r.code, 1, gatePlan);
+    assert.match(r.stderr, /could not verify that its listing contained/);
+  }
+});
+
 test("an unverifiable listing fails the run — UNKNOWN is not no", () => {
   // FAIL-CLOSED, the same reading the Actions gate uses, and the reason `phase_prep`
   // can afford to degrade instead of dying on a broken derivation.
@@ -211,6 +239,10 @@ test("listing_verdict_from reads the partitioner's verdict, and answers nothing 
   // A matrix with no block at all is not a clean listing.
   assert.equal(read('{"shard_total":2}').LISTING_VERIFIED, "false");
 
+  // `verified` is compared to the literal `true`, never coerced: a shape change that
+  // put a truthy non-boolean there must read as UNVERIFIED, not as checked.
+  assert.equal(read('{"listing":{"verified":"true","missing":[]}}').LISTING_VERIFIED, "false");
+
   // Every way it can fail to answer yields NOTHING, which `phase_verdict` reads
   // fail-closed — and it must not take the run down with it, because `phase_prep`
   // deliberately survives a broken derivation.
@@ -219,6 +251,12 @@ test("listing_verdict_from reads the partitioner's verdict, and answers nothing 
   }
   rmSync(matrix, { force: true });
   assert.deepEqual(read(null), {}, "an absent matrix");
+
+  // ...and the `|| out=""` that makes that true is asserted DIRECTLY, not through a
+  // command substitution: `x="$(f)"` masks a non-zero return, so the call site cannot
+  // pin it. Without the guard a direct call exits the shell under `set -e`.
+  const direct = sourced(`listing_verdict_from ${JSON.stringify(matrix)}; echo "REACHED=$?"`);
+  assert.match(direct.stdout, /REACHED=0/, "an unreadable matrix must not abort the caller");
 });
 
 test("phase_prep passes the declaration to the partitioner and cannot die deriving it", () => {

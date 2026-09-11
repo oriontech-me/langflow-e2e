@@ -555,9 +555,15 @@ export function compareRuns({
   // A warning, never a blocker, for the same reason the gate is one: a lane that lost
   // a file still produced every other verdict, and throwing the comparison away to
   // report one file would cost more than it tells.
+  // BOTH fields, not just `verified`. A block whose `missing` is not an array was
+  // rendered as "listing complete" and raised nothing — a half-written row reading as
+  // a measurement, which is the one thing this field exists to stop. Unreachable from
+  // either shipped producer (both always emit an array), so this is the foreign- or
+  // hand-edited-row case, and the honest answer for it is the same as for an absent
+  // block: parity UNVERIFIED.
   const listingOf = (row) => {
     const l = row?.listing_completeness;
-    return l && typeof l.verified === "boolean" ? l : null;
+    return l && typeof l.verified === "boolean" && Array.isArray(l.missing) ? l : null;
   };
   const ciListing = listingOf(ci);
   const vmListing = listingOf(vm);
@@ -795,8 +801,10 @@ export function renderReport(result, { sources = [] } = {}) {
   // down in the warning list.
   const pushListing = (row) => {
     const l = row?.listing_completeness;
-    if (!l || typeof l.verified !== "boolean") return;
-    const missing = Array.isArray(l.missing) ? l.missing : [];
+    // Same shape guard the comparison uses: a block this reader cannot trust must not
+    // render "listing complete" under a lane's counts.
+    if (!l || typeof l.verified !== "boolean" || !Array.isArray(l.missing)) return;
+    const missing = l.missing;
     L.push(
       `${" ".repeat(11)}` +
         (!l.verified
