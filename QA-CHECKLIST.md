@@ -1492,7 +1492,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 620 `test()` calls carrying the `@stable` tag, distributed across 242 spec
+> 619 `test()` calls carrying the `@stable` tag, distributed across 242 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1895,7 +1895,6 @@
 - [x] a registered memory base is exposed through the Memory Base API, never through the knowledge-base list → `memory-base-registration.spec.ts`
 
 #### core-functionality/model-provider/
-- [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
 - [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] Azure AI Foundry is offered with a two-variable form and a Foundry-only deployment surface → `azure-ai-foundry-provider-setup.spec.ts`
