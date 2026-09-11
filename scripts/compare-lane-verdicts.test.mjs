@@ -741,6 +741,27 @@ test("run-e2e.sh passes the resolved version to the history appender", () => {
   assert.match(block, /LANGFLOW_VERSION=/);
 });
 
+// The listing-completeness comparison has the same reachability problem as the
+// version check, and the same cure: with one writer the comparator sits permanently
+// on "parity UNVERIFIED", which reads like a check and is not one (#1812/#1818).
+// Scoped to the appending step for the same reason — daily-stable.yml sets the same
+// two variables in the umbrella step, one block further down.
+
+test("daily-stable.yml passes the listing verdict to the history appender", () => {
+  const yml = readFileSync(join(HERE, "..", ".github", "workflows", "daily-stable.yml"), "utf8");
+  const step = blockAfter(yml, /^\s*- name: Append daily history\s*$/, /^\s{6}- name: /);
+  assert.match(step, /append-weekly-history\.mjs/, "scoped to the wrong step");
+  assert.match(step, /LISTING_VERIFIED:/);
+  assert.match(step, /LISTING_MISSING:/);
+});
+
+test("run-e2e.sh passes the listing verdict to the history appender", () => {
+  const sh = readFileSync(join(HERE, "run-e2e.sh"), "utf8");
+  const block = blockAfter(sh, /HISTORY_FILE="\$LEDGER_HISTORY"/, /append-weekly-history\.mjs/);
+  assert.match(block, /LISTING_VERIFIED=/);
+  assert.match(block, /LISTING_MISSING=/);
+});
+
 // ---------------------------------------------------------------------------
 // Review follow-ups (PR 1728)
 // ---------------------------------------------------------------------------
@@ -1082,4 +1103,102 @@ test("the report prints each lane's key set under its counts", () => {
 test("a lane with no block prints no key line, rather than an empty one", () => {
   const text = renderReport(compare(row("daily-stable", gate(THREE, [])), row("daily-stable-vm")));
   assert.equal(text.split("\n").filter((l) => l.includes("listed with")).length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Listing completeness (#1812/#1818)
+// ---------------------------------------------------------------------------
+//
+// `collection_gate_keys` says which suite each lane's listing ENVIRONMENT would
+// produce. This says whether the listing then produced it — and the two fail apart:
+// two lanes can resolve identical keys and one still lose a file, which leaves no
+// failure, no skip and no row, only a smaller total (#1764).
+
+const listing = (verified, missing = []) => ({ listing_completeness: { verified, missing } });
+
+test("a lane whose matrix lost a spec file is named, with the file", () => {
+  const r = compare(
+    row("daily-stable", listing(true)),
+    row("vm-daily", { ...listing(true, ["llm-agents/provider-invalid-auth-error.spec.ts"]) }),
+  );
+  const w = r.warnings.join("\n");
+  assert.match(w, /MATRIX WAS MISSING SPEC FILE\(S\)/);
+  assert.match(w, /the VM lost llm-agents\/provider-invalid-auth-error\.spec\.ts/);
+  assert.doesNotMatch(w, /Actions lost/);
+  assert.deepEqual(r.listingMismatch, {
+    ci: [],
+    vm: ["llm-agents/provider-invalid-auth-error.spec.ts"],
+  });
+  // A warning, never a blocker: the lane still produced every other verdict.
+  assert.equal(r.comparable, true);
+});
+
+test("a lost file SHARPENS the count-difference explanation instead of guessing", () => {
+  // This is the whole reason both lanes write the field. With identical gate keys the
+  // old answer was "they may not have run the same suite revision" — a guess, on the
+  // one difference this comparison exists to classify.
+  const gate = { collection_gate_keys: { present: ["OPENAI_API_KEY"], absent: [] } };
+  const r = compare(
+    row("daily-stable", { ...gate, ...listing(true), totals: { passed: 10, failed: 0, flaky: 0, skipped: 2 } }),
+    row("vm-daily", { ...gate, ...listing(true, ["a/lost.spec.ts"]), totals: { passed: 7, failed: 0, flaky: 0, skipped: 2 } }),
+  );
+  const delta = r.warnings.find((x) => x.includes("accounted for different test counts"));
+  assert.ok(delta, "the count difference must still be reported");
+  assert.match(delta, /missing the spec file\(s\) named above/);
+  assert.doesNotMatch(delta, /may not have run the same suite revision/);
+});
+
+test("a lane that could not CHECK is not a lane that found nothing", () => {
+  const r = compare(row("daily-stable", listing(true)), row("vm-daily", listing(false)));
+  const w = r.warnings.join("\n");
+  assert.match(w, /listing-completeness UNVERIFIED on the VM/);
+  assert.match(w, /which is not the same as no/);
+  // Unverified is not a mismatch: there is no named file to report.
+  assert.equal(r.listingMismatch, null);
+});
+
+test("a row written before the field existed reports parity as UNVERIFIED", () => {
+  for (const [ci, vm, expected] of [
+    [row("daily-stable"), row("vm-daily"), /neither row carries/],
+    [row("daily-stable"), row("vm-daily", listing(true)), /the Actions row does not carry/],
+    [row("daily-stable", listing(true)), row("vm-daily"), /the VM row does not carry/],
+  ]) {
+    const w = compare(ci, vm).warnings.join("\n");
+    assert.match(w, /listing-completeness parity UNVERIFIED/);
+    assert.match(w, expected);
+  }
+});
+
+test("two complete listings say so and warn about nothing", () => {
+  const w = compare(row("daily-stable", listing(true)), row("vm-daily", listing(true))).warnings.join("\n");
+  assert.doesNotMatch(w, /listing-completeness/);
+  assert.doesNotMatch(w, /MATRIX WAS MISSING/);
+});
+
+test("the report carries each lane's listing state under its own counts", () => {
+  // Same placement as the key set, for the same reason: a reader looking at two
+  // different totals has to see the lost file in the same glance.
+  const text = renderReport(
+    compare(row("daily-stable", listing(true)), row("vm-daily", listing(true, ["a/lost.spec.ts"]))),
+  );
+  const lines = text.split("\n");
+  const ciAt = lines.findIndex((l) => l.includes("Actions "));
+  const vmAt = lines.findIndex((l) => l.includes("VM "));
+  assert.match(lines[ciAt + 1], /listing complete/);
+  assert.match(lines[vmAt + 1], /MATRIX MISSING 1 declared spec file\(s\): a\/lost\.spec\.ts/);
+});
+
+test("the report says UNVERIFIED rather than complete when the check could not run", () => {
+  const text = renderReport(compare(row("daily-stable", listing(false)), row("vm-daily", listing(true))));
+  assert.match(text, /listing completeness UNVERIFIED/);
+});
+
+test("a row with a malformed listing block is treated as absent, never as clean", () => {
+  for (const bad of [{}, { verified: "true" }, null, { missing: [] }]) {
+    const w = compare(
+      row("daily-stable", { listing_completeness: bad }),
+      row("vm-daily", listing(true)),
+    ).warnings.join("\n");
+    assert.match(w, /parity UNVERIFIED/, JSON.stringify(bad));
+  }
 });

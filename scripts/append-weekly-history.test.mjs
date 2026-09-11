@@ -469,3 +469,56 @@ test("a passing attempt is never classified", () => {
   );
   assert.equal(entry.failures[0].infra_signature_any_attempt, null);
 });
+
+// --- listing completeness (#1812/#1818) --------------------------------------
+
+test("the listing verdict is recorded when the lane measured it, in either outcome", () => {
+  // Keyed on LISTING_VERIFIED alone and NOT on "either field has content": the
+  // informative row here is the clean one — `verified: true, missing: []` — which an
+  // "either is non-empty" rule (the one `collection_gate_keys` correctly uses) would
+  // drop every day.
+  const clean = append(report([]), { LISTING_VERIFIED: "true", LISTING_MISSING: "[]" });
+  assert.deepEqual(clean.listing_completeness, { verified: true, missing: [] });
+
+  const lost = append(report([]), {
+    LISTING_VERIFIED: "true",
+    LISTING_MISSING: '["llm-agents/provider-invalid-auth-error.spec.ts"]',
+  });
+  assert.deepEqual(lost.listing_completeness, {
+    verified: true,
+    missing: ["llm-agents/provider-invalid-auth-error.spec.ts"],
+  });
+});
+
+test("a lane that did not measure gets no block at all — absent, never clean", () => {
+  assert.equal(append(report([])).listing_completeness, undefined);
+  assert.equal(append(report([]), { LISTING_VERIFIED: "" }).listing_completeness, undefined);
+});
+
+test("`verified` is true only for the exact string, so an unknown never reads as checked", () => {
+  for (const raw of ["false", "TRUE", "yes", "1"]) {
+    assert.equal(append(report([]), { LISTING_VERIFIED: raw }).listing_completeness.verified, false, raw);
+  }
+});
+
+test("the missing list is read as the JSON both lanes publish, and never throws", () => {
+  // The Actions lane publishes a JSON array as a step output; the VM publishes the
+  // same string. Whitespace is the fallback for a hand-run. This appender runs at the
+  // END of a day whose verdict is already decided, so a throw costs the row for
+  // everything else it carries.
+  const cases = [
+    ['["a.spec.ts","b.spec.ts"]', ["a.spec.ts", "b.spec.ts"]],
+    ["a.spec.ts b.spec.ts", ["a.spec.ts", "b.spec.ts"]],
+    ["not json", ["not", "json"]],
+    ['["a.spec.ts",null,2,""]', ["a.spec.ts"]],
+    // Parses as JSON but is not an array — a wiring break. The whitespace fallback
+    // records it verbatim rather than as `[]`: visible nonsense in the row beats an
+    // empty list that reads as "nothing was missing" (#1012).
+    ["{}", ["{}"]],
+    ["", []],
+  ];
+  for (const [raw, expected] of cases) {
+    const entry = append(report([]), { LISTING_VERIFIED: "true", LISTING_MISSING: raw });
+    assert.deepEqual(entry.listing_completeness.missing, expected, raw);
+  }
+});

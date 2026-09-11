@@ -29,6 +29,15 @@
 //                             `collection_gate_keys` block; neither alone can, because
 //                             a lane that resolved nothing and a lane that never
 //                             measured both send an empty string (#1813).
+//   LISTING_VERIFIED          Optional, and read as a PAIR with the one below:
+//   LISTING_MISSING           whether the run's listing was shown to contain every spec
+//                             file declaring an `@stable` test ("true"/"false"), and the
+//                             paths of those it did not, as the JSON array both lanes
+//                             publish (whitespace-separated is also accepted, for a
+//                             hand-run) (#1812/#1818).
+//                             Together they produce the `listing_completeness` block;
+//                             `LISTING_VERIFIED` unset means the lane does not measure
+//                             it, and the block is omitted.
 //
 // Schema (version 1):
 // {
@@ -66,6 +75,17 @@
 //   measured into `liveness-N` artifacts that expire after 7 days, so #1077's
 //   before/after had no durable series to compare against. Recording only; no
 //   gate reads it. See scripts/lib/backend-history.mjs.
+//   `listing_completeness` (optional, additive to schema v1, #1812/#1818) is
+//   `{ verified: bool, missing: [...] }` — whether this run's `--grep @stable --list`
+//   was shown to contain every spec file that DECLARES an `@stable` test, and which it
+//   did not. It is the other half of `collection_gate_keys`: that field says which
+//   suite the listing environment would produce, this says whether the listing then
+//   produced it. A spec whose tests are generated at collection time leaves the
+//   partition with no skip, no error and no row to be missing from, so the count is
+//   simply smaller (#1764) — and where the gate can only hint at that by naming an
+//   absent key, this names the FILE. `verified: false` means the check could not be
+//   made, which is not the same as `missing: []`; the block's absence means the lane
+//   does not measure it at all. The comparator reads all three states.
 //   `collection_gate_keys` (optional, additive to schema v1, #1813) is
 //   `{ present: [...], absent: [...] }` — which provider keys the run's LISTING
 //   resolved. It is not a record of what the tests could reach: these keys gate
@@ -392,6 +412,48 @@ const gateAbsent = gateNames(process.env.COLLECTION_GATE_KEYS_ABSENT);
 const collectionGateKeys =
   gatePresent.length || gateAbsent.length ? { present: gatePresent, absent: gateAbsent } : null;
 
+// Whether the listing CONTAINED the suite the gate above says it would list
+// (#1812/#1818). The two answer different halves and only the pair is a claim: the
+// gate records the listing's environment, this records what that environment actually
+// produced, and a spec generated at COLLECTION time can vanish between them with no
+// failure, skip or error to show for it (#1764).
+//
+// Keyed on `LISTING_VERIFIED` ALONE, not on "either field has content", because the
+// informative state here is the opposite of the gate's: `missing: []` with
+// `verified: true` is the answer worth recording every day, and an "either is
+// non-empty" rule would drop exactly that row. A lane that does not measure sends
+// nothing and gets no block — absent, never a clean measurement it did not make.
+const listingVerifiedRaw = process.env.LISTING_VERIFIED;
+/**
+ * The missing list as both lanes publish it: a JSON array of spec paths.
+ *
+ * Whitespace splitting is kept as the fallback rather than as the format, so a
+ * hand-run passing bare paths still records them — and so does anything else that is
+ * not a JSON array, verbatim. That is deliberate: both producers emit
+ * `JSON.stringify(array)`, so a value of another shape is a wiring break, and
+ * recording it as garbage keeps it visible where an empty list would read as "nothing
+ * was missing" (#1012). Parsed defensively for the reason every optional input here
+ * is: this appender runs at the END of a day whose verdict is already decided, so a
+ * throw costs the row for everything else it carries.
+ */
+const listingMissing = (raw) => {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return v.filter((f) => typeof f === "string" && f);
+  } catch {
+    /* not JSON — fall through to the whitespace form */
+  }
+  return gateNames(raw);
+};
+const listingCompleteness =
+  listingVerifiedRaw === undefined || listingVerifiedRaw === ""
+    ? null
+    : {
+        verified: listingVerifiedRaw === "true",
+        missing: listingMissing(process.env.LISTING_MISSING),
+      };
+
 const entry = {
   version: SCHEMA_VERSION,
   date: new Date().toISOString().split("T")[0],
@@ -408,6 +470,7 @@ const entry = {
   ...(reportMissing ? { report_missing: true } : {}),
   ...(backend ? { backend } : {}),
   ...(collectionGateKeys ? { collection_gate_keys: collectionGateKeys } : {}),
+  ...(listingCompleteness ? { listing_completeness: listingCompleteness } : {}),
 };
 
 mkdirSync(dirname(historyPath), { recursive: true });

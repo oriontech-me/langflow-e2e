@@ -47,11 +47,23 @@ function sourced(body, env = {}) {
 }
 
 /** Runs phase_verdict with a given run state and returns its exit code and stderr. */
-function verdict({ empty = "false", partial = "false", complete = "true", failed = "0" }) {
+function verdict({
+  empty = "false",
+  partial = "false",
+  complete = "true",
+  failed = "0",
+  listingVerified = "true",
+  listingMissing = "[]",
+  listingUnexpected = "[]",
+}) {
   const r = sourced(
     [
       `RUN_EMPTY=${empty} RUN_PARTIAL=${partial} SHARD_COMPLETE=${complete} TEST_JOB_FAILED=${failed}`,
       `RUN_TESTS=7 RUN_ERRORS=2 RUN_FIRST_ERROR="a top-level error" RUN_DIR=/tmp/does-not-matter`,
+      // The listing axis is neutralised for the same reason the version one below is,
+      // and for a sharper one: it is read FAIL-CLOSED, so leaving it unset makes every
+      // case here fail for a reason that is not the case's. It has its own tests.
+      `LISTING_VERIFIED=${listingVerified} LISTING_MISSING='${listingMissing}' LISTING_UNEXPECTED='${listingUnexpected}'`,
       // The version dimension is neutralised on purpose. With enforcement on by
       // default, leaving this unset makes it "unchecked" — fatal — so every case
       // below would fail for the version reason instead of its own, and the ones
@@ -112,6 +124,115 @@ test("empty outranks partial in the explanation, and both still fail", () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /ZERO tests executed/);
   assert.doesNotMatch(r.stderr, /PARTIAL run/);
+});
+
+// --- listing completeness (#1812/#1818) --------------------------------------
+//
+// The gate three phases up says which suite this environment WOULD list. These say
+// whether the listing then produced it: a spec generated at collection time leaves
+// the partition with no skip, no error and no row in the report to be missing from
+// (#1764), so nothing else in `phase_verdict` can see it.
+
+test("a spec file absent from the listing fails the run and is NAMED", () => {
+  const r = verdict({ listingMissing: '["llm-agents/provider-invalid-auth-error.spec.ts"]' });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /ABSENT from this run's listing/);
+  assert.match(r.stderr, /provider-invalid-auth-error\.spec\.ts/);
+  // A count would leave the reader diffing the matrix by hand, in a mechanism whose
+  // whole claim is that it names the file.
+  assert.match(r.stderr, /Not skipped, not red — absent/);
+});
+
+test("an unverifiable listing fails the run — UNKNOWN is not no", () => {
+  // FAIL-CLOSED, the same reading the Actions gate uses, and the reason `phase_prep`
+  // can afford to degrade instead of dying on a broken derivation.
+  for (const listingVerified of ["", "false", "yes", "TRUE"]) {
+    const r = verdict({ listingVerified });
+    assert.equal(r.code, 1, `listing_verified=${listingVerified}`);
+    assert.match(r.stderr, /could not verify that its listing contained/);
+  }
+});
+
+test("a verified, complete listing says nothing at all", () => {
+  const r = verdict({});
+  assert.equal(r.code, 0);
+  assert.doesNotMatch(r.stderr, /listing/i);
+});
+
+test("a listed-but-undeclared file warns and does NOT fail", () => {
+  // Coverage the run HAS and the predicate did not predict. Failing on it inverts the
+  // trade; staying silent hides that the missing list is then a LOWER BOUND.
+  const r = verdict({ listingUnexpected: '["factory.spec.ts"]' });
+  assert.equal(r.code, 0);
+  assert.match(r.stderr, /listed but not declared on disk/);
+  assert.match(r.stderr, /lower bound/);
+});
+
+test("the listing verdict is its own axis, not an elif of the report chain", () => {
+  // A file that never entered the matrix is a fact about this run's INPUT; the chain
+  // above is about its output. On a day the report also broke, this is the only place
+  // the gap is stated at all.
+  const r = verdict({ empty: "true", listingMissing: '["gone.spec.ts"]' });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /ZERO tests executed/);
+  assert.match(r.stderr, /gone\.spec\.ts/);
+});
+
+test("listing_verdict_from reads the partitioner's verdict, and answers nothing when it cannot", () => {
+  const dir = makeTempDir("run-e2e-listing-");
+  const matrix = join(dir, "matrix.json");
+  const read = (json) => {
+    if (json !== null) writeFileSync(matrix, json);
+    const r = sourced(`listing_verdict_from ${JSON.stringify(matrix)}`);
+    return Object.fromEntries(
+      r.stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    );
+  };
+
+  assert.deepEqual(
+    read('{"shard_total":2,"listing":{"verified":true,"missing":["a.spec.ts"],"unexpected":["b.spec.ts"]}}'),
+    {
+      LISTING_VERIFIED: "true",
+      // JSON, the exact string the Actions lane publishes, so the two lanes' gates
+      // read identically and their history rows are the same shape.
+      LISTING_MISSING: '["a.spec.ts"]',
+      LISTING_UNEXPECTED: '["b.spec.ts"]',
+    },
+  );
+  assert.deepEqual(read('{"shard_total":2,"listing":{"verified":false,"reason":"x"}}'), {
+    LISTING_VERIFIED: "false",
+    LISTING_MISSING: "[]",
+    LISTING_UNEXPECTED: "[]",
+  });
+  // A matrix with no block at all is not a clean listing.
+  assert.equal(read('{"shard_total":2}').LISTING_VERIFIED, "false");
+
+  // Every way it can fail to answer yields NOTHING, which `phase_verdict` reads
+  // fail-closed — and it must not take the run down with it, because `phase_prep`
+  // deliberately survives a broken derivation.
+  for (const broken of ["not json", '{"listing":', ""]) {
+    assert.deepEqual(read(broken), {}, broken);
+  }
+  rmSync(matrix, { force: true });
+  assert.deepEqual(read(null), {}, "an absent matrix");
+});
+
+test("phase_prep passes the declaration to the partitioner and cannot die deriving it", () => {
+  // `phase_prep`'s product is the matrix, and the audit runs last precisely so it
+  // never costs the artefacts that make the day diagnosable — the asymmetry with the
+  // collection gate, which DOES stop the run, is argued in the script.
+  const src = readFileSync(SCRIPT, "utf8");
+  assert.match(src, /scripts\/declared-stable-specs\.ts > "\$RUN_DIR\/declared-specs\.json"/);
+  assert.match(src, /--declared "\$RUN_DIR\/declared-specs\.json"/);
+  const prep = src.slice(src.indexOf("phase_prep() {"), src.indexOf("start_backend_for_shard() {"));
+  assert.match(prep, /if ! npx ts-node scripts\/declared-stable-specs\.ts/);
+  assert.match(prep, /listing_verdict_from "\$RUN_DIR\/matrix\.json"/);
+  // The gate above it still stops the run; this must not have loosened that.
+  assert.match(prep, /die "could not resolve the collection-gating provider keys/);
 });
 
 test("an unreadable report defaults to empty, not to green", () => {
@@ -496,6 +617,7 @@ test("the version check is on by default, and so is enforcing it", () => {
 test("by default, a version mismatch now fails the run", () => {
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
       `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
   );
@@ -595,6 +717,7 @@ test("with enforcement off, a version mismatch does not fail the run on its own"
   // produces its verdict and says what differed.
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
       `TARGET_VERSION_MATCH=no TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
     { REQUIRE_TARGET_VERSION: "0" },
@@ -605,6 +728,7 @@ test("with enforcement off, a version mismatch does not fail the run on its own"
 test("REQUIRE_TARGET_VERSION=1 makes an AUTHORITATIVE mismatch fatal, naming what it costs", () => {
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
       `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=published-image TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.12.0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
     { REQUIRE_TARGET_VERSION: "1" },
@@ -624,6 +748,7 @@ test("a mismatch the REGISTRY did not establish still fails, but claims less", (
   // "the target served the wrong Langflow" would assert what the source cannot support.
   const r = sourced(
     `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
       `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=nightly-tag TARGET_VERSION_REASON="expected 1.13.0.dev1, served 1.13.0.dev0"\n` +
       `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
     { REQUIRE_TARGET_VERSION: "1" },
@@ -638,6 +763,7 @@ test("a matching version passes under REQUIRE, exactly or by cycle", () => {
   for (const match of ["yes", "cycle"]) {
     const r = sourced(
       `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
         `TARGET_VERSION_MATCH=${match}\n` +
         `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
       { REQUIRE_TARGET_VERSION: "1" },
@@ -654,6 +780,7 @@ test("under REQUIRE, a check that could not RUN fails too", () => {
   for (const match of ["unknown", "unchecked"]) {
     const r = sourced(
       `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
         `TARGET_VERSION_MATCH=${match}\n` +
         `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
       { REQUIRE_TARGET_VERSION: "1" },
@@ -667,6 +794,7 @@ test("with REQUIRE explicitly off, none of the version states fail the run", () 
   for (const match of ["yes", "cycle", "unknown", "unchecked", "no"]) {
     const r = sourced(
       `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
         `TARGET_VERSION_MATCH=${match}\n` +
         `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
       { REQUIRE_TARGET_VERSION: "0" },

@@ -449,10 +449,11 @@ export function compareRuns({
   const warnings = [];
   let versionMismatch = null;
   let gateMismatch = null;
+  let listingMismatch = null;
 
   if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
   if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the VM lane did not record a run.`);
-  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, comparable: false };
+  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, listingMismatch, comparable: false };
 
   for (const [label, row] of [["Actions", ci], ["VM", vm]]) {
     const errs = row.run_errors ?? [];
@@ -541,6 +542,65 @@ export function compareRuns({
     );
   }
 
+  // WHETHER EACH LANE'S LISTING CONTAINED THE SUITE THE GATE SAYS IT WOULD (#1812/#1818).
+  //
+  // The gate above is about the listing ENVIRONMENT; this is about what that
+  // environment produced. They fail apart: two lanes can resolve identical keys and
+  // one of them still lose a file — a listing that dies halfway and exits 0, a spec
+  // gating collection on something that is not a key at all — and the loss leaves no
+  // failure, no skip and no row, so the only trace is a smaller total. That is
+  // precisely the difference this comparison exists to classify, and until both rows
+  // carried this field the honest answer below was a guess.
+  //
+  // A warning, never a blocker, for the same reason the gate is one: a lane that lost
+  // a file still produced every other verdict, and throwing the comparison away to
+  // report one file would cost more than it tells.
+  const listingOf = (row) => {
+    const l = row?.listing_completeness;
+    return l && typeof l.verified === "boolean" ? l : null;
+  };
+  const ciListing = listingOf(ci);
+  const vmListing = listingOf(vm);
+  const lostIn = (l) => (Array.isArray(l?.missing) ? l.missing : []);
+  const ciLost = lostIn(ciListing);
+  const vmLost = lostIn(vmListing);
+  if (ciListing && vmListing) {
+    if (ciLost.length || vmLost.length) {
+      listingMismatch = { ci: ciLost, vm: vmLost };
+      warnings.push(
+        `a lane's MATRIX WAS MISSING SPEC FILE(S) that declare an @stable test - ` +
+          `${[
+            ciLost.length ? `Actions lost ${ciLost.join(", ")}` : null,
+            vmLost.length ? `the VM lost ${vmLost.join(", ")}` : null,
+          ]
+            .filter(Boolean)
+            .join("; ")}. ` +
+          `Those files entered no shard, so they are absent from that lane's totals outright - no skip, ` +
+          `no error, nothing to subtract them from (#1764).`,
+      );
+    }
+    // A lane that could not CHECK is not a lane that found nothing (#1012).
+    const unverified = [!ciListing.verified ? "Actions" : null, !vmListing.verified ? "the VM" : null].filter(Boolean);
+    if (unverified.length) {
+      warnings.push(
+        `listing-completeness UNVERIFIED on ${unverified.join(" and ")}: the check could not be made, so whether a ` +
+          `spec file left that lane's matrix is unknown - which is not the same as no.`,
+      );
+    }
+  } else {
+    const missingSide =
+      !ciListing && !vmListing
+        ? "neither row carries"
+        : !ciListing
+          ? "the Actions row does not carry"
+          : "the VM row does not carry";
+    warnings.push(
+      `listing-completeness parity UNVERIFIED: ${missingSide} a listing_completeness block. A spec file can leave a ` +
+        `lane's shard matrix with no skip, no error and no row to be missing from (#1764), and a row written before ` +
+        `that field existed cannot say whether it did.`,
+    );
+  }
+
   if (ciExtra || vmExtra) {
     warnings.push(
       `more than one row for this date (Actions +${ciExtra}, VM +${vmExtra}); the last append of each lane was used.`,
@@ -586,9 +646,15 @@ export function compareRuns({
         // This one the gate CAN explain: collection decides which spec files enter the
         // matrix at all, so a file only one lane listed is missing from the other's
         // total outright - no skip, no error, nothing to subtract it from.
-        (gateMismatch
-          ? `the listing keys above differ, so the two matrices did not contain the same spec files.`
-          : `they may not have run the same suite revision.`),
+        // Three answers, best first. The listing block NAMES the files one matrix did
+        // not contain, which is the whole difference; the gate can only say the two
+        // environments would have listed different suites; and with neither, all that
+        // is left is the guess this line used to make unconditionally.
+        (listingMismatch
+          ? `a lane's matrix was missing the spec file(s) named above, which are absent from its totals outright.`
+          : gateMismatch
+            ? `the listing keys above differ, so the two matrices did not contain the same spec files.`
+            : `they may not have run the same suite revision.`),
     );
   }
 
@@ -623,7 +689,7 @@ export function compareRuns({
   // Leaving the array populated would let the two surfaces tell different stories
   // about one run, and the machine-readable one would be the fiction.
   if (blockers.length) {
-    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, comparable: false };
+    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, listingMismatch, comparable: false };
   }
 
   const divergences = [];
@@ -683,7 +749,7 @@ export function compareRuns({
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, gateMismatch, comparable: blockers.length === 0 };
+  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, gateMismatch, listingMismatch, comparable: blockers.length === 0 };
 }
 
 const KIND_LABEL = {
@@ -724,8 +790,26 @@ export function renderReport(result, { sources = [] } = {}) {
         (absent.length ? ` | absent: ${absent.join(", ")}` : ""),
     );
   };
+  // Same placement as the key set and for the same reason: a reader looking at two
+  // different totals has to see the lost file in the same glance, not three screens
+  // down in the warning list.
+  const pushListing = (row) => {
+    const l = row?.listing_completeness;
+    if (!l || typeof l.verified !== "boolean") return;
+    const missing = Array.isArray(l.missing) ? l.missing : [];
+    L.push(
+      `${" ".repeat(11)}` +
+        (!l.verified
+          ? "listing completeness UNVERIFIED"
+          : missing.length
+            ? `MATRIX MISSING ${missing.length} declared spec file(s): ${missing.join(", ")}`
+            : "listing complete"),
+    );
+  };
   pushLane("Actions", ci);
+  pushListing(ci);
   pushLane("VM", vm);
+  pushListing(vm);
 
   // The stamp rides at the head, not buried in the warning list: a report produced
   // across two different products has to say so where it cannot be scrolled past.
