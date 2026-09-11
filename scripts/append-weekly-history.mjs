@@ -20,6 +20,15 @@
 //                             `backend` block (#1077); otherwise it is omitted.
 //   SHARD_TOTAL               Optional. The run's declared shard count, recorded
 //                             so a shard that uploaded nothing cannot vanish.
+//   COLLECTION_GATE_KEYS      Optional, and read as a PAIR with the one below:
+//   COLLECTION_GATE_KEYS_ABSENT
+//                             the collection-gating provider keys the run's listing
+//                             resolved, and those it did not, space-separated names
+//                             (never values) as `scripts/collection-gate-keys.ts`
+//                             prints them. Together they produce the
+//                             `collection_gate_keys` block; neither alone can, because
+//                             a lane that resolved nothing and a lane that never
+//                             measured both send an empty string (#1813).
 //
 // Schema (version 1):
 // {
@@ -57,6 +66,23 @@
 //   measured into `liveness-N` artifacts that expire after 7 days, so #1077's
 //   before/after had no durable series to compare against. Recording only; no
 //   gate reads it. See scripts/lib/backend-history.mjs.
+//   `collection_gate_keys` (optional, additive to schema v1, #1813) is
+//   `{ present: [...], absent: [...] }` — which provider keys the run's LISTING
+//   resolved. It is not a record of what the tests could reach: these keys gate
+//   COLLECTION, so a spec file generated entirely from a missing one collects zero
+//   tests, never enters the file-level partition, and is run by no shard. The row's
+//   totals are then smaller for a reason no failure, skip or error records. Two lanes
+//   whose rows carry different sets are not comparable by count, and this is the field
+//   that says so instead of leaving it to be inferred (#1764 inferred it wrongly
+//   twice). The BLOCK's absence means the run did not measure its gate; `present: []`
+//   inside it means it measured and resolved nothing — a distinction the counts alone
+//   cannot make. And it describes the LISTING's environment, not the run's: on Actions
+//   that is the `prep` job, whose three collection-gating secrets (#1796) are a SUBSET
+//   of the provider block its `test` shards carry, and on the VM it is the same shell
+//   as the `--list`. So the field says which spec FILES a lane could collect, never
+//   which providers its tests could reach. That is why the comparator explains a
+//   TEST-COUNT difference with this field and refuses to explain a SKIP difference
+//   with it.
 //   `langflow_version` (optional, additive to schema v1) is the resolved version
 //   string the run tested, as opposed to the tag it asked for. It exists for the
 //   two-lane comparison of the VM migration: the Actions daily and the VM daily each
@@ -353,6 +379,19 @@ if (process.env.LIVENESS_DIR) {
   }
 }
 
+// The listing's provider gate (#1813). Names only — the resolver never reads a value —
+// and split on whitespace so the empty string yields `[]` rather than `[""]`.
+//
+// The block is written when EITHER list has a name in it, which is exactly "the run
+// measured its gate": the resolver refuses to report an empty derivation at all, so a
+// measured run always names at least one key on one side. A run that did not measure
+// sends two empty strings and gets no block — absent, never an empty measurement.
+const gateNames = (value) => (value ?? "").trim().split(/\s+/).filter(Boolean);
+const gatePresent = gateNames(process.env.COLLECTION_GATE_KEYS);
+const gateAbsent = gateNames(process.env.COLLECTION_GATE_KEYS_ABSENT);
+const collectionGateKeys =
+  gatePresent.length || gateAbsent.length ? { present: gatePresent, absent: gateAbsent } : null;
+
 const entry = {
   version: SCHEMA_VERSION,
   date: new Date().toISOString().split("T")[0],
@@ -368,6 +407,7 @@ const entry = {
   ...(runErrors.length ? { run_errors: runErrors } : {}),
   ...(reportMissing ? { report_missing: true } : {}),
   ...(backend ? { backend } : {}),
+  ...(collectionGateKeys ? { collection_gate_keys: collectionGateKeys } : {}),
 };
 
 mkdirSync(dirname(historyPath), { recursive: true });

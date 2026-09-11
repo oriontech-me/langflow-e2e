@@ -39,7 +39,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -459,4 +462,163 @@ test("the derivation is anchored at column 0 and refuses to guess", () => {
     () => collectionGateKeys(map(`  cohere: {\n    credential: "api-key",\n    envKeys: [],\n  },\n`)),
     /declares an EMPTY envKeys/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// THE LISTING SAYS WHICH GATE IT RESOLVED — and cannot die trying (#1813)
+// ---------------------------------------------------------------------------
+// The env block above is the fix for #1764; this is the report that makes the same
+// state readable a day later. `scripts/collection-gate-keys.ts` runs in this step,
+// before the `--list` it describes, and its answer rides onto the day's history row
+// so a cross-lane test-count difference resolves to a cause instead of a hypothesis.
+//
+// Two properties, and the second is the one review cannot hold. The report is
+// REPORTING: this step runs under `bash -eo pipefail` and its product is the shard
+// matrix, so a gate that cannot answer must degrade to a warning — an aborted `prep`
+// is a daily that never ran, traded for a field. And it must not answer WRONGLY: a
+// field renamed on the TypeScript side leaves the `sed`s matching nothing, which
+// would write "this run never measured its gate" onto a run that measured fine —
+// the one state the present/absent pair exists to distinguish. Both are exercised by
+// RUNNING the step's own script with a stubbed resolver, because every assertion
+// about a shell that is only a regex over the YAML passes the mutation it exists to
+// catch (#1226).
+
+/**
+ * The listing step's `run:` script, comments dropped, as bash would see it.
+ *
+ * `runScript` keeps the block-scalar indicator it finds after `run:` — harmless where
+ * every other caller only pattern-matches the text, and a bash SYNTAX ERROR the moment
+ * one is executed, since a lone `|` is a pipe with nothing on either side. Dropped
+ * here rather than in `runScript`, whose callers above assert on what YAML wrote.
+ */
+function listingScript() {
+  const { lines, keyIndent } = stepBody(read(WORKFLOW), LISTING_STEP);
+  return runScript(lines, keyIndent).replace(/^[ \t]*\|-?[ \t]*\n/, "");
+}
+
+/**
+ * Runs that script with `npx` stubbed, and reports what it did.
+ *
+ * The stub answers `npx ts-node …` with `gate` (or `rc`), and makes `npx playwright`
+ * announce itself and fail — so under `-e` the script stops at the listing instead of
+ * reaching `node scripts/partition-shards.mjs`. `listed` is therefore the question
+ * these cases are really about: did the run get PAST the gate?
+ */
+function runListingStep({ gate = "", rc = 0 } = {}) {
+  const dir = makeTempDir("listing-gate-");
+  const bin = path.join(dir, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(dir, "gate.txt"), gate);
+  fs.writeFileSync(
+    path.join(bin, "npx"),
+    [
+      "#!/usr/bin/env bash",
+      `if [ "$1" = "ts-node" ]; then cat ${JSON.stringify(path.join(dir, "gate.txt"))}; exit ${rc}; fi`,
+      'echo "REACHED_LISTING $*" >&2',
+      "exit 1",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const script = path.join(dir, "step.sh");
+  fs.writeFileSync(script, listingScript());
+  const out = path.join(dir, "github-output");
+  fs.writeFileSync(out, "");
+  const r = spawnSync("bash", ["-e", "-o", "pipefail", script], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SHARDS: "1", GITHUB_OUTPUT: out },
+  });
+  return {
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+    output: fs.readFileSync(out, "utf8"),
+    listed: /REACHED_LISTING .*--list/.test(r.stderr ?? ""),
+  };
+}
+
+const GATE_BLOCK = [
+  "keys=OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY",
+  "present=OPENAI_API_KEY ANTHROPIC_API_KEY",
+  "absent=GOOGLE_API_KEY",
+  "providers_listed=openai anthropic",
+  "providers_absent=google",
+  "complete=false",
+  "summary=listing with openai, anthropic; GOOGLE_API_KEY absent",
+  "",
+].join("\n");
+
+test("the gate is resolved BEFORE the suite is listed, which is the whole contract", () => {
+  // A report produced after the partition describes an environment nobody can act on.
+  // Read with COMMENT LINES DROPPED: the comment above the resolver names the `--list`
+  // it precedes, so an ordering read off the prose would pass on a step whose commands
+  // are in the wrong order.
+  const script = listingScript();
+  const gate = script.indexOf("scripts/collection-gate-keys.ts");
+  const list = script.indexOf("npx playwright test");
+  assert.ok(gate > -1, `${LISTING_STEP} no longer resolves the collection gate`);
+  assert.ok(list > -1, `${LISTING_STEP} no longer lists the suite`);
+  assert.ok(gate < list, "the gate is resolved after the listing it describes");
+});
+
+test("the field names this step parses are the ones the resolver actually emits", () => {
+  // The seam. Every case below feeds the step a HAND-WRITTEN block, so a field renamed
+  // on the TypeScript side would leave them all green while the real run parsed
+  // nothing. So the real resolver runs once, and the names are read out of the YAML
+  // rather than restated here.
+  const emitted = execFileSync("npx", ["ts-node", "scripts/collection-gate-keys.ts"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, OPENAI_API_KEY: "a" },
+  })
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.slice(0, line.indexOf("=")));
+
+  const script = listingScript();
+  const parsed = [
+    ...[...script.matchAll(/sed -n 's\/\^([a-z_]+)=/g)].map((m) => m[1]),
+    ...[...script.matchAll(/grep -q '\^([a-z_]+)='/g)].map((m) => m[1]),
+  ];
+  assert.ok(parsed.length >= 4, `${LISTING_STEP} parses only ${parsed.length} field(s) — this test reads the wrong place`);
+  for (const field of parsed) {
+    assert.ok(
+      emitted.includes(field),
+      `${LISTING_STEP} reads \`${field}=\`, which the resolver does not emit (it emits: ${emitted.join(", ")})`,
+    );
+  }
+});
+
+test("a resolved gate becomes the step's two outputs, present and absent both", () => {
+  const r = runListingStep({ gate: GATE_BLOCK });
+  assert.match(r.output, /^collection_gate_keys=OPENAI_API_KEY ANTHROPIC_API_KEY$/m);
+  assert.match(r.output, /^collection_gate_keys_absent=GOOGLE_API_KEY$/m);
+  assert.match(r.stdout, /listing gate: listing with openai, anthropic/);
+  assert.ok(r.listed, "the step did not go on to list the suite");
+});
+
+test("a gate that cannot answer warns and the matrix is still built", () => {
+  // REPORTING, not a gate on the day. The VM twin dies on this state on purpose —
+  // there the run's product is the cross-lane comparison — but here an abort costs
+  // the whole daily, so the row simply carries no block and the comparator reports
+  // parity UNVERIFIED, which is the pre-#1813 state plus a warning.
+  const r = runListingStep({ gate: "", rc: 2 });
+  assert.match(r.stdout, /::warning::could not resolve the collection-gating provider keys/);
+  assert.equal(r.output, "", `a failed resolver wrote outputs anyway: ${r.output}`);
+  assert.ok(r.listed, "a failed gate report stopped the shard matrix");
+});
+
+test("a renamed field is caught, not written onto the row as 'never measured'", () => {
+  // Exit 0 with a block this parse cannot read is the drift case, and it fails in the
+  // worst direction available: both `sed`s match nothing, the row carries no block,
+  // and a fully-keyed run reads as one that never measured its gate.
+  for (const gate of ["PRESENT=OPENAI_API_KEY\nABSENT=\n", "unexpected=shape\n", "present=OPENAI_API_KEY\n"]) {
+    const r = runListingStep({ gate });
+    assert.match(
+      r.stdout,
+      /::warning::could not resolve the collection-gating provider keys/,
+      `block ${JSON.stringify(gate)} was accepted`,
+    );
+    assert.equal(r.output, "", `block ${JSON.stringify(gate)} wrote ${r.output}`);
+    assert.ok(r.listed);
+  }
 });
