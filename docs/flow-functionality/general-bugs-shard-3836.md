@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/flow-functionality/general-bugs-shard-3836.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev9`)
 
 ---
 
@@ -24,7 +24,14 @@ The dev46 nightly replaced the old "Controls" edit modal with a node inspector s
 
 ## Tags
 
-`@release` `@components`
+`@stable` `@release` `@components` `@files`
+
+`@stable` since #1791. The spec was measured 2/3 green by the #1784 triage table and
+its failure was root-caused to this file, not to Langflow — see *The run executes
+the SAVED flow* below. `@files` is the functional half (an upload through a
+component's `files` field); the provider gate is `providerSkipGate("openai")`, which
+keys on key **health** rather than presence, so a drained key skips the test instead
+of blocking the backend past gunicorn's timeout (#1029).
 
 ---
 
@@ -53,7 +60,7 @@ The dev46 nightly replaced the old "Controls" edit modal with a node inspector s
 
 ## External dependencies
 
-- **OpenAI** — `test.skip` when `OPENAI_API_KEY` is absent. Runs the Basic Prompting flow through an OpenAI model (`initialGPTsetup`).
+- **OpenAI** — `test.skip` when `providerSkipGate("openai")` reports the key unusable (health, not mere presence). Runs the Basic Prompting flow through an OpenAI model (`initialGPTsetup`).
 - `src/lfx/src/lfx/components/input_output/chat.py` — Chat Input component; the advanced `files` field must exist as an addable inspector field for step 2 to find `inspector-add-files`.
 - `tests/assets/media/chain.png` — the uploaded test image.
 - `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions` / `closeAdvancedOptions` (the inspector panel).
@@ -81,3 +88,45 @@ The dev46 nightly replaced the old "Controls" edit modal with a node inspector s
 - Migrated to the dev46 node-inspector model (issue #818): swapped `showfiles` → `inspector-add-files`.
 - Added id-scoped `afterEach` flow cleanup (POST `/api/v1/flows` → 201 tracking), per repo convention (#490/#681) — the spec builds a flow from the Basic Prompting template.
 - Validated on `1.11.0.dev46` (2026-07-19): 1 passed (~24s), `--workers=1 --retries=0`, 0 orphan flows.
+
+---
+
+## Notes — the run executes the SAVED flow, not the canvas
+
+The step that runs the flow is `POST /api/v2/workflows`, and its body is
+`{"flow_id": "...", "input_value": "", ...}`: the endpoint executes the flow **as
+persisted**, resolving the Chat Input's text and files from the server's copy. The
+canvas is not carried. That makes every UI-visible upload state a **client-side**
+fact and the run a **server-side** read of it, with a ~2 s autosave debounce in
+between.
+
+Measured on `1.13.0.dev9`, reading `GET /api/v1/flows/{id}` around the run click:
+
+```
+before-run    ChatInput files=""            input_value="What is this image?"
+after-run+3s  ChatInput files=["chain.png"] input_value="What is this image?"
+```
+
+The file commits **after** the run has already started. The run therefore executes
+with no image; the model answers *"It seems like you're asking about an image, but
+I can't see images directly…"*, finishing normally in 2.4 s, and no `img` ever
+appears for `img[alt$="chain.png"]` to match. Nothing errors, nothing is logged —
+the only symptom is a 100 s wait expiring on an assertion that reads like a UI
+regression.
+
+This is why the spec now polls the **persisted** `files` value before clicking run.
+It is not a wait added to make a flake pass: it asserts the state the run actually
+consumes, and a file that never persists fails there, naming the cause, instead of
+100 s later at the image.
+
+Two notes on scope. The `files` value persists under the asset's **real** name
+(`chain.png`), not the random name `uploadFile` generates — that rename belongs to
+the file-management v2 branch, which this node does not take — so the `alt` and
+removal assertions are sound as written. And `uploadFile` has exactly two callers;
+the other, `llm-agents/loop-component.spec.ts`, also runs a flow after uploading,
+but it is a T2 row failing on a different signature (`locator.click` timeout) and is
+not touched here.
+
+Baseline for the fix, measured on this workstation: **5/5 failures** before,
+0 environment voids, and green after — against 2/3 green on the slower CI runner,
+which is the same race won from the other side.
