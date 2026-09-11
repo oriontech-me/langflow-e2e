@@ -1,6 +1,8 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { describeFlowReadback } from "../../../../helpers/flows/describe-flow-readback";
+import { describeResponseDetail } from "../../../../helpers/flows/describe-response-detail";
 
 // The versions sub-family (`{flow_id}/versions/`), hidden from /openapi.json — five
 // operations no spec drove and no document described. Spec doc:
@@ -72,7 +74,32 @@ test.describe("Flows API — versions", () => {
 
       await test.step("a fresh flow has no versions and a cap of 50", async () => {
         const res = await request.get(base, { headers });
-        expect(res.status()).toBe(200);
+
+        // Diagnosis computed ONLY when this is about to fail (#1777 / LE-2598).
+        // The 2026-09-09 daily printed `Expected: 200 / Received: 404` and
+        // nothing else, and recovering what that 404 actually said cost three
+        // dailies. The two reads are a THREE-way discriminator, which is why
+        // neither alone is enough:
+        //
+        //   detail "Flow not found" + readback 200  -> LE-2598's window: the
+        //     201 preceded the commit and the row landed between the two reads.
+        //   detail "Flow not found" + readback 404  -> the row is genuinely
+        //     gone (a cross-worker wipe, or a commit that never happened).
+        //   detail "Not Found"                      -> FastAPI's unmatched
+        //     route: the collection route stopped resolving.
+        //
+        // Neither helper throws, and neither is declared through `apiCoverage`:
+        // the gate fails a declaration the test never issues, and on a green run
+        // neither call happens.
+        const diagnosis =
+          res.status() === 200
+            ? undefined
+            : [
+                `GET ${base} -> ${res.status()}`,
+                await describeResponseDetail(res),
+                await describeFlowReadback(request, flowId, { headers }),
+              ].join("; ");
+        expect(res.status(), diagnosis).toBe(200);
         expect(await res.json()).toEqual({ entries: [], max_entries: 50 });
       });
 
