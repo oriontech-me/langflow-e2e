@@ -417,6 +417,9 @@ function candidate(over: Partial<DeclaredTest> = {}): DeclaredTest {
     // compiling against the widened interface.
     modifier: "",
     unparseableTags: false,
+    // Playwright's grep string (#1812) — the reconciler ignores it too; same
+    // reason as `modifier` above.
+    grepTitle: TITLE,
     ...over,
   };
 }

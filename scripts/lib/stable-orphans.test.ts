@@ -35,6 +35,10 @@ function declared(over: Partial<DeclaredTest> = {}): DeclaredTest {
     // scripts/reconcile-stable-orphans.test.ts for why the interface gained it.
     modifier: "",
     unparseableTags: false,
+    // Playwright's grep string (#1812): irrelevant to the reconciler, required
+    // by the interface, and spelled out rather than made optional — a fixture
+    // silently missing a required field is how #1593's `PwStats` gap survived.
+    grepTitle: "a test @regression",
     ...over,
   };
 }

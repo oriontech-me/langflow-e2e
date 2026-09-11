@@ -32,6 +32,7 @@ import {
   parseStableTests,
 } from "./stable-tests";
 import { makeTempDir } from "./tmp-dir.mjs";
+import { resolveLane } from "../../tests/fixtures/lane";
 
 // A path under REGRESSION_ROOT — it never has to exist, `parseStableTests`
 // only uses it to derive modulePath / specFile / relativePath.
@@ -702,22 +703,72 @@ test("declaredStableSpecFiles agrees with collectStableTests on the real regress
   for (const f of fromTests) assert.ok(fromFiles.has(f), `${f} is @stable but not declared`);
 });
 
-test("declaredStableSpecFiles treats a lane tag in the TITLE as lane-only", () => {
-  // Playwright matches --grep / grepInvert against the title AND the tags, so a
-  // test titled "@destructive …" is inverted out of every normal listing however
-  // it is tagged. Reading only the `tag` array reports such a file as MISSING —
-  // a false red, which is the expensive direction: it is how a detector gets
-  // switched off. None exist today; this is what keeps that true.
-  withTree(
-    {
-      "t.spec.ts": `test("@destructive wipes the account", { tag: ["${STABLE_TAG}"] }, async () => {});`,
-    },
-    (root) => {
+test("declaredStableSpecFiles excludes a lane tag by EVERY route Playwright greps", () => {
+  // `grepInvert` runs over `TestCase._grepTitleWithTags()` — every ancestor
+  // suite's title AND tags, then the test's own title and tags, space-joined —
+  // so a lane tag reaches it by four routes. Each of these was measured against
+  // a real `--list`: the file was excluded from the listing while an
+  // exact-match-over-tags predicate counted it, i.e. a false `missing`, i.e. a
+  // red daily and an umbrella naming a file that nothing lost.
+  const routes: Record<string, string> = {
+    "own title": `test("@destructive wipes the account", { tag: ["${STABLE_TAG}"] }, async () => {});`,
+    "describe title": `
+      test.describe("@destructive account wipers", () => {
+        test("wipes nothing", { tag: ["${STABLE_TAG}", "@api"] }, async () => {});
+      });
+    `,
+    "describe tag array": `
+      test.describe("suite", { tag: ["@enterprise"] }, () => {
+        test("inherits", { tag: ["${STABLE_TAG}"] }, async () => {});
+      });
+    `,
+    // grepInvert is a SUBSTRING regex; the first version compared tag strings for
+    // equality, so a longer token slipped past it.
+    "substring of a longer tag": `test("boundary", { tag: ["${STABLE_TAG}", "@serving-identity"] }, async () => {});`,
+    "substring of a title word": `test("mentions @servingless models", { tag: ["${STABLE_TAG}"] }, async () => {});`,
+  };
+  for (const [route, source] of Object.entries(routes)) {
+    withTree({ "t.spec.ts": source }, (root) => {
       const d = declaredStableSpecFiles(root);
-      assert.deepEqual(d.files, []);
-      assert.deepEqual(d.laneOnly, ["t.spec.ts"]);
-    },
+      assert.deepEqual(d.files, [], route);
+      assert.deepEqual(d.laneOnly, ["t.spec.ts"], route);
+    });
+  }
+});
+
+test("declaredStableSpecFiles excludes a spec whose PATH carries a lane tag", () => {
+  // The file suite's title is the path relative to `testDir`, and
+  // `_collectGrepTitlePath` pushes it like any other. Exotic, but the predicate
+  // claims to predict the listing, so it reproduces the composition rather than
+  // approximating it.
+  withTree({ "@serving/t.spec.ts": stableTest("ordinary") }, (root) => {
+    const d = declaredStableSpecFiles(root);
+    assert.deepEqual(d.files, []);
+    assert.deepEqual(d.laneOnly, ["@serving/t.spec.ts"]);
+  });
+});
+
+test("the lane exclusion is playwright.config.ts's own, not a second copy", () => {
+  // `resolveLane({})` is what the config passes as `grepInvert`, so a fourth lane
+  // tag cannot need a second edit here to keep the detector honest (#1045's shape).
+  const invert = resolveLane({}).grepInvert;
+  assert.ok(invert, "a normal run must still exclude the lane tags");
+  for (const lane of LANE_TAGS) assert.ok(invert!.test(`x ${lane}`), lane);
+});
+
+test("parseDeclaredTests composes grepTitle the way Playwright does", () => {
+  // Ancestor suite title, then its tags, then the test's title, then its tags.
+  const [t] = parseDeclaredTests(
+    path.join(REGRESSION_ROOT, "x.spec.ts"),
+    `
+      test.describe("outer", { tag: ["@api"] }, () => {
+        test.describe("inner", () => {
+          test("leaf", { tag: ["${STABLE_TAG}", "@agents"] }, async () => {});
+        });
+      });
+    `,
   );
+  assert.equal(t.grepTitle, `outer @api inner leaf ${STABLE_TAG} @agents`);
 });
 
 test("declaredStableSpecFiles keeps a file whose OTHER @stable test has no lane tag in its title", () => {

@@ -756,3 +756,60 @@ test("the umbrella caps the named files at 30 and says how many it elided", () =
   assert.doesNotMatch(body, /lost-40\.spec\.ts/);
   assert.match(body, /… and 11 more/);
 });
+
+test("main() reads LISTING_VERIFIED as the string 'true', and only that", async () => {
+  // The env→props mapping the render tests cannot reach. Mutating this comparison
+  // to `!== "false"` left every one of them green — and it MATTERS, because Actions
+  // renders an unset step output as the EMPTY STRING, not as undefined: `prep`
+  // failing, or a future edit dropping the field, produces `LISTING_VERIFIED=""`.
+  // Under the mutant that reads as verified, so the gate would redden the day while
+  // the umbrella rendered no listing section at all — #1176's defect, which this
+  // clause exists to close.
+  const runDir = makeTempDir("issue-body-listing-");
+  const base = {
+    ...process.env,
+    ISSUE_DRY_RUN: "1",
+    RUN_DIR: runDir,
+    RUN_ID: "1",
+    RUN_URL: "https://example.invalid/1",
+    AUTO_REMOVE_STATUS: "",
+    LIVENESS_MD: "",
+    LISTING_MISSING: "[]",
+  };
+  const read = (envOver) => {
+    const r = spawnSync(process.execPath, [SCRIPT], { encoding: "utf-8", env: { ...base, ...envOver } });
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(join(runDir, "issue-body.md"), "utf-8");
+  };
+
+  // Unset output → "" → NOT verified → the umbrella says so.
+  assert.match(read({ LISTING_VERIFIED: "" }), /could not be shown complete/);
+  assert.match(read({ LISTING_VERIFIED: "false" }), /could not be shown complete/);
+  // Absent entirely → this lane does not track it → no shape, no section.
+  const untracked = read({ TESTS_FAILED: "true" });
+  assert.doesNotMatch(untracked, /shard matrix/);
+  assert.match(untracked, /@stable tests failed on/);
+  assert.doesNotMatch(read({ LISTING_VERIFIED: "true", TESTS_FAILED: "true" }), /shard matrix/);
+});
+
+test("main() reads LISTING_MISSING off the env as the daily writes it", async () => {
+  const runDir = makeTempDir("issue-body-missing-");
+  const r = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      ISSUE_DRY_RUN: "1",
+      RUN_DIR: runDir,
+      RUN_ID: "1",
+      RUN_URL: "https://example.invalid/1",
+      AUTO_REMOVE_STATUS: "",
+      LIVENESS_MD: "",
+      LISTING_VERIFIED: "true",
+      LISTING_MISSING: '["llm-agents/provider-invalid-auth-error.spec.ts"]',
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const body = readFileSync(join(runDir, "issue-body.md"), "utf-8");
+  assert.match(body, /never entered the shard matrix/);
+  assert.match(body, /provider-invalid-auth-error\.spec\.ts/);
+});

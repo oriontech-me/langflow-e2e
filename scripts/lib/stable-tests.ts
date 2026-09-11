@@ -19,6 +19,12 @@ import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
 
+// `playwright.config.ts`'s own lane exclusion, imported rather than restated so
+// the completeness check (#1812) and the runner cannot disagree about which
+// tests a normal listing contains. `lane.ts` is dependency-free by design — it
+// imports nothing, Playwright included — so a script can read it.
+import { resolveLane } from "../../tests/fixtures/lane";
+
 export const REPO_ROOT = path.resolve(__dirname, "..", "..");
 export const REGRESSION_ROOT = path.join(
   REPO_ROOT,
@@ -378,6 +384,24 @@ export interface DeclaredTest {
   modifier: string;
   /** A `tag` option existed but could not be read as an inline array of literals. */
   unparseableTags: boolean;
+  /**
+   * The string Playwright matches `--grep` / `grepInvert` against, minus the
+   * file and project prefixes the caller knows and this parser does not.
+   *
+   * Playwright does NOT grep the tag array: `TestCase._grepTitleWithTags()`
+   * joins every ancestor suite's title AND tags, then the test's own title and
+   * tags, with spaces, and runs the pattern over that one string
+   * (`node_modules/playwright/lib/common/test.js`). So a lane tag reaches
+   * `grepInvert` through a `test.describe` TITLE, through a describe's tag
+   * array, through the test's own title, and as a SUBSTRING of a longer token
+   * (`@serving-identity`) — four routes an exact match over `tags` cannot see,
+   * and every one of them a FALSE `missing` for #1812's detector, which is the
+   * direction that gets a detector switched off.
+   *
+   * Reproduced rather than approximated, because the consumer's whole claim is
+   * that it can predict what the listing will contain.
+   */
+  grepTitle: string;
 }
 
 /**
@@ -439,9 +463,11 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
     node: ts.Node,
     inheritedStable: boolean,
     inheritedLane: string[],
+    inheritedGrep: string[],
   ): void {
     let childrenStable = inheritedStable;
     let childrenLane = inheritedLane;
+    let childrenGrep = inheritedGrep;
 
     if (ts.isCallExpression(node)) {
       if (isDescribeCall(node) && node.arguments.length >= 2) {
@@ -451,6 +477,15 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
           (LANE_TAGS as readonly string[]).includes(t),
         );
         if (lane.length > 0) childrenLane = [...inheritedLane, ...lane];
+        // The suite's TITLE and its WHOLE tag array, in Playwright's own order,
+        // because that is what `_collectGrepTitlePath` pushes — not just the
+        // lane tags `childrenLane` keeps for the reconciler.
+        const describeTitle = literalText(node.arguments[0]);
+        childrenGrep = [
+          ...inheritedGrep,
+          ...(describeTitle !== null ? [describeTitle] : []),
+          ...(tags ?? []),
+        ];
       } else if (isPlainTestCall(node) || isSkippedDeclaration(node)) {
         const title = literalText(node.arguments[0]);
         if (title !== null) {
@@ -478,17 +513,18 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             fixme: isSkippedDeclaration(node),
             modifier,
             unparseableTags: unparseable,
+            grepTitle: [...inheritedGrep, title, ...own].join(" "),
           });
         }
       }
     }
 
     ts.forEachChild(node, (child) =>
-      visit(child, childrenStable, childrenLane),
+      visit(child, childrenStable, childrenLane, childrenGrep),
     );
   }
 
-  visit(source, false, []);
+  visit(source, false, [], []);
   return out;
 }
 
@@ -582,16 +618,28 @@ export function declaredStableSpecFiles(
   const files: string[] = [];
   const laneOnly: string[] = [];
   const unparseable: string[] = [];
-  // A lane tag reaches `--grep`/`grepInvert` through the TITLE as well as through
-  // the `tag` array — Playwright matches both against the same string — so a test
-  // titled "@destructive wipes the account" is grepInverted out of every normal
-  // listing however it is tagged. Reading only the tags would report such a file
-  // as MISSING, which is the expensive direction: a false red on the daily is how
-  // a detector gets switched off. There are none today; this keeps it that way.
-  const laneInTitle = (t: { title: string }) =>
-    (LANE_TAGS as readonly string[]).some((lane) => t.title.includes(lane));
-  const isLaneOnly = (t: { title: string; tags: string[] }) =>
-    t.tags.some((tag) => (LANE_TAGS as readonly string[]).includes(tag)) || laneInTitle(t);
+  // Which tests a normal listing EXCLUDES, decided by the same regex the config
+  // excludes them with and over the same string Playwright matches it against.
+  //
+  // The first version tested `LANE_TAGS` for exact membership in the `tag` array
+  // and, after one review, `String.includes` on the test's own title. Both are
+  // narrower than Playwright, in the direction that costs a red day: the engine
+  // runs `config.grepInvert` over `_grepTitleWithTags()` — every ancestor suite's
+  // title AND tags, then the test's title and tags, space-joined, with the FILE
+  // suite's title (the path relative to `testDir`) at the front — so a lane tag
+  // reaches it through a `test.describe` title, through a describe's tag array,
+  // and as a substring of a longer token (`@serving-identity`). Each of those was
+  // measured against a real `--list`: the file was excluded from the listing and
+  // counted by the declaration, i.e. a false `missing`, i.e. a red daily and an
+  // umbrella naming a file that nothing lost.
+  //
+  // `resolveLane({})` rather than a regex of our own: the exclusion is
+  // `playwright.config.ts`'s, so a fourth lane tag must not need a second edit
+  // here to stay correct. `{}` is the normal run — no lane flag set — which is
+  // the listing the daily's matrix is built from.
+  const grepInvert = resolveLane({}).grepInvert;
+  const excluded = (rel: string, t: DeclaredTest) =>
+    !!grepInvert && grepInvert.test(`${rel} ${t.grepTitle}`);
 
   for (const abs of walkCollectableSpecs(root)) {
     const rel = path.relative(root, abs).split(path.sep).join("/");
@@ -599,7 +647,7 @@ export function declaredStableSpecFiles(
     if (tests.some((t) => t.unparseableTags)) unparseable.push(rel);
     const stable = tests.filter((t) => t.stable);
     if (stable.length === 0) continue;
-    if (stable.some((t) => !isLaneOnly(t))) files.push(rel);
+    if (stable.some((t) => !excluded(rel, t))) files.push(rel);
     else laneOnly.push(rel);
   }
   const sort = (a: string, b: string) => a.localeCompare(b);

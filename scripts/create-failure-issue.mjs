@@ -125,9 +125,9 @@ export function renderIssue({
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
 
-  // SEVEN shapes, most specific first. The count has been stale twice — it read
-  // "four" while there were six, and "six" while omitting `partial`, which has its
-  // own title and its own body — so it is enumerated exhaustively below.
+  // EIGHT shapes, most specific first. The count has been stale three times — it
+  // read "four" while there were six, "six" while omitting `partial`, and "seven"
+  // while omitting the listing shape — so it is enumerated exhaustively below.
   // 0. The shards RAN and the MERGE failed (#1726). It has to precede `empty`,
   //    because a failed merge leaves no report and the integrity guard therefore
   //    reports the run as empty and unreadable. "Find why nothing ran" is then a
@@ -151,6 +151,14 @@ export function renderIssue({
   //    fire. Gated on `!testsFailed`, because the account says nothing about whether
   //    specs also failed and a day with real per-test failures must keep its own
   //    title and body; on such a day the outage is carried as a banner instead.
+  // 3b. A spec file NEVER ENTERED THE SHARD MATRIX (#1812), or the matrix could not
+  //    be shown complete. LAST among the green-test shapes on purpose: every one
+  //    above is a bigger story, and this one reports information the run never had
+  //    rather than a run that went wrong. It needs a shape at all because the
+  //    daily's final gate reddens the day for it while the `test` job is GREEN —
+  //    without one, the run goes red with a single annotation and nothing durable
+  //    names why, which is #1176 on a fourth axis. On every other shape it is
+  //    carried as a banner instead (see `listingBanner`).
   // 4. The auto-remove step acted — show what it did.
   // 5. Neither (it errored, or a guard skipped it) — manual triage.
   // The account fact, without the banner's framing. On `empty` and `mergeFailed` the

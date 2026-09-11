@@ -99,6 +99,7 @@ test("formatParseRefusal names the failure in the floor's own voice", () => {
   const bad: DeclaredTest = {
     title: "one", relativePath: "a/x.spec.ts", line: 1, tags: [],
     stable: false, fixme: false, modifier: "", unparseableTags: true,
+    grepTitle: "one",
   };
   const stderr = console.error;
   console.error = () => {};   // assertNoWarnings prints the offending lines

@@ -649,13 +649,23 @@ function main(argv) {
     // --github-output  append the listing verdict as `key=value` step outputs (the
     //               daily passes `$GITHUB_OUTPUT`). Here rather than in a workflow
     //               one-liner because the values are what the final gate reads.
+    //
+    // A flag with an EMPTY value is not a usage error, and the distinction is the
+    // one this function exists for. `--github-output "$GITHUB_OUTPUT"` with the
+    // variable unset reaches here as `["--github-output", ""]`, and refusing it
+    // throws — exit 1, empty stdout — which under the prep step's `MATRIX="$(…)"`
+    // and `bash -eo pipefail` aborts the day. So an empty value DEGRADES (the
+    // verdict goes unwritten, which the gate reads fail-closed) while a flag with
+    // no following argument at all stays a usage error: that is a malformed
+    // command line, caught before any caller depends on it.
     const takeFlag = (argv, name) => {
       const at = argv.indexOf(name);
-      if (at === -1) return { value: "", rest: argv, given: false };
+      if (at === -1) return { value: "", rest: argv, given: false, missingValue: false };
       return {
-        value: argv[at + 1] || "",
+        value: argv[at + 1] ?? "",
         rest: [...argv.slice(0, at), ...argv.slice(at + 2)],
         given: true,
+        missingValue: at === argv.length - 1,
       };
     };
     const declaredFlag = takeFlag(rest, "--declared");
@@ -667,8 +677,8 @@ function main(argv) {
       !listPath ||
       !Number.isInteger(n) ||
       n < 1 ||
-      (declaredFlag.given && !declaredPath) ||
-      (outputFlag.given && !outputFlag.value)
+      declaredFlag.missingValue ||
+      outputFlag.missingValue
     )
       throw new Error(
         "usage: partition-shards.mjs matrix <list.json> <durations.json|-> <N> " +
@@ -751,7 +761,12 @@ function main(argv) {
     // merge job's final gate reads FAIL-CLOSED.
     let declared = null;
     let declaredError = "";
-    if (declaredPath && declaredPath !== "-") {
+    if (declaredFlag.given && !declaredPath) {
+      // Asked for, and the caller handed an empty path — an unset variable, almost
+      // always. Reported as UNVERIFIED with the cause named rather than silently
+      // treated as "nobody asked", which would drop the warning too.
+      declaredError = "the --declared path is empty (an unset variable?)";
+    } else if (declaredPath && declaredPath !== "-") {
       try {
         declared = readJSON(declaredPath);
       } catch (e) {
@@ -762,10 +777,19 @@ function main(argv) {
       ? compareListing({ files, root: undefined }, null)
       : compareListing({ files, root: listReport.config?.rootDir }, declared);
     if (declaredError) listing.reason = declaredError;
-    const verdict = renderListingVerdict(listing, !!declaredPath && declaredPath !== "-");
+    const verdict = renderListingVerdict(
+      listing,
+      declaredFlag.given && declaredPath !== "-",
+    );
     process.stderr.write(verdict.lines.join("\n") + "\n");
     for (const w of verdict.warnings) process.stderr.write(w + "\n");
-    if (outputFlag.value) {
+    if (outputFlag.given && !outputFlag.value) {
+      process.stderr.write(
+        `::warning::--github-output was given an empty path (an unset variable?), so the ` +
+          `listing verdict was not published as a step output. The scheduled run will fail ` +
+          `at the end of the merge job, because an absent verdict is read fail-closed (#1812).\n`,
+      );
+    } else if (outputFlag.value) {
       // Guarded for the same reason the declaration read is: this runs inside the
       // step that produces the shard matrix. An unwritable path leaves the outputs
       // ABSENT, which the gate reads fail-closed — the safe outcome — where a throw
