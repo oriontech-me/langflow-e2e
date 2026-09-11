@@ -306,7 +306,18 @@ test("a run whose every result was a provider skip gets its own title and shape"
   // guard written for this case stays silent.
   assert.ok(headingAt > -1, "the uncovered heading moved — this pin is scoped to it");
   assert.ok(triageAt > headingAt, "the triage paragraph moved — this pin is scoped to it");
-  const statedFact = body.slice(headingAt, triageAt);
+  // The shape's OWN PROSE, which is what "may not diagnose" is a rule about — not the
+  // whole body. The body also carries regions copied verbatim from inputs: the fenced
+  // `coverageHeadline` and the liveness block above the heading. A body-wide rule
+  // asserts something the code cannot honour, because the headline is a QUOTATION of
+  // the provider's error: `lane-coverage-verdict` exists to put that text there, and
+  // OpenAI's own 429 body reads "…please check your plan and billing details." — an
+  // account that has drained twice here (#772/#1450). Asserting "nothing in this shape
+  // may assert /billing/" over a quotation is the same over-claim #1801 is about, one
+  // level up.
+  const ownProse = (region) => region.replace(/```[\s\S]*?```/g, "");
+  const statedFact = ownProse(body.slice(headingAt, triageAt));
+  const triageParagraph = ownProse(body.slice(triageAt));
   // Vocabulary the enumeration needs, refused only in the statement of fact.
   for (const diagnosis of [/drained/i, /revoked/i, /spend cap/i]) {
     assert.doesNotMatch(
@@ -315,14 +326,19 @@ test("a run whose every result was a provider skip gets its own title and shape"
       `the shape states what was recorded; it cannot diagnose ${diagnosis} from a skip (#1801)`,
     );
   }
-  // Vocabulary that is a DIAGNOSIS wherever it appears, including in the paragraph a
-  // triager acts on.
+  // Vocabulary that is a DIAGNOSIS wherever this shape writes it, including in the
+  // paragraph a triager acts on.
   for (const diagnosis of [/dead provider/, /could not serve a call/, /out of credit/i, /billing/i]) {
-    assert.doesNotMatch(
-      body,
-      diagnosis,
-      `nothing in this shape may assert ${diagnosis} from a skip alone (#1801)`,
-    );
+    for (const [where, region] of [
+      ["the statement of fact", statedFact],
+      ["the triage paragraph", triageParagraph],
+    ]) {
+      assert.doesNotMatch(
+        region,
+        diagnosis,
+        `${where} may not assert ${diagnosis} from a skip alone (#1801)`,
+      );
+    }
   }
   // Triage points at the REASON, not at a diagnosis (#1801). The same `inactive`
   // record is written for a key that was never imported as a Langflow global
@@ -451,6 +467,32 @@ test("a dry account gets its own title and does not claim nothing ran", () => {
   assert.doesNotMatch(body, /not one of them is a/);
   assert.doesNotMatch(body, /no per-test evidence to/);
   assert.doesNotMatch(body, /restore the key or the credit/);
+
+  // And it may not DIAGNOSE either — the rule is the shape's, not the uncovered
+  // shape's, and this is the one the daily can actually reach. It had no blocklist at
+  // all: measured, injecting "the provider could not serve a call, the account is out
+  // of credit; check billing" into this branch left the whole lane green. Same two
+  // scopes and the same exclusion of the echoed `coverageHeadline` block, since the
+  // quoted reason is a quotation and not an assertion.
+  const dryHeadingAt = body.indexOf("### ⚠️ NO usable provider");
+  const dryTriageAt = body.indexOf("**Triage");
+  assert.ok(dryHeadingAt > -1, "the dry heading moved — this pin is scoped to it");
+  assert.ok(dryTriageAt > dryHeadingAt, "the dry triage paragraph moved — this pin is scoped to it");
+  const dryProse = body
+    .slice(dryHeadingAt)
+    .replace(/```[\s\S]*?```/g, "");
+  // `/drained/i` is deliberately NOT in this set: the dry shape's own prose ENUMERATES
+  // the two causes ("a drained account and a sweep that never imported the keys both
+  // produce it"), which is the same enumeration #1801 asked the uncovered shape for,
+  // and refusing it here would refuse the fix. The four below are diagnosis wherever
+  // they appear.
+  for (const diagnosis of [/dead provider/, /could not serve a call/, /out of credit/i, /billing/i]) {
+    assert.doesNotMatch(
+      dryProse,
+      diagnosis,
+      `the dry shape reports what providers.json RECORDED; it cannot diagnose ${diagnosis} (#1801)`,
+    );
+  }
 });
 
 // Review finding: the account says nothing about whether tests ALSO failed, and this

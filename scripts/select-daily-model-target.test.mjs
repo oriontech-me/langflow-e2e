@@ -360,11 +360,16 @@ test("daily-stable.yml asks exactly one shard for the full rotation block", () =
     .map((l) => l.replace(/\s+#.*$/, ""))
     .join("\n");
   assert.match(step, /ROTATION_SUMMARY:/, "the rotation step no longer chooses a shape");
+  // ONE assertion binding the key to its VALUE, not two independent ones. Two let the
+  // expression be parked on a live SIBLING key — `ROTATION_SHAPE_LEGACY: &rot ${{ … }}`
+  // beside a hardcoded `ROTATION_SUMMARY: '1'` — which is not a comment, survives both
+  // comment strips, and puts the full table back on every shard. Measured green.
+  //
   // `'1'` for shard 1 and `'0'` elsewhere — NOT a suppression, which is the half of
   // this the first shape got wrong: writing nothing on the other shards made the only
   // rendered surface depend on shard 1 surviving to this step, on a lane whose own
   // comments record shards dying before it (#1011).
-  assert.match(step, /matrix\.shard == 1 && '1' \|\| '0'/);
+  assert.match(step, /ROTATION_SUMMARY:\s*\$\{\{ matrix\.shard == 1 && '1' \|\| '0' \}\}/);
 });
 
 test("the daily emits the provider/model pair from the script, not from inline env", () => {

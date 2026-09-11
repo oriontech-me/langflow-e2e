@@ -625,9 +625,17 @@ export function renderSummary(result) {
             // google ones. So the clause would be contradicted by the run's own data
             // three lines above it, and would undercut the "narrower, not blind"
             // sentence it followed. "either" has no antecedent there either.
+            // WORDED OVER THE RUN'S OWN DATA, not over a reason. The first version
+            // gave the hardcoding as the cause — "12 specs hardcode the provider they
+            // need" — and that is false of the input this issue is about: the PR
+            // lane's own provider pin plus a #1058 degrade reaches `uncovered` with a
+            // PARAMETRIZED spec, whose test list renders two lines above this
+            // sentence. Same self-contradiction the `degraded` arm was just fixed
+            // for, one arm over, which is why the fix is to stop giving a reason
+            // rather than to pick a better one.
             const noCover =
               result.verdict === UNCOVERED
-                ? " A still-usable provider does not cover for the skipped one either — 12 specs hardcode the provider they need."
+                ? " A still-usable provider did not cover for it: every test that produced a result skipped on provider health, so nothing ran on one."
                 : "";
             return stillUsable.length > 0
               ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}${noCover}`

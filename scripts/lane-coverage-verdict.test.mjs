@@ -1598,6 +1598,30 @@ test("the daily's final gate's branch set is exhaustive over the states that rea
   }
 });
 
+test("the fallback clause renders on UNCOVERED and nowhere else", () => {
+  // The previous round moved this clause out of the uncovered-only scope and it
+  // started rendering on `degraded`, where it is false: something DID execute, and
+  // for a parametrized spec that something is the other providers' targets of the
+  // very spec that skipped. The GATE that fixed it was itself unpinned — reverting
+  // the ternary to the unconditional string left the whole lane green (measured),
+  // which is this PR's own theme applied everywhere except to its own fix.
+  const degraded = renderSummary(
+    verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), ALIVE),
+  );
+  assert.match(degraded, /Still usable: \*\*anthropic, google\*\*/, "the arm under test is the one with a fallback");
+  assert.doesNotMatch(degraded, /did not cover for it/, "something executed — the fallback DID cover part of this run");
+
+  const uncovered = renderSummary(
+    verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), ALIVE),
+  );
+  assert.match(uncovered, /A still-usable provider did not cover for it/);
+  // And it says so from the run's own data, never from a reason: the same
+  // parametrized-spec counter-example reaches THIS arm through the lane's provider
+  // pin plus a #1058 degrade, so "12 specs hardcode their provider" would be false
+  // here too.
+  assert.doesNotMatch(uncovered, /hardcode/);
+});
+
 test("the run summary does not decide whether a re-run helps", () => {
   // The THIRD surface. `renderSummary`'s `alive` arm arrived from #1800 after #1801
   // was filed, so it kept the assertion the headline and the umbrella had lost: "a
