@@ -471,15 +471,29 @@ test("a dry account gets its own title and does not claim nothing ran", () => {
   // And it may not DIAGNOSE either — the rule is the shape's, not the uncovered
   // shape's, and this is the one the daily can actually reach. It had no blocklist at
   // all: measured, injecting "the provider could not serve a call, the account is out
-  // of credit; check billing" into this branch left the whole lane green. Same two
-  // scopes and the same exclusion of the echoed `coverageHeadline` block, since the
-  // quoted reason is a quotation and not an assertion.
+  // of credit; check billing" into this branch left the whole lane green.
+  //
+  // ONE region, not two: the four patterns below are refused everywhere this shape
+  // writes prose, so the statement of fact and the triage paragraph need no separate
+  // treatment. (The uncovered test splits them because three further patterns are its
+  // enumeration's own vocabulary; this shape's enumeration word, `drained`, is simply
+  // left out — see below.)
+  //
+  // BOUNDED at the auto-removal section, and the fenced blocks stripped, for the same
+  // reason the uncovered scope excludes them: both are ECHOED INPUT. `arSummary`
+  // renders each removed test's own error verbatim in a code SPAN, which the fence
+  // strip does not touch, so a 429 body quoted there would trip `/billing/i` with a
+  // message that is false of the code. That section is unreachable on this shape in
+  // production (it needs `arStatus`, which needs a failed test job, which makes
+  // `testsFailed` true and routes the day elsewhere) — but it is kept deliberately as
+  // belt and braces, and an assertion must not depend on a branch staying dead.
   const dryHeadingAt = body.indexOf("### ⚠️ NO usable provider");
   const dryTriageAt = body.indexOf("**Triage");
   assert.ok(dryHeadingAt > -1, "the dry heading moved — this pin is scoped to it");
   assert.ok(dryTriageAt > dryHeadingAt, "the dry triage paragraph moved — this pin is scoped to it");
+  const autoRemoveAt = body.indexOf("### `@stable` auto-removal", dryHeadingAt);
   const dryProse = body
-    .slice(dryHeadingAt)
+    .slice(dryHeadingAt, autoRemoveAt > -1 ? autoRemoveAt : undefined)
     .replace(/```[\s\S]*?```/g, "");
   // `/drained/i` is deliberately NOT in this set: the dry shape's own prose ENUMERATES
   // the two causes ("a drained account and a sweep that never imported the keys both

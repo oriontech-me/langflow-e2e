@@ -1598,28 +1598,49 @@ test("the daily's final gate's branch set is exhaustive over the states that rea
   }
 });
 
-test("the fallback clause renders on UNCOVERED and nowhere else", () => {
-  // The previous round moved this clause out of the uncovered-only scope and it
-  // started rendering on `degraded`, where it is false: something DID execute, and
-  // for a parametrized spec that something is the other providers' targets of the
-  // very spec that skipped. The GATE that fixed it was itself unpinned — reverting
-  // the ternary to the unconditional string left the whole lane green (measured),
-  // which is this PR's own theme applied everywhere except to its own fix.
-  const degraded = renderSummary(
-    verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), ALIVE),
-  );
-  assert.match(degraded, /Still usable: \*\*anthropic, google\*\*/, "the arm under test is the one with a fallback");
-  assert.doesNotMatch(degraded, /did not cover for it/, "something executed — the fallback DID cover part of this run");
+test("the still-usable line makes no claim about what the fallback covered", () => {
+  // Four rounds, four formulations, four defects — all in one clause that tried to
+  // stop "Still usable: anthropic, google" reading as "so we are fine", and all of
+  // them contradicted by the counter line two rows above them. It is gone; what this
+  // pins is that it stays gone, in both arms, and that the sentence which does the
+  // work is still there.
+  //
+  // The last formulation is the one worth naming, because it looked like pure data:
+  // "every test that produced a result skipped on provider health" is false whenever
+  // an ordinary `test.skip` or a `fixme` is in the report, and `UNCOVERED` is
+  // `providerSkips > 0 && executed === 0` — it says nothing about the other skips.
+  const arms = {
+    degraded: renderSummary(
+      verdictWith(report("tests/a.spec.ts", [executed("one"), skipped("a", OPENAI_DEAD)]), ALIVE),
+    ),
+    uncovered: renderSummary(
+      verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), ALIVE),
+    ),
+  };
+  for (const [arm, text] of Object.entries(arms)) {
+    assert.match(text, /Still usable: \*\*anthropic, google\*\*/, `${arm}: the arm under test is the one with a fallback`);
+    assert.doesNotMatch(text, /did not cover for it/, `${arm}: no claim about what the fallback covered`);
+    assert.doesNotMatch(text, /hardcode/, `${arm}: no claim about why`);
+    assert.doesNotMatch(text, /does not recover by re-running/, `${arm}: no claim about a re-run`);
+  }
+  // The sentences that carry the meaning are untouched.
+  assert.match(arms.uncovered, /still produced no verdict/);
+  assert.match(arms.degraded, /narrower than the check status shows, not blind/);
+});
 
-  const uncovered = renderSummary(
-    verdictWith(report("tests/a.spec.ts", [skipped("a", OPENAI_DEAD)]), ALIVE),
+test("a MIXED-skip uncovered run is described by counts, not by a claim about them", () => {
+  // `generalBugs-shard-3.spec.ts`'s shape today: one provider-gated test and one
+  // permanent `test.skip`. The run is `uncovered` with 1 of 2 skips on provider
+  // health, and the summary must not say otherwise.
+  const mixed = renderSummary(
+    verdictWith(
+      report("tests/a.spec.ts", [skipped("gated", OPENAI_DEAD), skipped("quarantined", "no backend here")]),
+      ALIVE,
+    ),
   );
-  assert.match(uncovered, /A still-usable provider did not cover for it/);
-  // And it says so from the run's own data, never from a reason: the same
-  // parametrized-spec counter-example reaches THIS arm through the lane's provider
-  // pin plus a #1058 degrade, so "12 specs hardcode their provider" would be false
-  // here too.
-  assert.doesNotMatch(uncovered, /hardcode/);
+  assert.match(mixed, /provider health: \*\*1\*\*/);
+  assert.match(mixed, /skipped in total: \*\*2\*\*/);
+  assert.doesNotMatch(mixed, /every test that produced a result/);
 });
 
 test("the run summary does not decide whether a re-run helps", () => {

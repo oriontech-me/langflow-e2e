@@ -625,20 +625,29 @@ export function renderSummary(result) {
             // google ones. So the clause would be contradicted by the run's own data
             // three lines above it, and would undercut the "narrower, not blind"
             // sentence it followed. "either" has no antecedent there either.
-            // WORDED OVER THE RUN'S OWN DATA, not over a reason. The first version
-            // gave the hardcoding as the cause — "12 specs hardcode the provider they
-            // need" — and that is false of the input this issue is about: the PR
-            // lane's own provider pin plus a #1058 degrade reaches `uncovered` with a
-            // PARAMETRIZED spec, whose test list renders two lines above this
-            // sentence. Same self-contradiction the `degraded` arm was just fixed
-            // for, one arm over, which is why the fix is to stop giving a reason
-            // rather than to pick a better one.
-            const noCover =
-              result.verdict === UNCOVERED
-                ? " A still-usable provider did not cover for it: every test that produced a result skipped on provider health, so nothing ran on one."
-                : "";
+            // THERE IS NO FALLBACK CLAUSE HERE, and its four-round history is the
+            // reason it is gone rather than reworded a fifth time.
+            //
+            // The intent was to stop "Still usable: anthropic, google" reading as
+            // "so we are fine". Every formulation asserted something the run cannot
+            // support: "a spec hardcoded to the dead provider does not recover by
+            // re-running" (false on a #1058 degrade, where the key is live and the
+            // repair IS a re-run); "12 specs hardcode the provider they need" (false
+            // on `degraded`, where a parametrized spec's other targets ran, and false
+            // on `uncovered`, which the lane's provider pin reaches with the same
+            // parametrized spec); and "every test that produced a result skipped on
+            // provider health" (false whenever an ordinary `test.skip` or a `fixme`
+            // is in the report — `UNCOVERED` is `providerSkips > 0 && executed === 0`
+            // and says nothing about the other skips, which is the shape
+            // `generalBugs-shard-3.spec.ts` has today: one gated test, one permanent
+            // skip). Each was contradicted by the counter line two rows above it.
+            //
+            // Nothing is lost by dropping it: `scope` already says this run produced
+            // no verdict, and the heading says it covered nothing. The clause only
+            // ever added a REASON, and a reason is the one thing #1801 says this
+            // surface may not supply.
             return stillUsable.length > 0
-              ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}${noCover}`
+              ? `Still usable: **${displaySafe(stillUsable.join(", "))}** — the account is up, so it is not what needs fixing. ${scope}`
               : `The account is up (**${displaySafe(result.usableProviders.join(", "))}** recorded usable) and the same provider(s) skipped here — the sweep and the run disagree, which the daily's per-shard union can produce. ${scope}`;
           })()
         : "Whether any provider was usable is **UNKNOWN** (no readable `providers.json`). Unknown is not clean (#1012).",
