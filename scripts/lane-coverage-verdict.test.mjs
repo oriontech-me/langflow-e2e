@@ -1357,7 +1357,8 @@ test("a providers.json whose record shape drifted is UNKNOWN, never dry", () => 
 // or its `run:` reshaped, the helper throws rather than silently asserting on nothing.
 function runDailyGate(env) {
   const daily = readWorkflow("daily-stable.yml");
-  const marker = "- name: Fail scheduled run on an incomplete, empty, partial or uncovered report";
+  const marker =
+    "- name: Fail scheduled run on an incomplete, empty, partial, uncovered or under-listed report";
   const start = daily.indexOf(marker);
   assert.ok(start > 0, "the daily's final gate step must exist under its known name");
   const step = daily.slice(start, daily.indexOf("\n      - name:", start + 10));
@@ -1387,6 +1388,12 @@ function runDailyGate(env) {
       COVERAGE_HEADLINE: "H",
       COVERAGE_FAIL: "false",
       COVERAGE_ACCOUNT: "unknown",
+      // The listing-completeness axis (#1812). Defaulted to "the matrix contained
+      // every declared spec file", so the cases below still model one cause at a
+      // time — and so the exhaustiveness test keeps meaning what it says.
+      LISTING_VERIFIED: "true",
+      LISTING_MISSING: "[]",
+      LISTING_UNEXPECTED: "[]",
       ...env,
     },
   });
@@ -1418,6 +1425,15 @@ test("the daily's final gate always names a cause, and never two that disagree",
       /ZERO verdicts about Langflow/,
     ],
     [{ COVERAGE_FAIL: "" }, /for fail_recommended/],
+    // Listing completeness (#1812). Unlike the report axes above, the evidence comes
+    // from `prep`: a spec file that never entered the matrix leaves no trace in a
+    // report built from what ran.
+    [{ LISTING_MISSING: '["lost.spec.ts"]' }, /were ABSENT from this run's listing/],
+    [{ LISTING_VERIFIED: "false" }, /could not verify that its listing contained/],
+    // Fail-CLOSED on an unset output, the same `!= 'true'` idiom the two guards above
+    // use: an absent verdict means the derivation never ran, and that must not read
+    // as agreement.
+    [{ LISTING_VERIFIED: "" }, /could not verify that its listing contained/],
   ];
   for (const [env, expected] of cases) {
     const { status, out } = runDailyGate(env);
@@ -1488,6 +1504,8 @@ test("the daily's final gate's branch set is exhaustive over the states that rea
     /NO provider was recorded usable/,
     /ZERO verdicts about Langflow/,
     /for fail_recommended/,
+    /were ABSENT from this run's listing/,
+    /could not verify that its listing contained/,
   ]) {
     assert.doesNotMatch(out, claim, "no branch may claim a cause this state does not have");
   }

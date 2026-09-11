@@ -505,3 +505,99 @@ export function collectDeclaredTests(): DeclaredTest[] {
   );
   return all;
 }
+
+// ─── What the shard matrix EXPECTS the listing to contain (#1812) ────────────
+
+/**
+ * Playwright's own `testMatch`, copied from `playwright.config.ts`.
+ *
+ * Deliberately not `walkSpecs`'s `.spec.ts` suffix test. The two answer different
+ * questions and must not be merged: `walkSpecs` feeds the Phase 0 / checklist
+ * blocks, which are scoped to `regression/` and count what the repo publishes,
+ * while this one has to reproduce EXACTLY the file set Playwright collects — a
+ * `.spec.mts` is collected by the config (its comment says so in as many words)
+ * and would otherwise read as a file the listing invented.
+ */
+export const SPEC_FILE_PATTERN = /\.spec\.[cm]?[jt]s$/;
+
+/** `testDir` from `playwright.config.ts` — the root the JSON report's paths are relative to. */
+export const TESTS_ROOT = path.join(REPO_ROOT, "tests");
+
+/** Absolute paths of every Playwright-collectable spec under `dir`, recursively. */
+export function walkCollectableSpecs(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkCollectableSpecs(full));
+    else if (entry.isFile() && SPEC_FILE_PATTERN.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+export interface DeclaredStableSpecs {
+  /** Absolute root the paths below are relative to. */
+  root: string;
+  /**
+   * Files declaring at least one `@stable` test a NORMAL lane can select, POSIX
+   * and sorted — i.e. what `playwright test --grep @stable --list` must contain.
+   */
+  files: string[];
+  /**
+   * Files whose every `@stable` test also carries a lane tag. Excluded from
+   * `files` because `config.grepInvert` removes them from every normal listing,
+   * and reported because `CLAUDE.md` forbids that combination (#1010): an entry
+   * here is a spec that runs in no scheduled lane, not a detector artefact.
+   */
+  laneOnly: string[];
+  /**
+   * Files carrying a `tag` option this parser could not read as an inline array
+   * of literals. Their `@stable` membership is UNKNOWN, so they may be listed
+   * while absent from `files` — which is the one benign way the comparison can
+   * report a listed-only file, and the reason it is reported at all (#1012).
+   */
+  unparseable: string[];
+}
+
+/**
+ * The spec files the daily's `--grep @stable --list` is expected to produce.
+ *
+ * Derived from the AST, never from a grep for the token: `@stable` appears in
+ * prose all over this suite, and `CLAUDE.md` records that the loose substring
+ * test overcounts by 8 files — one of whose only occurrence is the comment
+ * "`@release`, never `@stable`".
+ *
+ * Scoped to `tests/`, not to `regression/`. Five listed files live outside the
+ * regression tree (`collect-models.spec.ts` and the four `fixtures/*-gate.spec.ts`),
+ * so the narrower scope reports them as phantom losses — measured, 242 against the
+ * listing's 247.
+ *
+ * A test declared under a `test.describe` tagged `@stable` counts, because
+ * Playwright's `--grep` honours the inherited tag and the daily therefore really
+ * does run it; `parseDeclaredTests` already resolves that inheritance, and the
+ * lane tags with it.
+ */
+export function declaredStableSpecFiles(
+  root: string = TESTS_ROOT,
+): DeclaredStableSpecs {
+  const files: string[] = [];
+  const laneOnly: string[] = [];
+  const unparseable: string[] = [];
+  const isLane = (t: string) => (LANE_TAGS as readonly string[]).includes(t);
+
+  for (const abs of walkCollectableSpecs(root)) {
+    const rel = path.relative(root, abs).split(path.sep).join("/");
+    const tests = parseDeclaredTests(abs, fs.readFileSync(abs, "utf-8"));
+    if (tests.some((t) => t.unparseableTags)) unparseable.push(rel);
+    const stable = tests.filter((t) => t.stable);
+    if (stable.length === 0) continue;
+    if (stable.some((t) => !t.tags.some(isLane))) files.push(rel);
+    else laneOnly.push(rel);
+  }
+  const sort = (a: string, b: string) => a.localeCompare(b);
+  return {
+    root,
+    files: files.sort(sort),
+    laneOnly: laneOnly.sort(sort),
+    unparseable: unparseable.sort(sort),
+  };
+}

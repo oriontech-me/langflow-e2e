@@ -9,7 +9,9 @@ import {
   stableFilesFromReport,
   buildShards,
   classifyDurations,
+  compareListing,
   refreshDurations,
+  renderListingVerdict,
   weighting,
   UNKNOWN_QUANTILE,
 } from "./partition-shards.mjs";
@@ -547,4 +549,275 @@ test("the refresh runs on a manual dispatch too, while only the COMMIT is schedu
     /github\.event_name\s*==\s*'schedule'/,
     "the commit back to main MUST stay schedule-only",
   );
+});
+
+// ---- #1812: the listing-completeness detector --------------------------------
+//
+// The daily shards by FILE, so the `--list` this partition is built from decides
+// which files exist at all. A spec whose tests are generated at COLLECTION time
+// from something the environment did not supply collects zero tests, leaves the
+// partition and is handed to no shard — not skipped, not red, ABSENT (#1764).
+// These tests are about the two things the detector must never do: miss a lost
+// file, and report agreement it did not establish.
+
+const listingOf = (files, root = "/repo/tests") => ({ files, root });
+const declaredOf = (files, root = "/repo/tests", extra = {}) => ({ root, files, ...extra });
+
+test("compareListing reports an exact match with no missing and no listed-only", () => {
+  const v = compareListing(listingOf(["a.spec.ts", "b.spec.ts"]), declaredOf(["b.spec.ts", "a.spec.ts"]));
+  assert.equal(v.verified, true);
+  assert.deepEqual(v.missing, []);
+  assert.deepEqual(v.unexpected, []);
+  assert.equal(v.declaredCount, 2);
+  assert.equal(v.listedCount, 2);
+});
+
+test("compareListing NAMES a declared file the listing does not contain", () => {
+  // #1764's exact shape: the file is on disk, carries @stable, and no shard got it.
+  const v = compareListing(
+    listingOf(["a.spec.ts"]),
+    declaredOf(["a.spec.ts", "llm-agents/provider-invalid-auth-error.spec.ts"]),
+  );
+  assert.equal(v.verified, true);
+  assert.deepEqual(v.missing, ["llm-agents/provider-invalid-auth-error.spec.ts"]);
+});
+
+test("compareListing reports a listed file the declaration does not know about", () => {
+  const v = compareListing(listingOf(["a.spec.ts", "factory.spec.ts"]), declaredOf(["a.spec.ts"]));
+  assert.deepEqual(v.unexpected, ["factory.spec.ts"]);
+  assert.deepEqual(v.missing, []);
+});
+
+test("compareListing matches through each side's own root, not on the path strings", () => {
+  // A Playwright release that reported paths from the config directory instead of
+  // from testDir would otherwise make all 247 files simultaneously lost AND
+  // invented — a false red big enough to get the detector switched off.
+  const v = compareListing(
+    { files: ["tests/a.spec.ts"], root: "/repo" },
+    declaredOf(["a.spec.ts"], "/repo/tests"),
+  );
+  assert.equal(v.verified, true);
+  assert.deepEqual(v.missing, []);
+  assert.deepEqual(v.unexpected, []);
+});
+
+test("compareListing is UNVERIFIED, never agreement, when it cannot resolve its inputs", () => {
+  // Fail-closed on all four: a detector that cannot look must not read as a
+  // detector that found nothing (#1012).
+  const cases = [
+    ["no declared set", compareListing(listingOf(["a.spec.ts"]), null)],
+    ["no declared root", compareListing(listingOf(["a.spec.ts"]), { files: ["a.spec.ts"] })],
+    ["no declared file list", compareListing(listingOf(["a.spec.ts"]), { root: "/repo/tests" })],
+    ["no listing root", compareListing({ files: ["a.spec.ts"], root: undefined }, declaredOf(["a.spec.ts"]))],
+  ];
+  for (const [why, v] of cases) {
+    assert.equal(v.verified, false, why);
+    assert.ok(v.reason.length > 0, `${why}: an unverified verdict must say why`);
+    // And it must not smuggle a finding out of an input it could not read.
+    assert.deepEqual(v.missing, [], why);
+    assert.deepEqual(v.unexpected, [], why);
+  }
+});
+
+test("compareListing carries the declaration's laneOnly and unparseable notes through", () => {
+  const v = compareListing(
+    listingOf(["a.spec.ts"]),
+    declaredOf(["a.spec.ts"], "/repo/tests", { laneOnly: ["ent.spec.ts"], unparseable: ["u.spec.ts"] }),
+  );
+  assert.deepEqual(v.laneOnly, ["ent.spec.ts"]);
+  assert.deepEqual(v.unparseable, ["u.spec.ts"]);
+});
+
+test("renderListingVerdict names every missing file and warns", () => {
+  const { lines, warnings } = renderListingVerdict(
+    compareListing(listingOf(["a.spec.ts"]), declaredOf(["a.spec.ts", "lost.spec.ts"])),
+  );
+  const text = lines.join("\n");
+  assert.match(text, /1 missing/);
+  assert.match(text, /lost\.spec\.ts/);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^::warning::/);
+  assert.match(warnings[0], /lost\.spec\.ts/);
+});
+
+test("renderListingVerdict says UNVERIFIED and never renders it as a match", () => {
+  const { lines, warnings } = renderListingVerdict(compareListing(listingOf(["a.spec.ts"]), null));
+  const text = lines.join("\n");
+  assert.match(text, /UNVERIFIED/);
+  assert.doesNotMatch(text, /exact match/);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^::warning::/);
+});
+
+test("renderListingVerdict still says UNVERIFIED when nobody asked, but does not warn", () => {
+  // Same split the durations table already makes: a caller that ASKED and got
+  // nothing is a different event from a caller that never asked. The verdict is
+  // unchanged — the daily's gate reads it fail-closed either way — so what this
+  // buys is only that a caller which does not run the check is not warned on
+  // every invocation, which is how `mode=count` became unreadable (#1252).
+  const { lines, warnings } = renderListingVerdict(
+    compareListing(listingOf(["a.spec.ts"]), null),
+    /* asked */ false,
+  );
+  assert.match(lines.join("\n"), /UNVERIFIED/);
+  assert.deepEqual(warnings, []);
+});
+
+test("renderListingVerdict does not warn at all on an exact match", () => {
+  const { lines, warnings } = renderListingVerdict(
+    compareListing(listingOf(["a.spec.ts"]), declaredOf(["a.spec.ts"])),
+  );
+  assert.deepEqual(warnings, []);
+  assert.match(lines.join("\n"), /exact match/);
+});
+
+test("renderListingVerdict warns about listed-only files WITHOUT calling them a loss", () => {
+  const { lines, warnings } = renderListingVerdict(
+    compareListing(listingOf(["a.spec.ts", "factory.spec.ts"]), declaredOf(["a.spec.ts"])),
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /No coverage is lost/);
+  // But it must say the missing list is then only a lower bound: a file the
+  // predicate cannot see is a file whose later disappearance it cannot report.
+  assert.match(lines.join("\n"), /lower bound/);
+});
+
+test("renderListingVerdict caps the named files at 30 and says how many it elided", () => {
+  const lost = Array.from({ length: 42 }, (_, i) => `lost-${String(i).padStart(2, "0")}.spec.ts`);
+  const { lines } = renderListingVerdict(compareListing(listingOf([]), declaredOf(lost)));
+  const text = lines.join("\n");
+  assert.match(text, /lost-00\.spec\.ts/);
+  assert.doesNotMatch(text, /lost-41\.spec\.ts/);
+  assert.match(text, /and 12 more not listed here/);
+});
+
+test("matrix emits a listing verdict on stdout and prints it, with --declared", () => {
+  const dir = makeTempDir("partition-listing-");
+  const listPath = path.join(dir, "list.json");
+  const declaredPath = path.join(dir, "declared.json");
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [
+        { file: "a.spec.ts", specs: [{ tags: ["stable"], tests: [{ results: [] }] }] },
+      ],
+    }),
+  );
+  fs.writeFileSync(
+    declaredPath,
+    JSON.stringify({ version: 1, root: "/repo/tests", files: ["a.spec.ts", "gone.spec.ts"] }),
+  );
+  const r = spawnSync(process.execPath, [CLI, "matrix", listPath, "-", "2", "--declared", declaredPath], {
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.listing.verified, true);
+  assert.deepEqual(out.listing.missing, ["gone.spec.ts"]);
+  assert.match(r.stderr, /::warning::.*gone\.spec\.ts/);
+  // The partition itself is unaffected: a file the listing never produced cannot
+  // be handed to a shard, and inventing one here would fail the shard command.
+  assert.equal(out.include.map((s) => s.files).join(" ").includes("gone.spec.ts"), false);
+});
+
+test("matrix reports UNVERIFIED rather than dying when the declared file is unreadable", () => {
+  // The load-bearing half of the placement: this step's product is the shard
+  // matrix, so a detector able to abort `prep` would cost the whole day it was
+  // added to protect.
+  const dir = makeTempDir("partition-listing-bad-");
+  const listPath = path.join(dir, "list.json");
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [{ file: "a.spec.ts", specs: [{ tags: ["stable"], tests: [{ results: [] }] }] }],
+    }),
+  );
+  const r = spawnSync(
+    process.execPath,
+    [CLI, "matrix", listPath, "-", "2", "--declared", path.join(dir, "absent.json")],
+    { encoding: "utf8" },
+  );
+  assert.equal(r.status, 0, "an unreadable declaration must not abort the matrix");
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.listing.verified, false);
+  assert.match(out.listing.reason, /could not be read/);
+  assert.equal(out.include.length, 2, "the partition is still produced");
+});
+
+test("matrix without --declared still emits a listing block, and it is UNVERIFIED", () => {
+  // An absent block would make the daily's `listing_verified` output empty, which
+  // the merge job's gate reads fail-closed — but only as long as the field exists
+  // to be read. Emitting it unconditionally is what makes the absence meaningful.
+  const dir = makeTempDir("partition-listing-none-");
+  const listPath = path.join(dir, "list.json");
+  fs.writeFileSync(
+    listPath,
+    JSON.stringify({
+      config: { rootDir: "/repo/tests" },
+      suites: [{ file: "a.spec.ts", specs: [{ tags: ["stable"], tests: [{ results: [] }] }] }],
+    }),
+  );
+  const r = spawnSync(process.execPath, [CLI, "matrix", listPath, "-", "2"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).listing.verified, false);
+});
+
+test("matrix refuses --declared with no value instead of silently skipping the check", () => {
+  const dir = makeTempDir("partition-listing-usage-");
+  const listPath = path.join(dir, "list.json");
+  fs.writeFileSync(listPath, JSON.stringify({ config: { rootDir: "/r" }, suites: [] }));
+  const r = spawnSync(process.execPath, [CLI, "matrix", listPath, "-", "2", "--declared"], {
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /usage:/);
+});
+
+// ---- #1812: the daily's wiring ----------------------------------------------
+//
+// Structural, and deliberately narrow. A regex over workflow text cannot prove
+// the gate behaves (#1226 — every such guard here was shown to pass its own
+// mutation); what it CAN prove is that the two ends are still connected, which is
+// the failure mode a detector added to one job and read by another actually has.
+
+const DAILY = fs.readFileSync(
+  path.join(import.meta.dirname, "..", ".github", "workflows", "daily-stable.yml"),
+  "utf8",
+);
+
+test("the daily derives the declared spec set and passes it to the matrix", () => {
+  assert.match(DAILY, /scripts\/declared-stable-specs\.ts > \/tmp\/declared-specs\.json/);
+  assert.match(DAILY, /partition-shards\.mjs matrix .*--declared \/tmp\/declared-specs\.json/);
+});
+
+test("deriving the declared set cannot abort the prep job", () => {
+  // `prep`'s product is the matrix. A detector that kills it loses 247 files to
+  // report one — the trade #980 names, and the one #1813 already settled for the
+  // sibling reporter in this same step.
+  const step = DAILY.slice(
+    DAILY.indexOf("name: Compute duration-balanced shard matrix"),
+    DAILY.indexOf("name: \"Shard ${{ matrix.shard }}"),
+  );
+  assert.match(step, /if ! npx ts-node scripts\/declared-stable-specs\.ts/);
+  assert.match(step, /::warning::could not derive the declared @stable spec set/);
+});
+
+test("prep publishes the listing verdict and the merge job's final gate reads it fail-closed", () => {
+  assert.match(DAILY, /listing_verified: \$\{\{ steps\.mk\.outputs\.listing_verified \}\}/);
+  assert.match(DAILY, /listing_missing: \$\{\{ steps\.mk\.outputs\.listing_missing \}\}/);
+  const gate = DAILY.slice(DAILY.indexOf("- name: Fail scheduled run on an incomplete"));
+  // `!= 'true'`, never `== 'false'`: an unset output means the derivation never
+  // ran, and an unknown verdict must fail rather than read as agreement.
+  assert.match(gate, /needs\.prep\.outputs\.listing_verified != 'true'/);
+  assert.match(gate, /needs\.prep\.outputs\.listing_missing != '\[\]'/);
+});
+
+test("the listing gate does not fire on listed-only files", () => {
+  // A listed-but-undeclared file is coverage the run HAS. Failing the day for it
+  // inverts the trade this check exists to make.
+  const gate = DAILY.slice(DAILY.indexOf("- name: Fail scheduled run on an incomplete"));
+  const condition = gate.slice(gate.indexOf("if:"), gate.indexOf("env:"));
+  assert.doesNotMatch(condition, /listing_unexpected/);
 });

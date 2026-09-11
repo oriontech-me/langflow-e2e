@@ -13,10 +13,15 @@
 // negative cases below are the load-bearing ones.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "fs";
 import * as path from "path";
 import {
   LANE_TAGS,
   REGRESSION_ROOT,
+  REPO_ROOT,
+  SPEC_FILE_PATTERN,
+  STABLE_TAG,
+  declaredStableSpecFiles,
   collectDeclaredCounts,
   collectDeclaredTests,
   collectStableTests,
@@ -24,6 +29,7 @@ import {
   parseDeclaredTests,
   parseStableTests,
 } from "./stable-tests";
+import { makeTempDir } from "./tmp-dir.mjs";
 
 // A path under REGRESSION_ROOT — it never has to exist, `parseStableTests`
 // only uses it to derive modulePath / specFile / relativePath.
@@ -476,4 +482,205 @@ test('modifier is "skip" on the declaring form of test.skip', () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].modifier, "skip");
   assert.equal(out[0].fixme, true);
+});
+
+// ─── declaredStableSpecFiles — what the shard matrix expects to be listed (#1812) ──
+
+/**
+ * Build a throwaway `tests/`-shaped tree and read it back.
+ *
+ * The filesystem is the point here: the function's whole job is to reproduce
+ * the file set Playwright collects, so a test that stubs the walk would pin the
+ * predicate and miss the half that has to agree with `testMatch`.
+ */
+function withTree(
+  files: Record<string, string>,
+  run: (root: string) => void,
+): void {
+  const root = makeTempDir("declared-specs-");
+  for (const [rel, text] of Object.entries(files)) {
+    const abs = path.join(root, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, text);
+  }
+  run(root);
+  // `makeTempDir` removes itself on process exit (#1732); dropping it here too
+  // keeps a tree out of the way of the next case, which walks a fresh root.
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+const stableTest = (title: string, ...tags: string[]) =>
+  `test("${title}", { tag: [${[STABLE_TAG, ...tags].map((t) => `"${t}"`).join(", ")}] }, async () => {});`;
+
+test("declaredStableSpecFiles reports a file with one @stable test, relative to the root", () => {
+  withTree(
+    {
+      "tests-automations/regression/core-components/a.spec.ts": stableTest("a"),
+      "fixtures/gate.spec.ts": stableTest("b"),
+      "tests-automations/regression/core-components/plain.spec.ts":
+        'test("c", { tag: ["@regression"] }, async () => {});',
+    },
+    (root) => {
+      const d = declaredStableSpecFiles(root);
+      assert.deepEqual(d.files, [
+        "fixtures/gate.spec.ts",
+        "tests-automations/regression/core-components/a.spec.ts",
+      ]);
+      assert.equal(d.root, root);
+      assert.deepEqual(d.laneOnly, []);
+      assert.deepEqual(d.unparseable, []);
+    },
+  );
+});
+
+// The measured reason the scope is `tests/` and not `tests/tests-automations/`:
+// five listed files live outside the regression tree, and the narrower scope
+// reports them as phantom losses (242 against the listing's 247).
+test("declaredStableSpecFiles covers specs OUTSIDE the regression tree", () => {
+  withTree({ "collect-models.spec.ts": stableTest("sweep") }, (root) => {
+    assert.deepEqual(declaredStableSpecFiles(root).files, ["collect-models.spec.ts"]);
+  });
+});
+
+test("declaredStableSpecFiles honours an @stable inherited from test.describe", () => {
+  withTree(
+    {
+      "d.spec.ts": `
+        test.describe("suite", { tag: ["${STABLE_TAG}"] }, () => {
+          test("inherits", async () => {});
+        });
+      `,
+    },
+    (root) => {
+      // Playwright's --grep honours the inherited tag, so the daily really does
+      // run this file. Reading it as undeclared would report the file as
+      // listed-only on every run.
+      assert.deepEqual(declaredStableSpecFiles(root).files, ["d.spec.ts"]);
+    },
+  );
+});
+
+test("declaredStableSpecFiles excludes a file whose every @stable test is lane-tagged, and names it", () => {
+  for (const lane of LANE_TAGS) {
+    withTree({ "lane.spec.ts": stableTest("x", lane) }, (root) => {
+      const d = declaredStableSpecFiles(root);
+      // `config.grepInvert` removes these from every normal listing, so counting
+      // them would report a permanent phantom loss. CLAUDE.md forbids the
+      // combination (#1010), which is why it is reported rather than dropped.
+      assert.deepEqual(d.files, []);
+      assert.deepEqual(d.laneOnly, ["lane.spec.ts"]);
+    });
+  }
+});
+
+test("declaredStableSpecFiles keeps a file that has a lane-tagged @stable test AND a normal one", () => {
+  withTree(
+    {
+      "mixed.spec.ts": `
+        ${stableTest("destructive one", "@destructive")}
+        ${stableTest("normal one")}
+      `,
+    },
+    (root) => {
+      const d = declaredStableSpecFiles(root);
+      assert.deepEqual(d.files, ["mixed.spec.ts"]);
+      assert.deepEqual(d.laneOnly, []);
+    },
+  );
+});
+
+test("declaredStableSpecFiles counts a test.fixme / declaring test.skip as declared", () => {
+  // Playwright's `--list` reports a fixme'd test, so the file IS in the listing.
+  // Treating it as undeclared would make the file permanently listed-only.
+  withTree(
+    {
+      "f.spec.ts": `test.fixme("quarantined", { tag: ["${STABLE_TAG}"] }, async () => {});`,
+    },
+    (root) => {
+      assert.deepEqual(declaredStableSpecFiles(root).files, ["f.spec.ts"]);
+    },
+  );
+});
+
+test("declaredStableSpecFiles collects the same extensions playwright.config.ts testMatch does", () => {
+  withTree(
+    {
+      "a.spec.ts": stableTest("ts"),
+      "b.spec.mts": stableTest("mts"),
+      "c.spec.cjs": stableTest("cjs"),
+      "d.spec.js": stableTest("js"),
+      // Not a spec: the unit lane's own files, which `testMatch` deliberately drops.
+      "e.test.ts": stableTest("unit"),
+      "f.ts": stableTest("plain"),
+    },
+    (root) => {
+      assert.deepEqual(declaredStableSpecFiles(root).files, [
+        "a.spec.ts",
+        "b.spec.mts",
+        "c.spec.cjs",
+        "d.spec.js",
+      ]);
+    },
+  );
+});
+
+test("SPEC_FILE_PATTERN is the same predicate playwright.config.ts declares", () => {
+  // Not a spelling check: a divergence here makes a legitimately collected file
+  // read as one the listing invented, which is the noise that gets a detector
+  // switched off.
+  const config = fs.readFileSync(path.join(REPO_ROOT, "playwright.config.ts"), "utf-8");
+  const m = config.match(/testMatch:\s*(\/[^\n,]+\/)/);
+  assert.ok(m, "playwright.config.ts no longer declares testMatch as a RegExp literal");
+  assert.equal(m![1], SPEC_FILE_PATTERN.toString());
+});
+
+test("declaredStableSpecFiles reports a file whose tag array it cannot read", () => {
+  withTree(
+    {
+      "u.spec.ts": `
+        const TAGS = ["${STABLE_TAG}"];
+        test("indirect", { tag: TAGS }, async () => {});
+      `,
+    },
+    (root) => {
+      const d = declaredStableSpecFiles(root);
+      // UNKNOWN, not absent: the file may well be listed, and saying so is what
+      // keeps a listed-only report attributable instead of mysterious (#1012).
+      assert.deepEqual(d.files, []);
+      assert.deepEqual(d.unparseable, ["u.spec.ts"]);
+    },
+  );
+});
+
+test("declaredStableSpecFiles ignores @stable written in prose", () => {
+  withTree(
+    {
+      "p.spec.ts": `
+        // @stable removed by daily triage #704 — restore once #705 lands.
+        /** Promoted to @stable on 2026-01-01. */
+        // test("old", { tag: ["@stable"] }, async () => {});
+        test("live", { tag: ["@regression"] }, async () => {});
+      `,
+    },
+    (root) => {
+      assert.deepEqual(declaredStableSpecFiles(root).files, []);
+    },
+  );
+});
+
+test("declaredStableSpecFiles agrees with collectStableTests on the real regression tree", () => {
+  // Two parsers over one tree: the Phase 0 collector lists @stable TESTS under
+  // `regression/`, this one lists FILES under `tests/`. Restricted to the
+  // regression tree the file sets must be identical — a divergence means one of
+  // them has drifted, and the daily's matrix reads this one.
+  const fromFiles = new Set(
+    declaredStableSpecFiles()
+      .files.filter((f) => f.startsWith("tests-automations/regression/"))
+      .map((f) => f.replace("tests-automations/regression/", "")),
+  );
+  const fromTests = new Set(collectStableTests().tests.map((t) => t.relativePath));
+  // `fromFiles` may legitimately be the larger of the two — it counts a
+  // describe-inherited or fixme'd @stable that the Phase 0 parser reports as a
+  // warning rather than a test — so the direction that must hold is this one.
+  for (const f of fromTests) assert.ok(fromFiles.has(f), `${f} is @stable but not declared`);
 });
