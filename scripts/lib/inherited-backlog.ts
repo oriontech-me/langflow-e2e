@@ -303,7 +303,11 @@ export function assertNoWarnings(tests: readonly DeclaredTest[]): void {
   if (unparseable.length === 0) return;
   for (const t of unparseable) {
     console.error(
-      `  • ${t.relativePath}:${t.line} — \`tag\` option is not an inline array of string literals`,
+      // "or an enclosing `test.describe`": since #1812 the flag is INHERITED, so
+      // the line below is the test's, not necessarily the unreadable option's —
+      // a describe three lines up is the likelier culprit. Saying "this line's
+      // tag option" would be false for exactly the case the inheritance added.
+      `  • ${t.relativePath}:${t.line} — its own \`tag\` option, or that of an enclosing \`test.describe\`, is not a string or an inline array of string literals`,
     );
   }
   throw new Error(

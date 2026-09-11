@@ -1030,11 +1030,11 @@ test("the daily's umbrella step fires on the listing axis too", () => {
 });
 
 test("compareListing flags the MISSING files whose titles it could not evaluate", () => {
-  // A `test.describe` title built from a template substitution is greppable at
-  // run time and opaque to the declaration, so a lane tag arriving through one
-  // looks exactly like a lost file. Reported, never subtracted: 19 of this
-  // suite's files have such a title, almost all of them the provider-
-  // parametrized specs — #1764's own family.
+  // A title built from a template substitution — on the test or on an enclosing
+  // `test.describe` — is greppable at run time and opaque to the declaration, so
+  // a lane tag arriving through one looks exactly like a lost file. Reported,
+  // never subtracted: 19 of this suite's files carry such a title, almost all of
+  // them the provider-parametrized specs — #1764's own family.
   const v = compareListing(
     listingOf(["a.spec.ts"]),
     declaredOf(["a.spec.ts", "param.spec.ts", "plain.spec.ts"], "/repo/tests", {
@@ -1045,7 +1045,14 @@ test("compareListing flags the MISSING files whose titles it could not evaluate"
   // Only the intersection: a file that was listed carries no doubt.
   assert.deepEqual(v.unresolvedMissing, ["param.spec.ts"]);
   const { lines } = renderListingVerdict(v);
-  assert.match(lines.join("\n"), /cannot evaluate \(a template substitution\)/);
+  const text = lines.join("\n");
+  assert.match(text, /carry a title this check cannot evaluate/);
+  assert.match(text, /template substitution/);
+  // Never worded over a construct the file may not contain: one real file in
+  // `unresolvedTitles` has no `test.describe` at all, its interpolation being in
+  // the TEST title, so naming a describe would send the reader looking for
+  // something that is not there.
+  assert.doesNotMatch(text, /carry a `test\.describe` title/);
   assert.match(lines.join("\n"), /param\.spec\.ts/);
 });
 

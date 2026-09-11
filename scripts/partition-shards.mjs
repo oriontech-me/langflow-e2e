@@ -454,15 +454,16 @@ export function compareListing(listing, declared) {
     .map(([, f]) => f)
     .sort();
 
-  // Which of the MISSING files the declaration could not fully evaluate. A
-  // `test.describe` title built from a template substitution is greppable at run
-  // time and opaque here, so a lane tag arriving through one would look exactly
-  // like a lost file — the intersection is where that doubt applies, and naming
-  // it is what keeps a rare false red attributable in one line instead of
-  // mysterious (#1012). Reported, never subtracted: 19 of this suite's files
-  // have such a title, almost all of them the provider-parametrized specs —
-  // #1764's own family — so excusing them would blind the check where it matters
-  // most.
+  // Which of the MISSING files the declaration could not fully evaluate. A title
+  // built from a template substitution — on the test or on an enclosing
+  // `test.describe`; both reach Playwright's grep string, and one real file here
+  // has the first with no describe at all — is greppable at run time and opaque
+  // here, so a lane tag arriving through one would look exactly like a lost file.
+  // The intersection is where that doubt applies, and naming it is what keeps a
+  // rare false red attributable in one line instead of mysterious (#1012).
+  // Reported, never subtracted: 19 of this suite's files carry such a title,
+  // almost all of them the provider-parametrized specs — #1764's own family — so
+  // excusing them would blind the check where it matters most.
   const unresolved = new Set(
     Array.isArray(declared.unresolvedTitles) ? declared.unresolvedTitles : [],
   );
@@ -543,9 +544,10 @@ export function renderListingVerdict(v, asked = true) {
     lines.push(`  MISSING from the listing — declared on disk, handed to no shard:`, ...list(v.missing));
     if (v.unresolvedMissing?.length)
       lines.push(
-        `  of those, ${v.unresolvedMissing.length} carry a \`test.describe\` title this ` +
-          `check cannot evaluate (a template substitution), so a lane tag arriving through ` +
-          `the interpolation would look identical to a lost file — rule that out first:`,
+        `  of those, ${v.unresolvedMissing.length} carry a title this check cannot evaluate ` +
+          `— a template substitution, on the test or on an enclosing \`test.describe\` — so a ` +
+          `lane tag arriving through the interpolation would look identical to a lost file. ` +
+          `Rule that out first:`,
         ...list(v.unresolvedMissing),
       );
     warnings.push(

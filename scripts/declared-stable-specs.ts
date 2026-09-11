@@ -56,7 +56,7 @@ function main(): number {
           ? `; ${declared.unparseable.length} carry an unreadable tag option (${declared.unparseable.join(", ")})`
           : "") +
         (declared.unresolvedTitles.length
-          ? `; ${declared.unresolvedTitles.length} carry a suite title this check cannot evaluate`
+          ? `; ${declared.unresolvedTitles.length} carry a title this check cannot evaluate`
           : "") +
         "\n",
     );

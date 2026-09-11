@@ -92,6 +92,25 @@ function literalText(node: ts.Node): string | null {
   return null;
 }
 
+/**
+ * A TAG's literal text, or `null` when the value is not statically known.
+ *
+ * Deliberately stricter than `literalText`, which renders a template with
+ * substitutions as its SOURCE (`"@${T}"`) — right for a title, where Phase 0
+ * publishes the placeholder on purpose, and wrong for a tag, where it produces
+ * a string the parser knows is not the runtime value and hands it back as if
+ * it were read successfully. That defused three fail-closed guards at once
+ * (`check-checklist-coverage`, `stable-tests --check`, `assertNoWarnings`), so
+ * `` tag: `@${T}` `` went from a loud refusal to silence — the "runs in the
+ * daily, invisible to the generator" gap those guards exist for. UNKNOWN here
+ * means unparseable, which is the fail-closed direction (#1812).
+ */
+function literalTagText(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node)) return node.text;
+  if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
 interface TagReadResult {
   /** Tags extracted from the inline array literal, or null if no `tag` property was found. */
   tags: string[] | null;
@@ -118,14 +137,14 @@ function readTagsArray(node: ts.Node): TagReadResult {
     // while the runner excluded the file: a false `missing` and a red daily
     // (#1812). Zero occurrences in this suite today, which is why widening it
     // changes no count anywhere.
-    const single = literalText(init);
+    const single = literalTagText(init);
     if (single !== null) return { tags: [single], unparseable: false };
     if (!ts.isArrayLiteralExpression(init)) {
       return { tags: null, unparseable: true };
     }
     const tags: string[] = [];
     for (const el of init.elements) {
-      const t = literalText(el);
+      const t = literalTagText(el);
       if (t !== null) tags.push(t);
       else {
         // Non-literal element (spread, identifier, etc.) — treat as unparseable
@@ -194,9 +213,10 @@ function parseStableTestsInFile(
         );
         if (unparseable) {
           warnings.push(
-            `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string literals; ` +
-              "the script cannot determine if this test is `@stable`. Inline the array " +
-              '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0.',
+            `${relativePath}:${line + 1} — \`tag\` option is not a string or an inline array of ` +
+              "string literals; the script cannot determine if this test is `@stable`. Inline it " +
+              '(e.g. `tag: ["@stable", ...]`) so it shows up in Phase 0 — a template ' +
+              "substitution counts as unreadable, because the runtime value is what Playwright greps.",
           );
         }
         if (title !== null && tags && tags.includes(STABLE_TAG)) {
@@ -448,8 +468,11 @@ export const UNRESOLVED_TITLE = "\u27e8unresolved\u27e9";
  * Two shapes, because `literalText` renders them differently and both are real
  * in this suite: a `test.describe` title the parser cannot read at all becomes
  * `UNRESOLVED_TITLE`, while a template with substitutions comes back with its
- * `${expr}` source text in place of the value — 20 describe titles here are that
- * second form, almost all of them the provider-parametrized specs.
+ * `${expr}` source text in place of the value. The string covers the test's own
+ * title as well as its suites', so both are checked — 20 files here have an
+ * interpolated DESCRIBE title and 19 have an `@stable` test with an unresolved
+ * segment anywhere; the two sets are near-identical and are not the same set,
+ * which is why the report is worded over "a title" rather than over a construct.
  */
 export function hasUnresolvedTitleSegment(grepTitle: string): boolean {
   return grepTitle.includes(UNRESOLVED_TITLE) || grepTitle.includes("${");
@@ -645,11 +668,17 @@ export interface DeclaredStableSpecs {
   unparseable: string[];
   /**
    * Files with an `@stable` test whose grep string this parser cannot fully
-   * evaluate — a `test.describe` title built from a template substitution or an
-   * identifier. They ARE counted in `files`, deliberately: 20 describe titles in
-   * this suite are interpolated, most of them the provider-parametrized specs —
-   * #1764's own family — and dropping them would blind the detector on exactly
-   * the specs it exists for.
+   * evaluate — a TITLE built from a template substitution or from an
+   * identifier, on the test itself or on any enclosing `test.describe`. Both
+   * halves matter and the first draft said only "describe": the grep string
+   * carries the test's own title too, and `file-types-upload.spec.ts` is in
+   * here with no `test.describe` in it at all, so a report naming a describe
+   * would send the reader looking for a construct the file does not have.
+   *
+   * They ARE counted in `files`, deliberately: 19 of this suite's declared
+   * files land here, most of them the provider-parametrized specs — #1764's own
+   * family — and dropping them would blind the detector on exactly the specs it
+   * exists for.
    *
    * What the unknown costs is one direction of certainty: if such a file turns
    * up as MISSING, the cause may be a lane tag arriving through the

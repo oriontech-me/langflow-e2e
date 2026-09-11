@@ -122,7 +122,7 @@ test("warns (and does not count) when the tag array holds a non-literal element"
   `);
   assert.deepEqual(tests, []);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /not an inline array of string literals/);
+  assert.match(warnings[0], /not a string or an inline array of string literals/);
 });
 
 test("counts Playwright's documented `tag: string` form", () => {
@@ -150,7 +150,7 @@ test("still warns when tag is neither a string nor an inline array of literals",
   `);
   assert.deepEqual(tests, []);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /not an inline array of string literals/);
+  assert.match(warnings[0], /not a string or an inline array of string literals/);
 });
 
 test("ignores test.skip / test.fixme even when they carry @stable", () => {
@@ -952,4 +952,82 @@ test("a plain literal title is never reported as unresolved", () => {
   withTree({ "p.spec.ts": stableTest("ordinary title") }, (root) => {
     assert.deepEqual(declaredStableSpecFiles(root).unresolvedTitles, []);
   });
+});
+
+// ─── #1812, round four: a tag whose runtime value is not knowable ───────────
+
+test("an interpolated tag is UNREADABLE, not a tag whose text happens to be its source", () => {
+  // `literalText` renders a template with substitutions as its SOURCE, which is
+  // right for a TITLE (Phase 0 publishes `${provider}` on purpose) and wrong for
+  // a TAG: it hands back a string the parser knows is not the runtime value,
+  // marked as successfully read. Widening the string form to use it defused
+  // three fail-closed guards at once — `check-checklist-coverage`,
+  // `stable-tests --check` and `assertNoWarnings` all went from refusing
+  // `` tag: `@${T}` `` to silence — which is the "runs in the daily, invisible
+  // to the generator" gap those guards exist for.
+  for (const form of ["`@${T}`", "[`@${T}`]"]) {
+    const { tests, warnings } = parse(`
+      const T = "stable";
+      test("interpolated", { tag: ${form} }, async () => {});
+    `);
+    assert.deepEqual(tests, [], form);
+    assert.equal(warnings.length, 1, form);
+    assert.match(warnings[0], /not a string or an inline array of string literals/);
+  }
+});
+
+test("a template TITLE still keeps its placeholder — only tags are stricter", () => {
+  // The Phase 0 generator renders `${provider}` as `<provider>`, so tightening
+  // the tag reader must not tighten the title reader with it.
+  const { tests } = parse(
+    "test(`sets up ${provider}`, { tag: [\"@stable\"] }, async () => {});",
+  );
+  assert.equal(tests.length, 1);
+  assert.equal(tests[0].title, "sets up ${provider}");
+});
+
+test("an interpolated tag leaves the file UNDECIDABLE for the detector too", () => {
+  withTree(
+    {
+      "i.spec.ts": "const T = \"destructive\";\ntest(\"x\", { tag: [`@${T}`] }, async () => {});",
+    },
+    (root) => {
+      const d = declaredStableSpecFiles(root);
+      assert.deepEqual(d.files, []);
+      assert.deepEqual(d.unparseable, ["i.spec.ts"]);
+    },
+  );
+});
+
+test("unresolvedTitles covers the TEST's own title, not only a suite's", () => {
+  // One real file is in this bucket with no `test.describe` in it at all
+  // (`file-types-upload.spec.ts`), so a report worded over a describe would send
+  // the reader looking for a construct the file does not contain.
+  withTree(
+    {
+      "t.spec.ts": "const ext = \"pdf\";\ntest(`upload a ${ext} file`, { tag: [\"@stable\"] }, async () => {});",
+    },
+    (root) => {
+      const d = declaredStableSpecFiles(root);
+      assert.deepEqual(d.files, ["t.spec.ts"]);
+      assert.deepEqual(d.unresolvedTitles, ["t.spec.ts"]);
+    },
+  );
+});
+
+test("an inherited unreadable tag is reported without blaming the child's own line", () => {
+  // The flag travels down since #1812, so the row's line is the TEST's while the
+  // unreadable option may be on a describe several lines above it.
+  const tests = parseDeclaredTests(
+    path.join(REGRESSION_ROOT, "x.spec.ts"),
+    `
+      const LANE = ["@destructive"];
+      test.describe("suite", { tag: LANE }, () => {
+        test("child", { tag: ["@regression"] }, async () => {});
+      });
+    `,
+  );
+  assert.equal(tests.length, 1);
+  assert.equal(tests[0].unparseableTags, true);
+  assert.equal(tests[0].line, 4, "the row still cites the test, which is why the wording must not");
 });
