@@ -53,7 +53,10 @@ function main(): number {
           ? `; ${declared.laneOnly.length} excluded as lane-only (${declared.laneOnly.join(", ")})`
           : "") +
         (declared.unparseable.length
-          ? `; ${declared.unparseable.length} carry an unreadable tag array (${declared.unparseable.join(", ")})`
+          ? `; ${declared.unparseable.length} carry an unreadable tag option (${declared.unparseable.join(", ")})`
+          : "") +
+        (declared.unresolvedTitles.length
+          ? `; ${declared.unresolvedTitles.length} carry a suite title this check cannot evaluate`
           : "") +
         "\n",
     );

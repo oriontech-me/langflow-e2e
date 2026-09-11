@@ -1028,3 +1028,41 @@ test("the daily's umbrella step fires on the listing axis too", () => {
   assert.match(step, /LISTING_VERIFIED: \$\{\{ needs\.prep\.outputs\.listing_verified \}\}/);
   assert.match(step, /LISTING_MISSING: \$\{\{ needs\.prep\.outputs\.listing_missing \}\}/);
 });
+
+test("compareListing flags the MISSING files whose titles it could not evaluate", () => {
+  // A `test.describe` title built from a template substitution is greppable at
+  // run time and opaque to the declaration, so a lane tag arriving through one
+  // looks exactly like a lost file. Reported, never subtracted: 19 of this
+  // suite's files have such a title, almost all of them the provider-
+  // parametrized specs — #1764's own family.
+  const v = compareListing(
+    listingOf(["a.spec.ts"]),
+    declaredOf(["a.spec.ts", "param.spec.ts", "plain.spec.ts"], "/repo/tests", {
+      unresolvedTitles: ["param.spec.ts", "listed-anyway.spec.ts"],
+    }),
+  );
+  assert.deepEqual(v.missing, ["param.spec.ts", "plain.spec.ts"]);
+  // Only the intersection: a file that was listed carries no doubt.
+  assert.deepEqual(v.unresolvedMissing, ["param.spec.ts"]);
+  const { lines } = renderListingVerdict(v);
+  assert.match(lines.join("\n"), /cannot evaluate \(a template substitution\)/);
+  assert.match(lines.join("\n"), /param\.spec\.ts/);
+});
+
+test("renderListingVerdict says nothing about unresolved titles when none are missing", () => {
+  const { lines } = renderListingVerdict(
+    compareListing(
+      listingOf(["a.spec.ts"]),
+      declaredOf(["a.spec.ts", "gone.spec.ts"], "/repo/tests", {
+        unresolvedTitles: ["a.spec.ts"],
+      }),
+    ),
+  );
+  assert.match(lines.join("\n"), /gone\.spec\.ts/);
+  assert.doesNotMatch(lines.join("\n"), /template substitution/);
+});
+
+test("an unverified verdict carries no unresolvedMissing either", () => {
+  const v = compareListing(listingOf(["a.spec.ts"]), null);
+  assert.deepEqual(v.unresolvedMissing, []);
+});

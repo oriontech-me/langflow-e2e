@@ -382,8 +382,8 @@ export function buildShards(files, durations, n) {
  * found nothing (#1012).
  *
  * @param {{files: string[], root: string|undefined}} listing
- * @param {{root?: string, files?: string[], laneOnly?: string[], unparseable?: string[]}|null} declared
- * @returns {{verified: boolean, reason: string, missing: string[], unexpected: string[], declaredCount: number, listedCount: number, laneOnly: string[], unparseable: string[]}}
+ * @param {{root?: string, files?: string[], laneOnly?: string[], unparseable?: string[], unresolvedTitles?: string[]}|null} declared
+ * @returns {{verified: boolean, reason: string, missing: string[], unexpected: string[], declaredCount: number, listedCount: number, laneOnly: string[], unparseable: string[], unresolvedMissing: string[]}}
  */
 export function compareListing(listing, declared) {
   const listedCount = listing.files.length;
@@ -396,6 +396,7 @@ export function compareListing(listing, declared) {
     listedCount,
     laneOnly: [],
     unparseable: [],
+    unresolvedMissing: [],
   });
 
   if (!declared) return unverified("no declared-spec set was passed");
@@ -453,6 +454,18 @@ export function compareListing(listing, declared) {
     .map(([, f]) => f)
     .sort();
 
+  // Which of the MISSING files the declaration could not fully evaluate. A
+  // `test.describe` title built from a template substitution is greppable at run
+  // time and opaque here, so a lane tag arriving through one would look exactly
+  // like a lost file — the intersection is where that doubt applies, and naming
+  // it is what keeps a rare false red attributable in one line instead of
+  // mysterious (#1012). Reported, never subtracted: 19 of this suite's files
+  // have such a title, almost all of them the provider-parametrized specs —
+  // #1764's own family — so excusing them would blind the check where it matters
+  // most.
+  const unresolved = new Set(
+    Array.isArray(declared.unresolvedTitles) ? declared.unresolvedTitles : [],
+  );
   return {
     verified: true,
     reason: "",
@@ -462,6 +475,7 @@ export function compareListing(listing, declared) {
     listedCount,
     laneOnly: Array.isArray(declared.laneOnly) ? declared.laneOnly : [],
     unparseable: Array.isArray(declared.unparseable) ? declared.unparseable : [],
+    unresolvedMissing: missing.filter((f) => unresolved.has(f)),
   };
 }
 
@@ -527,6 +541,13 @@ export function renderListingVerdict(v, asked = true) {
     );
   if (v.missing.length) {
     lines.push(`  MISSING from the listing — declared on disk, handed to no shard:`, ...list(v.missing));
+    if (v.unresolvedMissing?.length)
+      lines.push(
+        `  of those, ${v.unresolvedMissing.length} carry a \`test.describe\` title this ` +
+          `check cannot evaluate (a template substitution), so a lane tag arriving through ` +
+          `the interpolation would look identical to a lost file — rule that out first:`,
+        ...list(v.unresolvedMissing),
+      );
     warnings.push(
       `::warning::${v.missing.length} spec file(s) declare an @stable test but are ABSENT ` +
         `from this listing, so no shard will run them and nothing downstream will say so ` +

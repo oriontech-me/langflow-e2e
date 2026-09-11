@@ -112,6 +112,14 @@ function readTagsArray(node: ts.Node): TagReadResult {
       continue;
     }
     const init = prop.initializer;
+    // Playwright's `tag` option is `string | string[]`, and the string form is as
+    // real as the array one — it reaches `grepInvert` identically. Reading only
+    // the array meant `{ tag: "@destructive" }` on a describe was invisible here
+    // while the runner excluded the file: a false `missing` and a red daily
+    // (#1812). Zero occurrences in this suite today, which is why widening it
+    // changes no count anywhere.
+    const single = literalText(init);
+    if (single !== null) return { tags: [single], unparseable: false };
     if (!ts.isArrayLiteralExpression(init)) {
       return { tags: null, unparseable: true };
     }
@@ -422,6 +430,31 @@ export interface DeclaredTest {
  */
 const DECLARING_SKIP_MODIFIERS = ["fixme", "skip"] as const;
 
+/**
+ * Stands in for a suite title this parser cannot evaluate — a template
+ * substitution, an identifier, a call — inside `DeclaredTest.grepTitle`.
+ *
+ * Playwright greps the RUNTIME title, so such a segment could hold anything,
+ * a lane tag included. Omitting it silently is what turns an unknown into a
+ * confident "this file should have been listed" (#1812/#1012); the marker is
+ * chosen so it can never match a lane pattern on its own.
+ */
+export const UNRESOLVED_TITLE = "\u27e8unresolved\u27e9";
+
+/**
+ * Does this grep string contain a segment whose RUNTIME value this parser could
+ * not determine?
+ *
+ * Two shapes, because `literalText` renders them differently and both are real
+ * in this suite: a `test.describe` title the parser cannot read at all becomes
+ * `UNRESOLVED_TITLE`, while a template with substitutions comes back with its
+ * `${expr}` source text in place of the value — 20 describe titles here are that
+ * second form, almost all of them the provider-parametrized specs.
+ */
+export function hasUnresolvedTitleSegment(grepTitle: string): boolean {
+  return grepTitle.includes(UNRESOLVED_TITLE) || grepTitle.includes("${");
+}
+
 function isSkippedDeclaration(call: ts.CallExpression): boolean {
   return (
     ts.isPropertyAccessExpression(call.expression) &&
@@ -464,26 +497,42 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
     inheritedStable: boolean,
     inheritedLane: string[],
     inheritedGrep: string[],
+    inheritedUnparseable: boolean,
   ): void {
     let childrenStable = inheritedStable;
     let childrenLane = inheritedLane;
     let childrenGrep = inheritedGrep;
+    let childrenUnparseable = inheritedUnparseable;
 
     if (ts.isCallExpression(node)) {
       if (isDescribeCall(node) && node.arguments.length >= 2) {
-        const { tags } = readTagsArray(node.arguments[1]);
+        const { tags, unparseable: describeUnparseable } = readTagsArray(
+          node.arguments[1],
+        );
         if (tags?.includes(STABLE_TAG)) childrenStable = true;
         const lane = (tags ?? []).filter((t) =>
           (LANE_TAGS as readonly string[]).includes(t),
         );
         if (lane.length > 0) childrenLane = [...inheritedLane, ...lane];
+        // A suite `tag` this parser cannot read hides whatever it holds from
+        // every child, INCLUDING a lane tag — and the child is what the report
+        // is keyed on, so the unreadability has to travel down with it or the
+        // file is counted as fully understood (#1812).
+        if (describeUnparseable) childrenUnparseable = true;
         // The suite's TITLE and its WHOLE tag array, in Playwright's own order,
         // because that is what `_collectGrepTitlePath` pushes — not just the
         // lane tags `childrenLane` keeps for the reconciler.
+        //
+        // A title this parser cannot evaluate (a template substitution, an
+        // identifier) becomes an explicit marker rather than being omitted:
+        // Playwright greps the RUNTIME string, so the segment could hold
+        // anything, and a silent omission is the shape that reports a file the
+        // runner excluded as MISSING. The marker can never match a lane pattern
+        // itself; `declaredStableSpecFiles` reads it to say so out loud.
         const describeTitle = literalText(node.arguments[0]);
         childrenGrep = [
           ...inheritedGrep,
-          ...(describeTitle !== null ? [describeTitle] : []),
+          describeTitle !== null ? describeTitle : UNRESOLVED_TITLE,
           ...(tags ?? []),
         ];
       } else if (isPlainTestCall(node) || isSkippedDeclaration(node)) {
@@ -512,7 +561,7 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
             stable: inheritedStable || own.includes(STABLE_TAG),
             fixme: isSkippedDeclaration(node),
             modifier,
-            unparseableTags: unparseable,
+            unparseableTags: unparseable || inheritedUnparseable,
             grepTitle: [...inheritedGrep, title, ...own].join(" "),
           });
         }
@@ -520,11 +569,11 @@ export function parseDeclaredTests(filePath: string, text: string): DeclaredTest
     }
 
     ts.forEachChild(node, (child) =>
-      visit(child, childrenStable, childrenLane, childrenGrep),
+      visit(child, childrenStable, childrenLane, childrenGrep, childrenUnparseable),
     );
   }
 
-  visit(source, false, [], []);
+  visit(source, false, [], [], false);
   return out;
 }
 
@@ -586,12 +635,28 @@ export interface DeclaredStableSpecs {
    */
   laneOnly: string[];
   /**
-   * Files carrying a `tag` option this parser could not read as an inline array
-   * of literals. Their `@stable` membership is UNKNOWN, so they may be listed
-   * while absent from `files` — which is the one benign way the comparison can
-   * report a listed-only file, and the reason it is reported at all (#1012).
+   * Files carrying a `tag` option this parser could not read — on a test or on
+   * an enclosing `test.describe`. Their `@stable` membership AND their lane
+   * membership are both UNKNOWN, so such a test counts toward neither `files`
+   * nor `laneOnly`: a file whose every `@stable` test is undecidable appears
+   * here alone, and may then show up as listed-only, which is the benign
+   * direction (#1012).
    */
   unparseable: string[];
+  /**
+   * Files with an `@stable` test whose grep string this parser cannot fully
+   * evaluate — a `test.describe` title built from a template substitution or an
+   * identifier. They ARE counted in `files`, deliberately: 20 describe titles in
+   * this suite are interpolated, most of them the provider-parametrized specs —
+   * #1764's own family — and dropping them would blind the detector on exactly
+   * the specs it exists for.
+   *
+   * What the unknown costs is one direction of certainty: if such a file turns
+   * up as MISSING, the cause may be a lane tag arriving through the
+   * interpolation, which Playwright greps and this parser cannot see. The
+   * verdict says so rather than leaving the reader to discover it (#1012).
+   */
+  unresolvedTitles: string[];
 }
 
 /**
@@ -618,6 +683,7 @@ export function declaredStableSpecFiles(
   const files: string[] = [];
   const laneOnly: string[] = [];
   const unparseable: string[] = [];
+  const unresolvedTitles: string[] = [];
   // Which tests a normal listing EXCLUDES, decided by the same regex the config
   // excludes them with and over the same string Playwright matches it against.
   //
@@ -647,7 +713,15 @@ export function declaredStableSpecFiles(
     if (tests.some((t) => t.unparseableTags)) unparseable.push(rel);
     const stable = tests.filter((t) => t.stable);
     if (stable.length === 0) continue;
-    if (stable.some((t) => !excluded(rel, t))) files.push(rel);
+    // An unreadable tag option leaves the lane question UNDECIDABLE, so such a
+    // test votes for neither bucket: claiming the file should have been listed
+    // is the false-red direction, and claiming it is lane-only would hide a real
+    // loss. It is reported in `unparseable` either way.
+    const decidable = stable.filter((t) => !t.unparseableTags);
+    if (stable.some((t) => hasUnresolvedTitleSegment(t.grepTitle)))
+      unresolvedTitles.push(rel);
+    if (decidable.length === 0) continue;
+    if (decidable.some((t) => !excluded(rel, t))) files.push(rel);
     else laneOnly.push(rel);
   }
   const sort = (a: string, b: string) => a.localeCompare(b);
@@ -656,5 +730,6 @@ export function declaredStableSpecFiles(
     files: files.sort(sort),
     laneOnly: laneOnly.sort(sort),
     unparseable: unparseable.sort(sort),
+    unresolvedTitles: unresolvedTitles.sort(sort),
   };
 }
