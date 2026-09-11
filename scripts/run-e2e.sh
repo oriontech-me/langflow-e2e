@@ -179,6 +179,43 @@ LEDGER_DURATIONS="${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}"
 # default.)
 USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
 
+# ---------------------------------------------------------------------------
+# THE COLLECTION GATE — which suite this lane's listing will even see
+# ---------------------------------------------------------------------------
+# A few specs generate their tests while the suite is being LISTED, from the provider
+# keys in the environment — `provider-invalid-auth-error.spec.ts` iterates the keyed
+# providers filtered by `hasProviderEnvKeys`. Without a key, such a file collects zero
+# tests, never enters the file-level partition, and is handed to no shard: not skipped,
+# not red, ABSENT (#1764).
+#
+# Nothing in this file names OPENAI_API_KEY, ANTHROPIC_API_KEY or GOOGLE_API_KEY, and
+# that is not an omission to fix by adding them — the VM has no secrets store. What
+# supplies them is playwright.config.ts's unconditional `dotenv.config()`, i.e. the
+# `.env` of whatever working copy this runs from, plus whatever the operator exported.
+# So the matrix this lane partitions is a function of an untracked file on the machine,
+# and a clone whose `.env` loses a key produces a smaller suite with nothing said
+# (#1813). Measured on main: 247 files / 710 @stable tests with `.env`, 246 / 707
+# without, the same one-file delta #1764 measured on Actions.
+#
+# The fix is not a mirrored secret block. It is that the run STATES the gate it
+# resolved before it partitions, and that a difference from the Actions lane is a
+# decision rather than a default:
+#
+#   REQUIRE_PROVIDER_KEYS=0 (default) — say it and continue. The run declares it is
+#     comparing a narrower suite, and the key set travels with the verdict, so a
+#     test-count difference resolves to a cause instead of a hypothesis.
+#   REQUIRE_PROVIDER_KEYS=1 — refuse, the way the Playwright pin refuses a browser the
+#     comparison does not assume.
+#
+# The default is 0 and stays there until this lane HAS all three keys, for the same
+# reason the version check reported before it enforced: the VM has no GOOGLE_API_KEY
+# (#1764), so a refusing default would fail every run at 08:00 over a state that is
+# known, accepted and not fixable from inside the run — and a day of comparison is
+# worth more than a red that tells the operator what the log already said. A lane whose
+# three keys are present sets it to 1, and then a key falling out of `.env` cannot
+# shrink the matrix quietly.
+REQUIRE_PROVIDER_KEYS="${REQUIRE_PROVIDER_KEYS:-0}"
+
 # Which Langflow this lane SHOULD be testing. The rule is upstream's — the newest
 # `release-X.Y.Z` branch, never `main` — and scripts/resolve-target-version.mjs owns
 # it. Here the run only REPORTS the gap: moving and rebuilding the clone is a second
@@ -314,6 +351,7 @@ require_flag() {
 # exists.
 require_flag KEEP_LEDGER "$KEEP_LEDGER"
 require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
+require_flag REQUIRE_PROVIDER_KEYS "$REQUIRE_PROVIDER_KEYS"
 
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
 # specs assert against a traced instance. Both starters default it OFF — right for a
@@ -538,6 +576,27 @@ stamp_demand_for_plan() {
     echo 1
   else
     echo 0
+  fi
+  return 0
+}
+
+# What an incomplete collection gate costs this run — see THE COLLECTION GATE above.
+#
+# A function rather than an `if` inside phase_prep, for the same reason
+# target_preparation_plan() is one: the decision is the part worth pinning, and pinning
+# it must not require a machine, a listing or a `.env`.
+#
+# "complete" is the ONLY value that reads as a full suite. The gate's own report says
+# `complete=true`; anything else — false, empty, a word this script did not write — is
+# not complete, because the one way this can be dangerously wrong is calling a narrowed
+# listing whole.
+collection_gate_plan() {
+  if [ "${1:-}" = "true" ]; then
+    echo "complete"
+  elif [ "${REQUIRE_PROVIDER_KEYS:-0}" = "1" ]; then
+    echo "refuse"
+  else
+    echo "narrow"
   fi
   return 0
 }
@@ -1052,6 +1111,52 @@ phase_prep() {
   case "$SHARDS" in '' | *[!0-9]*) SHARDS=4 ;; esac
   [ "$SHARDS" -ge 1 ] || SHARDS=4
 
+  # WHICH SUITE THIS LISTING WILL SEE, said before it is partitioned (#1813).
+  #
+  # Run HERE — same shell, same working directory, immediately before the `--list` it
+  # describes — and that placement is the whole contract. `.env` is read relative to the
+  # working directory by the same `dotenv.config()` playwright.config.ts makes, so a
+  # report produced anywhere else would describe an environment this listing does not
+  # have. The report carries NAMES only; no key's value is ever read out.
+  local gate gate_rc=0
+  gate="$(npx ts-node scripts/collection-gate-keys.ts)" || gate_rc=$?
+  if [ "$gate_rc" != "0" ]; then
+    # An unanswerable gate is worse than a narrow one: the run cannot state which suite
+    # it partitioned, so every count it produces is uninterpretable next to the Actions
+    # lane's. That is the comparison this whole script exists for, so it stops.
+    die "could not resolve the collection-gating provider keys (exit $gate_rc) — this run cannot say which suite it is about to partition."
+  fi
+  COLLECTION_GATE_KEYS="$(printf '%s\n' "$gate" | sed -n 's/^present=//p')"
+  COLLECTION_GATE_KEYS_ABSENT="$(printf '%s\n' "$gate" | sed -n 's/^absent=//p')"
+  local gate_complete gate_summary
+  gate_complete="$(printf '%s\n' "$gate" | sed -n 's/^complete=//p')"
+  gate_summary="$(printf '%s\n' "$gate" | sed -n 's/^summary=//p')"
+  info "$gate_summary"
+
+  case "$(collection_gate_plan "$gate_complete")" in
+    refuse)
+      err "the listing would resolve ${COLLECTION_GATE_KEYS:-no provider key at all}; absent: ${COLLECTION_GATE_KEYS_ABSENT}."
+      err "A spec file generated entirely from a missing key collects zero tests, leaves"
+      err "the partition, and is run by no shard — not skipped, not red, absent. The"
+      err "verdict would then differ from the Actions lane's for a reason that is not the"
+      err "product, which is the one difference this lane must never produce silently."
+      err "Put the key in this clone's .env (or export it), or accept the narrower"
+      err "comparison with REQUIRE_PROVIDER_KEYS=0, which records what it costs."
+      die "a collection-gating provider key is missing"
+      ;;
+    narrow)
+      # Not a failure and not a footnote. The run declares what it is comparing, and the
+      # key set travels into the metadata and the history row below, so the day a
+      # test-count difference shows up the comparator can name this instead of
+      # hypothesising a catalog — the mis-attribution #1764 records twice.
+      warn "listing a NARROWER suite than a fully-keyed lane: ${COLLECTION_GATE_KEYS_ABSENT} absent."
+      warn "Whole spec files generated from those keys collect zero tests and enter no"
+      warn "shard, so this run's test counts are not comparable to a lane that has them"
+      warn "unless the difference is read as this. The key set is recorded with the"
+      warn "verdict. REQUIRE_PROVIDER_KEYS=1 refuses instead."
+      ;;
+  esac
+
   # `--list` stdout is a machine contract: playwright.config.ts sends its warnings to
   # stderr precisely because of this (#1024).
   npx playwright test --grep "@stable" --list --reporter=json > "$RUN_DIR/stable-list.json"
@@ -1459,6 +1564,8 @@ phase_merge() {
     langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
+    collection_gate_keys "${COLLECTION_GATE_KEYS:-}" \
+    collection_gate_keys_absent "${COLLECTION_GATE_KEYS_ABSENT:-}" \
     tests_total "${RUN_TESTS:-0}" \
     merge_ok "${MERGE_OK:-true}"
 
@@ -1586,6 +1693,12 @@ phase_publish() {
   # them: without the expected count a shard that died before writing its summary
   # vanishes from the row instead of reading as a gap (#1012), and the wedge this lane
   # is measuring (#1720) is exactly what those fields carry.
+  #
+  # COLLECTION_GATE_KEYS carries the listing's provider gate onto the row, and BOTH
+  # halves travel because only the pair distinguishes "measured, nothing resolved" from
+  # "not measured at all" — the empty-versus-absent distinction this lane keeps having
+  # to make. Without it the comparator can only guess at a test-count difference, which
+  # is how the missing invalid-auth pair was filed as a catalog problem twice (#1764).
   if ledger_active; then
     log "Recording the daily history"
     ledger_seed "$LEDGER_HISTORY" reports/daily-history.jsonl
@@ -1596,6 +1709,8 @@ phase_publish() {
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
+    COLLECTION_GATE_KEYS="${COLLECTION_GATE_KEYS:-}" \
+    COLLECTION_GATE_KEYS_ABSENT="${COLLECTION_GATE_KEYS_ABSENT:-}" \
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 
