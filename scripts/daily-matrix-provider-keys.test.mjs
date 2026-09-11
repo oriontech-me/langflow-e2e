@@ -25,10 +25,15 @@
 // Deliberately NOT covered, and hypothetical today rather than a live gap: a file
 // gated entirely on `OLLAMA_BASE_URL`. Measured — `ollama-provider.spec.ts` gates at
 // RUN time (`test.skip(!probe.reachable, …)`) and lists unconditionally, so no spec
-// file is ollama-gated at collection. Ollama is a keyless provider whose gate is a
-// base URL the daily does not set anywhere, so there is nothing to keep in step; the
-// day a whole spec file IS ollama-gated, that file needs its own decision, not a
-// mirrored secret.
+// file is ollama-gated at collection.
+//
+// An earlier version of this comment said the daily "does not set it anywhere". It
+// does: `daily-stable.yml` sets `OLLAMA_BASE_URL` at the **test job** level and not
+// in `prep` — i.e. the listing-vs-shard asymmetry this guard is about already exists
+// for that variable, and is harmless only because nothing gates on it at COLLECTION
+// time. A mirrored value would be wrong anyway: the service hostname the shards
+// reach does not resolve in `prep`. The day a whole spec file IS ollama-gated, that
+// file needs its own decision.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -89,7 +94,9 @@ function stepBody(workflowText, stepName) {
  */
 function envEntries(lines, keyIndent) {
   const open = new RegExp(`^ {${keyIndent}}env:\\s*$`);
-  const entry = new RegExp(`^ {${keyIndent + 2}}([A-Za-z_][A-Za-z0-9_]*):(.*)$`);
+  // `\r?$`: without it a CRLF checkout misses EVERY entry and the guard reds on a
+  // correctly-wired workflow — `.` does not match `\r`.
+  const entry = new RegExp(`^ {${keyIndent + 2}}([A-Za-z_][A-Za-z0-9_]*):(.*?)\\r?$`);
   const outdent = new RegExp(`^ {0,${keyIndent + 1}}\\S`);
   // `run: |`, `if: >-`, … — everything under one is DATA, not YAML, and a shell
   // heredoc inside it can print a line reading `env:`. Measured: with such a line in
@@ -145,6 +152,12 @@ function effectiveEnv(workflowText, stepName) {
   const own = envEntries(lines, keyIndent);
 
   const all = workflowText.split("\n");
+  // Three layers, lowest first. Workflow level was missing and reddened a correct
+  // hoist exactly as job level once did — the same "maintainer learns to edit around
+  // the guard" failure, one scope short. `daily-stable.yml` has no workflow-level
+  // `env:` today; the layer exists so moving the keys there is a refactor, not a red.
+  const jobsAt = all.findIndex((l) => /^jobs:\s*$/.test(l));
+  const top = envEntries(all.slice(0, jobsAt === -1 ? all.length : jobsAt), 0);
   const at = all.findIndex((l) => l.trimStart() === `- name: ${stepName}`);
   let jobStart = at;
   while (jobStart >= 0 && !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(all[jobStart])) jobStart--;
@@ -152,7 +165,7 @@ function effectiveEnv(workflowText, stepName) {
   while (jobEnd < all.length && !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(all[jobEnd])) jobEnd++;
   const job = envEntries(all.slice(jobStart, jobEnd), 4);
 
-  return new Map([...job, ...own]);
+  return new Map([...top, ...job, ...own]);
 }
 
 /**
@@ -165,7 +178,13 @@ function effectiveEnv(workflowText, stepName) {
  */
 function collectionGateKeys() {
   const source = read(PROVIDER_CONFIG);
-  const map = source.slice(source.indexOf("export const providerConfigMap = {"));
+  const start = source.indexOf("export const providerConfigMap = {");
+  // Bounded at the map's close, not run to EOF: any later `credential: "api-key"` —
+  // one sentence added to a doc comment does it — inflated `declared`, and the
+  // vacuity test then reported "the parse, not the config, is what changed", which
+  // is precisely backwards.
+  const close = source.indexOf("} satisfies", start);
+  const map = source.slice(start, close === -1 ? undefined : close);
   const keys = [];
   let parsed = 0;
   for (const [, body] of map.matchAll(/^ {2}\w+: \{$([\s\S]*?)^ {2}\},$/gm)) {
@@ -173,10 +192,37 @@ function collectionGateKeys() {
     parsed++;
     const envKeys = body.match(/envKeys:\s*\[([^\]]*)\]/);
     assert.ok(envKeys, `a keyed provider in ${PROVIDER_CONFIG} declares no envKeys`);
-    for (const [, name] of envKeys[1].matchAll(/"([^"]+)"/g)) keys.push(name);
+    const before = keys.length;
+    // Either quote: the repo lints neither quote style nor runs Prettier, so a
+    // single-quoted array parsed to ZERO names while `parsed === declared` still
+    // held — the guard then iterated a shorter list and went green over a workflow
+    // missing that very key (measured). The per-provider floor closes the class
+    // rather than this one spelling.
+    for (const [, name] of envKeys[1].matchAll(/["']([^"']+)["']/g)) keys.push(name);
+    assert.ok(
+      keys.length > before,
+      `envKeys for a keyed provider in ${PROVIDER_CONFIG} parsed to zero names — the parse, not the config, changed`,
+    );
   }
   const declared = (map.match(/credential:\s*"api-key"/g) ?? []).length;
   return { keys, parsed, declared };
+}
+
+/**
+ * One env value, read the way YAML reads it.
+ *
+ * A trailing `# comment` is not part of a plain scalar, and `"${{ … }}"` is the same
+ * expression as `${{ … }}` — this very step block already writes `CI: "true"` and
+ * `PLAYWRIGHT_BASE_URL: "http://localhost:7860/"`. Matching the raw text reddened
+ * both shapes with a message asserting the opposite of what had happened, which is
+ * the failure mode this guard exists to avoid being.
+ */
+function scalar(value) {
+  return (value ?? "")
+    .replace(/\s+#.*$/, "")
+    .trim()
+    .replace(/^(['"])([\s\S]*)\1$/, "$2")
+    .trim();
 }
 
 /** The `run:` script of a step, with comment lines dropped. */
@@ -184,7 +230,10 @@ function runScript(lines, keyIndent) {
   const at = lines.findIndex((l) => new RegExp(`^ {${keyIndent}}run:`).test(l));
   if (at === -1) return "";
   const outdent = new RegExp(`^ {0,${keyIndent}}\\S`);
-  const body = [];
+  // The inline remainder counts: `run: npx playwright test … --list` is a shape this
+  // file already uses elsewhere, and dropping it reported a step that does run
+  // `--list` as one that does not.
+  const body = [lines[at].slice(lines[at].indexOf("run:") + 4)];
   for (const line of lines.slice(at + 1)) {
     if (line.trim() !== "" && outdent.test(line)) break;
     if (/^\s*#/.test(line)) continue;
@@ -226,7 +275,7 @@ test("the listing step carries every key that gates collection, FROM ITS SECRET"
       `${LISTING_STEP} does not carry ${key}: a spec file generated from it collects zero tests, leaves the matrix, and is run by no shard — silently (#1764)`,
     );
     assert.match(
-      listing.get(key) ?? "",
+      scalar(listing.get(key)),
       new RegExp(`^\\$\\{\\{\\s*secrets\\.${key}\\s*\\}\\}$`),
       `${LISTING_STEP} sets ${key} from something other than secrets.${key} — an unknown secret renders "" and the file leaves the matrix again (#1764)`,
     );
@@ -247,8 +296,8 @@ test("the shard step carries them too, from the same secrets", () => {
       `${SHARD_STEP} does not carry ${key} — the shards would collect a different suite than the matrix was built from`,
     );
     assert.equal(
-      shard.get(key),
-      listing.get(key),
+      scalar(shard.get(key)),
+      scalar(listing.get(key)),
       `${key} is set from a different expression on the two steps — they would collect different suites`,
     );
   }
