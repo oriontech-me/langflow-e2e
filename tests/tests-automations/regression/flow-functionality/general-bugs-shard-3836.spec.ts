@@ -34,6 +34,34 @@ function trackCreatedFlows(page: Page): void {
   });
 }
 
+/**
+ * The Chat Input node's `files` value AS THE SERVER HOLDS IT.
+ *
+ * The run below is `POST /api/v2/workflows`, which executes the PERSISTED flow by
+ * `flow_id` — it does not carry the canvas. The upload shows on the node at once
+ * and is autosaved on a ~2 s debounce, so clicking run on the strength of the UI
+ * starts a run whose Chat Input still has `files: ""`: measured on `1.13.0.dev9`,
+ * the value landed ~3 s AFTER the run had already begun, the model answered that
+ * it cannot see images, and nothing ever matched the image assertion (#1791 —
+ * 5/5 failures on this machine, 2/3 green on the slower CI runner, which is the
+ * same race won from the other side).
+ */
+async function readPersistedFiles(page: Page, flowId: string): Promise<unknown[]> {
+  const res = await page.request.get(`/api/v1/flows/${flowId}`);
+  if (!res.ok()) return [];
+  const body = (await res.json()) as {
+    data?: {
+      nodes?: Array<{
+        id: string;
+        data?: { node?: { template?: { files?: { value?: unknown } } } };
+      }>;
+    };
+  };
+  const node = (body.data?.nodes ?? []).find((n) => /^ChatInput/.test(n.id));
+  const value = node?.data?.node?.template?.files?.value;
+  return Array.isArray(value) ? value : [];
+}
+
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
   const bearer = await getAuthToken(request);
@@ -46,7 +74,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must be able to send an image on chat using advanced tool on ChatInputComponent",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
@@ -86,6 +114,17 @@ test(
     await expect(page.getByText("chain.png")).not.toBeVisible();
 
     await uploadFile(page, "chain.png");
+
+    // Wait for the WRITE the run depends on, not for the UI that precedes it.
+    const flowId = (page.url().match(/\/flow\/([0-9a-f-]{36})/) ?? [])[1];
+    expect(flowId, "the editor URL must carry the flow id").toBeTruthy();
+    await expect
+      .poll(async () => readPersistedFiles(page, flowId!), {
+        timeout: 30000,
+        message:
+          "the re-uploaded file must be persisted before the run — /api/v2/workflows executes the SAVED flow, not the canvas",
+      })
+      .not.toHaveLength(0);
 
     await page.getByTestId("button_run_chat output").click();
 

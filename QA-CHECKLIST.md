@@ -296,7 +296,7 @@
 - [x] Chat Input is a singleton — adding one removes both the Chat Input and Webhook `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
 - [x] A value typed on a node (Chat Input as the host) is persisted by the debounced autosave and rehydrated after leaving and re-entering the flow — four consecutive edits, each gated on the server before the exit → `core-components/general-bugs-save-changes-on-node.spec.ts`
 - [x] Chat Input cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
-- [-] File on the advanced `files` field can be removed and re-uploaded; after running, the image and the user message render in the Playground → `flow-functionality/general-bugs-shard-3836.spec.ts`
+- [x] File on the advanced `files` field can be removed and re-uploaded; after running, the image and the user message render in the Playground. The run is `POST /api/v2/workflows`, which executes the **persisted** flow, so the spec waits for the upload to reach `GET /api/v1/flows/{id}` before running — measured, the file committed ~3 s after the run had already started, and the model answered that it could not see an image (#1791) → `flow-functionality/general-bugs-shard-3836.spec.ts`
 
 #### 3.2 Prompt Template
 - [x] Prompt Template renders on canvas with output handle → `core-components/prompt-template-component-regression.spec.ts`
@@ -690,7 +690,8 @@
 #### 10.2 Folder Navigation
 - [x] Navigate between folders → `core-functionality/project-management/flow-navigation-between-folders.spec.ts`
 - [x] A folder lists the flows it contains — the folder created over the API appears in the home sidebar under either testid spelling (#1363) and clicking it lists the flow created inside it, addressed by its own unique name → `core-functionality/project-management/folder-drag-drop-flow.spec.ts`
-- [-] Search flow by name filters results correctly
+- [x] Search flow by name filters results correctly — with two uniquely-named flows present, typing one name leaves it listed and drives the other to `toHaveCount(0)` (the negative half is the assertion that carries the test) → `core-functionality/project-management/flow-navigation-folders.spec.ts`
+- [x] A flow created over the API appears on the home listing — created with no `folder_id` so it lands in the default project, and asserted after a `page.reload()` so the grid re-fetches instead of re-rendering a cached store → `core-functionality/project-management/flow-navigation-folders.spec.ts`
 - [-] Folders in navigation sidebar
 
 ---
@@ -830,7 +831,7 @@
 - [ ] Partial failure — when one branch of a multi-branch graph raises, the branches that do not depend on it still produce their output, and the failed node is the one flagged
 - [ ] Execution order respects data dependency — a node that consumes another's output never builds first (asserted on the run stream, not on wall-clock timing)
 - [ ] A node whose upstream produced no value is skipped rather than run with an empty input
-- [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
+- [x] Playground button disabled with empty flow, and enabled once one Chat Output is on the canvas — the trigger's disabled twin is asserted first, then the Playground dialog is asserted by role and accessible name. Quarantine lifted in #1791: the failure was a stale expectation on `"Langflow Chat"`, the value of an i18n key with zero call sites in the bundle, not the product behaviour the TODO suspected → `regression/flow-functionality/generalBugs-shard-3.spec.ts`
 
 ---
 
