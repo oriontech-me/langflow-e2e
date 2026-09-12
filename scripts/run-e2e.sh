@@ -194,8 +194,12 @@ USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
 # `.env` of whatever working copy this runs from, plus whatever the operator exported.
 # So the matrix this lane partitions is a function of an untracked file on the machine,
 # and a clone whose `.env` loses a key produces a smaller suite with nothing said
-# (#1813). Measured on main: 247 files / 710 @stable tests with `.env`, 246 / 707
-# without, the same one-file delta #1764 measured on Actions.
+# (#1813). Measured on main when this was written: 247 files / 710 @stable tests with
+# `.env` against 246 / 707 without — the same one-file delta #1764 measured on Actions.
+# The DELTA is the point and it is stable; the absolute figures are not, and were
+# already stale at 251/251 within the day (#1826). Re-measure rather than quote:
+#   npx ts-node scripts/declared-stable-specs.ts   # what the tree declares
+#   npx playwright test --grep "@stable" --list    # what this environment lists
 #
 # The fix is not a mirrored secret block. It is that the run STATES the gate it
 # resolved before it partitions, and that a difference from the Actions lane is a
@@ -1241,9 +1245,11 @@ phase_prep() {
   # placement the Actions lane chose for the same reason, and an audit that aborts the
   # run it audits is the shape #1812 spent a review round removing.
   #
-  # `|| true` so a broken derivation degrades to UNVERIFIED instead of tripping `set -e`.
-  # An empty or truncated file is refused by `compareListing`, so the two failures land
-  # in the same place.
+  # The `if !` is what keeps a broken derivation from tripping `set -e`; it degrades to
+  # UNVERIFIED instead. An empty or truncated file is refused by `compareListing`, so
+  # the two failures land in the same place. (This said "`|| true`" until #1826 — the
+  # Actions-side copy of the same sentence was corrected and this one was not, which is
+  # the two-copies-drift shape the repo keeps recording.)
   if ! npx ts-node scripts/declared-stable-specs.ts > "$RUN_DIR/declared-specs.json"; then
     warn "could not derive the declared @stable spec set — this run cannot verify that its"
     warn "listing contained every spec file that declares one (#1812). The verdict fails on"
@@ -1905,9 +1911,10 @@ phase_verdict() {
     # permanent state, and the downgrade would have applied to every cause, including
     # the ones #1812 exists to catch (a listing that dies halfway and exits 0, a spec
     # gating collection on something that is not a key at all). The same measurement
-    # removes the motive: with only GOOGLE_API_KEY absent this clone lists 247 of 247
+    # removes the motive: with only GOOGLE_API_KEY absent this clone loses NOTHING
     # — the narrowing that triggers the plan costs zero files — and it takes all three
-    # keys blank to lose one.
+    # keys blank to lose one. (Stated as the outcome, not as a count: it read "247 of
+    # 247" and was 251 of 251 within the day, #1826.)
     #
     # What the narrowing buys is a comparison whose COUNTS are not comparable to a
     # fully-keyed lane. It was never a licence to report a lane as green over specs it
