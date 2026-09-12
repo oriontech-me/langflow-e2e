@@ -77,6 +77,17 @@ async function resolveOwnSessionId(
   flowIds: string[],
   headers: Record<string, string>,
 ): Promise<string> {
+  // Told apart from "the conversation was not stored" on purpose (#1778 review):
+  // an empty list means the response listener never saw a POST /api/v1/flows 201,
+  // so the failure is upstream of the messages and the reader must be sent there.
+  if (flowIds.length === 0) {
+    throw new Error(
+      `OWN_FLOW_ID_NOT_CAPTURED: no POST /api/v1/flows -> 201 was recorded, so this test ` +
+        `never learned the id of the flow it created and the grid cannot be scoped. Look at ` +
+        `the template load, not at the message history.`,
+    );
+  }
+
   const attempted: string[] = [];
   for (const flowId of flowIds) {
     const response = await request.get(
@@ -122,15 +133,20 @@ async function applyEqualsFilter(
   await page
     .locator(`.ag-header-cell[col-id="${colId}"] .ag-header-cell-filter-button`)
     .click({ timeout: 5000 });
-  await expect(page.locator(".ag-filter").first()).toBeVisible({
-    timeout: 5000,
-  });
+
+  // Scoped to the OPEN popup, never to `.ag-filter` at large. This helper runs
+  // twice in one test, and `.first()` over every `.ag-filter` in the DOM is only
+  // unambiguous while AG Grid detaches a closed popup — the day it keeps one
+  // attached-but-hidden, the `sender` call would type into the `session_id`
+  // filter and silently rescope the grid (#1778 review).
+  const popup = page.locator(".ag-filter:visible").first();
+  await expect(popup).toBeVisible({ timeout: 5000 });
 
   // Select "Equals" in the filter type dropdown
-  await page.locator(".ag-filter .ag-picker-field-wrapper").first().click();
+  await popup.locator(".ag-picker-field-wrapper").first().click();
   await page.getByRole("option", { name: "Equals" }).click();
 
-  const filterInput = page.locator('.ag-filter input[type="text"]').first();
+  const filterInput = popup.locator('input[type="text"]').first();
   await filterInput.fill(value);
   return filterInput;
 }
@@ -222,55 +238,6 @@ test(
       page.getByTestId("settings_menu_header"),
     ).toContainText("Messages");
 
-    // Scope the grid to THIS test's conversation before a single row is read.
-    //
-    // Settings > Messages is a GLOBAL audit surface: the suite runs
-    // `fullyParallel` against one shared superuser on one instance, so every
-    // sibling spec's messages land in this same table. And AG Grid virtualizes
-    // ROWS exactly the way #616 found it virtualizing columns — only what fits
-    // the viewport is in the DOM. Collecting `.ag-cell[col-id="..."]` off an
-    // unscoped grid therefore reads *some other spec's* messages and asserts
-    // this test's prompts are among them.
-    //
-    // Measured on `1.13.0.dev8` with 50 stored messages: the footer reports
-    // "1 to 50 of 50", the DOM carries 18 rows, and this test's own — the
-    // NEWEST, and last under the ascending default — are not among them. That
-    // is #1778 reproduced: a hard 3/3 failure on the VM lane while the feature
-    // was working, because the rows were one scroll away.
-    //
-    // REJECTED — sweeping the vertical scroll, the row-axis twin of the #616
-    // column sweep. It would collect the rows, but it leaves every assertion
-    // below measuring other specs' messages, and its cost grows with the
-    // instance's entire history: the lane that found this serves 654 tests from
-    // one instance. Scoping is O(this test's own rows) and makes the order,
-    // sender and content assertions legitimate again — the same move PR #1779
-    // made for #1773, where a global flow count was scoped to an owned project.
-    const bearer = await getAuthToken(request);
-    const ownSessionId = await resolveOwnSessionId(request, createdFlowIds, {
-      Authorization: bearer,
-    });
-    await applyEqualsFilter(page, "session_id", ownSessionId);
-    // Dismiss the popup: left open it swallows the hover that opens the next
-    // column's filter button.
-    await page.keyboard.press("Escape");
-
-    // The scope is ASSERTED, not assumed. Without this, a filter that silently
-    // failed to apply would hand every assertion below the global grid back —
-    // the exact state this test is being fixed for, and green.
-    const sessionCells = page.locator('.ag-cell[col-id="session_id"]');
-    await expect
-      .poll(
-        async () => {
-          const sessions = await sessionCells.allTextContents();
-          return (
-            sessions.length > 0 &&
-            sessions.every((s) => s.trim() === ownSessionId)
-          );
-        },
-        { timeout: 10000 },
-      )
-      .toBe(true);
-
     // Step 10: Verify the messages table has all required columns.
     // AG Grid VIRTUALIZES columns horizontally — header cells outside the
     // scrolled-into-view region are not in the DOM, so per-column
@@ -303,6 +270,62 @@ test(
     for (const column of EXPECTED_COLUMNS) {
       expect(renderedColumnIds, `column "${column}" missing from the messages grid`).toContain(column);
     }
+
+    // Scope the grid to THIS test's conversation before a single ROW is read.
+    //
+    // Settings > Messages is a GLOBAL audit surface: the suite runs
+    // `fullyParallel` against one shared superuser on one instance, so every
+    // sibling spec's messages land in this same table. And AG Grid virtualizes
+    // ROWS exactly the way #616 found it virtualizing columns — only what fits
+    // the viewport is in the DOM. Collecting `.ag-cell[col-id="..."]` off an
+    // unscoped grid therefore reads *some other spec's* messages and asserts
+    // this test's prompts are among them. That is #1778; the measurement behind
+    // it is dated in the spec doc rather than repeated here.
+    //
+    // This sits AFTER the column contract deliberately: everything below depends
+    // on `session_id` being reachable, and the horizontal sweep above is the only
+    // check that can say `column "session_id" missing from the messages grid`
+    // instead of timing out on a locator that never had a chance — in the file
+    // whose whole history is virtualization. The sweep reads headers, not rows,
+    // so nothing has been read unscoped.
+    //
+    // REJECTED — sweeping the vertical scroll, the row-axis twin of the #616
+    // column sweep. It would collect the rows, but it leaves every assertion
+    // below measuring other specs' messages, and its cost grows with the
+    // instance's entire message history instead of with this test's own rows.
+    // Scoping is the same move PR #1779 made for #1773, where a global flow
+    // count was scoped to a project the test owns.
+    const bearer = await getAuthToken(request);
+    const ownSessionId = await resolveOwnSessionId(request, createdFlowIds, {
+      Authorization: bearer,
+    });
+    await applyEqualsFilter(page, "session_id", ownSessionId);
+
+    // The scope is ASSERTED, not assumed. Without this, a filter that silently
+    // failed to apply would hand every assertion below the global grid back —
+    // the exact state this test is being fixed for, and green.
+    //
+    // Asserted BEFORE the popup is dismissed, so the read happens in the same
+    // window the value was typed in rather than across AG Grid's apply debounce.
+    // And it polls the rendered VALUE, not a boolean: `[]` says the grid
+    // narrowed to nothing (or the column is not materialized) while a list of
+    // foreign sessions says the filter never applied — `expected true, received
+    // false` says neither.
+    const sessionCells = page.locator('.ag-cell[col-id="session_id"]');
+    await expect
+      .poll(
+        async () => [
+          ...new Set(
+            (await sessionCells.allTextContents()).map((text) => text.trim()),
+          ),
+        ],
+        { timeout: 10000 },
+      )
+      .toEqual([ownSessionId]);
+
+    // Only now dismiss it: left open, the popup swallows the hover that opens
+    // the `sender` filter further down.
+    await page.keyboard.press("Escape");
 
     // Steps 11-13: Verify display order — OLDEST first (chronological). The
     // grid renders the API order, and 1.12 flipped that order on purpose:

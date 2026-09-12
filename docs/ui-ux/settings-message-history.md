@@ -59,7 +59,9 @@ fails* instead of greening.
 **Rejected alternative — sweeping the vertical scroll**, the row-axis twin of
 the #616 column sweep. It collects the rows, but it leaves every assertion
 measuring other specs' messages, and its cost grows with the instance's entire
-message history — the lane that found this serves 654 tests from one instance.
+message history — the lane that found this serves the whole suite from one
+instance (**621** tests on 2026-09-09, the day #1778 was filed; 654 on
+2026-09-11, after the target change put sixteen skipped tests back).
 Scoping is O(this test's own rows). The same move PR #1779 made for #1773,
 where a global flow count was scoped to a project the test owns.
 
@@ -109,13 +111,18 @@ burst on nightly `1.12.0.dev6`.
    finish (Stop button appears → hidden) and assert a non-empty response.
 3. Send `What is 2+2?`; same wait + non-empty assertion.
 4. Close the Playground; navigate **Settings → Messages**.
-5. **Scope:** resolve this conversation's `session_id` from
-   `GET /api/v1/monitor/messages?flow_id=<own flow>` (the flow id tracked for
-   cleanup), apply the `session_id` column's "Equals" filter, and assert every
-   rendered `session_id` equals it. Everything below reads the scoped grid.
-6. **Column contract:** sweep the grid horizontally collecting every
+5. **Column contract:** sweep the grid horizontally collecting every
    `.ag-header-cell` `col-id`; assert the collected set contains all 11
-   promised columns (superset-tolerant).
+   promised columns (superset-tolerant). This runs **before** the scope on
+   purpose — it reads headers, not rows, and it is the only check that can name
+   `session_id` as missing instead of timing out on a locator that never had a
+   chance.
+6. **Scope:** resolve this conversation's `session_id` from
+   `GET /api/v1/monitor/messages?flow_id=<own flow>` (the flow id tracked for
+   cleanup), apply the `session_id` column's "Equals" filter, assert the set of
+   rendered `session_id` values equals `[own]` — polled as a value, so an empty
+   grid and a grid full of foreign sessions read differently — and only then
+   dismiss the popup. Everything below reads the scoped grid.
 7. **Order:** read all `timestamp` cells (≥ 4 rows expected: 2 user + 2
    agent); assert they parse (≥ 4 parseable, so the check is never vacuous)
    and are **monotonically ascending**. Monotonicity alone also holds for a
