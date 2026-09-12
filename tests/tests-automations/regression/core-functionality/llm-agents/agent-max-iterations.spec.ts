@@ -329,6 +329,22 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("run and assert the run finishes without hitting the limit", async () => {
           const bubble = await runAndGetBubble(page);
+          // Positive half, asserted FIRST because it is the only one that waits:
+          // the fetched UUID. A negative assertion alone passes on a refusal ("I
+          // cannot fetch URLs") or a blank run — both of which also carry no limit
+          // message, and neither of which exercises the cap. Reaching it through
+          // `toContainText` retries until the streamed reply settles, so the read
+          // below is taken from a bubble that has stopped growing (#1830).
+          //
+          // `useInnerText` keeps this reading exactly what the assertion below
+          // reads. The default compares `textContent`, which carries the collapsed
+          // "Agent Steps" disclosure (see the note above `expectToolLoopEntered`) —
+          // and that disclosure holds the tool output, i.e. the very UUID this
+          // assertion exists to find in the ANSWER.
+          await expect(bubble).toContainText(UUID_SHAPE, {
+            useInnerText: true,
+            timeout: 30000,
+          });
           const reply = (await bubble.innerText()).trim();
           // Same task as Test 1, but with headroom to iterate: the agent finishes
           // its two calls WITHOUT the limit message. Only max_iterations differs
@@ -336,10 +352,6 @@ for (const { label, options, skipReason } of targets) {
           // cap, not an unrelated failure.
           expect(reply.length).toBeGreaterThan(0);
           expect(reply).not.toMatch(LIMIT_MESSAGE);
-          // Positive half: the fetched UUID. A negative assertion alone passes on a
-          // refusal ("I cannot fetch URLs") or a blank run — both of which also
-          // carry no limit message, and neither of which exercises the cap.
-          expect(reply).toMatch(UUID_SHAPE);
         });
       },
     );
