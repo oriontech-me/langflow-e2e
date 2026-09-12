@@ -1,6 +1,6 @@
 # Settings → Messages — history shows sent messages in order with working filters
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev6`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
 
 ---
 
@@ -28,8 +28,42 @@ conversation, the test validates that:
    note below.
 3. **Content integrity** — both sent prompts appear verbatim in the `text`
    column; `sender` distinguishes `User` from the machine/agent side.
-4. **Column filters work** — filtering `sender` by "Equals User" leaves only
-   User rows; clearing the filter restores the full row set.
+4. **Column filters work** — the `session_id` filter narrows the grid to one
+   conversation and the `sender` "Equals User" filter then leaves only User
+   rows; clearing the value restores that conversation's full row set.
+
+## Scoping note *(what broke in #1778)*
+
+Settings → Messages is a **global** audit surface. The suite runs
+`fullyParallel` against one shared superuser on one instance, so every sibling
+spec's messages land in this same table — and AG Grid virtualizes **rows** the
+way #616 found it virtualizing columns: only what fits the viewport is in the
+DOM. Collecting `.ag-cell[col-id="text"]` off an unscoped grid therefore reads
+*some other spec's* messages and asserts this test's prompts are among them.
+
+Measured on `1.13.0.dev8` with 50 stored messages: the footer reports
+"1 to 50 of 50", the DOM carries **18** rows, and this test's own — the newest,
+and therefore last under the ascending default — are not among them. That is
+#1778: a hard 3/3 failure on the VM lane while the feature was working, because
+the rows were one scroll away.
+
+The test therefore **scopes the grid to its own conversation before reading a
+single row**: it resolves its session id from
+`GET /api/v1/monitor/messages?flow_id=<own flow>` (never off the screen — the
+row carrying the prompt is exactly the row virtualization may not have
+materialized) and applies the `session_id` column's "Equals" filter. The scope
+is then **asserted**, not assumed: every rendered `session_id` must equal it,
+so a filter that silently failed to apply hands back the global grid *and
+fails* instead of greening.
+
+**Rejected alternative — sweeping the vertical scroll**, the row-axis twin of
+the #616 column sweep. It collects the rows, but it leaves every assertion
+measuring other specs' messages, and its cost grows with the instance's entire
+message history — the lane that found this serves the whole suite from one
+instance (**621** tests on 2026-09-09, the day #1778 was filed; 654 on
+2026-09-11, after the target change put sixteen skipped tests back).
+Scoping is O(this test's own rows). The same move PR #1779 made for #1773,
+where a global flow count was scoped to a project the test owns.
 
 ## Virtualization note *(what broke in #616)*
 
@@ -79,16 +113,25 @@ burst on nightly `1.12.0.dev6`.
 4. Close the Playground; navigate **Settings → Messages**.
 5. **Column contract:** sweep the grid horizontally collecting every
    `.ag-header-cell` `col-id`; assert the collected set contains all 11
-   promised columns (superset-tolerant).
-6. **Order:** read all `timestamp` cells (≥ 4 rows expected: 2 user + 2
+   promised columns (superset-tolerant). This runs **before** the scope on
+   purpose — it reads headers, not rows, and it is the only check that can name
+   `session_id` as missing instead of timing out on a locator that never had a
+   chance.
+6. **Scope:** resolve this conversation's `session_id` from
+   `GET /api/v1/monitor/messages?flow_id=<own flow>` (the flow id tracked for
+   cleanup), apply the `session_id` column's "Equals" filter, assert the set of
+   rendered `session_id` values equals `[own]` — polled as a value, so an empty
+   grid and a grid full of foreign sessions read differently — and only then
+   dismiss the popup. Everything below reads the scoped grid.
+7. **Order:** read all `timestamp` cells (≥ 4 rows expected: 2 user + 2
    agent); assert they parse (≥ 4 parseable, so the check is never vacuous)
    and are **monotonically ascending**. Monotonicity alone also holds for a
    reversed grid, so it is paired with a direction-sensitive check: the row
    index of `Hello, how are you?` must be **less than** the row index of
    `What is 2+2?` in the `text` column.
-7. **Content:** `sender` column contains `User` and a machine/agent value;
+8. **Content:** `sender` column contains `User` and a machine/agent value;
    `text` column contains both prompts verbatim.
-8. **Filter:** click the `sender` header's dedicated filter button
+9. **Filter:** click the `sender` header's dedicated filter button
    (`.ag-header-cell-filter-button` — the old `.ag-icon-menu` + "Filter" tab
    flow no longer exists on 1.11); pick "Equals", type `User`; assert every
    remaining row's sender is `User`; clear the value; assert the row count
@@ -98,6 +141,8 @@ burst on nightly `1.12.0.dev6`.
 
 ## Validation criterion *(required)*
 
+- Every row the grid renders after scoping belongs to this test's own session —
+  asserted, so an unapplied filter fails instead of silently widening the read.
 - The collected column-id set ⊇ the 11 promised columns.
 - Timestamps render in ascending (oldest-first) order, with ≥ 4 parseable
   timestamp cells after two exchanges; the first prompt sent renders above the
@@ -121,7 +166,8 @@ force-fail contract: no-op the cleanup and the flow count grows.
 
 - Message editing / deleting through the table (`edit` column actions).
 - Session-scoped views (`session_metadata`, session rename) — covered by the
-  playground session specs.
+  playground session specs. The `session_id` filter is used here as the
+  **instrument** that scopes the read; only its narrowing effect is asserted.
 - Exact set equality of columns (new upstream columns are tolerated by
   design — only removals of promised columns fail).
 
@@ -133,6 +179,8 @@ force-fail contract: no-op the cleanup and the flow count grows.
   history is asserted).
 - `tests/helpers/other/initialGPTsetup.ts` + `resolveGptModel` +
   `data/models.json` (collect-models).
+- `GET /api/v1/monitor/messages?flow_id=` — read once, to resolve this
+  conversation's `session_id` for the grid scope (#1778).
 - AG Grid rendering of the messages table (`.ag-header-cell[col-id]`,
   `.ag-cell[col-id]`, `.ag-center-cols-viewport` for the horizontal sweep,
   column-menu filter UI) — Settings → Messages page

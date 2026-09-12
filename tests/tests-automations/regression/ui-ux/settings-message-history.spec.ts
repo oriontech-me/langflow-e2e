@@ -26,6 +26,7 @@
 
 import * as dotenv from "dotenv";
 import path from "path";
+import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
@@ -62,6 +63,94 @@ const EXPECTED_COLUMNS = [
 // instance clean).
 const createdFlowIds: string[] = [];
 
+/**
+ * The session id Langflow stored for THIS test's conversation.
+ *
+ * Read from the API, never off the screen: the row carrying `FIRST_MESSAGE` is
+ * exactly the row virtualization may not have materialized (#1778), so reading
+ * the scope key from the grid would depend on the defect being absent. The
+ * lookup is keyed on the flow this test created and then on the prompt it sent,
+ * so it cannot pick up a sibling spec's conversation.
+ */
+async function resolveOwnSessionId(
+  request: APIRequestContext,
+  flowIds: string[],
+  headers: Record<string, string>,
+): Promise<string> {
+  // Told apart from "the conversation was not stored" on purpose (#1778 review):
+  // an empty list means the response listener never saw a POST /api/v1/flows 201,
+  // so the failure is upstream of the messages and the reader must be sent there.
+  if (flowIds.length === 0) {
+    throw new Error(
+      `OWN_FLOW_ID_NOT_CAPTURED: no POST /api/v1/flows -> 201 was recorded, so this test ` +
+        `never learned the id of the flow it created and the grid cannot be scoped. Look at ` +
+        `the template load, not at the message history.`,
+    );
+  }
+
+  const attempted: string[] = [];
+  for (const flowId of flowIds) {
+    const response = await request.get(
+      `/api/v1/monitor/messages?flow_id=${flowId}`,
+      { headers },
+    );
+    if (!response.ok()) {
+      attempted.push(`${flowId} -> HTTP ${response.status()}`);
+      continue;
+    }
+    const rows = (await response.json()) as {
+      text?: string;
+      session_id?: string;
+    }[];
+    const own = rows.find((row) => (row.text ?? "").trim() === FIRST_MESSAGE);
+    if (own?.session_id) return own.session_id;
+    attempted.push(`${flowId} -> ${rows.length} message(s), none matching`);
+  }
+  throw new Error(
+    `OWN_CONVERSATION_NOT_STORED: no stored message reads "${FIRST_MESSAGE}" for the ` +
+      `flow(s) this test created [${attempted.join("; ")}]. The conversation whose ` +
+      `history is under assertion was never persisted, so the grid cannot be scoped ` +
+      `to it — assert on the Playground exchange before this point, not on the grid.`,
+  );
+}
+
+/**
+ * Applies AG Grid's "Equals <value>" filter to one column, through the header's
+ * dedicated filter button, and returns the filter's text input so the caller can
+ * clear it later.
+ *
+ * The popup is left OPEN — closing it is the caller's call, because the two
+ * users of this want opposite things: the scoping filter is set once and must
+ * get out of the way of the next header, while the `sender` filter is cleared
+ * again a few lines later and would have to be reopened.
+ */
+async function applyEqualsFilter(
+  page: Page,
+  colId: string,
+  value: string,
+): Promise<Locator> {
+  await page.hover(`.ag-header-cell[col-id="${colId}"]`);
+  await page
+    .locator(`.ag-header-cell[col-id="${colId}"] .ag-header-cell-filter-button`)
+    .click({ timeout: 5000 });
+
+  // Scoped to the OPEN popup, never to `.ag-filter` at large. This helper runs
+  // twice in one test, and `.first()` over every `.ag-filter` in the DOM is only
+  // unambiguous while AG Grid detaches a closed popup — the day it keeps one
+  // attached-but-hidden, the `sender` call would type into the `session_id`
+  // filter and silently rescope the grid (#1778 review).
+  const popup = page.locator(".ag-filter:visible").first();
+  await expect(popup).toBeVisible({ timeout: 5000 });
+
+  // Select "Equals" in the filter type dropdown
+  await popup.locator(".ag-picker-field-wrapper").first().click();
+  await page.getByRole("option", { name: "Equals" }).click();
+
+  const filterInput = popup.locator('input[type="text"]').first();
+  await filterInput.fill(value);
+  return filterInput;
+}
+
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
   const bearer = await getAuthToken(request);
@@ -73,7 +162,7 @@ test.afterEach(async ({ request }) => {
 test(
   "Settings > Messages displays sent messages in correct order with working filters",
   { tag: ["@stable", "@release", "@workspace", "@api", "@settings"] },
-  async ({ page }) => {
+  async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
     }
@@ -182,6 +271,62 @@ test(
       expect(renderedColumnIds, `column "${column}" missing from the messages grid`).toContain(column);
     }
 
+    // Scope the grid to THIS test's conversation before a single ROW is read.
+    //
+    // Settings > Messages is a GLOBAL audit surface: the suite runs
+    // `fullyParallel` against one shared superuser on one instance, so every
+    // sibling spec's messages land in this same table. And AG Grid virtualizes
+    // ROWS exactly the way #616 found it virtualizing columns — only what fits
+    // the viewport is in the DOM. Collecting `.ag-cell[col-id="..."]` off an
+    // unscoped grid therefore reads *some other spec's* messages and asserts
+    // this test's prompts are among them. That is #1778; the measurement behind
+    // it is dated in the spec doc rather than repeated here.
+    //
+    // This sits AFTER the column contract deliberately: everything below depends
+    // on `session_id` being reachable, and the horizontal sweep above is the only
+    // check that can say `column "session_id" missing from the messages grid`
+    // instead of timing out on a locator that never had a chance — in the file
+    // whose whole history is virtualization. The sweep reads headers, not rows,
+    // so nothing has been read unscoped.
+    //
+    // REJECTED — sweeping the vertical scroll, the row-axis twin of the #616
+    // column sweep. It would collect the rows, but it leaves every assertion
+    // below measuring other specs' messages, and its cost grows with the
+    // instance's entire message history instead of with this test's own rows.
+    // Scoping is the same move PR #1779 made for #1773, where a global flow
+    // count was scoped to a project the test owns.
+    const bearer = await getAuthToken(request);
+    const ownSessionId = await resolveOwnSessionId(request, createdFlowIds, {
+      Authorization: bearer,
+    });
+    await applyEqualsFilter(page, "session_id", ownSessionId);
+
+    // The scope is ASSERTED, not assumed. Without this, a filter that silently
+    // failed to apply would hand every assertion below the global grid back —
+    // the exact state this test is being fixed for, and green.
+    //
+    // Asserted BEFORE the popup is dismissed, so the read happens in the same
+    // window the value was typed in rather than across AG Grid's apply debounce.
+    // And it polls the rendered VALUE, not a boolean: `[]` says the grid
+    // narrowed to nothing (or the column is not materialized) while a list of
+    // foreign sessions says the filter never applied — `expected true, received
+    // false` says neither.
+    const sessionCells = page.locator('.ag-cell[col-id="session_id"]');
+    await expect
+      .poll(
+        async () => [
+          ...new Set(
+            (await sessionCells.allTextContents()).map((text) => text.trim()),
+          ),
+        ],
+        { timeout: 10000 },
+      )
+      .toEqual([ownSessionId]);
+
+    // Only now dismiss it: left open, the popup swallows the hover that opens
+    // the `sender` filter further down.
+    await page.keyboard.press("Escape");
+
     // Steps 11-13: Verify display order — OLDEST first (chronological). The
     // grid renders the API order, and 1.12 flipped that order on purpose:
     // `monitor.py` `get_messages` no longer hardcodes `.desc()` — it now takes
@@ -194,7 +339,7 @@ test(
     await expect(timestampCells.first()).toBeVisible({ timeout: 10000 });
 
     const rowCount = await timestampCells.count();
-    expect(rowCount).toBeGreaterThanOrEqual(4); // at least: 2 user msgs + 2 agent responses
+    expect(rowCount).toBeGreaterThanOrEqual(4); // this conversation: 2 user msgs + 2 agent responses
 
     // Collect timestamps and verify ascending (oldest-first) order
     const timestamps: number[] = [];
@@ -263,24 +408,7 @@ test(
     // The header renders a dedicated filter button (.ag-header-cell-filter-button)
     // that opens the filter popup directly — the old .ag-icon-menu +
     // "Filter" tab flow no longer exists on the 1.11 nightly (#616).
-    await page.hover('.ag-header-cell[col-id="sender"]');
-    await page
-      .locator('.ag-header-cell[col-id="sender"] .ag-header-cell-filter-button')
-      .click({ timeout: 5000 });
-    await expect(page.locator(".ag-filter").first()).toBeVisible({
-      timeout: 5000,
-    });
-
-    // Select "Equals" in the filter type dropdown
-    const filterTypeSelect = page.locator(
-      '.ag-filter .ag-picker-field-wrapper',
-    ).first();
-    await filterTypeSelect.click();
-    await page.getByRole("option", { name: "Equals" }).click();
-
-    // Type "User" in the filter input
-    const filterInput = page.locator('.ag-filter input[type="text"]').first();
-    await filterInput.fill("User");
+    const filterInput = await applyEqualsFilter(page, "sender", "User");
 
     // Step 18: Verify only User messages are displayed. AG Grid applies the
     // filter after a debounce and re-renders asynchronously — poll until the
@@ -299,12 +427,12 @@ test(
     const filteredCount = await senderCellLocator.count();
     expect(filteredCount).toBeGreaterThan(0);
 
-    // Steps 19-20: Remove filter value → all messages restored
+    // Steps 19-20: Remove filter value → this conversation's rows restored
     await filterInput.clear();
     await expect
       .poll(async () => senderCellLocator.count(), { timeout: 10000 })
       .toBeGreaterThan(filteredCount); // more rows than the filtered set
     const restoredCount = await senderCellLocator.count();
-    expect(restoredCount).toBeGreaterThanOrEqual(4); // back to at least 4 rows
+    expect(restoredCount).toBeGreaterThanOrEqual(4); // back to the scoped set: 2 user + 2 agent
   },
 );
