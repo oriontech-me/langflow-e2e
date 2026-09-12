@@ -153,7 +153,7 @@ test("the listing verdict does NOT depend on the collection-gate plan", () => {
   // added for: the flag DEFAULTS to 0 and this VM has no GOOGLE_API_KEY on purpose,
   // so `narrow` is not an opt-in here — it is the lane's permanent state, and the
   // downgrade would have covered every cause, including the ones #1812 exists to
-  // catch. It also had no motive: only GOOGLE absent loses ZERO files (247/247); it
+  // catch. It also had no motive: only GOOGLE absent loses ZERO files; it
   // takes all three blank to lose one.
   for (const gatePlan of ["", "complete", "narrow", "refuse", "banana"]) {
     const missing = verdict({ gatePlan, listingMissing: '["a/lost.spec.ts"]' });

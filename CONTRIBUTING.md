@@ -491,6 +491,38 @@ See `agent-component-regression.spec.ts` and the `CLAUDE.md` in the `llm-agents/
 
 ---
 
+## A number in prose is a claim — give the derivation, not the figure
+
+This repo documents heavily, and much of that documentation carries measurements: how many files, how many tests, which character offset, how many occurrences. **A figure written without saying what was measured and how cannot be re-checked, and it goes stale silently.** Nothing breaks; the sentence simply stops being true while still looking like evidence.
+
+It happened three times in one day on #1812 / #1818 / #1801, in three different shapes:
+
+- **`247 of 247`** was true when written and false hours later, in five files at once, because the suite grew. No defect, no change to any of those files — the repo just moved.
+- **A character offset in a JSDoc** was wrong three corrections in a row, because the measurement was taken by calling the function by hand with a string built for the occasion, instead of driving the path production uses. The wrong thing was measured, carefully.
+- **Grep tallies in a commit message** (`listing_verified ×10`, …) were *correct* — and unverifiable, because the sentence never said over which files they were counted. A reviewer tried the whole tree by line, by occurrence, the branch diff alone and per file, and got none of them; the numbers reproduce only under the exact four-file scope the author had used and not written down. **This is the cheapest of the three to get wrong and the most instructive: the figures were right and the claim was still worthless.**
+
+The irony is the point: all three sat in work whose whole subject was a surface asserting a cause it had not measured.
+
+### The rule
+
+Ask what the number is for:
+
+- **Illustrative** — say the outcome instead. *"loses nothing"*, *"one file short"*, *"the whole listing"*, *"every file"*. Prose like that does not age.
+- **Load-bearing** — keep the figure, date it, and print the command that re-measures it beside. "The command" includes its SCOPE: a count over four files and a count over the tree are different measurements, and only the command distinguishes them.
+
+  ```
+  # Measured on `main` when this was written: 247 files with `.env`, 246 without.
+  # The DELTA is the point and is stable; the absolute figures are not. Re-measure:
+  #   npx ts-node scripts/declared-stable-specs.ts
+  #   npx playwright test --grep "@stable" --list
+  ```
+
+`CLAUDE.md` already states this for one counter that moves whenever a doc names a component path — *"re-run the grep rather than quoting the number"*. It generalises: **if a reader cannot re-derive your figure from what you wrote, do not write the figure.**
+
+And when a measurement has to be taken, take it **through the path the code actually uses**. A value built by hand for the measurement is a measurement of the hand-built value.
+
+---
+
 ## Branches
 
 Use the `<type>/<short-description>` pattern in kebab-case:

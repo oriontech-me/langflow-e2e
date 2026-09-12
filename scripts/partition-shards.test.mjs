@@ -591,7 +591,7 @@ test("compareListing reports a listed file the declaration does not know about",
 
 test("compareListing matches through each side's own root, not on the path strings", () => {
   // A Playwright release that reported paths from the config directory instead of
-  // from testDir would otherwise make all 247 files simultaneously lost AND
+  // from testDir would otherwise make EVERY file simultaneously lost AND
   // invented — a false red big enough to get the detector switched off.
   const v = compareListing(
     { files: ["tests/a.spec.ts"], root: "/repo" },
@@ -794,7 +794,7 @@ test("the daily derives the declared spec set and passes it to the matrix", () =
 });
 
 test("deriving the declared set cannot abort the prep job", () => {
-  // `prep`'s product is the matrix. A detector that kills it loses 247 files to
+  // `prep`'s product is the matrix. A detector that kills it loses the whole listing to
   // report one — the trade #980 names, and the one #1813 already settled for the
   // sibling reporter in this same step.
   const step = DAILY.slice(

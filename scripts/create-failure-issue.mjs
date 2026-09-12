@@ -389,8 +389,8 @@ export function renderIssue({
           "never entered the matrix cannot have influenced the files that did.",
           "",
           "**Triage this as the listing, not the suite.** Re-running changes nothing until the",
-          "`prep` job collects the missing file; and a green day that silently ran 246 of 247",
-          "files is not evidence about the 247th (#1012).",
+          "`prep` job collects the missing file; and a green day that silently ran one spec file",
+          "short is not evidence about the file it did not run (#1012).",
         ]
       : arStatus
         ? ["### `@stable` auto-removal", "", arSummary]

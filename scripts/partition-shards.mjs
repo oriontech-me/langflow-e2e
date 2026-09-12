@@ -132,7 +132,7 @@
 // this makes meaningful.
 //
 // It never fails the prep step. This script's product is the shard matrix, so a
-// detector able to abort it would lose 247 files to report one; an absent,
+// detector able to abort it would lose the whole listing to report one file; an absent,
 // unreadable or malformed declaration degrades to UNVERIFIED, which the merge
 // job's LAST step reads fail-closed. See `compareListing` for the rest.
 //
@@ -372,7 +372,7 @@ export function buildShards(files, durations, n) {
  * than on the strings. The listing's paths are relative to Playwright's
  * `config.rootDir` (today `<repo>/tests`) and the declaration's to the root it
  * walked; pinning the comparison to a spelling means a Playwright release that
- * reports paths from the config directory instead would report all 247 files as
+ * reports paths from the config directory instead would report EVERY file as
  * simultaneously lost and invented.
  *
  * Fail-closed on everything it cannot resolve. A missing, unreadable or rootless
@@ -560,7 +560,8 @@ export function renderListingVerdict(v, asked = true) {
         `(#1764/#1812): ${v.missing.slice(0, CAP).join(", ")}` +
         (v.missing.length > CAP ? `, … and ${v.missing.length - CAP} more` : "") +
         `. Most likely the listing environment is missing something a spec gates its ` +
-        `COLLECTION on. The scheduled run is failed at the end of the merge job.`,
+        `COLLECTION on. The run is failed by whichever lane read this — the merge job's ` +
+        `last step on Actions, \`phase_verdict\` on the VM (#1826).`,
     );
   }
   if (v.unexpected.length) {
