@@ -252,6 +252,86 @@ async function runAndGetBubble(page: Page) {
   return bubble;
 }
 
+// A missing UUID has two causes that the pattern alone cannot tell apart, and the
+// difference decides whether anyone should look at the product: the agent never got
+// the value, or it got it and the ANSWER was cut before it finished spelling it out.
+// Measured on 1.13.0.dev9 with `google / gemini-2.5-flash` (#1830): the reply stops
+// mid-UUID, the backend stores the SAME cut text — so it is not a rendering artifact —
+// the tool output inside that very message carries the value in full, `state` reads
+// `complete`, and `usage` reports 820 output tokens for a 63-character answer.
+//
+// Attached to the assertion instead of asserted on: a truncated answer still fails
+// the test, because the spec's premise is that the agent answers with the value.
+// What changes is that the failure names the cause. Without it the artifact reads as
+// "the agent never fetched", which is how it was read for a full day of triage.
+async function explainMissingUuid(
+  request: APIRequestContext,
+  flowId: string,
+  rendered: string,
+): Promise<string | undefined> {
+  // Nothing to explain about a pass, and the caller should not have to branch:
+  // a conditional in the test body is what this early return buys back.
+  if (UUID_SHAPE.test(rendered)) return undefined;
+
+  const bearer = await getAuthToken(request);
+  const res = await request.get(`/api/v1/monitor/messages?flow_id=${flowId}`, {
+    headers: bearer ? { Authorization: bearer } : {},
+  });
+  if (res.status() !== 200) return `could not read the persisted message: GET monitor -> ${res.status()}`;
+
+  const messages = await res.json();
+  const aiMsg = Array.isArray(messages)
+    ? messages.find((m: any) => m.sender === "Machine" && (m.content_blocks?.length ?? 0) > 0)
+    : undefined;
+  if (!aiMsg) return "no AI message with content blocks was persisted for this flow";
+
+  const stored = String(aiMsg.text ?? "");
+  const toolOutput = JSON.stringify(
+    (aiMsg.content_blocks as any[])
+      .flatMap((b: any) => b.contents ?? [])
+      .filter((c: any) => c.type === "tool_use")
+      .map((c: any) => c.output),
+  );
+  const fetched = toolOutput.match(UUID_SHAPE)?.[0];
+  const usage = aiMsg.properties?.usage;
+  const model = aiMsg.properties?.source?.source ?? "unknown";
+  const provenance =
+    stored.trim() === rendered.trim()
+      ? "identical to the rendered text — the cut is upstream of the UI, not a render"
+      : `DIFFERENT from the rendered text: ${JSON.stringify(stored.slice(-80))}`;
+
+  // The longest suffix of the answer that is a prefix of the value the tool fetched.
+  // Eight characters is the first UUID group, short of which the overlap is chance.
+  let overlap = 0;
+  if (fetched) {
+    for (let n = Math.min(rendered.length, fetched.length); n > 0; n--) {
+      if (fetched.startsWith(rendered.slice(rendered.length - n))) {
+        overlap = n;
+        break;
+      }
+    }
+  }
+
+  const head =
+    overlap >= 8
+      ? `the answer is TRUNCATED, not wrong: it ends in a ${overlap}-character prefix of the UUID ` +
+        `the tool actually fetched. This is neither a max_iterations failure nor a fetch failure (#1830).`
+      : fetched
+        ? `the tool DID fetch a UUID and the answer does not carry it — the model answered without ` +
+          `using what it fetched.`
+        : `no UUID appears in the tool output either, so the fetch itself did not deliver one.`;
+
+  return [
+    head,
+    `  rendered   : ${JSON.stringify(rendered.slice(-80))}`,
+    `  persisted  : ${provenance}`,
+    `  tool output: ${fetched ?? "no UUID found"}`,
+    `  model      : ${model} · usage ${JSON.stringify(usage ?? {})}`,
+    `A model that spends its output budget before finishing the answer produces exactly this, ` +
+      `and lanes that settle a different model do not reproduce it.`,
+  ].join("\n");
+}
+
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // Serial mode + --workers=1 keeps the shared instance state deterministic. Note
@@ -311,14 +391,14 @@ for (const { label, options, skipReason } of targets) {
     test(
       "causal control — a high max iterations does not hit the limit",
       { tag: ["@stable", "@regression", "@agents", "@playground"] },
-      async ({ page }) => {
+      async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        await loadAgent(page, options);
+        const flowId = await loadAgent(page, options);
 
         await test.step("force a tool call, allow a high max_iterations, set the task", async () => {
           await setSystemPrompt(page, SYSTEM_PROMPT);
@@ -329,22 +409,6 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("run and assert the run finishes without hitting the limit", async () => {
           const bubble = await runAndGetBubble(page);
-          // Positive half, asserted FIRST because it is the only one that waits:
-          // the fetched UUID. A negative assertion alone passes on a refusal ("I
-          // cannot fetch URLs") or a blank run — both of which also carry no limit
-          // message, and neither of which exercises the cap. Reaching it through
-          // `toContainText` retries until the streamed reply settles, so the read
-          // below is taken from a bubble that has stopped growing (#1830).
-          //
-          // `useInnerText` keeps this reading exactly what the assertion below
-          // reads. The default compares `textContent`, which carries the collapsed
-          // "Agent Steps" disclosure (see the note above `expectToolLoopEntered`) —
-          // and that disclosure holds the tool output, i.e. the very UUID this
-          // assertion exists to find in the ANSWER.
-          await expect(bubble).toContainText(UUID_SHAPE, {
-            useInnerText: true,
-            timeout: 30000,
-          });
           const reply = (await bubble.innerText()).trim();
           // Same task as Test 1, but with headroom to iterate: the agent finishes
           // its two calls WITHOUT the limit message. Only max_iterations differs
@@ -352,6 +416,14 @@ for (const { label, options, skipReason } of targets) {
           // cap, not an unrelated failure.
           expect(reply.length).toBeGreaterThan(0);
           expect(reply).not.toMatch(LIMIT_MESSAGE);
+          // Positive half: the fetched UUID. A negative assertion alone passes on a
+          // refusal ("I cannot fetch URLs") or a blank run — both of which also
+          // carry no limit message, and neither of which exercises the cap.
+          //
+          // A missing UUID has two causes that read identically from the pattern
+          // alone, so the assertion carries its own diagnosis (#1830). The helper
+          // returns early on a match, so a passing run costs nothing.
+          expect(reply, await explainMissingUuid(request, flowId, reply)).toMatch(UUID_SHAPE);
         });
       },
     );
