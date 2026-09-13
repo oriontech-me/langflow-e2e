@@ -39,12 +39,34 @@ test("an UPPERCASE answer is still recognised as truncated", () => {
   assert.doesNotMatch(out, /answered without using what it fetched/);
 });
 
-test("does NOT claim truncation — or its cause — when the answer ignores the fetched value", () => {
-  const rendered = "I could not determine the uuid.";
-  const out = describeMissingUuid({ rendered, stored: rendered, fetchedUuid: FETCHED });
+test("states NO cause when the answer carries no part of the UUID", () => {
+  // Measured in the field: an answer of 11 characters that cost 415 output tokens —
+  // truncation so early that it left no prefix to detect. The first version of this
+  // renderer called that "the model answered without using what it fetched", which is
+  // the misdiagnosis the whole diagnosis exists to remove.
+  const rendered = 'The exact "';
+  const out = describeMissingUuid({
+    rendered,
+    stored: rendered,
+    fetchedUuid: FETCHED,
+    outputTokens: 415,
+  });
 
-  assert.match(out, /answered without using what it fetched/);
-  assert.ok(!out.includes(CLOSING), "a cause the head just ruled out must not be asserted");
+  assert.match(out, /TWO readings fit and this message does not choose/);
+  assert.doesNotMatch(out, /the model answered without using what it fetched/);
+  assert.match(out, /11 characters long/);
+  assert.match(out, /reported 415 output tokens/);
+  assert.ok(!out.includes(CLOSING), "a cause the head declined to pick must not be asserted below it");
+});
+
+test("says so when the token count is not available, instead of implying one", () => {
+  const out = describeMissingUuid({
+    rendered: "I could not determine the uuid.",
+    stored: "I could not determine the uuid.",
+    fetchedUuid: FETCHED,
+  });
+
+  assert.match(out, /an unknown number of output tokens/);
 });
 
 test("says so when the tool output carried no UUID at all, and claims nothing further", () => {

@@ -306,6 +306,7 @@ async function explainMissingUuid(
       fetchedUuid: toolOutput.match(UUID_SHAPE)?.[0],
       model: aiMsg.properties?.source?.source,
       usage: aiMsg.properties?.usage,
+      outputTokens: aiMsg.properties?.usage?.output_tokens,
     });
   } catch (error) {
     // EVERY branch reports, and that is the whole contract of this function. It is

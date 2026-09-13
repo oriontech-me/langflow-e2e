@@ -26,6 +26,8 @@ export interface MissingUuidReading {
   model?: string;
   /** The message's usage block, printed as received. */
   usage?: unknown;
+  /** Output tokens from that usage block, when it reports them. */
+  outputTokens?: number;
 }
 
 /**
@@ -47,16 +49,26 @@ export function uuidPrefixOverlap(rendered: string, fetched: string): number {
 }
 
 export function describeMissingUuid(reading: MissingUuidReading): string {
-  const { rendered, stored, fetchedUuid, model, usage } = reading;
+  const { rendered, stored, fetchedUuid, model, usage, outputTokens } = reading;
   const overlap = fetchedUuid ? uuidPrefixOverlap(rendered, fetchedUuid) : 0;
   const truncated = !!fetchedUuid && overlap >= TRUNCATION_MIN_OVERLAP;
 
+  // The middle branch states no cause, and that is deliberate. A cut that lands
+  // BEFORE the answer reaches the value leaves no overlap to detect, and the first
+  // version of this renderer read that as "the model ignored the tool" — measured in
+  // the field on an answer of 11 characters that cost 415 output tokens, which is
+  // truncation in its most extreme form. Asserting the wrong one of two readings is
+  // the failure mode this whole diagnosis exists to remove, so where it cannot tell
+  // them apart it hands over the two numbers that do.
   const head = truncated
     ? `the answer is TRUNCATED, not wrong: it ends in a ${overlap}-character prefix of the UUID ` +
       `the tool actually fetched. This is neither a max_iterations failure nor a fetch failure (#1830).`
     : fetchedUuid
-      ? `the tool DID fetch a UUID and the answer does not carry it — the model answered without ` +
-        `using what it fetched.`
+      ? `the tool DID fetch a UUID and the answer does not carry it. TWO readings fit and this ` +
+        `message does not choose: the model ignored what it fetched, or the answer was cut before ` +
+        `it reached the value. The answer is ${rendered.length} characters long and the model ` +
+        `reported ${outputTokens ?? "an unknown number of"} output tokens — a short answer against ` +
+        `a large token count is the truncation this model does in 8 of 9 provocations (#1830).`
       : `no UUID appears in the tool output either, so the fetch itself did not deliver one.`;
 
   const provenance =
