@@ -6,6 +6,7 @@ import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../.
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { describeMissingUuid } from "../../../../helpers/other/describe-missing-uuid";
 import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import {
   hasProviderEnvKeys,
@@ -165,6 +166,34 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<s
 // passing bubble is 43 characters, the limit message alone. Same route, poll shape
 // and budget as `expectToolSelectionPersisted` in `agent-multi-tool-selection.spec.ts`.
 //
+// One reader for the persisted agent message, because there are now two consumers
+// and they had started as a copy: this poll, which asks whether the tool loop was
+// entered, and the UUID diagnosis below, which asks what the answer said. The poll
+// keeps its own loop and its own wording — only the fetch-and-find moved.
+async function readAgentMessage(
+  request: APIRequestContext,
+  flowId: string,
+  bearer: string | undefined,
+): Promise<{ problem?: string; aiMsg?: any; toolUses?: any[] }> {
+  const res = await request.get(`/api/v1/monitor/messages?flow_id=${flowId}`, {
+    headers: bearer ? { Authorization: bearer } : {},
+  });
+  if (res.status() !== 200) return { problem: `GET monitor -> ${res.status()}` };
+  const messages = await res.json();
+  if (!Array.isArray(messages)) return { problem: "monitor payload not a list" };
+
+  const aiMsg = messages.find(
+    (m: any) => m.sender === "Machine" && (m.content_blocks?.length ?? 0) > 0,
+  );
+  if (!aiMsg) return { problem: "AI message for this flow not persisted yet" };
+
+  const toolUses = (aiMsg.content_blocks as any[])
+    .flatMap((b: any) => b.contents ?? [])
+    .filter((c: any) => c.type === "tool_use");
+
+  return { aiMsg, toolUses };
+}
+
 // ANY tool counts, not specifically `fetch_content`: the cap is reached by
 // entering the tool loop, whichever of the template's two tools (URLComponent /
 // UnifiedWebSearch) the model picks, and pinning the name would add a second
@@ -178,22 +207,10 @@ async function expectToolLoopEntered(
   await expect
     .poll(
       async () => {
-        const res = await request.get(`/api/v1/monitor/messages?flow_id=${flowId}`, {
-          headers: bearer ? { Authorization: bearer } : {},
-        });
-        if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
-        const messages = await res.json();
-        if (!Array.isArray(messages)) return "monitor payload not a list";
+        const { problem, aiMsg, toolUses } = await readAgentMessage(request, flowId, bearer);
+        if (problem) return problem;
 
-        const aiMsg = messages.find(
-          (m: any) => m.sender === "Machine" && (m.content_blocks?.length ?? 0) > 0,
-        );
-        if (!aiMsg) return "AI message for this flow not persisted yet";
-
-        const toolNames = (aiMsg.content_blocks as any[])
-          .flatMap((b: any) => b.contents ?? [])
-          .filter((c: any) => c.type === "tool_use")
-          .map((c: any) => c.name as string);
+        const toolNames = (toolUses ?? []).map((c: any) => c.name as string);
 
         return toolNames.length > 0
           ? "tool-loop-entered"
@@ -264,6 +281,9 @@ async function runAndGetBubble(page: Page) {
 // the test, because the spec's premise is that the agent answers with the value.
 // What changes is that the failure names the cause. Without it the artifact reads as
 // "the agent never fetched", which is how it was read for a full day of triage.
+//
+// Rendering lives in `describeMissingUuid`, pure and unit-tested — this half only
+// reads. Nothing here may throw: see the catch.
 async function explainMissingUuid(
   request: APIRequestContext,
   flowId: string,
@@ -273,63 +293,32 @@ async function explainMissingUuid(
   // a conditional in the test body is what this early return buys back.
   if (UUID_SHAPE.test(rendered)) return undefined;
 
-  const bearer = await getAuthToken(request);
-  const res = await request.get(`/api/v1/monitor/messages?flow_id=${flowId}`, {
-    headers: bearer ? { Authorization: bearer } : {},
-  });
-  if (res.status() !== 200) return `could not read the persisted message: GET monitor -> ${res.status()}`;
+  try {
+    const bearer = await getAuthToken(request);
+    const { problem, aiMsg, toolUses } = await readAgentMessage(request, flowId, bearer);
+    if (problem) return `could not read the persisted message: ${problem}`;
 
-  const messages = await res.json();
-  const aiMsg = Array.isArray(messages)
-    ? messages.find((m: any) => m.sender === "Machine" && (m.content_blocks?.length ?? 0) > 0)
-    : undefined;
-  if (!aiMsg) return "no AI message with content blocks was persisted for this flow";
+    const toolOutput = JSON.stringify((toolUses ?? []).map((c: any) => c.output));
 
-  const stored = String(aiMsg.text ?? "");
-  const toolOutput = JSON.stringify(
-    (aiMsg.content_blocks as any[])
-      .flatMap((b: any) => b.contents ?? [])
-      .filter((c: any) => c.type === "tool_use")
-      .map((c: any) => c.output),
-  );
-  const fetched = toolOutput.match(UUID_SHAPE)?.[0];
-  const usage = aiMsg.properties?.usage;
-  const model = aiMsg.properties?.source?.source ?? "unknown";
-  const provenance =
-    stored.trim() === rendered.trim()
-      ? "identical to the rendered text — the cut is upstream of the UI, not a render"
-      : `DIFFERENT from the rendered text: ${JSON.stringify(stored.slice(-80))}`;
-
-  // The longest suffix of the answer that is a prefix of the value the tool fetched.
-  // Eight characters is the first UUID group, short of which the overlap is chance.
-  let overlap = 0;
-  if (fetched) {
-    for (let n = Math.min(rendered.length, fetched.length); n > 0; n--) {
-      if (fetched.startsWith(rendered.slice(rendered.length - n))) {
-        overlap = n;
-        break;
-      }
-    }
+    return describeMissingUuid({
+      rendered,
+      stored: String(aiMsg.text ?? ""),
+      fetchedUuid: toolOutput.match(UUID_SHAPE)?.[0],
+      model: aiMsg.properties?.source?.source,
+      usage: aiMsg.properties?.usage,
+    });
+  } catch (error) {
+    // EVERY branch reports, and that is the whole contract of this function. It is
+    // evaluated as an argument, so it runs BEFORE `expect` exists: an escaping throw
+    // takes the assertion failure with it and the artifact becomes a bare transport
+    // error — strictly less than this spec printed before the diagnosis existed.
+    // Both calls above can throw on a wedged backend (#1077): `getAuthToken` lets the
+    // original error propagate once its 30 s budget is out, by documented contract,
+    // and `res.json()` throws on a non-JSON 200.
+    const first = String(error instanceof Error ? error.message : error).split("\n")[0];
+    return `the UUID is missing and the diagnosis could not be read (${first}) — ` +
+      `the received string below is all the evidence this failure carries`;
   }
-
-  const head =
-    overlap >= 8
-      ? `the answer is TRUNCATED, not wrong: it ends in a ${overlap}-character prefix of the UUID ` +
-        `the tool actually fetched. This is neither a max_iterations failure nor a fetch failure (#1830).`
-      : fetched
-        ? `the tool DID fetch a UUID and the answer does not carry it — the model answered without ` +
-          `using what it fetched.`
-        : `no UUID appears in the tool output either, so the fetch itself did not deliver one.`;
-
-  return [
-    head,
-    `  rendered   : ${JSON.stringify(rendered.slice(-80))}`,
-    `  persisted  : ${provenance}`,
-    `  tool output: ${fetched ?? "no UUID found"}`,
-    `  model      : ${model} · usage ${JSON.stringify(usage ?? {})}`,
-    `A model that spends its output budget before finishing the answer produces exactly this, ` +
-      `and lanes that settle a different model do not reproduce it.`,
-  ].join("\n");
 }
 
 const targets = resolveTestTargets({ tier: "tool-calling" });
