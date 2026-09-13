@@ -38,7 +38,11 @@ if (!process.env.CI) {
 }
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
-const GROQ_TEST_MODEL = process.env.GROQ_TEST_MODEL ?? "llama-3.1-8b-instant";
+// `||`, not `??`: the CI lanes inject this from a repository variable, and an
+// unset variable arrives as an EMPTY STRING rather than undefined. Under `??`
+// that empty value wins, and the probe then reports `model "" not in the live
+// Groq catalog` -- a skip whose reason names nothing a reader can act on.
+const GROQ_TEST_MODEL = process.env.GROQ_TEST_MODEL || "llama-3.1-8b-instant";
 const GROQ_API_BASE = "https://api.groq.com/openai/v1";
 
 interface GroqProbe {
