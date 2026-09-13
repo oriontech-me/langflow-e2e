@@ -68,7 +68,8 @@ export function describeMissingUuid(reading: MissingUuidReading): string {
         `message does not choose: the model ignored what it fetched, or the answer was cut before ` +
         `it reached the value. The answer is ${rendered.length} characters long and the model ` +
         `reported ${outputTokens ?? "an unknown number of"} output tokens — a short answer against ` +
-        `a large token count is the truncation this model does in 8 of 9 provocations (#1830).`
+        `a large token count is the truncation shape, whose measured rate on this model lives in ` +
+        `#1830 and in this spec's doc, dated. A figure quoted here would age in silence.`
       : `no UUID appears in the tool output either, so the fetch itself did not deliver one.`;
 
   const provenance =
