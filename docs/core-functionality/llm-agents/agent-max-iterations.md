@@ -1,6 +1,6 @@
 # Agent Max Iterations — agent stops at the configured limit
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev4`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev9`)
 
 ---
 
@@ -133,6 +133,26 @@ triaging: a declined tool call now fails with *"the model answered without
 calling any tool … This is model non-compliance with the Agent Instructions, NOT
 a broken max_iterations (#1264)"*, and belongs in this section as a measured rate,
 not in a new product issue.
+**Second residual risk, measured the same way: `gemini-2.5-flash` truncates the
+answer.** Test 2 asks the agent to spell out a fetched UUID, and on that model the
+reply is cut mid-value — measured **13 times in 15 provocations** on the VM
+lane against `1.13.0.dev9`, `--retries=0`, on 2026-09-12. It is not a read arriving early and not a
+render: the bubble's `innerText`, its `textContent` and the text the backend
+persisted are identical and all cut, while the tool output inside the same message
+carries the UUID in full, `state` reads `complete`, and `usage` reports 357 to 820
+output tokens for answers of 3 to 63 characters — the cut lands anywhere, including
+before the answer reaches the value at all. On the same instance, minutes
+apart, `gpt-4o-mini` answered in full — so it is the model, not the substrate.
+
+This costs the VM lane a red on every day its Google param resolves to `2.5-flash`,
+which is a property of the provisional key there (the model is retired for new
+accounts, so that lane cannot reach `3.5-flash` — condition 2 of the migration's
+divergence nº 5) and disappears with the definitive key. The Actions lane settles
+`3.5-flash` and does not reproduce it. Read it here as a measured rate rather than
+filing it as a product issue; what is still open, and stated in #1830, is whether a
+message whose text is cut while `state` says `complete`, with no `finish_reason`
+anywhere in the payload, is worth raising upstream.
+
 `@regression` — guards the max-iterations enforcement from regressing (the bug
 #481 documented); `@agents` — agent execution; `@playground` — the flow is run
 through the Playground.

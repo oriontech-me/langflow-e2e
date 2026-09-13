@@ -6,6 +6,7 @@ import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../.
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { describeMissingUuid } from "../../../../helpers/other/describe-missing-uuid";
 import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import {
   hasProviderEnvKeys,
@@ -165,6 +166,34 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<s
 // passing bubble is 43 characters, the limit message alone. Same route, poll shape
 // and budget as `expectToolSelectionPersisted` in `agent-multi-tool-selection.spec.ts`.
 //
+// One reader for the persisted agent message, because there are now two consumers
+// and they had started as a copy: this poll, which asks whether the tool loop was
+// entered, and the UUID diagnosis below, which asks what the answer said. The poll
+// keeps its own loop and its own wording — only the fetch-and-find moved.
+async function readAgentMessage(
+  request: APIRequestContext,
+  flowId: string,
+  bearer: string | undefined,
+): Promise<{ problem?: string; aiMsg?: any; toolUses?: any[] }> {
+  const res = await request.get(`/api/v1/monitor/messages?flow_id=${flowId}`, {
+    headers: bearer ? { Authorization: bearer } : {},
+  });
+  if (res.status() !== 200) return { problem: `GET monitor -> ${res.status()}` };
+  const messages = await res.json();
+  if (!Array.isArray(messages)) return { problem: "monitor payload not a list" };
+
+  const aiMsg = messages.find(
+    (m: any) => m.sender === "Machine" && (m.content_blocks?.length ?? 0) > 0,
+  );
+  if (!aiMsg) return { problem: "AI message for this flow not persisted yet" };
+
+  const toolUses = (aiMsg.content_blocks as any[])
+    .flatMap((b: any) => b.contents ?? [])
+    .filter((c: any) => c.type === "tool_use");
+
+  return { aiMsg, toolUses };
+}
+
 // ANY tool counts, not specifically `fetch_content`: the cap is reached by
 // entering the tool loop, whichever of the template's two tools (URLComponent /
 // UnifiedWebSearch) the model picks, and pinning the name would add a second
@@ -178,22 +207,10 @@ async function expectToolLoopEntered(
   await expect
     .poll(
       async () => {
-        const res = await request.get(`/api/v1/monitor/messages?flow_id=${flowId}`, {
-          headers: bearer ? { Authorization: bearer } : {},
-        });
-        if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
-        const messages = await res.json();
-        if (!Array.isArray(messages)) return "monitor payload not a list";
+        const { problem, aiMsg, toolUses } = await readAgentMessage(request, flowId, bearer);
+        if (problem) return problem;
 
-        const aiMsg = messages.find(
-          (m: any) => m.sender === "Machine" && (m.content_blocks?.length ?? 0) > 0,
-        );
-        if (!aiMsg) return "AI message for this flow not persisted yet";
-
-        const toolNames = (aiMsg.content_blocks as any[])
-          .flatMap((b: any) => b.contents ?? [])
-          .filter((c: any) => c.type === "tool_use")
-          .map((c: any) => c.name as string);
+        const toolNames = (toolUses ?? []).map((c: any) => c.name as string);
 
         return toolNames.length > 0
           ? "tool-loop-entered"
@@ -250,6 +267,59 @@ async function runAndGetBubble(page: Page) {
   const bubble = page.getByTestId("div-chat-message").last();
   await expect(bubble).toBeVisible({ timeout: 30000 });
   return bubble;
+}
+
+// A missing UUID has two causes that the pattern alone cannot tell apart, and the
+// difference decides whether anyone should look at the product: the agent never got
+// the value, or it got it and the ANSWER was cut before it finished spelling it out.
+// Measured on 1.13.0.dev9 with `google / gemini-2.5-flash` (#1830): the reply stops
+// mid-UUID, the backend stores the SAME cut text — so it is not a rendering artifact —
+// the tool output inside that very message carries the value in full, `state` reads
+// `complete`, and `usage` reports 820 output tokens for a 63-character answer.
+//
+// Attached to the assertion instead of asserted on: a truncated answer still fails
+// the test, because the spec's premise is that the agent answers with the value.
+// What changes is that the failure names the cause. Without it the artifact reads as
+// "the agent never fetched", which is how it was read for a full day of triage.
+//
+// Rendering lives in `describeMissingUuid`, pure and unit-tested — this half only
+// reads. Nothing here may throw: see the catch.
+async function explainMissingUuid(
+  request: APIRequestContext,
+  flowId: string,
+  rendered: string,
+): Promise<string | undefined> {
+  // Nothing to explain about a pass, and the caller should not have to branch:
+  // a conditional in the test body is what this early return buys back.
+  if (UUID_SHAPE.test(rendered)) return undefined;
+
+  try {
+    const bearer = await getAuthToken(request);
+    const { problem, aiMsg, toolUses } = await readAgentMessage(request, flowId, bearer);
+    if (problem) return `could not read the persisted message: ${problem}`;
+
+    const toolOutput = JSON.stringify((toolUses ?? []).map((c: any) => c.output));
+
+    return describeMissingUuid({
+      rendered,
+      stored: String(aiMsg.text ?? ""),
+      fetchedUuid: toolOutput.match(UUID_SHAPE)?.[0],
+      model: aiMsg.properties?.source?.source,
+      usage: aiMsg.properties?.usage,
+      outputTokens: aiMsg.properties?.usage?.output_tokens,
+    });
+  } catch (error) {
+    // EVERY branch reports, and that is the whole contract of this function. It is
+    // evaluated as an argument, so it runs BEFORE `expect` exists: an escaping throw
+    // takes the assertion failure with it and the artifact becomes a bare transport
+    // error — strictly less than this spec printed before the diagnosis existed.
+    // Both calls above can throw on a wedged backend (#1077): `getAuthToken` lets the
+    // original error propagate once its 30 s budget is out, by documented contract,
+    // and `res.json()` throws on a non-JSON 200.
+    const first = String(error instanceof Error ? error.message : error).split("\n")[0];
+    return `the UUID is missing and the diagnosis could not be read (${first}) — ` +
+      `the received string below is all the evidence this failure carries`;
+  }
 }
 
 const targets = resolveTestTargets({ tier: "tool-calling" });
@@ -311,14 +381,14 @@ for (const { label, options, skipReason } of targets) {
     test(
       "causal control — a high max iterations does not hit the limit",
       { tag: ["@stable", "@regression", "@agents", "@playground"] },
-      async ({ page }) => {
+      async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        await loadAgent(page, options);
+        const flowId = await loadAgent(page, options);
 
         await test.step("force a tool call, allow a high max_iterations, set the task", async () => {
           await setSystemPrompt(page, SYSTEM_PROMPT);
@@ -339,7 +409,11 @@ for (const { label, options, skipReason } of targets) {
           // Positive half: the fetched UUID. A negative assertion alone passes on a
           // refusal ("I cannot fetch URLs") or a blank run — both of which also
           // carry no limit message, and neither of which exercises the cap.
-          expect(reply).toMatch(UUID_SHAPE);
+          //
+          // A missing UUID has two causes that read identically from the pattern
+          // alone, so the assertion carries its own diagnosis (#1830). The helper
+          // returns early on a match, so a passing run costs nothing.
+          expect(reply, await explainMissingUuid(request, flowId, reply)).toMatch(UUID_SHAPE);
         });
       },
     );
