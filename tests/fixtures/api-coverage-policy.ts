@@ -76,7 +76,7 @@ export function recordFromUrl(
  * - a declaration **with** one requires it, because a slash-only route is
  *   registered only that way. Measured: `POST /api/v2/files/batch` (no slash)
  *   falls through to `/api/v2/files/{file_id}` and answers `405`, and the DELETE
- *   answers `422 uuid_parsing` with `input: "batch"`. Crediting that call would
+ *   answers `422 uuid_parsing` on `path.file_id`. Crediting that call would
  *   mark the batch operation covered by a request that never reached it.
  */
 export function matchesOperation(op: string, req: RecordedRequest): boolean {
