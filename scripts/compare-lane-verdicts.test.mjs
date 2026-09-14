@@ -178,6 +178,37 @@ test("a failure carrying an infra_signature is flagged as not attributable to it
   assert.match(result.warnings.join(" "), /infra_signature/);
 });
 
+// The two below are the negative and the arithmetic of the test above, and their
+// absence is what let the warning count `flaky` as `failures` for three days: the
+// positive case passed either way, so nothing failed when the count was wrong.
+test("a recovered FLAKY carrying an infra_signature raises no 'listed failures' warning", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", {
+      flaky: [fail({ infra_signature: "api-request-timeout" })],
+      totals: { passed: 10, failed: 0, flaky: 1, skipped: 2 },
+    }),
+  );
+  assert.equal(
+    result.warnings.filter((w) => /listed failures carry an infra_signature/.test(w)).length,
+    0,
+  );
+});
+
+test("the infra_signature count counts failures only, not flaky plus failures", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", {
+      failures: [fail({ test: "a red one", infra_signature: "backend-unreachable" })],
+      flaky: [fail({ test: "a recovered one", infra_signature: "api-request-timeout" })],
+      totals: { passed: 9, failed: 1, flaky: 1, skipped: 2 },
+    }),
+  );
+  const line = result.warnings.find((w) => /listed failures carry an infra_signature/.test(w));
+  assert.ok(line, "the warning should still fire for the real failure");
+  assert.match(line, /^1 of VM's listed failures/);
+});
+
 test("different shard counts warn without blocking", () => {
   const result = compare(
     row("daily-stable", { backend: { shard_total: 4 } }),

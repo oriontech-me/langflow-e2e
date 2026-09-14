@@ -689,8 +689,16 @@ export function compareRuns({
   const ciOut = indexOutcomes(ci);
   const vmOut = indexOutcomes(vm);
 
-  for (const [label, index] of [["Actions", ciOut], ["VM", vmOut]]) {
-    const infra = [...index.values()].filter((v) => v.entry?.infra_signature).length;
+  // Counted off `row.failures`, NOT off the indexOutcomes map. That map merges `flaky`
+  // and `failures` into one key space, so counting it here made a RECOVERED flaky that
+  // carried an infra_signature read as a failure "not attributable to the spec". The
+  // text says "listed failures"; the count did not. Seen on 2026-09-11, when the VM's
+  // three reds all had infra_signature: null and the warning still claimed one, and
+  // again on 2026-09-14, when it fired on both lanes at once off the same flaky spec.
+  // This warning exists to say "this red is not the spec's fault", so a false positive
+  // lands squarely on the one claim this lane exists to make precisely.
+  for (const [label, laneRow] of [["Actions", ci], ["VM", vm]]) {
+    const infra = (laneRow?.failures ?? []).filter((e) => e?.infra_signature).length;
     if (infra) {
       warnings.push(
         `${infra} of ${label}'s listed failures carry an infra_signature - the harness could not reach the ` +
