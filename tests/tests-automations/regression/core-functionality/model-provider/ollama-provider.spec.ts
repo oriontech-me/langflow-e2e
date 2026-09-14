@@ -8,11 +8,21 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import {
   addComponentFromSidebar,
   dragComponentFromSidebar,
 } from "../../../../helpers/flows/add-component-from-sidebar";
 import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
+import {
+  readOllamaCapabilities,
+  resolveComponentTestModel,
+} from "../../../../helpers/provider-setup/ollama-capabilities";
+import {
+  ollamaBaseUrl,
+  ollamaBaseUrlFromLangflow,
+  ollamaTestModel,
+} from "../../../../helpers/provider-setup/ollama-endpoint";
 import {
   assertNodeConfigHeld,
   waitForNodeConfigSettled,
@@ -53,74 +63,48 @@ if (!process.env.CI) {
 }
 
 // Reachability probe from the TEST host.
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+const OLLAMA_BASE_URL = ollamaBaseUrl();
 // The URL typed INTO Langflow — how the (dockerized) Langflow reaches the
 // instance; host.docker.internal resolves to the host from the container.
-const OLLAMA_BASE_URL_FROM_LANGFLOW =
-  process.env.OLLAMA_BASE_URL_FROM_LANGFLOW ?? "http://host.docker.internal:11434";
-// The model to exercise. Left EMPTY on purpose when unset: the model is baked
-// into the CI image by build-ollama-image.yml (docker/ollama-e2e/Dockerfile,
+const OLLAMA_BASE_URL_FROM_LANGFLOW = ollamaBaseUrlFromLangflow();
+// The model to exercise. Left UNSET on purpose when the lane pins none: the model
+// is baked into the CI image by build-ollama-image.yml (docker/ollama-e2e/Dockerfile,
 // `ARG OLLAMA_E2E_MODEL`), so the instance — not this file — is the source of
 // truth. A hardcoded fallback used to live here, and it lied: with the env var
 // unset, or the baked model changed, the probe reported "model not pulled" and
 // the test SKIPPED silently on the very surface it exists to guard. Unset now
-// means "whatever this instance serves"; the workflows still pin it explicitly.
-const OLLAMA_TEST_MODEL = process.env.OLLAMA_TEST_MODEL ?? "";
+// means "the first completion tag this instance serves" (#1850); the workflows
+// still pin it explicitly.
+const OLLAMA_TEST_MODEL = ollamaTestModel();
 
 interface OllamaProbe {
-  reachable: boolean;
-  // The resolved model: the pinned one when set, else the instance's first.
+  // Both tests' precondition: a reachable instance serving a model the Ollama
+  // component can list.
+  usable: boolean;
   model: string;
-  models: string[];
   reason: string;
 }
 
-// One probe per worker: GET /api/tags from the test host. Unreachable or
-// model-less instances surface as an explicit skip, never a silent green.
+// One probe per test: `/api/tags` plus every tag's `/api/show`, from the test host,
+// then `resolveComponentTestModel` (#1850). The capabilities are what matter: the
+// component lists only completion tags, and `/api/tags` puts an embedding tag first
+// as readily as a chat model — which is how test 2 used to wait for a dropdown
+// option that could not exist. An unreachable instance, or one serving nothing the
+// component would list, is an explicit skip naming why, never a silent green.
 async function probeOllama(request: APIRequestContext): Promise<OllamaProbe> {
-  try {
-    const res = await request.get(`${OLLAMA_BASE_URL}/api/tags`, { timeout: 5000 });
-    if (res.status() !== 200) {
-      return {
-        reachable: false,
-        model: "",
-        models: [],
-        reason: `local Ollama at ${OLLAMA_BASE_URL} answered ${res.status()}`,
-      };
-    }
-    const body = (await res.json()) as { models?: Array<{ name?: string }> };
-    const models = (body.models ?? []).map((m) => m.name ?? "").filter(Boolean);
-    // Pinned (every CI workflow does): the exact model must be there, so a
-    // drifted image is a loud skip reason instead of a silent substitution.
-    if (OLLAMA_TEST_MODEL) {
-      if (!models.includes(OLLAMA_TEST_MODEL)) {
-        return {
-          reachable: false,
-          model: "",
-          models,
-          reason: `model "${OLLAMA_TEST_MODEL}" not pulled on the local Ollama (has: ${models.join(", ") || "none"})`,
-        };
-      }
-      return { reachable: true, model: OLLAMA_TEST_MODEL, models, reason: "" };
-    }
-    // Unpinned: follow the instance. Only a model-less instance skips.
-    if (models.length === 0) {
-      return {
-        reachable: false,
-        model: "",
-        models,
-        reason: `local Ollama at ${OLLAMA_BASE_URL} serves no model — pull one (e.g. \`ollama pull llama3.2:1b\`) or set OLLAMA_TEST_MODEL`,
-      };
-    }
-    return { reachable: true, model: models[0], models, reason: "" };
-  } catch {
+  const oracle = await readOllamaCapabilities(request, OLLAMA_BASE_URL);
+  if (!oracle.reachable) {
     return {
-      reachable: false,
+      usable: false,
       model: "",
-      models: [],
-      reason: `local Ollama not reachable at ${OLLAMA_BASE_URL} — see the spec doc's provisioning commands`,
+      reason: `${oracle.reason} — see the spec doc's provisioning commands`,
     };
   }
+  const resolution = resolveComponentTestModel(oracle.classes, OLLAMA_TEST_MODEL);
+  if ("skipReason" in resolution) {
+    return { usable: false, model: "", reason: resolution.skipReason };
+  }
+  return { usable: true, model: resolution.model, reason: "" };
 }
 
 // Delete a previously persisted OLLAMA_BASE_URL variable so the test always
@@ -162,12 +146,30 @@ async function waitForRunToFinish(page: Page): Promise<void> {
 test.describe.configure({ mode: "serial" });
 
 test.describe("Ollama Provider", () => {
+  // Both tests enter through `awaitBootstrapTest`, which creates `New Flow` and
+  // `Basic Prompting` whenever the default project is empty, and no test here deleted
+  // them — test 2's own `finally` covers only its blank flow. Measured on a purged
+  // 1.13.0.dev12 instance: the first run left exactly those two behind. The tracker
+  // captures every `POST /api/v1/flows/` → 201 the page performs and deletes exactly
+  // those ids; test 2's blank flow is deleted twice, and `deleteFlow` treats the
+  // second DELETE's 404 as done.
+  let flows: ReturnType<typeof trackCreatedFlows>;
+
+  test.beforeEach(async ({ page }) => {
+    flows = trackCreatedFlows(page);
+  });
+
+  test.afterEach(async ({ request }) => {
+    await flows.cleanup(request);
+    flows.dispose();
+  });
+
   test(
     "Ollama base URL is configured via Settings → Model Providers",
     { tag: ["@stable", "@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeOllama(request);
-      test.skip(!probe.reachable, probe.reason);
+      test.skip(!probe.usable, probe.reason);
 
       await resetOllamaProviderVariable(request);
       await awaitBootstrapTest(page, { skipModal: true });
@@ -286,7 +288,7 @@ test.describe("Ollama Provider", () => {
       ).toBe(true);
 
       const probe = await probeOllama(request);
-      test.skip(!probe.reachable, probe.reason);
+      test.skip(!probe.usable, probe.reason);
 
       // Per-run sentinel: logged (soft) — model obedience is not the contract.
       const token = `OLLAMA-${Date.now()}`;
@@ -375,9 +377,16 @@ test.describe("Ollama Provider", () => {
             .first();
           // THE connectivity assert: passing requires the component to have
           // enumerated the real local instance (the static catalog does not
-          // contain the pulled model's tag). `probe.model` is the model the
-          // instance actually serves, so this cannot drift from the CI image.
-          await expect(option).toBeVisible({ timeout: 15000 });
+          // contain the pulled model's tag). `probe.model` is a tag the instance
+          // actually serves, so this cannot drift from the CI image — and, short of
+          // a pin whose capabilities the test host could not read, one it reports
+          // as a completion model: never a tag the component filters out on
+          // purpose, which is what made this red misread as connectivity (#1850).
+          await expect(
+            option,
+            `the Ollama component's live model list does not offer "${probe.model}" after ` +
+              `pointing it at ${OLLAMA_BASE_URL_FROM_LANGFLOW}`,
+          ).toBeVisible({ timeout: 15000 });
           await option.click();
         };
 

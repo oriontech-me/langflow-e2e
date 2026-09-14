@@ -206,6 +206,45 @@ whatever this instance actually serves", so the spec follows the image instead
 of duplicating its choice. The CI workflows keep pinning the value explicitly,
 so their executed path is unchanged.
 
+**Which of the instance's tags — the first COMPLETION tag (#1850).** "Whatever
+the instance serves" used to mean the first tag `/api/tags` reports, and
+`/api/tags` orders tags with no preference for chat models. The Ollama
+component's live `model_name` list keeps a tag only when its `/api/show`
+capabilities include `completion` (`get_models` in
+`lfx_ollama/components/ollama/ollama.py`, `DESIRED_CAPABILITY = "completion"`,
+read from the 1.13.0.dev12 image), so on an instance listing an embedding
+model first test 2 waited for an option that cannot exist — and failed on the
+assert its own comment calls the connectivity assert, which reads as "the
+component could not enumerate the instance" when it had, and had correctly
+filtered the tag out. The probe now reads the instance through
+`helpers/provider-setup/ollama-capabilities.ts` — `/api/tags` plus every tag's
+`/api/show`, from the test host, the same oracle
+`assistant-ollama-provider.spec.ts` uses — and `resolveComponentTestModel`
+decides:
+
+| `OLLAMA_TEST_MODEL` | What the instance reports for it | Resolution |
+|---|---|---|
+| unset | at least one completion tag | the first completion tag, in `/api/tags` order |
+| unset | no completion tag | **skip**, naming the tags by class (embedding-only, capabilities unreadable, no completion capability) |
+| set | not served | **skip**, naming what is served (unchanged) |
+| set | served, capabilities lack `completion` | **skip** — no dropdown can ever offer it |
+| set | served as a completion model | that tag (unchanged) |
+| set | served, capabilities unreadable from the test host | that tag — **not** a skip |
+
+The rows about unreadable capabilities are the one place the resolution
+deliberately differs from the component, decided rather than inherited. The
+component lists a tag whose `/api/show` omits `capabilities` (older Ollama)
+and drops one whose `/api/show` fails; the oracle cannot tell those apart and
+files both as `unreadable`, never as completion (#1012). Unpinned, such a tag
+is therefore never chosen — resolving from an unknown is exactly how the
+embedding tag got chosen. Pinned, it is not a skip either: the pin is the
+lane's explicit choice, every CI lane pins, and skipping a `@stable` run
+because the test host failed one metadata read would trade the product's own
+verdict (the dropdown) for a silent skip. On an Ollama that reports
+capabilities — 0.32.1 locally, the 0.32.5 `docker/ollama-e2e/Dockerfile` pins
+for CI — the oracle and the component agree on every tag, so neither lane
+reaches those rows today.
+
 **Run-completion signal (fixed for #931).** The old `waitForRunToFinish`
 probed the Stop button with `isVisible({ timeout: 10000 })` and, when it did
 not appear in time, skipped the wait entirely and fell straight into a 60 s
@@ -280,9 +319,11 @@ equivalent for the healthy path, and for the broken path no budget works.
     the Langflow container reaches the instance (default
     `http://host.docker.internal:11434` for the dockerized nightly);
   - `OLLAMA_TEST_MODEL` — the model to exercise. **Optional: when unset the
-    spec derives it from the instance** (the first model `/api/tags` reports)
-    and skips only when the instance has NO model at all. There is
-    deliberately no hardcoded fallback tag — see *Model resolution* below.
+    spec derives it from the instance** — the first tag, in `/api/tags` order,
+    whose `/api/show` capabilities include `completion`, the only kind the
+    Ollama component lists (#1850) — and skips naming what the instance serves
+    when it has no such tag. There is deliberately no hardcoded fallback tag —
+    see *Model resolution* below.
   - Provisioning used for validation:
     `docker run -d --name ollama-e2e -p 11434:11434 ollama/ollama` +
     `docker exec ollama-e2e ollama pull llama3.2:1b`.
@@ -315,13 +356,15 @@ equivalent for the healthy path, and for the broken path no budget works.
     without the allowlist fails both tests (bullet above). The
     `DNS resolution failed` answer recorded below did not reproduce, with the
     ranges or with the bare hostname; the build that fixed it was not bisected.
-    One local trap, measured: **pin `OLLAMA_TEST_MODEL` to a chat model when
-    the instance also serves embedding models.** Unset, the spec takes the
-    first tag `/api/tags` reports — here `all-minilm:latest` — and the Ollama
-    component drops a model whose `/api/show` capabilities lack `completion`
-    (0.32.1 reports them), so test 2 failed its live-dropdown assert 2/2. Run
-    with `PLAYWRIGHT_BASE_URL` pointing at that instance:
-    `OLLAMA_TEST_MODEL=qwen2.5:0.5b npx playwright test
+    One local trap, measured and since fixed (#1850): that instance lists two
+    embedding tags (`all-minilm:latest`, `nomic-embed-text:latest`) before
+    `qwen2.5:0.5b`, and the spec used to take the first tag `/api/tags`
+    reports. The Ollama component drops a tag whose `/api/show` capabilities
+    lack `completion` (0.32.1 reports them), so test 2 failed its live-dropdown
+    assert on `all-minilm:latest` (2/2 then, 1/1 re-measured before the fix).
+    The spec now resolves `qwen2.5:0.5b` on the same instance, so no pin is
+    needed. Run with `PLAYWRIGHT_BASE_URL` pointing at that instance:
+    `npx playwright test
     tests/tests-automations/regression/core-functionality/model-provider/ollama-provider.spec.ts
     --workers=1 --retries=0`.
   - **1.12.0.dev18 (measured 2026-08-06) — did not run, so the spec was
@@ -355,7 +398,9 @@ equivalent for the healthy path, and for the broken path no budget works.
 
 **Test 1 — Ollama base URL is configured via Settings → Model Providers (§7.6 configure half)**
 
-1. Probe `OLLAMA_BASE_URL` (`/api/tags`); skip with reason if unreachable.
+1. Probe `OLLAMA_BASE_URL` (`/api/tags` plus each tag's `/api/show`) and
+   resolve the model (*Model resolution*); skip with the reason if the
+   instance is unreachable or serves no model the component would list.
    (No component pre-flight here — see Build-side pre-flight for why.)
 2. Open Settings → Model Providers → provider item **Ollama**.
 3. Fill the provider's base-URL field with `OLLAMA_BASE_URL_FROM_LANGFLOW`
@@ -376,9 +421,11 @@ equivalent for the healthy path, and for the broken path no budget works.
    the sidebar; connect ChatInput → Ollama (input) and Ollama → ChatOutput.
 3. On the Ollama node: set `base_url = OLLAMA_BASE_URL_FROM_LANGFLOW`,
    refresh/open the `model_name` dropdown.
-4. **Assert (configure/connectivity):** the dropdown lists
-   `OLLAMA_TEST_MODEL` — the component genuinely enumerated the local
-   instance's models. Select it, then **wait for the selection to converge**
+4. **Assert (configure/connectivity):** the dropdown lists the resolved model
+   — a tag the instance reports as a completion model (or the pin, see *Model
+   resolution*), so its absence means the component did not enumerate the
+   local instance, not that it filtered out an embedding tag (#1850). Select
+   it, then **wait for the selection to converge**
    (#1302): the widget still shows it with no flow-save PATCH in flight,
    re-applying at most once.
 5. Open the Playground. **Immediately before sending, assert the Ollama node
@@ -437,7 +484,13 @@ reply presence — never model wording.
   must fail there, naming the revert, NOT 180 s later on
   `div-chat-message`.** M5 is the one that proves the guard is load-bearing:
   without it the same mutation still fails the test, but as the unattributed
-  timeout this issue was filed under.
+  timeout this issue was filed under. **M6 (#1850) — the unpinned resolution
+  is forced back to the instance's first tag (`classes.tags[0]`) against an
+  instance listing an embedding model first ⇒ test 2 must fail at the
+  live-dropdown assert**, which is the defect the resolution removes; its
+  counterpart is behavioural, not a mutation: pointed at an instance serving
+  only embedding models (`OLLAMA_BASE_URL` at a fake `/api/tags` + `/api/show`),
+  both tests must **skip** naming those tags, never run and never pass.
 
   M1 was previously documented as "test 1 expects a **4xx** validate-provider
   (inverted)". That mutation could not fail as described: the endpoint answers
@@ -449,6 +502,20 @@ reply presence — never model wording.
   `LANGFLOW_SSRF_ALLOWED_HOSTS`: **1 failed in 1.1 min**. So the test was
   never a false positive, but it failed opaquely; the `valid === true` assert
   makes it fail fast and name the cause.
+
+---
+
+## Cleanup *(required by the repo's flow-cleanup rule)*
+
+- Test 2 deletes its blank flow by id in a `finally`.
+- Both tests enter through `awaitBootstrapTest`, which creates `New Flow` +
+  `Basic Prompting` whenever the default project is empty, and nothing deleted
+  them: measured on a purged 1.13.0.dev12 instance, the first run of this file
+  left exactly those two behind. `trackCreatedFlows` now captures every flow the
+  page creates and deletes those ids in `afterEach` (#1850); test 2's blank flow
+  is deleted twice, and `deleteFlow` treats the second DELETE's 404 as done.
+- `OLLAMA_BASE_URL` is deleted **before** test 1 on purpose, so the save is a real
+  first-time configure, and left configured afterwards.
 
 ---
 
@@ -464,9 +531,10 @@ reply presence — never model wording.
 
 ## External dependencies *(required)*
 
-- **Local Ollama instance** with `OLLAMA_TEST_MODEL` pulled (no cloud key,
-  no external network) — see Preconditions for the provisioning commands and
-  env vars; absent ⇒ explicit skip.
+- **Local Ollama instance** serving a completion model — `OLLAMA_TEST_MODEL`
+  when set, else the first tag whose `/api/show` capabilities include
+  `completion` (no cloud key, no external network) — see Preconditions for the
+  provisioning commands and env vars; absent ⇒ explicit skip.
 - **The `lfx-ollama` distribution present in the Langflow image** — it ships
   in the stock nightly, so absence is a packaging regression ⇒ attributed
   hard failure, not a skip. Migration watch for the M4 shim removal: #1040.

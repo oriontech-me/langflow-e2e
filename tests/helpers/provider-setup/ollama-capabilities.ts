@@ -89,7 +89,10 @@ export function boundOllamaModelList(
   };
 }
 
-export type AssistantTestModelResolution = { model: string } | { skipReason: string };
+/** The model a spec drives on the local Ollama, or why it cannot drive one. */
+export type OllamaTestModelResolution = { model: string } | { skipReason: string };
+
+export type AssistantTestModelResolution = OllamaTestModelResolution;
 
 /**
  * The model the spec drives: the lane's pin when it set one, else the first
@@ -125,6 +128,78 @@ export function resolveAssistantTestModel(
     };
   }
   return { model: first };
+}
+
+/** Why a tag is not a completion tag, in the words a skip reason should use. */
+function nonCompletionClass(tag: string, classes: OllamaCapabilityClasses): string {
+  if (classes.embeddingOnly.includes(tag)) return "embedding-only";
+  if (classes.unreadable.includes(tag)) return "capabilities unreadable";
+  return "no completion capability";
+}
+
+/** Every tag that is not a completion tag, grouped by why — so a skip names what to fix. */
+function describeNonCompletionTags(classes: OllamaCapabilityClasses): string {
+  const groups = new Map<string, string[]>();
+  for (const tag of classes.tags) {
+    if (classes.completion.includes(tag)) continue;
+    const why = nonCompletionClass(tag, classes);
+    groups.set(why, [...(groups.get(why) ?? []), tag]);
+  }
+  return [...groups].map(([why, tags]) => `${why}: ${tags.join(", ")}`).join("; ");
+}
+
+/**
+ * The model `ollama-provider.spec.ts` drives through the Ollama COMPONENT (#1850): the
+ * lane's pin when it set one, else the first completion tag in the instance's order.
+ *
+ * The component's live `model_name` list keeps a tag only when its `/api/show`
+ * capabilities include `completion` (`get_models` in `lfx_ollama/components/ollama/ollama.py`,
+ * `DESIRED_CAPABILITY = "completion"`, read from the 1.13.0.dev12 image), while `/api/tags`
+ * orders tags with no preference for chat models. Taking the first tag therefore picked
+ * `all-minilm:latest` on an instance listing it before `qwen2.5:0.5b`, and the spec waited
+ * for a dropdown option that cannot exist. Unlike the Assistant there is no tool-calling
+ * preference to honour: `completion` order is the whole rule.
+ *
+ * An unreadable tag is where this deliberately differs from the component. The component
+ * lists a tag whose `/api/show` omits `capabilities` (older Ollama) and drops one whose
+ * `/api/show` fails; this oracle cannot tell the two apart and files both as `unreadable`
+ * (#1012). Unpinned, such a tag is never chosen — resolving from an unknown is how the
+ * embedding tag got chosen. Pinned, it is not a skip either: the pin is the lane's explicit
+ * choice, and skipping a pinned run because the test host failed one metadata read would
+ * trade the product's own verdict (the dropdown) for a silent skip. A pin the instance
+ * positively reports as not a completion model does skip — no dropdown can ever offer it.
+ */
+export function resolveComponentTestModel(
+  classes: OllamaCapabilityClasses,
+  pinned: string | undefined,
+): OllamaTestModelResolution {
+  if (pinned) {
+    if (!classes.tags.includes(pinned)) {
+      return {
+        skipReason: `OLLAMA_TEST_MODEL "${pinned}" is not served by the local Ollama (has: ${classes.tags.join(", ") || "none"})`,
+      };
+    }
+    if (classes.completion.includes(pinned) || classes.unreadable.includes(pinned)) {
+      return { model: pinned };
+    }
+    return {
+      skipReason:
+        `OLLAMA_TEST_MODEL "${pinned}" is not a completion model on the local Ollama ` +
+        `(${nonCompletionClass(pinned, classes)}), and the Ollama component lists only tags ` +
+        `whose capabilities include completion`,
+    };
+  }
+  const first = classes.completion[0];
+  if (first) return { model: first };
+  const pull = "pull a chat model (e.g. `ollama pull llama3.2:1b`) or set OLLAMA_TEST_MODEL";
+  if (classes.tags.length === 0) {
+    return { skipReason: `the local Ollama serves no model — ${pull}` };
+  }
+  return {
+    skipReason:
+      `the local Ollama serves no completion model, which is all the Ollama component lists ` +
+      `(${describeNonCompletionTags(classes)}) — ${pull}`,
+  };
 }
 
 /**
