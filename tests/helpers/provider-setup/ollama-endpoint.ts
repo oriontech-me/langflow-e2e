@@ -16,10 +16,10 @@
 // `{"valid": false, "error": "Invalid Ollama base URL"}` — a rejection that does not
 // look like one at the status level.
 //
-// NOTE: `core-functionality/model-provider/ollama-provider.spec.ts` predates this
-// module and holds the same two defaults inline. It is deliberately not touched by
-// the enabling PR (it is `@stable` and green); migrating it onto these functions
-// belongs to the first adoption follow-up, which edits that area anyway.
+// `core-functionality/model-provider/ollama-provider.spec.ts` predates this module and
+// held the same two defaults inline until #1850 moved it onto these functions. One
+// behaviour moved with it: an env var set to the EMPTY string now falls back to the
+// default here, where the spec's `??` kept the empty string and probed nothing.
 
 /** What the TEST HOST probes for reachability. */
 export const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434";

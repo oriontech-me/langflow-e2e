@@ -23,6 +23,7 @@ import {
   declaredParameterCountB,
   readOllamaCapabilities,
   resolveAssistantTestModel,
+  resolveComponentTestModel,
   type OllamaHttp,
 } from "./ollama-capabilities";
 
@@ -152,6 +153,102 @@ test("unpinned, an instance with no completion tag skips", () => {
   const resolution = resolveAssistantTestModel(classes, undefined);
   assert.ok("skipReason" in resolution);
   assert.match(resolution.skipReason, /no completion-capable/);
+});
+
+// ---------------------------------------------------------------------------
+// resolveComponentTestModel (#1850)
+// ---------------------------------------------------------------------------
+
+// The instance #1850 was measured on, in its own /api/tags order: two embedding tags
+// BEFORE the only chat model. Taking the first tag is the defect.
+const EMBEDDING_FIRST = classifyOllamaCapabilities([
+  { name: "all-minilm:latest", capabilities: ["embedding"] },
+  { name: "nomic-embed-text:latest", capabilities: ["embedding"] },
+  { name: "qwen2.5:0.5b", capabilities: ["completion", "tools"] },
+]);
+
+test("unpinned, an embedding tag listed first is never chosen — the first completion tag is", () => {
+  assert.deepEqual(resolveComponentTestModel(EMBEDDING_FIRST, undefined), { model: "qwen2.5:0.5b" });
+  assert.deepEqual(resolveComponentTestModel(EMBEDDING_FIRST, ""), { model: "qwen2.5:0.5b" });
+});
+
+test("unpinned, instance order decides between completion tags — tools earn no preference here", () => {
+  // The component lists every completion tag, `tools` or not, so preferring a tool-capable
+  // one (as the Assistant resolver does) would only reorder what is already listed.
+  const classes = classifyOllamaCapabilities([
+    { name: "gemma2:2b", capabilities: ["completion"] },
+    { name: "qwen2.5:0.5b", capabilities: ["completion", "tools"] },
+  ]);
+  assert.deepEqual(resolveComponentTestModel(classes, undefined), { model: "gemma2:2b" });
+});
+
+test("unpinned, an unreadable tag is never chosen, even as the only candidate left", () => {
+  // Unknown is not completion (#1012): resolving from an unread capability is how an
+  // embedding tag got picked in the first place.
+  const classes = classifyOllamaCapabilities([
+    { name: "all-minilm:latest", capabilities: ["embedding"] },
+    { name: "mystery:tag", capabilities: null },
+  ]);
+  const resolution = resolveComponentTestModel(classes, undefined);
+  assert.ok("skipReason" in resolution);
+  assert.match(resolution.skipReason, /embedding-only: all-minilm:latest/);
+  assert.match(resolution.skipReason, /capabilities unreadable: mystery:tag/);
+  assert.match(resolution.skipReason, /OLLAMA_TEST_MODEL/);
+});
+
+test("unpinned, an instance serving only embedding models skips naming them", () => {
+  const classes = classifyOllamaCapabilities([
+    { name: "all-minilm:latest", capabilities: ["embedding"] },
+    { name: "nomic-embed-text:latest", capabilities: ["embedding"] },
+  ]);
+  const resolution = resolveComponentTestModel(classes, undefined);
+  assert.ok("skipReason" in resolution);
+  assert.match(resolution.skipReason, /no completion model/);
+  assert.match(resolution.skipReason, /embedding-only: all-minilm:latest, nomic-embed-text:latest/);
+});
+
+test("unpinned, a tag with capabilities but no completion is named as such", () => {
+  const classes = classifyOllamaCapabilities([{ name: "vision-only:tag", capabilities: ["vision"] }]);
+  const resolution = resolveComponentTestModel(classes, undefined);
+  assert.ok("skipReason" in resolution);
+  assert.match(resolution.skipReason, /no completion capability: vision-only:tag/);
+});
+
+test("unpinned, a model-less instance skips saying it serves no model", () => {
+  const resolution = resolveComponentTestModel(classifyOllamaCapabilities([]), undefined);
+  assert.ok("skipReason" in resolution);
+  assert.match(resolution.skipReason, /serves no model/);
+});
+
+test("a pinned completion model is used as-is, wherever the instance lists it", () => {
+  assert.deepEqual(resolveComponentTestModel(EMBEDDING_FIRST, "qwen2.5:0.5b"), {
+    model: "qwen2.5:0.5b",
+  });
+});
+
+test("a pinned model the instance does not serve skips naming what it serves", () => {
+  const resolution = resolveComponentTestModel(EMBEDDING_FIRST, "llama3.2:1b");
+  assert.ok("skipReason" in resolution);
+  assert.match(resolution.skipReason, /"llama3\.2:1b" is not served/);
+  assert.match(resolution.skipReason, /all-minilm:latest, nomic-embed-text:latest, qwen2\.5:0\.5b/);
+});
+
+test("a pinned embedding model skips instead of waiting for a dropdown option that cannot exist", () => {
+  const resolution = resolveComponentTestModel(EMBEDDING_FIRST, "all-minilm:latest");
+  assert.ok("skipReason" in resolution);
+  assert.match(resolution.skipReason, /"all-minilm:latest" is not a completion model/);
+  assert.match(resolution.skipReason, /embedding-only/);
+});
+
+test("a pinned model whose capabilities could not be read is driven, not skipped", () => {
+  // The deliberate difference from the Assistant resolver: a pin is the lane's choice and
+  // every CI lane pins, so a failed metadata read on the test host must not turn a
+  // `@stable` run into a skip. The component's own dropdown gives the verdict.
+  const classes = classifyOllamaCapabilities([
+    { name: "llama3.2:1b", capabilities: null },
+    { name: "all-minilm:latest", capabilities: ["embedding"] },
+  ]);
+  assert.deepEqual(resolveComponentTestModel(classes, "llama3.2:1b"), { model: "llama3.2:1b" });
 });
 
 // ---------------------------------------------------------------------------
