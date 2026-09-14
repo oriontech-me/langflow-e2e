@@ -10,6 +10,11 @@ import {
   type Provider,
 } from "./provider-config";
 import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
+import {
+  CREDENTIAL_REJECTED_PREFIX,
+  formatCredentialRejection,
+  watchProviderValidation,
+} from "./provider-validation-verdict";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -355,6 +360,7 @@ async function collectProviders(
   models: ModelRecord[],
   buildAxis: Record<string, ProviderVerdict>,
   stalls: Map<string, string>,
+  rejections: Map<string, string>,
 ): Promise<ProviderRecord[]> {
   console.log("Validating providers via API (key axis)...");
 
@@ -382,6 +388,17 @@ async function collectProviders(
     // wrong layer, which is what cost the PR lane its E2E run (#1370). Applied
     // only to that exact state — a provider that collected models despite a
     // stalled wait was genuinely probed, and its verdict stands.
+    //
+    // A REFUSAL outranks a stall, because it is the stronger claim and the true
+    // one (#1823): the key was probed, live, and the provider said no. Reported as
+    // a stall it reached `isCollectorStallReason()` and the spec then declined to
+    // call it a key problem — for the one state where it unambiguously is. Without
+    // the prefix it also lands in the spec's hard-failure step, which is where a
+    // dead key belongs (#570).
+    const rejected = rejections.get(r.provider);
+    if (rejected && r.error === NO_MODELS_COLLECTED) {
+      return { ...r, error: `${CREDENTIAL_REJECTED_PREFIX}${rejected}` };
+    }
     const stall = stalls.get(r.provider);
     if (stall && r.error === NO_MODELS_COLLECTED) {
       return { ...r, error: `${COLLECTOR_STALL_PREFIX}${stall}` };
@@ -1311,18 +1328,39 @@ function chargeBudget(budget: SweepBudget, provider: string, ms: number): void {
 interface ProviderCollection {
   models: ModelRecord[];
   stall: string | null;
+  /**
+   * Set when the PROVIDER refused the key, which is a different claim from
+   * `stall` and mutually exclusive with it (#1823).
+   *
+   * A stall is the ABSENCE of a verdict — the collector waited and learned
+   * nothing — and `collect-models.spec.ts` deliberately declines to call that a
+   * key problem. A rejection IS the verdict: the panel asked Langflow, Langflow
+   * called the provider, and the provider said no, in ~0.5 s. Reported as one, a
+   * rejected key spent 240 s and then claimed *"the key was never probed"*.
+   *
+   * Two fields rather than one tagged value because this is purely ADDITIVE: not
+   * one of the eleven existing `stall` assignments or messages changes, and the
+   * only place that can set this is the race below, which by construction leaves
+   * `stall` null.
+   */
+  rejection: string | null;
 }
 
 async function collectModelsForProvider(
   page: Page,
   providerTestId: string,
-  providerName: string,
+  providerName: Provider,
   apiKeyPlaceholder: string,
   apiKeyEnvVar: string,
   budget: SweepBudget,
   providersLeftAfterThis: number,
 ): Promise<ProviderCollection> {
   let stall: string | null = null;
+  let rejection: string | null = null;
+  // The name the PANEL uses, which is what the validate-provider payload carries —
+  // "Google Generative AI", not this repo's "google". Derived, never a second
+  // table (#1043/#1184).
+  const providerDisplayName = langflowProviderName(providerName);
   // Whether a Save was actually issued. Without it the configured-state wait
   // below would run for a provider this pass never saved — burning budget the
   // remaining providers need, to answer a question nobody asked (#1370).
@@ -1450,12 +1488,49 @@ async function collectModelsForProvider(
           .then((response) => ({ response, failure: null as WaitFailure | null }))
           .catch((error: unknown) => ({ response: null, failure: classifyWaitFailure(error) }));
         const startedAt = Date.now();
+        // Raced against the panel's OWN credential check (#1823). The write is not
+        // the only thing a Save can produce: when `validate-provider` answers
+        // `{"valid": false}` the frontend RETURNS without issuing one
+        // (`handleSaveAllVariables`, upstream #11446), so waiting for the write is
+        // waiting for something nobody is going to send. On the 2026-09-11 daily
+        // that cost 240 s here plus 60 s below, on a verdict that had landed in
+        // 0.4 s — and the report then said the key had never been probed.
+        //
+        // It can only ever END a wait early: `rejected` settles on a DEFINITE
+        // `valid:false` whose request payload names THIS provider, and on nothing
+        // else, so an accepted key, an unreadable body, a response for another
+        // provider in the same sweep, or no response at all all fall through to
+        // the wait that shipped before this existed.
+        const validation = watchProviderValidation(page, providerDisplayName, () => startedAt);
         await saveBtn.click();
-        const { response: saveResponse, failure } = await savePending;
+        const raced = await Promise.race([
+          savePending.then((result) => ({ refused: null, ...result })),
+          validation.rejected.then((refused) => ({
+            refused,
+            response: null,
+            failure: null as WaitFailure | null,
+          })),
+        ]);
+        validation.stop();
+        const { response: saveResponse, failure } = raced;
         const elapsedMs = Date.now() - startedAt;
         chargeBudget(budget, providerName, elapsedMs);
 
-        if (failure?.kind === "aborted") {
+        if (raced.refused) {
+          rejection = formatCredentialRejection({
+            displayName: providerDisplayName,
+            error: raced.refused.verdict.error,
+            elapsedMs: raced.refused.elapsedMs,
+          });
+          console.warn(
+            `⚠️  collect-models: provider "${providerName}" was REFUSED by the provider — ` +
+              `${raced.refused.verdict.error}. Langflow validated the key live and it was rejected ` +
+              `${(raced.refused.elapsedMs / 1000).toFixed(1)}s after Save, so the panel issued no ` +
+              `credential write. This is a KEY verdict, not a collector stall (#1823): the remaining ` +
+              `${Math.max(0, Math.round(budget.remainingMs / 1000))}s of the sweep's budget stay with ` +
+              `the providers that can still use them.`,
+          );
+        } else if (failure?.kind === "aborted") {
           // The wait never ran. Printing "no write observed within Ns" here is
           // what made run 31188034419 attempt 2 unreadable — two waits totalling
           // 240 s reported as measured negatives 12 ms apart, because the test
@@ -1511,16 +1586,29 @@ async function collectModelsForProvider(
     // like a provider with no models rather than a save that did not land.
     // Bounded by the same shared budget as the write above (#1370). It is the
     // second half of the 255 s a single stalling provider used to spend.
-    const configuredPlan: SaveWaitPlan = saveClicked
-      ? planConfiguredWait(budget.remainingMs, providersLeftAfterThis)
-      : { wait: false, reason: "no Save was issued for this provider" };
+    const configuredPlan: SaveWaitPlan =
+      rejection !== null
+        ? {
+            wait: false,
+            reason:
+              "the provider refused the credential, so the panel can never reach the configured state",
+          }
+        : saveClicked
+          ? planConfiguredWait(budget.remainingMs, providersLeftAfterThis)
+          : { wait: false, reason: "no Save was issued for this provider" };
 
     if (!configuredPlan.wait) {
-      stall ??= `the configured state was never waited for — ${configuredPlan.reason}`;
-      console.warn(
-        `⚠️  collect-models: skipped waiting for provider "${providerName}" to reach the configured ` +
-          `state ("Disconnect") — ${configuredPlan.reason}. Whatever it collects below is unverified (#1370).`,
-      );
+      // A refusal is a verdict, not a missing one (#1823). Recording a stall on
+      // top of it would hand `collectProviders` two reasons for one provider and
+      // put the "never probed" sentence back on a key that was — and the warning
+      // it replaces was already printed above, with the provider's own words.
+      if (rejection === null) {
+        stall ??= `the configured state was never waited for — ${configuredPlan.reason}`;
+        console.warn(
+          `⚠️  collect-models: skipped waiting for provider "${providerName}" to reach the configured ` +
+            `state ("Disconnect") — ${configuredPlan.reason}. Whatever it collects below is unverified (#1370).`,
+        );
+      }
     } else {
       const configuredAt = Date.now();
       const configured = await page
@@ -1618,12 +1706,13 @@ async function collectModelsForProvider(
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
-  return { models, stall };
+  return { models, stall, rejection };
 }
 
 async function collectModels(page: Page): Promise<{
   models: ModelRecord[];
   stalls: Map<string, string>;
+  rejections: Map<string, string>;
 }> {
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
@@ -1631,6 +1720,8 @@ async function collectModels(page: Page): Promise<{
 
   const allModels: ModelRecord[] = [];
   const stalls = new Map<string, string>();
+  // Kept apart from `stalls` on purpose — see `ProviderCollection.rejection`.
+  const rejections = new Map<string, string>();
 
   // One budget for the whole sweep, spent down as each provider's post-Save
   // waits actually run (#1370), with a per-provider ledger so a collateral stall
@@ -1653,6 +1744,7 @@ async function collectModels(page: Page): Promise<{
     );
     allModels.push(...collection.models);
     if (collection.stall) stalls.set(provider, collection.stall);
+    if (collection.rejection) rejections.set(provider, collection.rejection);
   }
 
   // Printed on EVERY sweep, not only a failing one (#1385). The budget is the
@@ -1665,7 +1757,7 @@ async function collectModels(page: Page): Promise<{
       `${Math.round(SWEEP_SAVE_BUDGET_MS / 1000)}s shared budget — ${formatBudgetSpend(budget.spent)}.`,
   );
 
-  return { models: allModels, stalls };
+  return { models: allModels, stalls, rejections };
 }
 
 // ─── Main export ───────────────────────────────────────────────────────────────
@@ -1714,10 +1806,10 @@ export async function collectAll(page: Page): Promise<void> {
   const buildAxis = await probeBuildAxis(page.request, keyedProviderNames);
 
   // Step 2: Collect models from UI via Settings
-  const { models, stalls } = await collectModels(page);
+  const { models, stalls, rejections } = await collectModels(page);
 
   // Step 3: Validate the key axis and merge both verdicts
-  const providers = await collectProviders(models, buildAxis, stalls);
+  const providers = await collectProviders(models, buildAxis, stalls, rejections);
 
   // BOTH data files are written BEFORE the target-model step, and providers.json is
   // then patched with its verdict. Order matters more than it looks: step 3b spends
