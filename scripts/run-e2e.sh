@@ -1717,8 +1717,17 @@ phase_publish() {
     # (#985). This path kept the retired form, so the 2026-09-14 pair reported 811 here
     # against the workflow's 723 — a coverage band nine points low, on the lane being
     # prepared to become the record.
-    stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
-    total_count="$(npx ts-node scripts/stable-tests.ts --count-oss 2>/dev/null || echo "")"
+    stable_count="$(npx ts-node scripts/stable-tests.ts --count || echo "")"
+    total_count="$(npx ts-node scripts/stable-tests.ts --count-oss || echo "")"
+    # #1012 applied to this lane's own numbers. `build-run-payload.mjs` omits the
+    # `coverage` block entirely when BOTH counts are empty, so a parser that failed and
+    # a run with nothing to report build the same payload; with one of the two empty it
+    # publishes a half band instead. The `2>/dev/null` that used to stand here threw
+    # away the one thing that tells those apart — and letting the parser's stderr
+    # through is the parity too, since the workflow prints it in its step log.
+    if [ -z "$stable_count" ] || [ -z "$total_count" ]; then
+      warn "the coverage counts are incomplete (stable='${stable_count}', total='${total_count}') — the payload's coverage band is dropped or half-filled. The parser's own error is above this line."
+    fi
 
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     WORKFLOW="$WORKFLOW_ID" \
