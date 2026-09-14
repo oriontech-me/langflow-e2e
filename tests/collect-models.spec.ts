@@ -5,6 +5,7 @@ import { expect, test } from "./fixtures/fixtures";
 import {
   collectAll,
   isCollectorStallReason,
+  CREDENTIAL_REJECTED_PREFIX,
   resolveRequiredProviders,
 } from "./helpers/provider-setup/collect-models";
 import type { ProviderRecord } from "./helpers/provider-setup/collect-models";
@@ -341,8 +342,11 @@ test(
       const fatal = stalled.filter((p) => required.includes(p.provider));
       expect(
         fatal.map((p) => p.provider),
-        `provider(s) this lane cannot run without were never configured by the collector — this is NOT a ` +
-          `key or account problem, the key was never probed: ` +
+        `provider(s) this lane cannot run without were never configured by the collector — the ` +
+          `credential write never answered, so this run reached NO verdict about the key. It is not ` +
+          `evidence that the key is good, and it is not evidence that it is bad: a key the panel ` +
+          `REFUSES is reported separately, as "${CREDENTIAL_REJECTED_PREFIX}…", in seconds rather ` +
+          `than after this wait (#1823). ` +
           fatal.map((p) => `${p.provider} — ${p.error}`).join(" | "),
       ).toEqual([]);
     });

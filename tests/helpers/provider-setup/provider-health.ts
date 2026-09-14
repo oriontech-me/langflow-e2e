@@ -309,3 +309,30 @@ export function providerSkipGate(...providers: Provider[]): {
 } {
   return toSkipGate(providerUnavailableReason(...providers));
 }
+
+/**
+ * What to tell the reader when a provider key is set but not configured in
+ * Langflow (#1823).
+ *
+ * The detection upstream of this is a true positive and its degradation is
+ * right; what aged badly is the REMEDY. "Run the collector first" is correct for
+ * a key that was never imported, and useless for one the panel refused — there
+ * the collector already ran, `POST /api/v1/models/validate-provider` answered
+ * `{valid:false}` in ~0.5 s, and the panel then deliberately issued no write.
+ * Running it again reproduces the refusal.
+ *
+ * Pure so the decision is testable on its output rather than asserted about a
+ * console line nobody reads.
+ */
+export function credentialRemedy(rejections: string[]): string {
+  if (rejections.length === 0) {
+    return (
+      "Run `npx playwright test tests/collect-models.spec.ts` first to import them " +
+      "(the daily-stable CI does this automatically)."
+    );
+  }
+  return (
+    "The collector already ran and the provider REFUSED the credential, so importing again " +
+    `cannot help — replace the credential: ${rejections.join(" | ")}.`
+  );
+}

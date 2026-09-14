@@ -29,6 +29,7 @@ import {
   unavailableReason,
   writeProviderHealth,
   type ProviderHealthRecord,
+  credentialRemedy,
 } from "./provider-health";
 import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
@@ -479,4 +480,27 @@ test("a missing providers.json says so, instead of looking healthy in silence", 
   const warnings = captureWarnings(() => providerSkipReasons(null, QUIET));
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /collect-models\.spec\.ts/);
+});
+
+// ─── The remedy a rejected credential needs (#1823) ──────────────────────────
+
+test("#1823: with nothing rejected, the remedy is still to run the collector", () => {
+  const remedy = credentialRemedy([]);
+  assert.match(remedy, /collect-models/, "the import advice must survive the case it was written for");
+  assert.doesNotMatch(remedy, /replace the credential/i);
+});
+
+test("#1823: a rejected credential is told to be replaced, not re-imported", () => {
+  const remedy = credentialRemedy([
+    "credential rejected by Anthropic: Invalid API key for Anthropic",
+  ]);
+  assert.match(remedy, /replace the credential/i);
+  assert.match(remedy, /Invalid API key for Anthropic/, "the provider's own words must survive");
+  // The whole point: the collector ALREADY ran and was refused, so telling the
+  // reader to run it again is advice that cannot change anything.
+  assert.doesNotMatch(
+    remedy,
+    /Run `npx playwright test tests\/collect-models\.spec\.ts`/,
+    "re-running the collector cannot help a key the panel refuses",
+  );
 });

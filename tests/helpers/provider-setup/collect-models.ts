@@ -355,6 +355,7 @@ async function collectProviders(
   models: ModelRecord[],
   buildAxis: Record<string, ProviderVerdict>,
   stalls: Map<string, string>,
+  rejections: Map<string, string>,
 ): Promise<ProviderRecord[]> {
   console.log("Validating providers via API (key axis)...");
 
@@ -382,6 +383,15 @@ async function collectProviders(
     // wrong layer, which is what cost the PR lane its E2E run (#1370). Applied
     // only to that exact state — a provider that collected models despite a
     // stalled wait was genuinely probed, and its verdict stands.
+    // A refusal is read BEFORE a stall and replaces it: it is the more specific
+    // verdict and the only one of the two that is certain about the credential.
+    // Already spelled in full by `credentialRejectionReason`, so no prefix here
+    // — the stall prefix would make it read as a timeout, which is the exact
+    // conflation this verdict exists to end (#1823).
+    const rejected = rejections.get(r.provider);
+    if (rejected && r.error === NO_MODELS_COLLECTED) {
+      return { ...r, error: rejected };
+    }
     const stall = stalls.get(r.provider);
     if (stall && r.error === NO_MODELS_COLLECTED) {
       return { ...r, error: `${COLLECTOR_STALL_PREFIX}${stall}` };
@@ -723,6 +733,59 @@ export const COLLECTOR_STALL_PREFIX = "collector stall: ";
 
 export function isCollectorStallReason(error: string | null | undefined): boolean {
   return typeof error === "string" && error.startsWith(COLLECTOR_STALL_PREFIX);
+}
+
+/**
+ * The panel REFUSED the credential — a verdict, not a timeout (#1823).
+ *
+ * Its own prefix rather than a better-worded `collector stall:`, because the
+ * question this exists to answer downstream is whether the shape may be exempted
+ * from `@stable` auto-removal. A *timeout* is produced identically by a rejected
+ * key and by a genuine panel regression that stops issuing the write, so
+ * exempting on the timeout would silence the second, unreviewed, in the Settings
+ * save path. A positively identified refusal can be exempted safely — the
+ * precedent is `PROVIDER_OUTAGE_PATTERNS` in `tests/fixtures/flow-error-policy.ts`,
+ * which keys on a provider's own message and never on a shape.
+ */
+export const CREDENTIAL_REJECTED_PREFIX = "credential rejected by ";
+
+export function isCredentialRejectedReason(error: string | null | undefined): boolean {
+  return typeof error === "string" && error.startsWith(CREDENTIAL_REJECTED_PREFIX);
+}
+
+/** The one place the recorded rejection is spelled, so the prefix cannot drift from its predicate. */
+export function credentialRejectionReason(provider: string, error: string): string {
+  return `${CREDENTIAL_REJECTED_PREFIX}${provider}: ${error}`;
+}
+
+export type ValidationVerdict =
+  | { kind: "rejected"; error: string }
+  | { kind: "accepted" }
+  | { kind: "undecidable" };
+
+/**
+ * What `POST /api/v1/models/validate-provider` said about the credential.
+ *
+ * Pure, and deliberately strict about what counts as a refusal: the caller uses
+ * a `rejected` verdict to STOP waiting for the credential write, so inventing one
+ * from a body this code cannot read would also stop it observing a write that was
+ * on its way. Anything without a boolean `valid` is `undecidable` — unknown is not
+ * a negative (#1012).
+ */
+export function readValidationVerdict(body: unknown): ValidationVerdict {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { kind: "undecidable" };
+  }
+  const { valid, error } = body as { valid?: unknown; error?: unknown };
+  if (valid === true) return { kind: "accepted" };
+  if (valid !== false) return { kind: "undecidable" };
+  // A refusal with no message still has to say something: an empty reason reads
+  // downstream as "no reason recorded", which is the state #1012 forbids.
+  const message =
+    typeof error === "string" && error.trim() !== ""
+      ? error.trim()
+      : "the provider refused the credential without giving a reason";
+  return { kind: "rejected", error: message };
 }
 
 /**
@@ -1311,6 +1374,8 @@ function chargeBudget(budget: SweepBudget, provider: string, ms: number): void {
 interface ProviderCollection {
   models: ModelRecord[];
   stall: string | null;
+  /** The panel REFUSED the credential — a verdict, not a stall (#1823). Already spelled in full. */
+  rejection: string | null;
 }
 
 async function collectModelsForProvider(
@@ -1323,6 +1388,7 @@ async function collectModelsForProvider(
   providersLeftAfterThis: number,
 ): Promise<ProviderCollection> {
   let stall: string | null = null;
+  let rejection: string | null = null;
   // Whether a Save was actually issued. Without it the configured-state wait
   // below would run for a provider this pass never saved — burning budget the
   // remaining providers need, to answer a question nobody asked (#1370).
@@ -1449,13 +1515,56 @@ async function collectModelsForProvider(
           )
           .then((response) => ({ response, failure: null as WaitFailure | null }))
           .catch((error: unknown) => ({ response: null, failure: classifyWaitFailure(error) }));
+        // A REFUSED credential is a verdict, not a stall (#1823). Measured on
+        // 1.13.0.dev9: the Save settles in ~0.55 s with
+        // `POST /api/v1/models/validate-provider` -> 200 `{valid:false}`, and the
+        // panel's own gate then returns WITHOUT issuing the write. Waiting the
+        // full credential budget for `/variables/` is therefore waiting for a
+        // request the frontend decided not to send — 240 s of the sweep's shared
+        // budget, charged to every provider behind this one, ending in a message
+        // that says the key was never probed when it was probed and refused.
+        //
+        // Only a refusal ends the wait: `accepted` and `undecidable` return a
+        // promise that never settles, so they always LOSE this race and the write
+        // below decides exactly as it did before this existed (#1012 — a body this
+        // code cannot read is unknown, not a negative).
+        const rejectionPending = page
+          .waitForResponse(
+            (r) =>
+              r.request().method() === "POST" &&
+              /^\/api\/v1\/models\/validate-provider\/?$/.test(new URL(r.url()).pathname),
+            { timeout: plan.timeoutMs },
+          )
+          .then(async (r): Promise<string> => {
+            const verdict = readValidationVerdict(await r.json().catch(() => null));
+            if (verdict.kind !== "rejected") return new Promise<string>(() => {});
+            return verdict.error;
+          })
+          .catch(() => new Promise<string>(() => {}));
+
         const startedAt = Date.now();
         await saveBtn.click();
-        const { response: saveResponse, failure } = await savePending;
+        const outcome = await Promise.race([
+          savePending.then((r) => ({ refusal: null as string | null, ...r })),
+          rejectionPending.then((refusal) => ({
+            refusal,
+            response: null as Awaited<ReturnType<typeof page.waitForResponse>> | null,
+            failure: null as WaitFailure | null,
+          })),
+        ]);
+        const { response: saveResponse, failure, refusal } = outcome;
         const elapsedMs = Date.now() - startedAt;
         chargeBudget(budget, providerName, elapsedMs);
 
-        if (failure?.kind === "aborted") {
+        if (refusal !== null) {
+          rejection = credentialRejectionReason(providerName, refusal);
+          console.warn(
+            `⚠️  collect-models: provider "${providerName}" REFUSED the credential after ` +
+              `${(elapsedMs / 1000).toFixed(1)}s — ${refusal}. No credential write was issued: the ` +
+              `panel validates first and returns on a refusal, so this is a dead key, not a stall. ` +
+              `Replace the credential (#1823).`,
+          );
+        } else if (failure?.kind === "aborted") {
           // The wait never ran. Printing "no write observed within Ns" here is
           // what made run 31188034419 attempt 2 unreadable — two waits totalling
           // 240 s reported as measured negatives 12 ms apart, because the test
@@ -1511,11 +1620,23 @@ async function collectModelsForProvider(
     // like a provider with no models rather than a save that did not land.
     // Bounded by the same shared budget as the write above (#1370). It is the
     // second half of the 255 s a single stalling provider used to spend.
-    const configuredPlan: SaveWaitPlan = saveClicked
-      ? planConfiguredWait(budget.remainingMs, providersLeftAfterThis)
-      : { wait: false, reason: "no Save was issued for this provider" };
+    // A refused credential answers this wait too, and answers it NO (#1823). The
+    // panel cannot reach the configured state for a key it just rejected, so the
+    // 60 s spent here is as futile as the credential wait was — measured at
+    // 60.4 s + 60.5 s of the sweep's shared budget for two refused providers,
+    // charged to whoever comes after them. Skipped WITHOUT recording a stall:
+    // there is nothing unverified about this provider, its verdict is known.
+    const configuredPlan: SaveWaitPlan = rejection
+      ? { wait: false, reason: "the provider refused the credential — it cannot reach the configured state" }
+      : saveClicked
+        ? planConfiguredWait(budget.remainingMs, providersLeftAfterThis)
+        : { wait: false, reason: "no Save was issued for this provider" };
 
-    if (!configuredPlan.wait) {
+    if (rejection) {
+      // No `stall ??=` and no warning: both would describe this provider as
+      // unmeasured, and it is measured — refused, in 0.3 s, with the provider's
+      // own words already recorded.
+    } else if (!configuredPlan.wait) {
       stall ??= `the configured state was never waited for — ${configuredPlan.reason}`;
       console.warn(
         `⚠️  collect-models: skipped waiting for provider "${providerName}" to reach the configured ` +
@@ -1618,12 +1739,13 @@ async function collectModelsForProvider(
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
-  return { models, stall };
+  return { models, stall, rejection };
 }
 
 async function collectModels(page: Page): Promise<{
   models: ModelRecord[];
   stalls: Map<string, string>;
+  rejections: Map<string, string>;
 }> {
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
@@ -1631,6 +1753,7 @@ async function collectModels(page: Page): Promise<{
 
   const allModels: ModelRecord[] = [];
   const stalls = new Map<string, string>();
+  const rejections = new Map<string, string>();
 
   // One budget for the whole sweep, spent down as each provider's post-Save
   // waits actually run (#1370), with a per-provider ledger so a collateral stall
@@ -1653,6 +1776,7 @@ async function collectModels(page: Page): Promise<{
     );
     allModels.push(...collection.models);
     if (collection.stall) stalls.set(provider, collection.stall);
+    if (collection.rejection) rejections.set(provider, collection.rejection);
   }
 
   // Printed on EVERY sweep, not only a failing one (#1385). The budget is the
@@ -1665,7 +1789,7 @@ async function collectModels(page: Page): Promise<{
       `${Math.round(SWEEP_SAVE_BUDGET_MS / 1000)}s shared budget — ${formatBudgetSpend(budget.spent)}.`,
   );
 
-  return { models: allModels, stalls };
+  return { models: allModels, stalls, rejections };
 }
 
 // ─── Main export ───────────────────────────────────────────────────────────────
@@ -1714,10 +1838,10 @@ export async function collectAll(page: Page): Promise<void> {
   const buildAxis = await probeBuildAxis(page.request, keyedProviderNames);
 
   // Step 2: Collect models from UI via Settings
-  const { models, stalls } = await collectModels(page);
+  const { models, stalls, rejections } = await collectModels(page);
 
   // Step 3: Validate the key axis and merge both verdicts
-  const providers = await collectProviders(models, buildAxis, stalls);
+  const providers = await collectProviders(models, buildAxis, stalls, rejections);
 
   // BOTH data files are written BEFORE the target-model step, and providers.json is
   // then patched with its verdict. Order matters more than it looks: step 3b spends
