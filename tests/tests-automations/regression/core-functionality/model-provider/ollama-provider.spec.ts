@@ -36,11 +36,15 @@ import {
  *            (small local models don't reliably echo — family pattern).
  *
  * Requires a local Ollama instance (see the spec doc for the provisioning
- * commands). When Langflow runs in Docker, its container must be started
- * with LANGFLOW_SSRF_ALLOWED_HOSTS=host.docker.internal — the nightly's
- * SSRF protection otherwise rejects the private address with a 400
- * (discovered live; documented in the spec doc). Without a reachable
- * instance both tests skip with an explicit reason — the same
+ * commands). When Langflow runs in Docker, LANGFLOW_SSRF_ALLOWED_HOSTS must
+ * cover the private address its container reaches Ollama on —
+ * host.docker.internal resolves to one, and the nightly's SSRF protection
+ * otherwise refuses it (validate-provider reports `valid: false`, the
+ * component's model-list fetch answers 400). scripts/start-langflow-docker.sh
+ * and every CI lane already allow-list the RFC-1918 ranges
+ * (172.16.0.0/12,10.0.0.0/8,192.168.0.0/16), which cover it; the bare hostname
+ * is accepted too (both measured on 1.13.0.dev12 — see the spec doc). Without
+ * a reachable instance both tests skip with an explicit reason — the same
  * missing-dependency contract the keyed providers use for absent env keys.
  */
 

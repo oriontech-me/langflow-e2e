@@ -102,8 +102,9 @@ evidence alone would predictably redden it again for an unrelated reason.
 **Restoration gate for #1302 — SATISFIED 2026-09-08.** `@stable` was removed and
 `test.fixme` added at triage on 2026-08-06 (#1296 → #1302). The bar was evidence
 from the **real CI environment**, because the failure mode is a flow-state race
-a dev box cannot reproduce at all — worse than in #931's case, since this spec
-cannot even RUN locally on an arm64 Mac (see *Preconditions → local
+a dev box cannot reproduce at all — worse than in #931's case, since when the
+gate was set this spec could not even RUN locally on an arm64 Mac
+(1.12.0.dev18; it runs again on 1.13.x — see *Preconditions → local
 reproduction*): a `manual.yml` dispatch, `-f retries=0`, green across several
 consecutive runs, with the guard in place. Neither a local green nor a single CI
 green was admissible — the mechanism fired on 2 of 26 dailies.
@@ -285,27 +286,60 @@ equivalent for the healthy path, and for the broken path no budget works.
   - Provisioning used for validation:
     `docker run -d --name ollama-e2e -p 11434:11434 ollama/ollama` +
     `docker exec ollama-e2e ollama pull llama3.2:1b`.
-- **SSRF allowlist (dockerized Langflow):** the nightly's SSRF protection
-  rejects `host.docker.internal` (private IP) with a 400 on the component's
-  model-list fetch — start the Langflow container with
-  `-e LANGFLOW_SSRF_ALLOWED_HOSTS=host.docker.internal` (discovered live on
-  1.11.0.dev36 while authoring this spec).
-- **Local reproduction is NOT possible on an arm64 Mac (measured 2026-08-06 on
-  1.12.0.dev18)** — treat this spec as CI-only there and do not spend the cycle.
-  A dockerized Langflow could not reach any Ollama in either topology (host
-  instance via `host.docker.internal`; a sibling `ollama/ollama` container on a
-  shared network with the CI's exact allowlist). Setting
-  `LANGFLOW_SSRF_ALLOWED_HOSTS` makes it worse rather than better: **without**
-  it the layer answers `resolves to blocked IP address(es)` (so the name
-  resolved), **with** it the same name answers `DNS resolution failed` — for a
-  name `getent` and `socket.getaddrinfo` resolve inside that same container.
-  Independently: `validate_model_provider_key("Ollama", …)` called directly in
-  that container validates and connects, while `POST
-  /api/v1/models/validate-provider` with the same argument does not — the
-  allowlist is honoured by the library and not by the endpoint. The escapes are
-  closed too: the amd64 image dies with `Fatal glibc error: CPU does not support
-  x86-64-v3`, and `start-langflow-pip.sh` installs the stable release, not the
-  nightly line.
+- **SSRF allowlist (dockerized Langflow):** `host.docker.internal` resolves to
+  a private address, which the nightly's SSRF protection refuses unless it is
+  allow-listed (discovered live on 1.11.0.dev36 while authoring this spec).
+  `scripts/start-langflow-docker.sh` sets `LANGFLOW_SSRF_ALLOWED_HOSTS` to the
+  RFC-1918 ranges (`172.16.0.0/12,10.0.0.0/8,192.168.0.0/16`, which all four CI
+  lanes carry too), and that covers it — an instance started that way needs no
+  extra flag. Re-measured on 1.13.0.dev12: with the variable **unset**,
+  `validate-provider` answers `{"valid": false}` naming the blocked IP
+  (`192.168.5.2`), the component's model-list fetch
+  (`custom_component/update`) answers **400** `SSRF Protection: … resolves to
+  blocked IP address(es)`, and both tests fail; allow-listing the bare hostname
+  (`LANGFLOW_SSRF_ALLOWED_HOSTS=host.docker.internal`) is accepted as well as
+  the ranges (`valid: true`, both tests green).
+- **Local reproduction on an arm64 Mac — runs on 1.13.x; it did not on
+  1.12.0.dev18.** Both measurements are kept, because the second reverses the
+  first and the first is what a recurrence would be read against:
+  - **1.13.0.dev12 (measured 2026-09-14) — runs.** A dockerized nightly under
+    Colima, started with the env of `scripts/start-langflow-docker.sh` (so the
+    RFC-1918 allowlist above), plus a **native** Homebrew Ollama (0.32.1,
+    `ollama serve` on the host's loopback, `qwen2.5:0.5b` pulled) reached from
+    the container as `http://host.docker.internal:11434` (`192.168.5.2` under
+    Colima) — no `ollama/ollama` image involved. `POST
+    /api/v1/models/validate-provider` answered `{"valid": true, "error": null}`,
+    and the spec ran **4/4 consecutive `--retries=0` runs green**, both tests
+    executing in each (`2 passed`, 0 skipped), the sentinel echoed every time,
+    test 2 taking 10.1–15.4 s. It is not green by construction: the same setup
+    without the allowlist fails both tests (bullet above). The
+    `DNS resolution failed` answer recorded below did not reproduce, with the
+    ranges or with the bare hostname; the build that fixed it was not bisected.
+    One local trap, measured: **pin `OLLAMA_TEST_MODEL` to a chat model when
+    the instance also serves embedding models.** Unset, the spec takes the
+    first tag `/api/tags` reports — here `all-minilm:latest` — and the Ollama
+    component drops a model whose `/api/show` capabilities lack `completion`
+    (0.32.1 reports them), so test 2 failed its live-dropdown assert 2/2. Run
+    with `PLAYWRIGHT_BASE_URL` pointing at that instance:
+    `OLLAMA_TEST_MODEL=qwen2.5:0.5b npx playwright test
+    tests/tests-automations/regression/core-functionality/model-provider/ollama-provider.spec.ts
+    --workers=1 --retries=0`.
+  - **1.12.0.dev18 (measured 2026-08-06) — did not run, so the spec was
+    treated as CI-only there.** A dockerized Langflow could not reach any
+    Ollama in either topology (host instance via `host.docker.internal`; a
+    sibling `ollama/ollama` container on a shared network with the CI's exact
+    allowlist). Setting `LANGFLOW_SSRF_ALLOWED_HOSTS` made it worse rather than
+    better: **without** it the layer answered `resolves to blocked IP
+    address(es)` (so the name resolved), **with** it the same name answered
+    `DNS resolution failed` — for a name `getent` and `socket.getaddrinfo`
+    resolved inside that same container. Independently:
+    `validate_model_provider_key("Ollama", …)` called directly in that
+    container validated and connected, while `POST
+    /api/v1/models/validate-provider` with the same argument did not — the
+    allowlist was honoured by the library and not by the endpoint. The escapes
+    were closed too: the amd64 image died with `Fatal glibc error: CPU does not
+    support x86-64-v3`, and `start-langflow-pip.sh` installs the stable
+    release, not the nightly line.
 - If the probe fails, both tests skip with the reason — no false red.
 - No collect-models / cloud key needed (local provider).
 - **How CI satisfies all of the above** (`daily-stable.yml`): an `ollama`
