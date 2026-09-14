@@ -1,6 +1,6 @@
 # Collect Models
 
-**Last validated:** Langflow 1.12.x (1.12.0.dev45)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`)
 
 ---
 
@@ -109,6 +109,10 @@ contract; the SPEC now verifies the outcome):
 - a provider the **collector** never managed to configure is reported as that,
   and never as a key/account/config failure — see *A stalling provider must not
   cost the sweep* (#1370);
+- a provider whose credential the PANEL rejected is reported as **that**, within
+  seconds of the Save click and naming the provider's own error, never as a
+  stall and never as "the key was never probed" — see *A rejected credential is
+  not a stall* (#1823);
 - every provider recorded `active` has its **target model enabled** on the
   instance, confirmed against the server — see *Enabling the target model, not
   every model* (#1666).
@@ -445,6 +449,92 @@ a spec its model any more; what it does is move wall clock (and a blocking write
 of the pre-flight, which has a post-sweep health gate on all four lanes, and into the
 first spec that configures that provider, which has none. Pointing those helpers at
 the target model too is the follow-up; it is #1651's surface, not this one's.
+
+### A rejected credential is not a stall (#1823)
+
+The two look identical from here and they are opposites, so the collector
+distinguishes them by a **positively identified verdict** rather than by how long
+a wait took.
+
+Measured on `1.13.0.dev9`, instrumenting every `/api/` call around one Save on
+Settings → Model Providers:
+
+```
+2.90s  === CLICKING SAVE ===
+2.93s  REQ  POST /api/v1/models/validate-provider
+3.46s  RES  200 (0.52s)  {"valid":false,"error":"Invalid API key for <provider>"}
+12.96s [poll] inflight=none | label="Save" busy=null
+       | inline-error="Invalid API key for <provider>"
+```
+
+**Nothing hangs.** The Save reaches a definite verdict in **0.55 s**, and
+`handleSaveAllVariables` (`useProviderConfiguration.ts`) then returns on
+`if (!isValid) return` — so `POST /api/v1/variables/` is *deliberately never
+issued*. The panel even renders the cause, `#provider-validation-error` with
+`role="alert"`. Causation rather than correlation: mocking `validate-provider` to
+`{"valid":true}` with the same bad key makes the write fire, and the **backend**
+refuses it `400` in 0.41 s — two independent guards, nothing persisted. The gate
+has been there since 2026-02-27 (PR #11446), identical on `release-1.12.0`,
+`release-1.13.0` and `main`, so this is **not** a product regression and the
+nightly bump that coincided with the first occurrence is a red herring.
+
+What was wrong was ours: the collector armed its wait on `/api/v1/variables/`
+only, so it spent 240 s waiting for a request the frontend had decided not to
+send, and then reported *"this is NOT a key or account problem, the key was never
+probed"*. The key **was** probed, live, and rejected. That sentence is why the
+first investigation of this went looking for a panel hang.
+
+**Why a second verdict and not a better-worded stall.** `collector stall:` is a
+machine-readable prefix with consumers, and the eventual question is whether this
+shape may be exempted from `@stable` auto-removal. A *timeout shape* is produced
+identically by a rejected key and by a genuine panel regression that stops
+issuing the write — exempting on it would silence the second, unreviewed, in the
+Settings save path. A positively identified rejection can be exempted safely; the
+precedent is `PROVIDER_OUTAGE_PATTERNS` in `tests/fixtures/flow-error-policy.ts`,
+which keys on a provider's own message and never on a timeout. So the collector
+records `credential rejected by <provider>: <error>` under its own prefix, and
+`collector stall:` goes back to meaning only what it says.
+
+**What does not change: the spec still fails.** A rejected key is a real loss of
+coverage (#570) — every spec parametrized on that provider skips — so a required
+provider whose credential is rejected still fails `collect-models`. Only the
+message becomes true, and it arrives in seconds instead of after a 240 s wait
+that also delays every provider behind it.
+
+Reproduce without Playwright:
+
+```bash
+TOK=$(curl -s localhost:7860/api/v1/auto_login | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+curl -s -X POST localhost:7860/api/v1/models/validate-provider \
+  -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"provider":"Anthropic","variables":{"ANTHROPIC_API_KEY":"'"$ANTHROPIC_API_KEY"'"}}'
+```
+
+**A refusal answers the second wait too, and answers it NO.** The configured-state
+wait (the panel reaching `Disconnect`) cannot succeed for a key the panel just
+rejected, so it is skipped on a rejection — and skipped *without* recording a
+stall or a warning, because there is nothing unverified about this provider: its
+verdict is known, in the provider's own words. Fixing only the credential wait
+left the sweep paying 60 s per refused provider for an outcome already decided,
+which is the same defect one layer down.
+
+Measured before and after, with two genuinely refused keys as the fixture (a
+healthy account cannot produce this state), on `1.13.0.dev12`:
+
+| | Before | After |
+|---|---|---|
+| Recording the refusal | 240 s, reported as never probed | **0.3-0.6 s**, with the provider's own error |
+| Post-Save waits, both providers | **121 s** of the shared budget | **1 s** |
+| Whole sweep, wall clock | 187 s | **55 s** |
+
+The spec still fails, and the refusal routes itself into the existing "real
+key/account/config problem" bucket rather than into the stall step.
+
+Any `{"valid":false}` means that provider will be recorded rejected. **Dry is not
+the same as invalid**, and the difference decides the shape: a drained key
+validates `true`, saves, and the spec passes — see *validate-provider answers 200
+for a drained key*. Only an authentication failure reaches this path, which is
+why it took until 2026-09-11 to appear once in 52 daily entries.
 
 ### A stalling provider must not cost the sweep (#1370)
 

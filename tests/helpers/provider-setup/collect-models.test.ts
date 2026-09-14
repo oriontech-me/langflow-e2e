@@ -52,6 +52,10 @@ import {
   waitForButtonIdle,
   type ProviderRecord,
   confirmEnabledOnServer,
+  readValidationVerdict,
+  credentialRejectionReason,
+  CREDENTIAL_REJECTED_PREFIX,
+  isCredentialRejectedReason,
 } from "./collect-models";
 import { keyedProviders } from "./provider-config";
 
@@ -1130,6 +1134,72 @@ test("#1385: the sweep budget fits inside the pre-flight's own test timeout", ()
     /test\.setTimeout\(12 \* 60 \* 1000\)/,
     "the spec must set the timeout this budget was sized against — the config default is 5 minutes",
   );
+});
+
+// ─── The rejected-credential verdict (#1823) ─────────────────────────────────
+
+test("#1823: a refusal body is a rejection, and nothing else is", () => {
+  assert.deepEqual(
+    readValidationVerdict({ valid: false, error: "Invalid API key for Anthropic" }),
+    { kind: "rejected", error: "Invalid API key for Anthropic" },
+  );
+});
+
+test("#1823: an accepted credential is not a rejection", () => {
+  assert.equal(readValidationVerdict({ valid: true }).kind, "accepted");
+  assert.equal(readValidationVerdict({ valid: true, error: null }).kind, "accepted");
+});
+
+test("#1823: a body this code cannot read is undecidable, never a rejection", () => {
+  // #1012: unknown is not a negative. Reporting these as rejections would
+  // invent a refusal the provider never made, and — because the rejection
+  // short-circuits the write wait — would also stop the collector observing a
+  // write that was on its way.
+  for (const body of [null, undefined, "", "not json", 42, [], {}, { error: "x" }]) {
+    assert.equal(
+      readValidationVerdict(body).kind,
+      "undecidable",
+      `body ${JSON.stringify(body)} must be undecidable`,
+    );
+  }
+});
+
+test("#1823: a rejection with no message still says so, rather than claiming an empty reason", () => {
+  const v = readValidationVerdict({ valid: false });
+  assert.equal(v.kind, "rejected");
+  assert.match(
+    v.kind === "rejected" ? v.error : "",
+    /\S/,
+    "the recorded reason must never be blank — an empty string reads as no reason at all",
+  );
+});
+
+test("#1823: the recorded reason names the provider and carries its own words", () => {
+  assert.equal(
+    credentialRejectionReason("Anthropic", "Invalid API key for Anthropic"),
+    "credential rejected by Anthropic: Invalid API key for Anthropic",
+  );
+  assert.equal(
+    isCredentialRejectedReason(credentialRejectionReason("Google Generative AI", "nope")),
+    true,
+    "whatever the formatter emits must satisfy its own predicate",
+  );
+});
+
+test("#1823: a rejection is recognisable, and is NOT a collector stall", () => {
+  const reason = credentialRejectionReason("Anthropic", "Invalid API key for Anthropic");
+  assert.equal(isCredentialRejectedReason(reason), true);
+  // The whole point of the second prefix: the eventual @stable auto-removal
+  // exemption must key on THIS verdict and never on the timeout shape, which a
+  // genuine panel regression produces identically.
+  assert.equal(isCollectorStallReason(reason), false);
+  assert.equal(
+    isCredentialRejectedReason(`${COLLECTOR_STALL_PREFIX}no credential write answered within 240s`),
+    false,
+  );
+  assert.equal(isCredentialRejectedReason(NO_MODELS_COLLECTED), false);
+  assert.equal(isCredentialRejectedReason(null), false);
+  assert.equal(isCredentialRejectedReason(undefined), false);
 });
 
 // ─── The collector-stall verdict (#1370) ─────────────────────────────────────

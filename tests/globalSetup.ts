@@ -14,8 +14,10 @@ import {
   degradeProviders,
   providersForEnvKeys,
   readProviderHealth,
+  credentialRemedy,
   writeProviderHealth,
 } from "./helpers/provider-setup/provider-health";
+import { isCredentialRejectedReason } from "./helpers/provider-setup/collect-models";
 import { preconfigureRoutedProvider } from "./helpers/provider-setup/preconfigure-routed-provider";
 import { freezeModelCatalog } from "./helpers/provider-setup/catalog-snapshot";
 import {
@@ -178,13 +180,22 @@ async function checkProviderCredentials(ctx: APIRequestContext): Promise<void> {
     return;
   }
 
+  // The remedy has to read the RECORDED health, not just the absence of the
+  // variable: both states look identical here, and only one of them can be fixed
+  // by running the collector (#1823). A key the panel refused is already probed —
+  // re-importing reproduces the refusal.
+  const recorded = readProviderHealth() ?? [];
+  const affected = new Set<string>(providersForEnvKeys(missing));
+  const rejections = recorded
+    .filter((r) => affected.has(r.provider))
+    .map((r) => r.error)
+    .filter((error): error is string => isCredentialRejectedReason(error));
+
   const message =
     `[preflight] provider key(s) set in the environment but NOT configured as a ` +
     `Langflow global variable: ${missing.join(", ")}. Specs resolve credentials ` +
     `from Langflow, not the env var, so they would fail with a misleading ` +
-    `error (e.g. a node_duration/build timeout). Run ` +
-    `\`npx playwright test tests/collect-models.spec.ts\` first to import them ` +
-    `(the daily-stable CI does this automatically).`;
+    `error (e.g. a node_duration/build timeout). ${credentialRemedy(rejections)}`;
 
   if (process.env.CI) {
     // Degrade the affected providers instead of aborting the shard (#1058).
