@@ -109,16 +109,25 @@ START_S="$(date +%s)"
 say "target: ${PACKAGE}==${TARGET_VERSION}"
 say "venv:   ${VENV} (python ${PYTHON_VERSION}, recreated)"
 rm -rf "${VENV}"
-uv venv "${VENV}" --python "${PYTHON_VERSION}" > /dev/null 2>&1 \
-  || die "could not create a venv at ${VENV} with python ${PYTHON_VERSION}.
-Nothing is installed, so the target is serving nothing rather than something stale."
+# uv's own output goes to stderr rather than /dev/null. The refusals below can only
+# say WHAT failed; uv is the only thing that knows WHY, and discarding it leaves the
+# operator with a confident message about a cause this script cannot actually
+# determine. stdout stays clean, so the key=value contract is unaffected.
+uv venv "${VENV}" --python "${PYTHON_VERSION}" >&2 \
+  || die "could not create a venv at ${VENV} with python ${PYTHON_VERSION} — uv's
+reason is above. Nothing is installed, so the target is serving
+nothing rather than something stale."
 
 T="$(date +%s)"
 say "installing..."
-uv pip install --python "${VENV}/bin/python" "${PACKAGE}==${TARGET_VERSION}" > /dev/null 2>&1 \
-  || die "no published distribution for ${PACKAGE}==${TARGET_VERSION}.
-The image listing named this version; the index does not carry it. That is the two
-registries disagreeing, which is the case this preparation exists to catch."
+uv pip install --python "${VENV}/bin/python" "${PACKAGE}==${TARGET_VERSION}" >&2 \
+  || die "could not install ${PACKAGE}==${TARGET_VERSION} — uv's reason is above.
+If the index does not carry this version, that is the published image and PyPI
+disagreeing, which is the case this preparation exists to catch; an unreachable index
+or a full disk fails here too, and this script cannot tell them apart. The venv has
+already been recreated, so the target now serves nothing — which is the intended
+outcome either way: the caller refuses the run rather than testing yesterday's
+version."
 INSTALL_S=$(( $(date +%s) - T ))
 say "installed in ${INSTALL_S}s"
 

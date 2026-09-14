@@ -87,7 +87,7 @@ PYEOF
   exit 0
 fi
 if [ "$sub" = "pip" ]; then
-  ${installFails ? "exit 1" : ""}
+  ${installFails ? 'echo "fake uv: refusing to install" >&2; exit 1' : ""}
   spec=""
   pyarg=""
   while [ $# -gt 0 ]; do
@@ -162,11 +162,18 @@ test("a venv it cannot create is a refusal, not a fallback to what was there", (
   assert.match(r.stderr, /rather than something stale/);
 });
 
-test("a version the index does not carry is refused as the two registries disagreeing", () => {
+test("an install it cannot complete is refused, and uv's reason is not swallowed", () => {
   const ctx = setup({ installFails: true });
   const r = run(ctx);
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /no published distribution for langflow==1\.13\.0\.dev12/);
+  assert.match(r.stderr, /could not install langflow==1\.13\.0\.dev12/);
+  // The message must not claim the index lacks the version: an unreachable index and
+  // a full disk fail the same way, and this script cannot tell them apart. Found in
+  // the field on 2026-09-14, where the refusal for a nonexistent version read as a
+  // settled diagnosis.
+  assert.match(r.stderr, /cannot tell them apart/);
+  // uv is the only thing that knows why, so its output has to reach the operator.
+  assert.match(r.stderr, /fake uv: refusing to install/);
 });
 
 test("THE cross-registry check: a wheel that is not the resolved version is fatal here", () => {
