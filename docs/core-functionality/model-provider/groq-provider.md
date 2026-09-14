@@ -65,6 +65,22 @@ Restore `@stable` only if the component returns to the default nightly image.
   invalid, or the API is unreachable; never a silent green).
 - Optional `GROQ_TEST_MODEL` (default `llama-3.1-8b-instant`) — must exist in
   the live Groq catalog; the probe skips with a reason if it doesn't.
+  **The Groq catalog is per ACCOUNT, and the default is not in every one of
+  them.** Measured 2026-09-13 against this repository's key: 14 models, none
+  of the llama-3.1 line (`openai/gpt-oss-*`, `qwen/qwen3.x`, `groq/compound*`,
+  whisper, `allam-2-7b`). The CI lanes therefore pin `openai/gpt-oss-20b`
+  through the repository VARIABLE `GROQ_TEST_MODEL` — a variable and not a
+  secret, so the probe's skip reason keeps naming the model instead of `***`.
+- **A pin outside `groq_constants.py` is a new failure mode, not just a
+  different model.** The dropdown is not the account catalog: it is that
+  catalog filtered by a live probe per model
+  (`groq_model_discovery.py::_test_chat_completion` / `_test_tool_calling`,
+  which drop entries as `not_supported`), and when discovery fails
+  `_get_fallback_models()` returns the STATIC list. That static list contains
+  `llama-3.1-8b-instant` and does **not** contain `openai/gpt-oss-20b`. So
+  under a discovery fallback the dropdown offers the retired default, the
+  `toContainText` assertion **fails** rather than skipping, and the red means
+  "discovery fell back", not "the model is gone".
 - Run with `--workers=1` (the test creates a flow; file is serial).
 
 ---
@@ -181,8 +197,12 @@ valid key.
   `anthropic-provider.spec.ts` Test 1).
 - If the Groq component's fields (`api_key`, `model_name`) or its bundle
   location change.
-- If the Groq catalog drops `llama-3.1-8b-instant` (override via
-  `GROQ_TEST_MODEL`).
+- ~~If the Groq catalog drops `llama-3.1-8b-instant`~~ — this HAPPENED, and it
+  was measured on 2026-09-13: the account behind this repository's key does not
+  serve it. The lanes now pin `openai/gpt-oss-20b` via the repository variable
+  `GROQ_TEST_MODEL`. What is left to review is the pin itself: if that model
+  leaves the account's catalog, or if Groq's discovery starts falling back to
+  the static list (see Preconditions), this test fails instead of skipping.
 
 ---
 
