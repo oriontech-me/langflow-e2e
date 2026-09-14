@@ -238,7 +238,7 @@ test.describe("Files API — v2, user-scoped store", () => {
 
   test(
     "the batch path requires its trailing slash",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       // Only the upload is declared: the two calls below deliberately land on
       // `/api/v2/files/{file_id}` with "batch" as the id, so crediting them
