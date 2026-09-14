@@ -125,7 +125,7 @@ export function schemaOperations(
  * are one operation. The tempting rule — `rstrip("/")` — is **wrong**, measured:
  * `POST /api/v2/files/batch/` is registered ONLY with the slash, and the
  * slash-less spelling falls through to `/api/v2/files/{file_id}`, answering
- * `405` (and `422 uuid_parsing` on DELETE, with `input: "batch"`). Stripping it
+ * `405` (and `422 uuid_parsing` on `path.file_id` for DELETE). Stripping it
  * would put a key in the baseline that no client can call.
  *
  * So: collapse a pair onto the slash-less form **only when the router registered

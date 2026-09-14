@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/files/api-files-v2-store.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev0`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev12`)
 
 Owning issue: #1692 (Wave 7 — OSS API coverage). Denominator, definitions and the
 gauge this spec feeds: `docs/api/api-surface-coverage-gauge.md`.
@@ -53,11 +53,32 @@ through to `/api/v2/files/{file_id}`:
 | Request | Answer |
 |---|---|
 | `POST /api/v2/files/batch` | `405 Method Not Allowed` |
-| `DELETE /api/v2/files/batch` | `422`, `type: "uuid_parsing"`, `loc: ["path","file_id"]`, `input: "batch"` |
+| `DELETE /api/v2/files/batch` | `422`, `type: "uuid_parsing"`, `loc: ["path","file_id"]` |
 
 That is asserted, not just recorded: it is the difference between a batch call and
 a call that hits the single-file route with `"batch"` as the id, and it is the case
 that makes `rstrip("/")` the wrong normalisation for the whole inventory.
+
+**`loc` is the route evidence, and since `1.13.0.dev10` it is the only one.** Until
+`dev9` the entry also echoed `input: "batch"`, and the spec asserted it. Upstream
+[langflow-ai/langflow#15038](https://github.com/langflow-ai/langflow/pull/15038)
+(LE-2462, merged into `release-1.13.0` on 2026-09-11) replaced FastAPI's default
+422 handler with one that **drops `input` from every validation entry** and trims
+`ctx` to schema-derived keys, so a 422 no longer reflects submitted values —
+credentials included — into proxy logs and error trackers. It is a deliberate,
+image-wide contract change, not a regression of this route (#1841). What still
+separates the two routes is `loc`: the single-file route has a **path** parameter
+named `file_id`, while `batch/` has no path parameter at all — a rejected batch
+payload would be located under `body`. Measured on `dev12`: `DELETE /api/v2/files/batch/`
+(with the slash) carrying `["batch"]` answers the **same** `422`, the same
+`type: "uuid_parsing"` and the same `msg`, differing only in `loc: ["body", 0]` —
+and on `≤ dev9` it would have echoed the same `input: "batch"` too, so `input` never
+separated the routes; `loc` always did. So `loc === ["path","file_id"]` together
+with `type === "uuid_parsing"` pins "reached the single-file handler and refused
+`batch` as a UUID", which is the discrimination `input` used to add. `input` is
+asserted neither present nor absent: its presence depends on the image's release
+line (≤ 1.12.x still echoes it), and the redaction is a security contract of its
+own rather than a property of the trailing slash.
 
 ---
 
@@ -123,7 +144,9 @@ class as `cleanAllFlows`, #553/#518).
 1. Upload one file (so the store is non-empty and a working batch call is possible).
 2. `POST /api/v2/files/batch` (no slash) with the id array → `405`.
 3. `DELETE /api/v2/files/batch` (no slash) → `422` whose first `detail` entry has
-   `type === "uuid_parsing"`, `loc === ["path","file_id"]` and `input === "batch"`.
+   `type === "uuid_parsing"` and `loc === ["path","file_id"]` — the path location
+   is what proves the single-file route was reached (see *`loc` is the route
+   evidence* above; `input` is no longer echoed since `1.13.0.dev10`).
 4. The file uploaded in step 1 is **still listed** — the malformed calls deleted
    nothing. This is the load-bearing half: a `405`/`422` that had nonetheless
    deleted the file would be the actual hazard.

@@ -238,7 +238,7 @@ test.describe("Files API — v2, user-scoped store", () => {
 
   test(
     "the batch path requires its trailing slash",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       // Only the upload is declared: the two calls below deliberately land on
       // `/api/v2/files/{file_id}` with "batch" as the id, so crediting them
@@ -267,11 +267,18 @@ test.describe("Files API — v2, user-scoped store", () => {
         expect(res.status()).toBe(422);
         const detail = (await res.json()).detail[0];
         // The body is the evidence that the request reached the SINGLE-file
-        // route: it names `file_id` and echoes "batch" as the value it could not
-        // parse. A bare 422 would not distinguish this from a rejected payload.
+        // route. A bare 422 would not distinguish this from a rejected payload.
+        // `loc` carries that on its own: only the single-file route has a PATH
+        // parameter named `file_id` — `batch/` has none, so a refused batch
+        // payload would be located under `body`.
+        //
+        // `input: "batch"` used to be asserted too, and is deliberately not any
+        // more: from 1.13.0.dev10 upstream #15038 (LE-2462) drops `input` from
+        // every validation entry so a 422 stops echoing submitted values, while
+        // <= 1.12.x still echoes it. Its presence says which release line
+        // answered, not which route (#1841).
         expect(detail.type).toBe("uuid_parsing");
         expect(detail.loc).toEqual(["path", "file_id"]);
-        expect(detail.input).toBe("batch");
       });
 
       await test.step("and the file is still there — the malformed calls deleted nothing", async () => {
