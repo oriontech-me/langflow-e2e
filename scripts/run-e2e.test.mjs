@@ -1831,3 +1831,46 @@ test("the payload is skipped, not attempted, when the guards could not read the 
     assert.equal(existsSync(join(dir, "payload.json")), false, `${state}: no empty file left behind either`);
   }
 });
+
+test("the coverage denominator is computed the way the workflow computes it", () => {
+  // The class this lane keeps finding: two places that must agree, drifting in
+  // silence. `--count-oss` was introduced to replace a grep that counted the
+  // @enterprise lane no nightly can reach (#1010); the workflow moved, this path did
+  // not, and the 2026-09-14 pair reported 811 against the workflow's 723 with nothing
+  // going red. Pinned as text because the number itself only differs on a machine
+  // that has the whole suite checked out.
+  //
+  // DERIVED from daily-stable.yml, never restated (#1045's shape): the command comes
+  // out of the workflow's own line, so renaming the flag there pulls this path with it
+  // instead of needing a second edit here. A flag that stops matching is a failure
+  // naming the moved reference, never a pin that quietly holds an obsolete one.
+  const sh = readFileSync(SCRIPT, "utf8");
+  const wf = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+  const ref = wf.match(/total=\$\(npx ts-node (scripts\/stable-tests\.ts --count-[a-z-]+)\)/);
+  assert.ok(ref, "daily-stable.yml no longer computes `total` from stable-tests.ts — the reference moved, and this pin is what has to be re-derived");
+  assert.ok(
+    sh.includes(`total_count="$(npx ts-node ${ref[1]}`),
+    `this lane has to take the denominator from the workflow's own command: ${ref[1]}`,
+  );
+  assert.doesNotMatch(sh, /total_count="\$\(grep/, "the retired grep must not come back");
+});
+
+test("an incomplete coverage count is reported, not swallowed", () => {
+  // #1012 one level down: `build-run-payload.mjs` drops the coverage block when both
+  // counts are empty, so a parser that failed looks exactly like a run with nothing to
+  // report. The stderr that tells them apart must not be discarded, and the gap must
+  // reach the operator as a warning rather than as an absent key in a JSON file.
+  const sh = readFileSync(SCRIPT, "utf8");
+  const block = sh.slice(sh.indexOf('log "Building the run payload"'));
+  assert.ok(block, "the payload build block moved");
+  assert.doesNotMatch(
+    block.slice(0, block.indexOf("PLAYWRIGHT_JSON=")),
+    /stable-tests\.ts --count[a-z-]* 2>\/dev\/null/,
+    "the parser's error is the only thing separating a failed count from an empty one",
+  );
+  assert.match(
+    block.slice(0, block.indexOf("PLAYWRIGHT_JSON=")),
+    /if \[ -z "\$stable_count" \] \|\| \[ -z "\$total_count" \]; then\n\s+warn /,
+    "an empty count has to be warned about, naming which one",
+  );
+});
