@@ -1709,8 +1709,16 @@ phase_publish() {
     warn "no readable report — the run payload is NOT built, and the notifiers report what the guards saw instead."
   else
     log "Building the run payload"
+    # Both numbers come from the SAME parser the workflow uses, and that is the point
+    # of the second line rather than a tidy-up. `--count-oss` exists because the
+    # workflow retired exactly the `grep -rE '^\s*test\s*\('` that used to stand here:
+    # it counts the `@enterprise` lane no nightly can execute (#1010), and it read the
+    # denominator off a regex while the numerator beside it came from the AST parser
+    # (#985). This path kept the retired form, so the 2026-09-14 pair reported 811 here
+    # against the workflow's 723 — a coverage band nine points low, on the lane being
+    # prepared to become the record.
     stable_count="$(npx ts-node scripts/stable-tests.ts --count 2>/dev/null || echo "")"
-    total_count="$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')"
+    total_count="$(npx ts-node scripts/stable-tests.ts --count-oss 2>/dev/null || echo "")"
 
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     WORKFLOW="$WORKFLOW_ID" \

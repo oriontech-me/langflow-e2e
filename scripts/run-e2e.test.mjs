@@ -1831,3 +1831,17 @@ test("the payload is skipped, not attempted, when the guards could not read the 
     assert.equal(existsSync(join(dir, "payload.json")), false, `${state}: no empty file left behind either`);
   }
 });
+
+test("the coverage denominator is computed the way the workflow computes it", () => {
+  // The class this lane keeps finding: two places that must agree, drifting in
+  // silence. `--count-oss` was introduced to replace a grep that counted the
+  // @enterprise lane no nightly can reach (#1010); the workflow moved, this path did
+  // not, and the 2026-09-14 pair reported 811 against the workflow's 723 with nothing
+  // going red. Pinned as text because the number itself only differs on a machine
+  // that has the whole suite checked out.
+  const sh = readFileSync(SCRIPT, "utf8");
+  const wf = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+  assert.match(wf, /stable-tests\.ts --count-oss/, "the workflow should still be the reference");
+  assert.match(sh, /total_count="\$\(npx ts-node scripts\/stable-tests\.ts --count-oss/);
+  assert.doesNotMatch(sh, /total_count="\$\(grep/, "the retired grep must not come back");
+});
