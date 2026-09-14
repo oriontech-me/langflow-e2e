@@ -1464,7 +1464,7 @@
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
-| `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
+| `core-functionality/model-provider/` | 36 | 33 | 2 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
 | `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
@@ -1481,7 +1481,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **659** | **541 (82%)** | **35 (5%)** | **18 (3%)** | **65 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **661** | **542 (82%)** | **35 (5%)** | **18 (3%)** | **66 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1497,7 +1497,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 627 `test()` calls carrying the `@stable` tag, distributed across 246 spec
+> 629 `test()` calls carrying the `@stable` tag, distributed across 247 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1902,6 +1902,8 @@
 #### core-functionality/model-provider/
 - [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
+- [x] check-config lists exactly the completion models the local Ollama instance serves → `assistant-ollama-provider.spec.ts`
+- [x] the Assistant composer offers the local Ollama model and arms Send for it → `assistant-ollama-provider.spec.ts`
 - [x] Azure AI Foundry is offered with a two-variable form and a Foundry-only deployment surface → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] an unconfigured Azure AI Foundry panel is read-only: no enable toggle, no add-deployment control → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] credentials that do not validate are rejected and nothing is persisted → `azure-ai-foundry-provider-setup.spec.ts`
@@ -2189,7 +2191,7 @@
 | `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 2 | 3 |
-| `core-functionality/model-provider/` | 2 | 0 |
+| `core-functionality/model-provider/` | 2 | 1 |
 | `core-functionality/playground/` | 1 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
