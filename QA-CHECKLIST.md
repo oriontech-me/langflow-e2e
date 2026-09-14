@@ -1493,7 +1493,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 626 `test()` calls carrying the `@stable` tag, distributed across 246 spec
+> 627 `test()` calls carrying the `@stable` tag, distributed across 246 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1512,6 +1512,7 @@
 - [x] uploads a file, the store reports it, and deleting it removes it → `api-files-v2-store.spec.ts`
 - [x] renames a file without moving it → `api-files-v2-store.spec.ts`
 - [x] zips a batch and deletes a batch → `api-files-v2-store.spec.ts`
+- [x] the batch path requires its trailing slash → `api-files-v2-store.spec.ts`
 
 #### api/flows/
 - [x] direct event_delivery streams build events inline (no job_id) and echoes the input → `api-build-direct-response.spec.ts`
