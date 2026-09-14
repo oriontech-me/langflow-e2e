@@ -11,10 +11,10 @@ import {
 } from "../../../../helpers/provider-setup";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import {
+  armProviderSave,
   awaitProviderPanelSettled,
   PROVIDER_SAVE_BUTTON,
   readResponseBodySafely,
-  waitForCredentialPersist,
 } from "../../../../helpers/provider-setup/provider-panel-save";
 import {
   classifyVariableWriteRefusal,
@@ -58,7 +58,12 @@ const KEY_VAR = "OPENAI_API_KEY";
 // creates (POST /api/v1/flows → 201) and delete those ids in afterEach (#605).
 const createdFlowIds: string[] = [];
 
-async function loadAgent(page: Page, model?: string): Promise<void> {
+// Registered by BOTH entry points, not just `loadAgent` — the google sibling's #1648
+// fix, which this file had not received. Test 1 never loads the Agent template, so it
+// left the tracker unregistered while `awaitBootstrapTest` created `New Flow` +
+// `Basic Prompting` on an empty default project: measured on a purged 1.13.0.dev12
+// instance, the first run of this file left exactly those two behind.
+function trackCreatedFlows(page: Page): void {
   page.on("response", (resp) => {
     if (
       resp.url().includes("/api/v1/flows") &&
@@ -73,6 +78,10 @@ async function loadAgent(page: Page, model?: string): Promise<void> {
         .catch(() => {}); // non-JSON / batch payloads
     }
   });
+}
+
+async function loadAgent(page: Page, model?: string): Promise<void> {
+  trackCreatedFlows(page);
   try {
     await new SimpleAgentTemplatePage(page).load({ provider: PROVIDER, model });
   } catch (e: any) {
@@ -174,6 +183,7 @@ test.describe("OpenAI Provider", () => {
       };
       const alreadyStored = (await storedNames()).includes(KEY_VAR);
 
+      trackCreatedFlows(page);
       await awaitBootstrapTest(page, { skipModal: true });
 
       await test.step("open Settings → Model Providers → OpenAI", async () => {
@@ -201,40 +211,26 @@ test.describe("OpenAI Provider", () => {
 
         // Arm both waiters BEFORE clicking so the pass is caused by THIS save,
         // not the "Replace" state a prior test's global key left behind.
-        const validatePromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/models/validate-provider") &&
-            r.request().method() === "POST",
-          { timeout: 30000 },
-        );
+        //
         // Persist is a CREATE (POST /variables/ 201) when the global key does
         // not yet exist and an UPDATE (PATCH /variables/{id} 200) when it does
-        // — the frontend branches on existence (#636). Match BOTH: a fresh
-        // instance, or a run where no earlier test configured the provider
-        // first, takes the POST path, so a PATCH-only predicate waits forever
-        // on a request that never fires — the flake that preceded this one on
-        // this very step (POST 201 observed live on a deleted-var repro).
-        const persistPromise = waitForCredentialPersist(page);
+        // — the frontend branches on existence (#636). The helper matches BOTH:
+        // a fresh instance, or a run where no earlier test configured the
+        // provider first, takes the POST path, so a PATCH-only predicate waits
+        // forever on a request that never fires — the flake that preceded this
+        // one on this very step (POST 201 observed live on a deleted-var repro).
+        const save = armProviderSave(page, { subject: "key" });
 
         // By testid: ONE control, three labels (#1431).
         await page.getByTestId(PROVIDER_SAVE_BUTTON).click();
 
-        const [validateResp, persistResp] = await Promise.all([
-          validatePromise,
-          persistPromise,
-        ]);
         // validate-provider answers 200 with `{"valid": false, "error": …}` for a
-        // credential it rejected, so the status alone proves nothing — read the
-        // body (same trap as the azure/ollama specs).
-        expect(validateResp.status()).toBe(200);
-        const validateBody = (await validateResp.json()) as {
-          valid?: boolean;
-          error?: string;
-        };
-        expect(
-          validateBody.valid,
-          `validate-provider rejected the key: ${validateBody.error ?? "(no error)"}`,
-        ).toBe(true);
+        // credential it rejected, so the verdict is read on its body — and read
+        // FIRST (#1849): the panel issues no write after a refusal, so awaiting
+        // both together died at the persist waiter's timeout (32.6 s on
+        // 1.13.0.dev12, invalid key) instead of here, quoting the provider.
+        await save.validated();
+        const persistResp = await save.persisted();
 
         // THE contract #1424 turned into an assert: the verb must match the state
         // read over the API above. A `POST` on a configured instance is the defect
@@ -259,10 +255,11 @@ test.describe("OpenAI Provider", () => {
           const first = await readResponseBodySafely(persistResp);
           const refusal = classifyVariableWriteRefusal(first);
           if (isEnvironmentalRefusal(refusal.kind)) {
-            const retryPromise = waitForCredentialPersist(page);
+            const retry = armProviderSave(page, { subject: "key" });
             await keyInput.fill(process.env.OPENAI_API_KEY ?? "");
             await page.getByTestId(PROVIDER_SAVE_BUTTON).click();
-            const retryResp = await retryPromise;
+            await retry.validated();
+            const retryResp = await retry.persisted();
             if (!retryResp.ok()) {
               const second = await readResponseBodySafely(retryResp);
               const retryRefusal = classifyVariableWriteRefusal(second);

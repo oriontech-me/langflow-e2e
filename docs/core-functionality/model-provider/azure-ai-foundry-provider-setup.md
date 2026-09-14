@@ -1,6 +1,6 @@
 # Azure AI Foundry — unified provider setup (deployment names, not catalog IDs)
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (1.13.0.dev12, #1849: tests 1–4, and test 5's refusal path only — tests 5–6 skipped, the local Foundry credential answered `401`)
 
 ---
 
@@ -270,11 +270,19 @@ Live-scouted testids (1.12.0.dev14, re-checked on dev15 where the run is green, 
    the openai sibling create over an existing name, #1431/#1424), fill both
    variables, arm waiters on `POST /api/v1/models/validate-provider` **and** on
    the variables write (`POST /api/v1/variables/` or `PATCH
-   /api/v1/variables/{id}` — the frontend branches on existence, #636), click
-   `provider-save-button`.
+   /api/v1/variables/{id}` — the frontend branches on existence, #636) with
+   `armProviderSave`, click `provider-save-button`.
 3. **Assert (configure):** validate-provider body `valid === true` and the
    variables write is 2xx — armed before the click, so a pre-existing configured
-   state cannot pass the test.
+   state cannot pass the test, and **read in that order (#1849)**: the panel
+   issues no write after a refusal, so awaiting the two together settled only
+   when the write waiter timed out. Measured on 1.13.0.dev12 against an endpoint
+   the test host's probe reaches and Langflow cannot: **63.9 s** at that waiter,
+   naming nothing, before; **3.6 s** of test time after, with
+   `validate-provider rejected the credentials: Could not validate Azure AI
+   Foundry credentials. …`. The healthy direction of this step could not be
+   re-run for #1849: the Foundry credential in the local `.env` answered `401`
+   to the probe on 2026-09-14, so tests 5–6 skipped there.
 
    > **The `400` this step used to die on, and why it is now classified (#1424).**
    > The KEY write is validated **live**: `create_variable` calls
@@ -413,7 +421,9 @@ OpenRouter so the asserts cannot pass on a page-wide string.
   T2 — assert the add-deployment button IS visible while unconfigured ⇒ red;
   T3 — assert `valid === true` for the bogus endpoint ⇒ red; T4 — read back a
   different deployment name than the one enabled ⇒ red; T5 — fill a garbage key
-  with the real endpoint ⇒ `valid === false` ⇒ red; T6 — expect a catalog ID
+  with the real endpoint ⇒ `valid === false` ⇒ red **at the verdict, in seconds,
+  naming the refusal** (#1849 — a 60 s `waitForResponse` timeout there means the
+  verdict is being read after the write again); T6 — expect a catalog ID
   (`gpt-4o`) in `value-dropdown-model_model` instead of the deployment ⇒ red.
   Every mutation carries `// FF-MUTATION` and is reverted with `grep -c` = 0.
 
@@ -421,13 +431,17 @@ OpenRouter so the asserts cannot pass on a page-wide string.
 
 ## Cleanup *(required by the repo's flow-cleanup rule)*
 
-- Tests 1–5 create **no flows** — they are Settings-UI and API only. Test 6
-  creates one flow (an API copy of the starter, see step 3) and deletes it
-  id-scoped in `afterEach` (`deleteFlow` + `getAuthToken`), per the mandatory
-  contract. That `afterEach` deliberately carries **no `.catch()`**: `deleteFlow`
-  throws on a failed deletion, and swallowing it is exactly how a leak goes
-  silent. Verified by diffing the instance's flow-id set around a run — zero new
-  ids.
+- Tests 1–5 create **no flows of their own** — they are Settings-UI and API
+  only. Test 6 creates one flow (an API copy of the starter, see step 3) and
+  deletes it id-scoped in `afterEach` (`deleteFlow` + `getAuthToken`), per the
+  mandatory contract. That `afterEach` deliberately carries **no `.catch()`**:
+  `deleteFlow` throws on a failed deletion, and swallowing it is exactly how a
+  leak goes silent. The earlier "zero new ids" verification was measured on a
+  populated instance, and it does not hold on an EMPTY default project: every
+  test enters through `awaitBootstrapTest`, which then creates `New Flow` +
+  `Basic Prompting` — measured on a purged 1.13.0.dev12 instance, the first run
+  of this file left exactly those two behind. A `beforeEach` response listener
+  now captures every flow the page creates into the same id list (#1849).
 - **Account-wide state:** every test restores what it wrote — credential
   variables are deleted by id, enabled deployments are disabled.
 - **Cleanup tolerates the second write.** The credential purge lists-and-deletes

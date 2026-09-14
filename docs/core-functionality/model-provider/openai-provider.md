@@ -1,6 +1,6 @@
 # OpenAI Provider — configure key, select GPT, execute
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev12`, #1849)
 
 ---
 
@@ -96,13 +96,21 @@ like a product regression and costs the tag every time the account drains.
    accessible name equal to `Replace` when step 1 found the key stored, `Save`
    when it did not.
 4. Fill `provider-variable-input-OPENAI_API_KEY` with `OPENAI_API_KEY`, arm the
-   two response waiters, then click `provider-save-button` (**by testid** — the
-   label is state-dependent, so role+name matched nothing during that window).
+   two response waiters (`armProviderSave`), then click `provider-save-button`
+   (**by testid** — the label is state-dependent, so role+name matched nothing
+   during that window).
 5. **Validation (causal — no pre-existing-state false positive):** the save click
    must produce **both** a `POST /api/v1/models/validate-provider` → **200 with
    `valid: true` in the body** (the endpoint answers 200 for a credential it
    rejected, so the status alone proves nothing) **and** a persist to
-   `/api/v1/variables/` → **2xx**. Three asserts hang off that persist:
+   `/api/v1/variables/` → **2xx** — **read in that order (#1849)**. The panel
+   issues no write after a refusal, so the verdict is asserted first and a
+   refused key fails at the refusal, quoting the body's `error` (measured on
+   1.13.0.dev12 with an invalid key: `validate-provider rejected the key: Invalid
+   API key for OpenAI` in **3.6 s** of test time, where awaiting both together
+   died at the persist waiter's 30 s timeout, **32.6 s**, naming nothing). That refusal is a
+   hard failure, not step 6's skip: step 6 is about a *write* the backend
+   refused after validation passed. Three asserts hang off that persist:
    - **the verb matches the branch step 1 established** — `PATCH` when the global
      key exists, `POST` when it does not. This is the contract the #1424 flake
      violated, so it is asserted rather than tolerated: a panel that creates over
@@ -118,7 +126,8 @@ like a product regression and costs the tag every time the account drains.
 6. **Refusals that are not Langflow's fault are skipped, loudly, never
    tolerated silently.** A 400 whose body says the credential did not
    authenticate (`Invalid API key for OpenAI`) or that the provider could not be
-   reached is retried **once** through the panel's own `Retry Save` and, if
+   reached is retried **once** through the panel's own `Retry Save` (its
+   verdict read first too) and, if
    refused again, ends the test as a `test.skip` **quoting the backend's exact
    `detail`** (#980's trade — a drained key must not cost a scheduled day, and
    #1012's rule — the reason is printed, never swallowed). Everything else,
@@ -195,6 +204,11 @@ like a product regression and costs the tag every time the account drains.
   stale, cached, or produced by a different provider.
 - **Force-failure check** (CONTRIBUTING §2) is run during VERIFY: each assertion
   is broken on purpose once to confirm it fails, before `@stable` is added.
+  Test 1's refusal path is forced behaviourally rather than by editing an
+  assert (#1849): run it with an invalid `OPENAI_API_KEY` ⇒ it must fail at the
+  `validate-provider` verdict in a few seconds, naming `Invalid API key for
+  OpenAI` — a 30 s `waitForResponse` timeout there means the verdict is being
+  read after the write again.
 
 ---
 
@@ -326,7 +340,11 @@ like a product regression and costs the tag every time the account drains.
   deletes them by id in `test.afterEach` (transient ids 404 harmlessly —
   `deleteFlow` treats 404 as done). Never a name-based or delete-all cleanup
   (cross-worker wiper class, #553/#520). Same pattern as
-  `anthropic-provider.spec.ts`.
+  `anthropic-provider.spec.ts`. The tracker is registered by **both** tests, the
+  google sibling's #1648 fix: Test 1 creates flows too, through
+  `awaitBootstrapTest` on an empty default project (`New Flow` + `Basic
+  Prompting` — measured on a purged 1.13.0.dev12 instance, left behind by the
+  first run of this file until #1849).
 - **Why the tools are removed before executing (root-caused during validation):**
   the Simple Agent template ships with Web Search + URL tools. Executing it with
   those tools on `gpt-4o-mini` failed ~1 in 5 runs (even spaced ~60s apart) with a
