@@ -1,0 +1,120 @@
+{
+  "version": "1.13.0.dev12",
+  "templates": [
+    {
+      "nameKey": "basic_prompting",
+      "name": "Basic Prompting"
+    },
+    {
+      "nameKey": "blog_writer",
+      "name": "Blog Writer"
+    },
+    {
+      "nameKey": "content_aggregator",
+      "name": "Content Aggregator"
+    },
+    {
+      "nameKey": "custom_component_generator",
+      "name": "Custom Component Generator"
+    },
+    {
+      "nameKey": "deep_research_agent",
+      "name": "Deep Research Agent"
+    },
+    {
+      "nameKey": "document_q_a",
+      "name": "Document Q&A"
+    },
+    {
+      "nameKey": "financial_report_parser",
+      "name": "Financial Report Parser"
+    },
+    {
+      "nameKey": "hybrid_search_rag",
+      "name": "Hybrid Search RAG"
+    },
+    {
+      "nameKey": "image_sentiment_analysis",
+      "name": "Image Sentiment Analysis"
+    },
+    {
+      "nameKey": "instagram_copywriter",
+      "name": "Instagram Copywriter"
+    },
+    {
+      "nameKey": "knowledge_retrieval",
+      "name": "Knowledge Retrieval"
+    },
+    {
+      "nameKey": "market_research",
+      "name": "Market Research"
+    },
+    {
+      "nameKey": "meeting_summary",
+      "name": "Meeting Summary"
+    },
+    {
+      "nameKey": "memory_chatbot",
+      "name": "Memory Chatbot"
+    },
+    {
+      "nameKey": "multi_agent_flow",
+      "name": "Multi Agent Flow"
+    },
+    {
+      "nameKey": "portfolio_website_code_generator",
+      "name": "Portfolio Website Code Generator"
+    },
+    {
+      "nameKey": "price_deal_finder",
+      "name": "Price Deal Finder"
+    },
+    {
+      "nameKey": "saas_pricing",
+      "name": "SaaS Pricing"
+    },
+    {
+      "nameKey": "seo_keyword_generator",
+      "name": "SEO Keyword Generator"
+    },
+    {
+      "nameKey": "sequential_tasks_agents",
+      "name": "Sequential Tasks Agents"
+    },
+    {
+      "nameKey": "simple_agent",
+      "name": "Simple Agent"
+    },
+    {
+      "nameKey": "social_media_agent",
+      "name": "Social Media Agent"
+    },
+    {
+      "nameKey": "text_sentiment_analysis",
+      "name": "Text Sentiment Analysis"
+    },
+    {
+      "nameKey": "travel_planning_agents",
+      "name": "Travel Planning Agents"
+    },
+    {
+      "nameKey": "twitter_thread_generator",
+      "name": "Twitter Thread Generator"
+    },
+    {
+      "nameKey": "vector_store_rag",
+      "name": "Vector Store RAG"
+    }
+  ],
+  "declaredAbsences": [
+    {
+      "nameKey": "research_translation_loop",
+      "name": "Research Translation Loop",
+      "reason": "ArXivComponent is not shipped by this image, so filter_starter_projects_by_available_components drops the template at startup: \"Skipping starter project 'Research Translation Loop'; unavailable components: ArXivComponent\".",
+      "issue": "#1744",
+      "unavailableComponents": [
+        "ArXivComponent"
+      ]
+    }
+  ]
+}
