@@ -28,6 +28,17 @@ export const REMOVED_HEADLINE_PREFIX = "🔻 **Auto-removed `@stable`** from ";
 export const REMOVED_HEADLINE_SUFFIX = " hard-failing test(s):";
 /** What the headline becomes once the removal is known not to have landed. */
 export const PENDING_HEADLINE_PREFIX = "🔻 **Selected for `@stable` removal** — ";
+/**
+ * The per-item note for a test whose `@stable` was its ONLY tag. Past tense, so
+ * it is a third claim and not a decoration: under a heading saying nothing
+ * reached `main`, "the array was left empty, please review" sends the reader to
+ * review a file `main` never saw changed.
+ */
+export const SOLE_TAG_NOTE =
+  " — _`@stable` was the only tag; the array was left empty, please review_";
+/** The same note about a removal that has not happened. */
+export const PENDING_SOLE_TAG_NOTE =
+  " — _`@stable` is its only tag; removing it leaves the array empty, please review_";
 /** The footer that states, in the past tense, that the commit happened. */
 export const COMMITTED_FOOTER =
   "These were committed to `main` automatically. **Restoring `@stable` is manual**: once the test or Langflow is fixed, re-add the tag via PR.";
@@ -39,22 +50,28 @@ export const removedHeadline = (count) =>
 /**
  * The same summary with every past-tense claim of a completed removal taken out.
  *
- * `neutralized` is false when neither sentence was found, which is not the same
- * as nothing to do: it means the formatter was reworded and this no longer
- * recognises it. The caller says so rather than presenting a summary it could not
- * correct as a corrected one (#1012), and the round-trip test is what makes that
- * branch a build failure instead of an issue body.
+ * `neutralized` requires BOTH claim sentences to have been recognised, and the
+ * strictness is the point: a PARTIAL match means the formatter was reworded on one
+ * side, so whatever this did not recognise is still in the text. The caller hedges
+ * on anything short of both rather than presenting a summary it could only
+ * half-correct as a corrected one (#1012); the round-trip test against the real
+ * formatter is what keeps that branch out of a real issue body.
+ *
+ * The `soleTag` note is corrected unconditionally and does NOT vote: it is present
+ * only for a removal whose `@stable` was the only tag, so its absence says nothing
+ * about whether the formatter drifted.
  */
 export function withoutCommittedClaim(summary) {
   const text = String(summary ?? "");
-  const headlineAt = text.indexOf(REMOVED_HEADLINE_PREFIX);
-  const footerAt = text.indexOf(COMMITTED_FOOTER);
-  if (headlineAt === -1 && footerAt === -1) return { text, neutralized: false };
+  const hasHeadline = text.includes(REMOVED_HEADLINE_PREFIX);
+  const hasFooter = text.includes(COMMITTED_FOOTER);
+  if (!hasHeadline && !hasFooter) return { text, neutralized: false };
   let out = text;
-  if (headlineAt !== -1) {
+  if (hasHeadline) {
     out = out.replaceAll(REMOVED_HEADLINE_PREFIX, PENDING_HEADLINE_PREFIX);
   }
-  if (footerAt !== -1) {
+  out = out.replaceAll(SOLE_TAG_NOTE, PENDING_SOLE_TAG_NOTE);
+  if (hasFooter) {
     // Removed outright rather than reworded: the block's own correction paragraph
     // already says what happens next, and two paragraphs about restoring the tag
     // is how a reader ends up believing the first one.
@@ -64,5 +81,5 @@ export function withoutCommittedClaim(summary) {
       .join("\n")
       .replace(/\n+$/, "");
   }
-  return { text: out, neutralized: headlineAt !== -1 && footerAt !== -1 };
+  return { text: out, neutralized: hasHeadline && hasFooter };
 }

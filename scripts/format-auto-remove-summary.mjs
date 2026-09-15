@@ -11,7 +11,11 @@ import { readFileSync } from "node:fs";
 // The two past-tense sentences below are shared with the consumer that has to take
 // them back when the commit step fails (#1822) — one copy, or the consumer fails
 // by silently matching nothing. See scripts/lib/auto-remove-claim.mjs.
-import { COMMITTED_FOOTER, removedHeadline } from "./lib/auto-remove-claim.mjs";
+import {
+  COMMITTED_FOOTER,
+  SOLE_TAG_NOTE,
+  removedHeadline,
+} from "./lib/auto-remove-claim.mjs";
 
 const r = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const lines = [];
@@ -116,9 +120,7 @@ if (r.status === "guard_tripped") {
   lines.push(removedHeadline(r.removed.length));
   lines.push("");
   for (const t of r.removed) {
-    const note = t.soleTag
-      ? " — _`@stable` was the only tag; the array was left empty, please review_"
-      : "";
+    const note = t.soleTag ? SOLE_TAG_NOTE : "";
     lines.push(`- \`${t.file}\` — ${t.title}${note}`);
   }
   lines.push("");

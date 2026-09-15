@@ -122,9 +122,24 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
  */
 function autoRemovalLines(arSummary, arUncommitted) {
   if (!arUncommitted) return ["### `@stable` auto-removal", "", arSummary];
+  const heading = "### ⚠️ `@stable` auto-removal did NOT reach `main`";
+  // The action writes `status` to `$GITHUB_OUTPUT` BEFORE it renders the summary,
+  // so a formatter crash leaves `status=removed` with no summary at all. "every
+  // test listed below" would then point at nothing, and the reworded-formatter
+  // hedge would be the wrong explanation for an empty one.
+  if (String(arSummary ?? "").trim() === "") {
+    return [
+      heading,
+      "",
+      "**Nothing was pushed**, and the step produced no summary either: it reported a",
+      "removal and then failed before writing one, so which tests it selected is only in",
+      "the `Auto-remove @stable from hard failures` step's log. No tag was removed on",
+      "`main` (#1822).",
+    ];
+  }
   const { text, neutralized } = withoutCommittedClaim(arSummary);
   return [
-    "### ⚠️ `@stable` auto-removal did NOT reach `main`",
+    heading,
     "",
     "**Nothing was pushed.** The auto-remove step failed, so every test listed below still",
     "carries `@stable` on `main` and runs again tomorrow — read the",
@@ -135,8 +150,8 @@ function autoRemovalLines(arSummary, arUncommitted) {
       : [
           "",
           "_The summary below was written before the commit was attempted and this could not",
-          "recognise its wording, so it may still read as though the tags were removed. The",
-          "paragraph above is the one that holds._",
+          "recognise all of its wording, so parts of it may still read as though the tags were",
+          "removed. The paragraph above is the one that holds._",
         ]),
     "",
     text,
