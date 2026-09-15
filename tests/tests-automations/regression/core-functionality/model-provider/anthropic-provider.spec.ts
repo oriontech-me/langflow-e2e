@@ -15,6 +15,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { selectPinnedModelOption } from "../../../../helpers/provider-setup/model-option";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
 
 /**
  * Anthropic (Claude) provider path (QA-CHECKLIST §7.3) as a provider-centric journey:
@@ -27,9 +28,10 @@ import { providerSkipGate } from "../../../../helpers/provider-setup/provider-he
  * Completes the provider family: openai-provider.spec.ts (§7.2),
  * google-provider.spec.ts (§7.4), ollama-provider.spec.ts (§7.6).
  *
- * False-positive guards: Test 1 asserts the save *requests* succeed
- * (validate-provider + POST|PATCH /variables, both 2xx) rather than a
- * pre-existing configured state, so a no-op save cannot pass. Test 2 asserts a
+ * False-positive guards: Test 1 asserts the save *requests* succeed and say so
+ * in the body (validate-provider -> 200 AND {"valid": true}, then POST|PATCH
+ * /variables -> 2xx) rather than a pre-existing configured state, so neither a
+ * no-op save nor a key the provider rejects can pass (#1829). Test 2 asserts a
  * Claude model is selected and the run returns output. Test 3 asserts the
  * dropdown value changes to each exact target model name — a switch that
  * silently keeps the previous model selected fails the exact-name assert.
@@ -183,17 +185,27 @@ test.describe.configure({ mode: "serial" });
 test.describe("Anthropic Provider", () => {
   test(
     "Anthropic API key is configured via Settings → Model Providers",
-    { tag: ["@model-provider", "@settings"] },
+    { tag: ["@stable", "@model-provider", "@settings"] },
     async ({ page }) => {
-      // Env presence, NOT provider health — deliberate (#1415). This test makes
-      // no completion call, and the backend's validate_model_provider_key
-      // (lfx/base/models/unified_models.py) only rejects a key when the error
-      // message contains "401"/"authentication"/"api key"; every other failure
-      // hits a bare `return` ("allow saving despite minor errors"), so a drained
-      // account still answers {valid: true} and this test still passes. Measured
-      // on the 2026-07-27 daily: Anthropic was dry, this test passed, Test 2
-      // hard-failed. Gating it would trade real coverage of the Settings save
-      // path for nothing on exactly the days the account is down.
+      // Env presence, NOT provider health — deliberate (#1415), and the reason
+      // holds for exactly ONE of the two ways an account can be unusable (#1829).
+      //   DRAINED: the backend's validate_model_provider_key
+      //   (lfx/base/models/unified_models.py) only rejects a key when the error
+      //   message contains "401"/"authentication"/"api key"; every other failure
+      //   hits a bare `return` ("allow saving despite minor errors"), so a dry
+      //   account still answers {valid: true} and the save path is genuinely
+      //   exercised. Measured on the 2026-07-27 daily: Anthropic was dry, this
+      //   test passed, Test 2 hard-failed. Gating would trade real coverage for
+      //   nothing on exactly the days the account is down.
+      //   REJECTED (401): the product correctly refuses to persist the
+      //   credential, so this test CANNOT pass however healthy Langflow is. That
+      //   is the test working — the remedy is a new key — and its job is to say
+      //   so in under a second with the provider's own message, which is what
+      //   the ordered assertion below does.
+      // providerSkipGate is still refused because it does not separate those two
+      // states: it skips on any provider ill-health, giving back the coverage
+      // #1415 deliberately kept. The discriminator that does separate them is the
+      // validate-provider body.
       test.skip(
         !hasProviderEnvKeys(PROVIDER),
         `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
@@ -219,30 +231,32 @@ test.describe("Anthropic Provider", () => {
         await keyInput.fill(process.env.ANTHROPIC_API_KEY ?? "");
 
         // Arm both waiters BEFORE clicking so the pass is caused by THIS save,
-        // not a "Disconnect"/"Replace" state a prior configuration left behind.
-        const validatePromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/models/validate-provider") &&
-            r.request().method() === "POST",
-          { timeout: 60000 },
-        );
-        // POST on first configure, PATCH on re-save of the existing variable.
-        const persistPromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/variables/") &&
-            ["POST", "PATCH"].includes(r.request().method()),
-          { timeout: 60000 },
-        );
+        // not a "Disconnect"/"Replace" state a prior configuration left behind —
+        // and read them in the order the panel issues them, never concurrently.
+        //
+        // A 2xx is NOT an authentication verdict: validate-provider answers 200
+        // for a rejected key too and puts the verdict in the body — measured on
+        // 1.13.0.dev8, {"valid":true,"error":null} vs
+        // {"valid":false,"error":"Invalid API key for Anthropic"} (#1829/#1823).
+        // The frontend then gates the write on that body
+        // (useProviderConfiguration.ts -> handleSaveAllVariables:
+        // `const isValid = await validateCredentials(); if (!isValid …) return;`),
+        // so a rejected key issues no /variables/ request at all and awaiting
+        // both at once reported a sub-second refusal as a 60 s timeout carrying
+        // no cause — the shape that cost the 2026-09-11 daily 300 s and an
+        // unreviewed @stable removal (#1829). `armProviderSave` is the one
+        // implementation of that rule, shared with the four sibling provider
+        // specs #1849 measured the same shape on.
+        const save = armProviderSave(page, { subject: "key" });
 
         await page.getByRole("button", { name: /Save|Replace/i }).first().click();
 
-        const [validateResp, persistResp] = await Promise.all([
-          validatePromise,
-          persistPromise,
-        ]);
-        // validate-provider 2xx = the key authenticates against Anthropic live;
-        // POST|PATCH /variables 2xx = the key is persisted globally.
-        expect(validateResp.ok()).toBe(true);
+        // Throws naming Anthropic's own reason when the key is refused.
+        await save.validated();
+
+        // POST|PATCH /variables 2xx = the key is persisted globally — the
+        // consequence of a validated save, asserted second.
+        const persistResp = await save.persisted();
         expect(persistResp.ok()).toBe(true);
       });
     },

@@ -1,6 +1,6 @@
 # Anthropic Provider — configure key, select Claude, switch models
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -31,7 +31,12 @@ Completes the provider-centric family: `openai-provider.spec.ts` (§7.2),
 `@stable` `@model-provider` `@settings` `@agents` `@playground`
 
 `@stable` added only after multiple clean `--retries=0` runs on the fresh
-nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
+nightly. It was auto-removed from Test 1 by the 2026-09-11 daily (commit
+`883047fc`) while the CI Anthropic key was rejected, and is restored with the
+key replaced (the CI secret was rotated 2026-09-13) and the assertion fixed
+(#1829). #1823, the daily that produced the removal, is closed.
+
+`@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 `@agents` + `@playground` (Tests 2–3 select models and execute).
 
 ---
@@ -41,7 +46,8 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - Langflow running at `PLAYWRIGHT_BASE_URL`.
 - `ANTHROPIC_API_KEY` set in `.env` with a **funded** account (all tests
   self-skip without the env var; a zero-credit key configures fine but fails
-  execution with a billing error — see Notes).
+  execution with a billing error — see Notes; a key the provider **rejects**
+  fails Test 1 by design — see the gate note).
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts` (Anthropic must be `active`).
   **Tests 2–3 additionally gate on the health `collect-models` recorded there**
@@ -67,14 +73,22 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 3. Fill `provider-variable-input-ANTHROPIC_API_KEY` with `ANTHROPIC_API_KEY`.
 4. Arm two response waiters, then click the save button (`Save` when
    unconfigured, `Replace` when a key is already stored — match `/Save|Replace/`).
-5. **Validation (causal — no pre-existing-state false positive):** the save click
-   must produce **both** a `POST /api/v1/models/validate-provider` → **2xx** (the
-   key authenticates against Anthropic live) **and** a `POST|PATCH
-   /api/v1/variables/…` → **2xx** (the key is persisted — `POST` on first
-   configure, `PATCH` on re-save). Asserting the request outcomes — not the
-   "Disconnect"/"Replace" state, which pre-exists when the global key was already
-   configured — ties the pass to *this* save. Idempotent: re-saving the same
-   valid key is a success; the shared global key is deliberately not wiped.
+5. **Validation (causal, and read where the verdict actually is):** the save
+   click must produce a `POST /api/v1/models/validate-provider` answering
+   **`200` *and* `{"valid": true}`** — the status alone proves nothing, since the
+   endpoint answers `200` for a rejected key too and puts the verdict in the body
+   (measured in Notes) — and **then** a `POST|PATCH /api/v1/variables/…` → **2xx**
+   (the key is persisted — `POST` on first configure, `PATCH` on re-save).
+   The two are awaited **in order, not concurrently**: the frontend gates the
+   write on the validation body, so a rejected key produces no `/variables/`
+   request at all, and waiting for both at once turns a sub-second refusal into a
+   60 s timeout with no cause in it (#1829). Both waiters are still armed before
+   the click, via the shared `armProviderSave` helper (#1849) — the same one the
+   four sibling provider specs read their Save with, so the rule has one
+   implementation rather than a copy per spec. Asserting the request outcomes — not the "Disconnect"/"Replace"
+   state, which pre-exists when the global key was already configured — ties the
+   pass to *this* save. Idempotent: re-saving the same valid key is a success;
+   the shared global key is deliberately not wiped.
 
 ---
 
@@ -126,10 +140,13 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 
 ## Validation criterion *(required)*
 
-- **Configure:** clicking Save on the Anthropic key produces a 2xx
-  `validate-provider` (key authenticates against Anthropic) and a 2xx
-  `POST|PATCH /variables` (key persisted) — the pass is caused by this save,
-  not a pre-existing configured state.
+- **Configure:** clicking Save on the Anthropic key produces a
+  `validate-provider` answering `200` **and** `{"valid": true}` (the key
+  authenticates against Anthropic live — the status alone does not say so) and,
+  as a consequence, a 2xx `POST|PATCH /variables` (key persisted) — the pass is
+  caused by this save, not a pre-existing configured state. A key the provider
+  rejects fails on the body assert, in under a second, carrying Anthropic's own
+  message.
 - **Select + execute:** the Agent's model dropdown shows a Claude model, and
   running the flow returns a non-empty AI response.
 - **Switch:** the dropdown value provably changes Haiku → Sonnet → Opus (three
@@ -138,9 +155,11 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 
 ## Guarding against false positives *(how)*
 
-- **Test 1** asserts the *save requests succeed* (`validate-provider` +
-  `POST|PATCH /variables` both 2xx), not a UI state that pre-exists from an
-  earlier configuration — so a no-op save cannot pass.
+- **Test 1** asserts the *save requests succeed and say so in the body*
+  (`validate-provider` → `200` + `{"valid": true}`, then `POST|PATCH
+  /variables` → 2xx), not a UI state that pre-exists from an earlier
+  configuration — so neither a no-op save nor a rejected key can pass, the
+  latter being reported by the endpoint with a `200`.
 - **Test 2** asserts a **Claude** model is selected
   (`value-dropdown-model_model` ~ `/claude/i`, causal) and that execution
   returns a non-empty response.
@@ -172,6 +191,10 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - `src/frontend/src/pages/SettingsPage/` (Model Providers page) — renders
   `provider-item-Anthropic`, `provider-variable-input-ANTHROPIC_API_KEY`,
   the Save/Replace button; a rename breaks Test 1.
+- `src/frontend/src/modals/modelProviderModal/hooks/useProviderConfiguration.ts`
+  — `handleSaveAllVariables` gates the `/variables/` write on the
+  `validate-provider` **body**; if that gate moves, Test 1's ordered
+  two-request assertion is what notices.
 - Provider-config storage — the global `ANTHROPIC_API_KEY` provider variable.
 - `src/lfx/src/lfx/components/models_and_agents/` — Agent execution with the
   selected Claude model (Tests 2–3).
@@ -254,14 +277,48 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - **Shared global key:** the Anthropic key is global and persists across runs.
   Test 1 is idempotent — it re-saves and asserts the request outcomes, not a
   fresh start.
-- **Why the gate is per test, not per file (#1415, mechanism from #1029):** only
-  Tests 2–3 make a live completion call, so only they are gated. Test 1 keeps
-  the env-presence gate on purpose: on a drained account it still passes (the
-  backend code path above), so it still covers the Settings save path on a day
-  the account is dry — gating it would trade real coverage for nothing. This is
-  the asymmetry #1333 settled for the OpenAI copy of the same bug, applied here
-  after confirming the premise holds for Anthropic in two independent ways: the
-  shared backend code path, and the 2026-07-27 daily, where Test 1 passed on the
-  drained account while Test 2 hard-failed. **Resilience, not a root-cause fix**
-  — the account still has to be funded for §7.3.2/§7.3.3 to be exercised at all;
-  the general remedy is **#976**.
+- **A `2xx` from `validate-provider` is not an authentication verdict (#1829).**
+  `POST /api/v1/models/validate-provider` answers `200` in **both** directions and
+  puts the verdict in the body. Measured on `1.13.0.dev8`, one call per key on the
+  same instance (#1823 measured the same on `dev9`):
+
+  | key | HTTP | body | latency |
+  |---|---|---|---|
+  | live | `200` | `{"valid":true,"error":null}` | 0.70 s |
+  | rejected | `200` | `{"valid":false,"error":"Invalid API key for Anthropic"}` | 0.23 s |
+
+  The frontend then gates the write on that body
+  (`useProviderConfiguration.ts` → `handleSaveAllVariables`:
+  `const isValid = await validateCredentials(); if (!isValid …) return;`), so a
+  rejected key produces **no** `/variables/` request at all. Until #1829 this test
+  asserted `validateResp.ok()`, which is `true` for a rejected key, and awaited
+  both responses concurrently — so the only half that could fail was the
+  `/variables/` waiter, as a 60 s timeout carrying no cause. On the 2026-09-11
+  daily that shape cost the run 300 s of the collector's sweep budget and an
+  unreviewed `@stable` removal (commit `883047fc`) on a test whose logic was
+  correct.
+- **Why the gate is per test, not per file (#1415, mechanism from #1029;
+  rationale corrected in #1829):** only Tests 2–3 make a live completion call, so
+  only they are gated. Test 1 keeps the env-presence gate on purpose, and the
+  reason holds for **one** of the two ways an account can be unusable:
+  - **drained** — the backend code path above answers `{valid: true}` and the save
+    proceeds, so Test 1 still covers the Settings save path on a day the account
+    is dry; gating it would trade real coverage for nothing. This is the asymmetry
+    #1333 settled for the OpenAI copy of the same bug, confirmed for Anthropic in
+    two independent ways: the shared backend code path, and the 2026-07-27 daily,
+    where Test 1 passed on the drained account while Test 2 hard-failed.
+  - **rejected (401)** — the product correctly refuses to persist the credential,
+    so Test 1 **cannot** pass however healthy Langflow is. That is the test
+    working, not a gap: the remedy is a new key, and the spec's job is to say so
+    in under a second with the provider's own message rather than to skip.
+    `providerSkipGate` does not separate the two states — it skips on any provider
+    ill-health, giving back exactly the coverage #1415 kept. The discriminator
+    that does separate them is the `validate-provider` body, which step 5 now
+    asserts.
+
+  **Resilience, not a root-cause fix** — the account still has to be funded for
+  §7.3.2/§7.3.3 to be exercised at all. The per-key fallback once proposed for
+  that (**#976**) was closed **not planned** — a drained key is resolved by a
+  top-up, not by a second credential — so the standing remedies are the daily's
+  provider rotation (**#1185**) and the keyless `any-completion` routing
+  (**#1187**).
