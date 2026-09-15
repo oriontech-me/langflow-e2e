@@ -61,8 +61,9 @@ before the tag stayed.** Runs 34980294666 / 34980298743 / 34980302630
 1 skipped**: `[anthropic / claude-haiku-4-5]` failed on `strong` after the
 heading and the list had already rendered — the reply carried no bold run at all
 — and the file-level serial mode then skipped `[google]`, costing that provider
-an observation. 18 attempts across the two days, 17 green, one red: a flake of
-the model's compliance, not of the renderer. Promoting it unchanged would have
+an observation. 18 targets scheduled across the two days: 16 green, one red, and
+one skipped behind the red — a flake of the model's compliance, not of the
+renderer. Promoting it unchanged would have
 imported exactly the kind of red Wave 8's three-observation rule exists to catch
 **before** a promotion.
 
@@ -87,7 +88,7 @@ the fix. One of the 2026-09-14 dispatches is the
 positive control: its `Collect models` reported `gemini-3.5-flash` "listed but
 OFF", so the Google variant ran the COLD path — enabling the model itself
 through the provider panel, the exact route #1649/#1679 document — and passed.
-The stall did not reappear in any of the six dispatches across the two days.
+The stall did not reappear in any of the nine dispatches across the two days.
 
 `@regression` — guards a rendering regression; `@agents` — agent execution;
 `@playground` — the reply is produced and asserted in the Playground chat.
