@@ -15,6 +15,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { selectPinnedModelOption } from "../../../../helpers/provider-setup/model-option";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
 
 /**
  * Anthropic (Claude) provider path (QA-CHECKLIST §7.3) as a provider-centric journey:
@@ -230,58 +231,33 @@ test.describe("Anthropic Provider", () => {
         await keyInput.fill(process.env.ANTHROPIC_API_KEY ?? "");
 
         // Arm both waiters BEFORE clicking so the pass is caused by THIS save,
-        // not a "Disconnect"/"Replace" state a prior configuration left behind.
-        const validatePromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/models/validate-provider") &&
-            r.request().method() === "POST",
-          { timeout: 60000 },
-        );
-        // POST on first configure, PATCH on re-save of the existing variable.
-        // Armed here, but AWAITED AFTER the validation verdict, never
-        // concurrently: the frontend gates this write on the validate-provider
-        // body (useProviderConfiguration.ts -> handleSaveAllVariables:
-        // `const isValid = await validateCredentials(); if (!isValid …) return;`),
-        // so a rejected key issues no /variables/ request at all and awaiting
-        // both at once reports a sub-second refusal as a 60 s timeout carrying no
-        // cause — measured, and the shape that cost the 2026-09-11 daily 300 s
-        // and an unreviewed @stable removal (#1829). The catch keeps the
-        // abandoned wait from surfacing as an unhandled rejection when the body
-        // assertion below ends the test first; the null is asserted, not ignored.
-        const persistPromise = page
-          .waitForResponse(
-            (r) =>
-              r.url().includes("/api/v1/variables/") &&
-              ["POST", "PATCH"].includes(r.request().method()),
-            { timeout: 60000 },
-          )
-          .catch(() => null);
-
-        await page.getByRole("button", { name: /Save|Replace/i }).first().click();
-
+        // not a "Disconnect"/"Replace" state a prior configuration left behind —
+        // and read them in the order the panel issues them, never concurrently.
+        //
         // A 2xx is NOT an authentication verdict: validate-provider answers 200
         // for a rejected key too and puts the verdict in the body — measured on
         // 1.13.0.dev8, {"valid":true,"error":null} vs
         // {"valid":false,"error":"Invalid API key for Anthropic"} (#1829/#1823).
-        const validateResp = await validatePromise;
-        expect(validateResp.status()).toBe(200);
-        const validateBody = (await validateResp.json()) as {
-          valid?: boolean;
-          error?: string | null;
-        };
-        expect(
-          validateBody.valid,
-          `validate-provider rejected the key: ${validateBody.error ?? "(no error)"}`,
-        ).toBe(true);
+        // The frontend then gates the write on that body
+        // (useProviderConfiguration.ts -> handleSaveAllVariables:
+        // `const isValid = await validateCredentials(); if (!isValid …) return;`),
+        // so a rejected key issues no /variables/ request at all and awaiting
+        // both at once reported a sub-second refusal as a 60 s timeout carrying
+        // no cause — the shape that cost the 2026-09-11 daily 300 s and an
+        // unreviewed @stable removal (#1829). `armProviderSave` is the one
+        // implementation of that rule, shared with the four sibling provider
+        // specs #1849 measured the same shape on.
+        const save = armProviderSave(page, { subject: "key" });
+
+        await page.getByRole("button", { name: /Save|Replace/i }).first().click();
+
+        // Throws naming Anthropic's own reason when the key is refused.
+        await save.validated();
 
         // POST|PATCH /variables 2xx = the key is persisted globally — the
         // consequence of a validated save, asserted second.
-        const persistResp = await persistPromise;
-        expect(
-          persistResp,
-          "no POST|PATCH /api/v1/variables/ followed a validated save",
-        ).not.toBeNull();
-        expect(persistResp?.ok()).toBe(true);
+        const persistResp = await save.persisted();
+        expect(persistResp.ok()).toBe(true);
       });
     },
   );
