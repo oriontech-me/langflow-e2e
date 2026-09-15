@@ -369,10 +369,11 @@ re-run `npm run triage:baseline -- --check` before quoting any count here.
 - **Auth & user management** — login/logout states, admin user lifecycle, auto-login, session isolation (`auth/` §4.1–4.2, ~13 `[-]`).
 - **Project-management tail** — deletion integrity, move/drag flows, folder navigation & search (`project-management/` §10, ~7 `[-]`/`[~]`).
 - **Disabled-test triage** — **mostly absorbed by Wave 8** (#1769). The "53 `test.skip` / 1 `test.fixme`" figure counted in-body `test.skip(cond, msg)` guards as declarations; measured 2026-09-08 the suite holds **10** disabled *declarations*, of which **7 are inside Wave 8's backlog** (`voice-assistant` ×3, `generalBugs-shard-3`, `toolModeGroup`, `youtube-transcripts`, `run-flow`). The **3 that remain here** sit in files that still carry `@stable` tests, so Wave 8's predicate excludes them by design: `loop-component-regression`, `publish-flow`, `credential-secret-exposure`. The entry's webhook `fixme` (#165) is **not** among them — no webhook spec has a disabled declaration today, so that pointer needs re-checking before this item is dated.
+- **Templates** — scoped in #1860 (`docs/core-functionality/templates/templates-coverage-scope.md`). `templates/` §11 now names **46** bullets against the 26 templates the nightly registers: registration & gallery (§11.1, 6), keyless instantiation of every registered template (§11.2, 26) and execution where a run needs nothing beyond one model and suite-supplied input (§11.3–11.5, 14 — two already `[x]`). Execution of the other 12 templates is recorded as out of scope with reasons. Natural first slice: §11.1 + §11.2, 32 bullets needing no provider key and no egress.
 
 **Needs scoping first (Rule 1 — no inventing inside a wave):**
 
-- **Templates** — load + run coverage across starter-project categories (`templates/` §11, 39 bullets, incl. the `core/integrations/*` specs). A scoping pass must decide depth (smoke vs. full execution) per category before this becomes a dated wave.
+- *(none today — Templates, the last entry here, was scoped in #1860)*
 
 ## Continuous track — spec-doc backfill
 
