@@ -274,9 +274,12 @@ Below the table, list the **quarantines the triage requires** (remove `@stable`
 (`spec/path.spec.ts:line`), each labelled with what put it there (`flake` /
 `hard-failure, guard day`). Every actionable recurrent flake (Phase 4) goes in
 the block. Hard failures normally do **not**: the workflow already auto-removed
-their tag. The exception is a **guard-tripped** day, where the workflow removed
-nothing — there, each hard failure the Phase-3 verdict judged
-**non-environmental** gets its own row too. If the block is empty, say so
+their tag. There are two exceptions. A **guard-tripped** day, where the workflow
+removed nothing — there, each hard failure the Phase-3 verdict judged
+**non-environmental** gets its own row too. And an umbrella headed *"`@stable`
+auto-removal did NOT reach `main`"* (#1822), where the removal was reported and
+the commit failed: those tags are still on `main`, so each of those tests gets a
+row as well. If the block is empty, say so
 explicitly rather than omitting it.
 
 Then **wait for explicit approval of the issue plan** ("pode abrir" or

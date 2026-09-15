@@ -935,7 +935,7 @@ The triage is **dispatch, not solution**. Its analysis is **preliminary and desc
 **1. Hard failures (first).**
 - Open one dedicated issue **per failure**.
 - **Group** two or more failures into a single issue when they share an **equal or related root cause** — a shared root cause is one problem.
-- The `@stable` tag was already auto-removed by the workflow; there is no manual removal at this step.
+- The `@stable` tag was already auto-removed by the workflow; there is no manual removal at this step — **unless the umbrella says otherwise**. A removal is reported by the script and only then committed, and the two came apart once (#1822: run 34599745145 reported two and committed one, silently). The commit is now derived from the report and verified against it, so a removal that did not reach `main` fails the step and the umbrella carries the heading *"`@stable` auto-removal did NOT reach `main`"* instead of the usual one. On that heading the tags are still there: remove them by PR as part of the dedicated issue.
 
 **2. Flakes (second).** Consult `reports/daily-history.jsonl`.
 - Open an issue **only for a recurrent flake**. A first occurrence is **only noted** in the triage — the retry budget absorbs single-run noise.

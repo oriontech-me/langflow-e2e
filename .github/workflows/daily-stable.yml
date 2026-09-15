@@ -1707,8 +1707,11 @@ jobs:
           # The STEP's own outcome, which the two values above cannot carry (#1822).
           # `summary_md` is produced by the action's first step and reads "auto-removed
           # @stable from N test(s)"; the commit, its staging and its verification are
-          # the second step, and a composite's outputs are set even when an embedded
-          # step fails. So a run whose commit was refused — a lost edit caught by the
+          # the second step, and a composite's outputs are published even when an
+          # embedded step fails (read off the runner's own `CompositeActionHandler`
+          # rather than measured on a run — and fail-safe either way: if it were
+          # false, no block would render at all). So a run whose commit was
+          # refused — a lost edit caught by the
           # verification, an empty index, a rejected push — still rendered that
           # sentence about tags that are still on `main`. That is the claim #1822 is
           # about, at the consumer the issue names; the script relabels the block on

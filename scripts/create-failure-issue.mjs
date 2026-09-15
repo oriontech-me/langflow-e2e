@@ -78,6 +78,7 @@
 // workflow sets ISSUE_STRICT=1; the VM leaves it unset.
 
 import { writeFileSync, mkdirSync, realpathSync } from "node:fs";
+import { withoutCommittedClaim } from "./lib/auto-remove-claim.mjs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -97,24 +98,48 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
 /**
  * The `@stable` auto-removal block — and the one thing it must never say.
  *
- * `arSummary` is written before the commit is attempted, so on its own it reports
- * an intention as an outcome. When the commit step failed, the tags are still on
- * `main`: the list is still the most useful thing on the page (it is what the day
- * tried to quarantine, and what will fail again tomorrow), so it is kept and
- * relabelled rather than dropped — dropping it would tell the triager nothing
- * happened, which is the opposite error (#1822).
+ * `arSummary` is written by the action's FIRST step, before the commit is even
+ * attempted, so on its own it reports an intention in the past tense. When the
+ * step then fails, the tags are still on `main`: the list remains the most useful
+ * thing on the page (it is what the day tried to quarantine, and what fails again
+ * tomorrow), so it is kept and corrected rather than dropped — dropping it would
+ * tell the triager nothing happened, which is the opposite error (#1822).
+ *
+ * Correcting it means three things, and the first version did only one:
+ *
+ *  - the heading, which is what it changed;
+ *  - the correction paragraph ABOVE the summary rather than below it, so the
+ *    reader meets it before the sentences it corrects;
+ *  - the summary's own past-tense claims, taken out through the module the
+ *    formatter shares (`withoutCommittedClaim`). Without this the body read "did
+ *    NOT commit" and then, one line down, the formatter's "These were committed
+ *    to `main` automatically" — the exact sentence #1822 quotes as false, one
+ *    line under its own correction.
+ *
+ * A summary this cannot recognise is reported as such instead of being presented
+ * as corrected (#1012); the round-trip test against the real formatter output is
+ * what keeps that branch out of a real issue body.
  */
 function autoRemovalLines(arSummary, arUncommitted) {
   if (!arUncommitted) return ["### `@stable` auto-removal", "", arSummary];
+  const { text, neutralized } = withoutCommittedClaim(arSummary);
   return [
-    "### ⚠️ `@stable` auto-removal reported removals it did NOT commit",
+    "### ⚠️ `@stable` auto-removal did NOT reach `main`",
     "",
-    arSummary,
-    "",
-    "**Nothing was pushed.** The commit step failed, so every test listed above still",
+    "**Nothing was pushed.** The auto-remove step failed, so every test listed below still",
     "carries `@stable` on `main` and runs again tomorrow — read the",
     "`Auto-remove @stable from hard failures` step for the cause, and treat the list as",
     "what this run TRIED to quarantine rather than as what it did (#1822).",
+    ...(neutralized
+      ? []
+      : [
+          "",
+          "_The summary below was written before the commit was attempted and this could not",
+          "recognise its wording, so it may still read as though the tags were removed. The",
+          "paragraph above is the one that holds._",
+        ]),
+    "",
+    text,
   ];
 }
 
@@ -129,10 +154,17 @@ export function renderIssue({
   arSummary = "",
   // #1822. The summary is produced by the action's FIRST step and says "auto-removed
   // @stable from N tests"; the commit and its verification are the SECOND step, and a
-  // composite's outputs are set even when an embedded step fails. So a run where the
-  // commit was refused still rendered that sentence about tags that are still on
-  // `main` — the claim #1822 is about, moved from silent-green to loud-red at the
-  // step and left untouched at the consumer the issue names.
+  // composite's outputs are published even when an embedded step fails (read off the
+  // runner's own `CompositeActionHandler`, not measured on a run — if it were false
+  // the block would simply not render, so the assumption is fail-safe either way). So
+  // a run where the commit was refused still rendered that sentence about tags that
+  // are still on `main` — the claim #1822 is about, moved from silent-green to
+  // loud-red at the step and left untouched at the consumer the issue names.
+  //
+  // Only ever applied to a REPORTED removal (`arStatus === "removed"`): the step can
+  // fail with `none` or `guard_tripped` — the first step crashing after it wrote
+  // `status` is enough — and accusing it of refusing removals nobody reported, over
+  // an empty list, is a false claim of its own in the other direction.
   arUncommitted = false,
   empty = false,
   unreadable = false,
@@ -158,6 +190,10 @@ export function renderIssue({
   // Which lane rendered this. `RUN_URL` is the only honest discriminator: it is
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
+
+  // A removal that was reported and did not reach `main` (#1822). Both halves are
+  // required: see the `arUncommitted` note above.
+  const arLost = arUncommitted && arStatus === "removed";
 
   // EIGHT shapes, most specific first. The count has been stale three times — it
   // read "four" while there were six, "six" while omitting `partial`, and "seven"
@@ -400,7 +436,7 @@ export function renderIssue({
           ...(accountDry && !uncovered && arStatus
             ? [
                 "",
-                ...autoRemovalLines(arSummary, arUncommitted),
+                ...autoRemovalLines(arSummary, arLost),
                 "",
                 "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
                 "the removal against the outage above before accepting it.",
@@ -425,7 +461,7 @@ export function renderIssue({
           "short is not evidence about the file it did not run (#1012).",
         ]
       : arStatus
-        ? autoRemovalLines(arSummary, arUncommitted)
+        ? autoRemovalLines(arSummary, arLost)
         : [
             "### Next steps",
             onActions

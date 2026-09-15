@@ -82,7 +82,8 @@ export class UnusableReportError extends Error {}
  * 2.52: `tests/*` through `--pathspec-file-nul` stages every modified file under
  * `tests/` (`--pathspec-file-nul` disables unquoting, NOT wildmatch), while
  * `:(literal)tests/*` is `fatal: … did not match any files`, exit 128 — a widening
- * turned into a loud abort.
+ * turned into a loud abort. It is the wildcard half only: a bare directory name
+ * still matches everything under it, with or without the prefix.
  */
 function validatePath(raw, index) {
   if (typeof raw !== "string" || raw.trim() === "") {
@@ -203,8 +204,11 @@ export function main(argv, stdin = "") {
       return 2;
     }
     // NUL-separated and `:(literal)`-prefixed, for `git add
-    // --pathspec-from-file=- --pathspec-file-nul`: the prefix is what makes each
-    // entry mean the file it names and nothing else (see validatePath).
+    // --pathspec-from-file=- --pathspec-file-nul`: the prefix turns off wildmatch
+    // (see validatePath). It does NOT turn off leading-directory matching —
+    // measured, `:(literal)tests` still stages every modified file under `tests/` —
+    // which costs nothing for a `removed[].file`, always a file, and is worth
+    // knowing before reasoning about a directory reaching the report.
     //
     // Nothing but NULs separates them. A trailing newline is not the catastrophe
     // an earlier version of this comment claimed — measured on git 2.52, both

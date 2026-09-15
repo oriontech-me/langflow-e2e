@@ -8,6 +8,10 @@
 // full cycle to rediscover the cause (run 30374528125: 14 of 19 hard failures
 // described one wedged backend).
 import { readFileSync } from "node:fs";
+// The two past-tense sentences below are shared with the consumer that has to take
+// them back when the commit step fails (#1822) — one copy, or the consumer fails
+// by silently matching nothing. See scripts/lib/auto-remove-claim.mjs.
+import { COMMITTED_FOOTER, removedHeadline } from "./lib/auto-remove-claim.mjs";
 
 const r = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const lines = [];
@@ -109,7 +113,7 @@ if (r.status === "guard_tripped") {
     );
   }
 } else if (r.status === "removed") {
-  lines.push(`🔻 **Auto-removed \`@stable\`** from ${r.removed.length} hard-failing test(s):`);
+  lines.push(removedHeadline(r.removed.length));
   lines.push("");
   for (const t of r.removed) {
     const note = t.soleTag
@@ -118,7 +122,7 @@ if (r.status === "guard_tripped") {
     lines.push(`- \`${t.file}\` — ${t.title}${note}`);
   }
   lines.push("");
-  lines.push("These were committed to `main` automatically. **Restoring `@stable` is manual**: once the test or Langflow is fixed, re-add the tag via PR.");
+  lines.push(COMMITTED_FOOTER);
 } else if (exempt.length && attributable === 0) {
   // Every hard failure was collateral. Saying "nothing was auto-removed" alone
   // would read as a clean triage over a run that was anything but.

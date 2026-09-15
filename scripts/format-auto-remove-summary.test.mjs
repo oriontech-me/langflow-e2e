@@ -17,6 +17,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
+import {
+  COMMITTED_FOOTER,
+  removedHeadline,
+  withoutCommittedClaim,
+} from "./lib/auto-remove-claim.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "format-auto-remove-summary.mjs");
 
@@ -284,4 +289,31 @@ test("a result produced before #1589 still renders", () => {
   assert.match(md, /NOT attributable to their spec/);
   assert.doesNotMatch(md, /EARLIER attempt/);
   assert.doesNotMatch(md, /corroborated by a measured outage/);
+});
+
+test("the claim sentences are the shared ones, byte for byte (#1822)", () => {
+  // The consumer that has to take these back when the commit fails
+  // (`create-failure-issue.mjs` → `withoutCommittedClaim`) matches on these exact
+  // strings. A copy on either side fails SILENTLY — by matching nothing, i.e. by
+  // leaving "These were committed to `main` automatically" in an issue about a
+  // commit that never happened. Same one-formatter-one-parser rule as
+  // `provider-health-reason.mjs`.
+  const out = render({
+    status: "removed",
+    threshold: 5,
+    hardFailures: 1,
+    attributableFailures: 1,
+    removed: [{ file: "a.spec.ts", title: "t", soleTag: false }],
+    skipped: [],
+    exempt: [],
+    disagreements: [],
+  });
+  assert.ok(out.includes(removedHeadline(1)), "the headline drifted from the shared copy");
+  assert.ok(out.includes(COMMITTED_FOOTER), "the footer drifted from the shared copy");
+
+  const { text, neutralized } = withoutCommittedClaim(out);
+  assert.equal(neutralized, true, "the consumer no longer recognises this output");
+  assert.ok(!text.includes(COMMITTED_FOOTER));
+  assert.ok(!text.includes("Auto-removed"));
+  assert.match(text, /a\.spec\.ts/, "the list itself must survive the correction");
 });

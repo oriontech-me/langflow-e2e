@@ -364,6 +364,13 @@ function runCommitStep(ws) {
     env: {
       PATH: `${ws.bin}:${process.env.PATH}`,
       HOME: ws.home,
+      // `HOME` insulates the step from the developer's GLOBAL config — which it
+      // writes to, via `git config --global --add safe.directory` — but not from
+      // the SYSTEM one (`/etc/gitconfig`, `/opt/homebrew/etc/gitconfig`), where a
+      // `commit.gpgsign = true` takes these tests down in exactly the same way.
+      // Not pinned to a writable file, because the step must keep being able to
+      // write its global config as it does on a runner.
+      GIT_CONFIG_SYSTEM: "/dev/null",
       GITHUB_WORKSPACE: ws.repo,
       REMOVED_COUNT: "2",
       EXEMPT_COUNT: "0",

@@ -28,7 +28,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,12 +41,27 @@ import {
   CC_DEFAULT,
 } from "./create-failure-issue.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
+import { COMMITTED_FOOTER, removedHeadline } from "./lib/auto-remove-claim.mjs";
 
 /** The script itself, for the handful of assertions that must go through `main()`. */
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "create-failure-issue.mjs");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
+
+/** The real `format-auto-remove-summary.mjs` output for a result JSON. */
+function formatSummary(result) {
+  const dir = makeTempDir("auto-remove-summary-");
+  const file = join(dir, "auto-remove-result.json");
+  writeFileSync(file, JSON.stringify(result));
+  const run = spawnSync(
+    process.execPath,
+    [join(HERE, "format-auto-remove-summary.mjs"), file],
+    { encoding: "utf-8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout;
+}
 
 const ACTIONS = {
   today: "2026-08-26",
@@ -937,26 +952,67 @@ test("the listing shape's triage pointer names the cause, not one of its shapes"
 
 // --- the removal that was reported and not committed (#1822) -----------------
 
-test("a reported removal the commit refused is relabelled, never announced as done", () => {
-  const done = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: "- a\n- b" });
+test("a reported removal that did not reach `main` is corrected, not merely retitled", () => {
+  // Asserted against the REAL formatter output, which is the whole finding: the
+  // first version changed the heading and left the summary underneath saying
+  // "These were committed to `main` automatically" — #1822's own false sentence,
+  // one line below its correction. A fixture summary of "- a\n- b" could not see it.
+  const summary = formatSummary({
+    status: "removed",
+    threshold: 5,
+    hardFailures: 2,
+    attributableFailures: 2,
+    removed: [
+      { file: "tests/collect-models.spec.ts", title: "collect providers", soleTag: false },
+      { file: "tests/fixtures/locale-gate.spec.ts", title: "locale", soleTag: false },
+    ],
+    skipped: [],
+    exempt: [],
+    disagreements: [],
+  });
+  // The premise: the formatter really does claim it happened, in two places.
+  assert.match(summary, /\*\*Auto-removed `@stable`\*\*/);
+  assert.ok(summary.includes(COMMITTED_FOOTER));
+
+  const done = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: summary });
   assert.match(done.body, /### `@stable` auto-removal\n/);
-  assert.doesNotMatch(done.body, /did NOT commit/);
+  assert.ok(done.body.includes(COMMITTED_FOOTER), "the normal path is unchanged");
 
   const lost = renderIssue({
     ...ACTIONS,
     arStatus: "removed",
-    arSummary: "- a\n- b",
+    arSummary: summary,
     arUncommitted: true,
   });
-  // The claim itself is what #1822 is about: the summary is written before the
-  // commit is attempted, and a composite's outputs survive a failed embedded step.
-  assert.match(lost.body, /reported removals it did NOT commit/);
+  assert.match(lost.body, /did NOT reach `main`/);
   assert.match(lost.body, /\*\*Nothing was pushed\.\*\*/);
-  assert.match(lost.body, /still\n?\s*carries `@stable` on `main`/);
+  // Neither past-tense claim survives anywhere in the body.
+  assert.doesNotMatch(lost.body, /\*\*Auto-removed `@stable`\*\*/);
+  assert.ok(!lost.body.includes(COMMITTED_FOOTER));
+  assert.ok(!lost.body.includes("were committed to `main`"));
   // The list is KEPT: it is what the day tried to quarantine and what fails again
   // tomorrow. Dropping it would say nothing happened, which is the opposite error.
-  assert.match(lost.body, /- a\n- b/);
-  assert.doesNotMatch(lost.body, /^### `@stable` auto-removal$/m);
+  assert.match(lost.body, /tests\/collect-models\.spec\.ts/);
+  assert.match(lost.body, /tests\/fixtures\/locale-gate\.spec\.ts/);
+  // The correction comes BEFORE the summary it corrects.
+  assert.ok(lost.body.indexOf("Nothing was pushed") < lost.body.indexOf("collect-models"));
+  // Recognised, so no hedge.
+  assert.doesNotMatch(lost.body, /could not\n?\s*recognise its wording/);
+});
+
+test("a summary this cannot recognise is hedged, never presented as corrected", () => {
+  // The formatter reworded and the shared constants not updated with it. The
+  // correction paragraph still holds; what changes is that the body says so
+  // instead of implying the surgery worked (#1012).
+  const { body } = renderIssue({
+    ...ACTIONS,
+    arStatus: "removed",
+    arSummary: "something the shared module has never seen",
+    arUncommitted: true,
+  });
+  assert.match(body, /did NOT reach `main`/);
+  assert.match(body, /could not\n?\s*recognise its wording/);
+  assert.match(body, /something the shared module has never seen/);
 });
 
 test("the relabel reaches the dry-account shape's auto-removal block too", () => {
@@ -964,27 +1020,88 @@ test("the relabel reaches the dry-account shape's auto-removal block too", () =>
     ...ACTIONS,
     accountDry: true,
     arStatus: "removed",
-    arSummary: "- a",
+    arSummary: `${removedHeadline(1)}\n\n- \`a.spec.ts\` — t\n\n${COMMITTED_FOOTER}`,
     arUncommitted: true,
   });
-  assert.match(body, /reported removals it did NOT commit/);
-  // The shape's own hedge is not displaced by the relabel.
+  assert.match(body, /did NOT reach `main`/);
+  assert.ok(!body.includes(COMMITTED_FOOTER));
+  // The shape's own hedge is not displaced by the correction.
   assert.match(body, /Unexpected on this shape/);
 });
 
-test("an untracked auto-remove outcome never relabels the block", () => {
-  // Positive identification, like every other shape here: the VM lane passes no
-  // outcome at all, and an absent one must not accuse the commit of failing.
-  for (const outcome of [undefined, "", "success", "skipped"]) {
-    const env = { AUTO_REMOVE_OUTCOME: outcome };
-    assert.equal(
-      env.AUTO_REMOVE_OUTCOME === "failure",
-      false,
-      `outcome ${JSON.stringify(outcome)} must not relabel`,
+test("a step failure with nothing reported accuses the step of nothing", () => {
+  // `status` is written before the summary, so the first step can fail having
+  // reported `none` or `guard_tripped`, with the commit step never running at all.
+  // Relabelling then invents a refusal of removals nobody reported, over an empty
+  // list — a false claim in the other direction.
+  for (const arStatus of ["none", "guard_tripped"]) {
+    const { body } = renderIssue({
+      ...ACTIONS,
+      arStatus,
+      arSummary: "No per-test `@stable` hard failures were auto-removed.",
+      arUncommitted: true,
+    });
+    assert.doesNotMatch(body, /did NOT reach `main`/, `relabelled on status=${arStatus}`);
+    assert.match(body, /### `@stable` auto-removal\n/);
+  }
+});
+
+test("main() reads AUTO_REMOVE_OUTCOME as the string 'failure', and only that", async () => {
+  // The env→props mapping the render tests cannot reach. Rendered through the real
+  // process so the mapping, not a re-declaration of it, is what is asserted —
+  // inverting the comparison to `!== "success"` left the whole lane green.
+  const runDir = makeTempDir("issue-body-");
+  const base = {
+    ...process.env,
+    ISSUE_DRY_RUN: "1",
+    RUN_DIR: runDir,
+    RUN_ID: "1",
+    RUN_URL: "https://example.invalid/1",
+    TESTS_FAILED: "true",
+    AUTO_REMOVE_STATUS: "removed",
+    AUTO_REMOVE_SUMMARY: `${removedHeadline(1)}\n\n- \`a.spec.ts\` — t\n\n${COMMITTED_FOOTER}`,
+    LIVENESS_MD: "",
+  };
+  // The dry run prints the title and writes the BODY to `$RUN_DIR/issue-body.md`,
+  // which is where the block being asserted lives.
+  const run = (outcome) => {
+    const r = spawnSync(process.execPath, [SCRIPT], {
+      encoding: "utf-8",
+      env: outcome === undefined ? base : { ...base, AUTO_REMOVE_OUTCOME: outcome },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(join(runDir, "issue-body.md"), "utf8");
+  };
+
+  assert.match(run("failure"), /did NOT reach `main`/);
+
+  // Everything else — including an absent value, which is what the VM lane sends —
+  // means "not tracked", never "failed": a shape is chosen by positive identification.
+  for (const outcome of [undefined, "", "success", "skipped", "cancelled"]) {
+    assert.doesNotMatch(
+      run(outcome),
+      /did NOT reach `main`/,
+      `outcome ${JSON.stringify(outcome)} relabelled the block`,
     );
   }
-  const { body } = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: "- a" });
-  assert.doesNotMatch(body, /did NOT commit/);
+});
+
+test("the weekly drops the section rather than forwarding an unqualified claim", () => {
+  // This lane renders its umbrella INLINE, so it cannot relabel; what it must not
+  // do is forward a summary that says the removals landed. Reverting either line
+  // to a bare `steps.auto_remove.outputs.*` left the whole lane green before this.
+  const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
+  const step = weekly.slice(weekly.indexOf("- name: Create issue on failure"));
+  const env = step.slice(0, step.indexOf("with:"));
+  for (const name of ["AUTO_REMOVE_STATUS", "AUTO_REMOVE_SUMMARY"]) {
+    const line = env.split("\n").find((l) => l.trim().startsWith(`${name}:`));
+    assert.ok(line, `${name} is not forwarded at all`);
+    assert.match(
+      line,
+      /steps\.auto_remove\.outcome == 'success' &&/,
+      `${name} is forwarded without the outcome gate (#1822)`,
+    );
+  }
 });
 
 test("the daily forwards the auto-remove step's own outcome to the umbrella", () => {
