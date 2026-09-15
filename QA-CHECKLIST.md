@@ -702,63 +702,72 @@
 
 ### core-functionality/templates/ — Predefined Flow and Component Models
 
-#### 11.1 Basic Templates
+> **Rescoped 2026-09-15 (#1860).** The 34 bullets this section carried described a gallery that no longer exists: 12 named no template (nine names are on none of `main`, `release-1.13.0` or `release-1.12.1`; three were provider or memory variants of a template), one was §14.1's MCP-server presets counted twice, and six shipped templates had no bullet at all. Every bullet below maps to what the product registers — 26 templates on nightly `1.13.0.dev12`, of the 27 upstream ships. Surface map, the depth decided per template, the planned spec inventory, the fate of each old bullet and the out-of-scope list: `docs/core-functionality/templates/templates-coverage-scope.md`.
 
-> **Corrected 2026-08-06.** This block listed all 7 entries **twice** — once plain, once
-> bold with a `core/integrations/*.spec.ts` reference. That path is **Langflow's own
-> upstream test suite**, not this repo, so those references were never automation of ours.
-> The duplicates are removed and each entry now carries its real state.
->
-> `[~]` here means the template is **instantiated and run** by specs that assert something
-> else (33 specs open *Basic Prompting* from the gallery, 20 open *Simple Agent*), so its
-> creation path is exercised while nothing asserts the template's own behaviour.
+#### 11.1 Registration and Gallery
 
-- [~] Basic Prompting (OpenAI) — instantiated from the template gallery by 33 specs as a fixture; no assertion on the template itself
-- [ ] Basic Prompting (Anthropic) — the provider variant is never exercised
-- [~] Simple Agent (OpenAI) — instantiated by 20 specs as a fixture
-- [ ] Simple Agent (Anthropic)
-- [ ] Simple Agent with memory
-- [ ] Vector Store RAG
-- [x] Memory Chatbot → `llm-agents/memory-history-regression.spec.ts`
+- [ ] Registered set — `GET /api/v1/flows/basic_examples/` returns exactly the templates a committed per-image baseline expects: an undeclared absence fails naming the template; a declared absence (*Research Translation Loop*, skipped at startup because `ArXivComponent` is not shipped — #1744) fails when the template comes back, naming the declaration to delete; a template the baseline does not know is reported, not failed
+- [ ] All templates tab — `side_nav_options_all-templates` renders exactly one `template_<slug>` card per registered template, the expected set read from the listing rather than hardcoded
+- [ ] Category tabs — each tab lists exactly the registered templates whose `tags` contain its id (Assistants `assistants`, Classification `classification`, Coding `coding`, Content Generation `content-generation`, Q&A `q-a`, Prompting `chatbots`, RAG `rag`, Agents `agents`), and a tab no visible template is tagged with is not offered
+- [ ] Get started tab — shows exactly the featured `template-get-started-card-basic-prompting`, `template-get-started-card-vector-store-rag` and `template-get-started-card-simple-agent` cards, and each one creates its template (`POST /api/v1/flows/` 201, flow named after it)
+- [ ] Template search — `search-input-template` keeps a template's card for its exact name and leaves zero cards for a string matching no name or description (the match is fuzzy, so the assertion is inclusion or emptiness, never an exact set)
+- [ ] Welcome panel quick picks — New Flow opens `flow-builder-welcome-panel`; `flow-builder-welcome-template-simple-agent` and `flow-builder-welcome-template-vector-store-rag` each create their template, and `flow-builder-welcome-browse-more` opens the gallery
 
-#### 11.2 Content Generation Templates
+#### 11.2 Instantiation — every registered template
 
+> Keyless and deterministic. Picking the card from *All templates* creates a flow whose persisted component types, edges and notes equal the template's entry in `GET /api/v1/flows/basic_examples/`, and the editor opens on it — measured 26 of 26 exact on `1.13.0.dev12`. Planned as one parametrized spec, one test per template.
+
+- [~] Basic Prompting — the editor opens on a non-empty graph named after the template → `flow-functionality/create-flow-from-template.spec.ts`. **Partial:** the composition (component types, edges, notes) is not compared
 - [ ] Blog Writer
-- [ ] Instagram Copywriter
-- [ ] Twitter Thread Generator
-- [ ] SEO Keyword Generator
-- [~] Portfolio Website Code Generator — opened from the gallery by `ui-ux/refresh-dropdown-list.spec.ts`; nothing asserts the template
-- [ ] SaaS Pricing
-
-#### 11.3 Analysis and Processing Templates
-
-- [ ] Document QA
-- [ ] Invoice Summarizer
-- [ ] Financial Report Parser
-- [ ] Image Sentiment Analysis
-- [ ] Text Sentiment Analysis
-- [ ] Youtube Analysis
-
-#### 11.4 Agent Templates
-
-- [ ] Dynamic Agent
-- [ ] Hierarchical Agent
-- [ ] Sequential Task Agent
-- [ ] Social Media Agent
-- [ ] Travel Planning Agent
-- [ ] Market Research
-- [~] Research Translation Loop — driven as the fixture of `core-components/loop-component-regression.spec.ts` (ArXiv loop), which asserts the Loop component, not the template
-- [ ] Pokedex Agent
-- [ ] Price Deal Finder
-- [ ] News Aggregator
-
-#### 11.5 Advanced Templates
-
+- [ ] Content Aggregator
 - [ ] Custom Component Generator
-- [ ] Prompt Chaining
-- [ ] Decision Flow
-- [ ] Similarity
-- [x] MCP Server (starter projects) → `mcp/server/mcp-server-starter-projects.spec.ts` (same coverage recorded in §14.1)
+- [ ] Deep Research Agent
+- [ ] Document Q&A
+- [ ] Financial Report Parser
+- [ ] Hybrid Search RAG
+- [ ] Image Sentiment Analysis
+- [ ] Instagram Copywriter
+- [ ] Knowledge Retrieval
+- [ ] Market Research
+- [ ] Meeting Summary
+- [~] Memory Chatbot — the canvas holds exactly 5 nodes after the template loads → `llm-agents/memory-history-regression.spec.ts`. **Partial:** node types and edges are not compared
+- [ ] Multi Agent Flow
+- [ ] Portfolio Website Code Generator
+- [ ] Price Deal Finder
+- [ ] SaaS Pricing
+- [ ] SEO Keyword Generator
+- [ ] Sequential Tasks Agents
+- [ ] Simple Agent
+- [ ] Social Media Agent
+- [ ] Text Sentiment Analysis
+- [ ] Travel Planning Agents
+- [ ] Twitter Thread Generator
+- [ ] Vector Store RAG
+
+#### 11.3 Execution — prompts, agents and image input
+
+> One configured model. The assertion is that the run completed — the terminal node's build badge, a non-empty output, and `page.flowErrorReport()` evaluated and clean — never the model's wording. Execution is deliberately **not** scoped for 12 templates, each of which keeps its §11.2 bullet: Content Aggregator, Deep Research Agent, Instagram Copywriter, Market Research, Price Deal Finder, Sequential Tasks Agents, Social Media Agent and Travel Planning Agents (public web search), Hybrid Search RAG and Meeting Summary (Astra DB / AssemblyAI credentials), SaaS Pricing (a SQL database) and Custom Component Generator (deferred). Reasons in the scope doc.
+
+- [ ] Basic Prompting — running Chat Output builds all four components and renders a non-empty reply with a clean flow-error report
+- [ ] Blog Writer — with the URL component pointed at the self-hosted echo endpoint instead of `docs.langflow.org`, the run builds and renders a non-empty reply with a clean flow-error report
+- [ ] Image Sentiment Analysis — an image attached in the Playground reaches a vision-capable model, and the run completes with a non-empty reply and a clean flow-error report
+- [x] Memory Chatbot — retains context within a session across consecutive messages and a Playground reopen, and a new session starts without it → `llm-agents/memory-history-regression.spec.ts`
+- [ ] Multi Agent Flow — all three Agents build and Chat Output renders a non-empty reply with a clean flow-error report
+- [ ] SEO Keyword Generator — run from its Chat Output (the template has no Chat Input), the build completes with a non-empty output and a clean flow-error report
+- [x] Simple Agent — the template as shipped, URL and Web Search tools wired, answers three Playground turns with non-empty replies → `llm-agents/agent-component-regression.spec.ts`
+- [ ] Twitter Thread Generator — running Chat Output renders a non-empty thread with a clean flow-error report
+
+#### 11.4 Execution — file input
+
+- [ ] Financial Report Parser — a plain-text fixture uploaded into the File component passes through the Parser to the Agent, and Chat Output builds with a non-empty output and a clean flow-error report
+- [ ] Portfolio Website Code Generator — a plain-text fixture uploaded into the File component reaches the Agent, and Chat Output builds with a non-empty output and a clean flow-error report
+- [ ] Text Sentiment Analysis — a plain-text fixture uploaded into the File component reaches its three Agents, and both Chat Outputs build with a non-empty output and a clean flow-error report
+
+#### 11.5 Execution — knowledge base
+
+- [ ] Document Q&A — against a knowledge base the spec creates and ingests a sentinel document into, the Knowledge node's retrieval contains the sentinel and the Agent's run completes with a non-empty reply and a clean flow-error report
+- [ ] Knowledge Retrieval — against such a knowledge base, Chat Output shows retrieved text containing the sentinel (this template has no LLM)
+- [ ] Vector Store RAG — the same observable as Document Q&A, through this template's graph
 
 ---
 
