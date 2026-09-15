@@ -66,6 +66,15 @@ the model's compliance, not of the renderer. Promoting it unchanged would have
 imported exactly the kind of red Wave 8's three-observation rule exists to catch
 **before** a promotion.
 
+**Re-measured after the change, and this is the evidence the tag stands on.**
+Runs 35003644385 / 35003647350 / 35003650561 (2026-09-15, commit `184b1f2f`,
+same lane and settings, `Collect models` ✅ on all three providers in every run)
+read 7/7 each: the new assertion green on openai, anthropic and google in all
+three passes (9/9). Locally on `gpt-4o-mini`, four force-failures were each
+observed red — the raw-token guard inverted, a heading required to render as
+`<blockquote>`, no construct found in the reply, and the reply read from a sender
+that does not exist — and a final green run followed.
+
 The `MODEL_TOGGLE_WRITE_STALLED` failure the inherited-spec triage table
 recorded against this spec (`docs/triage/inherited-spec-triage.md`) is stale by
 construction and is NOT evidence about this file: the mechanism was

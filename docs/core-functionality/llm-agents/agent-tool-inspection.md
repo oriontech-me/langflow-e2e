@@ -88,7 +88,10 @@ version superseded before the table itself merged: `@stable` landed here in
 `e49a5120`, `00f50b58`). Re-measured on the nightly: three `manual.yml`
 dispatches at `retries=0`, `provider=auto`, **green on openai, anthropic and
 google in all three passes** (9/9; runs 34881735770 / 34881749638 /
-34881764492).
+34881764492). Measured twice more on 2026-09-15 — runs 34980294666 /
+34980298743 / 34980302630, and 35003644385 / 35003647350 / 35003650561 — green
+9/9 both times, so 27/27 across the three sets. A local force-failure asserting
+the other tool's name (`perform_search`) went red with the spec's own message.
 
 **Known nondeterminism, in the shared helper rather than in this spec's
 assertions.** Daily 34857401847 (2026-09-14) recorded this test `flaky`

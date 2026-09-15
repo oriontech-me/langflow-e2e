@@ -36,6 +36,16 @@ dispatches at `retries=0` on the nightly, green 3/3, each one confirming
 this spec at all — it skipped 3/3 on a drained anthropic credential, which is
 what design §4 means by a provider spec being unjudgeable inside such a window.
 
+**Re-measured with the teardown change (#1790), and force-failed on the lane
+itself.** Runs 35003644385 / 35003647350 / 35003650561 (commit `184b1f2f`, each
+confirming `✅ anthropic (claude-haiku-4-5)`) were green 3/3 with the id
+`SimpleAgentTemplatePage.load()` returns in place of the canvas URL. The anthropic
+credential is the only path this spec takes and no local credential could
+exercise it, so both force-failures ran on CI from throwaway branches: expecting
+the duplicated `chat-message-User-2+22+2` failed on the missing element (run
+35003706009), and demanding `26` failed on the received answer `"4"` (run
+35003712866).
+
 **`@components` and `@workspace` were dropped, and that is a correction rather
 than a narrowing.** Both are cross-cutting tags in `CLAUDE.md`'s table, so the
 old array carried three cross-cutting tags and ZERO functional ones — it named
@@ -48,12 +58,6 @@ import graph, and only a `manual.yml` dispatch slices by functional tag.
 `@release` — a duplicated prompt is a release blocker; `@regression` — guards a
 fixed bug; `@agents` — the run goes through the Agent component; `@playground` —
 the duplication signature is read off the Playground chat.
-
-**#1790 owns that revisit**, and it has not happened yet: the Wave 8 T1
-measurement skipped this spec **3/3**, correctly, because its
-`providerSkipGate("anthropic")` met a key that was drained for all nine
-dispatches. Nothing here was measured, so promotion waits for a funded anthropic
-key and a re-dispatch — not for a verdict this spec has already earned.
 
 ---
 
