@@ -47,14 +47,61 @@ function collectFailureMessages(node: unknown, out: string[]): void {
   }
 }
 
-export function parsePwJson(raw: string): PwStats | null {
+/**
+ * Two sources, deliberately separate (#1837).
+ *
+ * `reportOut` is where the JSON payload is — Playwright's JSON reporter writes
+ * it to STDOUT and nowhere else. `fullOutput` is everything the run printed.
+ * Handing one concatenated string for both is what broke: `globalSetup` writes
+ * its API-drift warning to stderr, so a single route template in it
+ * (`PATCH /api/v1/connections/{connection_id}`) moved `lastIndexOf('}')` past
+ * the end of the payload and every run came back unparseable, on a run that had
+ * in fact succeeded. Measured on the same bytes: stdout alone parsed, stdout +
+ * stderr did not. Any future stderr line with a brace would have done it again,
+ * which is why the fix separates the inputs rather than sharpening the
+ * delimiter — a delimiter fix survives exactly until the next output shape.
+ *
+ * **Why `fullOutput` stays wider than `reportOut` — and it is NOT the reason
+ * the first version of this comment gave.** That version said the fixture
+ * writes `🚨 Backend Error` to stderr, so a scan narrowed along with the
+ * payload would blank the backend-error gate. Both halves are false and the
+ * measurement is the useful part: `fixtures.ts` prints the marker with
+ * `console.log`, and under `--reporter=json` nothing a WORKER prints reaches
+ * the process streams at all — measured on 1.58.2, `console.log` and
+ * `console.error` alike, from a test body and from `afterAll`, are captured
+ * into the payload as `results[].stdout` / `.stderr`, with the process stderr
+ * coming back 0 bytes. On a real report the stdout-only scan finds the marker
+ * anyway. The only writer to the real stderr is the MAIN process
+ * (`globalSetup`), which never prints the marker. So the width buys resilience
+ * to that changing — a reporter that forwards worker output, a marker printed
+ * from a global hook — not the live gate the first version claimed. It costs
+ * nothing, so it stays; what does not stay is a justification the code cannot
+ * support.
+ *
+ * `fullOutput` defaults to `reportOut` for callers that legitimately hold one
+ * string.
+ *
+ * **Residual, because "removes the class" is only half true.** `end` was
+ * hardened by choosing a stream; `start` is still the FIRST brace of the stream
+ * this now trusts, and `globalSetup` prints its preflight lines to STDOUT,
+ * ahead of the payload, several of them interpolating a string that came from
+ * the backend. Measured, with a brace in one of them:
+ * `parsePwJson('[preflight] routed provider ready — model {"name":"x"}\n' +
+ * payload)` is null — today's defect with the indices swapped. No preflight
+ * line carries a brace today. The fix that does remove the class is to stop
+ * scraping a stream at all: `PLAYWRIGHT_JSON_OUTPUT_NAME` writes the report to
+ * a file and leaves stdout carrying only the line reporter Playwright then adds
+ * by itself (verified on 1.58.2).
+ */
+export function parsePwJson(reportOut: string, fullOutput: string = reportOut): PwStats | null {
   // Playwright's JSON reporter pretty-prints to stdout, so the payload
-  // starts with '{\n  "config"' — never assume compact '{"'.
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
+  // starts with '{\n  "config"' — never assume compact '{"'. `start` is the
+  // first brace on the stream, which is the residual named above.
+  const start = reportOut.indexOf('{')
+  const end = reportOut.lastIndexOf('}')
   if (start < 0 || end <= start) return null
   let data: { stats?: Record<string, number>; suites?: unknown }
-  try { data = JSON.parse(raw.slice(start, end + 1)) } catch { return null }
+  try { data = JSON.parse(reportOut.slice(start, end + 1)) } catch { return null }
   const s = data.stats
   if (!s) return null
   const failureMessages: string[] = []
@@ -65,8 +112,8 @@ export function parsePwJson(raw: string): PwStats | null {
     flaky: s.flaky ?? 0,
     skipped: s.skipped ?? 0,
     durationMs: Math.round(s.duration ?? 0),
-    backendErrors: raw.includes('🚨 Backend Error'),
-    backendErrorLines: raw
+    backendErrors: fullOutput.includes('🚨 Backend Error'),
+    backendErrorLines: fullOutput
       .split('\n')
       .filter(l => l.includes('🚨 Backend Error'))
       .map(l => l.trim()),
@@ -232,10 +279,21 @@ export function ghPrView(url: string): { body: string; commentUrls: string[] } {
   }
 }
 
+/**
+ * Which stream feeds which reader — a pure function so the decision is covered
+ * by a test on its output rather than living in the subprocess wrapper, where
+ * nothing could reach it (#1837; the shape #1226 argues for). Reverting it to
+ * one concatenated input fails `pwRunResult reads the report from stdout`
+ * instead of passing the whole lane.
+ */
+export function pwRunResult(stdout: string, stderr: string): { stats: PwStats | null; raw: string } {
+  const raw = stdout + '\n' + stderr
+  return { stats: parsePwJson(stdout, raw), raw }
+}
+
 export function runPlaywright(args: string[]): { stats: PwStats | null; code: number; raw: string } {
   const r = sh('npx', ['playwright', 'test', ...args, '--reporter=json'])
-  const raw = r.stdout + '\n' + r.stderr
-  return { stats: parsePwJson(raw), code: r.code, raw }
+  return { ...pwRunResult(r.stdout, r.stderr), code: r.code }
 }
 
 export function npmRun(script: 'typecheck' | 'lint'): { code: number; tail: string } {

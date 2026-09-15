@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { PwStats } from './types.ts'
-import { parsePwJson, enumerateTests, enumerateTestEntries, enumerateRunnableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs } from './runners.ts'
+import { parsePwJson, pwRunResult, enumerateTests, enumerateTestEntries, enumerateRunnableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs } from './runners.ts'
 
 test('filterScoutSpecs drops throwaway scout/tmp specs, keeps real ones', () => {
   const kept = filterScoutSpecs([
@@ -237,6 +237,70 @@ test('parsePwJson keeps every backend-error line, not just a boolean', () => {
   assert.equal(stats!.backendErrors, true)
   assert.equal(stats!.backendErrorLines.length, 2)
   assert.match(stats!.backendErrorLines[0], /api\/v1\/flows/)
+})
+
+// ---------- stdout vs stderr (#1837) ----------
+
+// A real pair of streams: the JSON reporter writes the payload to stdout, and
+// globalSetup writes its API-drift warning — route templates and all — to
+// stderr. The brace in "{connection_id}" is the whole defect.
+const REPORT_STDOUT = [
+  '[preflight] backend healthy at http://localhost:7892 — Langflow Nightly 1.13.0.dev12',
+  '{\n  "config": { "rootDir": "/repo/tests" },\n  "stats": { "expected": 3, "unexpected": 0, "flaky": 0, "skipped": 0, "duration": 41900 }\n}',
+].join('\n')
+const DRIFT_STDERR = [
+  '[lane] @destructive tests are excluded from this run',
+  '[preflight] WARNING: the API surface DRIFTED from the baseline (#1692):',
+  '  ADDED   PATCH /api/v1/connections/{connection_id}',
+].join('\n')
+
+test('parsePwJson reads the payload from stdout even when stderr carries a brace', () => {
+  // The regression: one concatenated string put "{connection_id}" after the
+  // payload, lastIndexOf('}') landed inside the warning and every run in every
+  // phase came back "could not parse playwright JSON" — on runs that passed.
+  assert.equal(parsePwJson(REPORT_STDOUT + '\n' + DRIFT_STDERR), null,
+    'precondition: the concatenated form is what fails')
+  const s = parsePwJson(REPORT_STDOUT, REPORT_STDOUT + '\n' + DRIFT_STDERR)
+  assert.ok(s, 'stdout alone must parse')
+  assert.equal(s!.expected, 3)
+  assert.equal(s!.durationMs, 41900)
+})
+
+test('parsePwJson still scans BOTH streams for the backend-error marker', () => {
+  // What this pins is the WIDTH of the scan, and the layout below is
+  // deliberately synthetic — the first version of this test claimed the fixture
+  // writes the marker to stderr, which it does not. Measured on 1.58.2 under
+  // `--reporter=json`: `fixtures.ts` prints it with `console.log`, and nothing a
+  // worker prints reaches the process streams at all — it is captured into the
+  // payload as `results[].stdout` / `.stderr` (process stderr: 0 bytes), so a
+  // stdout-only scan finds it on a real report. The width is resilience to that
+  // changing (a reporter that forwards worker output, a marker from a global
+  // hook), not a live gate — see the note on `parsePwJson`.
+  const stderr = DRIFT_STDERR + '\n🚨 Backend Error: 500 - http://localhost:7860/api/v1/flows/'
+  const s = parsePwJson(REPORT_STDOUT, REPORT_STDOUT + '\n' + stderr)
+  assert.ok(s)
+  assert.equal(s!.backendErrors, true)
+  assert.equal(s!.backendErrorLines.length, 1)
+  assert.match(s!.backendErrorLines[0], /api\/v1\/flows/)
+})
+
+test('pwRunResult reads the report from stdout and keeps both streams in raw', () => {
+  // The call site is the half that actually broke, and runPlaywright is a
+  // subprocess wrapper no test can reach — so the stream routing lives here.
+  const stderr = DRIFT_STDERR + '\n🚨 Backend Error: 500 - http://localhost:7860/api/v1/flows/'
+  const { stats, raw } = pwRunResult(REPORT_STDOUT, stderr)
+  assert.ok(stats, 'a brace in stderr must not make the run unreadable')
+  assert.equal(stats!.expected, 3)
+  assert.equal(stats!.backendErrors, true)
+  assert.ok(raw.includes('{connection_id}'), 'raw keeps stderr for every other reader')
+  assert.ok(raw.includes('"stats"'), 'raw keeps stdout too')
+})
+
+test('parsePwJson defaults the scan source to the payload source', () => {
+  // One-argument callers (and every test above) keep reading the marker out of
+  // the single string they hold.
+  const raw = '{"stats":{"expected":1}}\n🚨 Backend Error: 503'
+  assert.equal(parsePwJson(raw)!.backendErrors, true)
 })
 
 // ---------- zero-evidence runs (#1593) ----------
