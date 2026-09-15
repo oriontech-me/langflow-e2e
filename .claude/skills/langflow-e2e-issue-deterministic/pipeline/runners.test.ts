@@ -267,9 +267,15 @@ test('parsePwJson reads the payload from stdout even when stderr carries a brace
 })
 
 test('parsePwJson still scans BOTH streams for the backend-error marker', () => {
-  // The fixture writes the marker to stderr, so a fix that narrowed the scan
-  // to stdout along with the payload would blank the backend-error gate while
-  // every stats assertion above still passed.
+  // What this pins is the WIDTH of the scan, and the layout below is
+  // deliberately synthetic — the first version of this test claimed the fixture
+  // writes the marker to stderr, which it does not. Measured on 1.58.2 under
+  // `--reporter=json`: `fixtures.ts` prints it with `console.log`, and nothing a
+  // worker prints reaches the process streams at all — it is captured into the
+  // payload as `results[].stdout` / `.stderr` (process stderr: 0 bytes), so a
+  // stdout-only scan finds it on a real report. The width is resilience to that
+  // changing (a reporter that forwards worker output, a marker from a global
+  // hook), not a live gate — see the note on `parsePwJson`.
   const stderr = DRIFT_STDERR + '\n🚨 Backend Error: 500 - http://localhost:7860/api/v1/flows/'
   const s = parsePwJson(REPORT_STDOUT, REPORT_STDOUT + '\n' + stderr)
   assert.ok(s)
