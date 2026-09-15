@@ -28,8 +28,14 @@ the Agent no longer executes at all (see the Notes on #1465).
 
 `@stable` is **not** set. That is the tag that decides whether `daily-stable.yml`
 runs it, and its absence is why this spec sat broken on `main` with no signal
-(#1465) — a call the issue asks to revisit once it is green on several
+(#1465, closed) — a call that issue asked to revisit once it is green on several
 `--retries=0` runs.
+
+**#1790 owns that revisit**, and it has not happened yet: the Wave 8 T1
+measurement skipped this spec **3/3**, correctly, because its
+`providerSkipGate("anthropic")` met a key that was drained for all nine
+dispatches. Nothing here was measured, so promotion waits for a funded anthropic
+key and a re-dispatch — not for a verdict this spec has already earned.
 
 ---
 

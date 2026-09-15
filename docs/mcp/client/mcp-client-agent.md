@@ -47,6 +47,15 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 `@mcp` `@agents` `@regression`
 
+**`@stable` is absent because it was taken away, and #963 owns putting it back.**
+The daily auto-removed it on 2026-07-27 (`e3a57f5`, run 30261409427) after the
+`[google/gemini-2.5-flash]` variant hard-failed 3/3 with the playground rendering
+`"Message empty."` while the echo tool did fire — the `[openai/gpt-4o-mini]`
+variant passed in the same run. #963 carries the restore checkbox and keeps it
+open until the root cause is settled on the current nightly; it is not restored
+on a test-side workaround. The spec therefore runs in no scheduled lane and
+cannot report a regression until then.
+
 ---
 
 ## Step by step *(required)*

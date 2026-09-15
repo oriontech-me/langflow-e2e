@@ -36,10 +36,18 @@ a core presentation regression for every agent reply.
 
 `@regression` `@agents` `@playground`
 
-**`@stable` is intentionally withheld (promotion gated — issue #826).** This area
-is in the current flaky cluster (#773); the spec is authored now but promoted to
-`@stable` only after the clean, non-guarded baseline for the Wave 3 infra work is
-achieved. Absence of `@stable` is explained here per the PR checklist.
+**`@stable` is withheld, and #1790 owns the decision.** The Wave 8 T1
+measurement — nine `manual.yml` dispatches, three passes, `--retries=0` — read
+this spec green 4/4 across the first eight reports and flaky only on the ninth,
+with `MODEL_TOGGLE_WRITE_STALLED` on Google Generative AI: an instance stall the
+issue says explicitly not to paper over by raising the flush budget (#1649). The
+anthropic variants skipped throughout, on a key that was drained for all nine
+dispatches, so the spec has not been measured on a full provider set at all.
+Promotion waits for that re-dispatch on a funded key, after which #1790 applies
+promote / delete / park.
+
+The original authoring gate (#826) and the Wave 3 flaky cluster (#773) are both
+closed — they are the history of this absence, not its live reason (#1783).
 
 `@regression` — guards a rendering regression; `@agents` — agent execution;
 `@playground` — the reply is produced and asserted in the Playground chat.
