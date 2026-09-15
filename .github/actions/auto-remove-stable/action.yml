@@ -106,10 +106,30 @@ runs:
         npm run coverage:summary
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        # Stage ONLY spec edits + the regenerated checklist. Never `git add -A`:
-        # results.json / payload.json / auto-remove-result.json at repo root are
-        # not git-ignored and must not be committed.
-        git add tests/tests-automations/regression QA-CHECKLIST.md
+        # Stage exactly the paths the script REPORTED it edited, plus the
+        # regenerated checklist. Never `git add -A`: results.json / payload.json /
+        # auto-remove-result.json at repo root are not git-ignored and must not be
+        # committed.
+        #
+        # This used to be `git add tests/tests-automations/regression`, one fixed
+        # prefix — and the script edits whatever spec the report names. Five spec
+        # files carrying 28 @stable tests live outside that prefix (the four
+        # `tests/fixtures/*-gate.spec.ts` and `tests/collect-models.spec.ts`), so
+        # their edits were made in the workspace and dropped, unstaged, with
+        # nothing failing (#1822: daily run 34599745145 reported two removals and
+        # committed one). `removed[].file` makes the set derivable, so no prefix
+        # needs to be trusted.
+        node scripts/auto-remove-commit-paths.mjs paths auto-remove-result.json \
+          | git add --pathspec-from-file=- --pathspec-file-nul
+        git add QA-CHECKLIST.md
+        # The removal set is non-empty here by construction (this step only runs on
+        # `status == removed`), so an empty index means every edit was lost. `git
+        # commit` would abort on it under `set -e` anyway; failing HERE is the same
+        # outcome with the cause named instead of git's generic "nothing to commit".
+        if git diff --cached --quiet; then
+          echo "::error::The @stable auto-removal reported ${REMOVED_COUNT} removal(s) and staged nothing. No tag was removed on main; the report must not be read as if one was (#1822)."
+          exit 1
+        fi
         MSG="chore(triage): auto-remove @stable from ${REMOVED_COUNT} hard-failing test(s) (${RUN_LABEL}) [skip ci]"
         if [ "${EXEMPT_COUNT:-0}" != "0" ]; then
           # Record in the commit itself why fewer tags were removed than tests
@@ -118,4 +138,13 @@ runs:
           MSG="${MSG}"$'\n\n'"${EXEMPT_COUNT} further hard failure(s) kept @stable as non-attributable wedge collateral (#1031)."
         fi
         git commit -m "$MSG"
+        # Verified in BOTH directions (#1084's shape, #1822). Deriving the staging
+        # set is not enough on its own: the failure it fixes was SILENT, a discarded
+        # edit being indistinguishable from an applied one. This reads the paths the
+        # commit actually contains and fails naming any reported removal missing from
+        # it — before the push, so a commit that does not match its own report never
+        # reaches main and the day is red at this step rather than green over a
+        # removal that did not happen.
+        git diff-tree -r --no-commit-id --name-only -z HEAD \
+          | node scripts/auto-remove-commit-paths.mjs verify auto-remove-result.json
         git push
