@@ -706,7 +706,7 @@
 
 #### 11.1 Registration and Gallery
 
-- [ ] Registered set — `GET /api/v1/flows/basic_examples/` returns exactly the templates a committed per-image baseline expects: an undeclared absence fails naming the template; a declared absence (*Research Translation Loop*, skipped at startup because `ArXivComponent` is not shipped — #1744) fails when the template comes back, naming the declaration to delete; a template the baseline does not know is reported, not failed
+- [x] Registered set — `GET /api/v1/flows/basic_examples/` returns exactly the templates a committed per-image baseline expects: an undeclared absence fails naming the template; a declared absence (*Research Translation Loop*, skipped at startup because `ArXivComponent` is not shipped — #1744) fails when the template comes back, naming the declaration to delete; a template the baseline does not know is reported, not failed → `core-functionality/templates/templates-registration.spec.ts`
 - [ ] All templates tab — `side_nav_options_all-templates` renders exactly one `template_<slug>` card per registered template, the expected set read from the listing rather than hardcoded
 - [ ] Category tabs — each tab lists exactly the registered templates whose `tags` contain its id (Assistants `assistants`, Classification `classification`, Coding `coding`, Content Generation `content-generation`, Q&A `q-a`, Prompting `chatbots`, RAG `rag`, Agents `agents`), and a tab no visible template is tagged with is not offered
 - [ ] Get started tab — shows exactly the featured `template-get-started-card-basic-prompting`, `template-get-started-card-vector-store-rag` and `template-get-started-card-simple-agent` cards, and each one creates its template (`POST /api/v1/flows/` 201, flow named after it)

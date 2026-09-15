@@ -34,6 +34,7 @@
     "triage:baseline": "ts-node scripts/update-inherited-backlog-baseline.ts",
     "triage:verify": "node scripts/build-triage-grep.mjs --verify",
     "api:baseline": "ts-node scripts/update-api-surface-baseline.ts",
+    "templates:baseline": "ts-node scripts/update-registered-templates-baseline.ts",
     "api:coverage": "ts-node scripts/api-coverage-report.ts",
     "tokens:trend": "node scripts/token-trend.mjs"
   },
