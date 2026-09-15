@@ -210,12 +210,20 @@ valid key.
   branch, never reaching the catalog check. Unreachable today (the pre-flight
   skips first) and recorded for the day the component returns.
   An earlier revision of this note said the workflows carried no secret yet. It
-  was already false when it was written, and it survived because it sits in
-  `## External dependencies` — a section no guard reads: `#1783`'s
-  gate-justification check looks only at the `## Tags` section and the Part II
-  bullet, and only at issue references. Prose outside those two places is
-  checked by nobody, which is the reason to state a CI fact here narrowly or
-  not at all.
+  was **true when it was written** and false about two hours later the same
+  afternoon: it landed at 13:29 UTC (`dd2c83c1`, #499) with issue #600 already
+  open about exactly those missing keys, and `2c4a7e51` provisioned all three
+  at 15:27 UTC. It then stood for two months because **no guard checks a CI
+  claim here** — and the narrow form of that is the part worth keeping, because
+  the wide form is wrong and this repo has paid for it once (PR #1570). This
+  section IS read on every PR: `pr-validation.yml`'s *Spec-doc dependency
+  paths* job resolves every backticked `src/…` token in it
+  (`watch-upstream-areas.mjs --mode=check-docs`), and `validate-spec-deps.ts`
+  checks it is populated at all. Neither looks at prose. `#1783`'s
+  gate-justification check does read prose, but only in the `## Tags` section
+  and the Part II bullet, and only issue references there. So a sentence about
+  CI wiring, in this section, is checked by nobody: state it narrowly or not at
+  all.
 
 ---
 

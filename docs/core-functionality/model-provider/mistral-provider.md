@@ -57,11 +57,12 @@ alone leaves the `mistral` registry category present but **empty**; the
 
 Restore `@stable` only if the component returns to the default nightly image.
 **Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — one minor
-line past the 1.12.0.dev8 measurement above, `mistral` appears in
-`GET /api/v1/all` only as Bedrock `model_id` options and as an Astra Vectorize
-provider name; there is no MistralAI component and no `mistral` category, so
-nothing about the absence has moved and the pre-flight still skips before a key
-is ever read.
+line past the 1.12.0.dev8 measurement above, `mistral` occurs 27 times in
+`GET /api/v1/all` and every one of them belongs to some other vendor's
+component — Bedrock `model_id` options, the Astra Vectorize provider list and
+its help text, and prose inside embedded component source. There is no
+MistralAI component and no `mistral` category, so nothing about the absence has
+moved and the pre-flight still skips before a key is ever read.
 
 ---
 
@@ -193,10 +194,16 @@ error event, so an auth failure cannot pass silently).
   `mistral-small-latest` default applies — unlike Groq, where the default was
   measured absent from this account's catalog and a variable had to be added.
   An earlier revision of this note said the workflows carried no secret yet. It
-  was already false when it was written, and it survived because it sits in
-  `## External dependencies` — a section no guard reads: `#1783`'s
-  gate-justification check looks only at the `## Tags` section and the Part II
-  bullet, and only at issue references.
+  was **true when it was written** and false about two hours later the same
+  afternoon: it landed at 13:51 UTC (`5a02ed4a`, #500) with issue #600 already
+  open about exactly those missing keys, and `2c4a7e51` provisioned all three
+  at 15:27 UTC. It then stood for two months because **no guard checks a CI
+  claim here** — which is not the same as "no guard reads this section", a
+  wider claim that is wrong and has cost this repo a review before (PR #1570).
+  `pr-validation.yml`'s *Spec-doc dependency paths* job resolves every
+  backticked `src/…` token here on every PR, and `#1783`'s check reads prose
+  only in `## Tags` and the Part II bullet, and only issue references. A CI
+  claim in this section is checked by nobody.
 
 ---
 
