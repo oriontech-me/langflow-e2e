@@ -1,6 +1,6 @@
 # Agent playground — a math prompt reaches the run exactly once
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (Wave 8 T1 verdict measured on the nightly)
 
 ---
 
@@ -24,12 +24,30 @@ the Agent no longer executes at all (see the Notes on #1465).
 
 ## Tags *(required)*
 
-`@release` `@components` `@workspace`
+`@stable` `@release` `@regression` `@agents` `@playground`
 
-`@stable` is **not** set. That is the tag that decides whether `daily-stable.yml`
-runs it, and its absence is why this spec sat broken on `main` with no signal
-(#1465, closed) — a call that issue asked to revisit once it is green on several
-`--retries=0` runs.
+`@stable` since the Wave 8 T1 verdict (#1790) — the call #1465 asked to revisit
+once the spec was green on several `--retries=0` runs. It is the tag that
+decides whether `daily-stable.yml` runs it, and its absence is why this spec sat
+broken on `main` with no signal. Measured before flipping it: three `manual.yml`
+dispatches at `retries=0` on the nightly, green 3/3, each one confirming
+`✅ anthropic (claude-haiku-4-5)` in its `Collect models` step first (runs
+34881735770 / 34881749638 / 34881764492). The Wave 8 measurement could not judge
+this spec at all — it skipped 3/3 on a drained anthropic credential, which is
+what design §4 means by a provider spec being unjudgeable inside such a window.
+
+**`@components` and `@workspace` were dropped, and that is a correction rather
+than a narrowing.** Both are cross-cutting tags in `CLAUDE.md`'s table, so the
+old array carried three cross-cutting tags and ZERO functional ones — it named
+no product area at all, against the repo's ≥1-of-each rule, and it put an
+anthropic-dependent agent spec inside `--grep @workspace`, a slice a reviewer
+reaches for expecting flow/folder/canvas management. Nothing scheduled selected
+it by either tag: the daily selects `@stable`, `pr-validation.yml` selects by
+import graph, and only a `manual.yml` dispatch slices by functional tag.
+
+`@release` — a duplicated prompt is a release blocker; `@regression` — guards a
+fixed bug; `@agents` — the run goes through the Agent component; `@playground` —
+the duplication signature is read off the Playground chat.
 
 **#1790 owns that revisit**, and it has not happened yet: the Wave 8 T1
 measurement skipped this spec **3/3**, correctly, because its
@@ -67,7 +85,12 @@ key and a re-dispatch — not for a verdict this spec has already earned.
 3. Open the Playground and send `2+2`.
 4. Wait for the assistant message of the completed run.
 5. Assert the user message text and the assistant message text.
-6. Delete the flow the run created (id-scoped, in `afterEach`).
+6. Delete the flow the run created (id-scoped, in `afterEach`). The id is the one
+   `SimpleAgentTemplatePage.load()` returns — the flow `loadTemplateByName`
+   actually created. The canvas URL is deliberately not read: that id was
+   transient on 1.11 and 404s on delete, leaking the flow the teardown meant to
+   remove (#490/#681). On `1.13.0.dev12` the two agree (measured across 26 of 26
+   template picks), which is an accident the teardown should not depend on.
 
 ---
 
