@@ -453,8 +453,17 @@ export function renderIssue({
                 "",
                 ...autoRemovalLines(arSummary, arLost),
                 "",
-                "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
-                "the removal against the outage above before accepting it.",
+                // Scoped to a block that actually lists something: the blank-summary
+                // branch has just said the step produced no list, and "weigh the
+                // removal" over nothing reads as a list the reader failed to find.
+                ...(String(arSummary ?? "").trim() === ""
+                  ? [
+                      "Unexpected on this shape (it is chosen only when the test job was green).",
+                    ]
+                  : [
+                      "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
+                      "the removal against the outage above before accepting it.",
+                    ]),
               ]
             : []),
         ]
@@ -704,9 +713,15 @@ async function main() {
     arStatus: env.AUTO_REMOVE_STATUS || "",
     arSummary: env.AUTO_REMOVE_SUMMARY || "",
     // #1822. Positive identification, like every other shape in this file: an
-    // absent outcome means the caller does not track it, never that the commit
-    // failed. The one value that relabels the block is the step's own "failure".
-    arUncommitted: env.AUTO_REMOVE_OUTCOME === "failure",
+    // absent or empty outcome means the caller does not track it, never that the
+    // commit failed. What relabels the block is the step not having COMPLETED —
+    // `failure`, and `cancelled` with it: the umbrella step is `always()`, so it
+    // runs on a cancelled job, and the composite publishes `status=removed` before
+    // the commit step exists, so excluding `cancelled` left one route to exactly
+    // the sentence this branch exists to end. `skipped` is not here: the commit
+    // step is gated on `status == removed`, so a skipped auto-removal has no
+    // status to render in the first place.
+    arUncommitted: ["failure", "cancelled"].includes(env.AUTO_REMOVE_OUTCOME || ""),
     empty: env.RUN_EMPTY === "true",
     unreadable: env.RUN_UNREADABLE === "true",
     partial: env.RUN_PARTIAL === "true",

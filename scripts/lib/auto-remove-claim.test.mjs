@@ -36,10 +36,15 @@ const summaryOf = ({ soleTag = false, footer = true, headline = true } = {}) =>
 test("the corrected text says the removal is pending, in no past tense of its own", () => {
   // The mutation this exists for: rewriting PENDING_HEADLINE_PREFIX to
   // "🔻 **Removed `@stable`** from " passes every absence assertion elsewhere.
+  // A blacklist alone is not a pin: a DIFFERENT past tense ("the array has been
+  // emptied") passes it. Each pending constant is matched positively, on the voice
+  // it has to be in.
   for (const pending of [PENDING_HEADLINE_PREFIX, PENDING_SOLE_TAG_NOTE]) {
-    assert.doesNotMatch(pending, /removed|was the only tag|were committed/i);
+    assert.doesNotMatch(pending, /\bremoved\b|was the only tag|were committed|has been/i);
   }
   assert.match(PENDING_HEADLINE_PREFIX, /Selected for `@stable` removal/);
+  assert.match(PENDING_SOLE_TAG_NOTE, /`@stable` is its only tag/);
+  assert.match(PENDING_SOLE_TAG_NOTE, /removing it leaves the array empty/);
 });
 
 test("both claims recognised: both gone, the list intact", () => {
@@ -71,14 +76,25 @@ test("a PARTIAL match corrects what it found and still reports not-recognised", 
   assert.equal(headlineOnly.neutralized, false);
   assert.ok(headlineOnly.text.includes(PENDING_HEADLINE_PREFIX));
 
-  const footerOnly = withoutCommittedClaim(summaryOf({ headline: false }));
+  const footerOnly = withoutCommittedClaim(summaryOf({ headline: false, soleTag: true }));
   assert.equal(footerOnly.neutralized, false);
   assert.ok(!footerOnly.text.includes(COMMITTED_FOOTER));
+  // The note is corrected on EITHER recognised claim, not only on the headline —
+  // otherwise this shape keeps "the array was left empty" over a commit that never
+  // happened, and only this combination can see it.
+  assert.ok(!footerOnly.text.includes(SOLE_TAG_NOTE));
+  assert.ok(footerOnly.text.includes(PENDING_SOLE_TAG_NOTE));
 });
 
-test("a summary with neither claim is returned untouched", () => {
+test("a summary with neither claim is returned untouched, note included", () => {
   const summary = "No per-test `@stable` hard failures were auto-removed.";
   assert.deepEqual(withoutCommittedClaim(summary), { text: summary, neutralized: false });
+
+  // Including the sole-tag note: a text this recognises nothing else in is one it
+  // no longer understands, so it is reported rather than half-rewritten — and the
+  // consumer's hedge is what covers the reader (#1012).
+  const foreign = `something else entirely${SOLE_TAG_NOTE}`;
+  assert.deepEqual(withoutCommittedClaim(foreign), { text: foreign, neutralized: false });
 });
 
 test("a non-string never throws — the consumer runs inside issue rendering", () => {

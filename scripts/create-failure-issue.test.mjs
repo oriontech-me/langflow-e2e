@@ -1058,6 +1058,11 @@ test("a step that reported a removal and produced no summary says that, not `lis
     });
     assert.match(body, /did NOT reach `main`/);
     assert.match(body, /produced no summary either/);
+    // The paragraph's OWN claim, not just the heading's: this prose is new, and
+    // the lesson that produced it applies to it too — every "is the old sentence
+    // gone?" assertion passes if the replacement is itself past tense.
+    assert.match(body, /No tag was removed on\n?\s*`main`/);
+    assert.doesNotMatch(body, /were removed from `main`/);
     assert.doesNotMatch(body, /every test listed below/);
     assert.doesNotMatch(body, /The summary below/);
   }
@@ -1109,10 +1114,16 @@ test("a step failure with nothing reported accuses the step of nothing", () => {
   }
 });
 
-test("main() reads AUTO_REMOVE_OUTCOME as the string 'failure', and only that", async () => {
+test("main() relabels on an outcome that did not COMPLETE, and on nothing else", async () => {
   // The env→props mapping the render tests cannot reach. Rendered through the real
   // process so the mapping, not a re-declaration of it, is what is asserted —
   // inverting the comparison to `!== "success"` left the whole lane green.
+  //
+  // `cancelled` belongs with `failure`: the umbrella step is `always()`, so it runs
+  // on a cancelled job, and the composite publishes `status=removed` before the
+  // commit step exists — reading it as "not tracked" left one route to exactly the
+  // claim this is here to end. `skipped` does not: the commit step is gated on
+  // `status == removed`, so a skipped auto-removal has no status to render.
   const runDir = makeTempDir("issue-body-");
   const base = {
     ...process.env,
@@ -1136,11 +1147,14 @@ test("main() reads AUTO_REMOVE_OUTCOME as the string 'failure', and only that", 
     return readFileSync(join(runDir, "issue-body.md"), "utf8");
   };
 
-  assert.match(run("failure"), /did NOT reach `main`/);
+  for (const outcome of ["failure", "cancelled"]) {
+    assert.match(run(outcome), /did NOT reach `main`/, `outcome ${outcome} was read as done`);
+  }
 
   // Everything else — including an absent value, which is what the VM lane sends —
-  // means "not tracked", never "failed": a shape is chosen by positive identification.
-  for (const outcome of [undefined, "", "success", "skipped", "cancelled"]) {
+  // means "not tracked", never "did not complete": a shape is chosen by positive
+  // identification.
+  for (const outcome of [undefined, "", "success", "skipped"]) {
     assert.doesNotMatch(
       run(outcome),
       /did NOT reach `main`/,
@@ -1158,6 +1172,9 @@ test("the weekly drops the section rather than forwarding an unqualified claim",
   // the STRING "false" — truthy to the inline script, which then prints the
   // section with the body `false`. Only evaluating the expression tells the two
   // apart.
+  // Reads ONE line per key: a folded scalar (`>-` with the expression on the next
+  // line) is valid YAML with identical semantics and fails this guard. Loud rather
+  // than silent, which is the safe direction, but worth knowing before reformatting.
   const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
   const step = weekly.slice(weekly.indexOf("- name: Create issue on failure"));
   const env = step.slice(0, step.indexOf("with:"));
@@ -1168,17 +1185,24 @@ test("the weekly drops the section rather than forwarding an unqualified claim",
   };
   // Flat, dotted keys: the evaluator refuses any path the caller did not supply,
   // so a renamed step id fails the guard instead of defaulting to empty.
+  // Distinct sentinels: asserting only "not empty" on success let the SUMMARY
+  // forward the STATUS and still pass, which would render `removed` as the
+  // umbrella's entire `@stable` section.
   const context = (outcome) => ({
     "steps.auto_remove.outcome": outcome,
-    "steps.auto_remove.outputs.status": "removed",
-    "steps.auto_remove.outputs.summary_md": "🔻 **Auto-removed `@stable`** …",
+    "steps.auto_remove.outputs.status": "<the-status>",
+    "steps.auto_remove.outputs.summary_md": "<the-summary>",
   });
+  const expected = {
+    AUTO_REMOVE_STATUS: "<the-status>",
+    AUTO_REMOVE_SUMMARY: "<the-summary>",
+  };
   for (const name of ["AUTO_REMOVE_STATUS", "AUTO_REMOVE_SUMMARY"]) {
     const raw = valueOf(name);
-    assert.notEqual(
+    assert.equal(
       evaluateWorkflowValue(raw, context("success")),
-      "",
-      `${name} must still be forwarded on a successful removal`,
+      expected[name],
+      `${name} does not forward its own output on a successful removal`,
     );
     for (const outcome of ["failure", "skipped", "cancelled"]) {
       assert.equal(
@@ -1193,7 +1217,11 @@ test("the weekly drops the section rather than forwarding an unqualified claim",
 test("the daily forwards the auto-remove step's own outcome to the umbrella", () => {
   // Without this the script cannot tell the two apart, and the default is "done".
   const daily = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
-  const step = daily.slice(daily.indexOf("- name: Create issue on failure"));
+  const stepAt = daily.indexOf("- name: Create issue on failure");
+  // Asserted separately so a RENAMED step does not report itself as a missing env
+  // key — the guard would still fail, at the wrong cause.
+  assert.ok(stepAt > 0, "the daily's umbrella step is gone or renamed");
+  const step = daily.slice(stepAt);
   const env = step.slice(0, step.indexOf("- name:", 10));
   const line = env.split("\n").find((l) => l.trim().startsWith("AUTO_REMOVE_OUTCOME:"));
   assert.ok(line, "AUTO_REMOVE_OUTCOME is not forwarded at all");

@@ -57,9 +57,11 @@ export const removedHeadline = (count) =>
  * half-correct as a corrected one (#1012); the round-trip test against the real
  * formatter is what keeps that branch out of a real issue body.
  *
- * The `soleTag` note is corrected unconditionally and does NOT vote: it is present
- * only for a removal whose `@stable` was the only tag, so its absence says nothing
- * about whether the formatter drifted.
+ * The `soleTag` note is corrected whenever either claim was recognised, and does
+ * NOT vote: it is present only for a removal whose `@stable` was the only tag, so
+ * its absence says nothing about whether the formatter drifted. It is not
+ * corrected when NEITHER was — that summary is returned untouched and reported as
+ * unrecognised, which is the honest answer for a text this no longer understands.
  */
 export function withoutCommittedClaim(summary) {
   const text = String(summary ?? "");
