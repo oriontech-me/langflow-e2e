@@ -27,8 +27,9 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * A plain-text/broken renderer would echo `**bold**` / `## Heading` literally and
  * fail the pairing — that is the false-positive guard.
  *
- * `@stable` is intentionally withheld (promotion gated — issue #826; #773 flaky
- * cluster). Parameterized per active provider, resolving a generic chat model.
+ * `@stable` is intentionally withheld — #1790 owns the promote / delete / park
+ * decision (the original #826 / #773 gate is closed). Parameterized per active
+ * provider, resolving a generic chat model.
  * Grounding: the `.markdown.prose` container and `<code>` rendering are confirmed
  * live by the @stable `playground/playground-output-data.spec.ts`.
  */
