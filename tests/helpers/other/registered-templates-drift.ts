@@ -28,19 +28,30 @@
  * catalog blocklist filters on. So the set comparison keys on it: an identity
  * must not depend on a request header any caller can set.
  *
- * **What that is NOT is protection against a `PW_LOCALE` run, and an earlier
- * version of this comment claimed it was.** Measured: `withLocale()` returns
- * **only** `locale`, deliberately not `extraHTTPHeaders` — `tests/fixtures/locale.ts`
- * says so in its own point 3 — and `locale` is not an `APIRequestContext` option
- * at all, so `PW_LOCALE=pt-BR` never reaches this endpoint through the `request`
- * fixture; it answers English regardless. The real exposure is the other way
- * round: the English `name` is English **because the caller pins the header**, and
- * that pin is one forgotten line from being gone. Hence the split — the SET is
- * compared on `name_key`, which survives any header decision, and the `name` is
- * compared separately as the thing that goes red when the pin breaks. That
- * matters because S1 (`templates-instantiate`, #1864) clicks a template's card by
- * its display name, so a silently-translated listing would surface there as an
- * unexplained click timeout instead of here as a named failure.
+ * **Two wrong reasons were written here before the right one, and both are worth
+ * knowing because each pointed at a trap that does not exist.** What is measured
+ * on `1.13.0.dev12` is only this:
+ *
+ *  - `Accept-Language: pt-BR` really does translate `name`, leaving `name_key`
+ *    untouched — the localization is real;
+ *  - **no header at all answers English**, because `set_locale` defaults to `en`;
+ *  - `PW_LOCALE=pt-BR` does **not** change this endpoint's answer. Playwright does
+ *    carry the context's `locale` into the `APIRequestContext`, but it never
+ *    reaches the wire as `Accept-Language`, so the first wrong version — "keying
+ *    on `name` would report 26 missing plus 26 extra under `PW_LOCALE=pt-BR`" —
+ *    describes a run that cannot happen;
+ *  - **deleting the `Accept-Language` pin from the spec leaves it GREEN** (all
+ *    three pins removed, 2 passed). So the second wrong version — "the `name`
+ *    comparison is what goes red when the pin breaks" — is false too: the pin is
+ *    explicitness, not a gate, as long as the backend's default stays `en`.
+ *
+ * What the `name` comparison actually buys, then, is an upstream **rename** —
+ * which is the signal that matters, because S1 (`templates-instantiate`, #1864)
+ * picks a template's card by its display name and would report a rename as an
+ * unexplained click timeout. It would also catch a locale that genuinely reached
+ * the request by some future route (a lane adding `extraHTTPHeaders`, a proxy, an
+ * upstream change to the default) — but that is a hypothesis, not a measurement,
+ * and it is written as one here on purpose.
  *
  * ## Layering
  *
@@ -192,6 +203,19 @@ export function describeBaselineDefect(
     }
     if (!isNonEmptyString(d.reason) || !isNonEmptyString(d.issue)) {
       return `the baseline's declaredAbsences[${i}] (${d.nameKey}) carries no reason or no issue — a declaration without either is the silent exemption #1084 forbids`;
+    }
+    // Optional, but `describeStaleDeclarations` joins it. Left unvalidated, the
+    // plausible hand-edit `"unavailableComponents": "ArXivComponent"` (a string
+    // where an array belongs) passed this check and then threw
+    // `TypeError: d.unavailableComponents.join is not a function` out of the
+    // stale-declaration branch — losing the "close #N and delete the declaration"
+    // message on the exact failure it exists to report.
+    if (
+      d.unavailableComponents !== undefined &&
+      (!Array.isArray(d.unavailableComponents) ||
+        !d.unavailableComponents.every((c) => isNonEmptyString(c)))
+    ) {
+      return `the baseline's declaredAbsences[${i}] (${d.nameKey}) has an unavailableComponents that is not an array of non-empty strings`;
     }
   }
   const keys = new Set<string>();

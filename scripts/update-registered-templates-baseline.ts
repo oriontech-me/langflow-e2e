@@ -153,18 +153,42 @@ async function main(): Promise<void> {
     });
     if (blockedRes.ok()) {
       const withBlocked = listedTemplates(await blockedRes.json());
-      const visible = new Set(listed.map((t) => t.nameKey));
-      const blocked = (withBlocked ?? []).filter((t) => !visible.has(t.nameKey));
-      if (blocked.length > 0 && !force) {
-        console.error(
-          `✖ a catalog policy is blocking ${blocked.length} template(s) on this instance:\n` +
-            blocked.map((t) => `    • ${t.nameKey} ("${t.name}")`).join("\n") +
-            `\n  They are absent from the listing this would capture, so committing it would bake the\n` +
-            `  block in as the expectation and make the spec report clean about a template that is not\n` +
-            `  in the gallery. Clear the policy (the @destructive governance specs restore it themselves)\n` +
-            `  and re-run, or pass --force if you really mean to baseline a blocked instance.`,
+      if (withBlocked === null) {
+        // `?? []` here read "no signal" as "nothing is blocked" and wrote in
+        // silence — the same #1012 rule the non-ok branch below honours, broken
+        // inside the check added to satisfy #1012.
+        console.warn(
+          "⚠ ?include_blocked=true answered 200 with no readable template list, so an active\n" +
+            "  catalog-policy block could not be ruled out. The captured listing is policy-filtered,\n" +
+            "  so review the diff for a template that vanished without an upstream change.",
         );
-        process.exit(1);
+      } else {
+        const visible = new Set(listed.map((t) => t.nameKey));
+        const blocked = withBlocked.filter((t) => !visible.has(t.nameKey));
+        if (blocked.length > 0) {
+          const named = blocked
+            .map((t) => `    • ${t.nameKey} ("${t.name}")`)
+            .join("\n");
+          if (!force) {
+            console.error(
+              `✖ a catalog policy is blocking ${blocked.length} template(s) on this instance:\n${named}\n` +
+                `  They are absent from the listing this would capture, so committing it would bake the\n` +
+                `  block in as the expectation and make the spec report clean about a template that is not\n` +
+                `  in the gallery. Clear the policy (the @destructive governance specs restore it themselves)\n` +
+                `  and re-run, or pass --force if you really mean to baseline a blocked instance.`,
+            );
+            process.exit(1);
+          }
+          // --force is overloaded: an operator passing it for the documented
+          // --min-templates reason also disarms this. Bypassing in silence would
+          // produce exactly the outcome the check exists to prevent, invisibly.
+          console.warn(
+            `⚠ --force: baselining anyway, with ${blocked.length} template(s) a catalog policy is\n` +
+              `  blocking left OUT of the baseline:\n${named}\n` +
+              `  The spec will report clean about them until the policy is cleared and the baseline\n` +
+              `  refreshed. Do not commit this unless that is what you meant.`,
+          );
+        }
       }
     } else {
       // Superuser-only (403 otherwise). Not being able to ask is not evidence

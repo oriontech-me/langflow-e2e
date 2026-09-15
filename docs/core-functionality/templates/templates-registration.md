@@ -70,23 +70,30 @@ the key upstream's own catalog blocklist filters on
 So the **set comparison keys on `name_key`**: an identity must not depend on a request header
 any caller can set.
 
-**What that is NOT is protection against a `PW_LOCALE` run, and the first draft of this
-section said it was — the correction is the useful half.** Measured: `withLocale()` returns
-**only** `locale`, deliberately not `extraHTTPHeaders` (`tests/fixtures/locale.ts` says so in
-its own point 3), and `locale` is not an `APIRequestContext` option at all — so
-`PW_LOCALE=pt-BR` never reaches this endpoint through the `request` fixture, which answers
-English regardless. A trap that is itself wrong is worse than none, and this one pointed at
-the safe direction.
+**Two wrong reasons were written in this section before the right one, and both are recorded
+because each named a trap that does not exist.** A documented trap that is itself wrong is
+worse than none, and this passage produced two of them in a row.
 
-The real exposure runs the other way. The English `name` is English **because the spec pins
-the header**, and that pin is one forgotten line from being gone — in this spec, in the
-refresh script, or in whatever spec copies from them next. Hence the split, which is stronger
-than the wrong reason made it look:
+What is actually measured on `1.13.0.dev12`:
 
-- the **set** is compared on `name_key`, which no `Accept-Language` decision can move;
-- the **name** is compared separately, so losing the pin goes red **here**, with the template
-  named — instead of surfacing in **S1**, which picks a card by its display name and would
-  report it as an unexplained click timeout.
+| Measurement | Result |
+|---|---|
+| `Accept-Language: pt-BR` | `name` → *Sugestões básicas*, `name_key` unchanged — the localization is real |
+| **No `Accept-Language` at all** | **English** — `set_locale` defaults to `en` |
+| `PW_LOCALE=pt-BR` through the `request` fixture | **English.** Playwright carries the context `locale` into the `APIRequestContext`, but it never reaches the wire as `Accept-Language` |
+| **All three `Accept-Language` pins deleted from the spec** | **2 passed — GREEN** |
+
+- ❌ *"Keying on `name` would report 26 missing plus 26 extra under a `PW_LOCALE=pt-BR` run"* —
+  false: that run cannot change this endpoint's answer.
+- ❌ *"The `name` comparison is what goes red when the pin is lost"* — also false, and measured
+  above: the pin is **explicitness, not a gate**, for as long as the backend's default is `en`.
+
+What the `name` comparison genuinely buys is an upstream **rename**. That is the signal worth
+having, because **S1** picks a template's card by its display name and would surface a rename
+as an unexplained click timeout rather than as a named failure. It would *also* catch a locale
+that reached the request by some future route — a lane adding `extraHTTPHeaders`, a proxy, an
+upstream change to the default — but that is a hypothesis and is written as one, not as a
+trap that has been observed.
 
 ### The three branches, and why their severities differ
 
@@ -230,8 +237,10 @@ template leaving the gallery is a red test rather than a silent coverage loss.
 7. Report any **extra** template: print it and push a `templates-extra` annotation. Do not
    fail.
 
-**Validation:** `verdict.missing` is empty, `verdict.renamed` is empty, and the comparison
-actually ran (`verdict.kind !== "unknown"`, `verdict.comparedCount === 26` on this image).
+**Validation:** the comparison actually ran (`verdict.kind !== "unknown"`), `verdict.missing`
+is empty, `verdict.renamed` is empty, and the extras report that the verdict calls for is the
+one the test actually emitted — asserted against `testInfo.annotations`, because the earlier
+`comparedCount === baseline.templates.length` was `x === x` and pinned nothing.
 
 ### 1.2 Every declared absence is still absent
 
@@ -293,7 +302,21 @@ The writer **refuses more than it accepts**, following `update-component-catalog
 - **a declared absence that the live listing now registers → exit 1.** The declarations are
   carried across a refresh (a refresh must not silently drop #1744's justification), so the
   writer will not emit a file that contradicts itself; removing an expired declaration stays
-  a deliberate, reviewed edit.
+  a deliberate, reviewed edit;
+- **an active catalog-policy template block → exit 1**, naming the blocked templates. The
+  listing it captures is policy-filtered, so a refresh on an instance a `@destructive`
+  governance spec left blocked would commit the block as the expectation, after which the
+  spec reports clean forever about a template that is not in the gallery — #1234's failure
+  mode arriving through the refresh path. `--min-templates` cannot catch it: six of 26 can
+  vanish and still clear a floor of 20. It probes `?include_blocked=true`, and when it
+  **cannot** probe (superuser-only) or gets an unreadable answer it says so rather than
+  reading silence as "nothing is blocked" (#1012).
+
+`--force` bypasses the count floor **and** the block refusal — it is one flag for two
+decisions, so an operator passing it for the documented minimal-image reason also disarms the
+block check. It therefore never bypasses in silence: the blocked templates are named and the
+warning says the spec will report clean about them until the policy is cleared and the
+baseline refreshed.
 
 ---
 

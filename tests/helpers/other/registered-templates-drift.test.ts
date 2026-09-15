@@ -177,6 +177,34 @@ test("a declaration with no reason or no issue is refused — that is the silent
   assert.match(String(defect), /no reason or no issue/);
 });
 
+test("an unavailableComponents that is not an array of strings is refused", () => {
+  // Left unvalidated, the plausible hand-edit of a string where an array belongs
+  // passed the validator and then threw `TypeError: …join is not a function` out
+  // of describeStaleDeclarations — losing the "close #N and delete the
+  // declaration" message on the exact failure it exists to report.
+  for (const bad of ["ArXivComponent", [""], [null], 3]) {
+    const defect = describeBaselineDefect({
+      templates: [{ nameKey: "a", name: "A" }],
+      declaredAbsences: [
+        { nameKey: "b", name: "B", reason: "r", issue: "#1", unavailableComponents: bad },
+      ],
+    });
+    assert.match(String(defect), /unavailableComponents/, `must be refused: ${JSON.stringify(bad)}`);
+  }
+  // Absent and well-formed both stay legal.
+  for (const ok of [undefined, [], ["ArXivComponent"]]) {
+    assert.equal(
+      describeBaselineDefect({
+        templates: [{ nameKey: "a", name: "A" }],
+        declaredAbsences: [
+          { nameKey: "b", name: "B", reason: "r", issue: "#1", unavailableComponents: ok },
+        ],
+      }),
+      null,
+    );
+  }
+});
+
 test("a baseline that both expects and declares absent the same template is refused", () => {
   const defect = describeBaselineDefect({
     templates: [{ nameKey: "a", name: "A" }],
