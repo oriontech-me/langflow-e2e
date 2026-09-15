@@ -1704,6 +1704,21 @@ jobs:
           # guard skipped the step entirely (incomplete merge / empty report).
           AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outputs.status }}
           AUTO_REMOVE_SUMMARY: ${{ steps.auto_remove.outputs.summary_md }}
+          # The STEP's own outcome, which the two values above cannot carry (#1822).
+          # `summary_md` is produced by the action's first step and reads "auto-removed
+          # @stable from N test(s)"; the commit, its staging and its verification are
+          # the second step, and a composite's outputs are published even when an
+          # embedded step fails (read off the runner's own `CompositeActionHandler`
+          # rather than measured on a run — and fail-safe either way: if it were
+          # false, no block would render at all). So a run whose commit was
+          # refused — a lost edit caught by the
+          # verification, an empty index, a rejected push — still rendered that
+          # sentence about tags that are still on `main`. That is the claim #1822 is
+          # about, at the consumer the issue names; the script relabels the block on
+          # an outcome that did not COMPLETE — `failure` or `cancelled`, this step
+          # being `always()` and therefore reached on a cancelled run — and, per its
+          # own rule, labels nothing on an absent value.
+          AUTO_REMOVE_OUTCOME: ${{ steps.auto_remove.outcome }}
           # From the report-integrity guard (#1012) — a run that executed ZERO
           # tests must announce itself as an infra abort, never as a per-test day.
           RUN_EMPTY: ${{ steps.runguard.outputs.empty }}

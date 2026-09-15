@@ -35,15 +35,54 @@ collect time.
 
 ## Tags *(required)*
 
-`@stable` `@model-provider` `@settings`
+`@model-provider` `@settings`
 
-Promoted by issue #501 (QA-CHECKLIST §7.1 ×4: key validation via real call,
-model collection via UI, Save Configuration, Replace/Disconnect state).
-Historically untagged as "just a setup helper" — promotion required a
+Promoted to `@stable` by issue #501 (QA-CHECKLIST §7.1 ×4: key validation via
+real call, model collection via UI, Save Configuration, Replace/Disconnect
+state). Historically untagged as "just a setup helper" — promotion required a
 force-failability hardening pass (see Validation criterion): the previous
 contract ("never throws") meant a fully broken Model Providers UI still
 produced a green run with empty JSONs, which would blind the daily on this
 surface (the #505 lesson).
+
+### Why `@stable` was taken back off (#1822, decided on the evidence of #1823)
+
+The hardening stands and none of it is reverted — what the tag bought was a
+SECOND EXECUTION, and that is what was removed.
+
+Every lane already runs this file **by path** as its pre-flight, before any
+spec: `daily-stable.yml`, `weekly-stable.yml`, `pr-validation.yml`,
+`manual.yml` and `scripts/run-e2e.sh` all invoke
+`npx playwright test tests/collect-models.spec.ts`. The tag does not gate the
+collector and never did; the sharded phase greps `@stable`, so the tag is what
+scheduled the same sweep a second time inside whichever shard the partition
+assigned it to — against an instance that is now under the full parallel load
+the pre-flight deliberately runs before.
+
+Measured on daily run 34599745145 (2026-09-11, recorded on #1823): the
+pre-flight passed on all four shards in the six minutes before, and the
+in-shard execution then stalled 240 s on the Anthropic credential write on each
+of three attempts — 342 s + 363 s + 342 s ≈ 17.5 min — ending at 13:05:01 on
+shard 4, whose phase ended at 13:06:14 against 12:57:48, 12:58:53 and 12:59:00
+for the other three. The redundant run **set the run's critical path**, by
+roughly seven minutes, and produced a hard failure the auto-removal then acted
+on unreviewed (on a test whose assertion was correct — see *A rejected
+credential is not a stall*).
+
+What the removal costs is worth stating rather than glossing: on the daily the
+pre-flight is `continue-on-error` (#980 — a drained key must not kill a day of
+coverage), so a collector failure there is a red step and a `::warning::`
+instead of a red test. It is not invisible — `lane-coverage-verdict.mjs`
+headlines what went unverified and fails the day on a dry account (#1456), and
+on `pr-validation.yml` the same pre-flight is a hard gate. What it is not, any
+more, is a second sweep writing provider credentials through the Settings UI
+while the parallel phase runs against the same backend.
+
+The spec keeps **failing** on a rejected credential; only its message had to
+become true (#1823). This is a permanent, deliberate absence, not a
+quarantine — there is no issue that would restore the tag. It is out of
+`scripts/reconcile-stable-orphans.ts`'s scope (that walks
+`tests/tests-automations/regression/`), so it needs no exemption entry there.
 
 ---
 

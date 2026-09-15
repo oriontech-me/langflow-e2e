@@ -50,6 +50,9 @@
 // Inputs (env), mirroring the workflow step's `env:` block:
 //   IMAGE, RUN_ID, RUN_DIR, RUN_URL (set on Actions, absent on the VM)
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
+//   AUTO_REMOVE_OUTCOME — the auto-remove STEP's own outcome (#1822). "failure"
+//     means the removals it reported are still on `main`; absent means the caller
+//     does not track it.
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   COVERAGE_VERDICT, COVERAGE_HEADLINE, COVERAGE_PROVIDERS, COVERAGE_SKIPS (#1456)
 //   COVERAGE_ACCOUNT="dry" — no provider was recorded usable (#1800)
@@ -75,6 +78,7 @@
 // workflow sets ISSUE_STRICT=1; the VM leaves it unset.
 
 import { writeFileSync, mkdirSync, realpathSync } from "node:fs";
+import { withoutCommittedClaim } from "./lib/auto-remove-claim.mjs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -91,6 +95,69 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
  * thing this script does that cannot be undone is open an issue, so the decision
  * that picks the shape must be reachable without reaching that.
  */
+/**
+ * The `@stable` auto-removal block — and the one thing it must never say.
+ *
+ * `arSummary` is written by the action's FIRST step, before the commit is even
+ * attempted, so on its own it reports an intention in the past tense. When the
+ * step then fails, the tags are still on `main`: the list remains the most useful
+ * thing on the page (it is what the day tried to quarantine, and what fails again
+ * tomorrow), so it is kept and corrected rather than dropped — dropping it would
+ * tell the triager nothing happened, which is the opposite error (#1822).
+ *
+ * Correcting it means three things, and the first version did only one:
+ *
+ *  - the heading, which is what it changed;
+ *  - the correction paragraph ABOVE the summary rather than below it, so the
+ *    reader meets it before the sentences it corrects;
+ *  - the summary's own past-tense claims, taken out through the module the
+ *    formatter shares (`withoutCommittedClaim`). Without this the body read "did
+ *    NOT commit" and then, one line down, the formatter's "These were committed
+ *    to `main` automatically" — the exact sentence #1822 quotes as false, one
+ *    line under its own correction.
+ *
+ * A summary this cannot recognise is reported as such instead of being presented
+ * as corrected (#1012); the round-trip test against the real formatter output is
+ * what keeps that branch out of a real issue body.
+ */
+function autoRemovalLines(arSummary, arUncommitted) {
+  if (!arUncommitted) return ["### `@stable` auto-removal", "", arSummary];
+  const heading = "### ⚠️ `@stable` auto-removal did NOT reach `main`";
+  // The action writes `status` to `$GITHUB_OUTPUT` BEFORE it renders the summary,
+  // so a formatter crash leaves `status=removed` with no summary at all. "every
+  // test listed below" would then point at nothing, and the reworded-formatter
+  // hedge would be the wrong explanation for an empty one.
+  if (String(arSummary ?? "").trim() === "") {
+    return [
+      heading,
+      "",
+      "**Nothing was pushed**, and the step produced no summary either: it reported a",
+      "removal and then stopped before writing one, so which tests it selected is only in",
+      "the `Auto-remove @stable from hard failures` step's log. No tag was removed on",
+      "`main` (#1822).",
+    ];
+  }
+  const { text, neutralized } = withoutCommittedClaim(arSummary);
+  return [
+    heading,
+    "",
+    "**Nothing was pushed.** The auto-remove step did not complete, so every test listed below still",
+    "carries `@stable` on `main` and runs again tomorrow — read the",
+    "`Auto-remove @stable from hard failures` step for the cause, and treat the list as",
+    "what this run TRIED to quarantine rather than as what it did (#1822).",
+    ...(neutralized
+      ? []
+      : [
+          "",
+          "_The summary below was written before the commit was attempted and this could not",
+          "recognise all of its wording, so parts of it may still read as though the tags were",
+          "removed. The paragraph above is the one that holds._",
+        ]),
+    "",
+    text,
+  ];
+}
+
 export function renderIssue({
   today,
   image = "",
@@ -100,6 +167,20 @@ export function renderIssue({
   hostname = "the QA VM",
   arStatus = "",
   arSummary = "",
+  // #1822. The summary is produced by the action's FIRST step and says "auto-removed
+  // @stable from N tests"; the commit and its verification are the SECOND step, and a
+  // composite's outputs are published even when an embedded step fails (read off the
+  // runner's own `CompositeActionHandler`, not measured on a run — if it were false
+  // the block would simply not render, so the assumption is fail-safe either way). So
+  // a run where the commit was refused still rendered that sentence about tags that
+  // are still on `main` — the claim #1822 is about, moved from silent-green to
+  // loud-red at the step and left untouched at the consumer the issue names.
+  //
+  // Only ever applied to a REPORTED removal (`arStatus === "removed"`): the step can
+  // fail with `none` or `guard_tripped` — the first step crashing after it wrote
+  // `status` is enough — and accusing it of refusing removals nobody reported, over
+  // an empty list, is a false claim of its own in the other direction.
+  arUncommitted = false,
   empty = false,
   unreadable = false,
   partial = false,
@@ -124,6 +205,10 @@ export function renderIssue({
   // Which lane rendered this. `RUN_URL` is the only honest discriminator: it is
   // the one input a VM run cannot have and an Actions run always does.
   const onActions = Boolean(runUrl);
+
+  // A removal that was reported and did not reach `main` (#1822). Both halves are
+  // required: see the `arUncommitted` note above.
+  const arLost = arUncommitted && arStatus === "removed";
 
   // EIGHT shapes, most specific first. The count has been stale three times — it
   // read "four" while there were six, "six" while omitting `partial`, and "seven"
@@ -366,12 +451,19 @@ export function renderIssue({
           ...(accountDry && !uncovered && arStatus
             ? [
                 "",
-                "### `@stable` auto-removal",
+                ...autoRemovalLines(arSummary, arLost),
                 "",
-                arSummary,
-                "",
-                "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
-                "the removal against the outage above before accepting it.",
+                // Scoped to a block that actually lists something: the blank-summary
+                // branch has just said the step produced no list, and "weigh the
+                // removal" over nothing reads as a list the reader failed to find.
+                ...(String(arSummary ?? "").trim() === ""
+                  ? [
+                      "Unexpected on this shape (it is chosen only when the test job was green).",
+                    ]
+                  : [
+                      "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
+                      "the removal against the outage above before accepting it.",
+                    ]),
               ]
             : []),
         ]
@@ -393,7 +485,7 @@ export function renderIssue({
           "short is not evidence about the file it did not run (#1012).",
         ]
       : arStatus
-        ? ["### `@stable` auto-removal", "", arSummary]
+        ? autoRemovalLines(arSummary, arLost)
         : [
             "### Next steps",
             onActions
@@ -620,6 +712,24 @@ async function main() {
     hostname: env.VM_HOSTNAME || env.HOSTNAME || "the QA VM",
     arStatus: env.AUTO_REMOVE_STATUS || "",
     arSummary: env.AUTO_REMOVE_SUMMARY || "",
+    // #1822. Positive identification, like every other shape in this file: an
+    // absent or empty outcome means the caller does not track it, never that the
+    // commit failed. What relabels the block is the step not having COMPLETED —
+    // `failure`, and `cancelled` with it: the umbrella step is `always()`, so it
+    // runs on a cancelled job, and the composite publishes `status=removed` before
+    // the commit step exists, so excluding `cancelled` left one route to exactly
+    // the sentence this branch exists to end. Those two are the whole set: an
+    // `outcome` is one of success / failure / cancelled / skipped, and `outcome`
+    // rather than `conclusion` is the field, since it is read before any
+    // `continue-on-error` (the step has none).
+    //
+    // `skipped` is excluded because a skipped step publishes NO OUTPUTS at all, so
+    // `arStatus` is empty and `arLost` is already false — not, as an earlier
+    // version of this said, because of the composite's INNER commit-step gate,
+    // which has no bearing on the outer `uses:` step's outcome. The test that pins
+    // it therefore feeds a combination Actions cannot produce (`skipped` with a
+    // status): it is defence in depth, not a reachable regression.
+    arUncommitted: ["failure", "cancelled"].includes(env.AUTO_REMOVE_OUTCOME || ""),
     empty: env.RUN_EMPTY === "true",
     unreadable: env.RUN_UNREADABLE === "true",
     partial: env.RUN_PARTIAL === "true",

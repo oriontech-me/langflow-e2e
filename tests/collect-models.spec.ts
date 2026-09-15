@@ -39,7 +39,7 @@ interface ModelRecord {
 
 test(
   "collect providers status and models from UI",
-  { tag: ["@stable", "@model-provider", "@settings"] },
+  { tag: ["@model-provider", "@settings"] },
   async ({ page }) => {
     // This pre-flight owns its own clock (#1385).
     //

@@ -28,7 +28,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,12 +41,34 @@ import {
   CC_DEFAULT,
 } from "./create-failure-issue.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
+import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
+import {
+  COMMITTED_FOOTER,
+  PENDING_HEADLINE_PREFIX,
+  PENDING_SOLE_TAG_NOTE,
+  SOLE_TAG_NOTE,
+  removedHeadline,
+} from "./lib/auto-remove-claim.mjs";
 
 /** The script itself, for the handful of assertions that must go through `main()`. */
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "create-failure-issue.mjs");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
+
+/** The real `format-auto-remove-summary.mjs` output for a result JSON. */
+function formatSummary(result) {
+  const dir = makeTempDir("auto-remove-summary-");
+  const file = join(dir, "auto-remove-result.json");
+  writeFileSync(file, JSON.stringify(result));
+  const run = spawnSync(
+    process.execPath,
+    [join(HERE, "format-auto-remove-summary.mjs"), file],
+    { encoding: "utf-8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout;
+}
 
 const ACTIONS = {
   today: "2026-08-26",
@@ -933,4 +955,311 @@ test("the listing shape's triage pointer names the cause, not one of its shapes"
   assert.match(body, /built from a variable/);
   assert.doesNotMatch(body, /a template substitution, on the test/);
   assert.doesNotMatch(body, /arriving through the interpolation/);
+});
+
+// --- the removal that was reported and not committed (#1822) -----------------
+
+test("a reported removal that did not reach `main` is corrected, not merely retitled", () => {
+  // Asserted against the REAL formatter output, which is the whole finding: the
+  // first version changed the heading and left the summary underneath saying
+  // "These were committed to `main` automatically" — #1822's own false sentence,
+  // one line below its correction. A fixture summary of "- a\n- b" could not see it.
+  const summary = formatSummary({
+    status: "removed",
+    threshold: 5,
+    hardFailures: 2,
+    attributableFailures: 2,
+    removed: [
+      { file: "tests/collect-models.spec.ts", title: "collect providers", soleTag: false },
+      { file: "tests/fixtures/locale-gate.spec.ts", title: "locale", soleTag: false },
+    ],
+    skipped: [],
+    exempt: [],
+    disagreements: [],
+  });
+  // The premise: the formatter really does claim it happened, in two places.
+  assert.match(summary, /\*\*Auto-removed `@stable`\*\*/);
+  assert.ok(summary.includes(COMMITTED_FOOTER));
+
+  const done = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: summary });
+  assert.match(done.body, /### `@stable` auto-removal\n/);
+  assert.ok(done.body.includes(COMMITTED_FOOTER), "the normal path is unchanged");
+
+  const lost = renderIssue({
+    ...ACTIONS,
+    arStatus: "removed",
+    arSummary: summary,
+    arUncommitted: true,
+  });
+  assert.match(lost.body, /did NOT reach `main`/);
+  assert.match(lost.body, /\*\*Nothing was pushed\.\*\*/);
+  // Neither past-tense claim survives anywhere in the body.
+  assert.doesNotMatch(lost.body, /\*\*Auto-removed `@stable`\*\*/);
+  assert.ok(!lost.body.includes(COMMITTED_FOOTER));
+  assert.ok(!lost.body.includes("were committed to `main`"));
+  // And the replacement is asserted, not just the absence: rewriting
+  // PENDING_HEADLINE_PREFIX back into a past-tense voice puts #1822's claim back
+  // under the heading that denies it, and every absence assertion still passes.
+  assert.ok(lost.body.includes(PENDING_HEADLINE_PREFIX));
+  assert.doesNotMatch(
+    lost.body.slice(lost.body.indexOf(PENDING_HEADLINE_PREFIX)),
+    /\*\*(Auto-)?[Rr]emoved `@stable`\*\*/,
+  );
+  // The list is KEPT: it is what the day tried to quarantine and what fails again
+  // tomorrow. Dropping it would say nothing happened, which is the opposite error.
+  assert.match(lost.body, /tests\/collect-models\.spec\.ts/);
+  assert.match(lost.body, /tests\/fixtures\/locale-gate\.spec\.ts/);
+  // The correction comes BEFORE the summary it corrects.
+  assert.ok(lost.body.indexOf("Nothing was pushed") < lost.body.indexOf("collect-models"));
+  // Recognised, so no hedge.
+  assert.doesNotMatch(lost.body, /could not\n?\s*recognise all of its wording/);
+});
+
+test("the `@stable`-was-the-only-tag note is corrected too, or it reviews a file main never saw", () => {
+  // Third claim in the same block, and past tense like the other two: under a
+  // heading saying nothing reached `main`, "the array was left empty, please
+  // review" sends the reader to review a change that does not exist.
+  const summary = formatSummary({
+    status: "removed",
+    threshold: 5,
+    hardFailures: 1,
+    attributableFailures: 1,
+    removed: [{ file: "a.spec.ts", title: "one", soleTag: true }],
+    skipped: [],
+    exempt: [],
+    disagreements: [],
+  });
+  assert.ok(summary.includes(SOLE_TAG_NOTE), "the formatter no longer emits the note");
+
+  const { body } = renderIssue({
+    ...ACTIONS,
+    arStatus: "removed",
+    arSummary: summary,
+    arUncommitted: true,
+  });
+  assert.ok(!body.includes(SOLE_TAG_NOTE));
+  assert.ok(body.includes(PENDING_SOLE_TAG_NOTE));
+  // Still no hedge: the note does not vote on whether the formatter drifted, it is
+  // present only for a sole-tag removal.
+  assert.doesNotMatch(body, /could not\n?\s*recognise all of its wording/);
+});
+
+test("a step that reported a removal and produced no summary says that, not `listed below`", () => {
+  // `status` is written to $GITHUB_OUTPUT before the summary is rendered, so a
+  // formatter crash leaves `removed` with an empty summary. "every test listed
+  // below" then points at nothing, and the reworded-formatter hedge is the wrong
+  // explanation for an empty one.
+  for (const arSummary of ["", "   \n  "]) {
+    const { body } = renderIssue({
+      ...ACTIONS,
+      arStatus: "removed",
+      arSummary,
+      arUncommitted: true,
+    });
+    assert.match(body, /did NOT reach `main`/);
+    assert.match(body, /produced no summary either/);
+    // The paragraph's OWN claim, not just the heading's: this prose is new, and
+    // the lesson that produced it applies to it too — every "is the old sentence
+    // gone?" assertion passes if the replacement is itself past tense.
+    assert.match(body, /No tag was removed on\n?\s*`main`/);
+    assert.doesNotMatch(body, /were removed from `main`/);
+    assert.doesNotMatch(body, /every test listed below/);
+    assert.doesNotMatch(body, /The summary below/);
+  }
+});
+
+test("the dry-account hedge does not weigh a removal list that is not there", () => {
+  // The only rendered-output change in its commit, and it shipped unpinned:
+  // inverting the conditional, or deleting it, restored "weigh the removal against
+  // the outage above" over a block that has just said the step produced no list.
+  const blank = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    arStatus: "removed",
+    arSummary: "",
+    arUncommitted: true,
+  });
+  assert.match(blank.body, /produced no summary either/);
+  assert.match(blank.body, /Unexpected on this shape/);
+  assert.doesNotMatch(blank.body, /weigh\n?\s*the removal/);
+
+  // And the mirror: with a list above it, the hedge is exactly what the reader needs.
+  const listed = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    arStatus: "removed",
+    arSummary: `${removedHeadline(1)}\n\n- \`a.spec.ts\` — t\n\n${COMMITTED_FOOTER}`,
+  });
+  assert.match(listed.body, /weigh\n?\s*the removal against the outage/);
+});
+
+test("a summary this cannot recognise is hedged, never presented as corrected", () => {
+  // The formatter reworded and the shared constants not updated with it. The
+  // correction paragraph still holds; what changes is that the body says so
+  // instead of implying the surgery worked (#1012).
+  const { body } = renderIssue({
+    ...ACTIONS,
+    arStatus: "removed",
+    arSummary: "something the shared module has never seen",
+    arUncommitted: true,
+  });
+  assert.match(body, /did NOT reach `main`/);
+  assert.match(body, /could not\n?\s*recognise all of its wording/);
+  assert.match(body, /something the shared module has never seen/);
+});
+
+test("the relabel reaches the dry-account shape's auto-removal block too", () => {
+  const { body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    arStatus: "removed",
+    arSummary: `${removedHeadline(1)}\n\n- \`a.spec.ts\` — t\n\n${COMMITTED_FOOTER}`,
+    arUncommitted: true,
+  });
+  assert.match(body, /did NOT reach `main`/);
+  assert.ok(!body.includes(COMMITTED_FOOTER));
+  // The shape's own hedge is not displaced by the correction.
+  assert.match(body, /Unexpected on this shape/);
+});
+
+test("a step failure with nothing reported accuses the step of nothing", () => {
+  // `status` is written before the summary, so the first step can fail having
+  // reported `none` or `guard_tripped`, with the commit step never running at all.
+  // Relabelling then invents a refusal of removals nobody reported, over an empty
+  // list — a false claim in the other direction.
+  for (const arStatus of ["none", "guard_tripped"]) {
+    const { body } = renderIssue({
+      ...ACTIONS,
+      arStatus,
+      arSummary: "No per-test `@stable` hard failures were auto-removed.",
+      arUncommitted: true,
+    });
+    assert.doesNotMatch(body, /did NOT reach `main`/, `relabelled on status=${arStatus}`);
+    assert.match(body, /### `@stable` auto-removal\n/);
+  }
+});
+
+test("main() relabels on an outcome that did not COMPLETE, and on nothing else", async () => {
+  // The env→props mapping the render tests cannot reach. Rendered through the real
+  // process so the mapping, not a re-declaration of it, is what is asserted —
+  // inverting the comparison to `!== "success"` left the whole lane green.
+  //
+  // `cancelled` belongs with `failure`: the umbrella step is `always()`, so it runs
+  // on a cancelled job, and the composite publishes `status=removed` before the
+  // commit step exists — reading it as "not tracked" left one route to exactly the
+  // claim this is here to end. `skipped` does not: the commit step is gated on
+  // `status == removed`, so a skipped auto-removal has no status to render.
+  const runDir = makeTempDir("issue-body-");
+  const base = {
+    ...process.env,
+    ISSUE_DRY_RUN: "1",
+    RUN_DIR: runDir,
+    RUN_ID: "1",
+    RUN_URL: "https://example.invalid/1",
+    TESTS_FAILED: "true",
+    AUTO_REMOVE_STATUS: "removed",
+    AUTO_REMOVE_SUMMARY: `${removedHeadline(1)}\n\n- \`a.spec.ts\` — t\n\n${COMMITTED_FOOTER}`,
+    LIVENESS_MD: "",
+  };
+  // The dry run prints the title and writes the BODY to `$RUN_DIR/issue-body.md`,
+  // which is where the block being asserted lives.
+  const run = (outcome) => {
+    const r = spawnSync(process.execPath, [SCRIPT], {
+      encoding: "utf-8",
+      env: outcome === undefined ? base : { ...base, AUTO_REMOVE_OUTCOME: outcome },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(join(runDir, "issue-body.md"), "utf8");
+  };
+
+  for (const outcome of ["failure", "cancelled"]) {
+    assert.match(run(outcome), /did NOT reach `main`/, `outcome ${outcome} was read as done`);
+  }
+
+  // Everything else — including an absent value, which is what the VM lane sends —
+  // means "not tracked", never "did not complete": a shape is chosen by positive
+  // identification.
+  for (const outcome of [undefined, "", "success", "skipped"]) {
+    assert.doesNotMatch(
+      run(outcome),
+      /did NOT reach `main`/,
+      `outcome ${JSON.stringify(outcome)} relabelled the block`,
+    );
+  }
+});
+
+test("the weekly drops the section rather than forwarding an unqualified claim", () => {
+  // This lane renders its umbrella INLINE, so it cannot relabel; what it must not
+  // do is forward a summary that says the removals landed.
+  //
+  // EVALUATED, not matched (#1226/#1300). A regex over the line pins a spelling:
+  // dropping the `|| ''` half leaves `${{ false && X }}`, which GitHub renders as
+  // the STRING "false" — truthy to the inline script, which then prints the
+  // section with the body `false`. Only evaluating the expression tells the two
+  // apart.
+  // Reads ONE line per key: a folded scalar (`>-` with the expression on the next
+  // line) is valid YAML with identical semantics and fails this guard. Loud rather
+  // than silent, which is the safe direction, but worth knowing before reformatting.
+  const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
+  const step = weekly.slice(weekly.indexOf("- name: Create issue on failure"));
+  const env = step.slice(0, step.indexOf("with:"));
+  const valueOf = (name) => {
+    const line = env.split("\n").find((l) => l.trim().startsWith(`${name}:`));
+    assert.ok(line, `${name} is not forwarded at all`);
+    return line.slice(line.indexOf(":") + 1).trim();
+  };
+  // Flat, dotted keys: the evaluator refuses any path the caller did not supply,
+  // so a renamed step id fails the guard instead of defaulting to empty.
+  // Distinct sentinels: asserting only "not empty" on success let the SUMMARY
+  // forward the STATUS and still pass, which would render `removed` as the
+  // umbrella's entire `@stable` section.
+  const context = (outcome) => ({
+    "steps.auto_remove.outcome": outcome,
+    "steps.auto_remove.outputs.status": "<the-status>",
+    "steps.auto_remove.outputs.summary_md": "<the-summary>",
+  });
+  const expected = {
+    AUTO_REMOVE_STATUS: "<the-status>",
+    AUTO_REMOVE_SUMMARY: "<the-summary>",
+  };
+  for (const name of ["AUTO_REMOVE_STATUS", "AUTO_REMOVE_SUMMARY"]) {
+    const raw = valueOf(name);
+    assert.equal(
+      evaluateWorkflowValue(raw, context("success")),
+      expected[name],
+      `${name} does not forward its own output on a successful removal`,
+    );
+    for (const outcome of ["failure", "skipped", "cancelled"]) {
+      assert.equal(
+        evaluateWorkflowValue(raw, context(outcome)),
+        "",
+        `${name} reaches the umbrella on outcome=${outcome} (#1822)`,
+      );
+    }
+  }
+});
+
+test("the daily forwards the auto-remove step's own outcome to the umbrella", () => {
+  // Without this the script cannot tell the two apart, and the default is "done".
+  const daily = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
+  const stepAt = daily.indexOf("- name: Create issue on failure");
+  // Asserted separately so a RENAMED step does not report itself as a missing env
+  // key — the guard would still fail, at the wrong cause.
+  assert.ok(stepAt > 0, "the daily's umbrella step is gone or renamed");
+  const step = daily.slice(stepAt);
+  const env = step.slice(0, step.indexOf("- name:", 10));
+  const line = env.split("\n").find((l) => l.trim().startsWith("AUTO_REMOVE_OUTCOME:"));
+  assert.ok(line, "AUTO_REMOVE_OUTCOME is not forwarded at all");
+  // Evaluated, like the weekly's: what has to hold is that the step's own outcome
+  // arrives unaltered, not that the line is spelled one particular way.
+  // `cancelled` included: it is the value the relabel was widened for, so a lane
+  // that suppressed precisely that one would defeat it while passing everything else.
+  for (const outcome of ["failure", "cancelled", "success", "skipped"]) {
+    assert.equal(
+      evaluateWorkflowValue(line.slice(line.indexOf(":") + 1).trim(), {
+        "steps.auto_remove.outcome": outcome,
+      }),
+      outcome,
+    );
+  }
 });
