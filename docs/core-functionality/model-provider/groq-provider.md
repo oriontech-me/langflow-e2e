@@ -36,7 +36,9 @@ OpenAI-compatible alt-cloud provider covered by the suite.
 No `@settings`: the Settings surface does not exist for Groq (see above).
 
 **No `@stable` — the component is not packaged in the image this suite
-validates (#1039).** Langflow 1.12 moved component families out of
+validates (#1039), and the standing answer is
+`docs/component-distribution-policy.md` rather than a tracker, so this is not
+re-decided per incident.** Langflow 1.12 moved component families out of
 `lfx.components.*` into per-vendor distributions plus an aggregate
 `lfx-bundles` package; `langflowai/langflow-nightly:latest` installs ~20 vendor
 distributions and no `lfx-bundles`, so the Groq component is absent from
@@ -54,6 +56,10 @@ the component but the run then dies with `ComponentBuildError: Error building
 Component Groq: langchain-groq is not installed`.
 
 Restore `@stable` only if the component returns to the default nightly image.
+**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — two minor
+lines past the 1.12.0.dev8 measurement above, `GET /api/v1/all` still carries
+**zero** occurrences of `groq` anywhere in its payload, so nothing about the
+absence has moved and the pre-flight still skips before a key is ever read.
 
 ---
 
@@ -183,10 +189,20 @@ valid key.
   (`popover-anchor-input-api_key`, `dropdown_str_model_name`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Groq API (`api.groq.com`) — probe, live catalog refresh, and the real
-  inference. A live `GROQ_API_KEY` is required; **CI note:** the workflows
-  don't carry a `GROQ_API_KEY` secret yet — in CI the test skips with the
-  probe reason until the secret is added (same degradation contract as
-  Ollama-less runs).
+  inference. A live `GROQ_API_KEY` is required. **CI note — the lanes now carry
+  it, and that changes nothing here:** `GROQ_API_KEY` (secret) reaches
+  `daily-stable.yml`, `pr-validation.yml` and `manual.yml`, and
+  `GROQ_TEST_MODEL` (repository variable, `openai/gpt-oss-20b`) reaches the
+  first two, all since 2026-09-13. The key is therefore **not** why CI skips
+  this test — the component-availability pre-flight above runs first and
+  unconditionally, so the key probe is not reached while the component is
+  absent. An earlier revision of this note said the workflows carried no secret
+  yet; that named a second cause which no longer exists, and a parked spec
+  whose doc names the wrong cause is the expired justification #1783 exists to
+  report. One gap left standing because it is unreachable today:
+  `manual.yml` receives the key but **not** `GROQ_TEST_MODEL`, so a dispatch
+  there would fall back to the `llama-3.1-8b-instant` default this account does
+  not serve and skip on the probe — visible only if the component ever returns.
 
 ---
 

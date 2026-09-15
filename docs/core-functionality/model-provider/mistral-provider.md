@@ -32,7 +32,9 @@ If this fails, Mistral can no longer be configured or executed in a flow.
 No `@settings`: the Settings surface does not exist for Mistral.
 
 **No `@stable` — the component is not packaged in the image this suite
-validates (#1039).** Langflow 1.12 moved component families out of
+validates (#1039), and the standing answer is
+`docs/component-distribution-policy.md` rather than a tracker, so this is not
+re-decided per incident.** Langflow 1.12 moved component families out of
 `lfx.components.*` into per-vendor distributions plus an aggregate
 `lfx-bundles` package; `langflowai/langflow-nightly:latest` installs ~20 vendor
 distributions and no `lfx-bundles`, so the MistralAI component is absent from
@@ -51,6 +53,12 @@ alone leaves the `mistral` registry category present but **empty**; the
 `ext:mistral:MistralAIModelComponent@official` appear.
 
 Restore `@stable` only if the component returns to the default nightly image.
+**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — two minor
+lines past the 1.12.0.dev8 measurement above, `mistral` appears in
+`GET /api/v1/all` only as Bedrock `model_id` options and as an Astra Vectorize
+provider name; there is no MistralAI component and no `mistral` category, so
+nothing about the absence has moved and the pre-flight still skips before a key
+is ever read.
 
 ---
 
@@ -165,9 +173,19 @@ error event, so an auth failure cannot pass silently).
   (`popover-anchor-input-api_key`, `dropdown_str_model_name`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Mistral API (`api.mistral.ai`) — probe and the real inference. A live
-  `MISTRAL_API_KEY` is required; **CI note:** the workflows don't carry a
-  `MISTRAL_API_KEY` secret yet — in CI the test skips with the probe reason
-  until the secret is added (same degradation contract as Groq/Ollama).
+  `MISTRAL_API_KEY` is required. **CI note — the lanes now carry it, and that
+  changes nothing here:** `MISTRAL_API_KEY` (secret) reaches
+  `daily-stable.yml`, `pr-validation.yml` and `manual.yml` since 2026-09-13.
+  The key is therefore **not** why CI skips this test — the
+  component-availability pre-flight above runs first and unconditionally, so
+  the key probe is not reached while the component is absent. An earlier
+  revision of this note said the workflows carried no secret yet; that named a
+  second cause which no longer exists, and a parked spec whose doc names the
+  wrong cause is the expired justification #1783 exists to report. No
+  `MISTRAL_TEST_MODEL` variable exists on any lane, so a run that ever got past
+  the pre-flight would use the `mistral-small-latest` default — unlike Groq,
+  where the default was measured absent from this account's catalog and a
+  variable had to be added.
 
 ---
 
