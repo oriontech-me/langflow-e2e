@@ -92,7 +92,7 @@ non-monotonic at this one point in the file; `scripts/coverage-summary.ts` keys 
 |---|---|---|
 | **`LANGFLOW_A2A_ENABLED=true`** on the Langflow container | everything except the disabled-state case | **Off everywhere.** Measured on both `dev10` and `dev14`: `GET /api/v1/config` (authed) → `a2a_enabled: false`; `GET /api/v1/a2a/agents` → `404`. `scripts/start-langflow-docker.sh` set no A2A env at all. **Rolled out in #1240** — both start scripts plus the **six** workflows that run a Langflow service container for specs: `adaptive-impacted.yml`, `daily-stable.yml`, `manual.yml`, `nightly.yml`, `pr-validation.yml`, `weekly-stable.yml`. Six, not the five this row first named: `adaptive-impacted.yml` also starts one and is absent from `CLAUDE.md`'s workflow list. `scripts/a2a-flag-lanes.test.mjs` fails if any lane loses it |
 | A project with `auth_type=apikey` + a Langflow API key owned by the flow owner | the auth-gate spec | Reachable — the same surface `mcp/server/mcp-server-tab.spec.ts` already drives; key creation via `tests/helpers/mcp/add-new-api-keys.ts` |
-| SSRF allowance for loopback (`connector_ssrf_allow_loopback` class of setting) | `External`-mode client spec calling this instance's own card URL | **Unverified.** Langflow's SSRF layer blocks loopback outright (`LE-1904`, `LE-1898`); a self-call is the only way to exercise External mode without leaving the runner's network |
+| SSRF allowance for loopback (`connector_ssrf_allow_loopback`) | `External`-mode client spec calling this instance's own card URL | **Available — measured on `1.13.0.dev12` (#1855).** `_call_external_agent` validates `agent_url` with the **connector** policy, which exempts a literal loopback host (`localhost`, `127.0.0.0/8`, `::1`) while `connector_ssrf_allow_loopback` is on, and it defaults to `True`; no lane overrides it. The self-call completes under `LANGFLOW_WORKERS=1`. The recorded block (`LE-1904`, `LE-1898`) applies to the strict validator, which this path no longer uses for the configured URL |
 | A provider key (Anthropic/OpenAI) + `models.json` | the A2A-as-a-Tool spec only | Available, but that spec is the one expensive row of the batch — `--workers=1` |
 | `a2a-sdk >= 1.1.0` inside the image | all | Present on the nightly (the JSON-RPC dispatch is the SDK's) |
 
@@ -217,8 +217,8 @@ Every path below is relative to `tests/tests-automations/regression/` (specs) an
 | **U1** | `a2a-server-agent-tab-publish` | On a blank flow the Agent tab shows the ineligible copy and `agent-publish-switch` cannot publish; after adding Chat Input + Chat Output it can; publishing → status `Live` + an `agent-card-url` equal to the real card URL (fetched `200` in-test); editing Name/Description → `agent-save` → toast `"Agent updated"` **and** `GET …/agent-card.json` returns the new values |
 | **U3** | `a2a-server-agent-tab-try-it` | "Try it" sends a per-run sentinel over the live endpoint; the agent bubble renders the echoed sentinel, the state reaches `completed`, the turn counter increments, and `"View JSON-RPC exchange"` exposes the request/response pair |
 | **C1** | `a2a-client-agent-internal` | In a second flow, an `A2AAgent` node with `mode=Internal` lists the published agent in its dropdown; running it produces a `Response` containing the sentinel the published passthrough flow echoes — no LLM on either side |
-| **C2** | `a2a-client-agent-external` | `mode=External` pointed at **this instance's own** card URL renders the card in the `agent_card` display (name chip; `"Requires an API key"` when restricted) and a run returns the echoed sentinel. `@regression` for `LE-1845` (`NameError: name 'call_a2a_agent' is not defined`). **Gated on the loopback-SSRF dependency above** |
-| **C3** | `a2a-client-agent-as-tool` | An Agent with the `A2AAgent` wired as a Tool (`tool_mode`) calls the published agent and the reply reaches the playground; `@regression` for `LE-1963` (`self.user_id is None` → `badly formed hexadecimal UUID string` on tool-approval resume). The only LLM-dependent row — `--workers=1`, `models.json` |
+| **C2** | `a2a-client-agent-external` | `mode=External` pointed at **this instance's own** card URL renders the card in the `agent_card` display (name chip; `"Requires an API key"` when restricted) and a run returns the echoed sentinel. `@regression` for `LE-1845` (`NameError: name 'call_a2a_agent' is not defined`). Once gated on the loopback-SSRF dependency above; written in #1855 |
+| **C3** | `a2a-client-agent-as-tool` | An Agent with the `A2AAgent` wired as a Tool (`tool_mode`) calls the published agent and the reply reaches the playground; `@regression` for `LE-1963` (`self.user_id is None` → `badly formed hexadecimal UUID string` on tool-approval resume). The only LLM-dependent row — `--workers=1`, `models.json`. Written in #1855 through the approval pause itself, since `LE-1963` fired on the resume, not on the plain call |
 
 **Shared preconditions for the batch.** `createRunnableChatFlowViaApi`
 (`tests/helpers/flows/create-runnable-chat-flow-via-api.ts`) already builds the
@@ -262,6 +262,8 @@ inline improvisation.
    loudly on a misordered array — that is the guard, not a warning).
 4. **Loopback-SSRF question** answered before `C2` is scheduled: if a self-call
    cannot be allowed on the runner, External mode drops to out of scope and
-   `LE-1845` stays uncovered — a conscious gap, recorded here.
+   `LE-1845` stays uncovered — a conscious gap, recorded here. **Answered in #1855:**
+   the self-call is allowed by default on `1.13.0.dev12` (see *External
+   dependencies*), so C2 shipped and `LE-1845` is covered.
 5. **Live scout of the Agent tab entry point** (`playwright-cli`) as the PLAN step
    of the first UI spec issue, once the flag is on.

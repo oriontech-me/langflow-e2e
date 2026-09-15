@@ -1,6 +1,6 @@
 # A2A Client — the `A2AAgent` component in Internal mode: calling a locally published agent
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`; first measured on `1.12.0.dev18`)
 
 **Issue:** #1354 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C1**) ·
 **Depends on:** #1240 · **Jira:** epic `LE-1588`
@@ -13,11 +13,10 @@ A2A has two halves: **serving** an agent and **consuming** one. The eight specs
 under `core-functionality/a2a/` cover the server. The `A2AAgent` component — the
 entire client half — has **no coverage at all**, and this is its first.
 
-`mode=Internal` is the half reachable today: it lists agents published **in the
-caller flow's own project** and calls one over the same `/jsonrpc` endpoint the
-server specs already prove. It does **not** depend on the loopback-SSRF question
-that blocks `C2`/External (`LE-1904` class) — that constraint applies only to
-pointing the component at a URL, including this instance's own.
+`mode=Internal` lists agents published **in the caller flow's own project** and runs
+one **in-process** — no HTTP, no SSRF layer, no api key (`_run_internal_agent`). Its
+siblings are `a2a-client-agent-external` (the same component calling an agent by URL)
+and `a2a-client-agent-as-tool` (this mode used as an Agent's tool, #1855).
 
 Two things are proven, and they fail independently:
 
@@ -175,10 +174,9 @@ is **unknown** and deliberately not claimed.
 
 ## Out of scope
 
-- **C2 / External mode** (`LE-1845`) — blocked until the loopback-SSRF question
-  is answered; tracked separately.
-- **C3 / the `A2AAgent` as a Tool** (`LE-1963`) — the only LLM-dependent row of
-  the area; tracked separately.
+- **C2 / External mode** (`LE-1845`) — covered by `a2a-client-agent-external` (#1855).
+- **C3 / the `A2AAgent` as a Tool** (`LE-1963`) — covered by
+  `a2a-client-agent-as-tool` (#1855), the only LLM-dependent spec of the area.
 - **The negative control "an agent published in another project is absent from
   the dropdown."** It is the natural sibling of assertion 1 and is genuinely
   reachable (`createProjectViaApi` from #1353 makes the second project cheap),

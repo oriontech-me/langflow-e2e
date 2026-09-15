@@ -1,9 +1,10 @@
-import type { APIRequestContext, Page, Request, Route } from "@playwright/test";
+import type { APIRequestContext, Page, Route } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
+import { waitForComponentUpdateSettled } from "../../../helpers/flows/wait-for-component-update-settled";
 
 // §2.2 Tool Mode — edit a tool action and prove the edits persist. Exercised on
 // the URL component, whose current single tool action is "Fetch Content".
@@ -83,7 +84,7 @@ const UPDATE_PATH = "/api/v1/custom_component/update";
  * measuring nothing (#1644 — 3 of 3 attempts on the 2026-08-31 daily, 5 of 5
  * locally). A trailing wildcard would fix today's url and still match a future
  * `/update/batch`; the pathname is what this spec actually means, and it is
- * what `waitForComponentUpdateSettled` below already compares — which is why
+ * what `waitForComponentUpdateSettled` (helpers/flows) already compares — which is why
  * the barrier test went through the change green while the hold did not.
  *
  * Hoisted to a module constant because `page.unroute()` needs the SAME function
@@ -101,71 +102,10 @@ const matchesUpdatePath = (url: URL): boolean => url.pathname === UPDATE_PATH;
 // first and this wait covers the window (see `applyActionEdits`).
 const ROW_COMMIT_MS = 600;
 
-/**
- * Block until no `POST /api/v1/custom_component/update` is in flight.
- *
- * Closing the Tool Mode actions editor applies the panel edits to the node, and
- * that node then round-trips through `custom_component/update`. A round trip
- * that was issued BEFORE the edits and is still in flight when the editor closes
- * comes back carrying the pre-edit `tools_metadata`; applying it overwrites the
- * edits in the store, and the debounced autosave persists the loss (#1519 —
- * reproduced by holding one such response). Waiting the round trip out before
- * closing is what a human user does by being slow; automation has to ask.
- *
- * Tracks REQUESTS, not just responses: a request already issued whose response
- * is slow under load is exactly the case this has to cover, and a response-only
- * probe would arm its quiet timer while that request was still open — the same
- * reasoning as `helpers/flows/wait-for-flow-save-settled.ts` (#995). Kept local
- * to this spec because it has one caller; extract it to `tests/helpers/flows/`
- * (with its own `*.test.ts`) the moment a second spec needs it.
- */
-async function waitForComponentUpdateSettled(
-  page: Page,
-  { quietMs = 700, timeout = 15000 }: { quietMs?: number; timeout?: number } = {},
-): Promise<void> {
-  const isNodeUpdate = (req: Request) =>
-    req.method() === "POST" &&
-    new URL(req.url()).pathname.includes(UPDATE_PATH);
-
-  await new Promise<void>((resolve) => {
-    let quietTimer: ReturnType<typeof setTimeout> | undefined;
-    let inFlight = 0;
-
-    const finish = () => {
-      clearTimeout(quietTimer);
-      clearTimeout(cap);
-      page.off("request", onRequest);
-      page.off("requestfinished", onSettled);
-      page.off("requestfailed", onSettled);
-      resolve();
-    };
-
-    const arm = () => {
-      clearTimeout(quietTimer);
-      if (inFlight === 0) quietTimer = setTimeout(finish, quietMs);
-    };
-
-    const onRequest = (req: Request) => {
-      if (!isNodeUpdate(req)) return;
-      inFlight++;
-      clearTimeout(quietTimer);
-    };
-
-    // A request that was already open when this attached decrements below zero;
-    // clamping keeps the counter honest and still re-arms the quiet window.
-    const onSettled = (req: Request) => {
-      if (!isNodeUpdate(req)) return;
-      inFlight = Math.max(0, inFlight - 1);
-      arm();
-    };
-
-    const cap = setTimeout(finish, timeout);
-    page.on("request", onRequest);
-    page.on("requestfinished", onSettled);
-    page.on("requestfailed", onSettled);
-    arm();
-  });
-}
+// The barrier between the last panel edit and the editor close — a round trip still
+// in flight across the close comes back with the pre-edit `tools_metadata` and
+// overwrites the edits (#1519). Lives in `helpers/flows/` since #1855 gave it a
+// second caller; its timing rules are unit-tested there.
 
 /**
  * Assert the edited action as the FLOW DOCUMENT holds it, not as the editor
