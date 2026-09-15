@@ -36,10 +36,18 @@ a core presentation regression for every agent reply.
 
 `@regression` `@agents` `@playground`
 
-**`@stable` is intentionally withheld (promotion gated — issue #826).** This area
-is in the current flaky cluster (#773); the spec is authored now but promoted to
-`@stable` only after the clean, non-guarded baseline for the Wave 3 infra work is
-achieved. Absence of `@stable` is explained here per the PR checklist.
+**`@stable` is withheld, and #1790 owns the decision.** The Wave 8 T1
+measurement — nine `manual.yml` dispatches, three passes, `--retries=0` — read
+this spec green 4/4 across the first eight reports and flaky only on the ninth,
+with `MODEL_TOGGLE_WRITE_STALLED` on Google Generative AI: an instance stall the
+issue says explicitly not to paper over by raising the flush budget (#1649). The
+anthropic variants skipped throughout, on a key that was drained for all nine
+dispatches, so the spec has not been measured on a full provider set at all.
+Promotion waits for that re-dispatch on a funded key, after which #1790 applies
+promote / delete / park.
+
+The original authoring gate (#826) and the Wave 3 flaky cluster (#773) are both
+closed — they are the history of this absence, not its live reason (#1783).
 
 `@regression` — guards a rendering regression; `@agents` — agent execution;
 `@playground` — the reply is produced and asserted in the Playground chat.
@@ -155,7 +163,8 @@ tags proves the constructs rendered; absence of the raw tokens proves they were
 - If the Playground chat renderer (`.markdown.prose`, react-markdown plugins) or
   the code-block component changes.
 - If the Simple Agent template is renamed, removed, or rewired.
-- On promotion to `@stable` once the #773 baseline is clean (issue #826 gate).
+- On promotion to `@stable`, which #1790 decides after the re-dispatch on a
+  funded anthropic key (the #826 / #773 gate above it is closed history).
 
 ---
 
@@ -178,5 +187,7 @@ tags proves the constructs rendered; absence of the raw tokens proves they were
   the test a false negative. The prompt therefore explicitly forbids wrapping the
   whole answer in a code block and scopes the fence to `print('hello')` only;
   verified 8/8 clean after the change.
-- **Promotion gated (#826):** authored without `@stable`; promote after the Wave 3
-  clean baseline (#773) — do not add `@stable` in this PR.
+- **Promotion gated (#1790):** authored without `@stable` under the since-closed
+  #826 / #773 gate; the live owner is the Wave 8 T1 batch, which applies
+  promote / delete / park once the measurement can run on a funded anthropic key.
+  Do not add `@stable` ahead of that decision.

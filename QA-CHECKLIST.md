@@ -508,7 +508,7 @@
 - [~] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**partially covered on 1.11**: the field is present and togglable, but True/False are behaviorally identical — the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them; the only live trigger (LLM-emitted malformed args) is non-deterministic, so the semantic difference is not deterministically testable — re-scope tracked in #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
 - [x] Image attached in the Playground is processed by the Agent — the attachment renders in the user message and the reply describes it → `core-functionality/llm-agents/general-bugs-agent-images-playground.spec.ts` (`@stable` restored in #992 — the OpenAI quota that caused the #772 quarantine is back)
-- [-] A math prompt typed in the Playground reaches the Agent run exactly once — the user message reads `2+2` (never `2+22+2`) and the answer is `4`, never `26` → `core-functionality/llm-agents/general-bugs-agent-sum-duplicate-message-playground.spec.ts` (not `@stable`: #1465 repaired it after it sat broken on `main` unnoticed, so promotion waits for green dailies)
+- [-] A math prompt typed in the Playground reaches the Agent run exactly once — the user message reads `2+2` (never `2+22+2`) and the answer is `4`, never `26` → `core-functionality/llm-agents/general-bugs-agent-sum-duplicate-message-playground.spec.ts` (not `@stable`: #1465 repaired it after it sat broken on `main` unnoticed; #1790 owns the revisit and skipped it 3/3 on a drained anthropic key, so promotion waits for a funded key and a re-dispatch)
 
 ---
 
@@ -856,7 +856,7 @@
 - [x] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
-- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts` (automated, not `@stable` — no lane runs it, so it cannot report a regression; #1371)
+- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts` (automated, not `@stable` — auto-removed 2026-07-27 when the `[google/gemini-2.5-flash]` variant hard-failed 3/3 with `"Message empty."`; that model has since left the catalog, so the Wave 8 measurement's 6/6 green ran a different one and #1787 deliberately left this spec out of the promote batch — #963 owns the verdict and the restore)
 - [x] Gemini × MCP tool-calling regression — agent invokes the echo MCP tool (regression for fixed upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
 - [ ] List available resources via MCP protocol (client not-implementable on 1.11.x — MCPTools component and v2 client API expose tools only; server-side resources covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 - [ ] Consume resource URI and inject content into flow (client not-implementable on 1.11.x — no client resource surface; server-side read covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
