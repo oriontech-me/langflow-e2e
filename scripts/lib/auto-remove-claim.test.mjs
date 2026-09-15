@@ -72,9 +72,13 @@ test("the sole-tag note is corrected too, and does not vote on recognition", () 
 test("a PARTIAL match corrects what it found and still reports not-recognised", () => {
   // The formatter reworded one side. Reporting `true` here would suppress the
   // consumer's hedge over a summary that still carries the other claim.
-  const headlineOnly = withoutCommittedClaim(summaryOf({ footer: false }));
+  const headlineOnly = withoutCommittedClaim(summaryOf({ footer: false, soleTag: true }));
   assert.equal(headlineOnly.neutralized, false);
   assert.ok(headlineOnly.text.includes(PENDING_HEADLINE_PREFIX));
+  // Symmetric to the footer-only case below: the note is corrected on EITHER
+  // recognised claim, and testing only one side left the other rewritable.
+  assert.ok(!headlineOnly.text.includes(SOLE_TAG_NOTE));
+  assert.ok(headlineOnly.text.includes(PENDING_SOLE_TAG_NOTE));
 
   const footerOnly = withoutCommittedClaim(summaryOf({ headline: false, soleTag: true }));
   assert.equal(footerOnly.neutralized, false);

@@ -1068,6 +1068,31 @@ test("a step that reported a removal and produced no summary says that, not `lis
   }
 });
 
+test("the dry-account hedge does not weigh a removal list that is not there", () => {
+  // The only rendered-output change in its commit, and it shipped unpinned:
+  // inverting the conditional, or deleting it, restored "weigh the removal against
+  // the outage above" over a block that has just said the step produced no list.
+  const blank = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    arStatus: "removed",
+    arSummary: "",
+    arUncommitted: true,
+  });
+  assert.match(blank.body, /produced no summary either/);
+  assert.match(blank.body, /Unexpected on this shape/);
+  assert.doesNotMatch(blank.body, /weigh\n?\s*the removal/);
+
+  // And the mirror: with a list above it, the hedge is exactly what the reader needs.
+  const listed = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    arStatus: "removed",
+    arSummary: `${removedHeadline(1)}\n\n- \`a.spec.ts\` — t\n\n${COMMITTED_FOOTER}`,
+  });
+  assert.match(listed.body, /weigh\n?\s*the removal against the outage/);
+});
+
 test("a summary this cannot recognise is hedged, never presented as corrected", () => {
   // The formatter reworded and the shared constants not updated with it. The
   // correction paragraph still holds; what changes is that the body says so
@@ -1227,7 +1252,9 @@ test("the daily forwards the auto-remove step's own outcome to the umbrella", ()
   assert.ok(line, "AUTO_REMOVE_OUTCOME is not forwarded at all");
   // Evaluated, like the weekly's: what has to hold is that the step's own outcome
   // arrives unaltered, not that the line is spelled one particular way.
-  for (const outcome of ["failure", "success", "skipped"]) {
+  // `cancelled` included: it is the value the relabel was widened for, so a lane
+  // that suppressed precisely that one would defeat it while passing everything else.
+  for (const outcome of ["failure", "cancelled", "success", "skipped"]) {
     assert.equal(
       evaluateWorkflowValue(line.slice(line.indexOf(":") + 1).trim(), {
         "steps.auto_remove.outcome": outcome,

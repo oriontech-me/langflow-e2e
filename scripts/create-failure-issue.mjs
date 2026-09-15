@@ -132,7 +132,7 @@ function autoRemovalLines(arSummary, arUncommitted) {
       heading,
       "",
       "**Nothing was pushed**, and the step produced no summary either: it reported a",
-      "removal and then failed before writing one, so which tests it selected is only in",
+      "removal and then stopped before writing one, so which tests it selected is only in",
       "the `Auto-remove @stable from hard failures` step's log. No tag was removed on",
       "`main` (#1822).",
     ];
@@ -141,7 +141,7 @@ function autoRemovalLines(arSummary, arUncommitted) {
   return [
     heading,
     "",
-    "**Nothing was pushed.** The auto-remove step failed, so every test listed below still",
+    "**Nothing was pushed.** The auto-remove step did not complete, so every test listed below still",
     "carries `@stable` on `main` and runs again tomorrow — read the",
     "`Auto-remove @stable from hard failures` step for the cause, and treat the list as",
     "what this run TRIED to quarantine rather than as what it did (#1822).",
@@ -718,9 +718,17 @@ async function main() {
     // `failure`, and `cancelled` with it: the umbrella step is `always()`, so it
     // runs on a cancelled job, and the composite publishes `status=removed` before
     // the commit step exists, so excluding `cancelled` left one route to exactly
-    // the sentence this branch exists to end. `skipped` is not here: the commit
-    // step is gated on `status == removed`, so a skipped auto-removal has no
-    // status to render in the first place.
+    // the sentence this branch exists to end. Those two are the whole set: an
+    // `outcome` is one of success / failure / cancelled / skipped, and `outcome`
+    // rather than `conclusion` is the field, since it is read before any
+    // `continue-on-error` (the step has none).
+    //
+    // `skipped` is excluded because a skipped step publishes NO OUTPUTS at all, so
+    // `arStatus` is empty and `arLost` is already false — not, as an earlier
+    // version of this said, because of the composite's INNER commit-step gate,
+    // which has no bearing on the outer `uses:` step's outcome. The test that pins
+    // it therefore feeds a combination Actions cannot produce (`skipped` with a
+    // status): it is defence in depth, not a reachable regression.
     arUncommitted: ["failure", "cancelled"].includes(env.AUTO_REMOVE_OUTCOME || ""),
     empty: env.RUN_EMPTY === "true",
     unreadable: env.RUN_UNREADABLE === "true",

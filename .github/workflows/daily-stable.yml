@@ -1715,7 +1715,9 @@ jobs:
           # verification, an empty index, a rejected push — still rendered that
           # sentence about tags that are still on `main`. That is the claim #1822 is
           # about, at the consumer the issue names; the script relabels the block on
-          # `failure` and, per its own rule, labels nothing on an absent value.
+          # an outcome that did not COMPLETE — `failure` or `cancelled`, this step
+          # being `always()` and therefore reached on a cancelled run — and, per its
+          # own rule, labels nothing on an absent value.
           AUTO_REMOVE_OUTCOME: ${{ steps.auto_remove.outcome }}
           # From the report-integrity guard (#1012) — a run that executed ZERO
           # tests must announce itself as an infra abort, never as a per-test day.
