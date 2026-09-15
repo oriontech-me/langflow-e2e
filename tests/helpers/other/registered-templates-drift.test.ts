@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   describeBaselineDefect,
+  describeBlockProbe,
   describeExtra,
   describeStaleDeclarations,
   listedTemplates,
@@ -103,7 +104,7 @@ test("an unknown template is reported as extra and does NOT make the verdict dri
   assert.match(describeExtra(v.extra), /templates:baseline/);
 });
 
-test("a template whose English name changed is drift — the Accept-Language pin is load-bearing", () => {
+test("a template whose English name changed under an UNCHANGED key is drift", () => {
   const v = registrationVerdict(
     baseline,
     listedTemplates([{ name: "Sugestões básicas", name_key: "basic_prompting" }, live[1]]),
@@ -211,4 +212,27 @@ test("a baseline that both expects and declares absent the same template is refu
     declaredAbsences: [{ nameKey: "a", name: "A", reason: "r", issue: "#1" }],
   });
   assert.match(String(defect), /both expects and declares absent/);
+});
+
+test("describeBlockProbe tells a catalog-policy block apart from a registration loss", () => {
+  const probe = [
+    { nameKey: "basic_prompting", name: "Basic Prompting" },
+    { nameKey: "saas_pricing", name: "SaaS Pricing" },
+  ];
+
+  // The branch the whole probe exists for. It is unreachable from any spec run on
+  // a clean instance — which is precisely why it is pinned here and nowhere else.
+  const blocked = describeBlockProbe(probe, ["saas_pricing"]);
+  assert.match(blocked, /DOES list saas_pricing/);
+  assert.match(blocked, /catalog-policy template block is active/);
+  assert.doesNotMatch(blocked, /REGISTRATION loss/);
+
+  const lost = describeBlockProbe(probe, ["ghost_template"]);
+  assert.match(lost, /REGISTRATION loss/);
+  assert.doesNotMatch(lost, /DOES list/);
+
+  // null is "could not rule it out", never "nothing is blocked" (#1012).
+  const unknown = describeBlockProbe(null, ["ghost_template"]);
+  assert.match(unknown, /could not be\n  ruled out/);
+  assert.doesNotMatch(unknown, /REGISTRATION loss/);
 });

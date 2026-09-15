@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
+  describeBlockProbe,
   describeExtra,
   describeMissing,
   describeRenamed,
@@ -33,18 +34,21 @@ import {
  * Everything that decides lives in `helpers/other/registered-templates-drift.ts`
  * and is pure; this file is I/O and assertions only.
  *
- * `Accept-Language: en-US` is pinned on every request here, and the pin is the
- * fragile part rather than the safe part. The endpoint localizes `name` (#1400) —
- * under `pt-BR` *Basic Prompting* answers as *Sugestões básicas* while `name_key`
- * is unchanged — and nothing in the harness supplies that header for an
- * `APIRequestContext`: `PW_LOCALE` sets the browser context's `locale`, which is
- * not an `APIRequestContext` option at all, so it cannot reach this request
- * (`tests/fixtures/locale.ts` point 3 says the same). English is therefore a
- * property of the line below, not of the environment. Hence the split: the SET is
- * compared on `name_key`, which no header can move, while the `name` is compared
- * separately so that losing the pin goes red HERE — instead of surfacing in S1
- * (`templates-instantiate`, #1864), which picks a card by its display name and
- * would report it as an unexplained click timeout.
+ * `Accept-Language: en-US` is pinned on every request here. The full reasoning,
+ * and the three wrong versions of it this passage went through, are in the helper
+ * and the spec doc; the short form is that the pin is **explicitness, not a gate**
+ * (measured: no header at all also answers English, because `set_locale` defaults
+ * to `en`, and deleting all three pins leaves this spec green).
+ *
+ * The SET is compared on `name_key` because an identity must not depend on a
+ * header any caller can set. The `name` is compared as well, but **not** because
+ * it catches an upstream rename — it does not: `translate_starter_flows`
+ * (`src/backend/base/langflow/utils/i18n.py`) recomputes the served `name_key` as
+ * `safe_flow_key(persisted name)` on every request and then looks the served
+ * `name` up under that same key, so the two share one source and a rename moves
+ * both, firing the MISSING branch. What the `name` comparison does catch is the
+ * narrow case where the translation table and the persisted name disagree for one
+ * key, and a locale that genuinely reached the request.
  */
 
 const BASELINE_PATH = path.join(
@@ -225,31 +229,4 @@ async function probeIncludingBlocked(
   } catch {
     return null;
   }
-}
-
-/** Turns the probe into the one sentence a reader needs to pick a remedy. */
-function describeBlockProbe(
-  probe: ListedTemplate[] | null,
-  missingKeys: string[],
-): string {
-  if (probe === null) {
-    return (
-      "  Could not probe ?include_blocked=true (superuser only), so a catalog-policy block could not be\n" +
-      "  ruled out as the cause."
-    );
-  }
-  const withBlocked = new Set(probe.map((t) => t.nameKey));
-  const blocked = missingKeys.filter((k) => withBlocked.has(k));
-  if (blocked.length === 0) {
-    return (
-      "  ?include_blocked=true does not list them either, so this is a REGISTRATION loss, not a catalog\n" +
-      "  policy block: the image stopped shipping a component the template needs (see the startup log for\n" +
-      "  \"Skipping starter project …; unavailable components: …\")."
-    );
-  }
-  return (
-    `  ?include_blocked=true DOES list ${blocked.join(", ")}, so a catalog-policy template block is active\n` +
-    "  on this instance — not a registration loss. The @destructive governance specs set one and restore it;\n" +
-    "  a local run sharing an instance with them sees this. Re-run against a clean instance."
-  );
 }

@@ -88,12 +88,28 @@ What is actually measured on `1.13.0.dev12`:
 - ❌ *"The `name` comparison is what goes red when the pin is lost"* — also false, and measured
   above: the pin is **explicitness, not a gate**, for as long as the backend's default is `en`.
 
-What the `name` comparison genuinely buys is an upstream **rename**. That is the signal worth
-having, because **S1** picks a template's card by its display name and would surface a rename
-as an unexplained click timeout rather than as a named failure. It would *also* catch a locale
-that reached the request by some future route — a lane adding `extraHTTPHeaders`, a proxy, an
-upstream change to the default — but that is a hypothesis and is written as one, not as a
-trap that has been observed.
+- ❌ *"What the `name` comparison buys is an upstream rename"* — the third wrong version, and
+  the mechanism is why. The served `name_key` is **not** the persisted column:
+  `translate_starter_flows` (`src/backend/base/langflow/utils/i18n.py`) recomputes it as
+  `safe_flow_key(flow.name)` on **every request**, then looks the served `name` up as
+  `starter_flows.<that key>.name` with the persisted name as the fallback. Both served fields
+  descend from one source. Measured on the live listing under `en-US`: `safe_flow_key(name)
+  == name_key` for **26 of 26**, no divergence — so they are not independent observations. A
+  genuine rename (*Blog Writer* → *Blog Author*) moves the key too and fires **missing** plus
+  **extra**, never `renamed`.
+
+What `renamed` genuinely catches is narrower, and kept because it is free: the translation
+table disagreeing with the persisted name for one key (an upstream edit to
+`locales/en.json`'s `starter_flows.<key>.name` without the starter JSON's own `name`, or a
+punctuation-only rename that collapses to the same key, *Document Q&A* → *Document Q & A*),
+and a locale that genuinely reached the request by some future route — a lane adding
+`extraHTTPHeaders`, a proxy, an upstream change to the default. That last one is a hypothesis
+and is written as one, not as a trap that has been observed.
+
+So the honest statement of the design: the set is keyed on `name_key` because identity must
+not ride on a header, and the `name` check is a cheap **second observation of a shared
+source**, not an independent one. Three drafts of this passage claimed more than that; each
+is left above rather than quietly replaced.
 
 ### The three branches, and why their severities differ
 
@@ -199,6 +215,7 @@ It fails, with the template named in the message, when any of:
 | Add a fictional template to `templates[]` | RED — reported as an undeclared absence, naming it, with the `?include_blocked=true` probe's verdict appended |
 | **Move** a registered template out of `templates[]` and into `declaredAbsences[]` | RED — reported as a stale declaration, naming the declaration and its issue |
 | Remove a real template from `templates[]` | **GREEN**, with the extra reported in the output and asserted in the annotation |
+| Change one template's recorded `name` while leaving its `nameKey` | RED via the `renamed` branch, naming both spellings |
 | Delete the report block from the extras step | RED — the annotation assertion is what makes "reported" a property rather than a hope |
 
 The second row says **move** on purpose: *adding* a registered template to `declaredAbsences[]`
@@ -332,8 +349,12 @@ Resolved on `origin/main` and `origin/release-1.13.0`.
   registered set, its embedded-custom-component exemption, and the warning text it logs.
 - `src/backend/base/langflow/initial_setup/starter_projects/` — the 27 shipped template
   JSONs. A file added, removed or renamed here moves the baseline.
-- `src/backend/base/langflow/services/database/models/flow/model.py` — `name_key`, the
-  stable i18n key this spec compares on.
+- `src/backend/base/langflow/services/database/models/flow/model.py` — the persisted
+  `name_key` column. Note it is **not** what the endpoint serves: see the next entry.
+- `src/backend/base/langflow/utils/i18n.py` — `translate_starter_flows`, which recomputes the
+  served `name_key` from the persisted English name on every request and looks the served
+  `name` up under it. This is the derivation the spec actually compares on, and the reason
+  `name` and `name_key` are not independent observations.
 - `src/backend/base/langflow/utils/i18n_keys.py` — `safe_flow_key`, which derives `name_key`
   from the original English name.
 - `src/lfx/src/lfx/utils/component_aliases.py` — `flatten_components_with_aliases`, why

@@ -25,8 +25,10 @@
  * `name_key` is a persisted column — "Stable i18n key derived from the original
  * English name" (`services/database/models/flow/model.py`), produced by
  * `safe_flow_key` (`utils/i18n_keys.py`) — and it is the key upstream's own
- * catalog blocklist filters on. So the set comparison keys on it: an identity
- * must not depend on a request header any caller can set.
+ * catalog blocklist filters on. (The value this ENDPOINT serves is recomputed per
+ * request rather than read from that column; see the third retraction below, which
+ * is where that matters.) So the set comparison keys on it: an identity must not
+ * depend on a request header any caller can set.
  *
  * **Two wrong reasons were written here before the right one, and both are worth
  * knowing because each pointed at a trap that does not exist.** What is measured
@@ -45,13 +47,32 @@
  *    comparison is what goes red when the pin breaks" — is false too: the pin is
  *    explicitness, not a gate, as long as the backend's default stays `en`.
  *
- * What the `name` comparison actually buys, then, is an upstream **rename** —
- * which is the signal that matters, because S1 (`templates-instantiate`, #1864)
- * picks a template's card by its display name and would report a rename as an
- * unexplained click timeout. It would also catch a locale that genuinely reached
- * the request by some future route (a lane adding `extraHTTPHeaders`, a proxy, an
- * upstream change to the default) — but that is a hypothesis, not a measurement,
- * and it is written as one here on purpose.
+ * **A third wrong reason followed the first two, and this is it: "what the `name`
+ * comparison buys is an upstream rename."** It does not, and the mechanism is the
+ * reason. The served `name_key` is **not** the persisted column —
+ * `translate_starter_flows` (`src/backend/base/langflow/utils/i18n.py`) recomputes
+ * it as `safe_flow_key(flow.name)` on **every request**, then looks the served
+ * `name` up as `starter_flows.<that key>.name` with the persisted name as the
+ * fallback. So both served fields descend from one source, the persisted English
+ * name. Measured on the live listing under `en-US`: `safe_flow_key(name) ==
+ * name_key` for **26 of 26**, no divergence. A genuine rename (*Blog Writer* ->
+ * *Blog Author*) therefore moves the key too and fires **missing** plus **extra**,
+ * never `renamed`.
+ *
+ * What `renamed` actually catches is narrower, and worth keeping because it is
+ * free:
+ *
+ *  - the translation table and the persisted name disagreeing for one key — an
+ *    upstream edit to `locales/en.json`'s `starter_flows.<key>.name` without the
+ *    starter JSON's own `name`, or a punctuation-only rename that collapses to the
+ *    same `safe_flow_key` (*Document Q&A* -> *Document Q & A*);
+ *  - a locale that genuinely reached the request by some future route (a lane
+ *    adding `extraHTTPHeaders`, a proxy, an upstream change to the default) —
+ *    a hypothesis, written as one on purpose.
+ *
+ * Which leaves the honest statement of the design: the set is keyed on `name_key`
+ * because identity must not ride on a header, and the `name` check is a cheap
+ * second observation of a shared source, not an independent one.
  *
  * ## Layering
  *
@@ -120,9 +141,11 @@ export interface RegistrationVerdict {
   /** Declared absences the listing now carries. Failing (#1084). */
   staleDeclarations: DeclaredAbsence[];
   /**
-   * Templates present whose English name differs from the baseline's. Failing:
-   * either upstream renamed it, or the `Accept-Language` pin stopped being
-   * honoured — and the second would silently break S1's card click.
+   * Templates present whose English `name` differs from the baseline's, under the
+   * same `name_key`. Failing — but note what it is NOT: an upstream rename moves
+   * the served key too (see the header), so a rename fires `missing`, not this.
+   * This is the narrow case of the translation table disagreeing with the
+   * persisted name for one key, or of a locale genuinely reaching the request.
    */
   renamed: Array<{ nameKey: string; expected: string; actual: string }>;
   /**
@@ -357,8 +380,10 @@ export function describeRenamed(renamed: RegistrationVerdict["renamed"]): string
     .map(
       (r) =>
         `  • ${r.nameKey} answers "${r.actual}" where the baseline recorded "${r.expected}".\n` +
-        `      Either upstream renamed the template, or Accept-Language: en-US stopped being honoured —\n` +
-        `      the second silently breaks every spec that picks a template card by its display name.`,
+        `      The key is unchanged, so this is NOT a plain upstream rename (that would move the key and\n` +
+        `      show up as a missing template). Either locales/en.json's starter_flows.${r.nameKey}.name was\n` +
+        `      edited without the starter JSON's own name, or a locale reached this request. Either way,\n` +
+        `      every spec that picks a template card by its display name is about to click the wrong one.`,
     )
     .join("\n");
 }
@@ -370,5 +395,46 @@ export function describeExtra(extra: ListedTemplate[]): string {
     `📌 ${extra.length} template(s) the baseline does not know — reported, not failed:\n` +
     extra.map((t) => `  • ${t.nameKey} ("${t.name}")`).join("\n") +
     `\n  Accept them with: npm run templates:baseline (a committed diff, reviewed like any other).`
+  );
+}
+
+/**
+ * Turns the `?include_blocked=true` probe into the one sentence a reader needs to
+ * pick a remedy: a catalog-policy block and a registration loss both show up as a
+ * missing template, and their fixes are opposite.
+ *
+ * `probe` is `null` when the listing could not be obtained or read — the flag is
+ * superuser-only, so an ordinary credential gets 403. That is "could not rule it
+ * out", never "nothing is blocked" (#1012).
+ *
+ * It lives here rather than in the spec because it DECIDES, and this module is
+ * where the deciding is pure and unit-tested; the spec owns the request that feeds
+ * it. Its third branch — the one the whole probe exists for — is reachable from no
+ * spec run on a clean instance, so a unit test is the only place it can be pinned
+ * at all.
+ */
+export function describeBlockProbe(
+  probe: ListedTemplate[] | null,
+  missingKeys: string[],
+): string {
+  if (probe === null) {
+    return (
+      "  Could not probe ?include_blocked=true (superuser only), so a catalog-policy block could not be\n" +
+      "  ruled out as the cause."
+    );
+  }
+  const withBlocked = new Set(probe.map((t) => t.nameKey));
+  const blocked = missingKeys.filter((k) => withBlocked.has(k));
+  if (blocked.length === 0) {
+    return (
+      "  ?include_blocked=true does not list them either, so this is a REGISTRATION loss, not a catalog\n" +
+      "  policy block: the image stopped shipping a component the template needs (see the startup log for\n" +
+      '  "Skipping starter project …; unavailable components: …").'
+    );
+  }
+  return (
+    `  ?include_blocked=true DOES list ${blocked.join(", ")}, so a catalog-policy template block is active\n` +
+    "  on this instance — not a registration loss. The @destructive governance specs set one and restore it;\n" +
+    "  a local run sharing an instance with them sees this. Re-run against a clean instance."
   );
 }
