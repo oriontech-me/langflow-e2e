@@ -686,15 +686,41 @@ export function compareRuns({
     );
   }
 
-  const ciOut = indexOutcomes(ci);
-  const vmOut = indexOutcomes(vm);
-
-  for (const [label, index] of [["Actions", ciOut], ["VM", vmOut]]) {
-    const infra = [...index.values()].filter((v) => v.entry?.infra_signature).length;
-    if (infra) {
+  // Counted off `row.failures`, NOT off the indexOutcomes map. That map merges `flaky`
+  // and `failures` into one key space, so counting it here made a RECOVERED flaky that
+  // carried an infra_signature read as a failure "not attributable to the spec". The
+  // text says "listed failures"; the count did not. Seen on 2026-09-11, when the VM's
+  // three reds all had infra_signature: null and the warning still claimed one, and
+  // again on 2026-09-14, when it fired on both lanes at once off the same flaky spec.
+  // This warning exists to say "this red is not the spec's fault", so a false positive
+  // lands squarely on the one claim this lane exists to make precisely.
+  //
+  // The flaky count is REPORTED, not dropped, and that is the second half of the same
+  // fix. Splitting the two and printing only the failures line would have traded a
+  // wrong sentence for a missing one, which is the trade #1012 refuses: a flake whose
+  // failed attempt could not reach the backend is a fact about that lane's environment
+  // -- the likeliest reason a flake is one-sided at all -- and this was the only place
+  // that said so outside a cross-target pair. It would also have left that pair's
+  // "(see the narrowing above)" pointing at nothing on exactly the 2026-09-14 shape
+  // above, where both lanes carried the signature on a FLAKY and neither on a failure.
+  for (const [label, laneRow] of [["Actions", ci], ["VM", vm]]) {
+    const carrying = (list) => (list ?? []).filter((e) => e?.infra_signature).length;
+    const infraFailed = carrying(laneRow?.failures);
+    const infraFlaky = carrying(laneRow?.flaky);
+    if (infraFailed) {
       warnings.push(
-        `${infra} of ${label}'s listed failures carry an infra_signature - the harness could not reach the ` +
+        `${infraFailed} of ${label}'s listed failures carry an infra_signature - the harness could not reach the ` +
           `backend, so they are not attributable to the spec that reported them.`,
+      );
+    }
+    // A separate line, never a clause on the one above, because the two say different
+    // things about the day: one names reds that are not the spec's, the other names a
+    // lane that was unreachable and recovered. A reader counting reds must not add them.
+    if (infraFlaky) {
+      warnings.push(
+        `${infraFlaky} of ${label}'s RECOVERED flaky tests carry an infra_signature - the harness could not reach ` +
+          `the backend on an attempt that later passed. Those are not reds on that lane and not the spec's fault ` +
+          `either; they are that lane's environment, and the usual reason a flake is one-sided.`,
       );
     }
   }
@@ -710,6 +736,11 @@ export function compareRuns({
   if (blockers.length) {
     return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, listingMismatch, comparable: false };
   }
+
+  // Below the return, not above it: nothing between here and the top reads these any
+  // more, and a blocked comparison used to build both maps only to discard them.
+  const ciOut = indexOutcomes(ci);
+  const vmOut = indexOutcomes(vm);
 
   const divergences = [];
   const agreed = [];

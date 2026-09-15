@@ -178,6 +178,113 @@ test("a failure carrying an infra_signature is flagged as not attributable to it
   assert.match(result.warnings.join(" "), /infra_signature/);
 });
 
+// The two below are the negative and the arithmetic of the test above, and their
+// absence is what let the warning count `flaky` as `failures` for three days: the
+// positive case passed either way, so nothing failed when the count was wrong.
+test("a recovered FLAKY carrying an infra_signature raises no 'listed failures' warning", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", {
+      flaky: [fail({ infra_signature: "api-request-timeout" })],
+      totals: { passed: 10, failed: 0, flaky: 1, skipped: 2 },
+    }),
+  );
+  assert.equal(
+    result.warnings.filter((w) => /listed failures carry an infra_signature/.test(w)).length,
+    0,
+  );
+});
+
+test("the infra_signature count counts failures only, not flaky plus failures", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", {
+      failures: [fail({ test: "a red one", infra_signature: "backend-unreachable" })],
+      flaky: [fail({ test: "a recovered one", infra_signature: "api-request-timeout" })],
+      totals: { passed: 9, failed: 1, flaky: 1, skipped: 2 },
+    }),
+  );
+  const line = result.warnings.find((w) => /listed failures carry an infra_signature/.test(w));
+  assert.ok(line, "the warning should still fire for the real failure");
+  assert.match(line, /^1 of VM's listed failures/);
+});
+
+// Splitting the count was only half the fix. The other half is that the flaky side is
+// still REPORTED — on its own line, with its own meaning. Dropping it would trade a
+// wrong sentence for a missing one, and would leave the cross-target block's
+// "(see the narrowing above)" pointing at nothing on the 2026-09-14 shape, where both
+// lanes carried the signature on a flaky and neither on a failure.
+test("a recovered flaky carrying an infra_signature is reported on its own line", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", {
+      flaky: [fail({ infra_signature: "api-request-timeout" })],
+      totals: { passed: 10, failed: 0, flaky: 1, skipped: 2 },
+    }),
+  );
+  const line = result.warnings.find((w) => /RECOVERED flaky tests carry an infra_signature/.test(w));
+  assert.ok(line, "the flaky side must not go silent");
+  assert.match(line, /^1 of VM's RECOVERED flaky/);
+  assert.match(line, /not reds on that lane/);
+});
+
+test("failures and flaky carrying an infra_signature are counted on two separate lines", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", {
+      failures: [fail({ test: "a red one", infra_signature: "backend-unreachable" })],
+      flaky: [
+        fail({ test: "a recovered one", infra_signature: "api-request-timeout" }),
+        fail({ test: "another recovered one", infra_signature: "api-request-timeout" }),
+      ],
+      totals: { passed: 8, failed: 1, flaky: 2, skipped: 2 },
+    }),
+  );
+  // Never folded into one sentence: a reader counting reds must not add 1 and 2.
+  assert.match(
+    result.warnings.find((w) => /listed failures carry an infra_signature/.test(w)),
+    /^1 of VM's listed failures/,
+  );
+  assert.match(
+    result.warnings.find((w) => /RECOVERED flaky tests carry an infra_signature/.test(w)),
+    /^2 of VM's RECOVERED flaky/,
+  );
+});
+
+// The pair the narrowing has to answer for: 2026-09-14, where `model-provider-base-url-ssrf`
+// flaked on BOTH lanes off an unreachable backend and no failure carried a signature at
+// all. The rendered pair says "see the narrowing above", so the narrowing has to be there.
+test("a cross-target flaky pair with infra on both lanes has a narrowing to point at", () => {
+  const ssrf = (over) =>
+    fail({
+      test: "a base URL on a private address is refused",
+      file: "tests-automations/regression/core-functionality/model-provider/model-provider-base-url-ssrf.spec.ts",
+      error_signature: "apiRequestContext.post: Timeout 20000ms exceeded",
+      infra_signature: "api-request-timeout",
+      ...over,
+    });
+  const result = compare(
+    row("daily-stable", {
+      flaky: [ssrf({ param: "provider:openai" })],
+      totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 },
+    }),
+    row("daily-stable-vm", {
+      flaky: [ssrf({ param: "provider:google" })],
+      totals: { passed: 9, failed: 0, flaky: 1, skipped: 2 },
+    }),
+  );
+  const report = renderReport(result);
+  assert.match(report, /see the narrowing above/);
+  for (const label of ["Actions", "VM"]) {
+    assert.ok(
+      result.warnings.some((w) => new RegExp(`^1 of ${label}'s RECOVERED flaky`).test(w)),
+      `${label} carries the signature on a flaky and the narrowing must say so`,
+    );
+  }
+  // And it still says nothing about failures, because there were none.
+  assert.equal(result.warnings.filter((w) => /listed failures carry an infra_signature/.test(w)).length, 0);
+});
+
 test("different shard counts warn without blocking", () => {
   const result = compare(
     row("daily-stable", { backend: { shard_total: 4 } }),
