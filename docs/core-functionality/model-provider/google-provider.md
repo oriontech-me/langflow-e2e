@@ -1,6 +1,6 @@
 # Google Provider — configure key, select Gemini
 
-**Last validated:** Langflow 1.12.x (provider-row wait + Test 1 flow cleanup measured on `1.12.0.dev44`, #1648)
+**Last validated:** Langflow 1.13.x (Test 1 read through `armProviderSave` and measured on `1.13.0.dev12`, #1867; provider-row wait + Test 1 flow cleanup on `1.12.0.dev44`, #1648)
 
 ---
 
@@ -64,17 +64,28 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 3. Fill `provider-variable-input-GOOGLE_API_KEY` with `GOOGLE_API_KEY`.
 4. Arm two response waiters, then click the save button (`Save` when
    unconfigured, `Replace` when a key is already stored — match `/Save|Replace/`).
-5. **Validation (causal — no pre-existing-state false positive):** the save click
-   must produce **both** a `POST /api/v1/models/validate-provider` → **2xx** (the
-   key authenticates against Google live) **and** a persist to
-   `/api/v1/variables/` → **2xx**. The persist is a **`POST` (create, 201)** when
-   the `GOOGLE_API_KEY` global variable does not yet exist and a **`PATCH`
-   (update, 200)** when it does — the frontend branches on existence — so the
-   waiter matches **either method** (#636). Asserting the request outcomes — not
-   the "Disconnect"/"Replace" state, which pre-exists when the global key was
-   already configured — ties the pass to *this* save. Idempotent across states:
-   the first save on a fresh instance creates, later saves update. (Google
-   validation can be slow on a cold provider — the waiters use a 60 s timeout.)
+5. **Validation (causal, and read where the verdict actually is):** the save
+   click must produce a `POST /api/v1/models/validate-provider` answering
+   **`200` *and* `{"valid": true}`** — the status alone proves nothing, since the
+   endpoint answers `200` for a rejected key too and puts the verdict in the body
+   (`{"valid": false, "error": "Invalid API key for …"}`, #1823/#1867) — and
+   **then** a persist to `/api/v1/variables/` → **2xx**. The persist is a
+   **`POST` (create, 201)** when the `GOOGLE_API_KEY` global variable does not yet
+   exist and a **`PATCH` (update, 200)** when it does — the frontend branches on
+   existence — so the waiter matches **either method** (#636).
+   The two are awaited **in order, not concurrently**: the frontend gates the
+   write on the validation body (`useProviderConfiguration.ts` →
+   `handleSaveAllVariables`), so a rejected key produces no `/variables/` request
+   at all, and waiting for both at once turned a sub-second refusal into a 60 s
+   timeout with no cause in it (#1867). Both waiters are still armed before the
+   click, via the shared `armProviderSave` helper (#1849) — the same one the five
+   sibling provider specs read their Save with, so the rule has one implementation
+   rather than a copy per spec. Asserting the request outcomes — not the
+   "Disconnect"/"Replace" state, which pre-exists when the global key was already
+   configured — ties the pass to *this* save. Idempotent across states: the first
+   save on a fresh instance creates, later saves update. (Google validation can be
+   slow on a cold provider — the waiters keep a 60 s timeout, over the helper's
+   30 s default; the refusal path no longer spends it either way.)
 
 ---
 
@@ -109,20 +120,24 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 
 ## Validation criterion *(required)*
 
-- **Configure:** clicking Save on the Google key produces a 2xx
-  `validate-provider` (key authenticates against Google) and a 2xx persist to
+- **Configure:** clicking Save on the Google key produces a `validate-provider`
+  answering `200` **and** `{"valid": true}` (the key authenticates against Google
+  live — the status alone does not say so) and, as a consequence, a 2xx persist to
   `/variables/` (key persisted) — `POST` create or `PATCH` update depending on
   whether the global key already exists (#636) — the pass is caused by this save,
-  not a pre-existing configured state.
+  not a pre-existing configured state. A key Google rejects fails on the body
+  assert, in seconds, carrying Google's own message.
 - **Select + execute:** the Agent's model dropdown shows a Gemini model, and
   running the flow returns a non-empty AI response (the per-run sentinel is a soft
   signal — Gemini doesn't always echo it verbatim).
 
 ## Guarding against false positives *(how)*
 
-- **Test 1** asserts the *save requests succeed* (`validate-provider` +
-  `POST`/`PATCH /variables` both 2xx), not a UI state that pre-exists from an
-  earlier configuration — so a no-op save cannot pass.
+- **Test 1** asserts the *save requests succeed and say so in the body*
+  (`validate-provider` → `200` + `{"valid": true}`, then `POST`/`PATCH
+  /variables` → 2xx), not a UI state that pre-exists from an earlier
+  configuration — so neither a no-op save nor a key Google rejects can pass, the
+  latter being reported by the endpoint with a `200` (#1867).
 - **Test 2** asserts a **Gemini** model is selected
   (`value-dropdown-model_model` ~ `/gemini|gemma/i`, causal) and that execution
   returns a non-empty response; the per-run sentinel is a soft signal (Gemini
@@ -145,9 +160,22 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/pages/SettingsPage/` (Model Providers page) — renders
-  `provider-item-Google Generative AI`, `provider-variable-input-GOOGLE_API_KEY`,
-  the Save/Replace button; a rename breaks Test 1.
+- `src/frontend/src/pages/SettingsPage/pages/ModelProvidersPage/` — the Model
+  Providers page Test 1 navigates to. It does not render the controls itself: it
+  mounts them from the directory below, so a *page* rename breaks the navigation
+  step only.
+- `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx`
+  and `src/frontend/src/modals/modelProviderModal/components/ProviderListItem.tsx`
+  — where `provider-variable-input-GOOGLE_API_KEY`, the Save/Replace control and
+  `provider-item-Google Generative AI` actually live (verified by grep on upstream
+  `main` / `release-1.13.0` / `release-1.12.1`: the first two testids appear in
+  exactly one file each). A rename here breaks Test 1's key entry and save.
+- `src/frontend/src/modals/modelProviderModal/hooks/useProviderConfiguration.ts` —
+  `handleSaveAllVariables` gates the `/variables/` write on the
+  `validate-provider` **body** (`const isValid = await validateCredentials(); if
+  (!isValid …) return;`). That gate is the whole reason Test 1 reads the two
+  responses **in order** rather than together (#1867); if it moves, the ordered
+  two-request assertion is what notices.
 - Provider-config storage — the global `GOOGLE_API_KEY` provider variable.
 - `src/lfx/src/lfx/components/models_and_agents/` — Agent execution with the
   selected Gemini model (Test 2).
@@ -212,15 +240,29 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   visible past the 120 s wait, no `div-chat-message` renders, and the workflow
   auto-removes `@stable`. A billing outage reported as a product regression.
   Measured on the OpenAI copy of the same bug twice (#772/#775, then #1333).
-  **Test 1 is deliberately NOT gated:** `validate_model_provider_key`
+  **Test 1 is deliberately NOT gated, and the reason holds for exactly ONE of the
+  two ways the account can be unusable (#1867).**
+  *Drained / spend-capped:* `validate_model_provider_key`
   (`lfx/base/models/unified_models.py`) makes a real `llm.invoke("test")` but
   only raises when the error message contains `401`, `authentication` or
   `api key` — every other failure hits a bare `return` ("allow saving despite
-  minor errors"), so a quota/billing failure still answers `{valid: true}` and
-  Test 1 still passes. It therefore keeps covering the Settings save path on a
-  day the account is dry; gating it would trade real coverage for nothing.
+  minor errors"), so a quota/billing failure is expected to still answer
+  `{valid: true}` and leave Test 1 passing. That is a derivation from the shared
+  code path, not a Google measurement: the instance actually measured is the
+  Anthropic sibling on the 2026-07-27 daily (dry account, Test 1 passed, Test 2
+  hard-failed). It keeps covering the Settings save path on a day the account is
+  dry; gating it would trade real coverage for nothing.
+  *Rejected (401):* the product correctly refuses to persist the credential
+  (#1823), so Test 1 **cannot** pass however healthy Langflow is. That is the test
+  working — the remedy is a new key — and since #1867 it says so in seconds,
+  carrying Google's own message, instead of at a 60 s timeout carrying nothing.
+  `providerSkipGate` is still refused because it does not separate those two
+  states; the discriminator that does is the `validate-provider` body.
   **Resilience, not a root-cause fix** — the key still has to be usable for
-  §7.4.2 to be exercised at all; the general remedy is **#976**.
+  §7.4.2 to be exercised at all. The per-key fallback once proposed for that
+  (**#976**) was closed **not planned** — a drained key is resolved by a top-up,
+  not by a second credential — so the standing remedies are the daily's provider
+  rotation (**#1185**) and the keyless `any-completion` routing (**#1187**).
 - **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
   the frontend fires `POST /variables/` (create, 201) when the key does not yet
   exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
