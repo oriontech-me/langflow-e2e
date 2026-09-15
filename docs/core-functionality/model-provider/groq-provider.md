@@ -1,6 +1,9 @@
 # Groq Provider — configure key on the component, execute flow
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x — and it stays there deliberately. The only
+run that ever exercised this test was on `1.12.0.dev8` with `lfx-bundles` +
+`langchain-groq` installed by hand (see *Tags*); the 1.13 measurement below
+re-confirms the component's **absence**, which is not a validation of the test.
 
 ---
 
@@ -56,8 +59,8 @@ the component but the run then dies with `ComponentBuildError: Error building
 Component Groq: langchain-groq is not installed`.
 
 Restore `@stable` only if the component returns to the default nightly image.
-**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — two minor
-lines past the 1.12.0.dev8 measurement above, `GET /api/v1/all` still carries
+**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — one minor
+line past the 1.12.0.dev8 measurement above, `GET /api/v1/all` still carries
 **zero** occurrences of `groq` anywhere in its payload, so nothing about the
 absence has moved and the pre-flight still skips before a key is ever read.
 
@@ -189,20 +192,30 @@ valid key.
   (`popover-anchor-input-api_key`, `dropdown_str_model_name`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Groq API (`api.groq.com`) — probe, live catalog refresh, and the real
-  inference. A live `GROQ_API_KEY` is required. **CI note — the lanes now carry
-  it, and that changes nothing here:** `GROQ_API_KEY` (secret) reaches
-  `daily-stable.yml`, `pr-validation.yml` and `manual.yml`, and
-  `GROQ_TEST_MODEL` (repository variable, `openai/gpt-oss-20b`) reaches the
-  first two, all since 2026-09-13. The key is therefore **not** why CI skips
-  this test — the component-availability pre-flight above runs first and
-  unconditionally, so the key probe is not reached while the component is
-  absent. An earlier revision of this note said the workflows carried no secret
-  yet; that named a second cause which no longer exists, and a parked spec
-  whose doc names the wrong cause is the expired justification #1783 exists to
-  report. One gap left standing because it is unreachable today:
-  `manual.yml` receives the key but **not** `GROQ_TEST_MODEL`, so a dispatch
-  there would fall back to the `llama-3.1-8b-instant` default this account does
-  not serve and skip on the probe — visible only if the component ever returns.
+  inference. A live `GROQ_API_KEY` is required. **CI note — the lanes do carry
+  it, and that changes nothing here:** `GROQ_API_KEY` is a repository secret
+  created **2026-07-09** (`#600`; rotated 2026-09-13, which is the `Updated`
+  column `gh secret list` prints — read `created_at` from the API before dating
+  anything off it), and it reaches the step that RUNS specs in
+  `daily-stable.yml` and `pr-validation.yml`, alongside `GROQ_TEST_MODEL`
+  (repository variable, `openai/gpt-oss-20b`, added 2026-09-13). The key is
+  therefore **not** why CI skips this test — the component-availability
+  pre-flight above runs first and unconditionally, so the key probe is not
+  reached while the component is absent.
+  **`manual.yml` is the exception, and it is the whole key rather than the
+  model pin:** there the secret appears only inside the `Collect models` step's
+  own `env:`, which does not cross steps, and the job-level `env:` block
+  carries no `GROQ_*` at all — so a dispatch runs this spec with no key and
+  would skip on `"GROQ_API_KEY not set in the environment"`, the probe's first
+  branch, never reaching the catalog check. Unreachable today (the pre-flight
+  skips first) and recorded for the day the component returns.
+  An earlier revision of this note said the workflows carried no secret yet. It
+  was already false when it was written, and it survived because it sits in
+  `## External dependencies` — a section no guard reads: `#1783`'s
+  gate-justification check looks only at the `## Tags` section and the Part II
+  bullet, and only at issue references. Prose outside those two places is
+  checked by nobody, which is the reason to state a CI fact here narrowly or
+  not at all.
 
 ---
 

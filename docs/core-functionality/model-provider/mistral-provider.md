@@ -1,6 +1,9 @@
 # Mistral Provider — configure key on the component, execute flow
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x — and it stays there deliberately. The only
+run that ever exercised this test was on `1.12.0.dev8` with `lfx-bundles` +
+`langchain-mistralai` installed by hand (see *Tags*); the 1.13 measurement below
+re-confirms the component's **absence**, which is not a validation of the test.
 
 ---
 
@@ -53,8 +56,8 @@ alone leaves the `mistral` registry category present but **empty**; the
 `ext:mistral:MistralAIModelComponent@official` appear.
 
 Restore `@stable` only if the component returns to the default nightly image.
-**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — two minor
-lines past the 1.12.0.dev8 measurement above, `mistral` appears in
+**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — one minor
+line past the 1.12.0.dev8 measurement above, `mistral` appears in
 `GET /api/v1/all` only as Bedrock `model_id` options and as an Astra Vectorize
 provider name; there is no MistralAI component and no `mistral` category, so
 nothing about the absence has moved and the pre-flight still skips before a key
@@ -173,19 +176,27 @@ error event, so an auth failure cannot pass silently).
   (`popover-anchor-input-api_key`, `dropdown_str_model_name`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Mistral API (`api.mistral.ai`) — probe and the real inference. A live
-  `MISTRAL_API_KEY` is required. **CI note — the lanes now carry it, and that
-  changes nothing here:** `MISTRAL_API_KEY` (secret) reaches
-  `daily-stable.yml`, `pr-validation.yml` and `manual.yml` since 2026-09-13.
-  The key is therefore **not** why CI skips this test — the
-  component-availability pre-flight above runs first and unconditionally, so
-  the key probe is not reached while the component is absent. An earlier
-  revision of this note said the workflows carried no secret yet; that named a
-  second cause which no longer exists, and a parked spec whose doc names the
-  wrong cause is the expired justification #1783 exists to report. No
-  `MISTRAL_TEST_MODEL` variable exists on any lane, so a run that ever got past
-  the pre-flight would use the `mistral-small-latest` default — unlike Groq,
-  where the default was measured absent from this account's catalog and a
-  variable had to be added.
+  `MISTRAL_API_KEY` is required. **CI note — the lanes do carry it, and that
+  changes nothing here:** `MISTRAL_API_KEY` is a repository secret created
+  **2026-07-09** (`#600`; the 2026-09-13 date `gh secret list` shows is
+  `updated_at`, a rotation, not the creation) and it reaches the step that RUNS
+  specs in `daily-stable.yml` and `pr-validation.yml`. The key is therefore
+  **not** why CI skips this test — the component-availability pre-flight above
+  runs first and unconditionally, so the key probe is not reached while the
+  component is absent.
+  **`manual.yml` is the exception:** there the secret appears only inside the
+  `Collect models` step's own `env:`, which does not cross steps, and the
+  job-level `env:` carries no `MISTRAL_*` — so a dispatch runs this spec with
+  no key and would skip on `"MISTRAL_API_KEY not set in the environment"`.
+  Unreachable today, recorded for the day the component returns. No
+  `MISTRAL_TEST_MODEL` variable exists on any lane, so the
+  `mistral-small-latest` default applies — unlike Groq, where the default was
+  measured absent from this account's catalog and a variable had to be added.
+  An earlier revision of this note said the workflows carried no secret yet. It
+  was already false when it was written, and it survived because it sits in
+  `## External dependencies` — a section no guard reads: `#1783`'s
+  gate-justification check looks only at the `## Tags` section and the Part II
+  bullet, and only at issue references.
 
 ---
 
