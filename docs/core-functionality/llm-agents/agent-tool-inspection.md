@@ -1,6 +1,6 @@
 # Agent tool inspection — Playground names the tool used and captures its input/output
 
-**Last validated:** Langflow 1.12.x (promotion measured on 1.12.1)
+**Last validated:** Langflow 1.13.x (promotion measured on 1.12.1; Wave 8 T1 verdict re-measured on the nightly)
 
 ---
 
@@ -77,6 +77,34 @@ asserts the chip exists for MCP tools. Neither asserts the tool call's
 ## Tags *(required)*
 
 `@stable` `@regression` `@agents` `@playground`
+
+**Re-measured for the Wave 8 T1 verdict (#1790), and the table's row does not
+describe this file.** `docs/triage/inherited-spec-triage.md` recorded
+`3/6 green, 3 skipped` with a 30 s `page.waitForResponse` at
+`helpers/flows/load-template-by-name.ts:221`. That measurement ran against a
+version superseded before the table itself merged: `@stable` landed here in
+`f5f83da8` at 2026-09-09T20:50Z — 17 minutes ahead of the table's merge at
+21:07Z — alongside three further rewrites the same day (`574f0cdc`,
+`e49a5120`, `00f50b58`). Re-measured on the nightly: three `manual.yml`
+dispatches at `retries=0`, `provider=auto`, **green on openai, anthropic and
+google in all three passes** (9/9; runs 34881735770 / 34881749638 /
+34881764492). Measured twice more on 2026-09-15 — runs 34980294666 /
+34980298743 / 34980302630, and 35003644385 / 35003647350 / 35003650561 — green
+9/9 both times, so 27/27 across the three sets. A local force-failure asserting
+the other tool's name (`perform_search`) went red with the spec's own message.
+
+**Known nondeterminism, in the shared helper rather than in this spec's
+assertions.** Daily 34857401847 (2026-09-14) recorded this test `flaky`
+(`attempts: 2`, `param: openai / gpt-4o-mini`, `infra_signature: null`): the
+first attempt failed inside `dismissWelcomeOverlayAndWaitForModal`
+(`tests/helpers/flows/open-new-flow-templates-modal.ts:106`), where a 30 s
+`expect.poll` on the welcome overlay / templates modal never turned true. It is
+the template-load entry path — the same family as the row above, a DIFFERENT
+line in it — and it is reached by every spec that loads a template, not only
+this one. **Tracked by #1865**, filed from #1790: the helper is imported by 144 spec
+files, and the three issues this class has closed under (#420, #970, #966) left
+no open owner. It is the only occurrence in `reports/daily-history.jsonl` across
+the four dailies from 2026-09-10 to 2026-09-15.
 
 **Promoted in #1451.** The spec shipped without `@stable` under two gates that
 have both been closed since 2026-07-30 — the flaky cluster #773 and the clean

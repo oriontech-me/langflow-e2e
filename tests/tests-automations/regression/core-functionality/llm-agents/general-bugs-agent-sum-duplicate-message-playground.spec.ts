@@ -44,7 +44,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must not experience message duplication in mathematical expressions with agent component",
-  { tag: ["@release", "@components", "@workspace"] },
+  { tag: ["@stable", "@release", "@regression", "@agents", "@playground"] },
   async ({ page }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -63,12 +63,16 @@ test(
     // helper returned, so the run left with no model bound and the backend
     // answered `ComponentBuildError: … No model selected.` — which surfaced 30 s
     // later as the completion gate below timing out (#1465).
-    await new SimpleAgentTemplatePage(page).load({
+    // The id comes from the POM, which returns the flow `loadTemplateByName`
+    // created. Reading it off the canvas URL — what this spec did until #1790 —
+    // is the documented anti-pattern: that id was transient on 1.11 and 404s on
+    // delete, leaking the flow it meant to remove (#490/#681). It happens to
+    // match the persisted id on 1.13.0.dev12 (measured, 26 of 26 template picks),
+    // which is exactly the kind of accident a teardown should not rest on.
+    createdFlowId = await new SimpleAgentTemplatePage(page).load({
       provider: "anthropic",
       model: resolveClaudeModel(),
     });
-
-    createdFlowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
 
     await page.getByTestId("playground-btn-flow-io").click();
 
