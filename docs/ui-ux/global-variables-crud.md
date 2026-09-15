@@ -1,6 +1,7 @@
 # Global Variables — CRUD via the Settings page
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev16`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`); the #1303 fix
+verified on `1.12.2rc1`
 
 ---
 
@@ -70,16 +71,57 @@ Two consequences, both encoded in the steps below:
   refetch, and only a row the frontend demonstrably received can fail as a
   rendering problem.
 
-**Open, and deliberately not fixed here:** on the 2026-08-05 daily
-(run 30997773754, shard 1) the failure was *not* virtualization. The captured
-page snapshot shows ag-grid's `No Data Available` overlay — the grid held **zero**
-rows for the full 15 s after a 201 create, with the modal already closed, the
-backend measurably healthy across the whole window (liveness probes 2–45 ms;
-nearest failed probe one minute earlier) and no HTTP error logged. That state
-did not reproduce on `1.12.0.dev16` in 22 attempts (10 normal + 12 under 8×
-CPU throttling) with the list forced empty at page load. It remains unexplained;
-the awaited refetch above exists so the next occurrence names its own cause
-instead of being absorbed into this one. Tracked on #1303.
+### The second mechanism, root-caused upstream (LE-2599, #1303)
+
+On the 2026-08-05 daily (run 30997773754, shard 1) the failure was *not*
+virtualization. The captured page snapshot shows ag-grid's `No Data Available`
+overlay — the grid held **zero** rows for the full 15 s after a 201 create, with
+the modal already closed, the backend measurably healthy across the whole window
+(liveness probes 2–45 ms; nearest failed probe one minute earlier) and no HTTP
+error logged. That state did not reproduce on `1.12.0.dev16` in 22 attempts
+(10 normal + 12 under 8× CPU throttling) with the list forced empty at page load.
+
+**It is a client-state race in the frontend** — which is why nothing failed and
+why it would not reproduce on demand. `AppInitPage` fires `GET /api/v1/session`
+and auto-login in parallel. On a fresh context the probe carries no cookie, so
+the backend correctly answers `200 {"authenticated": false}`; auto-login then
+succeeds and `login()` sets `isAuthenticated = true`. If the probe's answer
+lands *after* that, `AppInitPage` writes the state back to `false`, and nothing
+restores it: the auto-login query is `staleTime: Infinity` / `refetchOnMount:
+false` and has already run, and the session query is `retry: false`. Both
+`useGetGlobalVariables` and `useGetFoldersQuery` gate on
+`enabled: isAuthenticated`, and `queryClient.refetchQueries` filters out a query
+whose observers are all disabled. The page therefore loads with an **empty**
+grid, the create returns 201, and the post-create refetch is dropped with no
+request and no error — exactly the observed state. A failed probe does it too:
+`useGetAuthSession` catches the error and resolves to `{ authenticated: false }`.
+The window is the margin between the session response and `login()` finishing,
+measured upstream at ~140–440 ms, which is what a loaded CI shard closes.
+
+**How to recognise it in a daily.** The `createVariable` wait above is what names
+it, and it worked: on 2026-09-14 (`1.13.0.dev12`) this spec flaked with
+`the variables list was never refetched with "<name>" after a 201 create`. Read
+that message as this defect, not as a new investigation — a rendering problem
+cannot produce it, because the wait is on the response, not on the DOM.
+
+**Delivery, and why the flake outlives the fix.** Fixed upstream by
+`canSessionProbeClearAuth()` (langflow-ai/langflow#15028) — an unauthenticated
+probe may clear auth only when auto-login is not in play — applied in
+`AppInitPage` and `PlaygroundAuthGate`. Verified present in the built frontend of
+`1.12.2rc1` (`autoLogin!==!0`, two call sites) and this spec passes 3/3 against
+that image at `--retries=0`. Engineering routed the fix through the **1.12.3**
+patch release first and only then into `release-1.13.0` — the line the nightly
+is cut from — so the flake stays reachable on the daily until it lands there.
+Landing check:
+
+```bash
+git ls-tree origin/release-1.13.0 \
+  src/frontend/src/controllers/API/queries/auth/session-probe.ts
+```
+
+Tracked on #1303, which stays **open** until the fix reaches the nightly and the
+spec is re-validated there. `@stable` is deliberately kept meanwhile: the spec
+fails for the right reason and with a message that names it.
 
 ---
 
@@ -214,21 +256,26 @@ without weakening what is asserted; see the dev16 note above.
 
 ## Notes *(optional)*
 
-- **#1303 flake verdict (test-side for the reproduced mechanism; one CI
-  observation still open):** ag-grid row virtualization makes the row assertion
-  depend on the account's variable count — reproduced deterministically on
-  `1.12.0.dev16` and fixed by scrolling to the appended row. The 2026-08-05
-  daily failure is a *different* state (grid with zero rows, healthy backend)
-  that does not reproduce and is not explained by this change; the awaited list
-  refetch is there so it reports itself distinctly rather than being absorbed.
-  `@stable` is restored for the reproduced defect, not for the open one — see
-  the dev16 section above and #1303.
+- **#1303 flake verdict — two mechanisms, both now explained:** (a) *test-side*
+  — ag-grid row virtualization made the row assertion depend on the account's
+  variable count; reproduced deterministically on `1.12.0.dev16` and fixed by
+  scrolling to the appended row. (b) *product-side* — a late or failed
+  `GET /api/v1/session` disables the page's authenticated queries for the whole
+  page load under auto-login, so the grid is empty and the post-create refetch
+  never fires (LE-2599, langflow-ai/langflow#15028). (b) was the 2026-08-05
+  state that did not reproduce locally, and it is what the awaited list refetch
+  was added to name — it did, on 2026-09-14. See the section above for the
+  mechanism, the recognition signature and the delivery path.
 - **Relationship to #1235** (same surface, kept separate): #1235 is a row
   *interaction* that does not produce its state (the edit modal never opens, the
   delete button never enables) — rows are present and a click is ignored. #1303
   is one step earlier: no interaction has happened and the row itself is not in
   the DOM. The mechanism found here (virtualization on append) cannot produce
-  #1235's symptoms, since those specs act on rows they already located. Kept
+  #1235's symptoms, since those specs act on rows they already located. The
+  product-side mechanism (b) cannot produce them either, and this is now a
+  mechanical argument rather than a signature one: #1235's rows are *present*,
+  which proves `useGetGlobalVariables` ran, which proves `isAuthenticated` was
+  true — the exact state the session-probe race destroys. Kept
   separate; revisit only if #1235's investigation lands on a shared refresh
   mechanism.
 - **#810 flake verdict (test-side, not a product regression):** the product
