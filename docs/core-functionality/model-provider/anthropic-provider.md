@@ -84,7 +84,7 @@ key replaced (the CI secret was rotated 2026-09-13) and the assertion fixed
    request at all, and waiting for both at once turns a sub-second refusal into a
    60 s timeout with no cause in it (#1829). Both waiters are still armed before
    the click, via the shared `armProviderSave` helper (#1849) — the same one the
-   four sibling provider specs read their Save with, so the rule has one
+   five sibling provider specs read their Save with, so the rule has one
    implementation rather than a copy per spec. Asserting the request outcomes — not the "Disconnect"/"Replace"
    state, which pre-exists when the global key was already configured — ties the
    pass to *this* save. Idempotent: re-saving the same valid key is a success;

@@ -118,11 +118,15 @@ test.describe("Google Provider", () => {
       //   backend's validate_model_provider_key (lfx/base/models/unified_models.py)
       //   only rejects a key when the error message contains "401"/
       //   "authentication"/"api key"; every other failure hits a bare `return`
-      //   ("allow saving despite minor errors"), so such a key still answers
-      //   {valid: true} and this test still passes, genuinely exercising the
-      //   Settings save path. Gating would trade real coverage for nothing on
-      //   exactly the days the account is down — and this is the provider that
-      //   went spend-capped in #1029.
+      //   ("allow saving despite minor errors"), so such a key is expected to
+      //   still answer {valid: true} and leave this test passing, genuinely
+      //   exercising the Settings save path. That is a derivation from the shared
+      //   code path, NOT a Google measurement — the measured instance is the
+      //   Anthropic sibling on the 2026-07-27 daily (dry account, Test 1 passed,
+      //   Test 2 hard-failed); #1029 records only that collect-models marked
+      //   google inactive on run 30374528125, never this test's outcome. Gating
+      //   would trade real coverage for nothing on exactly the days the account is
+      //   down — and google is the provider that went spend-capped in #1029.
       //   REJECTED (401): the product correctly refuses to persist the
       //   credential, so this test CANNOT pass however healthy Langflow is. That
       //   is the test working — the remedy is a new key — and its job is to say
@@ -166,9 +170,12 @@ test.describe("Google Provider", () => {
         // if (!isValid …) return;`), so a rejected key issues no /variables/
         // request at all and awaiting both at once reported a sub-second refusal
         // as the persist waiter's 60 s timeout, carrying no cause — the shape that
-        // cost the 2026-09-11 daily 300 s of the collector's sweep budget and an
-        // unreviewed @stable removal on the Anthropic sibling (commit 883047fc,
-        // #1829), on a test whose logic was correct. `armProviderSave` is the one
+        // cost the 2026-09-11 daily an unreviewed @stable removal on the Anthropic
+        // sibling (commit 883047fc, #1829), on a test whose logic was correct.
+        // (That daily also burnt the COLLECTOR's sweep budget on the same dead
+        // key, but that is a different instrument with its own ceiling and its own
+        // fix — collect-models.ts CREDENTIAL_SAVE_TIMEOUT_MS, #1823's remedy (i) —
+        // and no change here recovers it.) `armProviderSave` is the one
         // implementation of that rule, shared with the five sibling provider
         // specs (#1849/#1867).
         //

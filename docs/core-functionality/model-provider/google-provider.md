@@ -160,9 +160,22 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/pages/SettingsPage/` (Model Providers page) — renders
-  `provider-item-Google Generative AI`, `provider-variable-input-GOOGLE_API_KEY`,
-  the Save/Replace button; a rename breaks Test 1.
+- `src/frontend/src/pages/SettingsPage/pages/ModelProvidersPage/` — the Model
+  Providers page Test 1 navigates to. It does not render the controls itself: it
+  mounts them from the directory below, so a *page* rename breaks the navigation
+  step only.
+- `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx`
+  and `src/frontend/src/modals/modelProviderModal/components/ProviderListItem.tsx`
+  — where `provider-variable-input-GOOGLE_API_KEY`, the Save/Replace control and
+  `provider-item-Google Generative AI` actually live (verified by grep on upstream
+  `main` / `release-1.13.0` / `release-1.12.1`: the first two testids appear in
+  exactly one file each). A rename here breaks Test 1's key entry and save.
+- `src/frontend/src/modals/modelProviderModal/hooks/useProviderConfiguration.ts` —
+  `handleSaveAllVariables` gates the `/variables/` write on the
+  `validate-provider` **body** (`const isValid = await validateCredentials(); if
+  (!isValid …) return;`). That gate is the whole reason Test 1 reads the two
+  responses **in order** rather than together (#1867); if it moves, the ordered
+  two-request assertion is what notices.
 - Provider-config storage — the global `GOOGLE_API_KEY` provider variable.
 - `src/lfx/src/lfx/components/models_and_agents/` — Agent execution with the
   selected Gemini model (Test 2).
@@ -227,15 +240,29 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   visible past the 120 s wait, no `div-chat-message` renders, and the workflow
   auto-removes `@stable`. A billing outage reported as a product regression.
   Measured on the OpenAI copy of the same bug twice (#772/#775, then #1333).
-  **Test 1 is deliberately NOT gated:** `validate_model_provider_key`
+  **Test 1 is deliberately NOT gated, and the reason holds for exactly ONE of the
+  two ways the account can be unusable (#1867).**
+  *Drained / spend-capped:* `validate_model_provider_key`
   (`lfx/base/models/unified_models.py`) makes a real `llm.invoke("test")` but
   only raises when the error message contains `401`, `authentication` or
   `api key` — every other failure hits a bare `return` ("allow saving despite
-  minor errors"), so a quota/billing failure still answers `{valid: true}` and
-  Test 1 still passes. It therefore keeps covering the Settings save path on a
-  day the account is dry; gating it would trade real coverage for nothing.
+  minor errors"), so a quota/billing failure is expected to still answer
+  `{valid: true}` and leave Test 1 passing. That is a derivation from the shared
+  code path, not a Google measurement: the instance actually measured is the
+  Anthropic sibling on the 2026-07-27 daily (dry account, Test 1 passed, Test 2
+  hard-failed). It keeps covering the Settings save path on a day the account is
+  dry; gating it would trade real coverage for nothing.
+  *Rejected (401):* the product correctly refuses to persist the credential
+  (#1823), so Test 1 **cannot** pass however healthy Langflow is. That is the test
+  working — the remedy is a new key — and since #1867 it says so in seconds,
+  carrying Google's own message, instead of at a 60 s timeout carrying nothing.
+  `providerSkipGate` is still refused because it does not separate those two
+  states; the discriminator that does is the `validate-provider` body.
   **Resilience, not a root-cause fix** — the key still has to be usable for
-  §7.4.2 to be exercised at all; the general remedy is **#976**.
+  §7.4.2 to be exercised at all. The per-key fallback once proposed for that
+  (**#976**) was closed **not planned** — a drained key is resolved by a top-up,
+  not by a second credential — so the standing remedies are the daily's provider
+  rotation (**#1185**) and the keyless `any-completion` routing (**#1187**).
 - **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
   the frontend fires `POST /variables/` (create, 201) when the key does not yet
   exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
