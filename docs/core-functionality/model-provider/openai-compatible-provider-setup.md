@@ -1,6 +1,6 @@
 # OpenAI Compatible — unified provider setup (base URL + optional key, live-only catalog)
 
-**Last validated:** Langflow 1.12.x (1.12.0.dev23)
+**Last validated:** Langflow 1.13.x (1.13.0.dev12, #1849)
 **Spec file:** `tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
 **Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below)
 **Upstream:** langflow-ai/langflow#13940, #14199, #14311
@@ -473,8 +473,15 @@ both OpenAI and OpenAI Compatible is unambiguous); playground
 
 **Test 6 — Settings Save persists BOTH variables** *(the #1193 core; was `test.fixme` against LE-2124, lifted on 1.12.0.dev19 — see the finding)*
 1. Fill base URL + a working key; arm waiters for `validate-provider` **and** for
-   `POST|PATCH /api/v1/variables/`; click Save.
-2. `validate-provider` answers `valid: true`.
+   `POST|PATCH /api/v1/variables/` (`armProviderSave`); click Save.
+2. `validate-provider` answers `valid: true` — read **before** the write
+   (#1849). The panel issues no write after a refusal, so awaiting the two
+   together settled only when the write waiter timed out: measured on
+   1.13.0.dev12 against a base URL the host reaches and Langflow cannot, the
+   test died at that waiter after **63.4 s** naming nothing; read verdict-first
+   it fails in **3.6 s** of test time with `validate-provider rejected the
+   credentials: Could not connect to the OpenAI-compatible endpoint at …`. Only
+   then is the write awaited.
 3. Poll `GET /api/v1/variables/` for the **pair**
    `[OPENAI_COMPATIBLE_API_KEY, OPENAI_COMPATIBLE_BASE_URL]` (the backend fact
    "this provider is configured", independent of how many requests the frontend
@@ -548,7 +555,9 @@ healthy they run.
 - **`validate-provider` bodies, never statuses**: the endpoint answers HTTP 200
   for a credential it rejected.
 - **Waiters armed before the click**: a pass can only be caused by the save under
-  test, never by pre-existing state.
+  test, never by pre-existing state. Test 6 reads them verdict-first, so a
+  refused credential fails at the refusal with the provider's message instead
+  of at the write waiter's timeout (#1849).
 - **The pair, not the first write**: the configured assertion polls for both
   variable names, because a two-variable provider issues two writes and waiting
   on one loses ~1 run in 3 (measured on the Foundry sibling).
@@ -582,6 +591,11 @@ healthy they run.
   leftover enable is exactly the ambient state #1334 was about.
 - Test 6 deletes its flow **by id** in a `finally`, so a mid-test failure still
   cleans up. No spec in this file uses the shared template-card path.
+- Every test enters through `awaitBootstrapTest`, which creates `New Flow` +
+  `Basic Prompting` whenever the default project is empty — measured on a purged
+  1.13.0.dev12 instance, the first run of this file left exactly those two behind.
+  A `beforeEach` response listener captures every flow the page creates
+  (`POST /api/v1/flows/` → 201) into the id list `afterEach` deletes (#1849).
 - Nothing global is touched: no other provider's variables, no other user's
   flows.
 

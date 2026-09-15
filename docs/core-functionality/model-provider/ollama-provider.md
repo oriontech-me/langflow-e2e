@@ -405,14 +405,20 @@ equivalent for the healthy path, and for the broken path no budget works.
 2. Open Settings → Model Providers → provider item **Ollama**.
 3. Fill the provider's base-URL field with `OLLAMA_BASE_URL_FROM_LANGFLOW`
    (real field scouted live — never invented).
-4. Arm response waiters BEFORE clicking Save (validate-provider POST +
-   variables save), click Save.
-5. **Assert:** both requests resolve 2xx, **and** the validate-provider body
-   reports `valid === true`. The body check is what proves the URL reached the
+4. Arm both response waiters BEFORE clicking Save (validate-provider POST +
+   variables save) with `armProviderSave`
+   (`helpers/provider-setup/provider-panel-save.ts`), click Save.
+5. **Assert, in the order the panel issues them (#1849):** first the
+   validate-provider verdict — HTTP 200 **and** a body reporting
+   `valid === true`, the failure carrying the body's `error`; only then the
+   variables write, 2xx. The body check is what proves the URL reached the
    live instance: the endpoint answers **HTTP 200 with `{"valid": false,
    "error": …}`** for a URL it could not reach (measured on 1.12.0.dev9 with
    the SSRF allowlist absent), so an HTTP-status-only assert is weak in
-   isolation.
+   isolation. The order is what lets that check run at all: after a refusal
+   the panel issues **no** variables write, so awaiting the two together
+   (`Promise.all`) settled only when the write waiter timed out, and the
+   verdict was never read.
 
 **Test 2 — the Ollama component lists the local model live and executes (§7.6 execute half)**
 
@@ -457,7 +463,8 @@ reply presence — never model wording.
 ## Guarding against false positives *(how)*
 
 - **Waiters armed before Save (test 1)** — the pass is caused by THIS save,
-  not by a pre-existing configured state (family pattern).
+  not by a pre-existing configured state (family pattern). They are read
+  verdict-first, so a refused base URL fails at the refusal, naming it (#1849).
 - **Live dropdown assert (test 2)** — a broken base URL yields an empty /
   catalog-only dropdown and fails BEFORE any model runs; passing requires
   the component to have enumerated the real local instance.
@@ -474,8 +481,11 @@ reply presence — never model wording.
   whole 180 s budget on a locator that will never resolve and reports a
   `toHaveCount` timeout three layers away from the cause. The guard reads the
   widget, not the API, because the run ships the in-memory graph.
-- **Force-failure checks** (CONTRIBUTING §2): M1 — test 1 asserts the
-  validate-provider body reports `valid === false` (inverted) ⇒ must fail;
+- **Force-failure checks** (CONTRIBUTING §2): M1 — test 1 saves a base URL
+  the SSRF layer refuses even with the allowlist in place
+  (`OLLAMA_BASE_URL_FROM_LANGFLOW=http://169.254.169.254:11434`) ⇒ must fail
+  **at the validate-provider verdict, within seconds, naming the refusal** —
+  not 60 s later at the variables waiter (#1849);
   M2 — test 2 expects a never-pulled model name in the live dropdown ⇒ must
   fail; M3 — test 2 asserts the reply is empty (inverted) ⇒ must fail; M4 —
   the pre-flight probe token is changed to a family absent from the build
@@ -500,8 +510,15 @@ reply presence — never model wording.
   timing out at 60 s (Langflow never persists a URL it could not validate) —
   verified live on 1.12.0.dev9 by running test 1 against a container without
   `LANGFLOW_SSRF_ALLOWED_HOSTS`: **1 failed in 1.1 min**. So the test was
-  never a false positive, but it failed opaquely; the `valid === true` assert
-  makes it fail fast and name the cause.
+  never a false positive, but it failed opaquely. The `valid === true` assert
+  was added to make it fail fast and name the cause, and until #1849 it did
+  neither: it sat behind `Promise.all([validate, persist])`, which settles only
+  when both do, and the panel issues no write after a refusal. Re-measured on
+  1.13.0.dev12 with the base URL refused (M1's address), the run still died at
+  the persistence waiter after **64.6 s**, naming nothing. Reading the verdict
+  first, the same run fails in **4.1 s** — the whole test, bootstrap and
+  navigation included — with `validate-provider rejected the base URL: Access
+  to IP address 169.254.169.254 is blocked by SSRF protection. …`.
 
 ---
 

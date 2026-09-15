@@ -27,6 +27,7 @@ import {
   assertNodeConfigHeld,
   waitForNodeConfigSettled,
 } from "../../../../helpers/flows/node-config-guard";
+import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
 
 /**
  * Ollama provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -192,44 +193,21 @@ test.describe("Ollama Provider", () => {
         // Arm both waiters BEFORE clicking so the pass is caused by THIS
         // save, not a state a prior configuration left behind (family
         // pattern from openai/google-provider).
-        const validatePromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/models/validate-provider") &&
-            r.request().method() === "POST",
-          { timeout: 60000 },
-        );
-        const persistPromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/variables") &&
-            ["POST", "PATCH"].includes(r.request().method()),
-          { timeout: 60000 },
-        );
+        const save = armProviderSave(page, { subject: "base URL", timeout: 60000 });
 
         await page.getByRole("button", { name: /Save|Replace/i }).first().click();
 
-        const [validateResp, persistResp] = await Promise.all([
-          validatePromise,
-          persistPromise,
-        ]);
-        // validate-provider 2xx = the endpoint answered; variables 2xx = the
-        // URL is persisted.
-        expect(validateResp.ok()).toBe(true);
+        // The verdict FIRST, on its body (#1849). validate-provider answers HTTP
+        // 200 with `{ valid: false, error: … }` for a URL it could not reach
+        // (measured on 1.12.0.dev9 with the SSRF allowlist absent), and the panel
+        // then issues no variables write at all — so reading the two together
+        // settled only when the write waiter timed out, 64.6 s later on
+        // 1.13.0.dev12, with the refusal's reason discarded (#931's symptom,
+        // reached by a different route).
+        await save.validated();
+        // variables 2xx = the URL is persisted.
+        const persistResp = await save.persisted();
         expect(persistResp.ok()).toBe(true);
-
-        // The BODY is what proves Langflow reached the live instance: the
-        // endpoint answers HTTP 200 with `{ valid: false, error: … }` for a URL
-        // it could not reach (measured on 1.12.0.dev9 with the SSRF allowlist
-        // absent), so the status alone is a weak assert. Without this the
-        // failure surfaces only as the persistence waiter timing out at 60s,
-        // naming nothing (#931).
-        const validateBody = (await validateResp.json()) as {
-          valid?: boolean;
-          error?: string | null;
-        };
-        expect(
-          validateBody.valid,
-          `validate-provider rejected the base URL: ${validateBody.error ?? "no reason given"}`,
-        ).toBe(true);
       });
     },
   );

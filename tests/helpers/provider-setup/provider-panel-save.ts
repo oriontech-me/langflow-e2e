@@ -126,3 +126,138 @@ export function waitForCredentialPersist(page: Page, timeout = 30000): Promise<R
     { timeout },
   );
 }
+
+/**
+ * Judges a `POST /api/v1/models/validate-provider` answer on its BODY, never on its
+ * status alone: `null` when it accepted the credential, else the failure message.
+ *
+ * The endpoint answers HTTP 200 in both directions and puts the verdict in the body —
+ * `{"valid": false, "error": "Invalid API key for OpenAI"}` for a refused key (#1829,
+ * measured again on 1.13.0.dev12 for #1849). Only a 200 carrying `valid: true` is an
+ * acceptance. Anything else fails, saying what was actually read: a body that could not
+ * be read, or is not the JSON the endpoint sends, is reported as that and never as a
+ * refusal the provider did not make (#1012).
+ */
+export function validateProviderFailure(
+  subject: string,
+  status: number,
+  body: string,
+): string | null {
+  const excerpt = body.trim().slice(0, 300) || "<empty body>";
+  if (body === UNREADABLE_VARIABLE_WRITE_BODY) {
+    return `validate-provider answered HTTP ${status} for the ${subject}, and its body could not be read`;
+  }
+  if (status !== 200) {
+    return `validate-provider answered HTTP ${status} for the ${subject}: ${excerpt}`;
+  }
+  let verdict: unknown;
+  try {
+    verdict = JSON.parse(body);
+  } catch {
+    return `validate-provider answered the ${subject} with a body that is not JSON: ${excerpt}`;
+  }
+  const { valid, error } = (verdict ?? {}) as { valid?: unknown; error?: unknown };
+  if (valid === true) return null;
+  if (valid === false) {
+    const reason = typeof error === "string" && error.trim() !== "" ? error.trim() : "no reason given";
+    return `validate-provider rejected the ${subject}: ${reason}`;
+  }
+  return `validate-provider answered the ${subject} with no boolean \`valid\`: ${excerpt}`;
+}
+
+/** The two requests one Save issues, read in the order the panel issues them. */
+export interface ProviderSave {
+  /**
+   * Resolves once `validate-provider` accepted the credential; throws otherwise, naming
+   * the provider's own reason. Await it FIRST.
+   */
+  validated(): Promise<Response>;
+  /** The credential write that followed an accepted validation. Await it after `validated()`. */
+  persisted(): Promise<Response>;
+}
+
+/** Arms a waiter for the Save's verdict, matched on the pathname so a query string cannot hide it. */
+function waitForValidateProvider(page: Page, timeout: number): Promise<Response> {
+  return page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      /^\/api\/v1\/models\/validate-provider\/?$/.test(new URL(r.url()).pathname),
+    { timeout },
+  );
+}
+
+type Settled = { response: Response } | { error: unknown };
+
+function settle(waiter: Promise<Response>): Promise<Settled> {
+  return waiter.then(
+    (response) => ({ response }),
+    (error: unknown) => ({ error }),
+  );
+}
+
+function firstLine(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.split("\n").find((line) => line.trim() !== "")?.trim() ?? "no detail";
+}
+
+/**
+ * Arms the waiters for a provider panel Save — call it BEFORE clicking — and reads them
+ * in the order the panel issues them: the `validate-provider` verdict first, the
+ * credential write second (#1849).
+ *
+ * The order is the point. The panel persists only after an accepted validation
+ * (`handleSaveAllVariables` returns when `!isValid`), so after a refusal no
+ * `POST|PATCH /api/v1/variables/` is issued at all. Four provider specs awaited the two
+ * together, `Promise.all([validate, persist])`, which settles only when BOTH do — so a
+ * refusal the product reached in well under a second surfaced as the persistence waiter's
+ * 30-60 s timeout, and the already-resolved verdict, with the provider's reason in it, was
+ * discarded. Measured on 1.13.0.dev12, one refusal per spec, before this existed:
+ * ollama-provider 64.6 s, openai-provider 32.6 s, openai-compatible-provider-setup 63.4 s,
+ * azure-ai-foundry-provider-setup 63.9 s — each a bare `waitForResponse` timeout.
+ *
+ * Both waiters are still armed before the click, so the pass is caused by THIS save and a
+ * write that lands right after the verdict cannot be missed. They are settled into values
+ * here, at arm time, so the one the caller never reads — the write after a refusal, or
+ * both when the click itself throws — resolves quietly instead of rejecting unobserved
+ * when the page closes.
+ *
+ * `subject` names what was saved ("key", "base URL", "credentials") in the failures.
+ */
+export function armProviderSave(
+  page: Page,
+  opts: { subject: string; timeout?: number; persistTimeout?: number },
+): ProviderSave {
+  const timeout = opts.timeout ?? 30000;
+  const persistTimeout = opts.persistTimeout ?? timeout;
+  const validate = settle(waitForValidateProvider(page, timeout));
+  const persist = settle(waitForCredentialPersist(page, persistTimeout));
+
+  return {
+    async validated() {
+      const outcome = await validate;
+      if ("error" in outcome) {
+        throw new Error(
+          `the Save issued no POST /api/v1/models/validate-provider for the ${opts.subject} ` +
+            `within ${timeout / 1000} s: ${firstLine(outcome.error)}`,
+        );
+      }
+      const failure = validateProviderFailure(
+        opts.subject,
+        outcome.response.status(),
+        await readResponseBodySafely(outcome.response),
+      );
+      if (failure) throw new Error(failure);
+      return outcome.response;
+    },
+    async persisted() {
+      const outcome = await persist;
+      if ("error" in outcome) {
+        throw new Error(
+          `no POST/PATCH /api/v1/variables/ followed the Save of the ${opts.subject} ` +
+            `within ${persistTimeout / 1000} s: ${firstLine(outcome.error)}`,
+        );
+      }
+      return outcome.response;
+    },
+  };
+}

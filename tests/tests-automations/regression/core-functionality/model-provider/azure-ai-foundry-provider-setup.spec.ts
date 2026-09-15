@@ -9,11 +9,12 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { createFlowFromStarter } from "../../../../helpers/flows/create-flow-from-starter";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { flowIdFrom, isFlowCreateUrl } from "../../../../helpers/flows/track-created-flows";
 import {
+  armProviderSave,
   awaitProviderPanelSettled,
   collectCredentialWrites,
   PROVIDER_SAVE_BUTTON,
-  waitForCredentialPersist,
 } from "../../../../helpers/provider-setup/provider-panel-save";
 import {
   classifyVariableWriteRefusal,
@@ -261,6 +262,30 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("Azure AI Foundry — unified provider setup", () => {
   const createdFlowIds: string[] = [];
+
+  // Every test enters through `awaitBootstrapTest`, which creates `New Flow` +
+  // `Basic Prompting` whenever the default project is empty, while the ids below were
+  // only ever pushed for the flow test 6 creates over the API. Measured on a purged
+  // 1.13.0.dev12 instance: the first run of this file left exactly those two behind.
+  // Capture every flow the PAGE creates (POST /api/v1/flows/ → 201) as well.
+  test.beforeEach(({ page }) => {
+    page.on("response", (resp) => {
+      if (
+        resp.request().method() !== "POST" ||
+        resp.status() !== 201 ||
+        !isFlowCreateUrl(resp.url())
+      ) {
+        return;
+      }
+      resp
+        .json()
+        .then((body) => {
+          const id = flowIdFrom(body);
+          if (id) createdFlowIds.push(id);
+        })
+        .catch(() => {}); // non-JSON body
+    });
+  });
 
   test.afterEach(async ({ request }) => {
     if (createdFlowIds.length === 0) return;
@@ -543,30 +568,18 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
             await page.getByTestId(ENDPOINT_INPUT).fill(FOUNDRY_ENDPOINT);
 
             // Armed BEFORE the click so the pass is caused by THIS save, never by a
-            // pre-existing configured state.
-            const validatePromise = page.waitForResponse(
-              (r) =>
-                r.url().includes("/api/v1/models/validate-provider") &&
-                r.request().method() === "POST",
-              { timeout: 60000 },
-            );
-            // Create (POST /variables/) on a fresh instance, update (PATCH
-            // /variables/{id}) when a value already exists — the frontend branches
-            // on existence (#636), so match both.
-            const persistPromise = waitForCredentialPersist(page, 60000);
+            // pre-existing configured state. The write waiter matches create (POST
+            // /variables/) and update (PATCH /variables/{id}) — the frontend
+            // branches on existence (#636).
+            const save = armProviderSave(page, { subject: "credentials", timeout: 60000 });
 
             await page.getByTestId(PROVIDER_SAVE_BUTTON).click();
 
-            const [validateResp] = await Promise.all([validatePromise, persistPromise]);
-            expect(validateResp.status()).toBe(200);
-            const validateBody = (await validateResp.json()) as {
-              valid?: boolean;
-              error?: string;
-            };
-            expect(
-              validateBody.valid,
-              `validate-provider rejected the credentials: ${validateBody.error ?? "(no error)"}`,
-            ).toBe(true);
+            // The verdict FIRST, on its body (#1849): the panel issues no write
+            // after a refusal, so awaiting both together died at the write waiter
+            // (63.9 s on 1.13.0.dev12) with the provider's reason discarded.
+            await save.validated();
+            await save.persisted();
 
             // Resolve the account state, naming what is missing while it waits —
             // "partial: AZURE_AI_FOUNDRY_ENDPOINT" is the half-configured state a
