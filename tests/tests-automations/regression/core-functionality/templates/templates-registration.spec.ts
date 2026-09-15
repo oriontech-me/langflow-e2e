@@ -33,10 +33,18 @@ import {
  * Everything that decides lives in `helpers/other/registered-templates-drift.ts`
  * and is pure; this file is I/O and assertions only.
  *
- * `Accept-Language: en-US` is pinned on every request: the endpoint localizes
- * `name` (#1400) — under `pt-BR` *Basic Prompting* answers as *Sugestões básicas*
- * while `name_key` is unchanged — and the baseline records the English name
- * because S1 (`templates-instantiate`, #1864) picks a card by its display name.
+ * `Accept-Language: en-US` is pinned on every request here, and the pin is the
+ * fragile part rather than the safe part. The endpoint localizes `name` (#1400) —
+ * under `pt-BR` *Basic Prompting* answers as *Sugestões básicas* while `name_key`
+ * is unchanged — and nothing in the harness supplies that header for an
+ * `APIRequestContext`: `PW_LOCALE` sets the browser context's `locale`, which is
+ * not an `APIRequestContext` option at all, so it cannot reach this request
+ * (`tests/fixtures/locale.ts` point 3 says the same). English is therefore a
+ * property of the line below, not of the environment. Hence the split: the SET is
+ * compared on `name_key`, which no header can move, while the `name` is compared
+ * separately so that losing the pin goes red HERE — instead of surfacing in S1
+ * (`templates-instantiate`, #1864), which picks a card by its display name and
+ * would report it as an unexplained click timeout.
  */
 
 const BASELINE_PATH = path.join(
@@ -44,8 +52,27 @@ const BASELINE_PATH = path.join(
   "../../../../assets/templates/registered-templates-baseline.json",
 );
 
-const readBaseline = (): unknown =>
-  JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8"));
+/**
+ * The committed baseline, or the reason it could not be read.
+ *
+ * A raw `SyntaxError`/`ENOENT` out of `JSON.parse`/`readFileSync` is fail-closed
+ * but anonymous, and `registrationVerdict` cannot recover the cause either — it
+ * would only report "the baseline is not a JSON object". Naming it here keeps the
+ * promise this whole file makes: the failure says what happened.
+ */
+const readBaseline = (): { baseline: unknown; readError?: string } => {
+  try {
+    return { baseline: JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8")) };
+  } catch (e) {
+    return {
+      baseline: null,
+      readError:
+        `${path.relative(process.cwd(), BASELINE_PATH)} could not be read: ` +
+        `${(e as Error)?.message?.split("\n")[0] ?? String(e)}. ` +
+        `Recreate it with: npm run templates:baseline`,
+    };
+  }
+};
 
 const baselineVersion = (baseline: unknown): string =>
   (baseline as RegisteredTemplatesBaseline)?.version ?? "(version unknown)";
@@ -57,7 +84,8 @@ test.describe("Templates — the registered set", () => {
     async ({ request, apiCoverage }, testInfo) => {
       apiCoverage.declare(["GET /api/v1/flows/basic_examples/"]);
       const authToken = await getAuthToken(request);
-      const baseline = readBaseline();
+      const { baseline, readError } = readBaseline();
+      expect(readError, readError).toBeUndefined();
 
       const listed = await test.step("GET /api/v1/flows/basic_examples/ answers 200 with a readable listing", async () => {
         const res = await request.get("/api/v1/flows/basic_examples/", {
@@ -112,11 +140,20 @@ test.describe("Templates — the registered set", () => {
           console.log(report);
           testInfo.annotations.push({ type: "templates-extra", description: report });
         }
-        // The comparison must have covered the whole baseline — a green run over
-        // a truncated one would report "clean" about templates it never checked.
-        expect(verdict.comparedCount).toBe(
-          (baseline as RegisteredTemplatesBaseline).templates.length,
-        );
+        // The assertion is on what was ACTUALLY reported, read back out of
+        // testInfo, against what the verdict says should have been. Asserting
+        // `comparedCount === baseline.templates.length` instead — as the first
+        // version did — is `x === x`: the helper sets it from that same field.
+        // Measured: with that assertion, deleting the whole report block above
+        // left the test green and silent, so "an extra is reported" was pinned
+        // nowhere in the spec this checklist bullet claims coverage from. That is
+        // #1862's "with the report asserted", and #1012 one level down.
+        expect(
+          testInfo.annotations
+            .filter((a) => a.type === "templates-extra")
+            .map((a) => a.description),
+          "the extras report did not reach the test's annotations",
+        ).toEqual(verdict.extra.length === 0 ? [] : [describeExtra(verdict.extra)]);
       });
     },
   );
@@ -127,15 +164,8 @@ test.describe("Templates — the registered set", () => {
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["GET /api/v1/flows/basic_examples/"]);
       const authToken = await getAuthToken(request);
-      const baseline = readBaseline() as RegisteredTemplatesBaseline;
-
-      // A run with nothing declared asserts nothing, and would go green forever
-      // the day the declaration is deleted without this spec noticing.
-      expect(
-        baseline.declaredAbsences.length,
-        "the baseline declares no absence, so this test would assert nothing — " +
-          "if that is intentional, delete this test along with the declarations",
-      ).toBeGreaterThan(0);
+      const { baseline, readError } = readBaseline();
+      expect(readError, readError).toBeUndefined();
 
       const listed = await test.step("GET /api/v1/flows/basic_examples/ answers 200 with a readable listing", async () => {
         const res = await request.get("/api/v1/flows/basic_examples/", {
@@ -146,10 +176,24 @@ test.describe("Templates — the registered set", () => {
       });
 
       const verdict = registrationVerdict(baseline, listed);
+      // Ordered before every read of the baseline's own fields: the verdict is
+      // the only thing that validates its shape, so checking `declaredAbsences`
+      // first — as the first version did — turned a baseline with that key
+      // missing into a bare `TypeError: Cannot read properties of undefined`,
+      // losing the named reason in the one file whose whole thesis is that the
+      // cause is named. Fail-closed either way; the difference is the message.
       expect(
         verdict.kind,
         `no comparison was possible: ${verdict.reason}`,
       ).not.toBe("unknown");
+
+      // A run with nothing declared asserts nothing, and would go green forever
+      // the day the declaration is deleted without this spec noticing.
+      expect(
+        (baseline as RegisteredTemplatesBaseline).declaredAbsences.length,
+        "the baseline declares no absence, so this test would assert nothing — " +
+          "if that is intentional, delete this test along with the declarations",
+      ).toBeGreaterThan(0);
 
       expect(
         verdict.staleDeclarations,

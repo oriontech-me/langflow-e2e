@@ -67,13 +67,26 @@ original English name"* (`services/database/models/flow/model.py`), produced by
 the key upstream's own catalog blocklist filters on
 (`_filter_basic_examples_by_catalog_policy`) and the key `FEATURED_TEMPLATE_KEYS` uses.
 
-So the **set comparison keys on `name_key`**. A name-keyed comparison would report all 26 as
-missing plus 26 as extra under a `PW_LOCALE=pt-BR` run — which the suite explicitly supports
-(`tests/fixtures/locale.ts`) — i.e. it would be an environment-dependent assertion of the
-kind this repo has been bitten by. The English `name` is still recorded in the baseline and
-still asserted, under an explicitly pinned `Accept-Language: en-US` header, because **S1
-clicks the card by its display name**: if the backend stopped honouring the pin, S1 would
-start clicking the wrong heading and this spec is where that must show.
+So the **set comparison keys on `name_key`**: an identity must not depend on a request header
+any caller can set.
+
+**What that is NOT is protection against a `PW_LOCALE` run, and the first draft of this
+section said it was — the correction is the useful half.** Measured: `withLocale()` returns
+**only** `locale`, deliberately not `extraHTTPHeaders` (`tests/fixtures/locale.ts` says so in
+its own point 3), and `locale` is not an `APIRequestContext` option at all — so
+`PW_LOCALE=pt-BR` never reaches this endpoint through the `request` fixture, which answers
+English regardless. A trap that is itself wrong is worse than none, and this one pointed at
+the safe direction.
+
+The real exposure runs the other way. The English `name` is English **because the spec pins
+the header**, and that pin is one forgotten line from being gone — in this spec, in the
+refresh script, or in whatever spec copies from them next. Hence the split, which is stronger
+than the wrong reason made it look:
+
+- the **set** is compared on `name_key`, which no `Accept-Language` decision can move;
+- the **name** is compared separately, so losing the pin goes red **here**, with the template
+  named — instead of surfacing in **S1**, which picks a card by its display name and would
+  report it as an unexplained click timeout.
 
 ### The three branches, and why their severities differ
 
@@ -102,6 +115,17 @@ world it is in: *present when blocked templates are included* ⇒ a catalog poli
 this instance, not a registration loss. That is cheaper and far more actionable than naming
 the possibility in prose, and it costs nothing on a green run because the probe only runs
 when the assertion is already lost.
+
+**This spec inverts its siblings' severity, and that is a chosen cost rather than an
+oversight.** `component-catalog-drift` and `api-surface-drift` **warn** in `globalSetup` and
+never fail (#980's trade: a catalog change costs nobody a test). Here a removed template is a
+hard red, because #1862 asked for exactly that — an absence nothing goes red about is the
+#1234 failure. Know what that buys and what it costs: the first legitimate upstream template
+removal produces a **hard daily failure**, and `remove-stable-from-failures.ts` strips
+`@stable` in an unreviewed commit, after which restoring it is a manual checkbox on an issue
+(#1746's orphan class). The remedy is one `npm run templates:baseline` commit, so the cost is
+one red day and a tag to put back — paid deliberately, because the alternative is a warning
+nobody reads, which is the `mode=count` lesson this repo has already paid for once.
 
 **A declaration does not key on the image version — #1862's open question, answered.**
 On a `manual.yml` dispatch against an image that *does* register *Research Translation Loop*,
@@ -165,9 +189,15 @@ It fails, with the template named in the message, when any of:
 
 | Mutation | Expected |
 |---|---|
-| Add a fictional template to `templates[]` | RED — reported as an undeclared absence, naming it |
-| Declare an absence for a template that *is* registered | RED — reported as a stale declaration, naming the declaration and its issue |
-| Remove a real template from `templates[]` | **GREEN**, with the extra reported in the output and in the annotation |
+| Add a fictional template to `templates[]` | RED — reported as an undeclared absence, naming it, with the `?include_blocked=true` probe's verdict appended |
+| **Move** a registered template out of `templates[]` and into `declaredAbsences[]` | RED — reported as a stale declaration, naming the declaration and its issue |
+| Remove a real template from `templates[]` | **GREEN**, with the extra reported in the output and asserted in the annotation |
+| Delete the report block from the extras step | RED — the annotation assertion is what makes "reported" a property rather than a hope |
+
+The second row says **move** on purpose: *adding* a registered template to `declaredAbsences[]`
+while leaving it in `templates[]` is a different failure — the baseline then both expects and
+declares it absent, which `describeBaselineDefect` refuses as UNKNOWN. Still red, but not this
+branch, and the first version of this table was not reproducible as written.
 
 ---
 

@@ -25,11 +25,22 @@
  * `name_key` is a persisted column — "Stable i18n key derived from the original
  * English name" (`services/database/models/flow/model.py`), produced by
  * `safe_flow_key` (`utils/i18n_keys.py`) — and it is the key upstream's own
- * catalog blocklist filters on. Keying the set comparison on `name` instead would
- * report all 26 as missing plus 26 as extra under a `PW_LOCALE=pt-BR` run, which
- * the suite explicitly supports (`tests/fixtures/locale.ts`). The English `name`
- * is still compared — under a pinned `Accept-Language: en-US` — because S1
- * (`templates-instantiate`, #1864) clicks a template's card by its display name.
+ * catalog blocklist filters on. So the set comparison keys on it: an identity
+ * must not depend on a request header any caller can set.
+ *
+ * **What that is NOT is protection against a `PW_LOCALE` run, and an earlier
+ * version of this comment claimed it was.** Measured: `withLocale()` returns
+ * **only** `locale`, deliberately not `extraHTTPHeaders` — `tests/fixtures/locale.ts`
+ * says so in its own point 3 — and `locale` is not an `APIRequestContext` option
+ * at all, so `PW_LOCALE=pt-BR` never reaches this endpoint through the `request`
+ * fixture; it answers English regardless. The real exposure is the other way
+ * round: the English `name` is English **because the caller pins the header**, and
+ * that pin is one forgotten line from being gone. Hence the split — the SET is
+ * compared on `name_key`, which survives any header decision, and the `name` is
+ * compared separately as the thing that goes red when the pin breaks. That
+ * matters because S1 (`templates-instantiate`, #1864) clicks a template's card by
+ * its display name, so a silently-translated listing would surface there as an
+ * unexplained click timeout instead of here as a named failure.
  *
  * ## Layering
  *
@@ -198,7 +209,27 @@ export function describeBaselineDefect(
 }
 
 /**
- * The drift verdict. **Cannot throw** — every unusable input becomes UNKNOWN.
+ * Whether the listing side is usable. `null` when it is.
+ *
+ * `listedTemplates` already guarantees this for its own output, so within this
+ * module the check is redundant — and it is here anyway because the guarantee
+ * above is stated unconditionally and S1 (#1864) parametrizes over this module.
+ * Without it, `registrationVerdict(baseline, [null])` threw a `TypeError`, which
+ * makes "cannot throw" a claim about one call site rather than a property.
+ */
+function describeListingDefect(listed: ListedTemplate[]): string | null {
+  if (!Array.isArray(listed)) return "the listing side is not an array";
+  for (const [i, t] of listed.entries()) {
+    if (!isRecord(t) || !isNonEmptyString(t.nameKey)) {
+      return `the listing side's entry [${i}] is not { nameKey, name } with a non-empty nameKey`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The drift verdict. **Cannot throw** — every unusable input becomes UNKNOWN,
+ * on both sides, for any caller and not only for `listedTemplates`' output.
  *
  * `listed` is `null` when the listing carried no signal (see `listedTemplates`).
  */
@@ -226,6 +257,10 @@ export function registrationVerdict(
         "(not an array, empty, or an entry with no name_key) — an unreadable listing is unknown, never clean",
       comparedCount: 0,
     };
+  }
+  const listingDefect = describeListingDefect(listed);
+  if (listingDefect) {
+    return { kind: "unknown", ...empty, reason: listingDefect, comparedCount: 0 };
   }
 
   const b = baseline as RegisteredTemplatesBaseline;

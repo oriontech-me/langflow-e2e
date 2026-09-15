@@ -32,7 +32,12 @@
  *  - when a **declared absence is now registered**. Declarations are carried
  *    across a refresh — dropping #1744's justification silently is precisely the
  *    expiry #1084 forbids — so the writer will not emit a file that contradicts
- *    itself. Removing an expired declaration stays a deliberate, reviewed edit.
+ *    itself. Removing an expired declaration stays a deliberate, reviewed edit;
+ *  - when an **active catalog policy is blocking a template**. The listing this
+ *    captures is policy-filtered, so a refresh run on an instance a @destructive
+ *    governance spec left blocked would commit the block as the expectation and
+ *    make the spec report clean about a template that is not in the gallery. The
+ *    count floor cannot catch that — six of 26 can vanish and still clear 20.
  *
  * ## Why `Accept-Language: en-US` is pinned
  *
@@ -132,6 +137,43 @@ async function main(): Promise<void> {
           `  image (or lower the bar with --min-templates=N).`,
       );
       process.exit(1);
+    }
+
+    // The listing this captured is POLICY-FILTERED: `_filter_basic_examples_by_catalog_policy`
+    // strips blocked name_keys from it for superuser and anonymous alike, and only
+    // `?include_blocked=true` bypasses it. Refreshing on an instance where a
+    // @destructive governance spec left a block would therefore COMMIT the block as
+    // the expectation, after which the spec reports clean forever about a template
+    // that is not in the gallery — #1234's failure mode, arriving through the
+    // refresh path. The `--min-templates` floor cannot catch it: up to six of the 26
+    // can vanish and still clear a floor of 20.
+    const blockedRes = await ctx.get("/api/v1/flows/basic_examples/?include_blocked=true", {
+      headers,
+      timeout: 60000,
+    });
+    if (blockedRes.ok()) {
+      const withBlocked = listedTemplates(await blockedRes.json());
+      const visible = new Set(listed.map((t) => t.nameKey));
+      const blocked = (withBlocked ?? []).filter((t) => !visible.has(t.nameKey));
+      if (blocked.length > 0 && !force) {
+        console.error(
+          `✖ a catalog policy is blocking ${blocked.length} template(s) on this instance:\n` +
+            blocked.map((t) => `    • ${t.nameKey} ("${t.name}")`).join("\n") +
+            `\n  They are absent from the listing this would capture, so committing it would bake the\n` +
+            `  block in as the expectation and make the spec report clean about a template that is not\n` +
+            `  in the gallery. Clear the policy (the @destructive governance specs restore it themselves)\n` +
+            `  and re-run, or pass --force if you really mean to baseline a blocked instance.`,
+        );
+        process.exit(1);
+      }
+    } else {
+      // Superuser-only (403 otherwise). Not being able to ask is not evidence
+      // that nothing is blocked, so it is said rather than assumed (#1012).
+      console.warn(
+        `⚠ could not probe ?include_blocked=true (${blockedRes.status()}) — an active catalog-policy\n` +
+          `  template block could not be ruled out. The captured listing is policy-filtered, so review\n` +
+          `  the diff for a template that vanished without an upstream change.`,
+      );
     }
 
     const declaredAbsences = readExistingDeclarations(OUT_PATH);

@@ -149,6 +149,26 @@ test("a malformed baseline is UNKNOWN rather than a throw — the verdict is tot
   }
 });
 
+test("the listing side is validated too — `cannot throw` is a property, not a claim about one call site", () => {
+  // Measured before the guard existed: `registrationVerdict(baseline, [null])` threw
+  // `TypeError: Cannot read properties of null (reading 'nameKey')`. Not reachable
+  // from the spec, where `listed` always comes from `listedTemplates` — but the
+  // JSDoc states the guarantee unconditionally and S1 (#1864) parametrizes over
+  // this module, so the guarantee has to hold for any caller.
+  for (const bad of [
+    [null],
+    [undefined],
+    ["Basic Prompting"],
+    [{ name: "Basic Prompting" }],
+    [{ nameKey: "", name: "x" }],
+    "not an array",
+  ]) {
+    const v = registrationVerdict(baseline, bad as never);
+    assert.equal(v.kind, "unknown", `expected UNKNOWN for ${JSON.stringify(bad)}`);
+    assert.ok(v.reason, "UNKNOWN must carry a reason");
+  }
+});
+
 test("a declaration with no reason or no issue is refused — that is the silent exemption #1084 forbids", () => {
   const defect = describeBaselineDefect({
     templates: [{ nameKey: "a", name: "A" }],
