@@ -1,6 +1,9 @@
 # Groq Provider — configure key on the component, execute flow
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x — and it stays there deliberately. The only
+run that ever exercised this test was on `1.12.0.dev8` with `lfx-bundles` +
+`langchain-groq` installed by hand (see *Tags*); the 1.13 measurement below
+re-confirms the component's **absence**, which is not a validation of the test.
 
 ---
 
@@ -36,7 +39,9 @@ OpenAI-compatible alt-cloud provider covered by the suite.
 No `@settings`: the Settings surface does not exist for Groq (see above).
 
 **No `@stable` — the component is not packaged in the image this suite
-validates (#1039).** Langflow 1.12 moved component families out of
+validates (#1039), and the standing answer is
+`docs/component-distribution-policy.md` rather than a tracker, so this is not
+re-decided per incident.** Langflow 1.12 moved component families out of
 `lfx.components.*` into per-vendor distributions plus an aggregate
 `lfx-bundles` package; `langflowai/langflow-nightly:latest` installs ~20 vendor
 distributions and no `lfx-bundles`, so the Groq component is absent from
@@ -54,6 +59,10 @@ the component but the run then dies with `ComponentBuildError: Error building
 Component Groq: langchain-groq is not installed`.
 
 Restore `@stable` only if the component returns to the default nightly image.
+**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — one minor
+line past the 1.12.0.dev8 measurement above, `GET /api/v1/all` still carries
+**zero** occurrences of `groq` anywhere in its payload, so nothing about the
+absence has moved and the pre-flight still skips before a key is ever read.
 
 ---
 
@@ -183,10 +192,41 @@ valid key.
   (`popover-anchor-input-api_key`, `dropdown_str_model_name`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Groq API (`api.groq.com`) — probe, live catalog refresh, and the real
-  inference. A live `GROQ_API_KEY` is required; **CI note:** the workflows
-  don't carry a `GROQ_API_KEY` secret yet — in CI the test skips with the
-  probe reason until the secret is added (same degradation contract as
-  Ollama-less runs).
+  inference. A live `GROQ_API_KEY` is required. **CI note — the lanes do carry
+  it, and that changes nothing here:** `GROQ_API_KEY` is a repository secret
+  created **2026-07-09** (`#600`; rotated 2026-09-13, which is the `Updated`
+  column `gh secret list` prints — read `created_at` from the API before dating
+  anything off it), and it reaches the step that RUNS specs in
+  `daily-stable.yml` and `pr-validation.yml`, alongside `GROQ_TEST_MODEL`
+  (repository variable, `openai/gpt-oss-20b`, added 2026-09-13). The key is
+  therefore **not** why CI skips this test — the component-availability
+  pre-flight above runs first and unconditionally, so the key probe is not
+  reached while the component is absent.
+  **`manual.yml` is the exception, and it is the whole key rather than the
+  model pin:** there the secret appears only inside the `Collect models` step's
+  own `env:`, which does not cross steps, and the job-level `env:` block
+  carries no `GROQ_*` at all — so a dispatch runs this spec with no key and
+  would skip on `"GROQ_API_KEY not set in the environment"`, the probe's first
+  branch, never reaching the catalog check. Unreachable today (the pre-flight
+  skips first) and recorded for the day the component returns.
+  An earlier revision of this note said the workflows carried no secret yet. It
+  was **true when it was written** and false about two hours later the same
+  afternoon: it landed at 13:29 UTC (`dd2c83c1`, #499) with issue #600 already
+  open about exactly those missing keys, and `2c4a7e51` provisioned all three
+  at 15:27 UTC. It then stood for two months because **no guard checks a CI
+  claim here** — and the narrow form of that is the part worth keeping, because
+  the wide form is wrong and this repo has paid for it once (PR #1570). This
+  section IS read on every PR: `pr-validation.yml`'s *Spec-doc dependency
+  paths* job resolves every backticked Langflow source path in it
+  (`watch-upstream-areas.mjs --mode=check-docs`), and `validate-spec-deps.ts`
+  checks it is populated at all. Writing one of those paths with an ellipsis in
+  this very sentence is what made that job fail on this PR — the guard cannot
+  resolve a placeholder and refuses to skip it, so the prose has to describe
+  the token instead of spelling one. Neither looks at prose. `#1783`'s
+  gate-justification check does read prose, but only in the `## Tags` section
+  and the Part II bullet, and only issue references there. So a sentence about
+  CI wiring, in this section, is checked by nobody: state it narrowly or not at
+  all.
 
 ---
 

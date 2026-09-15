@@ -1,6 +1,9 @@
 # Mistral Provider — configure key on the component, execute flow
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x — and it stays there deliberately. The only
+run that ever exercised this test was on `1.12.0.dev8` with `lfx-bundles` +
+`langchain-mistralai` installed by hand (see *Tags*); the 1.13 measurement below
+re-confirms the component's **absence**, which is not a validation of the test.
 
 ---
 
@@ -32,7 +35,9 @@ If this fails, Mistral can no longer be configured or executed in a flow.
 No `@settings`: the Settings surface does not exist for Mistral.
 
 **No `@stable` — the component is not packaged in the image this suite
-validates (#1039).** Langflow 1.12 moved component families out of
+validates (#1039), and the standing answer is
+`docs/component-distribution-policy.md` rather than a tracker, so this is not
+re-decided per incident.** Langflow 1.12 moved component families out of
 `lfx.components.*` into per-vendor distributions plus an aggregate
 `lfx-bundles` package; `langflowai/langflow-nightly:latest` installs ~20 vendor
 distributions and no `lfx-bundles`, so the MistralAI component is absent from
@@ -51,6 +56,13 @@ alone leaves the `mistral` registry category present but **empty**; the
 `ext:mistral:MistralAIModelComponent@official` appear.
 
 Restore `@stable` only if the component returns to the default nightly image.
+**Re-confirmed 2026-09-15 on `1.13.0.dev8` and `1.13.0.dev12`** — one minor
+line past the 1.12.0.dev8 measurement above, `mistral` occurs 27 times in
+`GET /api/v1/all` and every one of them belongs to some other vendor's
+component — Bedrock `model_id` options, the Astra Vectorize provider list and
+its help text, and prose inside embedded component source. There is no
+MistralAI component and no `mistral` category, so nothing about the absence has
+moved and the pre-flight still skips before a key is ever read.
 
 ---
 
@@ -165,9 +177,36 @@ error event, so an auth failure cannot pass silently).
   (`popover-anchor-input-api_key`, `dropdown_str_model_name`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Mistral API (`api.mistral.ai`) — probe and the real inference. A live
-  `MISTRAL_API_KEY` is required; **CI note:** the workflows don't carry a
-  `MISTRAL_API_KEY` secret yet — in CI the test skips with the probe reason
-  until the secret is added (same degradation contract as Groq/Ollama).
+  `MISTRAL_API_KEY` is required. **CI note — the lanes do carry it, and that
+  changes nothing here:** `MISTRAL_API_KEY` is a repository secret created
+  **2026-07-09** (`#600`; the 2026-09-13 date `gh secret list` shows is
+  `updated_at`, a rotation, not the creation) and it reaches the step that RUNS
+  specs in `daily-stable.yml` and `pr-validation.yml`. The key is therefore
+  **not** why CI skips this test — the component-availability pre-flight above
+  runs first and unconditionally, so the key probe is not reached while the
+  component is absent.
+  **`manual.yml` is the exception:** there the secret appears only inside the
+  `Collect models` step's own `env:`, which does not cross steps, and the
+  job-level `env:` carries no `MISTRAL_*` — so a dispatch runs this spec with
+  no key and would skip on `"MISTRAL_API_KEY not set in the environment"`.
+  Unreachable today, recorded for the day the component returns. No
+  `MISTRAL_TEST_MODEL` variable exists on any lane, so the
+  `mistral-small-latest` default applies — unlike Groq, where the default was
+  measured absent from this account's catalog and a variable had to be added.
+  An earlier revision of this note said the workflows carried no secret yet. It
+  was **true when it was written** and false about two hours later the same
+  afternoon: it landed at 13:51 UTC (`5a02ed4a`, #500) with issue #600 already
+  open about exactly those missing keys, and `2c4a7e51` provisioned all three
+  at 15:27 UTC. It then stood for two months because **no guard checks a CI
+  claim here** — which is not the same as "no guard reads this section", a
+  wider claim that is wrong and has cost this repo a review before (PR #1570).
+  `pr-validation.yml`'s *Spec-doc dependency paths* job resolves every
+  backticked Langflow source path here on every PR — spelling one with an
+  ellipsis in this sentence is what failed that job on this PR, since a
+  placeholder resolves against no ref and is a defect rather than a skip. And
+  `#1783`'s check reads prose
+  only in `## Tags` and the Part II bullet, and only issue references. A CI
+  claim in this section is checked by nobody.
 
 ---
 
