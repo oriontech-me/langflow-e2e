@@ -1,7 +1,9 @@
 # Global Variables — CRUD via the Settings page
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`); the #1303 fix
-verified on `1.12.2rc1`
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev16`); the #1303 fix
+verified on `1.12.2rc1`. **Not** re-validated on 1.13.x — the defect below is
+still live there, and the spec is observed flaking on `1.13.0.dev12`, which is
+an observation and not a validation.
 
 ---
 
@@ -78,50 +80,68 @@ virtualization. The captured page snapshot shows ag-grid's `No Data Available`
 overlay — the grid held **zero** rows for the full 15 s after a 201 create, with
 the modal already closed, the backend measurably healthy across the whole window
 (liveness probes 2–45 ms; nearest failed probe one minute earlier) and no HTTP
-error logged. That state did not reproduce on `1.12.0.dev16` in 22 attempts
+error logged. It did not reproduce on `1.12.0.dev16` in 22 **unforced** attempts
 (10 normal + 12 under 8× CPU throttling) with the list forced empty at page load.
 
-**It is a client-state race in the frontend** — which is why nothing failed and
-why it would not reproduce on demand. `AppInitPage` fires `GET /api/v1/session`
-and auto-login in parallel. On a fresh context the probe carries no cookie, so
-the backend correctly answers `200 {"authenticated": false}`; auto-login then
-succeeds and `login()` sets `isAuthenticated = true`. If the probe's answer
-lands *after* that, `AppInitPage` writes the state back to `false`, and nothing
-restores it: the auto-login query is `staleTime: Infinity` / `refetchOnMount:
-false` and has already run, and the session query is `retry: false`. Both
-`useGetGlobalVariables` and `useGetFoldersQuery` gate on
-`enabled: isAuthenticated`, and `queryClient.refetchQueries` filters out a query
-whose observers are all disabled. The page therefore loads with an **empty**
-grid, the create returns 201, and the post-create refetch is dropped with no
-request and no error — exactly the observed state. A failed probe does it too:
-`useGetAuthSession` catches the error and resolves to `{ authenticated: false }`.
-The window is the margin between the session response and `login()` finishing,
-measured upstream at ~140–440 ms, which is what a loaded CI shard closes.
+**It is a client-state race in the frontend, and it does reproduce once the
+ordering is forced** — 7/7 on `1.13.0.dev0` through a proxy delaying only
+`GET /api/v1/session`, against 4/4 control. `AppInitPage` fires that probe and
+auto-login in parallel; on a fresh context the probe carries no cookie, so the
+backend correctly answers `200 {"authenticated": false}`. `login()` then sets
+`isAuthenticated = true`, and a probe answering after that is applied anyway,
+with nothing to revisit it (`retry: false`, `refetchOnWindowFocus: false`, and
+an auto-login query already settled behind `staleTime: Infinity`). Every query
+gated on `enabled: isAuthenticated` — `useGetGlobalVariables` here,
+`useGetFoldersQuery` on projects — is then dead for the page's lifetime, because
+`queryClient.refetchQueries` filters out a query whose observers are all
+disabled. The create still returns 201; the refetch after it is dropped with no
+request and no error, which is why the suite's HTTP monitor cannot see this
+class at all.
 
-**How to recognise it in a daily.** The `createVariable` wait above is what names
-it, and it worked: on 2026-09-14 (`1.13.0.dev12`) this spec flaked with
-`the variables list was never refetched with "<name>" after a 201 create`. Read
-that message as this defect, not as a new investigation — a rendering problem
-cannot produce it, because the wait is on the response, not on the DOM.
+**The full record is `REGRESSIONS.md` (row `2026-08-05 · ui-ux ·
+global-variables-crud.spec.ts`, LE-2599) and #1303** — the second trigger, the
+measured/inferred split, and why this is not a 1.12 regression. Do not
+re-derive it here. In particular, that the 08-05 run *was* this mechanism is
+**inferred**, not measured: its artifacts expired, and the inference rests on
+the reproduced state matching the recorded one item for item.
 
-**Delivery, and why the flake outlives the fix.** Fixed upstream by
-`canSessionProbeClearAuth()` (langflow-ai/langflow#15028) — an unauthenticated
-probe may clear auth only when auto-login is not in play — applied in
-`AppInitPage` and `PlaygroundAuthGate`. Verified present in the built frontend of
-`1.12.2rc1` (`autoLogin!==!0`, two call sites) and this spec passes 3/3 against
-that image at `--retries=0`. Engineering routed the fix through the **1.12.3**
-patch release first and only then into `release-1.13.0` — the line the nightly
-is cut from — so the flake stays reachable on the daily until it lands there.
-Landing check:
+**How to recognise it in a daily.** The `createVariable` wait above is what
+names it, and it fired for the first time on 2026-09-14 (`1.13.0.dev12`,
+line 231's setup):
+
+```
+the variables list was never refetched with "<name>" after a 201 create
+```
+
+That message rules **out** a rendering or virtualization race — the wait is on
+the response, not on the DOM — and rules **in** the query-never-fires shape.
+It does not by itself identify this defect: a refetch that fired and answered
+non-2xx, or without the row, times out the same way. Attribute it here unless
+the refetch is observed firing.
+
+**Status.** Fixed upstream by `canSessionProbeClearAuth()`
+(langflow-ai/langflow#15028), which lets an unauthenticated probe clear auth
+only when auto-login is not in play. Merged into `release-1.12.2` and present in
+the `v1.12.2` tag; verified in the built frontend of the `1.12.2rc1` image
+(`autoLogin!==!0`, both call sites), where all 3 tests of this spec pass in one
+`--retries=0` run. No 1.12.2 release was published: engineering routed the fix
+through the **1.12.3** patch release first, and only then into
+`release-1.13.0` — the line the nightly is cut from — so the defect stays live
+on the daily until it lands there. Landing check, from a Langflow clone:
 
 ```bash
-git ls-tree origin/release-1.13.0 \
+git fetch -q origin release-1.13.0 && git ls-tree FETCH_HEAD \
   src/frontend/src/controllers/API/queries/auth/session-probe.ts
 ```
 
-Tracked on #1303, which stays **open** until the fix reaches the nightly and the
-spec is re-validated there. `@stable` is deliberately kept meanwhile: the spec
-fails for the right reason and with a message that names it.
+A line means landed; empty means not landed. #1303 stays **open** until then and
+until the spec is re-validated on a nightly that carries it.
+
+**`@stable` meanwhile.** Kept, and the basis is the recurrence rule, not the
+quality of the message: 2026-09-14 is the **first** occurrence of this
+`error_signature` (the earlier three carried the generic
+`expect(locator).toBeVisible() failed`). A second occurrence of it inside 30
+days triggers quarantine per `CONTRIBUTING.md`, fix in flight or not.
 
 ---
 
@@ -265,19 +285,20 @@ without weakening what is asserted; see the dev16 note above.
   never fires (LE-2599, langflow-ai/langflow#15028). (b) was the 2026-08-05
   state that did not reproduce locally, and it is what the awaited list refetch
   was added to name — it did, on 2026-09-14. See the section above for the
-  mechanism, the recognition signature and the delivery path.
+  recognition signature and the status, and `REGRESSIONS.md` / #1303 for the
+  full investigation.
 - **Relationship to #1235** (same surface, kept separate): #1235 is a row
   *interaction* that does not produce its state (the edit modal never opens, the
   delete button never enables) — rows are present and a click is ignored. #1303
   is one step earlier: no interaction has happened and the row itself is not in
   the DOM. The mechanism found here (virtualization on append) cannot produce
-  #1235's symptoms, since those specs act on rows they already located. The
-  product-side mechanism (b) cannot produce them either, and this is now a
-  mechanical argument rather than a signature one: #1235's rows are *present*,
-  which proves `useGetGlobalVariables` ran, which proves `isAuthenticated` was
-  true — the exact state the session-probe race destroys. Kept
-  separate; revisit only if #1235's investigation lands on a shared refresh
-  mechanism.
+  #1235's symptoms, since those specs act on rows they already located. **Both
+  investigations have since landed, on different causes, so this is settled
+  rather than deferred:** #1235 root-caused to the RBAC permission gate
+  (LE-2123, langflow-ai/langflow#14215 — fixed in `1.12.0.dev23`) and is closed;
+  #1303 to the session-probe race (LE-2599). Neither is a refresh mechanism, and
+  `useGetEffectivePermissions` is gated on its resource ids rather than on
+  `isAuthenticated`, so the #1303 race cannot hold #1235's gate closed.
 - **#810 flake verdict (test-side, not a product regression):** the product
   correctly masks Credential values (verified: the table Value cell shows
   `*****`, the sentinel never renders). The recurring failure was the old
