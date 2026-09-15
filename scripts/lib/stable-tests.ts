@@ -703,10 +703,11 @@ export interface DeclaredStableSpecs {
  * test overcounts by 8 files — one of whose only occurrence is the comment
  * "`@release`, never `@stable`".
  *
- * Scoped to `tests/`, not to `regression/`. Five listed files live outside the
- * regression tree (`collect-models.spec.ts` and the four `fixtures/*-gate.spec.ts`),
- * so the narrower scope reports them as phantom losses — measured, 242 against the
- * listing's 247.
+ * Scoped to `tests/`, not to `regression/`. Listed files live outside the
+ * regression tree — the four `fixtures/*-gate.spec.ts` behavioural gates today,
+ * five until #1822 took `@stable` off `collect-models.spec.ts` — so the narrower
+ * scope reports them as phantom losses, four short whatever the total is on the
+ * day (measured when this shipped: 242 against the listing's 247).
  *
  * A test declared under a `test.describe` tagged `@stable` counts, because
  * Playwright's `--grep` honours the inherited tag and the daily therefore really

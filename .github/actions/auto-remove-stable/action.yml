@@ -112,13 +112,14 @@ runs:
         # committed.
         #
         # This used to be `git add tests/tests-automations/regression`, one fixed
-        # prefix — and the script edits whatever spec the report names. Five spec
-        # files carrying 28 @stable tests live outside that prefix (the four
-        # `tests/fixtures/*-gate.spec.ts` and `tests/collect-models.spec.ts`), so
-        # their edits were made in the workspace and dropped, unstaged, with
-        # nothing failing (#1822: daily run 34599745145 reported two removals and
-        # committed one). `removed[].file` makes the set derivable, so no prefix
-        # needs to be trusted.
+        # prefix — and the script edits whatever spec the report names. Spec files
+        # carrying @stable tests live outside that prefix: the four
+        # `tests/fixtures/*-gate.spec.ts` behavioural gates, and
+        # `tests/collect-models.spec.ts` until #1822 took its tag off for reasons
+        # of its own. Their edits were made in the workspace and dropped, unstaged,
+        # with nothing failing (#1822: daily run 34599745145 reported two removals
+        # and committed one). `removed[].file` makes the set derivable, so no
+        # prefix needs to be trusted.
         node scripts/auto-remove-commit-paths.mjs paths auto-remove-result.json \
           | git add --pathspec-from-file=- --pathspec-file-nul
         git add QA-CHECKLIST.md
@@ -147,4 +148,11 @@ runs:
         # removal that did not happen.
         git diff-tree -r --no-commit-id --name-only -z HEAD \
           | node scripts/auto-remove-commit-paths.mjs verify auto-remove-result.json
+        # A bare push, unlike the sibling history step 60 lines up in
+        # daily-stable.yml, which retries 5x with a rebase because `main` moves
+        # during a ~35 min run. The window here is narrow (that step has just
+        # pushed) and a rejection is a red step rather than a silent loss, so it is
+        # left as it is and named instead of hidden: the removal does not land, and
+        # the umbrella says so, because `AUTO_REMOVE_OUTCOME` carries this step's
+        # outcome to it (#1822).
         git push

@@ -37,10 +37,10 @@ const ACTION = path.join(
 
 const REGRESSION_SPEC =
   "tests/tests-automations/regression/core-functionality/model-provider/anthropic-provider.spec.ts";
-// The file the prefix could not reach. `tests/collect-models.spec.ts` is the one
-// run 34599745145 actually lost; the four `tests/fixtures/*-gate.spec.ts` are the
-// other 27 tests in the same blind spot.
 const OUTSIDE_SPEC = "tests/collect-models.spec.ts";
+// The four behavioural gates are the 27 tests still in that blind spot today;
+// `tests/collect-models.spec.ts` was the 28th until #1822 took its tag off for
+// reasons of its own, and is kept here because it is the file the run lost.
 const GATE_SPEC = "tests/fixtures/flow-error-gate.spec.ts";
 
 const removal = (file, title = "a hard-failing test") => ({
@@ -148,10 +148,18 @@ test("an empty commit listing leaves every reported removal missing", () => {
   assert.deepEqual(missingFromCommit(report([OUTSIDE_SPEC]), []), [OUTSIDE_SPEC]);
 });
 
-test("the -z stream is split on NUL and tolerates the trailing one", () => {
+test("the -z stream is split on NUL and on nothing else", () => {
   assert.deepEqual(splitNulList("a\0b\0"), ["a", "b"]);
   assert.deepEqual(splitNulList(""), []);
-  assert.deepEqual(splitNulList("a\nb\n"), ["a", "b"]);
+  // A newline and a leading space are legal in a path, so splitting or trimming
+  // on them corrupts the names `-z` exists to carry — and then reports the result
+  // as a removal the commit does not contain.
+  assert.deepEqual(splitNulList("a\nb\0"), ["a\nb"]);
+  assert.deepEqual(splitNulList(" a \0"), [" a "]);
+  // A caller that forgets `-z` gets one entry, not a plausible-looking list: every
+  // reported path then reads as missing and the step fails, which is the safe way
+  // round.
+  assert.deepEqual(splitNulList("a\nb\n"), ["a\nb\n"]);
 });
 
 // ---------- the CLI ----------
@@ -170,14 +178,29 @@ function runCli(args, { stdin = "", files = {} } = {}) {
   return { status: run.status, stdout: run.stdout, stderr: run.stderr };
 }
 
-test("`paths` emits a NUL-separated list with no trailing newline", () => {
+test("`paths` emits NUL-separated, `:(literal)`-prefixed pathspecs", () => {
   const run = runCli(["paths", "r.json"], {
     files: { "r.json": JSON.stringify(report([OUTSIDE_SPEC, REGRESSION_SPEC])) },
   });
   assert.equal(run.status, 0);
-  // A newline is legal in a path, and git reads an empty pathspec as EVERYTHING —
-  // which is the `git add -A` the step exists to avoid.
-  assert.equal(run.stdout, `${OUTSIDE_SPEC}\0${REGRESSION_SPEC}\0`);
+  // The prefix is what makes each entry mean its own file: `--pathspec-file-nul`
+  // disables unquoting, not wildmatch, so a bare `tests/*` would stage every
+  // modified file under `tests/` (measured, git 2.52).
+  assert.equal(
+    run.stdout,
+    `:(literal)${OUTSIDE_SPEC}\0:(literal)${REGRESSION_SPEC}\0`,
+  );
+});
+
+test("a wildcard in the report aborts the staging instead of widening it", () => {
+  // Unreachable from the producer (`removed[].file` is a path that passed
+  // `fs.existsSync`), and pinned anyway: this is the `git add -A` the step exists
+  // to avoid, arriving through the report instead of through the YAML.
+  const ws = workspace({ removed: ["tests/*"], edits: [OUTSIDE_SPEC] });
+  const run = runCommitStep(ws);
+  assert.notEqual(run.status, 0, run.out);
+  assert.match(run.out, /did not match any files/);
+  assert.equal(git(ws.remote, "rev-parse", "main"), ws.baseline);
 });
 
 test("`verify` exits 1 naming the removal the commit does not carry", () => {
@@ -237,8 +260,29 @@ function commitStepBody() {
   return body;
 }
 
+/**
+ * git, insulated from whoever is running the test.
+ *
+ * The fixture builds a real repository and commits in it, so the developer's own
+ * `~/.gitconfig` would otherwise decide whether that works: with
+ * `commit.gpgsign = true` — an ordinary setting — every behavioural test below
+ * dies in setup with `gpg failed to sign the data`, and CI, being a clean
+ * container, never shows it. Same class as the repo's other environment-dependent
+ * assertions (timezone, base URL, clone depth).
+ *
+ * The step UNDER test gets its own explicit env in `runCommitStep`, including
+ * `HOME`, so nothing here ever writes to the developer's global config either.
+ */
 const git = (cwd, ...args) =>
-  execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    },
+  }).trim();
 
 /**
  * A repository shaped like the workspace this step runs in: a checkout with a
@@ -255,7 +299,7 @@ function workspace({ removed, edits, checklistChanges = true }) {
   const home = path.join(root, "home");
   const bin = path.join(root, "bin");
   for (const dir of [repo, home, bin]) fs.mkdirSync(dir, { recursive: true });
-  execFileSync("git", ["init", "--bare", "-b", "main", remote]);
+  git(root, "init", "--bare", "-b", "main", remote);
 
   const write = (rel, content) => {
     const full = path.join(repo, rel);
@@ -411,4 +455,22 @@ test("no lane stages the auto-removal by path prefix any more", () => {
   );
   assert.match(action, /auto-remove-commit-paths\.mjs paths/);
   assert.match(action, /auto-remove-commit-paths\.mjs verify/);
+});
+
+test("the CLI sets process.exitCode rather than calling process.exit", () => {
+  // `paths` writes to a PIPE (`| git add`), and `process.exit()` discards whatever
+  // has not flushed — the repo has measured that truncation at 8192 bytes. The
+  // staging set is far under it, so nothing catches this by behaviour; it is
+  // pinned here because the safe spelling is otherwise one edit from being lost.
+  // Over the CODE only: the comment beside it names the spelling it rejects, and a
+  // guard that cannot tell prose from a statement would forbid recording why.
+  const code = fs
+    .readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+  assert.ok(
+    !code.some((line) => /process\.exit\(/.test(line)),
+    "the CLI calls process.exit()",
+  );
+  assert.ok(code.some((line) => /process\.exitCode = main\(/.test(line)));
 });

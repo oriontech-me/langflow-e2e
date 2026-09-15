@@ -10,11 +10,13 @@
  *     git add tests/tests-automations/regression QA-CHECKLIST.md
  *
  * `scripts/remove-stable-from-failures.ts` edits whatever spec the report names,
- * and five spec files carrying 28 `@stable` tests live OUTSIDE that prefix — the
- * four `tests/fixtures/*-gate.spec.ts` behavioural gates and
- * `tests/collect-models.spec.ts`. An edit to one of those was made in the
- * workspace and then dropped, unstaged, with nothing failing: the step was green
- * because the OTHER file in the same run had something to stage.
+ * and spec files carrying `@stable` tests live OUTSIDE that prefix: the four
+ * `tests/fixtures/*-gate.spec.ts` behavioural gates (27 tests), plus
+ * `tests/collect-models.spec.ts` until #1822 took its tag off for reasons of its
+ * own. Count them per ref rather than quoting a number — the set moves. An edit
+ * to one of them was made in the workspace and then dropped, unstaged, with
+ * nothing failing: the step was green because the OTHER file in the same run had
+ * something to stage.
  *
  * That is what happened on daily run 34599745145 (2026-09-11). The script's JSON,
  * the commit message and the umbrella issue all said two tests lost the tag;
@@ -29,6 +31,15 @@
  * `auto-remove-result.json` sit at the repo root and are not git-ignored.
  *
  * VERIFIED IN BOTH DIRECTIONS (#1084's shape)
+ *
+ * What `verify` compares is FILE-level: the reported path is among the paths the
+ * commit changed. It cannot tell "this test's tag was removed" from "this file is
+ * in the commit for some other reason", and that limit is stated rather than
+ * hidden. It costs nothing today — the only other staged path is QA-CHECKLIST.md,
+ * and the remover writes every range of one file in a single `writeFileSync`, so
+ * a partial loss WITHIN a file is not a state it can produce. The stronger form
+ * (re-parse `git show HEAD:<file>` for the reported titles) is what to reach for
+ * if that ever stops being true.
  *
  * Deriving the set is not enough on its own, because the failure mode it fixes was
  * silent: a discarded edit looked exactly like an applied one. `verify` reads the
@@ -64,6 +75,14 @@ export class UnusableReportError extends Error {}
  * Validated rather than trusted, because every one of these ends up as a git
  * pathspec: an absolute path, a `..` escape or a leading `:` (pathspec magic)
  * would stage something other than the file the report names.
+ *
+ * The wildcard half is handled by the `:(literal)` prefix `paths` emits rather
+ * than by another rejection here, because rejecting `*?[` would refuse a
+ * legitimate file name for a risk the prefix removes outright. Measured on git
+ * 2.52: `tests/*` through `--pathspec-file-nul` stages every modified file under
+ * `tests/` (`--pathspec-file-nul` disables unquoting, NOT wildmatch), while
+ * `:(literal)tests/*` is `fatal: … did not match any files`, exit 128 — a widening
+ * turned into a loud abort.
  */
 function validatePath(raw, index) {
   if (typeof raw !== "string" || raw.trim() === "") {
@@ -126,12 +145,19 @@ export function missingFromCommit(result, committed) {
   return stagingPaths(result).filter((file) => !staged.has(file));
 }
 
-/** Splits a `-z` git/pathspec stream; tolerant of a trailing NUL and of `\n` lists. */
+/**
+ * Splits git's `-z` stream: NUL-terminated entries, trailing NUL tolerated.
+ *
+ * NUL and nothing else. An earlier version also split on `\n` and trimmed each
+ * entry, which contradicted the very protocol this exists to consume — a newline
+ * and a leading space are both legal in a path, so that version corrupted exactly
+ * the names `-z` is used to carry, and reported the result as a removal the commit
+ * did not contain. A caller that pipes a non-`-z` listing here now gets one long
+ * entry, every reported path counted as missing, and a failed step: fail-closed,
+ * which is the direction this guard has to err.
+ */
 export function splitNulList(text) {
-  return text
-    .split(/\0|\n/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "");
+  return text.split("\0").filter((entry) => entry !== "");
 }
 
 function readReport(path) {
@@ -176,10 +202,17 @@ export function main(argv, stdin = "") {
       process.stderr.write(`::error::auto-remove-commit-paths: ${error.message}\n`);
       return 2;
     }
-    // NUL-separated, for `git add --pathspec-from-file=- --pathspec-file-nul`.
-    // No trailing newline: a newline is a legal character in a path, and git
-    // would read one as an empty pathspec, which matches EVERYTHING.
-    process.stdout.write(paths.map((p) => `${p}\0`).join(""));
+    // NUL-separated and `:(literal)`-prefixed, for `git add
+    // --pathspec-from-file=- --pathspec-file-nul`: the prefix is what makes each
+    // entry mean the file it names and nothing else (see validatePath).
+    //
+    // Nothing but NULs separates them. A trailing newline is not the catastrophe
+    // an earlier version of this comment claimed — measured on git 2.52, both
+    // `x\0\0` and `x\0\n` abort with `fatal: empty string is not a valid
+    // pathspec` / `fatal: pathspec '<LF>' did not match any files`, exit 128,
+    // never a silent `git add -A`. It is still wrong, and loudly: it would abort
+    // the commit of a removal that was correctly made.
+    process.stdout.write(paths.map((p) => `:(literal)${p}\0`).join(""));
     return 0;
   }
 

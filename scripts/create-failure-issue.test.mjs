@@ -934,3 +934,65 @@ test("the listing shape's triage pointer names the cause, not one of its shapes"
   assert.doesNotMatch(body, /a template substitution, on the test/);
   assert.doesNotMatch(body, /arriving through the interpolation/);
 });
+
+// --- the removal that was reported and not committed (#1822) -----------------
+
+test("a reported removal the commit refused is relabelled, never announced as done", () => {
+  const done = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: "- a\n- b" });
+  assert.match(done.body, /### `@stable` auto-removal\n/);
+  assert.doesNotMatch(done.body, /did NOT commit/);
+
+  const lost = renderIssue({
+    ...ACTIONS,
+    arStatus: "removed",
+    arSummary: "- a\n- b",
+    arUncommitted: true,
+  });
+  // The claim itself is what #1822 is about: the summary is written before the
+  // commit is attempted, and a composite's outputs survive a failed embedded step.
+  assert.match(lost.body, /reported removals it did NOT commit/);
+  assert.match(lost.body, /\*\*Nothing was pushed\.\*\*/);
+  assert.match(lost.body, /still\n?\s*carries `@stable` on `main`/);
+  // The list is KEPT: it is what the day tried to quarantine and what fails again
+  // tomorrow. Dropping it would say nothing happened, which is the opposite error.
+  assert.match(lost.body, /- a\n- b/);
+  assert.doesNotMatch(lost.body, /^### `@stable` auto-removal$/m);
+});
+
+test("the relabel reaches the dry-account shape's auto-removal block too", () => {
+  const { body } = renderIssue({
+    ...ACTIONS,
+    accountDry: true,
+    arStatus: "removed",
+    arSummary: "- a",
+    arUncommitted: true,
+  });
+  assert.match(body, /reported removals it did NOT commit/);
+  // The shape's own hedge is not displaced by the relabel.
+  assert.match(body, /Unexpected on this shape/);
+});
+
+test("an untracked auto-remove outcome never relabels the block", () => {
+  // Positive identification, like every other shape here: the VM lane passes no
+  // outcome at all, and an absent one must not accuse the commit of failing.
+  for (const outcome of [undefined, "", "success", "skipped"]) {
+    const env = { AUTO_REMOVE_OUTCOME: outcome };
+    assert.equal(
+      env.AUTO_REMOVE_OUTCOME === "failure",
+      false,
+      `outcome ${JSON.stringify(outcome)} must not relabel`,
+    );
+  }
+  const { body } = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: "- a" });
+  assert.doesNotMatch(body, /did NOT commit/);
+});
+
+test("the daily forwards the auto-remove step's own outcome to the umbrella", () => {
+  // Without this the script cannot tell the two apart, and the default is "done".
+  const daily = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
+  const step = daily.slice(daily.indexOf("- name: Create issue on failure"));
+  assert.match(
+    step.slice(0, step.indexOf("- name:", 10)),
+    /AUTO_REMOVE_OUTCOME:\s*\$\{\{\s*steps\.auto_remove\.outcome\s*\}\}/,
+  );
+});

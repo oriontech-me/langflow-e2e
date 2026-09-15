@@ -269,8 +269,15 @@ jobs:
         uses: actions/github-script@v9
         env:
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
-          AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outputs.status }}
-          AUTO_REMOVE_SUMMARY: ${{ steps.auto_remove.outputs.summary_md }}
+          # Gated on the step's own outcome (#1822): the summary is written before the
+          # commit is attempted and a composite's outputs survive a failed embedded
+          # step, so an unforwarded status announces removals that are still on
+          # `main`. This lane renders the umbrella INLINE rather than through
+          # `create-failure-issue.mjs`, so it drops the section instead of
+          # relabelling it as the daily does — one expression, on a disabled lane,
+          # against teaching a second renderer the same decision (#1045).
+          AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outcome == 'success' && steps.auto_remove.outputs.status || '' }}
+          AUTO_REMOVE_SUMMARY: ${{ steps.auto_remove.outcome == 'success' && steps.auto_remove.outputs.summary_md || '' }}
         with:
           script: |
             const today = new Date().toISOString().split('T')[0];

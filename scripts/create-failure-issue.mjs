@@ -50,6 +50,9 @@
 // Inputs (env), mirroring the workflow step's `env:` block:
 //   IMAGE, RUN_ID, RUN_DIR, RUN_URL (set on Actions, absent on the VM)
 //   AUTO_REMOVE_STATUS, AUTO_REMOVE_SUMMARY
+//   AUTO_REMOVE_OUTCOME — the auto-remove STEP's own outcome (#1822). "failure"
+//     means the removals it reported are still on `main`; absent means the caller
+//     does not track it.
 //   RUN_EMPTY, RUN_UNREADABLE, RUN_PARTIAL, RUN_ERRORS, RUN_FIRST_ERROR, RUN_TESTS
 //   COVERAGE_VERDICT, COVERAGE_HEADLINE, COVERAGE_PROVIDERS, COVERAGE_SKIPS (#1456)
 //   COVERAGE_ACCOUNT="dry" — no provider was recorded usable (#1800)
@@ -91,6 +94,30 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
  * thing this script does that cannot be undone is open an issue, so the decision
  * that picks the shape must be reachable without reaching that.
  */
+/**
+ * The `@stable` auto-removal block — and the one thing it must never say.
+ *
+ * `arSummary` is written before the commit is attempted, so on its own it reports
+ * an intention as an outcome. When the commit step failed, the tags are still on
+ * `main`: the list is still the most useful thing on the page (it is what the day
+ * tried to quarantine, and what will fail again tomorrow), so it is kept and
+ * relabelled rather than dropped — dropping it would tell the triager nothing
+ * happened, which is the opposite error (#1822).
+ */
+function autoRemovalLines(arSummary, arUncommitted) {
+  if (!arUncommitted) return ["### `@stable` auto-removal", "", arSummary];
+  return [
+    "### ⚠️ `@stable` auto-removal reported removals it did NOT commit",
+    "",
+    arSummary,
+    "",
+    "**Nothing was pushed.** The commit step failed, so every test listed above still",
+    "carries `@stable` on `main` and runs again tomorrow — read the",
+    "`Auto-remove @stable from hard failures` step for the cause, and treat the list as",
+    "what this run TRIED to quarantine rather than as what it did (#1822).",
+  ];
+}
+
 export function renderIssue({
   today,
   image = "",
@@ -100,6 +127,13 @@ export function renderIssue({
   hostname = "the QA VM",
   arStatus = "",
   arSummary = "",
+  // #1822. The summary is produced by the action's FIRST step and says "auto-removed
+  // @stable from N tests"; the commit and its verification are the SECOND step, and a
+  // composite's outputs are set even when an embedded step fails. So a run where the
+  // commit was refused still rendered that sentence about tags that are still on
+  // `main` — the claim #1822 is about, moved from silent-green to loud-red at the
+  // step and left untouched at the consumer the issue names.
+  arUncommitted = false,
   empty = false,
   unreadable = false,
   partial = false,
@@ -366,9 +400,7 @@ export function renderIssue({
           ...(accountDry && !uncovered && arStatus
             ? [
                 "",
-                "### `@stable` auto-removal",
-                "",
-                arSummary,
+                ...autoRemovalLines(arSummary, arUncommitted),
                 "",
                 "Unexpected on this shape (it is chosen only when the test job was green) — weigh",
                 "the removal against the outage above before accepting it.",
@@ -393,7 +425,7 @@ export function renderIssue({
           "short is not evidence about the file it did not run (#1012).",
         ]
       : arStatus
-        ? ["### `@stable` auto-removal", "", arSummary]
+        ? autoRemovalLines(arSummary, arUncommitted)
         : [
             "### Next steps",
             onActions
@@ -620,6 +652,10 @@ async function main() {
     hostname: env.VM_HOSTNAME || env.HOSTNAME || "the QA VM",
     arStatus: env.AUTO_REMOVE_STATUS || "",
     arSummary: env.AUTO_REMOVE_SUMMARY || "",
+    // #1822. Positive identification, like every other shape in this file: an
+    // absent outcome means the caller does not track it, never that the commit
+    // failed. The one value that relabels the block is the step's own "failure".
+    arUncommitted: env.AUTO_REMOVE_OUTCOME === "failure",
     empty: env.RUN_EMPTY === "true",
     unreadable: env.RUN_UNREADABLE === "true",
     partial: env.RUN_PARTIAL === "true",
