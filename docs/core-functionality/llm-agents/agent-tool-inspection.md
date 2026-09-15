@@ -101,9 +101,10 @@ first attempt failed inside `dismissWelcomeOverlayAndWaitForModal`
 `expect.poll` on the welcome overlay / templates modal never turned true. It is
 the template-load entry path — the same family as the row above, a DIFFERENT
 line in it — and it is reached by every spec that loads a template, not only
-this one. **No open issue owns it**: #1002 is closed and the overlay wait is not
-named by any open tracker. One occurrence in the three dailies this spec has run
-since promotion.
+this one. **Tracked by #1865**, filed from #1790: the helper is imported by 144 spec
+files, and the three issues this class has closed under (#420, #970, #966) left
+no open owner. It is the only occurrence in `reports/daily-history.jsonl` across
+the four dailies from 2026-09-10 to 2026-09-15.
 
 **Promoted in #1451.** The spec shipped without `@stable` under two gates that
 have both been closed since 2026-07-30 — the flaky cluster #773 and the clean
