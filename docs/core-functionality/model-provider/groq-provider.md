@@ -217,9 +217,12 @@ valid key.
   claim here** — and the narrow form of that is the part worth keeping, because
   the wide form is wrong and this repo has paid for it once (PR #1570). This
   section IS read on every PR: `pr-validation.yml`'s *Spec-doc dependency
-  paths* job resolves every backticked `src/…` token in it
+  paths* job resolves every backticked Langflow source path in it
   (`watch-upstream-areas.mjs --mode=check-docs`), and `validate-spec-deps.ts`
-  checks it is populated at all. Neither looks at prose. `#1783`'s
+  checks it is populated at all. Writing one of those paths with an ellipsis in
+  this very sentence is what made that job fail on this PR — the guard cannot
+  resolve a placeholder and refuses to skip it, so the prose has to describe
+  the token instead of spelling one. Neither looks at prose. `#1783`'s
   gate-justification check does read prose, but only in the `## Tags` section
   and the Part II bullet, and only issue references there. So a sentence about
   CI wiring, in this section, is checked by nobody: state it narrowly or not at

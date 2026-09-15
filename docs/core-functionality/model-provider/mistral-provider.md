@@ -201,7 +201,10 @@ error event, so an auth failure cannot pass silently).
   claim here** — which is not the same as "no guard reads this section", a
   wider claim that is wrong and has cost this repo a review before (PR #1570).
   `pr-validation.yml`'s *Spec-doc dependency paths* job resolves every
-  backticked `src/…` token here on every PR, and `#1783`'s check reads prose
+  backticked Langflow source path here on every PR — spelling one with an
+  ellipsis in this sentence is what failed that job on this PR, since a
+  placeholder resolves against no ref and is a defect rather than a skip. And
+  `#1783`'s check reads prose
   only in `## Tags` and the Part II bullet, and only issue references. A CI
   claim in this section is checked by nobody.
 
