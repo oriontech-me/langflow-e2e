@@ -1469,7 +1469,7 @@
 | `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
 | `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
-| `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
+| `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 33 | 29 | 0 | 0 | 4 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
@@ -1481,7 +1481,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **661** | **542 (82%)** | **35 (5%)** | **18 (3%)** | **66 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **661** | **544 (82%)** | **35 (5%)** | **18 (3%)** | **64 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1497,7 +1497,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 629 `test()` calls carrying the `@stable` tag, distributed across 247 spec
+> 631 `test()` calls carrying the `@stable` tag, distributed across 249 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1767,6 +1767,8 @@
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/a2a/
+- [x] an approved send_to_agent call resumes the run and executes the published agent → `a2a-client-agent-as-tool.spec.ts`
+- [x] External mode fetches the card and calls the agent at its URL, forwarding the key a restricted agent requires → `a2a-client-agent-external.spec.ts`
 - [x] the Internal dropdown lists a locally published agent and calling it runs that flow → `a2a-client-agent-internal.spec.ts`
 - [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
 - [x] card overrides change exactly what the card advertises → `a2a-server-agent-card.spec.ts`
