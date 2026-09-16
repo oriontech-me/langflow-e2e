@@ -262,26 +262,32 @@ function runStop(r, extraEnv = {}) {
 /**
  * Asserts the script's exit code, attaching what it printed (#1888).
  *
- * A bare `assert.equal(r.status, 0)` reports `1 !== 0` and nothing else, which
- * is not enough to act on — and the reason is specific to this file rather than
- * a general preference for verbose assertions. `runScript`'s catch normalises a
- * TIMEOUT into the same code: when `execFileSync` kills the child at
+ * A bare `assert.equal(r.status, 0)` reports `1 !== 0` and nothing else, and the
+ * code alone is thinner than it looks here: `runScript`'s catch normalises a
+ * TIMEOUT into the same value. When `execFileSync` kills the child at
  * `timeout: 12000` it throws with `status: null` and `signal: SIGTERM`, and
- * `e.status ?? 1` turns that `null` into `1` (measured, alongside a real
- * `exit 1`, which is indistinguishable by status alone). The only thing that
- * separates the two is the `TIMED OUT: the starter did not return` line the
- * catch appends to `stdout`, so dropping `stdout` drops the distinguisher.
+ * `e.status ?? 1` turns that `null` into `1` — measured beside a real `exit 1`
+ * (`status: 1`, `signal: null`), indistinguishable by status. What names the
+ * cause is `stdout`: the script's own error lines, plus the
+ * `TIMED OUT: the starter did not return` line the same catch appends.
  *
- * It cost a red `TypeScript Check` on PR #1877 that could not be diagnosed:
- * `1 !== 0`, on a branch whose `scripts/` was byte-identical to `main`, green on
- * a re-run. Whether that was the timeout or the readiness probe is still not
- * known, because this message did not exist yet.
+ * `duration_ms` is the cheap bound and it is NOT what this message replaces —
+ * `node:test` prints it for every subtest, so a red near 12 s is a timeout
+ * candidate and a fast one is not. On the red this was written for, that field
+ * already settled more than an earlier version of this comment admitted: PR
+ * #1877, `TypeScript Check`, `duration_ms: 32.625602`. At 33 ms neither the
+ * 12 s spawn timeout nor the 30 s readiness budget (`healthy: true`,
+ * `serverExits: false`) can have elapsed, so both were ruled out before anyone
+ * read a line of output, and the occurrence narrows to *the script exited 1
+ * within 33 ms* — the pre-launch path, not the probe. What is still unknown is
+ * WHICH pre-launch check, which is the half `stdout` would have answered and
+ * the reason this helper exists.
  */
-function assertExit(result, expected, context) {
+function assertExit(result, expected) {
   assert.equal(
     result.status,
     expected,
-    `${context ? `${context}\n` : ""}exit ${result.status}, expected ${expected}\n` +
+    `exit ${result.status}, expected ${expected}\n` +
       `--- script output ---\n${result.stdout || "(nothing captured)"}`,
   );
 }
