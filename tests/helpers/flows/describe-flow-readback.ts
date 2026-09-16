@@ -7,11 +7,18 @@ import type { APIRequestContext } from "@playwright/test";
  * Why this exists (#1759 / `LE-2552`): on the 2026-09-08 daily, three
  * `api-flows-crud` assertions failed and none of their messages said what the
  * backend had done. `expect(found).toBeDefined() / Received: undefined` does not
- * distinguish *the row is missing from the database* from *the row is there and
+ * distinguish *the row is not visible to a by-id read* from *the row is there and
  * the LIST did not return it*, and those are two different defects. The by-id
- * route answers exactly that question, so reading it at the moment of failure
- * turns an unattributable message into an attributable one. The assertion itself
- * is unchanged — this only decorates it.
+ * route separates those two, so reading it at the moment of failure turns an
+ * unattributable message into an attributable one. The assertion itself is
+ * unchanged — this only decorates it.
+ *
+ * **What it does NOT separate (#1878), which is why the 404 branch is worded the
+ * way it is:** a row that is absent from a row that was written and has not
+ * committed yet. Both answer 404 to this read — measured 10/10 under a forced
+ * 300 ms commit window on `1.13.0.dev12`. What settles that pair is a LATER read
+ * or the container log, never this one. An earlier version of this block said the
+ * by-id route "answers exactly that question", which is the claim #1878 refuted.
  *
  * Two properties are contractual, and both are pinned in
  * `describe-flow-readback.test.ts`:
@@ -23,8 +30,8 @@ import type { APIRequestContext } from "@playwright/test";
  *
  * 2. **It has three outcomes, not two.** A readback that could not be performed
  *    is `UNDECIDED` and claims neither verdict (#1012 — an unevaluated result is
- *    unknown, not clean). Folding a 503 into "the row is absent" would send a
- *    triage after a phantom, which is worse than printing nothing at all.
+ *    unknown, not clean). Folding a 503 into the 404 branch's reading would send
+ *    a triage after a phantom, which is worse than printing nothing at all.
  *
  * Deliberately NOT declared through `apiCoverage`: the call only happens on the
  * failing branch, and the coverage gate FAILS a declaration the test never
@@ -66,14 +73,19 @@ export async function describeFlowReadback(
   }
   if (status === 404) {
     // NOT "absent from the database" (#1878). This read is issued milliseconds
-    // after the one that failed, and on four of the five callers it is the SAME
-    // request — same route, same id — so a commit window wider than that gap
-    // makes both miss: measured on 1.13.0.dev12 under a forced 300 ms window,
-    // both negative 10 times out of 10 on every sequence tried. Claiming the
-    // database state here is the one thing this line must not do, because it is
-    // the string a triage reads out of `results.json` — on `api-invalid-key` it
-    // sent the reader straight at a broken authorization check. What settles it
-    // is a LATER read or the container log, never this one.
+    // after the one that failed, so a commit window wider than that gap makes
+    // both miss: measured on 1.13.0.dev12 under a forced 300 ms window, both
+    // negative 10 times out of 10 on every sequence tried. On `api-flows-batch`
+    // and `api-invalid-key` it is literally the SAME request — same route, same
+    // id — which is the sharpest form of it; on the other three callers the
+    // failing read asks a different question and the millisecond gap is what
+    // carries the argument. (An earlier version of this comment said four of
+    // the five, counted wrong, in a comment written to justify a correction.)
+    // Claiming the database state here is the one thing this line must not do,
+    // because it is the string a triage reads out of `results.json` — on
+    // `api-invalid-key` it sent the reader straight at a broken authorization
+    // check. What settles it is a LATER read or the container log, never this
+    // one.
     return (
       `readback GET ${route} -> 404: the row is not visible to this read — ` +
       `absent, or written and not yet committed${suffix}`
