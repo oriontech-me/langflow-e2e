@@ -1506,7 +1506,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 644 `test()` calls carrying the `@stable` tag, distributed across 253 spec
+> 645 `test()` calls carrying the `@stable` tag, distributed across 253 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1540,6 +1540,7 @@
 - [x] POST /api/v1/custom_component without auth returns 401 or 403 → `api-custom-component-creation.spec.ts`
 - [x] batch create makes every flow in the list and refuses a duplicate name → `api-flows-batch.spec.ts`
 - [x] POST creates flow and returns ID → `api-flows-crud.spec.ts`
+- [x] GET lists flows and includes the created one → `api-flows-crud.spec.ts`
 - [x] GET by ID returns correct flow → `api-flows-crud.spec.ts`
 - [x] PATCH updates flow name and description → `api-flows-crud.spec.ts`
 - [x] DELETE removes flow and returns 200 → `api-flows-crud.spec.ts`
