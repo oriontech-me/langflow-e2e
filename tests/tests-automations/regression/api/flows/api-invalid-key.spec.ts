@@ -134,10 +134,15 @@ test.describe("API Invalid Key Handling", () => {
         // window is most misleading: a bare `Expected: 200 / Received: 404` on
         // the step that checks "the wrong-token PATCH did not change the flow"
         // reads as a SECURITY finding — a rejected write that destroyed the row
-        // — in a spec whose subject is the auth boundary. It is not: the PATCH
-        // is refused before it touches anything and the flow is simply not
-        // visible yet. Neither read throws, both run only here, and neither is
-        // declared through apiCoverage.
+        // — in a spec whose subject is the auth boundary. It is not one YET: the
+        // likely story is that the PATCH was refused before it touched anything
+        // and the flow is simply not visible so far. What decides a BOTH-NEGATIVE
+        // pair is a read taken after the commit window, not these two: both miss
+        // inside an open window, measured 10/10 (#1878/#1881), and the doc's table
+        // reports that pair as undecided. The pair DOES decide when the second read
+        // answers 200 — the row landed between them, transient and not a security
+        // finding, which is the row above it in that table. Neither read throws,
+        // both run only here, and neither is declared through apiCoverage.
         const readbackDiagnosis =
           getRes.status() === 200
             ? undefined

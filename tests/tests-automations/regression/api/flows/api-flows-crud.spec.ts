@@ -76,9 +76,12 @@ test.describe("CRUD /api/v1/flows", () => {
   //
   //   1.13.0.dev12   mutation 0/10 first list reads contained the flow, POST 9-11 ms
   //                  — and the read below, driven BY HAND (this diagnostic has never
-  //                    fired in a lane), answered 404 on all 10: the ROW was not there,
-  //                    and `read_flows` takes get_all=True, so an incomplete page is not
-  //                    a state it can be in
+  //                    fired in a lane), answered 404 on all 10: invisible to the by-id
+  //                    route AS WELL. Not "the row was not there" (#1881) — under this
+  //                    window it had been written and merely not committed, which is
+  //                    what makes both reads miss. What it does rule out is a list that
+  //                    dropped an otherwise-readable row, and `read_flows` takes
+  //                    get_all=True, so an incomplete page is not a state it can be in
   //   1.13.0.dev14   mutation 10/10 contained it, POST 316-331 ms
   //                  — the delay moved from after the response to inside it
   //
@@ -118,7 +121,11 @@ test.describe("CRUD /api/v1/flows", () => {
           // because `error.message` is what `results.json` carries and what the
           // daily triage reads — an attachment would not be there. Which of two
           // defects this is turns on the readback's status: 200 means the row
-          // exists and the LIST did not return it; 404 means the row is absent.
+          // exists and the LIST did not return it — a verdict, and the one #1759
+          // was opened to add, because the read that failed here is the LIST and
+          // the readback asks a genuinely different question. 404 means the row
+          // is not visible to the by-id route either, which is NOT the same as
+          // absent (#1881): an uncommitted write misses both reads.
           const diagnosis = found
             ? undefined
             : await describeFlowReadback(
@@ -257,10 +264,13 @@ test.describe("CRUD /api/v1/flows", () => {
             headers: { Authorization: authToken },
           });
           // A 404 here does not say whether the id is wrong or the row was merely
-          // not visible to that read. The readback separates them, in the message the
-          // daily triage actually reads — and on 2026-09-08 it was the second: a 404
-          // for a just-created id is LE-2598's shape, while LE-2552 is this call
-          // answering 200 for a request that removed nothing.
+          // not visible to that read. The readback separates them on its 200 branch
+          // ONLY (#1881), in the message the daily triage actually reads: a 200 puts
+          // the row there, so the DELETE's 404 was a read. Its own 404 leaves both
+          // alive — a wrong id and a write that has not committed answer it alike.
+          // On 2026-09-08 it was the second, attributed by SHAPE rather than by this
+          // readback: a 404 for a just-created id is LE-2598's, while LE-2552 is this
+          // call answering 200 for a request that removed nothing.
           const diagnosis =
             deleteRes.status() === 200
               ? undefined
@@ -409,8 +419,10 @@ test.describe("CRUD /api/v1/flows", () => {
           const found = flows.find((f) => f.id === id);
           // A 2xx from DELETE is not proof of removal (LE-2552), so when the list
           // still carries the id the readback says which it is: 200 means the
-          // delete reported success and removed nothing; 404 means the row is gone
-          // and only the LIST still shows it.
+          // delete reported success and removed nothing; 404 means the row is no
+          // longer visible by id and only the LIST still shows it. The 404 wording
+          // is deliberate (#1881) — this line reports what the read found and
+          // leaves the database state to a LATER read or the container log.
           const diagnosis = found
             ? await describeFlowReadback(
                 request,
