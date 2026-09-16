@@ -245,10 +245,10 @@ which is found by name and by the flow ids it brought back.
 
    | flow readback | listing re-read | shape |
    |---|---|---|
-   | `200` — the flow EXISTS | the name IS now listed | `LE-2598`'s window, already closed when the diagnosis ran: the upload's `201` preceded its commit and both rows landed between the two reads. **Transient.** |
-   | `200` — the flow EXISTS | still absent | the flow row and the project row have **diverged** — the import committed one and not the other. Not a window; a data defect. |
-   | `404` — the flow is absent | the name IS now listed | the reverse divergence: a project holding nothing. |
-   | `404` — the flow is absent | still absent | **undecided** — a window still open when the diagnosis ran looks exactly like an import that never committed at all. |
+   | `200` — the row EXISTS | the name IS now listed | `LE-2598`'s window, already closed when the diagnosis ran: the upload's `201` preceded its commit and both rows landed between the two reads. **Transient.** |
+   | `200` — the row EXISTS | still absent | the flow row and the project row have **diverged** — the import committed one and not the other. Not a window; a data defect. |
+   | `404` — not visible to this read | the name IS now listed | **UNDECIDED**, and an earlier revision of this table called it a verdict. Either the reverse divergence — a project holding nothing — **or** the flow row's window still open: the project landing says nothing about the flow's commit, since committing one and not the other is what *divergence* means here. |
+   | `404` — not visible to this read | still absent | **undecided** — a window still open when the diagnosis ran looks exactly like an import that never committed at all. |
 
    **That last row is measured, not hypothesised, and it is why the pair is a lead
    rather than a verdict here.** Under the 300 ms toggle both reads come back negative
