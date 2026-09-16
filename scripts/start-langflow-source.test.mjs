@@ -246,6 +246,15 @@ exec sleep ${marker}
     // per start, so a leak can no longer make a later assertion vacuous, but a
     // live stub is still a live stub for up to 30 s.
     const bail = (message) => {
+      // Read the log BEFORE the sweep. The starter writes the launched process's
+      // own output to `${STATE_DIR}/langflow.log` (start-langflow-source.sh:80),
+      // which on this path is the one thing that says WHY the stub died — for
+      // the defect that motivated this guard, `sleep: invalid time interval:
+      // --host`. Deleting it and then telling the reader to "check that the run
+      // command tolerates the flags" is #1888's defect committed by #1888's own
+      // family: the failure would name a hypothesis and destroy the evidence for
+      // it in the same breath.
+      const log = read(join(stateDir, "langflow.log")).trim();
       const pid = read(pidFile).trim();
       if (pid) {
         try {
@@ -255,7 +264,9 @@ exec sleep ${marker}
         }
       }
       rmSync(dir, { recursive: true, force: true });
-      throw new Error(message);
+      throw new Error(
+        `${message}\n--- langflow.log ---\n${log || "(empty)"}`,
+      );
     };
     if (!waitFor(() => serverPattern(marker).test(processTable()))) {
       bail(
