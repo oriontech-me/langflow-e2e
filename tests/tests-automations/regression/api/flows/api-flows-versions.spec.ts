@@ -52,9 +52,21 @@ test.describe("Flows API — versions", () => {
     return flow;
   }
 
+  // `@stable` is BACK (#1777). The daily's auto-removal took it on 2026-09-09 when
+  // step 1 below read `404 {"detail":"Flow not found"}` on a flow its own `POST` had
+  // just returned `201` for. Verdict was PRODUCT — `LE-2598`, every write route taking
+  // `DbSession` answering its 2xx before the commit — so the tag is restored on the
+  // upstream fix (`langflow#15078`, nightly from 1.13.0.dev14) and not on a green run:
+  // the defect never reproduced idle. Measured for THIS spec's own sequence, with a
+  // 300 ms gated delay between `session_scope`'s `yield` and its `commit`, control and
+  // mutation in the same process:
+  //
+  //   1.13.0.dev12   0/10 first reads answered 200, all 10 `{"detail":"Flow not found"}`,
+  //                  POST 11-17 ms — the client was not waiting for the commit
+  //   1.13.0.dev14   10/10 answered 200, POST 321-344 ms — now it is
   test(
     "versions lifecycle: create, list, read, activate with auto-snapshot, delete",
-    { tag: ["@api", "@workspace"] },
+    { tag: ["@stable", "@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/flows/",
@@ -78,15 +90,23 @@ test.describe("Flows API — versions", () => {
         // Diagnosis computed ONLY when this is about to fail (#1777 / LE-2598).
         // The 2026-09-09 daily printed `Expected: 200 / Received: 404` and
         // nothing else, and recovering what that 404 actually said cost three
-        // dailies. The two reads are a THREE-way discriminator, which is why
-        // neither alone is enough:
+        // dailies. The two reads narrow it to three cases, and only two of them
+        // are a verdict — an earlier version of this comment claimed all three
+        // were, and the toggle refutes it:
         //
-        //   detail "Flow not found" + readback 200  -> LE-2598's window: the
-        //     201 preceded the commit and the row landed between the two reads.
-        //   detail "Flow not found" + readback 404  -> the row is genuinely
-        //     gone (a cross-worker wipe, or a commit that never happened).
         //   detail "Not Found"                      -> FastAPI's unmatched
         //     route: the collection route stopped resolving.
+        //   detail "Flow not found" + readback 200  -> LE-2598's window: the
+        //     201 preceded the commit and the row landed between the two reads.
+        //   detail "Flow not found" + readback 404  -> UNDECIDED. This was
+        //     documented as "the row is genuinely gone, NOT LE-2598", and under
+        //     a forced 300 ms window on 1.13.0.dev12 it is what LE-2598 itself
+        //     produces, 10 times out of 10: both reads land inside the window,
+        //     and the row appears ~300 ms later. A wipe and a window wider than
+        //     the gap between these two reads look identical here. What tells
+        //     them apart is a LATER read or the container log, not a third one
+        //     issued in the same breath (#1807 measured the same ambiguity on
+        //     the projects pair).
         //
         // Neither helper throws, and neither is declared through `apiCoverage`:
         // the gate fails a declaration the test never issues, and on a green run
