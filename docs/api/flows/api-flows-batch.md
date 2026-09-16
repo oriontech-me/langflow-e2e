@@ -123,7 +123,7 @@ the batch are tracked from the `201` list and deleted by id in `afterEach`.
    | `detail` | second read | shape |
    |---|---|---|
    | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the batch's `201` preceded its commit and the row landed between the two reads. **Transient.** |
-   | `"Flow not found"` | `404` — still absent | **UNDECIDED**, not a verdict. Either the row is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
+   | `"Flow not found"` | `404` — not visible to this read | **UNDECIDED**, not a verdict. Either the row is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — `GET /api/v1/flows/{flow_id}` stopped resolving. |
 
    A read that cannot answer is `UNDECIDED` and claims neither (#1012). The second read
