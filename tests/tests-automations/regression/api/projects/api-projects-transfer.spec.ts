@@ -138,14 +138,18 @@ test.describe("Projects API — download and upload", () => {
         // four-row table reads the pair. Neither read throws, both run only
         // here, and neither is declared through apiCoverage.
         //
-        // Three of those four rows are a verdict, not four (#1876). `detail`
+        // Two of those four rows are a verdict, not four (#1876). `detail`
         // "No flows found in project" WITH a readback of 404 is UNDECIDED: the
         // keys differ (project vs flow) but the invisible row is the same one --
         // the flow this step just posted -- so a still-open commit window looks
         // exactly like a flow that is genuinely gone. Measured on 1.13.0.dev12
         // under a forced 300 ms window: that pair, 10 times out of 10. What
         // separates them is a LATER read or the container log, never a second
-        // one issued in the same breath.
+        // one issued in the same breath. Row 1 is weak for a second, route-local
+        // reason: the readback prints a STATUS, not a `folder_id`, so a flow that
+        // committed OUTSIDE this project reads identically to the window -- a
+        // flow created with no `folder_id` and downloaded 1.5 s later reproduces
+        // it on both images.
         const downloadDiagnosis =
           res.status() === 200
             ? undefined

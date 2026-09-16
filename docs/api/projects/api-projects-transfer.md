@@ -167,12 +167,14 @@ which is found by name and by the flow ids it brought back.
    (`describeFlowReadback`, the #1759 helper). Neither throws, both run only on the
    failing branch, and the assertion itself is unchanged.
 
-   **The pair narrows the failure to four cases, and three of them are a verdict.** The
-   flow readback is the half that does the work here:
+   **The pair narrows the failure to four cases, and two of them are a verdict.** The
+   flow readback is the half that does the work here — and it is also why the first two
+   rows are the weak ones on this route specifically, which is the only member of the
+   family whose two reads address *different* rows:
 
    | `detail` | flow readback | shape |
    |---|---|---|
-   | `"No flows found in project"` | `200` — the row EXISTS | `LE-2598`'s window: the flow's `201` preceded its commit, so the download's `folder_id` query saw nothing. **Transient.** |
+   | `"No flows found in project"` | `200` — the row EXISTS | the flow row is there, but the readback prints a **status, not a `folder_id`** — so this is either `LE-2598`'s window (the flow's `201` preceded its commit and the download's `folder_id` query saw nothing) or a flow that committed *outside this project*. Measured on `1.13.0.dev12` and `dev14` alike: creating a flow with no `folder_id` and downloading 1.5 s later — no window anywhere — produces this exact row. |
    | `"No flows found in project"` | `404` — the row is absent | **UNDECIDED**, not a verdict. Either the flow is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
    | `"Project not found"` | either | the **project** row is the one missing — a different subject, and new: step 1 already proved that id resolved. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — the download route stopped resolving. |
@@ -204,11 +206,15 @@ which is found by name and by the flow ids it brought back.
    which two calls issued milliseconds apart cannot guarantee. What separates them is a
    **later** read or the container log.
 
-   How much weight row 2 carries: under the *natural* window — 8-11 ms, below one HTTP
-   round trip — the readback normally lands after the commit and gives row 1, so the
-   forced window is ~30× wider than anything measured idle. The generalisation holds for
-   the case that matters anyway, since a failing occurrence has by definition already
-   outlasted a round trip — which is exactly when the pair collapses.
+   How much weight row 2 carries: the natural window is below one HTTP round trip — the
+   figure the family quotes, **8-11 ms, was measured on the flows `POST` → versions
+   sequence** (#1777), and on *this* sequence the un-forced control is 8/8 first reads
+   answering `200` with the flow `POST` returning in 7-9 ms on `dev12` and 8 ms on
+   `dev14` — so the readback normally lands after the commit and gives row 1, and the
+   forced window is one to two orders of magnitude wider than anything measured idle.
+   The generalisation holds for the case that matters anyway, since a failing occurrence
+   has by definition already outlasted a round trip — which is exactly when the pair
+   collapses.
 3. Keep the buffer for test 2's fixture path (each test builds its own — no shared
    state between tests).
 
