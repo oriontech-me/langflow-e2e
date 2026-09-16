@@ -259,9 +259,36 @@ function runStop(r, extraEnv = {}) {
   }
 }
 
+/**
+ * Asserts the script's exit code, attaching what it printed (#1888).
+ *
+ * A bare `assert.equal(r.status, 0)` reports `1 !== 0` and nothing else, which
+ * is not enough to act on — and the reason is specific to this file rather than
+ * a general preference for verbose assertions. `runScript`'s catch normalises a
+ * TIMEOUT into the same code: when `execFileSync` kills the child at
+ * `timeout: 12000` it throws with `status: null` and `signal: SIGTERM`, and
+ * `e.status ?? 1` turns that `null` into `1` (measured, alongside a real
+ * `exit 1`, which is indistinguishable by status alone). The only thing that
+ * separates the two is the `TIMED OUT: the starter did not return` line the
+ * catch appends to `stdout`, so dropping `stdout` drops the distinguisher.
+ *
+ * It cost a red `TypeScript Check` on PR #1877 that could not be diagnosed:
+ * `1 !== 0`, on a branch whose `scripts/` was byte-identical to `main`, green on
+ * a re-run. Whether that was the timeout or the readiness probe is still not
+ * known, because this message did not exist yet.
+ */
+function assertExit(result, expected, context) {
+  assert.equal(
+    result.status,
+    expected,
+    `${context ? `${context}\n` : ""}exit ${result.status}, expected ${expected}\n` +
+      `--- script output ---\n${result.stdout || "(nothing captured)"}`,
+  );
+}
+
 test("a missing source clone fails with exit 2, naming the path and the override", () => {
   const r = runScript({ repoExists: false });
-  assert.equal(r.status, 2);
+  assertExit(r, 2);
   assert.match(r.stdout, /Langflow source clone not found/);
   assert.match(r.stdout, /LANGFLOW_SRC_REPO/);
   r.cleanup();
@@ -269,14 +296,14 @@ test("a missing source clone fails with exit 2, naming the path and the override
 
 test("the clone is not moved when no ref is requested", () => {
   const r = runScript();
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.doesNotMatch(r.git, /checkout/);
   r.cleanup();
 });
 
 test("LANGFLOW_SRC_REF opts in to moving the clone, and warns the frontend is not rebuilt", () => {
   const r = runScript({ env: { LANGFLOW_SRC_REF: "v1.12.0" } });
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.match(r.git, /checkout --quiet v1\.12\.0/);
   assert.match(r.stdout, /Checking out v1\.12\.0/);
   assert.match(r.stdout, /frontend assets are NOT rebuilt/);
@@ -289,8 +316,8 @@ test("the PORT keys the state directory, so two ports never share one", () => {
   // directory pass this file before.
   const a = runScript({ env: { LANGFLOW_PORT: "7863" } });
   const b = runScript({ env: { LANGFLOW_PORT: "7864" } });
-  assert.equal(a.status, 0);
-  assert.equal(b.status, 0);
+  assertExit(a, 0);
+  assertExit(b, 0);
   assert.match(a.stateDir, /langflow-source-7863$/);
   assert.notEqual(a.stateDir, b.stateDir);
   assert.ok(a.pidFileExists, "expected a PID file under the per-port state directory");
@@ -305,7 +332,7 @@ test("the PORT keys the state directory, so two ports never share one", () => {
 
 test("the PID file names the server itself, so the stop script leaves no orphan", () => {
   const r = runScript();
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.ok(r.pid, "expected a PID");
   assert.match(
     processTable(),
@@ -314,7 +341,7 @@ test("the PID file names the server itself, so the stop script leaves no orphan"
   );
 
   const stop = runStop(r);
-  assert.equal(stop.status, 0, stop.stdout);
+  assertExit(stop, 0);
   assert.match(stop.stdout, /stopped/);
   // The real assertion. With $! holding the subshell instead of the server, the stop
   // reported success here while the server survived, reparented, still on the port.
@@ -338,7 +365,7 @@ test("the starter returns while the server keeps running, holding none of the ca
   const started = Date.now();
   const r = runScript();
   const elapsed = Date.now() - started;
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.ok(elapsed < 10000, `the starter took ${elapsed}ms to return; it is holding the caller's pipes`);
   assert.match(processTable(), serverPattern(), "the server should still be running behind it");
   r.cleanup();
@@ -348,7 +375,7 @@ test("a port that already answers is refused, instead of being reported ready", 
   // Without this the failed bind is invisible: the readiness probe is answered by
   // whatever already holds the port, and the lane runs against that instance.
   const r = runScript({ portBusy: true });
-  assert.equal(r.status, 2);
+  assertExit(r, 2);
   assert.match(r.stdout, /already answers \/health_check/);
   assert.equal(r.uv, "", "nothing should be synced or launched once the port is taken");
   r.cleanup();
@@ -356,13 +383,13 @@ test("a port that already answers is refused, instead of being reported ready", 
 
 test("a still-running instance from a previous start is refused, naming the stop command", () => {
   const first = runScript();
-  assert.equal(first.status, 0);
+  assertExit(first, 0);
   // Same state root and port, and the first instance is still alive.
   const second = runScript({
     env: { LANGFLOW_SRC_STATE_DIR: first.stateDir },
     portBusy: false,
   });
-  assert.equal(second.status, 2);
+  assertExit(second, 2);
   assert.match(second.stdout, /still running on port/);
   assert.match(second.stdout, /stop-langflow-source\.sh/);
   first.cleanup();
@@ -374,7 +401,7 @@ test("a frontend build that belongs to another commit is refused", () => {
   // backend and leaves the previous build's index.html in place: the specs that did
   // not change pass, the ones that did fail, and the report blames the product.
   const r = runScript({ stamp: "deadbeefdeadbeef" });
-  assert.equal(r.status, 2);
+  assertExit(r, 2);
   assert.match(r.stdout, /was built from deadbeefde/);
   assert.match(r.stdout, /prepare-target-source\.sh/);
   assert.equal(r.pidFileExists, false);
@@ -386,12 +413,12 @@ test("an unstamped build warns by default and is fatal when the lane demands it"
   // usable; the scheduled lane runs the preparer first, so there "no stamp" means the
   // preparer did not run and the assets' origin is unknown.
   const lenient = runScript();
-  assert.equal(lenient.status, 0);
+  assertExit(lenient, 0);
   assert.match(lenient.stdout, /no build stamp at/);
   lenient.cleanup();
 
   const strict = runScript({ env: { LANGFLOW_REQUIRE_BUILD_STAMP: "1" } });
-  assert.equal(strict.status, 2);
+  assertExit(strict, 2);
   assert.match(strict.stdout, /asks for a guarantee/);
   assert.equal(strict.pidFileExists, false);
   strict.cleanup();
@@ -399,7 +426,7 @@ test("an unstamped build warns by default and is fatal when the lane demands it"
 
 test("a stamp that agrees with HEAD starts with nothing to say about provenance", () => {
   const r = runScript({ stamp: "abc1234" });
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.doesNotMatch(r.stdout, /build stamp/);
   r.cleanup();
 });
@@ -408,7 +435,7 @@ test("a clone with no frontend build is refused, naming the build command", () =
   // src/backend/base/langflow/frontend is gitignored upstream, so a fresh clone has
   // none and the backend answers /health_check 200 while serving no UI at all.
   const r = runScript({ frontendBuilt: false });
-  assert.equal(r.status, 2);
+  assertExit(r, 2);
   assert.match(r.stdout, /no frontend build at/);
   assert.match(r.stdout, /install_frontend build_frontend/);
   r.cleanup();
@@ -416,7 +443,7 @@ test("a clone with no frontend build is refused, naming the build command", () =
 
 test("a process that exits during startup fails immediately, not at the deadline", () => {
   const r = runScript({ serverExits: true, healthy: false });
-  assert.equal(r.status, 1);
+  assertExit(r, 1);
   assert.match(r.stdout, /exited .* without answering/);
   assert.equal(r.pidFileExists, false);
   r.cleanup();
@@ -430,7 +457,7 @@ test("a process that ignores SIGTERM is escalated, not left as an orphan", () =>
   // The next start could not see it either: /health_check cannot answer from a port
   // that is BOUND but silent, which is the very state the timeout was reached in.
   const r = runScript({ healthy: false, ignoresTerm: true, env: { LANGFLOW_STOP_TIMEOUT_S: "2" } });
-  assert.equal(r.status, 1);
+  assertExit(r, 1);
   assert.match(r.stdout, /ignored SIGTERM/);
   assert.doesNotMatch(
     processTable(),
@@ -470,7 +497,7 @@ test("tracing is the caller's to set, and its default is not moved", () => {
 
 test("the environment block matches the pip starter's, read from that file", () => {
   const r = runScript();
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   const pip = readFileSync(PIP_START, "utf8");
 
   // Every LANGFLOW_* the pip starter puts in front of `langflow run` must reach the
@@ -497,7 +524,7 @@ test("the environment block matches the pip starter's, read from that file", () 
 
 test("the default bind is loopback, unlike the pip starter's, because the VM is shared", () => {
   const r = runScript();
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.match(r.uv, /--host 127\.0\.0\.1/);
   const opted = runScript({ env: { LANGFLOW_BIND_HOST: "0.0.0.0" } });
   assert.match(opted.uv, /--host 0\.0\.0\.0/);
@@ -507,14 +534,14 @@ test("the default bind is loopback, unlike the pip starter's, because the VM is 
 
 test("the sync keeps the lockfile frozen, so the clone is not rewritten", () => {
   const r = runScript();
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.match(r.uv, /sync --frozen/);
   r.cleanup();
 });
 
 test("LANGFLOW_SRC_RUN_CMD replaces the uv path entirely", () => {
   const r = runScript({ env: { LANGFLOW_SRC_RUN_CMD: `sleep ${SERVER_MARKER}` } });
-  assert.equal(r.status, 0);
+  assertExit(r, 0);
   assert.equal(r.uv, "", "uv must not be invoked when the run command is overridden");
   r.cleanup();
 });
@@ -524,7 +551,7 @@ test("no uv and no override is an error, not a silent pip install of published p
   // [tool.uv.sources] workspace = true, so `pip install -e .` reaches PyPI for
   // langflow-base and every lfx-* bundle and installs RELEASED versions instead.
   const r = runScript({ withUv: false });
-  assert.equal(r.status, 2);
+  assertExit(r, 2);
   assert.match(r.stdout, /uv is not installed/);
   assert.match(r.stdout, /LANGFLOW_SRC_RUN_CMD/);
   r.cleanup();
@@ -532,14 +559,14 @@ test("no uv and no override is an error, not a silent pip install of published p
 
 test("the log is truncated per start, so a failure tail cannot show the previous run", () => {
   const first = runScript({ serverExits: true, healthy: false });
-  assert.equal(first.status, 1);
+  assertExit(first, 1);
   writeFileSync(join(first.stateDir, "langflow.log"), "PREVIOUS RUN MARKER\n");
   const second = runScript({
     env: { LANGFLOW_SRC_STATE_DIR: first.stateDir },
     serverExits: true,
     healthy: false,
   });
-  assert.equal(second.status, 1);
+  assertExit(second, 1);
   assert.doesNotMatch(second.stdout, /PREVIOUS RUN MARKER/);
   assert.doesNotMatch(second.log, /PREVIOUS RUN MARKER/);
   first.cleanup();
@@ -554,7 +581,7 @@ test("LANGFLOW_SRC_KEEP_STATE=1 keeps the previous database and log", () => {
   const second = runScript({
     env: { LANGFLOW_SRC_STATE_DIR: first.stateDir, LANGFLOW_SRC_KEEP_STATE: "1" },
   });
-  assert.equal(second.status, 0);
+  assertExit(second, 0);
   assert.ok(existsSync(dataMarker), "KEEP_STATE=1 should not wipe the data directory");
   first.cleanup();
   second.cleanup();
@@ -562,7 +589,7 @@ test("LANGFLOW_SRC_KEEP_STATE=1 keeps the previous database and log", () => {
 
 test("a backend that never answers fails with exit 1 and clears the PID file", () => {
   const r = runScript({ healthy: false });
-  assert.equal(r.status, 1);
+  assertExit(r, 1);
   assert.match(r.stdout, /did not become ready/);
   assert.equal(r.pidFileExists, false);
   r.cleanup();
@@ -570,7 +597,7 @@ test("a backend that never answers fails with exit 1 and clears the PID file", (
 
 test("a poll interval of zero is refused, because it never advances the deadline", () => {
   const r = runScript({ env: { LANGFLOW_POLL_INTERVAL_S: "0" } });
-  assert.equal(r.status, 2);
+  assertExit(r, 2);
   assert.match(r.stdout, /LANGFLOW_POLL_INTERVAL_S/);
   r.cleanup();
 });
@@ -579,7 +606,7 @@ test("the stop script reports honestly when the recorded process is already gone
   const r = runScript();
   execFileSync("kill", ["-9", r.pid]);
   const stop = runStop(r);
-  assert.equal(stop.status, 0);
+  assertExit(stop, 0);
   assert.match(stop.stdout, /already gone/);
   assert.equal(existsSync(r.pidFile), false);
   r.cleanup();
@@ -588,7 +615,7 @@ test("the stop script reports honestly when the recorded process is already gone
 test("stopping a port with no instance is a no-op, not a failure", () => {
   const r = runScript({ repoExists: false });
   const stop = runStop(r);
-  assert.equal(stop.status, 0);
+  assertExit(stop, 0);
   assert.match(stop.stdout, /No PID file/);
   r.cleanup();
 });
