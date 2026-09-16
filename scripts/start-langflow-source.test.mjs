@@ -267,10 +267,11 @@ function runStop(r, extraEnv = {}) {
  * TIMEOUT into it: `execFileSync` killing the child at `timeout: 12000` throws
  * with `status: null` and `signal: SIGTERM`, and `e.status ?? 1` turns that
  * `null` into `1`, indistinguishable from a real `exit 1` (`status: 1`,
- * `signal: null`). A SPAWN failure (`ENOENT`, and `EAGAIN`/`EMFILE` under the
- * parallel runner) collapses the same way — that one arrives with `stdout`
- * EMPTY, which is what the `(nothing captured)` fallback below is for. And the
- * script's own `1` has two sources of its own, below.
+ * `signal: null`). A SPAWN failure collapses the same way — measured for
+ * `ENOENT`: `status: null`, `signal: null`, and `stdout` EMPTY, which is what
+ * the `(nothing captured)` fallback below distinguishes. (Any other spawn errno
+ * would take the same route; only `ENOENT` was measured.) And the script's own
+ * `1` has two sources of its own, below.
  *
  * `duration_ms` is the cheap bound and this message does not replace it:
  * `node:test` prints it for every subtest. But read it against the script's exit
@@ -297,8 +298,10 @@ function runStop(r, extraEnv = {}) {
  * The cause is in the fixture rather than in the script: `${RUN_CMD}` is
  * launched with `--host … --port … --no-open-browser --workers 1` appended
  * (start-langflow-source.sh:296), and this test's stub is `sleep 30.<pid>`,
- * which rejects those and exits 1 in ~20 ms. The test passes only while bash has
- * not reaped the zombie by the time `kill -0` runs. Tracked separately — fixing
+ * which rejects those and exits 1 immediately — well inside the loop's first
+ * iteration, which is why the reds land in the tens of milliseconds rather than
+ * at any budget. The test passes only while bash has not reaped the zombie by
+ * the time `kill -0` runs. Tracked separately — fixing
  * it is a change to what the test does, where this helper is a change to what a
  * failure says.
  */
