@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/projects/api-projects-transfer.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev12`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev14`)
 
 Owning issue: #1707 (Wave 7 — OSS API coverage, `projects` family). Gauge, definitions
 and denominator: `docs/api/api-surface-coverage-gauge.md`.
@@ -96,7 +96,9 @@ route). On `GET /api/v1/projects/download/{id}` it does not: the **same** string
 **and** the answer while the flow's `INSERT` is uncommitted, because
 `download_project_flows` selects `Flow.folder_id == project_id` and raises on an empty
 result (`projects_files.py:79`). Test 1's own step 1 asserts that legitimate 404. So
-the discriminator has to come from a second read, of a different key.
+the discriminator has to come from a **second read** — of the flow row, since that is
+the row whose visibility decides this 404. What a second read cannot do is fix its own
+timing, which is the limit measured in *When the pair collapses* below.
 
 **What the tests do about it: nothing that changes an assertion.** `200` with a ZIP for
 a populated project, and the imported project being in the listing, *are* the contracts
@@ -165,13 +167,13 @@ which is found by name and by the flow ids it brought back.
    (`describeFlowReadback`, the #1759 helper). Neither throws, both run only on the
    failing branch, and the assertion itself is unchanged.
 
-   **The pair is a four-way discriminator, and the flow readback is the half that does
-   the work here:**
+   **The pair narrows the failure to four cases, and three of them are a verdict.** The
+   flow readback is the half that does the work here:
 
    | `detail` | flow readback | shape |
    |---|---|---|
    | `"No flows found in project"` | `200` — the row EXISTS | `LE-2598`'s window: the flow's `201` preceded its commit, so the download's `folder_id` query saw nothing. **Transient.** |
-   | `"No flows found in project"` | `404` — the row is absent | the flow is genuinely gone: a commit that never happened, or a cross-worker wipe. **Not `LE-2598`.** |
+   | `"No flows found in project"` | `404` — the row is absent | **UNDECIDED**, not a verdict. Either the flow is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
    | `"Project not found"` | either | the **project** row is the one missing — a different subject, and new: step 1 already proved that id resolved. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — the download route stopped resolving. |
 
@@ -179,6 +181,34 @@ which is found by name and by the flow ids it brought back.
    readback must never become the asserted read: the `expect` runs on the status
    captured from the **first** download, so a row that lands between the two reads
    still fails the test — it just says why.
+
+   **When the pair collapses — measured, and the reason row 2 says UNDECIDED (#1876).**
+   This table first read row 2 as *"the flow is genuinely gone — not `LE-2598`"*, and
+   `LE-2598` produces exactly that pair while its window is open. Replaying step 2 on
+   `1.13.0.dev12` under the family's usual toggle — a 300 ms delay between
+   `session_scope`'s `yield` and its `commit`, gated on a marker file so control and
+   mutation run in the same process:
+
+   | phase | downloads answering `200` | what the pair said |
+   |---|---|---|
+   | control | **10/10** | — |
+   | mutation (300 ms) | **0/10** | `404 "No flows found in project"` + flow readback `404`, **10 of 10** |
+   | revert, same process | **10/10** | — |
+
+   The mechanism is what makes this a rule rather than one experiment's result: the
+   keys differ — the download is addressed by `project_id`, the readback by `flow_id` —
+   but **the row that is invisible is the same one**. Under `LE-2598` the uncommitted
+   row is the flow just posted into the project: the download's `folder_id` query cannot
+   see it, and the readback of that same flow cannot either. What a pair of reads needs
+   in order to discriminate is not two keys but one read that lands *after* the window,
+   which two calls issued milliseconds apart cannot guarantee. What separates them is a
+   **later** read or the container log.
+
+   How much weight row 2 carries: under the *natural* window — 8-11 ms, below one HTTP
+   round trip — the readback normally lands after the commit and gives row 1, so the
+   forced window is ~30× wider than anything measured idle. The generalisation holds for
+   the case that matters anyway, since a failing occurrence has by definition already
+   outlasted a round trip — which is exactly when the pair collapses.
 3. Keep the buffer for test 2's fixture path (each test builds its own — no shared
    state between tests).
 
@@ -210,9 +240,11 @@ which is found by name and by the flow ids it brought back.
    window. On the daily, where the window is under one HTTP round trip, the same two
    reads land *after* it and give row 1. So the honest reading is: rows 1-3 name a
    shape; row 4 says the reads were taken too close to the failure to separate the two,
-   and the next step is the container log, not another read. Test 1's pair does not have
-   this hole — its two reads are of **different** keys, so the flow readback still
-   answers even while the download is failing.
+   and the next step is the container log, not another read. **Test 1's pair has the same
+   hole, for the same reason** — an earlier revision of this file claimed it did not,
+   on the grounds that its two reads use different keys. They do, but the invisible row
+   is the same flow either way; it is measured under *When the pair collapses* in test
+   1's step 2 (#1876).
 
    Same rule as test 1: the re-read decorates the message only. `expect` asserts on the
    **first** listing, so a project that appears a moment later still fails the test.
