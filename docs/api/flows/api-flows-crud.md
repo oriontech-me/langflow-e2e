@@ -68,13 +68,22 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
    `expect(received).toBeDefined() / Received: undefined` and names neither.
 
    **The asymmetry is the point, and it is what makes this readback worth keeping.**
-   Unlike the sibling routes in that family, the read that fails here is the **LIST**,
-   not the by-id route, so the two reads ask genuinely different questions and the
-   `200` branch stays a verdict — that is the attribution #1759 was opened to add.
-   Only the `404` branch is undecided between *absent* and *written and not yet
-   committed*, and the argument this test needs survives it intact: under a forced
-   window the readback answers `404` **too**, so the row is invisible to every read
-   rather than missing from one page, and `read_flows` is not the defect.
+   The read that fails here is the **LIST**, not the by-id route the readback uses, so
+   the two reads ask genuinely different questions and the `200` branch stays a
+   verdict — that is the attribution #1759 was opened to add.
+
+   Draw that line in the right place: it is **not** *this route versus the siblings*.
+   `describe-flow-readback.ts` records that only `api-flows-batch` and `api-invalid-key`
+   reissue the **same** request, where the readback adds no second axis at all; on
+   `api-flows-versions` and `api-projects-transfer` the failing read differs too, and
+   their `200` branches are verdicts for the same reason as this one. What all five
+   share is the `404` branch — undecided between *absent* and *written and not yet
+   committed*. An editor working the family must not flatten any of those `200`
+   branches.
+
+   Here the argument this test needs survives that intact: under a forced window the
+   readback answers `404` **too**, so the row is invisible to every read rather than
+   missing from one page, and `read_flows` is not the defect.
 6. Cleanup
 
 **Test 3 — `GET by ID returns correct flow`**
@@ -98,8 +107,10 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
 3. Assert HTTP status is `200`
 4. **When step 3 fails, attach the response body and the status of `GET
    /api/v1/flows/{id}`** — a `404` from `DELETE` does not say whether the id is wrong
-   or the row was merely not visible to that read (see *Known product defect*), and
-   the `GET` separates the two
+   or the row was merely not visible to that read (see *Known product defect*). The
+   `GET` separates the two on its `200` branch; a `404` there is answered alike by a
+   wrong id and by a write that has not committed (#1881), so that branch narrows
+   nothing and the attribution falls back to shape
 
 **Test 6 — `GET after DELETE returns 404`**
 1. Create a flow via `POST`
@@ -126,9 +137,12 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
    daily this test and Test 5 were the same failure seen from two sides
 3. `GET /api/v1/flows/`
 4. Assert HTTP status is `200` and the deleted `id` is absent from the list
-5. **When step 4 fails, attach the status of `GET /api/v1/flows/{id}`** — it separates
-   "the delete reported success and removed nothing" from "the row is gone and only
-   the list still shows it"
+5. **When step 4 fails, attach the status of `GET /api/v1/flows/{id}`** — a `200`
+   there is the verdict *"the delete reported success and removed nothing"*. A `404`
+   says only that the row is **no longer visible by id**, not that it is gone (#1881):
+   the readback is issued milliseconds after the list, so a write that has not
+   committed misses both. What settles the database state is a LATER read or the
+   container log, never this pair
 
 ---
 
@@ -182,8 +196,8 @@ observable, while no in-lane failure of Test 2 ever carried a readback, so the 0
 09-08 occurrences are attributed by shape rather than caught in the act. Note what row
 three does and does not say — it rules out *the list dropped a row that is otherwise
 readable*, and it does **not** establish that the row was absent, since under this very
-window it demonstrably was not. The competing explanation is refuted structurally rather
-than by the experiment — `read_flows`
+window it demonstrably was not. The competing explanation is refuted structurally, and
+independently of the experiment — `read_flows`
 (`api/v1/flows.py`) takes `get_all: bool = True` and the spec calls it unparameterised,
 so "the list returned an incomplete page" is not a state that route can be in. The `POST`
 latency is what shows the ordering instead of inferring it: the delay moved from *after*
@@ -259,9 +273,12 @@ sequential path always gave.
 - **A green run is not evidence that this family is gone, and was never accepted as
   such.** `LE-2552`/`LE-2598` never reproduced idle here; what re-validated them is the
   forced-ordering measurement in *Known product defects*, run on the image before the fix
-  and on the image with it. If one of the three fails again, read the diagnostic first —
-  `404` from the by-id readback is the write-before-commit shape returning, `200` with
-  the id absent from the list would be a genuinely new defect in `read_flows`.
+  and on the image with it. If one of the three fails again, read the diagnostic first.
+  A `200` with the id absent from the list would be a genuinely new defect in
+  `read_flows`. A `404` from the by-id readback is **consistent with** the
+  write-before-commit shape returning and does not establish it (#1881) — a
+  cross-worker wipe and a row that never committed answer that read alike — so take a
+  read after the window, or the container log, before reopening `LE-2598`.
 
 ---
 
