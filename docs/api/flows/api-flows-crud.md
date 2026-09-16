@@ -27,10 +27,13 @@ serial and 0/80 concurrent while #1759 was open, and 10/10 clean first list read
 `1.13.0.dev12` and `1.13.0.dev14` un-forced — so a green burst says nothing about it. The
 measurement that does is in *Known product defects* below.
 
-It was quarantined with `test.fixme` at triage (#1761) and **un-quarantined the same
-day** (#1768, four hours later) while the tag stayed off, and that lift is what made the attribution
-possible: it kept the test running in the PR gate and the full suite, so its step-5
-diagnostic stayed readable. A discriminant on a muted test is never read.
+It was quarantined with `test.fixme` at triage (#1761) and **un-quarantined the same day**
+(#1768, four hours later) while the tag stayed off, so it kept running in the PR gate and
+the full suite with its step-5 diagnostic readable. Be precise about what that bought: the
+diagnostic never fired — the test has not failed in any lane since 2026-09-08 — so what
+attributed the failure is the same read driven **by hand** under a forced commit window,
+which `test.fixme` would not have prevented either. The lift preserved a runnable spec and
+the chance of an in-lane reading; the evidence came from the experiment.
 
 Tests 5 and 9 kept `@stable` throughout — they were first occurrences, absorbed by the
 daily's retry budget, and while the defect was live they were what said it was still
@@ -137,12 +140,17 @@ tests gained is the ability to say which side fired — and that is kept, becaus
 run is not evidence on an intermittent defect and the next one of this family will be
 read from a failure message in `results.json`.
 
-### `LE-2598` — the write answered before it committed (Test 2)
+### Shape A — the write answered before it committed (`LE-2598`)
+
+Observed by **Test 2** (`POST` → `201`, the list omits the id) and by **Test 5** on the
+2026-09-08 daily, where the raw `DELETE` of a just-created id answered `404`. Both are
+this shape and not the one below: that id was never deleted twice.
 
 Every write route taking `DbSession` returned its 2xx before the transaction committed:
 `_new_flow` does `session.add` → `flush()` → `refresh()` → `return FlowRead` and never
-commits; the commit belonged to `session_scope`'s `yield`-dependency teardown, which
-FastAPI runs **after** the response has been written. So `POST` → `201` → the very next
+commits; the commit belonged to the teardown of `injectable_session_scope` (the `yield`
+dependency wrapping `session_scope`), which FastAPI runs **after** the response has been
+written. So `POST` → `201` → the very next
 `GET /api/v1/flows/` can correctly not list the flow.
 
 Measured for **this test's own shape** — `POST /api/v1/flows/` then the LIST — with a
@@ -154,17 +162,25 @@ the confounder:
 |---|---|---|
 | first list read contains the flow, **un-forced** | 10/10 | 10/10 |
 | first list read contains the flow, **under the delay** | **0/10** | **10/10** |
-| by-id readback at that moment (step 5's diagnostic) | `404` × 10 — the **row** is not there | n/a |
+| by-id readback at that moment (the read step 5 performs, driven by hand) | `404` × 10 — the **row** is not there | n/a |
 | list showed it after | 276-433 ms (3-4 polls) | n/a |
 | `POST` latency under the delay | 9-11 ms — the client is not waiting for the commit | **316-331 ms** — it is |
 | marker removed again, same process | 10/10 | 10/10 |
 
-The `404` in row three is what settles the attribution #1759 left open: Test 2's failure
-is **not** a list-query defect (`read_flows` returning an incomplete page), it is the row
-not being visible to any read yet. The `POST` latency is what proves the ordering rather
-than inferring it — the delay moved from *after* the response to *inside* it.
+Row three is what attributes the failure #1759 left open, and the strength is worth
+stating honestly: the forced window shows this mechanism produces **exactly** Test 2's
+observable, while no in-lane failure of Test 2 ever carried a readback, so the 08-19 and
+09-08 occurrences are attributed by shape rather than caught in the act. The competing
+explanation is refuted structurally rather than by the experiment — `read_flows`
+(`api/v1/flows.py`) takes `get_all: bool = True` and the spec calls it unparameterised,
+so "the list returned an incomplete page" is not a state that route can be in. The `POST`
+latency is what shows the ordering instead of inferring it: the delay moved from *after*
+the response to *inside* it.
 
-### `LE-2552` — the delete answered success for a request that removed nothing (Tests 5, 9)
+### Shape B — the delete answered success for a request that removed nothing (`LE-2552`)
+
+Observed by **Tests 5 and 9**, and only when two deletes of the same id overlap. A `404`
+from `DELETE` is Shape A; a `200` that removed nothing is this one.
 
 `DELETE` on this route family answered a **success status for a request that removed
 nothing**. `_read_flow` runs twice per request — once in the `AuthorizedDeleteFlow`
@@ -196,8 +212,8 @@ Two consequences for anyone reading a failure here:
 - **A `2xx` from `DELETE` is not a post-condition.** Confirm removal with `GET
   /api/v1/flows/{id}` → `404` or by absence from the list — which is what Tests 6 and
   9 do, and why Test 9's own delete is now asserted rather than delegated.
-- **A `404` from `DELETE` is not proof the id is wrong.** It is the other face of the
-  same race.
+- **A `404` from `DELETE` is not proof the id is wrong.** That is Shape A — the row was
+  written and was not yet visible to this request's read.
 
 Test 2's own failure (`POST` → `201`, then the list omits the id) is **not** attributed
 to this mechanism — it goes through `read_flows`, a different query, and it did not
@@ -261,7 +277,7 @@ sequential path always gave.
 - `src/backend/base/langflow/api/v1/authz_route_dependencies.py` — resolves the flow for `GET`/`PATCH`/`DELETE` by id and is where the `404 "Flow not found"` originates. It performs the **first** of the two `_read_flow` calls per request; the second is in the router. `LE-2552` lives in the gap between them, so a change to either read (or to the retry that wraps the second one) changes what Tests 5 and 9 observe.
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_read_flow` itself (owner-scoped unless an authorization plugin widens it) and `_new_flow`; the query that decides whether a just-written row is visible to the next read.
 - `src/backend/base/langflow/api/utils/core.py` — where `DbSession` is declared. `LE-2598` was the absence of `scope="function"` on this `Depends`, which put the commit in a teardown FastAPI runs after the response; dropping it again makes Test 2 fail exactly as it did on 2026-08-19 and 2026-09-08.
-- `src/lfx/src/lfx/services/deps.py` — `session_scope`, the `yield`-dependency whose teardown carries the `commit` that every write route relies on.
+- `src/lfx/src/lfx/services/deps.py` — `session_scope` (the `@asynccontextmanager` carrying the `commit`) and `injectable_session_scope`, the `yield` dependency wrapping it; `LE-2598` was that dependency's teardown running after the response.
 
 ---
 

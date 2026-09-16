@@ -75,8 +75,10 @@ test.describe("CRUD /api/v1/flows", () => {
   // `session_scope`'s `yield` and its `commit`, control and mutation in the same process:
   //
   //   1.13.0.dev12   mutation 0/10 first list reads contained the flow, POST 9-11 ms
-  //                  — and the readback below answered 404 on all 10, i.e. the ROW was
-  //                    not there; the list query is not the defect
+  //                  — and the read below, driven BY HAND (this diagnostic has never
+  //                    fired in a lane), answered 404 on all 10: the ROW was not there,
+  //                    and `read_flows` takes get_all=True, so an incomplete page is not
+  //                    a state it can be in
   //   1.13.0.dev14   mutation 10/10 contained it, POST 316-331 ms
   //                  — the delay moved from after the response to inside it
   //
@@ -255,8 +257,10 @@ test.describe("CRUD /api/v1/flows", () => {
             headers: { Authorization: authToken },
           });
           // A 404 here does not say whether the id is wrong or the row was merely
-          // not visible to that read — the two faces of LE-2552. The readback
-          // separates them, in the message the daily triage actually reads.
+          // not visible to that read. The readback separates them, in the message the
+          // daily triage actually reads — and on 2026-09-08 it was the second: a 404
+          // for a just-created id is LE-2598's shape, while LE-2552 is this call
+          // answering 200 for a request that removed nothing.
           const diagnosis =
             deleteRes.status() === 200
               ? undefined
