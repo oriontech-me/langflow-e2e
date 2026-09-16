@@ -2,10 +2,13 @@
 
 **File:** `tests/tests-automations/regression/api/flows/api-flows-batch.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev0`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev12`)
 
 Owning issue: #1699 (Wave 7 — OSS API coverage, `flows` family). Gauge, definitions
 and denominator: `docs/api/api-surface-coverage-gauge.md`.
+
+Product defect against step 2, **fixed upstream in `1.13.0.dev14`**: #1807 / `LE-2598`
+— see *The defect step 2 caught* below.
 
 ---
 
@@ -48,6 +51,42 @@ Recorded here so the finding is not lost: **the flows listing does not paginate*
 
 ---
 
+## The defect step 2 caught — `LE-2598` (#1807), fixed in `1.13.0.dev14`
+
+Step 2 reads each created flow back by id, and on a loaded instance that read can answer
+`404 {"detail":"Flow not found"}` for an id the batch `POST` has just returned. The cause
+is not this route: **every write route taking `DbSession` answers its 2xx before the
+transaction commits**, so a read issued with the id the write just returned can correctly
+find nothing. The mechanism, the five links and the causal proof are documented once in
+`docs/api/flows/api-flows-versions.md`; this file records only what is specific to batch
+create.
+
+It fired on the 2026-09-10 daily ([run 34478166565](https://github.com/oriontech-me/langflow-e2e/actions/runs/34478166565), triage #1806 → #1807): attempts 0 and 1
+failed at `12:47:10.020` and `12:47:11.763`, and attempt 2 passed 1.9 s later — one of
+four tests across three routes inside the same 16 s window on shard 3.
+
+**Batch create is the cheapest witness of the mechanism in the suite**, which is why the
+instrumentation is worth having here even though the test recovers on retry: the `POST`
+returns **two** ids in one transaction, so a window that hides one and not the other
+would be visible as a partial batch, and the loop reads them back-to-back with nothing in
+between.
+
+**`@stable` stays on.** The test recovered on attempt 2, so the daily's auto-removal
+never took the tag. What step 2 gains is attribution — the next occurrence names its own
+shape rather than printing `Received: 404`.
+
+**The fix, verified rather than assumed.** `langflow#15078` scopes the session
+dependency to the function (`Depends(injectable_session_scope, scope="function")`), so
+the commit precedes the response; it back-merged into the 1.13 line between
+`1.13.0.dev12` and `1.13.0.dev14`. A green run is not the evidence — the defect never
+reproduced locally to begin with. What was measured is the ordering from both sides: the
+same gated 300 ms delay between `session_scope`'s `yield` and its `commit` takes this
+step from **0/10 on `dev12`** to **10/10 on `dev14`**, with the `POST` latency going from
+11-20 ms to 338-366 ms. The delay moved from after the response to inside it. The
+instrumentation stays as a regression detector, not as a workaround.
+
+---
+
 ## Tags *(required)*
 
 `@api` `@workspace` `@stable`
@@ -69,7 +108,25 @@ the batch are tracked from the `201` list and deleted by id in `afterEach`.
    names, empty graphs) → `201`, body is an array of length 2, each entry with a UUID
    `id`, the submitted `name`, and `access_type === "PRIVATE"`.
 2. `GET /api/v1/flows/{id}` for each → `200` with the same `name` — the flows exist
-   server-side, not only in the response.
+   server-side, not only in the response. The `200` is asserted unconditionally. On a
+   non-`200` the step builds a diagnosis into the assertion's message from two reads —
+   the failing response's own `detail` (`describeResponseDetail`) and a second by-id
+   read of the same route (`describeFlowReadback`, the #1759 helper). Neither throws,
+   both run only on the failing branch, and the assertion is unchanged.
+
+   **Here the two reads differ by TIME, not by route, and that is the axis that
+   matters:**
+
+   | `detail` | second read | shape |
+   |---|---|---|
+   | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the batch's `201` preceded its commit and the row landed between the two reads. **Transient.** |
+   | `"Flow not found"` | `404` — still absent | the row is genuinely gone: a commit that never happened, or a cross-worker wipe. **Not `LE-2598`.** |
+   | `"Not Found"` | either | FastAPI's unmatched-route 404 — `GET /api/v1/flows/{flow_id}` stopped resolving. |
+
+   A read that cannot answer is `UNDECIDED` and claims neither (#1012). The second read
+   must never become the asserted one: `expect` runs on the status captured from the
+   **first** read, so a row that lands a moment later still fails the test — it just
+   says why.
 3. `POST /api/v1/flows/batch/` with `{"flows": [<A's name again>]}` → `409`,
    `detail === "Name must be unique"`; the flow count is unchanged.
 4. `POST /api/v1/flows/batch/` with `{"flows": []}` → `201`, body deep-equals `[]`.
@@ -87,10 +144,22 @@ answering `405`, and the declared coverage — `POST /api/v1/flows/batch/` and
 `GET /api/v1/flows/{flow_id}` — matching what the fixture recorded. Zero flows left
 behind.
 
+For the `LE-2598` instrumentation specifically: forcing step 2's read-back to a
+non-`200` must produce a failure message that names the `detail` string **and** the
+second read's verdict, and the step must still **fail** — an instrumented assertion
+that stops failing is the defect this suite exists to catch, inverted. Neither
+diagnostic read is added to `apiCoverage.declare`: they run on the failing branch only,
+and the gate fails a declaration the test never issues.
+
 ---
 
 ## External dependencies *(required)*
 
 - A running Langflow OSS instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser.
 - `src/backend/base/langflow/api/v1/flows.py` — the flows router these operations live in.
+- `src/backend/base/langflow/api/v1/flows_helpers.py` — `_new_flow`, which flushes
+  without committing (`LE-2598`).
+- `src/backend/base/langflow/api/utils/core.py` — `DbSession`, the
+  auto-commit-at-teardown session dependency.
+- `src/lfx/src/lfx/services/deps.py` — `session_scope`, where the commit actually happens.
 - No provider key, no model, no network egress.
