@@ -725,10 +725,13 @@ test("a stub that dies on arrival fails with the log that says why, not just a h
         runCmdForwardsArgv: true,
         waitBudgetMs: 500,
       }),
+    // Match the stub's own error PREFIX, not its wording: BSD `sleep` rejects
+    // `--host` as an operand ("invalid time interval"), GNU rejects it as an
+    // option ("unrecognized option"), and pinning either one makes this test
+    // pass on the author's machine and fail on the runner — measured, on CI.
     (e) =>
       /never appeared in the process table/.test(e.message) &&
-      /--- langflow\.log ---/.test(e.message) &&
-      /invalid time interval/.test(e.message),
+      /--- langflow\.log ---[\s\S]*sleep:/.test(e.message),
     "the guard must name the hypothesis AND hand over the log that settles it",
   );
 });
