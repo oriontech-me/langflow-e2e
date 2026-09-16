@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/flows/api-flows-batch.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev12`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev14`)
 
 Owning issue: #1699 (Wave 7 — OSS API coverage, `flows` family). Gauge, definitions
 and denominator: `docs/api/api-surface-coverage-gauge.md`.
@@ -114,19 +114,41 @@ the batch are tracked from the `201` list and deleted by id in `afterEach`.
    read of the same route (`describeFlowReadback`, the #1759 helper). Neither throws,
    both run only on the failing branch, and the assertion is unchanged.
 
-   **Here the two reads differ by TIME, not by route, and that is the axis that
-   matters:**
+   **The pair narrows the failure to three cases, and two of them are a verdict.** The
+   two reads differ by TIME rather than by route, which is what separates rows 1 and 2 —
+   and why row 2 is not a verdict: time discriminates only when the second read lands
+   *after* the commit window, which two calls issued in the same breath cannot
+   guarantee. Row 3 needs neither read beyond the `detail` string:
 
    | `detail` | second read | shape |
    |---|---|---|
    | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the batch's `201` preceded its commit and the row landed between the two reads. **Transient.** |
-   | `"Flow not found"` | `404` — still absent | the row is genuinely gone: a commit that never happened, or a cross-worker wipe. **Not `LE-2598`.** |
+   | `"Flow not found"` | `404` — still absent | **UNDECIDED**, not a verdict. Either the row is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — `GET /api/v1/flows/{flow_id}` stopped resolving. |
 
    A read that cannot answer is `UNDECIDED` and claims neither (#1012). The second read
    must never become the asserted one: `expect` runs on the status captured from the
    **first** read, so a row that lands a moment later still fails the test — it just
    says why.
+
+   **Row 2 was measured, and it is why that row says UNDECIDED rather than "not
+   `LE-2598`", which is what this table claimed first (#1878).** Replaying this step on
+   `1.13.0.dev12` under the family's toggle — a 300 ms delay between `session_scope`'s
+   `yield` and its `commit`, gated on a marker file so control and mutation run in the
+   same process — gives 10/10 first reads answering `200` in control, **0/10 under the
+   delay with BOTH reads negative in all ten**, and 10/10 again on revert. `LE-2598`
+   produces row 2 itself. (An earlier draft cited PR #1873's `×2` on this row as
+   corroboration; that `×2` is the **two flows** the batch creates, each read once, not
+   two reads of one flow — the row stands on the measurement above.)
+
+   The reason is structural rather than an artefact of that experiment: the second read
+   is the **same request** as the failing one, same route and same id, issued
+   milliseconds later, so a window wider than that gap makes both miss. What separates a
+   wipe from a window is a **later** read or the container log, never a second one
+   issued in the same breath. Under the natural window — below one HTTP round trip —
+   the second read normally lands after the commit and gives row 1, so the forced window
+   is orders of magnitude wider; the reading still holds for the case that matters,
+   since a failing occurrence has by definition already outlasted a round trip.
 3. `POST /api/v1/flows/batch/` with `{"flows": [<A's name again>]}` → `409`,
    `detail === "Name must be unique"`; the flow count is unchanged.
 4. `POST /api/v1/flows/batch/` with `{"flows": []}` → `201`, body deep-equals `[]`.

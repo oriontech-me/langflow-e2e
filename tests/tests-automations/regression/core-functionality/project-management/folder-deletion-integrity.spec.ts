@@ -1,9 +1,5 @@
 import type { Page } from "@playwright/test";
-import {
-  expect,
-  test,
-  type PageWithErrorHooks,
-} from "../../../../fixtures/fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
@@ -395,30 +391,28 @@ test(
   async ({ page, request }) => {
     trackCreatedFlows(page);
 
-    // The zero-project state this test exists to reach makes the frontend fire
-    // the paginated flows query with a literal `undefined` project id, and the
-    // backend correctly rejects it with a `422 uuid_parsing`. Upstream frontend
-    // defect, confirmed on the release-1.12.0 line the nightly is built from
-    // (#1008) — the chain is:
-    //
-    //   `useGetFolders` sets `myCollectionId = data.find(default)?.id ?? data[0]?.id`,
-    //   which is `undefined` once no project is left; `HomePage` then passes
-    //   `id: folderId ?? myCollectionId!` — the `!` silences the type error, not
-    //   the value — and `use-get-folder.ts` nests its existence guard inside
-    //   `if (params.id)`, so it is skipped for exactly the `undefined` case it
-    //   should block, and `` `${PROJECTS}/${params.id}` `` interpolates the string.
-    //
-    // Declared rather than silenced with `allowHttpErrors()`: this test deletes N
-    // projects through the UI, and `DELETE /api/v1/projects/{id}` answering 500
-    // while the toast reads "deleted successfully" is a separate filed defect
-    // (#965/LE-2020) that this loop is unusually well placed to catch. The
-    // declaration is verified — if the 422 stops firing, the fixture fails this
-    // test and tells us to close #1008.
-    (page as PageWithErrorHooks).expectKnownHttpError({
-      pathname: "/api/v1/projects/undefined",
-      status: 422,
-      reason:
-        "#1008 — after the last project is deleted the frontend queries GET /api/v1/projects/undefined; upstream frontend defect, the backend's 422 is correct",
+    // LE-2231 regression guard (#1008). Until the upstream fix (langflow#14661),
+    // the zero-project state this test exists to reach made the frontend fire the
+    // paginated flows query with a literal `undefined` project id —
+    // `use-get-folder.ts` nested its existence guard inside `if (params.id)`, so
+    // the guard was skipped for exactly the case it should block — and the
+    // backend rejected it with `422 uuid_parsing`. PR #1294 declared that 422;
+    // the declaration went stale on 1.13.0.dev14, and deleting it alone would
+    // have left a return of the defect as a `🚨` log line, which never fails a
+    // test (#1084). So the REQUEST is asserted absent instead: an absence has to
+    // be asserted on the event that would have happened, and a request the page
+    // never sends has no response to read. Any method, any query string, and
+    // `null` alongside `undefined`, since the fix also dropped the non-null
+    // assertion that used to make the missing value `undefined` only. Registered
+    // before bootstrap so the whole test is covered. Proven to fail on
+    // langflowai/langflow:1.11.6, which still carries the defect.
+    const MISSING_PROJECT_ID = /^\/api\/v1\/projects\/(?:undefined|null)$/;
+    const missingIdRequests: string[] = [];
+    page.on("request", (issued) => {
+      const { pathname } = new URL(issued.url());
+      if (MISSING_PROJECT_ID.test(pathname)) {
+        missingIdRequests.push(`${issued.method()} ${issued.url()}`);
+      }
     });
 
     // Guarantee there is at least one folder holding a flow, so the
@@ -506,5 +500,13 @@ test(
     await expect(
       page.getByTestId("new_project_btn_empty_page"),
     ).toBeVisible({ timeout: 15000 });
+
+    // Asserted only after the empty-project screen: on the defective build the
+    // missing-id request was sent before that screen rendered (measured on
+    // 1.11.6), so by now the listener has seen it if it is coming.
+    expect(
+      missingIdRequests,
+      "the page requested a project with a missing id — LE-2231 is back (#1008)",
+    ).toEqual([]);
   },
 );
