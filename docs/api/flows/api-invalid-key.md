@@ -98,12 +98,24 @@ The spec runs **6 independent tests** via Playwright's `request` fixture. Tests 
    | `detail` | second read | shape |
    |---|---|---|
    | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the `201` in step 1 preceded its commit and the row landed between the two reads. **Transient, and not a security finding.** |
-   | `"Flow not found"` | `404` — still absent | the row is genuinely gone. Only *then* is "the rejected `PATCH` destroyed the flow" on the table — and a cross-worker wipe is still the likelier half. |
+   | `"Flow not found"` | `404` — still absent | **UNDECIDED**, and specifically **not** a security finding yet. Either the row is genuinely gone **or** the commit window is still open and wider than the gap between these two reads. Only a read taken *after* the window still missing puts "the rejected `PATCH` destroyed the flow" on the table — and a cross-worker wipe is still the likelier half even then. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — `GET /api/v1/flows/{flow_id}` stopped resolving. |
 
    A read that cannot answer is `UNDECIDED` and claims neither (#1012). The second read
    must never become the asserted one: `expect` runs on the status captured from the
    **first** read, so a row that lands a moment later still fails the test.
+
+   **Row 2 was measured, and on this spec getting it wrong is the expensive one (#1878).**
+   The second read is the **same request** as the failing one — same route, same id,
+   milliseconds later — so a commit window wider than that gap makes both miss. Replaying
+   this test's sequence (`POST /api/v1/flows/` → the rejected `PATCH` → the read) on
+   `1.13.0.dev12` under the family's toggle — a 300 ms delay between `session_scope`'s
+   `yield` and its `commit`, gated on a marker file so control and mutation share one
+   process — gives 10/10 first reads answering `200` in control, **0/10 under the delay
+   with BOTH reads negative in all ten**, and 10/10 on revert. Read as a verdict, that
+   pair sends a triager after a broken authorization check on a spec whose whole subject
+   is the auth boundary, when what happened was an uncommitted `INSERT`. What separates
+   them is a **later** read or the container log, never a second one in the same breath.
 6. `finally`: delete the created flow
 
 ---

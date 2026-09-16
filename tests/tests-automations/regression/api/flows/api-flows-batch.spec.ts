@@ -82,11 +82,15 @@ test.describe("Batch flow creation via API", () => {
             headers: { Authorization: authToken },
           });
           // The 200 is the contract and is asserted unchanged. The failing
-          // branch adds attribution (#1807 / LE-2598): here the two reads
-          // differ by TIME rather than by route, which is exactly the axis
-          // needed — a row that landed between them is the window, a row still
-          // absent is not. Neither read throws, both run only here, and neither
-          // is declared through apiCoverage.
+          // branch adds attribution (#1807 / LE-2598): the two reads differ by
+          // TIME rather than by route, so a row that landed between them is the
+          // window. A row STILL absent is not the complement of that (#1878):
+          // the second read is the same request as the first, milliseconds
+          // later, so a window wider than that gap makes both miss — measured
+          // on 1.13.0.dev12 under a forced 300 ms window, both negative 10 times
+          // out of 10. That pair is undecided, and what settles it is a LATER
+          // read or the container log. Neither read throws, both run only here,
+          // and neither is declared through apiCoverage.
           const diagnosis =
             res.status() === 200
               ? undefined
