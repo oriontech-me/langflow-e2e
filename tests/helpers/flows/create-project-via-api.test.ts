@@ -201,11 +201,19 @@ test("a non-201 creation throws instead of returning an unusable project", async
 // created (#1409). The generated name therefore has to stay unique THROUGH that
 // truncation, not just as a whole string.
 //
-// `sanitizeMcpName` below replicates `lfx/base/mcp/util.py::sanitize_mcp_name`
-// over the ASCII subset these names live in. It is replicated rather than
-// imported because the rule lives in the product, not in this repo: these tests
-// pin OUR name against THEIR cut, and a drift in the cut should surface here
-// rather than in a red daily.
+// `sanitizeMcpName` below replicates
+// `src/lfx/src/lfx/base/mcp/util.py::sanitize_mcp_name` over the ASCII subset
+// these names live in. It is replicated rather than imported because the rule
+// lives in the product, not in this repo.
+//
+// Be clear about what that does NOT buy, because an earlier version of this
+// comment claimed it: the cut is hardcoded on BOTH sides — `MCP_CUT` here,
+// `MCP_DERIVED_NAME_BUDGET` in the helper — and nothing reads the product. What
+// these tests pin is the helper against a second copy of 26, so an edit to the
+// helper's constant fails here (measured: 26 -> 27 is caught) while a change to
+// Langflow's `MAX_MCP_SERVER_NAME_LENGTH` is caught by nothing and comes back as
+// a 409 in the daily. The only mechanism that would watch `base/mcp` is
+// `file-watcher.yml`, which is disabled and has no run history.
 //
 // Two divergences, both unreachable for a generated name, and the SECOND one is
 // worth knowing because it decides what these tests can prove:
@@ -217,10 +225,26 @@ test("a non-201 creation throws instead of returning an unusable project", async
 //     BELOW U+24C2 (Cyrillic, Greek, Arabic, Hebrew, Devanagari, Thai) Python
 //     KEEPS letters this replica strips — i.e. the replica is more permissive
 //     there, not stricter. So `discriminatorSurvives` cannot pin the removal of
-//     `normalizePrefix`: mutate it away and `uniqueProjectName("проектпроект")`
-//     sanitizes to 27 characters under real Python while this replica reports 14
-//     and returns true. That mutation is caught, by the separator and
-//     recognisability tests instead — which is why those two are not decoration.
+//     `normalizePrefix`.
+//
+//     Plain Cyrillic is NOT the escape, and the first version of this comment
+//     cited it as one. Do the arithmetic before quoting a case: the budget slice
+//     is 11 code units, so with `normalizePrefix` mutated away
+//     `uniqueProjectName("проектпроект")` is still a 26-character name, which
+//     real Python sanitizes to 26 and this replica to 14 — both inside the cut,
+//     both `true`. An escape needs a transform that LENGTHENS, i.e. a leading
+//     NON-ASCII digit: `uniqueProjectName("٣проектпрое")` sanitizes to 27 under
+//     real Python, because `str.isdigit()` is true for `٣` and prepends `_`
+//     where the helper's `/^[0-9]/` does not pay for it, and the discriminator
+//     loses its last character. Measured against a faithful replica of
+//     `sanitize_mcp_name`, not derived.
+//
+//     That mutation is caught by the RECOGNISABILITY test, and only by it —
+//     also measured: the separator test PASSES against it, because for `"   "`,
+//     `"---"` and `"***"` the mutant still produces no leading, trailing or
+//     doubled hyphen. The separator test pins a different mutation, the dropped
+//     `.replace(/-+$/, "")`. Crediting it here would make a later edit that
+//     weakens the recognisability test look safe.
 
 const MCP_CUT = 26;
 /** `${ts base36}-${rand}` — 8 + 1 + 5. */

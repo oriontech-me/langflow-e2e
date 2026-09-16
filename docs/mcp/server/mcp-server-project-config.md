@@ -1,6 +1,6 @@
 # MCP Server — per-project tool exposure (`GET`/`PATCH /{project_id}`) and what the protocol serves
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev33`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev14`)
 
 ---
 
@@ -207,6 +207,11 @@ project). Teardown deletes the flow and then the project.
   That second argument is the fix for #1408 and the subject of step 6; before
   [langflow#14522](https://github.com/langflow-ai/langflow/pull/14522) the handler
   never read `mcp_enabled`, so a de-selected flow stayed callable.
+- `src/lfx/src/lfx/base/mcp/constants.py` — `MAX_MCP_SERVER_NAME_LENGTH`, the 30 that
+  upstream slices to `- 4` when it derives a project's MCP server name. The 26-character
+  budget `createProjectViaApi` reserves is a second copy of that number (#1883) and
+  nothing here reads the constant, so a change to it surfaces as a 409 on project
+  creation rather than as a failed assertion.
 - `src/lfx/src/lfx/base/mcp/util.py` — `get_flow_snake_case`, where the
   `mcp_enabled_only` filter is applied to the query (post-filtering there was the
   defect); its default preserves the historical behaviour for the global MCP server,
@@ -276,9 +281,12 @@ project). Teardown deletes the flow and then the project.
   is the selection, and MCP tool naming deserves a spec of its own — but it is why the
   guard above is a hard failure rather than a comment.
 - **The prefix length used to be load-bearing, and since #1883 it is not.** Creating a
-  project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
-  (`MAX_MCP_SERVER_NAME_LENGTH` is 30 minus the `lf-` prefix) and that derived name must
-  be unique per user. `createProjectViaApi` used to append a 20-character
+  project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}` — upstream
+  slices at `MAX_MCP_SERVER_NAME_LENGTH - 4`, and `MAX_MCP_SERVER_NAME_LENGTH` is 30, so
+  the budget is **26** and the registered name is at most 29. Read the `- 4` as the
+  reservation it is, not as `len("lf-")`: that is 3, and budgeting 27 reopens #1409 by
+  one character. That derived name must be unique per user.
+  `createProjectViaApi` used to append a 20-character
   `-${Date.now()}-${rand5}`, so only `26 - len(prefix) - 1` digits of the timestamp
   survived and the caller carried the whole burden: a prefix of six or fewer characters
   was what kept the unique part inside the cut. The 22-character prefix the first

@@ -152,8 +152,10 @@ test.describe("MCP Server — per-project tool exposure", () => {
 
     // The prefix LENGTH used to be load-bearing here, and since #1883 it is not.
     // Creating a project derives an MCP server named
-    // `lf-${sanitize_mcp_name(name)[:26]}` (`MAX_MCP_SERVER_NAME_LENGTH` is 30,
-    // minus the `lf-` prefix), and that derived name must be unique per user.
+    // `lf-${sanitize_mcp_name(name)[:26]}` — upstream slices at
+    // `MAX_MCP_SERVER_NAME_LENGTH - 4` and that constant is 30, so the budget is
+    // 26. The `- 4` is a reservation, NOT `len("lf-")`, which is 3: budgeting 27
+    // reopens #1409 by one character. That derived name must be unique per user.
     // `createProjectViaApi` used to append `-${Date.now()}-${rand5}` — 20
     // characters — so only `26 - len(prefix) - 1` digits of the timestamp
     // survived and the caller carried the burden: the 22-character prefix the
