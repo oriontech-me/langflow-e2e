@@ -138,6 +138,13 @@ jobs:
     name: QA-CHECKLIST guard
     runs-on: ubuntu-latest
     timeout-minutes: 6
+    # Explicit, because the `@stable` ownership step reads open issues through
+    # `gh` and this workflow otherwise inherits the repository's default token
+    # scopes — which may not include issues. A lookup that 403s would make every
+    # row undecidable and fail EVERY PR for a reason no author caused.
+    permissions:
+      contents: read
+      issues: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -175,6 +182,27 @@ jobs:
       # introduces it.
       - name: Guard spec ↔ doc ↔ QA-CHECKLIST triad
         run: npm run check:checklist-coverage
+
+      # A spec whose tests carry no `@stable` runs in no scheduled lane, so it
+      # needs an OPEN issue that names the file, or a declared absence in
+      # scripts/lib/stable-orphan-exemptions.json (#1770). Two things make this a
+      # fair PR gate rather than an audit that reddens everyone:
+      #   * the frozen triage baseline is read from the BASE ref — a PR that
+      #     regenerated it to include the spec it adds would otherwise turn its
+      #     own failure into a notice;
+      #   * a spec outside that baseline FAILS only when this diff touched it. The
+      #     daily strips `@stable` from a hard-failing test on its own, so a spec
+      #     can leave the daily with no PR involved, and failing every later PR on
+      #     it would be #980's inversion — that case is a warning here and a row in
+      #     the daily's standing report.
+      # No continue-on-error: the failing case is the author's own diff. A failed
+      # issue lookup also fails (#1012) — a re-run is the remedy, not a skip.
+      - name: "@stable ownership guard"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: npx ts-node scripts/check-stable-ownership.ts --base-ref "origin/$BASE_REF"
 
   doc-deps-guard:
     name: Spec-doc dependency paths

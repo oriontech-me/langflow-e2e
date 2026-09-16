@@ -85,6 +85,7 @@ import {
   type TrackerRef,
   type Verdict,
 } from "./lib/stable-orphans";
+import { OWNERSHIP_ISSUE_TITLE } from "./lib/stable-ownership";
 
 /**
  * The identity of the report issue. A fixed title is what keeps one issue
@@ -492,7 +493,26 @@ export function buildTrackerIndex(
   return index;
 }
 
-function fetchOpenIssues(): RawIssue[] {
+/**
+ * Every open issue except the two standing REPORT issues — this check's own and
+ * #1770's ownership report.
+ *
+ * Both reports name specs by construction, and one spec can sit in both: a spec
+ * that loses its last `@stable` to the daily is an orphan here AND a spec with no
+ * `@stable` test there. Counted as a tracker, either report would "own"
+ * everything it lists, so a real finding in one would read as owned the day the
+ * other report named it. `buildTrackerIndex` / `buildSpecTrackerIndex` already
+ * drop THIS check's title; this drops both, in the one fetch both guards share,
+ * so the exclusion holds in both directions without either builder knowing the
+ * other exists. Exact title match: an issue that merely quotes a report title is
+ * a real issue.
+ */
+export function withoutReportIssues(issues: RawIssue[]): RawIssue[] {
+  const reports = new Set([ORPHAN_ISSUE_TITLE, OWNERSHIP_ISSUE_TITLE]);
+  return issues.filter((i) => !reports.has(i.title));
+}
+
+export function fetchOpenIssues(): RawIssue[] {
   const out = execFileSync(
     "gh",
     [
@@ -512,7 +532,7 @@ function fetchOpenIssues(): RawIssue[] {
     { cwd: REPO_ROOT, encoding: "utf-8", maxBuffer: 256 * 1024 * 1024 },
   );
   const pages = JSON.parse(out) as RawIssue[][];
-  return pages.flat();
+  return withoutReportIssues(pages.flat());
 }
 
 // ─── Gate justifications (#1783) ─────────────────────────────────────────────
