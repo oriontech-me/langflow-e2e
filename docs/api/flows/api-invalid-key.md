@@ -98,7 +98,7 @@ The spec runs **6 independent tests** via Playwright's `request` fixture. Tests 
    | `detail` | second read | shape |
    |---|---|---|
    | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the `201` in step 1 preceded its commit and the row landed between the two reads. **Transient, and not a security finding.** |
-   | `"Flow not found"` | `404` — still absent | **UNDECIDED**, and specifically **not** a security finding yet. Either the row is genuinely gone **or** the commit window is still open and wider than the gap between these two reads. Only a read taken *after* the window still missing puts "the rejected `PATCH` destroyed the flow" on the table — and a cross-worker wipe is still the likelier half even then. |
+   | `"Flow not found"` | `404` — not visible to this read | **UNDECIDED**, and specifically **not** a security finding yet. Either the row is genuinely gone **or** the commit window is still open and wider than the gap between these two reads. Only a read taken *after* the window still missing puts "the rejected `PATCH` destroyed the flow" on the table — and a cross-worker wipe is still the likelier half even then. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — `GET /api/v1/flows/{flow_id}` stopped resolving. |
 
    A read that cannot answer is `UNDECIDED` and claims neither (#1012). The second read

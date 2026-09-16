@@ -134,7 +134,7 @@ test, deleted by id in `afterEach` (versions go with the flow).
    | `detail` | by-id readback | shape |
    |---|---|---|
    | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the `201` preceded the commit, and the row landed between the two reads. **Transient.** |
-   | `"Flow not found"` | `404` — the row is absent | **UNDECIDED**, not a verdict. Either the row is genuinely gone (a cross-worker wipe, a commit that never happened) **or** the window is still open and wider than the gap between these two reads. |
+   | `"Flow not found"` | `404` — not visible to this read | **UNDECIDED**, not a verdict. Either the row is genuinely gone (a cross-worker wipe, a commit that never happened) **or** the window is still open and wider than the gap between these two reads. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — the collection route stopped resolving. |
 
    A readback that cannot answer is `UNDECIDED` and claims neither (#1012). The
