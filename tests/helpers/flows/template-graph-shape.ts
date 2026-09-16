@@ -26,6 +26,28 @@
  * so a set comparison would pass with two of the three silently dropped, which is
  * exactly the instantiation defect this spec exists to catch.
  *
+ * ## Why the wiring is compared and not just the edge COUNT
+ *
+ * A count is blind to an edge that moved. The instantiation path is `updateIds`
+ * (`src/frontend/src/utils/reactflowUtils.ts`), which rewrites every node id and
+ * then repoints every edge through the id map — so "the edge landed on the wrong
+ * node" is a live regression shape, and 7 of the 26 templates repeat a component
+ * type, which is where it hides.
+ *
+ * `wiring` is therefore a one-round neighbourhood signature: per component node,
+ * its type plus the sorted multiset of its incoming and outgoing neighbour TYPES.
+ * Measured on `1.13.0.dev12` across all 26 templates, expected == actual **26 of
+ * 26** — so it is assertable today with no divergence to tolerate.
+ *
+ * What it buys, measured rather than asserted: of the 7 templates where an edge
+ * can be repointed onto a different node of the SAME type, this catches **6**; a
+ * type-level topology (the multiset of `sourceType → targetType` pairs) catches
+ * **0 of 7**, because moving an `Agent → Agent` edge between two Agents leaves
+ * that multiset identical. The 1 it misses is *Deep Research Agent*, where the
+ * constructed rewire lands between two nodes whose 1-hop neighbourhoods coincide;
+ * distinguishing those needs a second refinement round, which is not taken —
+ * 6 of 7 for one round is the trade, and the residual is named rather than hidden.
+ *
  * ## Layering
  *
  * Everything here is pure and cannot throw; the spec holds the requests and the
@@ -46,6 +68,12 @@ export interface GraphShape {
   edgeCount: number;
   /** Every node that is not a `genericNode`. */
   noteCount: number;
+  /**
+   * One canonical line per component node — its type and the sorted neighbour
+   * types on each side — **sorted**, and a multiset like `componentTypes`. This
+   * is what notices an edge that moved rather than vanished.
+   */
+  wiring: string[];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -86,10 +114,42 @@ export function graphShape(data: unknown): GraphShape | null {
   }
   if (componentTypes.length === 0) return null;
 
+  // Node ids are rewritten by `updateIds` on instantiation, so they are never
+  // compared; what IS comparable is each node's neighbourhood expressed in types.
+  const typeById = new Map<string, string>();
+  for (const node of nodes) {
+    const n = node as Record<string, unknown>;
+    if (n.type !== "genericNode") continue;
+    const id = n.id;
+    const inner = n.data as Record<string, unknown>;
+    if (isNonEmptyString(id)) typeById.set(id, inner.type as string);
+  }
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (!isRecord(edge)) return null;
+    const { source, target } = edge;
+    if (!isNonEmptyString(source) || !isNonEmptyString(target)) continue;
+    const sourceType = typeById.get(source);
+    const targetType = typeById.get(target);
+    // An edge touching a non-component node contributes to `edgeCount` but has no
+    // type to name, so it is left out of the signature rather than guessed at.
+    if (sourceType === undefined || targetType === undefined) continue;
+    (outgoing.get(source) ?? outgoing.set(source, []).get(source)!).push(targetType);
+    (incoming.get(target) ?? incoming.set(target, []).get(target)!).push(sourceType);
+  }
+  const wiring: string[] = [];
+  for (const [id, type] of typeById) {
+    const inTypes = [...(incoming.get(id) ?? [])].sort();
+    const outTypes = [...(outgoing.get(id) ?? [])].sort();
+    wiring.push(`${type} ←(${inTypes.join(", ")}) →(${outTypes.join(", ")})`);
+  }
+
   // Sorted so the comparison is order-independent while staying count-sensitive:
   // node order in the persisted flow is not a contract, the multiset is.
   componentTypes.sort();
-  return { componentTypes, edgeCount: edges.length, noteCount };
+  wiring.sort();
+  return { componentTypes, edgeCount: edges.length, noteCount, wiring };
 }
 
 /**
@@ -130,6 +190,24 @@ export function describeShapeDiff(expected: GraphShape, actual: GraphShape): str
   if (expected.noteCount !== actual.noteCount) {
     lines.push(
       `note count: the template has ${expected.noteCount}, the created flow has ${actual.noteCount}`,
+    );
+  }
+
+  // Wiring last: when an edge MOVED, the counts above are all equal and this is
+  // the only thing that differs, so it reads as the finding rather than as a
+  // footnote to three lines that said nothing.
+  const wantWiring = counts(expected.wiring);
+  const gotWiring = counts(actual.wiring);
+  for (const entry of [...new Set([...wantWiring.keys(), ...gotWiring.keys()])].sort()) {
+    const w = wantWiring.get(entry) ?? 0;
+    const g = gotWiring.get(entry) ?? 0;
+    if (w === g) continue;
+    lines.push(
+      g === 0
+        ? `wiring: the template has a node "${entry}" and the created flow has none`
+        : w === 0
+          ? `wiring: the created flow has a node "${entry}" that the template does not`
+          : `wiring "${entry}": the template has ${w}, the created flow has ${g}`,
     );
   }
   return lines;

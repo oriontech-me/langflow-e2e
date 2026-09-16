@@ -17,14 +17,18 @@ import {
 /** Basic Prompting as the listing really serves it. */
 const basicPrompting = {
   nodes: [
-    { type: "genericNode", data: { type: "ChatInput" } },
-    { type: "genericNode", data: { type: "Prompt" } },
-    { type: "genericNode", data: { type: "ChatOutput" } },
-    { type: "genericNode", data: { type: "LanguageModelComponent" } },
-    { type: "noteNode", data: { type: "note" } },
-    { type: "noteNode", data: {} },
+    { id: "ci", type: "genericNode", data: { type: "ChatInput" } },
+    { id: "pr", type: "genericNode", data: { type: "Prompt" } },
+    { id: "co", type: "genericNode", data: { type: "ChatOutput" } },
+    { id: "lm", type: "genericNode", data: { type: "LanguageModelComponent" } },
+    { id: "n1", type: "noteNode", data: { type: "note" } },
+    { id: "n2", type: "noteNode", data: {} },
   ],
-  edges: [{}, {}, {}],
+  edges: [
+    { source: "ci", target: "pr" },
+    { source: "pr", target: "lm" },
+    { source: "lm", target: "co" },
+  ],
 };
 
 test("a real template reduces to its multiset, edge count and note count", () => {
@@ -33,6 +37,12 @@ test("a real template reduces to its multiset, edge count and note count", () =>
     componentTypes: ["ChatInput", "ChatOutput", "LanguageModelComponent", "Prompt"],
     edgeCount: 3,
     noteCount: 2,
+    wiring: [
+      "ChatInput ←() →(Prompt)",
+      "ChatOutput ←(LanguageModelComponent) →()",
+      "LanguageModelComponent ←(Prompt) →(ChatOutput)",
+      "Prompt ←(ChatInput) →(LanguageModelComponent)",
+    ],
   });
 });
 
@@ -110,15 +120,33 @@ test("a rewritten component type reports both halves, not a bare inequality", ()
   const rewritten = graphShape({
     ...basicPrompting,
     nodes: basicPrompting.nodes.map((n) =>
-      n.data && (n.data as { type?: string }).type === "Prompt"
-        ? { type: "genericNode", data: { type: "PromptTemplate" } }
+      (n.data as { type?: string })?.type === "Prompt"
+        ? { ...n, data: { type: "PromptTemplate" } }
         : n,
     ),
   }) as GraphShape;
-  assert.deepEqual(describeShapeDiff(expected, rewritten), [
-    "component type Prompt is missing from the created flow (the template has 1)",
-    "component type PromptTemplate appears 1× in the created flow and not at all in the template",
-  ]);
+  const diff = describeShapeDiff(expected, rewritten);
+
+  // Both halves of the component change are named…
+  assert.ok(
+    diff.includes("component type Prompt is missing from the created flow (the template has 1)"),
+    JSON.stringify(diff),
+  );
+  assert.ok(
+    diff.includes(
+      "component type PromptTemplate appears 1× in the created flow and not at all in the template",
+    ),
+    JSON.stringify(diff),
+  );
+  // …and the wiring moves with it, because renaming a node also changes what its
+  // NEIGHBOURS report as their neighbour types. Every remaining line is a wiring
+  // line: the counts are untouched, which is the point.
+  assert.ok(
+    diff.filter((l) => !l.startsWith("component type")).every((l) => l.startsWith("wiring")),
+    JSON.stringify(diff),
+  );
+  assert.equal(expected.edgeCount, rewritten.edgeCount);
+  assert.equal(expected.noteCount, rewritten.noteCount);
 });
 
 test("the persisted name is the template's own or its ` (N)` duplicate", () => {
@@ -149,4 +177,88 @@ test("a template name carrying regex metacharacters is compared literally", () =
   assert.equal(nameMatchesTemplate("Document QxA", "Document Q&A"), false);
   assert.equal(nameMatchesTemplate("A (b) (1)", "A (b)"), true);
   assert.equal(nameMatchesTemplate("Ax(b) (1)", "A (b)"), false);
+});
+
+/**
+ * Multi Agent Flow's real shape: ChatInput → A1 → A2 → A3 → ChatOutput, three
+ * nodes of the SAME type. This is where an edge that MOVED hides, and 7 of the 26
+ * templates have a repeated type like this.
+ */
+const multiAgent = {
+  nodes: [
+    { id: "ci", type: "genericNode", data: { type: "ChatInput" } },
+    { id: "a1", type: "genericNode", data: { type: "Agent" } },
+    { id: "a2", type: "genericNode", data: { type: "Agent" } },
+    { id: "a3", type: "genericNode", data: { type: "Agent" } },
+    { id: "co", type: "genericNode", data: { type: "ChatOutput" } },
+  ],
+  edges: [
+    { source: "ci", target: "a1" },
+    { source: "a1", target: "a2" },
+    { source: "a2", target: "a3" },
+    { source: "a3", target: "co" },
+  ],
+};
+
+test("an edge repointed onto a DIFFERENT node of the same type is caught", () => {
+  // The defect the edge COUNT cannot see and a type-level topology cannot either:
+  // moving `ChatInput → a1` to `ChatInput → a2` leaves the component multiset, the
+  // edge count, the note count and the multiset of (sourceType → targetType) pairs
+  // all identical. Measured on the live build, this shape is reachable in 7 of the
+  // 26 templates.
+  const moved = {
+    ...multiAgent,
+    edges: multiAgent.edges.map((e) =>
+      e.source === "ci" ? { source: "ci", target: "a2" } : e,
+    ),
+  };
+  const before = graphShape(multiAgent) as GraphShape;
+  const after = graphShape(moved) as GraphShape;
+
+  assert.deepEqual(before.componentTypes, after.componentTypes, "multiset is blind to this");
+  assert.equal(before.edgeCount, after.edgeCount, "the edge count is blind to this");
+  assert.equal(before.noteCount, after.noteCount);
+  assert.notDeepEqual(before.wiring, after.wiring, "the wiring must NOT be blind to it");
+
+  const diff = describeShapeDiff(before, after);
+  assert.ok(diff.length > 0, "a moved edge must produce a difference");
+  assert.ok(
+    diff.every((l) => l.startsWith("wiring")),
+    `only the wiring should differ, got: ${JSON.stringify(diff)}`,
+  );
+});
+
+test("the wiring is order-independent and ignores node ids, which instantiation rewrites", () => {
+  // `updateIds` rewrites every node id on instantiation, so comparing ids would
+  // fail on every healthy run.
+  const renamed = {
+    nodes: multiAgent.nodes.map((n) => ({ ...n, id: `x-${n.id}` })).reverse(),
+    edges: multiAgent.edges.map((e) => ({ source: `x-${e.source}`, target: `x-${e.target}` })).reverse(),
+  };
+  assert.deepEqual(graphShape(multiAgent), graphShape(renamed));
+});
+
+test("an edge touching a non-component node counts but contributes no wiring", () => {
+  const withNoteEdge = {
+    nodes: [...multiAgent.nodes, { id: "nt", type: "noteNode", data: {} }],
+    edges: [...multiAgent.edges, { source: "nt", target: "a1" }],
+  };
+  const shape = graphShape(withNoteEdge) as GraphShape;
+  assert.equal(shape.edgeCount, 5, "it is still an edge");
+  assert.equal(shape.noteCount, 1);
+  // a1's incoming stays ChatInput only — the note has no component type to name.
+  assert.ok(shape.wiring.includes("Agent ←(ChatInput) →(Agent)"));
+});
+
+test("graphShape still cannot throw once wiring is computed", () => {
+  for (const bad of [
+    { nodes: multiAgent.nodes, edges: [null] },
+    { nodes: multiAgent.nodes, edges: [{ source: 1, target: 2 }] },
+    { nodes: multiAgent.nodes, edges: [{ source: "nope", target: "a1" }] },
+    { nodes: [{ id: "a", type: "genericNode", data: { type: "A" } }], edges: [{}] },
+  ]) {
+    assert.doesNotThrow(() => graphShape(bad));
+  }
+  // An unreadable edge is no signal at all, not an edge to guess about.
+  assert.equal(graphShape({ nodes: multiAgent.nodes, edges: [null] }), null);
 });

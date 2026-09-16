@@ -24,7 +24,25 @@ flow equals that template's entry in `GET /api/v1/flows/basic_examples/` on four
 | **Component types**, as a multiset | `data.nodes[]` where `type === "genericNode"`, taking `data.type` |
 | **Edge count** | `data.edges.length` |
 | **Note count** | every node whose `type !== "genericNode"` |
+| **Wiring** — per component node, its type plus the sorted neighbour TYPES on each side | `data.edges[]` resolved through the node ids |
 | **Name** | the template's own, or the template's plus a ` (N)` suffix the backend adds when the name already exists |
+
+**The wiring row is not in #1864's list, and it is here because without it the spec
+goes green while broken.** The instantiation path is `updateIds`
+(`src/frontend/src/utils/reactflowUtils.ts`): it rewrites every node id and repoints
+every edge through the id map, so "the edge landed on the wrong node" is a live
+regression shape — and **7 of the 26 templates repeat a component type**, which is
+where it hides. Moving an `Agent → Agent` edge between two of *Multi Agent Flow*'s
+three Agents leaves the multiset, the edge count and the note count all identical.
+
+Measured, rather than argued: expected == actual for the wiring on **26 of 26**
+templates, so it is assertable today with no divergence to tolerate; of the 7
+templates where a same-type rewire is constructible it catches **6**, where the
+obvious weaker alternative — the multiset of `sourceType → targetType` pairs —
+catches **0 of 7**. The one residual is *Deep Research Agent*, where the rewire
+lands between two nodes whose one-hop neighbourhoods coincide; separating those
+needs a second refinement round, which is not taken. 6 of 7 for one round is the
+trade, and the residual is named rather than hidden.
 
 Measured on `1.13.0.dev12`, across all 26 templates: **138 `genericNode`s and 29 `noteNode`s**.
 The note nodes are why the count is "every other node" rather than `type === "noteNode"` —
@@ -38,9 +56,28 @@ value — this finds no defect on `1.13.0.dev12` (the #1860 scoping measured 26 
 so it is a regression detector and is only worth shipping with force-fails proving the
 comparison bites.
 
-What it is **not**: it does not run the templates (§11.3–§11.5), does not assert the gallery
-(**G1**, #1863), and does not assert the registered **set** — that is **R1** (#1862), whose
-baseline this spec consumes.
+### What it is **not** — including two things it could compare and does not
+
+- It does not run the templates (§11.3–§11.5), does not assert the gallery (**G1**, #1863),
+  and does not assert the registered **set** — that is **R1** (#1862), whose baseline this
+  spec consumes.
+- **Node ids and positions are not compared, by design.** `updateIds` rewrites every id on
+  instantiation, so comparing them would fail on every healthy run; positions and the
+  viewport are presentation.
+- **Component PARAMETER VALUES are not compared** — and this one is a real omission rather
+  than a non-observable, so it is named here rather than left for a reader of the `[x]`
+  bullets to discover. Measured on `1.13.0.dev12`: **1398 `template.<field>.value` fields
+  across the 26 templates, zero differing**, so it is assertable *on this instance*. It is
+  declined because it is **instance-dependent by design**: `use-add-flow.ts` resolves the
+  project's global variables and passes `unavailableFields` into `updateGroupRecursion`, so a
+  field referencing a global variable the project does not have is handled differently — an
+  account whose variables differ would go red on a legitimate state. The regression it would
+  catch is real and guarded against upstream (*"a missing snapshot must never act like an
+  empty one"*), so **it is worth its own issue** rather than a silent omission here: a run
+  that blanks every referenced field leaves the graph shape untouched and all 26 tests green.
+
+Concretely, then: this spec proves the template's **structure** arrives, not its
+**configuration**.
 
 ---
 
@@ -127,9 +164,13 @@ For each registered template, the spec passes when:
 1. `loadTemplateByName(page, name)` returns a flow id (the creation `POST /api/v1/flows/`
    answered 201) and the editor is open (`canvas_controls_dropdown` visible).
 2. `GET /api/v1/flows/{id}` returns 200 and its persisted graph equals the template's listing
-   entry on the component-type multiset, the edge count and the note count.
+   entry on the component-type multiset, the edge count, the note count and the wiring.
 3. The persisted `name` is the template's own or `"<name> (N)"`.
-4. `afterEach` deletes that id, and the account's user-flow count is what it was before.
+4. `afterEach` deletes that id and `GET /api/v1/flows/{id}` then answers **404**. The
+   assertion is per-flow, not a count of the account's flows: a count is not parallel-safe
+   (other workers create and delete flows during the window) and would be a #553-shaped
+   observation. The account-wide count is checked as a **validation activity** before the
+   report, not asserted in the spec.
 
 It fails, naming the template and the difference, when any of those does not hold — and a
 failure is scoped to **one** template's test; the other 25 stay green.
@@ -141,7 +182,9 @@ failure is scoped to **one** template's test; the other 25 stay green.
 | Remove one edge from one template's **expected** entry | RED for exactly that template; the other 25 green |
 | Swap one component type in the expected multiset | RED, naming the type |
 | Break the note count for one template | RED, naming the counts |
-| Revert the `afterEach` delete | The flow-count check goes RED (cleanup is load-bearing, so it gets a behavioural force-fail of its own) |
+| Move one edge onto a different node of the **same type** | RED on the wiring alone, with every count unchanged — the case the edge count cannot see |
+| Revert the `afterEach` delete | RED on the 404 readback, naming the surviving flow |
+| Fail the comparison **and** the cleanup together | The PRODUCT failure is still reported; the cleanup problem is a warning beside it, never a replacement |
 
 **Flow cleanup is proven, not assumed** — on a green run *and* on a forced-red run, because a
 red test that leaks is the case a green-only check never sees. Already measured on the probe:
@@ -205,6 +248,12 @@ Resolved on `origin/main` and `origin/release-1.13.0`.
 - `src/frontend/src/modals/templatesModal/components/TemplateCardComponent/index.tsx` —
   `template_<slug>` on the card heading, which `loadTemplateByName` clicks.
 - `src/frontend/src/modals/templatesModal/index.tsx` — the *All templates* tab this picks from.
+- `src/frontend/src/utils/reactflowUtils.ts` — `updateIds`, which rewrites every node id on
+  instantiation and repoints the edges through the id map. It is why node ids are not
+  compared and why the wiring is.
+- `src/frontend/src/hooks/flows/use-add-flow.ts` — `getUnavailableFields` /
+  `updateGroupRecursion`, the global-variable-driven field handling that makes component
+  parameter values instance-dependent, and therefore out of scope above.
 
 Suite side: `tests/helpers/flows/load-template-by-name.ts`,
 `tests/helpers/flows/open-new-flow-templates-modal.ts`, `tests/helpers/flows/delete-flow.ts`,

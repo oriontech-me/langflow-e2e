@@ -93,6 +93,48 @@ function templatesToCover(): BaselineTemplate[] {
 const TEMPLATES = templatesToCover();
 
 test.describe("Templates — every registered template instantiates as itself", () => {
+  /**
+   * The flow the running test created, for `afterEach` to delete.
+   *
+   * Describe-scoped rather than in-body on purpose. An in-body `finally` is NOT
+   * equivalent: Playwright gives `afterEach` its own timeout budget and runs it
+   * after a test TIMES OUT, whereas a `finally` inside the timed-out body is not
+   * guaranteed to complete — and this file creates one flow per test, so the
+   * timeout case is exactly when a leak compounds. Safe under `fullyParallel`
+   * because each worker has its own module instance and runs its tests serially;
+   * it is the same shape the merged `create-flow-from-template.spec.ts` uses.
+   */
+  let createdFlowId: string | null = null;
+
+  test.afterEach(async ({ request }) => {
+    const id = createdFlowId;
+    createdFlowId = null;
+    if (!id) return;
+    // Id-scoped, never a wipe (#553). A cleanup problem must NOT replace the
+    // product failure — measured: with the comparison failing AND the delete
+    // failing, the only error reported was the cleanup's, and the "edge count"
+    // message was gone. That is the convention `load-template-by-name.ts` states
+    // for its own cleanup, and the triage cost this repo keeps writing guards
+    // about. So a cleanup failure is surfaced and re-thrown only when the test
+    // had otherwise passed.
+    const authToken = await getAuthToken(request);
+    try {
+      await deleteFlow(request, id, { headers: { Authorization: authToken } });
+      const gone = await request.get(`/api/v1/flows/${id}`, {
+        headers: { Authorization: authToken },
+      });
+      expect(
+        gone.status(),
+        `flow ${id} survived its own cleanup — this file creates ${TEMPLATES.length} ` +
+          `flows per run, so a leak here compounds`,
+      ).toBe(404);
+    } catch (error) {
+      const reason = (error as Error)?.message?.split("\n")[0] ?? String(error);
+      console.warn(`⚠️  templates-instantiate: could not clean up flow ${id} — ${reason}`);
+      if (test.info().status === "passed") throw error;
+    }
+  });
+
   for (const template of TEMPLATES) {
     // The title is built from a variable, so the @stable listing detector reports
     // it under `unresolvedTitles` (#1812) — expected for this file, as for the
@@ -101,10 +143,9 @@ test.describe("Templates — every registered template instantiates as itself", 
       `${template.name} instantiates with the template's components, edges and notes`,
       { tag: ["@stable", "@workspace", "@regression", "@templates"] },
       async ({ page, request }) => {
-        let createdFlowId: string | null = null;
         const authToken = await getAuthToken(request);
 
-        try {
+        {
           const expectedShape = await test.step("read the template's entry from the live listing", async () => {
             const res = await request.get("/api/v1/flows/basic_examples/", {
               // Pinned for the same reason #1862 pins it: the endpoint localizes
@@ -169,23 +210,6 @@ test.describe("Templates — every registered template instantiates as itself", 
                 `name that became a substring of another would land here.`,
             ).toBe(true);
           });
-        } finally {
-          // Id-scoped, never a wipe (#553), and in `finally` so a failed assertion
-          // still cleans up — a red test that leaks is the case a green-only
-          // cleanup check never sees.
-          if (createdFlowId) {
-            await deleteFlow(request, createdFlowId, {
-              headers: { Authorization: authToken },
-            });
-            const gone = await request.get(`/api/v1/flows/${createdFlowId}`, {
-              headers: { Authorization: authToken },
-            });
-            expect(
-              gone.status(),
-              `flow ${createdFlowId} survived its own cleanup — this file creates ${TEMPLATES.length} ` +
-                `flows per run, so a leak here compounds`,
-            ).toBe(404);
-          }
         }
       },
     );
