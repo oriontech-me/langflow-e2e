@@ -35,12 +35,13 @@ function describeShape(body: unknown): string {
  * upload's `201` can precede the rows it describes; the question that message
  * cannot answer is whether those rows exist at all. Paired with
  * {@link describeFlowReadback} on the flow id the upload returned, the two reads
- * separate three cases: a window already closed, a window that closed BETWEEN
- * them (the flow is read first, so a `404` there and a listed project here is
- * the commit landing in between), and a genuine flow/project row divergence —
- * which is the one that needs visibility to go backwards and is therefore the
- * one no window explains. `docs/api/projects/api-projects-transfer.md` has the
- * table.
+ * narrow the failure to three shapes: a window already closed, a window that
+ * closed BETWEEN them (the flow is read first on that caller, so a `404` there
+ * and a listed project here is the commit landing in between), and a genuine
+ * flow/project row divergence — the last being the one a window cannot explain,
+ * because explaining it would need visibility to go backwards.
+ * `docs/api/projects/api-projects-transfer.md` has the table, including what
+ * each shape does NOT rule out.
  *
  * **What the pair cannot do, measured rather than assumed** (`1.13.0.dev12`,
  * `session_scope` delayed 300 ms): while the window is still open BOTH reads
