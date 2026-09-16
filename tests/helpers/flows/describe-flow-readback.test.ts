@@ -63,11 +63,25 @@ test("a 200 readback states the row exists and nothing more", async () => {
   assert.doesNotMatch(line, /\blist\b/i);
 });
 
-test("a 404 readback says the row is absent", async () => {
+test("a 404 readback reports what it read and does NOT claim the database state", async () => {
   const { request } = fakeRequest(404);
   const line = await describeFlowReadback(request, ID);
   assert.match(line, /404/);
-  assert.match(line, /absent|not there|does not exist/i);
+  assert.match(line, /not visible/i);
+  // The load-bearing half (#1878): this read is issued milliseconds after the
+  // one that failed, so a commit window wider than that gap makes both miss. On
+  // `api-flows-batch` and `api-invalid-key` it is the SAME request, same route
+  // and same id; on the other three callers the failing read asks a different
+  // question and the gap alone carries it. A line that concluded "absent from
+  // the database" — which this helper printed until #1878 — reads as a verdict
+  // in `results.json`, and on `api-invalid-key` that verdict is a broken
+  // authorization check. Both possibilities must survive into the text.
+  assert.match(line, /absent/i);
+  assert.match(line, /not yet committed/i);
+  assert.doesNotMatch(line, /absent from the database/i);
+  // Same rule as the 503 and throw branches: asserting the disjunction is
+  // present does not stop a line that ALSO claims the row exists.
+  assert.doesNotMatch(line, /exists/i);
 });
 
 test("any other status is UNDECIDED and claims neither verdict", async () => {
