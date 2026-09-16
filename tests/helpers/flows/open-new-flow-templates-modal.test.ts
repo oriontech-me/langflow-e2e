@@ -9,7 +9,10 @@
 // does not, so an E2E run cannot reach it on demand.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { openNewFlowTemplatesModal } from "./open-new-flow-templates-modal";
+import {
+  openNewFlowTemplatesModal,
+  openNewFlowWelcomePanel,
+} from "./open-new-flow-templates-modal";
 import {
   fakeNewFlowPage,
   type EntryScript,
@@ -175,4 +178,62 @@ test("does not tear down an editor whose types request answered again after the 
   assert.equal(fake.modalOpen, true);
   assert.deepEqual(fake.deleted, []);
   assert.equal(fake.entries, 1);
+});
+
+/** An older build: New Flow opens the templates modal directly, with no welcome overlay. */
+const OPENS_MODAL_DIRECTLY: EntryScript = {
+  responses: [{ at: 1000, path: TYPES, status: 200 }],
+  modalAt: 1500,
+};
+
+/** Runs the welcome-panel entry with console.warn captured; never throws. */
+async function runWelcomePanel(fake: ReturnType<typeof fakeNewFlowPage>) {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (msg: string) => warnings.push(String(msg));
+  try {
+    await openNewFlowWelcomePanel(fake.page, { now: fake.now });
+    return { warnings, error: undefined };
+  } catch (error) {
+    return { warnings, error: error as Error };
+  } finally {
+    console.warn = realWarn;
+  }
+}
+
+test("the welcome-panel entry stops at the overlay instead of browsing past it", async () => {
+  // The quick picks only exist on the panel, and the modal entry dismisses it.
+  const fake = fakeNewFlowPage([OPENS]);
+
+  const { error } = await runWelcomePanel(fake);
+
+  assert.equal(error, undefined, `the panel was reached (${error?.message})`);
+  assert.equal(fake.modalOpen, false, "browse-more is not clicked on this path");
+  assert.equal(fake.entries, 1);
+  assert.equal(fake.responseListeners, 0, "no response listener is left on the page");
+});
+
+test("the welcome-panel entry recovers from the #1865 404 like the modal entry does", async () => {
+  const fake = fakeNewFlowPage([TYPES_404, OPENS]);
+
+  const { warnings, error } = await runWelcomePanel(fake);
+
+  assert.equal(error, undefined, `the re-entry reached the panel (${error?.message})`);
+  assert.deepEqual(fake.deleted, ["flow-1"]);
+  assert.equal(fake.entries, 2);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /#1865/);
+});
+
+test("the welcome-panel entry fails naming the modal when New Flow opens the gallery directly", async () => {
+  // Not a timeout and not a silent pass: the panel is the surface under test, so
+  // a build that skips it has to say so.
+  const fake = fakeNewFlowPage([OPENS_MODAL_DIRECTLY]);
+
+  const { error } = await runWelcomePanel(fake);
+
+  assert.ok(error, "an entry that never showed the panel fails");
+  assert.match(error.message, /welcome/i);
+  assert.match(error.message, /modal/i);
+  assert.equal(fake.deleted.length, 0, "nothing is deleted on that path");
 });

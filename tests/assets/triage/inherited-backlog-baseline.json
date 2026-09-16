@@ -88,109 +88,6 @@
       ]
     },
     {
-      "relativePath": "api/flows/workflows-v2-job-lifecycle.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "batch create refuses a duplicate name with 409, leaks no SQL, and leaves the next write working",
-          "modifier": "",
-          "tags": [
-            "@api",
-            "@regression"
-          ],
-          "line": 146
-        },
-        {
-          "title": "batch create refuses a duplicate endpoint_name with its own message",
-          "modifier": "",
-          "tags": [
-            "@api",
-            "@regression"
-          ],
-          "line": 230
-        },
-        {
-          "title": "a completed background run reports the session it was given",
-          "modifier": "",
-          "tags": [
-            "@api",
-            "@regression"
-          ],
-          "line": 255
-        },
-        {
-          "title": "a completed sync run answers its own status query with the session and outputs it returned",
-          "modifier": "",
-          "tags": [
-            "@api",
-            "@regression"
-          ],
-          "line": 304
-        },
-        {
-          "title": "attribution control: the sync read-back is correct once the job's rows settle",
-          "modifier": "",
-          "tags": [
-            "@api",
-            "@regression"
-          ],
-          "line": 381
-        }
-      ]
-    },
-    {
-      "relativePath": "core-components/configure-mcp-and-custom-component.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "configureMcpServer registers an MCP server via the HTTP form",
-          "modifier": "",
-          "tags": [
-            "@regression",
-            "@mcp"
-          ],
-          "line": 86
-        },
-        {
-          "title": "configureCustomComponent compiles code into a node with its declared interface",
-          "modifier": "",
-          "tags": [
-            "@regression",
-            "@components"
-          ],
-          "line": 136
-        }
-      ]
-    },
-    {
-      "relativePath": "core-components/general-bugs-component-webhook-api-key-display.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "user must be able to see api key in webhook component when auto login is disabled",
-          "modifier": "",
-          "tags": [
-            "@release"
-          ],
-          "line": 44
-        },
-        {
-          "title": "user must be able to not see api key in webhook component when auto login is enabled",
-          "modifier": "",
-          "tags": [
-            "@release"
-          ],
-          "line": 117
-        }
-      ]
-    },
-    {
       "relativePath": "core-components/toolModeGroup.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -205,60 +102,6 @@
             "@components"
           ],
           "line": 7
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/llm-agents/agent-markdown-output.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "agent reply renders as correct Markdown in the Playground",
-          "modifier": "",
-          "tags": [
-            "@regression",
-            "@agents",
-            "@playground"
-          ],
-          "line": 133
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/llm-agents/agent-tool-inspection.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "Playground names the tool used and captures its input/output",
-          "modifier": "",
-          "tags": [
-            "@regression",
-            "@agents",
-            "@playground"
-          ],
-          "line": 233
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "user must be able to send an image on chat",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@components"
-          ],
-          "line": 47
         }
       ]
     },
@@ -346,24 +189,6 @@
       ]
     },
     {
-      "relativePath": "core-functionality/llm-agents/general-bugs-agent-sum-duplicate-message-playground.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "user must not experience message duplication in mathematical expressions with agent component",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@components",
-            "@workspace"
-          ],
-          "line": 45
-        }
-      ]
-    },
-    {
       "relativePath": "core-functionality/llm-agents/loop-component.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -413,7 +238,7 @@
             "@model-provider",
             "@playground"
           ],
-          "line": 93
+          "line": 97
         }
       ]
     },
@@ -436,70 +261,6 @@
       ]
     },
     {
-      "relativePath": "core-functionality/playground/playground-send-while-in-progress.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "input is locked while a run is in progress and recovers after it completes",
-          "modifier": "",
-          "tags": [
-            "@regression",
-            "@playground"
-          ],
-          "line": 41
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/project-management/flow-navigation-between-folders.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "navigating between two folders scopes the listing to each folder's flows",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@mainpage",
-            "@regression"
-          ],
-          "line": 30
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/project-management/flow-navigation-folders.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": false,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "flows created via API appear on the home listing",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 6
-        },
-        {
-          "title": "searching flows by name filters results correctly",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 45
-        }
-      ]
-    },
-    {
       "relativePath": "core-functionality/project-management/flowPage.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -512,92 +273,6 @@
             "@release"
           ],
           "line": 6
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/project-management/folder-drag-drop-flow.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": false,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "creating a flow in a specific folder via API places it in that folder",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 7
-        },
-        {
-          "title": "folder listing shows flows correctly via UI",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 77
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/templates/save-flow-as-template.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": false,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "Flow save button saves the current flow",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression",
-            "@templates"
-          ],
-          "line": 7
-        },
-        {
-          "title": "Component in canvas can be saved as a custom component via API",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression",
-            "@templates"
-          ],
-          "line": 60
-        },
-        {
-          "title": "Flow can be exported and re-imported as a template JSON",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression",
-            "@templates"
-          ],
-          "line": 97
-        }
-      ]
-    },
-    {
-      "relativePath": "core-functionality/templates/starter-projects.spec.ts",
-      "tier": "T2",
-      "hasMirroredDoc": false,
-      "hasIdScopedCleanup": false,
-      "tests": [
-        {
-          "title": "user must be able to interact with starter projects",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@templates"
-          ],
-          "line": 5
         }
       ]
     },
@@ -688,78 +363,6 @@
       ]
     },
     {
-      "relativePath": "flow-functionality/dragAndDrop.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "dropping a collection file imports every flow it contains",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@mainpage"
-          ],
-          "line": 76
-        },
-        {
-          "title": "dropping a single flow file imports that flow",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@mainpage"
-          ],
-          "line": 123
-        }
-      ]
-    },
-    {
-      "relativePath": "flow-functionality/freeze-and-state.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "a frozen component serves its cached output instead of recomputing",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@regression",
-            "@components",
-            "@workspace",
-            "@ui-ux"
-          ],
-          "line": 189
-        },
-        {
-          "title": "freezing a component also freezes every component upstream of it",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@regression",
-            "@components",
-            "@workspace",
-            "@ui-ux"
-          ],
-          "line": 268
-        },
-        {
-          "title": "unfreezing releases the whole path and the component recomputes",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@regression",
-            "@components",
-            "@workspace",
-            "@ui-ux"
-          ],
-          "line": 303
-        }
-      ]
-    },
-    {
       "relativePath": "flow-functionality/general-bugs-component-as-tool-shortcut.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -793,24 +396,6 @@
       ]
     },
     {
-      "relativePath": "flow-functionality/general-bugs-hidden-input-edges.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "user should not be able to hide connected inputs",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@api",
-            "@database"
-          ],
-          "line": 43
-        }
-      ]
-    },
-    {
       "relativePath": "flow-functionality/general-bugs-reset-flow-run.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -824,23 +409,6 @@
             "@components"
           ],
           "line": 10
-        }
-      ]
-    },
-    {
-      "relativePath": "flow-functionality/general-bugs-shard-3836.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "user must be able to send an image on chat using advanced tool on ChatInputComponent",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@components"
-          ],
-          "line": 47
         }
       ]
     },
@@ -922,32 +490,6 @@
       ]
     },
     {
-      "relativePath": "flow-functionality/generalBugs-shard-3.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "should copy code from playground modal",
-          "modifier": "",
-          "tags": [
-            "@release"
-          ],
-          "line": 46
-        },
-        {
-          "title": "playground button should be enabled or disabled",
-          "modifier": "skip",
-          "tags": [
-            "@release",
-            "@api",
-            "@workspace"
-          ],
-          "line": 179
-        }
-      ]
-    },
-    {
       "relativePath": "flow-functionality/generalBugs-shard-6.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -996,43 +538,6 @@
       ]
     },
     {
-      "relativePath": "flow-functionality/import-outdated-flow.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "importing an outdated flow via the UI upload button surfaces the outdated notification on open",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 32
-        }
-      ]
-    },
-    {
-      "relativePath": "flow-functionality/run-flow.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "user should be able to use Run Flow without any issues",
-          "modifier": "fixme",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@api",
-            "@regression"
-          ],
-          "line": 42
-        }
-      ]
-    },
-    {
       "relativePath": "mcp/client/mcp-client-agent.spec.ts",
       "tier": "T1",
       "hasMirroredDoc": true,
@@ -1046,24 +551,7 @@
             "@agents",
             "@regression"
           ],
-          "line": 243
-        }
-      ]
-    },
-    {
-      "relativePath": "mcp/server/mcp-server-regression.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": false,
-      "hasIdScopedCleanup": true,
-      "tests": [
-        {
-          "title": "flow appears as MCP tool in MCP Server tab and endpoint responds",
-          "modifier": "",
-          "tags": [
-            "@mcp",
-            "@regression"
-          ],
-          "line": 20
+          "line": 248
         }
       ]
     },
@@ -1197,53 +685,6 @@
       ]
     },
     {
-      "relativePath": "ui-ux/settings-shortcuts-edit.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": false,
-      "tests": [
-        {
-          "title": "editing the Duplicate shortcut persists and triggers the action on canvas",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@regression",
-            "@settings",
-            "@ui-ux"
-          ],
-          "line": 28
-        }
-      ]
-    },
-    {
-      "relativePath": "ui-ux/use-global-variable-in-component.spec.ts",
-      "tier": "T1",
-      "hasMirroredDoc": true,
-      "hasIdScopedCleanup": false,
-      "tests": [
-        {
-          "title": "bind a Credential global variable to a component secret field",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 132
-        },
-        {
-          "title": "component secret-field global-variable binding persists across reload",
-          "modifier": "",
-          "tags": [
-            "@release",
-            "@workspace",
-            "@regression"
-          ],
-          "line": 167
-        }
-      ]
-    },
-    {
       "relativePath": "ui-ux/userSettings.spec.ts",
       "tier": "T2",
       "hasMirroredDoc": false,
@@ -1340,6 +781,6 @@
       ]
     }
   ],
-  "testCount": 92,
+  "testCount": 54,
   "titleCollisions": []
 }
