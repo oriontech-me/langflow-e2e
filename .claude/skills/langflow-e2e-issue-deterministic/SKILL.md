@@ -124,6 +124,24 @@ rate of a flake on the unmodified spec (it refuses a dirty spec file).
   quarantined a test, VALIDATE fails while a `test.fixme` survives in a touched
   spec — and, when the issue asks for the tag back, while a quarantined title
   lacks `@stable`.
+- **A `langflow-regression` issue outlives its fix PR — until the upstream fix
+  actually lands, and that is now CHECKED rather than assumed.** The PR gate
+  refuses `Closes #NNN` under that verdict and requires a non-closing reference,
+  because the issue tracks a live upstream defect. The condition that lifts the
+  refusal was written into its own message from the first version — *"must stay
+  open until the upstream fix lands and is re-validated"* — and was never read,
+  i.e. treated as permanently false; #1807 was the first issue to satisfy it and
+  had no way to say so (`langflow#15078` back-merged into the 1.13 line between
+  `1.13.0.dev12` and `1.13.0.dev14`). DEBUG evidence may now carry
+  `upstreamFixValidated: {image, howVerified}` — the image a scheduled lane
+  pulls, and how the fix was verified **there** — and `Closes` is then accepted.
+  Both fields are required and a blank one is not a field: the lift has to cost
+  evidence or it degrades into a flag set to get past the gate. It **permits**
+  the close, never forces it — waiting for a green scheduled run first is a
+  legitimate call. And a green run is not the evidence: say what was measured
+  (for #1807, the toggle that had produced 0/10 giving 10/10 on the new image,
+  plus the ordering invert — the write absorbing the injected delay instead of
+  the read-back).
 - **A confirmed `langflow-regression` owes `REGRESSIONS.md` an entry, and it is
   gated.** The ledger's own header calls the row *"a mandatory step"* and names
   the REPORT phase as one of its two owners, but no phase mentioned the file and
@@ -199,7 +217,7 @@ Both delegate test authoring to `langflow-e2e`.
 ## Changing the pipeline itself
 
 `pipeline/` is 2.8k lines of TypeScript that owns every gate. It has its own
-lane — `npm run test:pipeline` (152 tests + `tsc -p` against the pipeline's own
+lane — `npm run test:pipeline` (160 tests + `tsc -p` against the pipeline's own
 tsconfig), wired into `pr-validation.yml`. Run it before and after any edit.
 
 It needs a separate runner from `npm run test:units`: the pipeline imports with

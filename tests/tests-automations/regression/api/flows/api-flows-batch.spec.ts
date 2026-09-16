@@ -1,6 +1,8 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { describeFlowReadback } from "../../../../helpers/flows/describe-flow-readback";
+import { describeResponseDetail } from "../../../../helpers/flows/describe-response-detail";
 
 // Batch create: `POST /api/v1/flows/batch/`. Spec doc: docs/api/flows/api-flows-batch.md
 //
@@ -79,7 +81,26 @@ test.describe("Batch flow creation via API", () => {
           const res = await request.get(`/api/v1/flows/${id}`, {
             headers: { Authorization: authToken },
           });
-          expect(res.status()).toBe(200);
+          // The 200 is the contract and is asserted unchanged. The failing
+          // branch adds attribution (#1807 / LE-2598): here the two reads
+          // differ by TIME rather than by route, which is exactly the axis
+          // needed — a row that landed between them is the window, a row still
+          // absent is not. Neither read throws, both run only here, and neither
+          // is declared through apiCoverage.
+          const diagnosis =
+            res.status() === 200
+              ? undefined
+              : [
+                  `GET /api/v1/flows/${id} -> ${res.status()}`,
+                  await describeResponseDetail(res),
+                  await describeFlowReadback(
+                    request,
+                    id,
+                    { headers: { Authorization: authToken } },
+                    "second read of the same route — a 200 here means the row landed between the two",
+                  ),
+                ].join("; ");
+          expect(res.status(), diagnosis).toBe(200);
           expect([nameA, nameB]).toContain((await res.json()).name);
         }
       });

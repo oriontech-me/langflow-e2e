@@ -431,9 +431,45 @@ export function checkCiVerdict(
 export const NON_CLOSING_REF_RE = (issue: number) =>
   new RegExp(`(?:Refs|Tracked by|Part of|Relates to)\\s+#${issue}\\b`, 'i')
 
+/**
+ * What a `langflow-regression` issue needs on record before its fix PR may
+ * CLOSE it: the upstream fix present in the image the scheduled lanes run, and
+ * a note of how that was verified there.
+ *
+ * Why it is a field and not the author's judgement: the refusal below has
+ * always named the condition that would lift it — "must stay open until the
+ * upstream fix lands and is re-validated" — and never checked it, so the
+ * exemption was permanent. #1807 is the first issue to satisfy it
+ * (`langflow#15078` back-merged into the 1.13 line between `1.13.0.dev12` and
+ * `1.13.0.dev14`; re-validated on the nightly by re-running the toggle that had
+ * broken it and measuring the ordering invert). An exemption whose
+ * justification expires silently is the failure #1084 was raised about, and the
+ * mirror case — a gate that can never be satisfied — is how a correct PR gets
+ * pushed into improvising around the state machine.
+ */
+export interface UpstreamFixRecord {
+  /** The image the fix was verified in, e.g. `1.13.0.dev14` — the tag a scheduled lane pulls. */
+  image?: unknown
+  /** How it was verified THERE. A green run is not evidence; say what was measured. */
+  howVerified?: unknown
+}
+
+/** A non-blank string, which is what makes a required field actually required. */
+const filled = (v: unknown): boolean => typeof v === 'string' && v.trim() !== ''
+
+/**
+ * True only when BOTH halves are recorded. Half a record is not a record: the
+ * lift has to cost real evidence or it degrades into a flag an author sets to
+ * get past the gate.
+ */
+export function upstreamFixIsValidated(r: UpstreamFixRecord | undefined): boolean {
+  return r !== undefined && filled(r.image) && filled(r.howVerified)
+}
+
 export function checkPrReadiness(e: {
   branch: string; prBody: string; issue: number; isWave: boolean; labels: string[]
   verdict?: string
+  upstreamFixValidated?: UpstreamFixRecord
 }): string[] {
   const problems: string[] = []
   if (!BRANCH_RE.test(e.branch)) {
@@ -441,13 +477,19 @@ export function checkPrReadiness(e: {
   }
   const closes = new RegExp(`Closes #${e.issue}\\b`).test(e.prBody)
   if (e.verdict === 'langflow-regression') {
-    if (closes) {
+    // The verdict inverts the rule, and a validated upstream fix un-inverts it:
+    // at that point every clause of the issue's own deliverable is met, so
+    // closing is allowed — but never REQUIRED, since waiting for a green
+    // scheduled run first is a legitimate call the gate should not overrule.
+    if (closes && !upstreamFixIsValidated(e.upstreamFixValidated)) {
       problems.push(
         `PR body says "Closes #${e.issue}", but a langflow-regression issue must `
         + `stay open until the upstream fix lands and is re-validated — reference it `
-        + `without closing it ("Refs #${e.issue}" / "Tracked by #${e.issue}")`,
+        + `without closing it ("Refs #${e.issue}" / "Tracked by #${e.issue}"), or `
+        + `record the validated fix in DEBUG evidence as `
+        + `upstreamFixValidated: {image, howVerified}`,
       )
-    } else if (!NON_CLOSING_REF_RE(e.issue).test(e.prBody)) {
+    } else if (!closes && !NON_CLOSING_REF_RE(e.issue).test(e.prBody)) {
       problems.push(
         `PR body must reference #${e.issue} without closing it `
         + `("Refs #${e.issue}" / "Tracked by #${e.issue}" / "Part of #${e.issue}")`,

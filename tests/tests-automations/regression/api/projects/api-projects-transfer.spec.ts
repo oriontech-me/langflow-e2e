@@ -4,6 +4,9 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
+import { describeFlowReadback } from "../../../../helpers/flows/describe-flow-readback";
+import { describeProjectListing } from "../../../../helpers/flows/describe-project-listing";
+import { describeResponseDetail } from "../../../../helpers/flows/describe-response-detail";
 
 // The two transfer operations of the projects family — export as an archive and
 // import one back. Spec doc: docs/api/projects/api-projects-transfer.md
@@ -91,7 +94,7 @@ test.describe("Projects API — download and upload", () => {
 
   test(
     "download refuses an empty project and returns a ZIP for a populated one",
-    { tag: ["@api", "@workspace"] },
+    { tag: ["@stable", "@api", "@workspace"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["GET /api/v1/projects/download/{project_id}"]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -120,14 +123,39 @@ test.describe("Projects API — download and upload", () => {
           },
         });
         expect(flowRes.status(), await flowRes.text()).toBe(201);
-        createdFlowIds.push((await flowRes.json()).id);
+        const flowId = (await flowRes.json()).id as string;
+        createdFlowIds.push(flowId);
 
         const res = await request.get(`/api/v1/projects/download/${project.projectId}`, {
           headers,
         });
-        expect(res.status()).toBe(200);
+        // The 200 is the contract and is asserted unchanged. What the failing
+        // branch adds is attribution (#1807 / LE-2598): the route answers 404
+        // both for a project that is legitimately empty and for one whose flow
+        // row has not committed yet -- the SAME `detail` string this test
+        // asserts in step 1 -- so `detail` alone cannot say which happened. The
+        // by-id readback of the flow supplies the second axis; the spec doc's
+        // four-row table reads the pair. Neither read throws, both run only
+        // here, and neither is declared through apiCoverage.
+        const downloadDiagnosis =
+          res.status() === 200
+            ? undefined
+            : [
+                `GET /api/v1/projects/download/${project.projectId} -> ${res.status()}`,
+                await describeResponseDetail(res),
+                await describeFlowReadback(
+                  request,
+                  flowId,
+                  { headers },
+                  "the flow this step POSTed into the project",
+                ),
+              ].join("; ");
+        expect(res.status(), downloadDiagnosis).toBe(200);
         const body = await res.body();
-        // Asserted by magic bytes, not by Content-Type: the endpoint sets none.
+        // Asserted by magic bytes rather than by Content-Type. The header IS set
+        // (`application/x-zip-compressed`, measured on 1.13.0.dev12 -- an older
+        // comment here claimed it was not), but a header can be right while the
+        // body is not an archive at all, so the bytes are the stronger check.
         expect(body.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
         expect(body.byteLength).toBeGreaterThan(100);
       });
@@ -191,7 +219,34 @@ test.describe("Projects API — download and upload", () => {
         // Id-scoped by construction: the file name is unique to this run, so this
         // never matches another worker's project.
         const imported = rows.find((r) => r.name === fileName);
-        expect(imported, `no project named "${fileName}" after the import`).toBeTruthy();
+        // Same rule as test 1: the assertion is on THIS listing and is unchanged.
+        // The two extra reads only decorate its message, so a project that
+        // becomes visible a moment later still fails the test -- it just says so.
+        // Note what the pair cannot do, measured rather than assumed (#1807):
+        // inside a still-open window BOTH come back negative, which is
+        // indistinguishable from an import that never committed. The doc's table
+        // reports that row as undecided rather than as either shape.
+        const listingDiagnosis = imported
+          ? undefined
+          : [
+              `GET /api/v1/projects/ -> ${list.status()} without "${fileName}"`,
+              await describeFlowReadback(
+                request,
+                flowId,
+                { headers },
+                "the flow id the upload returned",
+              ),
+              await describeProjectListing(
+                request,
+                fileName,
+                { headers },
+                `first read listed ${rows.length} project(s)`,
+              ),
+            ].join("; ");
+        expect(
+          imported,
+          listingDiagnosis ?? `no project named "${fileName}" after the import`,
+        ).toBeTruthy();
         createdProjectIds.push(imported!.id);
 
         const read = await request.get(`/api/v1/projects/${imported!.id}`, { headers });

@@ -1,6 +1,8 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { describeFlowReadback } from "../../../../helpers/flows/describe-flow-readback";
+import { describeResponseDetail } from "../../../../helpers/flows/describe-response-detail";
 
 const FLOW_BASE = {
   name: "",
@@ -127,7 +129,29 @@ test.describe("API Invalid Key Handling", () => {
         const getRes = await request.get(`/api/v1/flows/${flowId}`, {
           headers: { Authorization: authToken },
         });
-        expect(getRes.status()).toBe(200);
+        // The 200 is the contract and is asserted unchanged. The failing branch
+        // adds attribution (#1807 / LE-2598), and this is the file where the
+        // window is most misleading: a bare `Expected: 200 / Received: 404` on
+        // the step that checks "the wrong-token PATCH did not change the flow"
+        // reads as a SECURITY finding — a rejected write that destroyed the row
+        // — in a spec whose subject is the auth boundary. It is not: the PATCH
+        // is refused before it touches anything and the flow is simply not
+        // visible yet. Neither read throws, both run only here, and neither is
+        // declared through apiCoverage.
+        const readbackDiagnosis =
+          getRes.status() === 200
+            ? undefined
+            : [
+                `GET /api/v1/flows/${flowId} -> ${getRes.status()}`,
+                await describeResponseDetail(getRes),
+                await describeFlowReadback(
+                  request,
+                  flowId,
+                  { headers: { Authorization: authToken } },
+                  "second read of the same route — a 200 here means the row landed between the two",
+                ),
+              ].join("; ");
+        expect(getRes.status(), readbackDiagnosis).toBe(200);
         const flow = await getRes.json();
         expect(flow.name).toBe(flowName);
       } finally {

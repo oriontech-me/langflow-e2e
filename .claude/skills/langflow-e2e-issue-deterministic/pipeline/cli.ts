@@ -21,6 +21,7 @@ import {
   checkCiVerdict, symptomsOwnedElsewhere, checkFinalGreenCoverage, finalGreenTargets,
   resolveClassification, checkRegressionLedger, LEDGER_FILE,
 } from './gates.ts'
+import type { UpstreamFixRecord } from './gates.ts'
 import { summarizeRunArtifact } from './artifacts.ts'
 import { instructionFor } from './instructions.ts'
 
@@ -509,8 +510,14 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
           isWave: s.issueData?.milestone != null,
           labels: s.issueData?.labels ?? [],
           // A product verdict inverts the closing requirement: the issue has to
-          // outlive its own fix PR (#1759 — see checkPrReadiness).
+          // outlive its own fix PR (#1759 — see checkPrReadiness) — unless DEBUG
+          // recorded the upstream fix as landed AND re-validated on the image the
+          // scheduled lanes pull, which is the condition that refusal has always
+          // named and never checked (#1807).
           verdict: (s.steps?.DEBUG?.evidence as { verdict?: string } | undefined)?.verdict,
+          upstreamFixValidated: (
+            s.steps?.DEBUG?.evidence as { upstreamFixValidated?: UpstreamFixRecord } | undefined
+          )?.upstreamFixValidated,
         }))
         // `evidence` is the payload being recorded by THIS call; `rec.evidence`
         // is what a previous attempt left behind. Reading the stale one meant a

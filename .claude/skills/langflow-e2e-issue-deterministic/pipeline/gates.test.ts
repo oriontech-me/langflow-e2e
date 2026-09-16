@@ -156,6 +156,73 @@ test('a langflow-regression PR is REFUSED for saying Closes (#1759)', () => {
   assert.match(problems[0], /stay open|must not close|Refs/i)
 })
 
+// The condition under which that inversion LIFTS was written into the refusal's
+// own message from the start — "must stay open until the upstream fix lands and
+// is re-validated" — and was never checked, i.e. treated as permanently false.
+// #1807 is the first issue to satisfy it: langflow#15078 back-merged into the
+// 1.13 line between `1.13.0.dev12` and `1.13.0.dev14`, and the fix was
+// re-validated ON the nightly by re-running the toggle that had broken it
+// (0/10 -> 10/10) and measuring the ordering invert (the POST absorbing the
+// delay instead of the read-back). At that point every clause of the
+// deliverable is met and the issue SHOULD close with its fix PR. An exemption
+// whose justification has expired is the failure #1084 was raised about, so the
+// lift is keyed on recorded EVIDENCE rather than on the author's say-so.
+
+test('a langflow-regression PR MAY close its issue once the upstream fix is validated (#1807)', () => {
+  const problems = checkPrReadiness({
+    branch: 'fix/issue-1807-read-after-write-attribution',
+    prBody: 'Closes #1807\n## Problem',
+    issue: 1807, isWave: false, labels: [], verdict: REGRESSION,
+    upstreamFixValidated: { image: '1.13.0.dev14', howVerified: 'toggle 0/10 -> 10/10' },
+  })
+  assert.deepEqual(problems, [])
+})
+
+test('a validated upstream fix does not FORCE the close — a reference still passes (#1807)', () => {
+  // Closing is the author's call (a team may want a green daily first); the
+  // evidence only removes the refusal.
+  const problems = checkPrReadiness({
+    branch: 'fix/issue-1807-read-after-write-attribution',
+    prBody: 'Refs #1807\n## Problem',
+    issue: 1807, isWave: false, labels: [], verdict: REGRESSION,
+    upstreamFixValidated: { image: '1.13.0.dev14', howVerified: 'toggle 0/10 -> 10/10' },
+  })
+  assert.deepEqual(problems, [])
+})
+
+test('an INCOMPLETE upstream-fix record does not lift the refusal (#1807)', () => {
+  // The load-bearing half: the lift must cost real evidence, or it becomes a
+  // flag an author sets to get past the gate. Both fields are required, and a
+  // blank one is not a field.
+  for (const bad of [
+    {},
+    { image: '1.13.0.dev14' },
+    { howVerified: 'toggle 0/10 -> 10/10' },
+    { image: '   ', howVerified: 'toggle' },
+    { image: '1.13.0.dev14', howVerified: '' },
+  ]) {
+    const problems = checkPrReadiness({
+      branch: 'fix/issue-1807-x', prBody: 'Closes #1807\n## Problem',
+      issue: 1807, isWave: false, labels: [], verdict: REGRESSION,
+      upstreamFixValidated: bad as never,
+    })
+    assert.equal(problems.length, 1, JSON.stringify(bad))
+    assert.match(problems[0], /Closes #1807/)
+  }
+})
+
+test('the upstream-fix record changes nothing for a non-regression verdict (#1807)', () => {
+  // A test-defect issue closes with its PR either way; the record must not
+  // become a second, silent way to satisfy an unrelated rule.
+  const problems = checkPrReadiness({
+    branch: 'fix/issue-1807-x', prBody: 'no closes at all',
+    issue: 1807, isWave: false, labels: [], verdict: 'test-defect',
+    upstreamFixValidated: { image: '1.13.0.dev14', howVerified: 'toggle' },
+  })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /missing "Closes #1807"/)
+})
+
 test('a langflow-regression PR still needs SOME reference to its issue (#1759)', () => {
   const problems = checkPrReadiness({
     branch: 'fix/issue-1759-flows-crud', prBody: '## Problem\nno reference at all',
