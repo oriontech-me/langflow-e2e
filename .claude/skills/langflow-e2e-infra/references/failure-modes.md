@@ -27,49 +27,89 @@ wedge in the umbrella issue — #1030) and **keep** the measurement: the per-sha
 writes its outage totals and per-shard breakdown onto its `reports/daily-history.jsonl`
 line as `backend` (`scripts/lib/backend-history.mjs`; schema in `reports/README.md`).
 That series is the baseline any lever has to be compared against — read it with the
-two `jq` queries in that README rather than re-deriving it from artifacts. **Applying
-and measuring a lever against it is #1686**, which carries the candidate list, the
-levers already rejected on measurement, and the credential-hang-vs-load distinction a
-benchmark has to preserve; new run-level wedge occurrences are recorded there. Do **not**
+two `jq` queries in that README rather than re-deriving it from artifacts. **No lever
+was ever applied and none is needed** — the wedge was the suite's own doing and #1679
+removed it, measured below; that is what closed #1686, which still carries the candidate
+list, the levers already rejected on measurement, and the credential-hang-vs-load
+distinction any future benchmark has to preserve. Do **not**
 reach for `--max-failures` or a detect-and-abort probe: on run 30444299314 the heavy
 shards wedged 7-10 times and still passed ~100 specs each, so aborting costs more
 coverage than it saves.
 
-**Before sizing a lever against it, note the wedge may be endogenous.** The 5
-consecutive dailies backfilled with #1077 (2026-08-27 → 09-02) include a near-control:
-2026-08-27 measured **0 outage windows on all 4 shards** — 547 tests executed of 549
-counted, 545 passing — at roughly half the summed shard span of the wedged days, so
-the wedge is not a constant of the runner. Read it with its own floor caveat, the one
-this series documents: that row still carries `blips_total: 19`, i.e. 19 single-probe
-failures below the 2-probe window threshold. The backend answered every probe on none
-of those shards; it merely never stayed unreachable long enough to open a window.
+**The wedge was endogenous, and since 2026-09-11 it is measured absent.** Read this
+before sizing a runner or a worker count against the series above: the levers listed
+here are documented, not pending, and applying one now would size it against a signal
+that is no longer there.
+
 `update_enabled_models` validates the provider key once **per model, synchronously,
 inside the request** (measured on an idle container, #1666: 1 model 0.4-1.0 s,
 30 models **103 s**, the same 30 *disabled* 0.02 s), and the lanes run
 `LANGFLOW_WORKERS: 1` — so a 30-model enable write blocks the only worker for 103 s,
 past the helper's own 90 s flush budget and within reach of gunicorn's 120 s timeout
-under any concurrent load. #1666 removed that sweep from `collect-models` and
-**#1679 removed it from the spec side too**: `enableAndSettleModelToggles` now clicks
-only the model the setup is about to pick, via `planToggleTargets`. Re-measured there on
-`1.13.0.dev8`, one idle container: a 29-model google batch never answers and takes the
-backend down for ~100 s (gunicorn `WORKER TIMEOUT` -> `SIGKILL`, nothing persisted),
-against **0.86 s and no dropped probe** for one model — and end to end, the same
-`agent-component-regression [google]` went from a 109 s outage while passing to zero
-probes down. So the outage total still has to be re-read across ≥2 scheduled dailies
-before a worker count or a runner size is benchmarked against it, but the reason is now
-"confirm the suite-caused share is gone" rather than "the suite is still causing it":
-#1686's stated blocker is cleared by #1679, and its own *Done when* is what closes it.
+under any concurrent load. #1666 removed that sweep from `collect-models`; **#1679
+removed it from the spec side** (PR #1805, merged 2026-09-10 15:35 UTC — after that
+day's daily had already started at 12:41 UTC, so 09-10 is the last "before" row).
+`enableAndSettleModelToggles` now clicks only the model the setup is about to pick,
+via `planToggleTargets`.
 
-**One gap to know before running the benchmark itself.** History lines are written on
+Three consecutive scheduled dailies either side, read off `reports/daily-history.jsonl`
+(`.backend`), with the gunicorn kill count grepped from each run's own shard job logs:
+
+| daily | provider | run | outages | `down_seconds_total` | `collateral_attempts` | `WORKER TIMEOUT` kills | passed |
+|---|---|---|---|---|---|---|---|
+| 2026-09-08 | google | 34227075296 | 20 | 1644.2 s | 12 | **12** | 601 |
+| 2026-09-09 | google | 34352667406 | 11 | 808 s | 6 | **4** | 608 |
+| 2026-09-10 | openai | 34478166565 | 11 | 528 s | 5 | **3** | 629 |
+| 2026-09-11 | google | 34599745145 | **0** | **0 s** | 0 | **0** | 644 |
+| 2026-09-14 | openai | 34857401847 | 1 | 8 s | 0 | **0** | 657 |
+| 2026-09-15 | anthropic | 34973003377 | 1 | 12 s | 1 | **0** | 660 |
+
+Four things that make this a comparison rather than a coincidence:
+
+- **The kill count is the discriminator, not the outage count** (#1048) — a liveness
+  probe goes through the same forward the specs use and cannot tell a wedged worker
+  from a dead socat. The counts above come from
+  `gh run view <id> --log | grep -cE "critical.*WORKER TIMEOUT"`, and the instrument is
+  validated by 2026-09-08 reproducing exactly the 12 kills that run's own triage had
+  read by hand out of the four container logs.
+- **The rotation covers all three providers** (#1185), google on both sides — google
+  being the 30-model panel the write was measured on.
+- **Neither side is a drained account.** Each "after" run's `providers.json` records
+  openai and google active (anthropic inactive on 09-11 only), so this is not the
+  credential-hang-vs-load confusion #1029 produced — a distinction these numbers
+  cannot make on their own.
+- **No lever was applied.** `LANGFLOW_WORKERS: "1"` and `LANGFLOW_WORKER_TIMEOUT: "120"`
+  are unchanged across the whole window, and nothing moved in `playwright.config.ts` or
+  the shard matrix.
+
+**What is left is not the wedge, and reading it as one sends the next person after the
+wrong lever.** `blips_total` did not move (23 / 31 / 23 before → 24 / 27 / 24 after):
+single-probe failures below the 2-probe window threshold are a floor of the runner,
+present on the 2026-08-27 near-control too (19), and #1549 owns them. And `wedged: true`
+still renders on a day whose only window is 8 s long with `reason: "timeout>4000ms"` and
+no kill behind it — the flag is a threshold on the probe, not a synonym for a worker
+kill, so read `down_seconds_total` and the kill count rather than the boolean.
+
+**Return condition — the rollback point a lever would have needed.** The mechanism is
+intact in the product: one synchronous per-model key validation, inside one request, on
+one worker. Any helper that goes back to writing N models in a single call reopens it,
+and the daily's own row is the detector. If `backend.down_seconds_total` climbs back
+into the hundreds of seconds on a **scheduled** daily, look for a whole-panel toggle
+write **before** reaching for a worker count or a runner size. `LANGFLOW_WORKERS: 1`
+stays pinned: it is what makes such a write fatal, but raising it trades a mid-run wedge
+for the `collect-models` start-of-run starvation of #922/#927 gated by #1011 — and there
+is no measured wedge left to buy with that trade.
+
+**One gap to know if a benchmark is ever run here again.** History lines are written on
 `schedule` only, so a lever measured through a `workflow_dispatch` of `daily-stable.yml`
 produces **no durable row** — its "after" would again be a table typed by hand from
-7-day artifacts. Either land the lever and compare across ≥2 scheduled dailies (what
-#1686's last *Done when* asks for anyway), or extend the append step first.
+7-day artifacts. Either land the lever and compare across ≥2 scheduled dailies, or
+extend the append step first.
 
 **Docs:** `ISSUE-817-CI-RUNNER-SIZING.md`, `ISSUE-833-SHARDING-DESIGN.md`,
 `ISSUE-833-SHARDING-PLAN.md`; `@stable`-removal rules → `CONTRIBUTING.md` →
 *Tag @stable* / *Triage protocol*.
-**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · #1077 · #1666 · #1679 · #1686 · PR #888.
+**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · #1077 · #1549 · #1666 · #1679 · #1686 · PR #888 · PR #1805.
 
 **`@stable` verdict routing** (when someone wants to drop `@stable` over this):
 confirmed saturation (green at `--workers=1`, flakes at higher N) → **keep
