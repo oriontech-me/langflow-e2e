@@ -14,7 +14,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { APIRequestContext } from "@playwright/test";
-import { createProjectViaApi } from "./create-project-via-api";
+import { createProjectViaApi, uniqueProjectName } from "./create-project-via-api";
 
 interface Call {
   method: string;
@@ -191,4 +191,145 @@ test("a failed key delete is reported, not swallowed into a false clean", async 
 test("a non-201 creation throws instead of returning an unusable project", async () => {
   const f = fakeRequest({ createStatus: 500 });
   await assert.rejects(() => createProjectViaApi(f.request, HEADERS));
+});
+
+// ─── Name truncation (#1883) ─────────────────────────────────────────────────
+//
+// Langflow auto-registers one MCP server per project under a name derived from
+// the project's and cut to 26 characters, and refuses the SECOND project whose
+// name collides on that derivation with a 409 naming a server the caller never
+// created (#1409). The generated name therefore has to stay unique THROUGH that
+// truncation, not just as a whole string.
+//
+// `sanitizeMcpName` below replicates `lfx/base/mcp/util.py::sanitize_mcp_name`
+// over the ASCII subset these names live in — JS `\w` is `[A-Za-z0-9_]` where
+// Python's is unicode-aware, which is the only divergence and is unreachable for
+// a generated name. It is replicated rather than imported because the rule lives
+// in the product, not in this repo: these tests pin OUR name against THEIR cut,
+// and a drift in the cut should surface here rather than in a red daily.
+
+const MCP_CUT = 26;
+/** `${ts base36}-${rand}` — 8 + 1 + 5. */
+const DISCRIMINATOR_LENGTH = 14;
+
+function sanitizeMcpName(name: string, maxLength = 46): string {
+  let n = name.normalize("NFD").replace(/\p{Mn}/gu, "");
+  n = n.replace(/[^\w\s-]/g, "");
+  n = n.replace(/[-\s]+/g, "_");
+  n = n.replace(/_+/g, "_");
+  n = n.replace(/^_+|_+$/g, "");
+  if (/^[0-9]/.test(n)) n = `_${n}`;
+  n = n.toLowerCase();
+  if (n.length > maxLength) n = n.slice(0, maxLength).replace(/_+$/, "");
+  return n || "unnamed";
+}
+
+/** What Langflow registers for a project of this name. */
+function derivedServerName(projectName: string): string {
+  return `lf-${sanitizeMcpName(projectName).slice(0, MCP_CUT)}`;
+}
+
+/**
+ * The property the fix has to hold, asserted DETERMINISTICALLY rather than by
+ * counting collisions over a sample.
+ *
+ * Collision counting was the first formulation and it is too weak: losing the
+ * last character of the random component still leaves 36^4 values, so a 200-draw
+ * sample collides about 1% of the time and the assertion passes against a broken
+ * budget. What must be true is structural — the whole discriminator survives the
+ * cut — so that is what is asserted.
+ */
+function discriminatorSurvives(name: string): boolean {
+  const full = sanitizeMcpName(name);
+  return full
+    .slice(0, MCP_CUT)
+    .endsWith(full.slice(-DISCRIMINATOR_LENGTH));
+}
+
+/** The construction this fix replaced, kept so the tests below are shown to discriminate. */
+function legacyProjectName(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// Every prefix the suite passes to createProjectViaApi today, plus the default,
+// plus the shapes a caller could pass tomorrow.
+const PREFIXES = [
+  "api-flows-export-upsert", // 23 — the case that collides ALWAYS
+  "api-monitor-lifecycle",
+  "authz-reconcile",
+  "authz-inherited",
+  "a2a-authgate",
+  "a2a-external",
+  "ac-ui-scope",
+  "e2e-project", // the helper's own default
+  "e2ecf",
+  "pdl",
+  "an-extremely-long-and-descriptive-spec-prefix-nobody-should-write",
+  "2fa-login-regression-probe", // starts with a digit AND outruns the budget
+  "7", // a digit that does not outrun it
+  "", // no prefix at all
+  "   ",
+  "---",
+  "***",
+  "Mixed Case With Spaces",
+];
+
+test("the discriminator survives Langflow's 26-character cut, for every prefix shape", () => {
+  for (const prefix of PREFIXES) {
+    for (let i = 0; i < 50; i++) {
+      const name = uniqueProjectName(prefix);
+      assert.ok(
+        discriminatorSurvives(name),
+        `prefix ${JSON.stringify(prefix)} produced "${name}", which derives ` +
+          `"${derivedServerName(name)}" — the discriminator does not survive`,
+      );
+    }
+  }
+});
+
+test("the property fails under the construction this replaced", () => {
+  // Not a test of the old code — a test that the assertion above can fail. The
+  // 23-character prefix leaves 2 digits of the timestamp, so every name derives
+  // the same server; without this, a no-op "fix" would pass the suite.
+  const name = legacyProjectName("api-flows-export-upsert");
+  assert.equal(discriminatorSurvives(name), false);
+  const derived = new Set(
+    Array.from({ length: 50 }, () =>
+      derivedServerName(legacyProjectName("api-flows-export-upsert")),
+    ),
+  );
+  assert.equal(derived.size, 1, "the legacy construction collapses to one derived name");
+});
+
+test("no generated name starts or ends with a separator", () => {
+  for (const prefix of PREFIXES) {
+    const name = uniqueProjectName(prefix);
+    assert.ok(!name.startsWith("-"), `leading separator: ${name}`);
+    assert.ok(!name.endsWith("-"), `trailing separator: ${name}`);
+  }
+});
+
+test("the prefix stays recognisable in the generated name", () => {
+  // The prefix exists to say whose orphan a leftover project is. A fix that made
+  // names unique by dropping it would pass every assertion above.
+  assert.ok(uniqueProjectName("a2a-authgate").startsWith("a2a-authgat"));
+  assert.ok(uniqueProjectName("api-flows-export-upsert").startsWith("api-flows-e"));
+  assert.ok(uniqueProjectName("pdl").startsWith("pdl-"));
+  assert.ok(uniqueProjectName("Mixed Case With Spaces").startsWith("mixed-case-"));
+});
+
+test("the name the helper sends is the one uniqueProjectName builds", () => {
+  // Guards the wiring: the rule is worth nothing if createProjectViaApi stops
+  // using it.
+  const f = fakeRequest();
+  return createProjectViaApi(f.request, HEADERS, {
+    namePrefix: "api-flows-export-upsert",
+  }).then((project) => {
+    assert.equal(project.name, f.createdName());
+    assert.ok(
+      project.name.startsWith("api-flows-e-"),
+      `unexpected generated name: ${project.name}`,
+    );
+    assert.ok(discriminatorSurvives(project.name));
+  });
 });
