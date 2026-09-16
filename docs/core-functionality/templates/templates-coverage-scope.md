@@ -392,7 +392,7 @@ Every path below is relative to `tests/tests-automations/regression/` (specs) an
 | ID | Spec / doc basename | Bullets | What proves it |
 |---|---|---|---|
 | **R1** | `templates-registration` | §11.1 registered set | `GET /api/v1/flows/basic_examples/` names match a committed per-image baseline; an undeclared absence fails naming the template; a declared absence (*Research Translation Loop*, #1744) fails when it comes back, naming the declaration to delete; an extra template is reported, not failed |
-| **G1** | `templates-gallery` | §11.1 all templates, tabs, get started, search, welcome panel | Card sets per tab equal the listing filtered by exact tag; the offered tabs equal the tags present; the three featured cards and the two quick picks each create their template (`POST /api/v1/flows/` 201, name matching); a name query keeps its card and a nonsense query leaves none. Supersedes `starter-projects.spec.ts` |
+| **G1** | `templates-gallery` | §11.1 all templates, tabs, get started, search, welcome panel | Card sets per tab equal the listing filtered by exact tag; the offered tabs equal the tags present; the three featured cards each create their template (`POST /api/v1/flows/` 201, name matching) while the two welcome quick picks **convert the New Flow placeholder in place** (`PATCH /api/v1/flows/{id}` 200, same id — measured 2026-09-16, corrected in #1863); a name query keeps its card and a nonsense query leaves none. Supersedes `starter-projects.spec.ts` |
 | **S1** | `templates-instantiate` | §11.2, one test per registered template | Pick from *All templates* → editor opens → `GET /api/v1/flows/{id}` component types, edges and notes equal the listing's entry; id-scoped cleanup of the template flow |
 | **E1** | `templates-run-prompts` | §11.3 Basic Prompting, Blog Writer, Multi Agent Flow, SEO Keyword Generator, Twitter Thread Generator | Run the terminal Chat Output; build badge, non-empty reply, clean flow-error report. Blog Writer's URL points at `ECHO_BASE_URL` |
 | **E2** | `templates-run-image-input` | §11.3 Image Sentiment Analysis | An image attached in the Playground reaches a vision-capable model; the run completes with a non-empty reply and a clean report |
@@ -425,9 +425,11 @@ E1–E4 need the one model `collect-models` resolved and run with `--workers=1`.
 
 ## Follow-up work this scoping creates
 
-1. **Retire `core-functionality/templates/starter-projects.spec.ts`** once G1 is
-   `@stable`. It sits in Wave 8's T2 backlog, and the DELETE outcome there requires a named
-   replacing spec and test — G1 is that name.
+1. ~~**Retire `core-functionality/templates/starter-projects.spec.ts`** once G1 is
+   `@stable`.~~ **Done in #1863**: G1 shipped `@stable` as
+   `core-functionality/templates/templates-gallery.spec.ts` and the file was deleted in the same
+   PR, with `tests/assets/triage/inherited-backlog-baseline.json` refreshed — Wave 8's T2 DELETE
+   outcome required a named replacing spec and test, and G1 is that name.
 2. **File the three catalog anomalies upstream** (Social Media Agent's `agent` tag,
    Knowledge Retrieval's empty tags, Meeting Summary's `test MB`), each as its own issue.
 3. **Date the batch at a roadmap review.** `ROADMAP.md`'s pool entry now points here as a

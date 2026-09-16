@@ -32,6 +32,12 @@ export interface EntryScript {
   responses?: ScriptedResponse[];
   /** Milliseconds after the click at which the welcome overlay renders; omitted = never. */
   welcomeAt?: number;
+  /**
+   * Milliseconds after the click at which the templates modal renders DIRECTLY,
+   * without the welcome overlay — what an older build does, and what the
+   * welcome-panel entry has to refuse rather than silently accept.
+   */
+  modalAt?: number;
 }
 
 export interface FakeNewFlowPage {
@@ -117,6 +123,15 @@ export function fakeNewFlowPage(scripts: EntryScript[]): FakeNewFlowPage {
         flow: id,
         fire: () => {
           state.welcome = true;
+        },
+      });
+    }
+    if (script.modalAt !== undefined) {
+      state.scheduled.push({
+        at: state.clock + script.modalAt,
+        flow: id,
+        fire: () => {
+          state.modal = true;
         },
       });
     }

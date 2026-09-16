@@ -294,6 +294,47 @@ export interface NewFlowEntryDeps {
 }
 
 /**
+ * New Flow → the welcome overlay or the templates modal, with the #1865 recovery.
+ * Shared by both entry points below; throws with the measured state when neither
+ * surface appears.
+ */
+const openNewFlowEntry = async (page: Page, now: () => number) => {
+  const types = watchTypesResponses(page);
+  try {
+    let outcome = await enterNewFlow(page, types, now);
+    let reenteredAfter: string | undefined;
+
+    if (outcome.kind === "stuck") {
+      reenteredAfter = outcome.flowId;
+      console.warn(
+        `⚠️  openNewFlowTemplatesModal: New Flow created ${reenteredAfter}, but GET /api/v1/all?flow_id=${reenteredAfter} answered 404 — ` +
+          `the editor asked for the flow before its creation had committed (LE-2598, #1865). The frontend never retries that, ` +
+          `so the editor stays blank for good: deleting ${reenteredAfter} and entering New Flow once more.`,
+      );
+      await deletePlaceholder(page, reenteredAfter);
+      await page.goto("/");
+      await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
+      outcome = await enterNewFlow(page, types, now);
+
+      if (outcome.kind === "stuck") {
+        await deletePlaceholder(page, outcome.flowId);
+        throw new Error(
+          `openNewFlowTemplatesModal: the editor of a new flow stayed blank twice — GET /api/v1/all?flow_id=<id> answered 404 ` +
+            `for ${reenteredAfter} and, after one re-entry, for ${outcome.flowId} too (LE-2598, #1865). Both placeholders were ` +
+            `deleted. New Flow is re-entered once, so a second 404 fails here instead of looping.`,
+        );
+      }
+    }
+
+    if (outcome.kind === "nothing") {
+      throw new Error(nothingOpenedMessage(page, types, reenteredAfter));
+    }
+  } finally {
+    types.dispose();
+  }
+};
+
+/**
  * Clicks whichever "New Flow" entry point the home page exposes and lands on
  * the templates modal, handling the 1.10.0 welcome overlay (see
  * `dismissWelcomeOverlayAndWaitForModal`).
@@ -343,39 +384,34 @@ export const openNewFlowTemplatesModal = async (
   page: Page,
   { now = Date.now }: NewFlowEntryDeps = {},
 ) => {
-  const types = watchTypesResponses(page);
-  try {
-    let outcome = await enterNewFlow(page, types, now);
-    let reenteredAfter: string | undefined;
+  await openNewFlowEntry(page, now);
+  await browsePastWelcomeOverlay(page);
+};
 
-    if (outcome.kind === "stuck") {
-      reenteredAfter = outcome.flowId;
-      console.warn(
-        `⚠️  openNewFlowTemplatesModal: New Flow created ${reenteredAfter}, but GET /api/v1/all?flow_id=${reenteredAfter} answered 404 — ` +
-          `the editor asked for the flow before its creation had committed (LE-2598, #1865). The frontend never retries that, ` +
-          `so the editor stays blank for good: deleting ${reenteredAfter} and entering New Flow once more.`,
-      );
-      await deletePlaceholder(page, reenteredAfter);
-      await page.goto("/");
-      await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
-      outcome = await enterNewFlow(page, types, now);
-
-      if (outcome.kind === "stuck") {
-        await deletePlaceholder(page, outcome.flowId);
-        throw new Error(
-          `openNewFlowTemplatesModal: the editor of a new flow stayed blank twice — GET /api/v1/all?flow_id=<id> answered 404 ` +
-            `for ${reenteredAfter} and, after one re-entry, for ${outcome.flowId} too (LE-2598, #1865). Both placeholders were ` +
-            `deleted. New Flow is re-entered once, so a second 404 fails here instead of looping.`,
-        );
-      }
-    }
-
-    if (outcome.kind === "nothing") {
-      throw new Error(nothingOpenedMessage(page, types, reenteredAfter));
-    }
-
-    await browsePastWelcomeOverlay(page);
-  } finally {
-    types.dispose();
-  }
+/**
+ * Clicks New Flow and stops at the `FlowBuilderWelcome` overlay, instead of
+ * browsing past it to the templates modal.
+ *
+ * Same entry point, same retries and the same #1865 recovery as
+ * `openNewFlowTemplatesModal` — only the destination differs. It exists because
+ * the overlay carries a surface the modal does not: the quick picks, which
+ * convert the flow New Flow just created **in place** (`PATCH`), where a gallery
+ * pick creates a second flow. `templates-gallery.spec.ts` (#1863) asserts that,
+ * and the modal entry dismisses the overlay before a spec can see it.
+ *
+ * A build that opens the modal directly (older builds, or the empty-page CTA)
+ * gets an error naming what happened rather than a selector timeout: the panel is
+ * the surface under test, so its absence is a result, not a wait.
+ */
+export const openNewFlowWelcomePanel = async (
+  page: Page,
+  { now = Date.now }: NewFlowEntryDeps = {},
+) => {
+  await openNewFlowEntry(page, now);
+  if (await page.locator(WELCOME_PANEL).isVisible().catch(() => false)) return;
+  throw new Error(
+    `openNewFlowWelcomePanel: New Flow reached the templates modal without ever showing the ` +
+      `welcome overlay (page on ${page.url()}). The quick picks only exist on that overlay, so ` +
+      `this entry point reports the build rather than asserting against a surface that is not there.`,
+  );
 };
