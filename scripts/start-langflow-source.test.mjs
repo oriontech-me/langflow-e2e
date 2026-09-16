@@ -155,8 +155,25 @@ if [ "$N" -eq 1 ]; then exit ${portBusy ? 0 : 1}; fi
 exit ${healthy ? 0 : 1}
 `,
   );
+  // The override stub for `LANGFLOW_SRC_RUN_CMD`. It must be a BARE WORD and it
+  // must ignore its arguments, for two reasons that are both properties of the
+  // starter rather than choices here: `${RUN_CMD}` is expanded UNQUOTED
+  // (start-langflow-source.sh:296), so a quoted shell fragment would be word-split
+  // and its quotes never re-processed; and four flags are appended to it, which a
+  // real server parses and `sleep` does not. Passing `sleep <marker>` directly —
+  // which this file did until #1893 — hands `sleep` a `--host` it rejects, so the
+  // "server" was dead ~30 ms in and the test passed only while bash had not yet
+  // reaped the zombie when the starter's `kill -0` ran. Same shape as the `uv`
+  // stub above, which was always correct because a bash script ignores `"$@"`
+  // unless it reads it.
+  writeFileSync(
+    join(bin, "fake-server"),
+    `#!/usr/bin/env bash
+exec sleep ${SERVER_MARKER}
+`,
+  );
   chmodSync(join(uvBin, "uv"), 0o755);
-  for (const f of ["git", "curl"]) chmodSync(join(bin, f), 0o755);
+  for (const f of ["git", "curl", "fake-server"]) chmodSync(join(bin, f), 0o755);
 
   // `withUv: false` must not inherit the caller's PATH, or a real uv on the machine
   // answers `command -v uv` and the branch under test is never reached. The minimal
@@ -200,8 +217,25 @@ exit ${healthy ? 0 : 1}
   // Settle the two things the launched process writes on its own schedule, so no
   // assertion below has to race it.
   if (status === 0 && existsSync(pidFile)) {
-    waitFor(() => serverPattern().test(processTable()));
-    if (withUv && !env.LANGFLOW_SRC_RUN_CMD) waitFor(() => read(envLog).length > 0);
+    // Checked, not merely awaited (#1893). `waitFor` returns a boolean and both
+    // call sites used to discard it, so a launch command that died on arrival
+    // was indistinguishable from one that was simply slow: the run burnt the
+    // whole 5 s budget, every assertion below still passed, and the only
+    // symptom was a test that flaked whenever bash reaped the corpse first.
+    // The starter exits 0 only after `kill -0` and the health probe both
+    // answered, so a process missing here is a broken FIXTURE, and saying so is
+    // the difference between finding that in one run and finding it in a daily.
+    if (!waitFor(() => serverPattern().test(processTable()))) {
+      throw new Error(
+        `the launched server never appeared in the process table (looked for ` +
+          `"sleep ${SERVER_MARKER}" for 5s). The starter reported ready, so the ` +
+          `stub it launched died on arrival — check that the run command ` +
+          `tolerates the flags start-langflow-source.sh appends to it.`,
+      );
+    }
+    if (withUv && !env.LANGFLOW_SRC_RUN_CMD && !waitFor(() => read(envLog).length > 0)) {
+      throw new Error("the uv stub never wrote its env dump");
+    }
   }
 
   return {
@@ -594,9 +628,18 @@ test("the sync keeps the lockfile frozen, so the clone is not rewritten", () => 
 });
 
 test("LANGFLOW_SRC_RUN_CMD replaces the uv path entirely", () => {
-  const r = runScript({ env: { LANGFLOW_SRC_RUN_CMD: `sleep ${SERVER_MARKER}` } });
+  // `fake-server`, not a bare `sleep`: see the stub's definition in `runScript`.
+  // Reaching `assertExit` at all now proves the override produced a LIVE server,
+  // since `runScript` throws when it cannot find one — which is what this test
+  // was silently not proving before #1893.
+  const r = runScript({ env: { LANGFLOW_SRC_RUN_CMD: "fake-server" } });
   assertExit(r, 0);
   assert.equal(r.uv, "", "uv must not be invoked when the run command is overridden");
+  assert.match(
+    processTable(),
+    serverPattern(),
+    "the overridden run command must leave a live server, not a corpse",
+  );
   r.cleanup();
 });
 
