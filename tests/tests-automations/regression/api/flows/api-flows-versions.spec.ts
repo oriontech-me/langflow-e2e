@@ -92,21 +92,23 @@ test.describe("Flows API — versions", () => {
         // nothing else, and recovering what that 404 actually said cost three
         // dailies. The two reads narrow it to three cases, and only two of them
         // are a verdict — an earlier version of this comment claimed all three
-        // were, and the toggle refutes it:
+        // were, and the toggle refutes it (same order as the spec doc's table):
         //
-        //   detail "Not Found"                      -> FastAPI's unmatched
-        //     route: the collection route stopped resolving.
         //   detail "Flow not found" + readback 200  -> LE-2598's window: the
         //     201 preceded the commit and the row landed between the two reads.
         //   detail "Flow not found" + readback 404  -> UNDECIDED. This was
         //     documented as "the row is genuinely gone, NOT LE-2598", and under
         //     a forced 300 ms window on 1.13.0.dev12 it is what LE-2598 itself
-        //     produces, 10 times out of 10: both reads land inside the window,
-        //     and the row appears ~300 ms later. A wipe and a window wider than
-        //     the gap between these two reads look identical here. What tells
-        //     them apart is a LATER read or the container log, not a third one
-        //     issued in the same breath (#1807 measured the same ambiguity on
-        //     the projects pair).
+        //     produces, 10 times out of 10. The reason is structural, not a
+        //     quirk of that experiment: BOTH reads resolve the same Flow row by
+        //     (id, user_id) — this 404 comes out of `_get_user_flow` and the
+        //     readback out of that same row being invisible — so a pair of
+        //     same-row reads cannot tell "not there" from "not there YET". What
+        //     tells them apart is a LATER read or the container log, never a
+        //     second one issued in the same breath. #1807 measured the same
+        //     collapse on the projects family's UPLOAD pair.
+        //   detail "Not Found"                      -> FastAPI's unmatched
+        //     route: the collection route stopped resolving.
         //
         // Neither helper throws, and neither is declared through `apiCoverage`:
         // the gate fails a declaration the test never issues, and on a green run

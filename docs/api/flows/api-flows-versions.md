@@ -37,7 +37,7 @@ work silently, which is exactly the class of contract worth a test.
 
 ---
 
-## Known product defect — `LE-2598` (#1777, fixed in `1.13.0.dev14`)
+## Known product defect — `LE-2598` (#1777, in the nightly from `1.13.0.dev14`)
 
 Step 1 reads the versions collection back on the flow the `POST` just created, and
 on a loaded instance that read could answer `404 {"detail":"Flow not found"}`. The
@@ -128,7 +128,8 @@ test, deleted by id in `afterEach` (versions go with the flow).
    of `GET /api/v1/flows/{id}` (`describeFlowReadback`, the #1759 helper). Neither
    throws, and both run only on the failing branch, so no assertion changes.
 
-   **The pair is a three-way discriminator, which is why both reads are needed:**
+   **The pair narrows the failure to three cases, and two of them are a verdict.**
+   Both reads are still needed — the `detail` alone cannot reach row 1 at all:
 
    | `detail` | by-id readback | shape |
    |---|---|---|
@@ -137,17 +138,30 @@ test, deleted by id in `afterEach` (versions go with the flow).
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — the collection route stopped resolving. |
 
    A readback that cannot answer is `UNDECIDED` and claims neither (#1012). The
-   `detail` alone cannot separate rows 1 and 2, and those route the triage to
-   different places — which is the whole reason the 2026-09-09 occurrence, carrying
-   neither read, cost three dailies.
+   `detail` alone cannot separate rows 1 and 2 — which is the whole reason the
+   2026-09-09 occurrence, carrying neither read, cost three dailies.
 
    **Row 2 was measured, and it is why that row says UNDECIDED rather than "not
    `LE-2598`", which is what this table claimed first.** Under a forced 300 ms window
    on `dev12`, `LE-2598` itself produces row 2 in **10 of 10** trials: both reads land
-   inside the window and the row appears 292-344 ms later. A wipe and a wide window are
-   indistinguishable from two reads issued in the same breath; what separates them is a
-   **later** read or the container log, not a third immediate one. #1807 measured the
-   same ambiguity on the projects pair — this is that lesson arriving on this route.
+   inside the window and the row appears 292-344 ms later.
+
+   The mechanism is what makes that a rule rather than one experiment's result: **both
+   reads resolve the same `Flow` row by `(id, user_id)`** — the failing `GET
+   .../versions/` 404s out of `_get_user_flow`, and the readback 404s out of that same
+   row being invisible. A pair of same-row reads cannot separate "not there" from "not
+   there *yet*"; what does is a **later** read or the container log, never a second one
+   issued in the same breath. #1807 measured the same collapse on the projects family's
+   **upload** pair (`docs/api/projects/api-projects-transfer.md`, Test 2 — its Test 1
+   row still claims immunity, which does not survive this mechanism and is that issue's
+   file to correct).
+
+   **How much weight row 2 carries.** Under the *natural* window — 8-11 ms, below one
+   HTTP round trip — the second read normally lands after the commit and gives row 1, so
+   the forced 300 ms window is ~30× wider than anything measured idle. The
+   generalisation holds for the case that matters anyway: a failing occurrence has by
+   definition already outlasted a round trip, so its window is wide by construction,
+   which is exactly when the pair collapses.
 2. `POST {id}/versions/` with `{}` → `201`, `version_number === 1`, `version_tag === "v1"`,
    `description === null`, `flow_id === id`.
 3. `PUT /api/v1/flows/{id}` with the flow's `name` (required by PUT — see
@@ -183,8 +197,9 @@ operations plus the CRUD/PUT calls issued — matching what the fixture recorded
 flows left behind.
 
 For the `LE-2598` instrumentation specifically — kept after the fix, because an
-intermittent product defect is not re-validated by a green run and the next one of this
-family will be read from a failure message: forcing step 1's read-back to a non-`200`
+intermittent product defect is not re-validated by a green run, and because even when
+the pair lands on the undecided row it still names the `detail` string and rules out the
+unmatched-route shape, which is two of the three questions answered: forcing step 1's read-back to a non-`200`
 must produce a failure message that names the `detail` string **and** the by-id readback
 verdict, and the step must still fail — an instrumented assertion
 that stops failing is the defect this suite exists to catch, inverted. Both reads
