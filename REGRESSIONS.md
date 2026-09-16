@@ -131,6 +131,18 @@ Findings deliberately kept out of both tables, so nobody re-litigates them:
   then fixed upstream on 1.12.0.dev0 by the `langchain-anthropic` 1.3.5 → 1.4.8
   bump. No ticket was ever filed, so it never qualified; it is fixed, not
   pending. (Former candidate.)
+- **Project create refused by an MCP name truncation (#1409, LE-2648)** — two
+  projects whose names agree on their first 26 sanitized characters cannot
+  coexist: `POST /api/v1/projects/` answers `409 MCP server name conflict:
+  'lf-…' already exists for a different project`, the project is rolled back,
+  and the message names an `lf-…` server the user never created. Real,
+  user-facing, and filed upstream — but **not a regression**: measured
+  identically on `1.10.3`, `1.11.2` and nightly `1.13.0.dev14` (same derived
+  name, same rollback; short distinct names pass 201/201 on all three), so
+  nothing changed inside the window the suite validates — unlike LE-2020, which
+  earned a row despite being "not new" because the 7× rate shift was measured.
+  The suite hit it while validating #1396 and worked around it by shortening the
+  spec's `namePrefix`. Evidence: #1409.
 - **#552 — no echo response for gemini-3.5-flash in `mcp-client-agent`** —
   closed on triage 2026-07-10 without a confirmed `langflow-regression` verdict
   or a filed ticket. (Former candidate.)
