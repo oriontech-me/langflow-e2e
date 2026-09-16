@@ -168,14 +168,22 @@ which is found by name and by the flow ids it brought back.
    failing branch, and the assertion itself is unchanged.
 
    **The pair narrows the failure to four cases, and two of them are a verdict.** The
-   flow readback is the half that does the work here — and it is also why the first two
-   rows are the weak ones on this route specifically, which is the only member of the
-   family whose two reads address *different* rows:
+   readback is what reaches rows 1 and 2 at all — rows 3 and 4 are decided by the
+   `detail` string alone — but it does not settle either of them, and the reason is
+   route-local. The two reads use **different keys**: the download selects flow rows by
+   `Flow.folder_id == project_id`, the readback addresses one flow row by its id. They
+   are not reads of different **rows** — the row whose visibility decides this `404` is
+   the same flow either way, which is the whole point of *When the pair collapses*
+   below. (Test 2, further down this file, *is* the case with two genuinely different
+   rows: it reads the flow **and** the project listing, and carries a table row for each
+   direction in which the two can diverge.) In the family's vocabulary: `api-flows-batch` and `api-invalid-key`
+   reissue the **same request**, while this route's second read asks a **different
+   question** of the same row.
 
    | `detail` | flow readback | shape |
    |---|---|---|
-   | `"No flows found in project"` | `200` — the row EXISTS | the flow row is there, but the readback prints a **status, not a `folder_id`** — so this is either `LE-2598`'s window (the flow's `201` preceded its commit and the download's `folder_id` query saw nothing) or a flow that committed *outside this project*. Measured on `1.13.0.dev12` and `dev14` alike: creating a flow with no `folder_id` and downloading 1.5 s later — no window anywhere — produces this exact row. |
-   | `"No flows found in project"` | `404` — the row is absent | **UNDECIDED**, not a verdict. Either the flow is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
+   | `"No flows found in project"` | `200` — the row EXISTS | the flow row is there, but the readback prints a **status, not a `folder_id`** — so this is either `LE-2598`'s window (the flow's `201` preceded its commit and the download's `folder_id` query saw nothing) or a flow that committed *outside this project*. Measured on `1.13.0.dev12` and `dev14` alike: creating a flow with no `folder_id` and downloading 1.5 s later — no window anywhere — produces this exact row. **Those two are told apart by re-running**, not by another read: this step always posts with `folder_id` (`spec:122`), so the second branch requires `POST /api/v1/flows/` to have stopped honouring it — a product regression, which reproduces, where the window does not. |
+   | `"No flows found in project"` | `404` — not visible to this read | **UNDECIDED**, not a verdict. Either the flow is genuinely gone (a commit that never happened, a cross-worker wipe) **or** the window is still open and wider than the gap between these two reads. |
    | `"Project not found"` | either | the **project** row is the one missing — a different subject, and new: step 1 already proved that id resolved. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — the download route stopped resolving. |
 
@@ -206,15 +214,18 @@ which is found by name and by the flow ids it brought back.
    which two calls issued milliseconds apart cannot guarantee. What separates them is a
    **later** read or the container log.
 
-   How much weight row 2 carries: the natural window is below one HTTP round trip — the
-   figure the family quotes, **8-11 ms, was measured on the flows `POST` → versions
-   sequence** (#1777), and on *this* sequence the un-forced control is 8/8 first reads
-   answering `200` with the flow `POST` returning in 7-9 ms on `dev12` and 8 ms on
-   `dev14` — so the readback normally lands after the commit and gives row 1, and the
-   forced window is one to two orders of magnitude wider than anything measured idle.
-   The generalisation holds for the case that matters anyway, since a failing occurrence
-   has by definition already outlasted a round trip — which is exactly when the pair
-   collapses.
+   How much weight row 2 carries, stated over what was actually measured. The figure the
+   family quotes — **8-11 ms** — was measured on the flows `POST` → versions sequence
+   (#1777), not here. On *this* sequence what is measured is the un-forced control:
+   **8/8** downloads answering `200`, which says the window closed inside the
+   `POST`→download gap and nothing narrower. It does **not** bound the window, and the
+   flow `POST`'s own latency (7-9 ms on `dev12`, 8 ms on `dev14`) is **not** that bound
+   either — under `LE-2598` the response is written *before* the commit by construction,
+   so that number is a request time, not a window. What the control does establish is
+   that the natural window normally closes before the readback, so an idle run gives row
+   1; the forced 300 ms is wider than that gap by construction. And the generalisation
+   holds for the case that matters anyway, since a failing occurrence has by definition
+   already outlasted a round trip — which is exactly when the pair collapses.
 3. Keep the buffer for test 2's fixture path (each test builds its own — no shared
    state between tests).
 
@@ -250,7 +261,7 @@ which is found by name and by the flow ids it brought back.
    hole, for the same reason** — an earlier revision of this file claimed it did not,
    on the grounds that its two reads use different keys. They do, but the invisible row
    is the same flow either way; it is measured under *When the pair collapses* in test
-   1's step 2 (#1876).
+   1's step 2, and corrected here (#1876).
 
    Same rule as test 1: the re-read decorates the message only. `expect` asserts on the
    **first** listing, so a project that appears a moment later still fails the test.

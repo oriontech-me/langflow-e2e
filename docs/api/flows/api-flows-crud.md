@@ -75,9 +75,12 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
    Draw that line in the right place: it is **not** *this route versus the siblings*.
    `describe-flow-readback.ts` records that only `api-flows-batch` and `api-invalid-key`
    reissue the **same** request, where the readback adds no second axis at all; on
-   `api-flows-versions` and `api-projects-transfer` the failing read differs too, and
-   their `200` branches are verdicts for the same reason as this one. What all five
-   share is the `404` branch — undecided between *absent* and *written and not yet
+   `api-flows-versions` and `api-projects-transfer` the failing read differs too, so
+   their `200` branches carry information for the same reason as this one — on
+   `api-flows-versions` as a verdict, and on `api-projects-transfer` as something
+   narrower, because that route's readback prints a **status, not a `folder_id`**, so a
+   flow committed outside the project reads the same as the window (#1876). What all
+   five share is the `404` branch — undecided between *absent* and *written and not yet
    committed*. An editor working the family must not flatten any of those `200`
    branches.
 

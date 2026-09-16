@@ -154,8 +154,8 @@ test, deleted by id in `afterEach` (versions go with the flow).
    issued in the same breath. #1807 measured the same collapse on the projects family's
    **upload** pair (`docs/api/projects/api-projects-transfer.md`, Test 2). Its Test 1 row
    asserted the opposite and claimed immunity on the grounds that its two reads use
-   different keys; that was corrected by #1876, measured the same way — 0/10 under the
-   toggle, with both reads negative in all ten.
+   different keys; #1876 corrected it, measured the same way — 0/10 under the toggle,
+   with both reads negative in all ten.
 
    **How much weight row 2 carries.** Under the *natural* window — 8-11 ms, below one
    HTTP round trip — the second read normally lands after the commit and gives row 1, so
