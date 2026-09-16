@@ -1506,7 +1506,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 643 `test()` calls carrying the `@stable` tag, distributed across 253 spec
+> 644 `test()` calls carrying the `@stable` tag, distributed across 253 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1634,6 +1634,7 @@
 - [x] a project is created, listed, read with its flows and deleted by id → `api-projects-crud.spec.ts`
 - [x] PATCH is partial, PUT merges but refuses a body without a name → `api-projects-crud.spec.ts`
 - [x] a duplicate name is suffixed and the required field is enforced → `api-projects-crud.spec.ts`
+- [x] download refuses an empty project and returns a ZIP for a populated one → `api-projects-transfer.spec.ts`
 - [x] upload refuses colliding flow ids and imports the archive once they are gone → `api-projects-transfer.spec.ts`
 
 #### core-components/
