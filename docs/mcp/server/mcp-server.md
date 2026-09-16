@@ -344,7 +344,11 @@ and nothing is fetched from the npm registry.
   the server** — so a typo'd name silently registers a ghost instead of failing.
   Asserting today's behaviour would enshrine it; asserting the corrected
   behaviour would ship a durably red `@stable` test, which the current triage
-  policy strips within a day. Both belong in a product-finding issue first.
+  policy strips within a day. Both are filed upstream — `LE-2646` (PATCH) and
+  `LE-2647` (GET) — and tracked in #1406; the PATCH half is the API-level cause
+  of upstream PR #13464, which fixed the edit modal only. The assertions land
+  in `mcp/client/mcp-server-registration-status-codes.spec.ts` once the
+  contract is settled.
 - **The stdio security policy on the PATCH path.** Also measured: a merge patch
   that sends `args` **without** `command` is validated with no command in scope,
   so `{"args": ["-y", "…"]}` is refused with 422 (`dangerous keyword '-y'`) while
