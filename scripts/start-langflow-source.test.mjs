@@ -329,15 +329,21 @@ function runStop(r, extraEnv = {}) {
  * out `waitFor(…, 5000)` for a process that never enters the process table.
  * Fast is the failure here and slow is the success.
  *
- * The cause is in the fixture rather than in the script: `${RUN_CMD}` is
- * launched with `--host … --port … --no-open-browser --workers 1` appended
- * (start-langflow-source.sh:296), and this test's stub is `sleep 30.<pid>`,
- * which rejects those and exits 1 immediately — well inside the loop's first
- * iteration, which is why the reds land in the tens of milliseconds rather than
- * at any budget. The test passes only while bash has not reaped the zombie by
- * the time `kill -0` runs. Tracked separately — fixing
- * it is a change to what the test does, where this helper is a change to what a
- * failure says.
+ * The cause was in the fixture rather than in the script, and is FIXED (#1893):
+ * `${RUN_CMD}` is launched with `--host … --port … --no-open-browser
+ * --workers 1` appended (start-langflow-source.sh:296), and this test's stub
+ * used to be a bare `sleep 30.<pid>`, which rejects those and exits 1 well
+ * inside the readiness loop's first iteration — which is why those reds landed
+ * in the tens of milliseconds rather than at any budget, and why the test passed
+ * only while bash had not yet reaped the zombie when `kill -0` ran. The override
+ * is now the `fake-server` stub, and `runScript` FAILS when the process it
+ * launched never appears, so the same mistake is a deterministic red with the
+ * cause named rather than an intermittent one with none.
+ *
+ * The three reds above are kept because they are what this message was built
+ * for, and because they are the worked example: a `1`, a duration in the tens of
+ * milliseconds, and — had it existed then — one line of captured output naming
+ * the branch.
  */
 function assertExit(result, expected) {
   assert.equal(
