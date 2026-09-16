@@ -16,26 +16,24 @@ If any of these tests fail against `langflowai/langflow-nightly:latest`, the flo
 ## Tags *(required)*
 `@stable` `@release` `@api` `@regression`
 
-**Test 2 (`GET lists flows and includes the created one`) carries `@release @api
-@regression` but NOT `@stable`, deliberately, and #1759 stays open until it does.**
-`@stable` was removed at triage of the 2026-09-08 daily (umbrella #1757) when the test
-failed under the same assertion for the second time. The investigation reached a
-**product** verdict — `LE-2552`, see *Known product defect* below — so the tag is not
-restored on a test-side change: the issue's own rule is that a product regression is
-restored only after the fix lands in `langflowai/langflow-nightly:latest` and is
-re-validated there.
+**All 9 tests carry `@stable` again.** Test 2 (`GET lists flows and includes the created
+one`) lost it at triage of the 2026-09-08 daily (umbrella #1757 → #1759), when it failed
+under the same assertion for the second time, and it is restored here on the **upstream
+fix** — `langflow#15078`, in the nightly from `1.13.0.dev14` — never on a test-side
+change, which is the rule a product verdict carries.
 
-The test is nonetheless **un-quarantined** (no `test.fixme`), which is a decision and
-not an oversight. `test.fixme` runs in no context at all — not the daily, not the PR
-impacted-specs gate, not the full suite — and Test 2 is the **only** one of the three
-symptoms whose failure is not yet attributable to the confirmed mechanism. Its
-diagnostic (step 5 below) is the discriminant, and a discriminant on a muted test is
-never read. Without `@stable` it runs in the PR gate and the full suite and stays out
-of the daily, so it produces evidence where the issue's owner sees it without diluting
-the daily's signal.
+**The evidence is ordering, not a green run.** This defect never reproduced idle — 0/30
+serial and 0/80 concurrent while #1759 was open, and 10/10 clean first list reads on both
+`1.13.0.dev12` and `1.13.0.dev14` un-forced — so a green burst says nothing about it. The
+measurement that does is in *Known product defects* below.
 
-Tests 5 and 9 keep `@stable`: they are first occurrences, they run in the daily on
-purpose, and while the defect is live they are what says it is still there.
+The test was never quarantined with `test.fixme` while the tag was off, and that is what
+made the attribution possible: it kept running in the PR gate and the full suite, so its
+step-5 diagnostic stayed readable. A discriminant on a muted test is never read.
+
+Tests 5 and 9 kept `@stable` throughout — they were first occurrences, absorbed by the
+daily's retry budget, and while the defect was live they were what said it was still
+there.
 
 ---
 
@@ -62,7 +60,8 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
    **list** did not return it; `404` means the row is not there at all. Without this
    the failure reads `expect(received).toBeDefined() / Received: undefined` and names
    neither. This is the one symptom of the three that #1759 could not attribute, and
-   this reading is what closes it.
+   this reading is what closed it: under a forced window the readback answers `404`, so
+   the **row** is not there and `read_flows` is not the defect.
 6. Cleanup
 
 **Test 3 — `GET by ID returns correct flow`**
@@ -120,14 +119,53 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
 
 ---
 
-## Known product defect — `LE-2552` (open)
+## Known product defects — `LE-2552` and `LE-2598` (both fixed in `1.13.0.dev14`)
 
-Tests 2, 5 and 9 are the three sides of one live product defect, filed as
-[`LE-2552`](https://datastax.jira.com/browse/LE-2552). **The assertions here are the
-contract and none of them is weakened for it.** What the tests gained is the ability to
-say which side fired.
+Tests 2, 5 and 9 are the three sides of the same sentence — *the HTTP status of a write
+is not a post-condition of anything* — and they were filed as two tickets,
+[`LE-2552`](https://datastax.jira.com/browse/LE-2552) (this spec, #1759) and
+[`LE-2598`](https://datastax.jira.com/browse/LE-2598) (#1777/#1807). **One upstream
+commit fixes both**, `langflow#15078`, which scopes the session dependency to the
+function (`Depends(injectable_session_scope, scope="function")` in
+`api/utils/core.py`) so the teardown that commits runs **before** the response is
+written. It was merged on `release-1.12.2` and back-merged into the 1.13 line between
+`1.13.0.dev12` and `1.13.0.dev14`.
 
-`DELETE` on this route family answers a **success status for a request that removed
+**The assertions here are the contract and none of them was weakened for it.** What the
+tests gained is the ability to say which side fired — and that is kept, because a green
+run is not evidence on an intermittent defect and the next one of this family will be
+read from a failure message in `results.json`.
+
+### `LE-2598` — the write answered before it committed (Test 2)
+
+Every write route taking `DbSession` returned its 2xx before the transaction committed:
+`_new_flow` does `session.add` → `flush()` → `refresh()` → `return FlowRead` and never
+commits; the commit belonged to `session_scope`'s `yield`-dependency teardown, which
+FastAPI runs **after** the response has been written. So `POST` → `201` → the very next
+`GET /api/v1/flows/` can correctly not list the flow.
+
+Measured for **this test's own shape** — `POST /api/v1/flows/` then the LIST — with a
+300 ms delay inserted between `session_scope`'s `yield` and its `commit`, gated on a
+marker file so control and mutation run in the **same process** and a restart cannot be
+the confounder:
+
+| | `1.13.0.dev12` (before the fix) | `1.13.0.dev14` (after) |
+|---|---|---|
+| first list read contains the flow, **un-forced** | 10/10 | 10/10 |
+| first list read contains the flow, **under the delay** | **0/10** | **10/10** |
+| by-id readback at that moment (step 5's diagnostic) | `404` × 10 — the **row** is not there | n/a |
+| list showed it after | 276-433 ms (3-4 polls) | n/a |
+| `POST` latency under the delay | 9-11 ms — the client is not waiting for the commit | **316-331 ms** — it is |
+| marker removed again, same process | 10/10 | 10/10 |
+
+The `404` in row three is what settles the attribution #1759 left open: Test 2's failure
+is **not** a list-query defect (`read_flows` returning an incomplete page), it is the row
+not being visible to any read yet. The `POST` latency is what proves the ordering rather
+than inferring it — the delay moved from *after* the response to *inside* it.
+
+### `LE-2552` — the delete answered success for a request that removed nothing (Tests 5, 9)
+
+`DELETE` on this route family answered a **success status for a request that removed
 nothing**. `_read_flow` runs twice per request — once in the `AuthorizedDeleteFlow`
 dependency (`api/v1/authz_route_dependencies.py`, which raises `404 "Flow not found"`
 when it returns `None`) and once inside `_delete_operation` (`api/v1/flows.py`,
@@ -161,10 +199,17 @@ Two consequences for anyone reading a failure here:
   same race.
 
 Test 2's own failure (`POST` → `201`, then the list omits the id) is **not** attributed
-to this mechanism: it goes through `read_flows`, a different query, and it did not
+to this mechanism — it goes through `read_flows`, a different query, and it did not
 reproduce in six local configurations (0/30 serial, 0/80 concurrent, 0/10 `repro-run`,
 0/6 daily topology, 0/8 current nightly with tracing, 0/10 with the daily's exact
-SQLite pragmas). Its step-5 diagnostic is what will decide it.
+SQLite pragmas). It is `LE-2598`, measured above; the same scoping fixes both, which is
+why all three symptoms clear on the same image.
+
+**Both are fixed on the current nightly**, and the same scoping settles `LE-2552`:
+four concurrent `DELETE`s of one flow id answer `200 404 404 404` in 5 of 5 trials on
+`1.13.0.dev14`, against `200` × 4 in 25 of 25 before it (#1807). The losing caller's
+dependency read now lands after the winner's commit, so it gets the honest `404` the
+sequential path always gave.
 
 ---
 
@@ -182,10 +227,12 @@ SQLite pragmas). Its step-5 diagnostic is what will decide it.
   a triage is that the three original messages named none of it. Forced-failure
   evidence for this is the mutation that flips the assertion while the diagnostic still
   prints.
-- **While `LE-2552` is open, these three are expected to fail intermittently, and that
-  is the spec working.** The product is intermittent; a green run is not evidence the
-  defect is gone. Closing the loop needs the upstream fix in the nightly plus a
-  re-validated `@stable` on Test 2 — never a test-side change.
+- **A green run is not evidence that this family is gone, and was never accepted as
+  such.** `LE-2552`/`LE-2598` never reproduced idle here; what re-validated them is the
+  forced-ordering measurement in *Known product defects*, run on the image before the fix
+  and on the image with it. If one of the three fails again, read the diagnostic first —
+  `404` from the by-id readback is the write-before-commit shape returning, `200` with
+  the id absent from the list would be a genuinely new defect in `read_flows`.
 
 ---
 
@@ -212,6 +259,8 @@ SQLite pragmas). Its step-5 diagnostic is what will decide it.
 - `src/backend/base/langflow/api/utils/` — shared API helpers used by the flows router (validation, current-user resolution); changes here can shift 422 vs 400 boundaries.
 - `src/backend/base/langflow/api/v1/authz_route_dependencies.py` — resolves the flow for `GET`/`PATCH`/`DELETE` by id and is where the `404 "Flow not found"` originates. It performs the **first** of the two `_read_flow` calls per request; the second is in the router. `LE-2552` lives in the gap between them, so a change to either read (or to the retry that wraps the second one) changes what Tests 5 and 9 observe.
 - `src/backend/base/langflow/api/v1/flows_helpers.py` — `_read_flow` itself (owner-scoped unless an authorization plugin widens it) and `_new_flow`; the query that decides whether a just-written row is visible to the next read.
+- `src/backend/base/langflow/api/utils/core.py` — where `DbSession` is declared. `LE-2598` was the absence of `scope="function"` on this `Depends`, which put the commit in a teardown FastAPI runs after the response; dropping it again makes Test 2 fail exactly as it did on 2026-08-19 and 2026-09-08.
+- `src/lfx/src/lfx/services/deps.py` — `session_scope`, the `yield`-dependency whose teardown carries the `commit` that every write route relies on.
 
 ---
 

@@ -64,23 +64,29 @@ test.describe("CRUD /api/v1/flows", () => {
 
   // `POST /api/v1/flows/` returns 201 and the very next `GET /api/v1/flows/` does not
   // contain the created flow. Recurrent under the same assertion on the 2026-08-19 and
-  // 2026-09-08 dailies. Not wedge collateral — the attempt ran at 12:41:27Z and
-  // finished in 418 ms, ~2.5 min before the earliest measured outage window on any
-  // shard (12:43:57Z).
+  // 2026-09-08 dailies (#1759), which cost this test `@stable` at triage.
   //
-  // NO `@stable`, and #1759 stays open until it comes back: the investigation reached a
-  // PRODUCT verdict (`LE-2552`), so the tag is restored only after the upstream fix
-  // lands in the nightly and is re-validated there — never on a test-side change.
+  // `@stable` is BACK, on the mechanism and not on a green run — the defect never
+  // reproduced idle, so a green run was never the evidence. This was the one of #1759's
+  // three symptoms left unattributed: it goes through `read_flows`, a different query
+  // from the one `LE-2552` lives in, and it did not reproduce in six local
+  // configurations. It is `LE-2598` (every write route taking `DbSession` answered its
+  // 2xx BEFORE the commit), measured for THIS shape with a 300 ms gated delay between
+  // `session_scope`'s `yield` and its `commit`, control and mutation in the same process:
   //
-  // The triage quarantine (`test.fixme`) is LIFTED, and that is a decision: `test.fixme`
-  // runs in no context at all, and this is the one of the three symptoms whose failure
-  // is NOT yet attributable to LE-2552's mechanism (it goes through `read_flows`, a
-  // different query, and did not reproduce in six local configurations). Its readback
-  // below is the discriminant, and a discriminant on a muted test is never read. Without
-  // `@stable` it runs in the PR gate and the full suite and stays out of the daily.
+  //   1.13.0.dev12   mutation 0/10 first list reads contained the flow, POST 9-11 ms
+  //                  — and the readback below answered 404 on all 10, i.e. the ROW was
+  //                    not there; the list query is not the defect
+  //   1.13.0.dev14   mutation 10/10 contained it, POST 316-331 ms
+  //                  — the delay moved from after the response to inside it
+  //
+  // `langflow#15078` (`Depends(injectable_session_scope, scope="function")`) is the fix;
+  // it reached the nightly at 1.13.0.dev14 and fixes `LE-2552` — the sibling symptom on
+  // Tests 5 and 9 — by the same scoping. Keep the readback: it is what named this defect
+  // and what will name the next one, and the failure message is all the daily triage gets.
   test(
     "GET lists flows and includes the created one",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(["POST /api/v1/flows/", "GET /api/v1/flows/"]);
       const authToken = await getAuthToken(request);
