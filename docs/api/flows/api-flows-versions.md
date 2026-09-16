@@ -2,13 +2,14 @@
 
 **File:** `tests/tests-automations/regression/api/flows/api-flows-versions.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev8`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev14`)
 
 Owning issue: #1699 (Wave 7 — OSS API coverage, `flows` family). Gauge, definitions
 and denominator: `docs/api/api-surface-coverage-gauge.md`.
 
-Open product defect against step 1: #1777 / `LE-2598` — see *Known product defect*
-below. It is the reason `@stable` is currently off.
+Product defect against step 1, **fixed**: #1777 / `LE-2598`, upstream `langflow#15078`,
+in the nightly from `1.13.0.dev14` — see *Known product defect* below. It is why
+`@stable` was off, and the measurement that brought it back is there too.
 
 ---
 
@@ -36,12 +37,12 @@ work silently, which is exactly the class of contract worth a test.
 
 ---
 
-## Known product defect — `LE-2598` (#1777)
+## Known product defect — `LE-2598` (#1777, in the nightly from `1.13.0.dev14`)
 
 Step 1 reads the versions collection back on the flow the `POST` just created, and
-on a loaded instance that read can answer `404 {"detail":"Flow not found"}`. The
-cause is not this route: **every write route taking `DbSession` answers its 2xx
-before the transaction commits**, so a read-back by `(id, user_id)` can correctly
+on a loaded instance that read could answer `404 {"detail":"Flow not found"}`. The
+cause was not this route: **every write route taking `DbSession` answered its 2xx
+before the transaction committed**, so a read-back by `(id, user_id)` could correctly
 find nothing.
 
 `_new_flow` does `session.add` → `flush()` → `refresh()` → `return FlowRead` and
@@ -59,6 +60,30 @@ ms** under the mutation. Two sibling routes break under the same toggle:
 `DELETE /flows/{id}` on a just-created id (#1759) and `GET /projects/download/{id}`
 (#1807).
 
+### The fix, verified by ordering rather than by a green run
+
+`langflow#15078` scopes the session dependency to the function
+(`Depends(injectable_session_scope, scope="function")` in `api/utils/core.py`), so the
+teardown that commits runs **before** the response is written. It was merged on
+`release-1.12.2` and back-merged into the 1.13 line between `1.13.0.dev12` and
+`1.13.0.dev14`; the scoped form is present in the `dev14` image and absent in `dev12`.
+
+A green run proves nothing here — this never reproduced idle. What was measured is the
+same gated delay, applied to **this spec's own step 1** (`POST /api/v1/flows/` then
+`GET /api/v1/flows/{id}/versions/`), on each image:
+
+| | `1.13.0.dev12` | `1.13.0.dev14` |
+|---|---|---|
+| step 1 answers `200` on the first read, **un-forced** | 10/10 | 10/10 |
+| step 1 answers `200` on the first read, **under the delay** | **0/10** — all `404 {"detail":"Flow not found"}` | **10/10** |
+| by-id readback at that moment | `404` × 10 (see the ambiguity below) | n/a |
+| the collection answered `200` after | 292-344 ms | n/a |
+| `POST` latency under the delay | 11-17 ms — the client is not waiting for the commit | **321-344 ms** — it is |
+| marker removed again, same process | 10/10 | 10/10 |
+
+The delay moved from *after* the response to *inside* it. The `POST` latency is what
+shows the ordering instead of inferring it.
+
 **What the test does about it: nothing that changes the assertion.** `200` on a
 fresh flow's versions collection *is* the contract, so step 1 still asserts it and
 must never be softened with a retry, a sleep, a catch or a narrower scope. What it
@@ -71,13 +96,13 @@ cost three dailies of investigation to recover.
 
 ## Tags *(required)*
 
-`@api` `@workspace`
+`@stable` `@api` `@workspace`
 
-**`@stable` is deliberately absent on test 1** while `LE-2598` is open upstream.
-The daily's auto-removal took it in `67b6fc39`; restoring it before the fix ships
-in `langflowai/langflow-nightly:latest` would be the test-side mute #1777's
-*Deliverables* forbid. Tracked by **#1777**, which stays open until the fix is
-re-validated on the nightly.
+**`@stable` is back on test 1.** The daily's auto-removal took it in `67b6fc39` on
+2026-09-09; it is restored on the upstream fix being in
+`langflowai/langflow-nightly:latest` and re-validated there — never on a test-side
+change, which is what #1777's *Deliverables* forbid. The evidence is the ordering
+measurement above, not the burst: un-forced, `dev12` and `dev14` both answer 10/10.
 
 **Test 2 keeps `@stable`, and not because it is immune — it is exposed to the same
 window.** `get_single_flow_version` calls `_get_user_flow` before it resolves the
@@ -103,18 +128,40 @@ test, deleted by id in `afterEach` (versions go with the flow).
    of `GET /api/v1/flows/{id}` (`describeFlowReadback`, the #1759 helper). Neither
    throws, and both run only on the failing branch, so no assertion changes.
 
-   **The pair is a three-way discriminator, which is why both reads are needed:**
+   **The pair narrows the failure to three cases, and two of them are a verdict.**
+   Both reads are still needed — the `detail` alone cannot reach row 1 at all:
 
    | `detail` | by-id readback | shape |
    |---|---|---|
    | `"Flow not found"` | `200` — the row EXISTS | `LE-2598`'s window: the `201` preceded the commit, and the row landed between the two reads. **Transient.** |
-   | `"Flow not found"` | `404` — the row is absent | the row is genuinely gone: a cross-worker wipe, or a commit that never happened. **Not `LE-2598`.** |
+   | `"Flow not found"` | `404` — the row is absent | **UNDECIDED**, not a verdict. Either the row is genuinely gone (a cross-worker wipe, a commit that never happened) **or** the window is still open and wider than the gap between these two reads. |
    | `"Not Found"` | either | FastAPI's unmatched-route 404 — the collection route stopped resolving. |
 
    A readback that cannot answer is `UNDECIDED` and claims neither (#1012). The
-   `detail` alone cannot separate rows 1 and 2, and those route the triage to
-   different places — which is the whole reason the 2026-09-09 occurrence, carrying
-   neither read, cost three dailies.
+   `detail` alone cannot separate rows 1 and 2 — which is the whole reason the
+   2026-09-09 occurrence, carrying neither read, cost three dailies.
+
+   **Row 2 was measured, and it is why that row says UNDECIDED rather than "not
+   `LE-2598`", which is what this table claimed first.** Under a forced 300 ms window
+   on `dev12`, `LE-2598` itself produces row 2 in **10 of 10** trials: both reads land
+   inside the window and the row appears 292-344 ms later.
+
+   The mechanism is what makes that a rule rather than one experiment's result: **both
+   reads resolve the same `Flow` row by `(id, user_id)`** — the failing `GET
+   .../versions/` 404s out of `_get_user_flow`, and the readback 404s out of that same
+   row being invisible. A pair of same-row reads cannot separate "not there" from "not
+   there *yet*"; what does is a **later** read or the container log, never a second one
+   issued in the same breath. #1807 measured the same collapse on the projects family's
+   **upload** pair (`docs/api/projects/api-projects-transfer.md`, Test 2 — its Test 1
+   row still claims immunity, which does not survive this mechanism and is that issue's
+   file to correct).
+
+   **How much weight row 2 carries.** Under the *natural* window — 8-11 ms, below one
+   HTTP round trip — the second read normally lands after the commit and gives row 1, so
+   the forced 300 ms window is ~30× wider than anything measured idle. The
+   generalisation holds for the case that matters anyway: a failing occurrence has by
+   definition already outlasted a round trip, so its window is wide by construction,
+   which is exactly when the pair collapses.
 2. `POST {id}/versions/` with `{}` → `201`, `version_number === 1`, `version_tag === "v1"`,
    `description === null`, `flow_id === id`.
 3. `PUT /api/v1/flows/{id}` with the flow's `name` (required by PUT — see
@@ -149,9 +196,12 @@ ignored `name` asserted as absent, and the declared coverage — all five `versi
 operations plus the CRUD/PUT calls issued — matching what the fixture recorded. Zero
 flows left behind.
 
-For the `LE-2598` instrumentation specifically: forcing step 1's read-back to a
-non-`200` must produce a failure message that names the `detail` string **and** the
-by-id readback verdict, and the step must still fail — an instrumented assertion
+For the `LE-2598` instrumentation specifically — kept after the fix, because an
+intermittent product defect is not re-validated by a green run, and because even when
+the pair lands on the undecided row it still names the `detail` string and rules out the
+unmatched-route shape, which is two of the three questions answered: forcing step 1's read-back to a non-`200`
+must produce a failure message that names the `detail` string **and** the by-id readback
+verdict, and the step must still fail — an instrumented assertion
 that stops failing is the defect this suite exists to catch, inverted. Both reads
 are absent from `apiCoverage.declare` on purpose: the gate fails a declaration the
 test never issues, so declaring them would redden every green run.

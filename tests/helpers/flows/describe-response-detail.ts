@@ -17,8 +17,12 @@ const truncate = (value: string): string =>
  * splits the two candidate shapes was never recorded — `detail: "Flow not
  * found"` is the row not being visible, `detail: "Not Found"` is FastAPI's
  * unmatched route — and recovering it cost three dailies. Paired with
- * {@link describeFlowReadback}, the two reads form a three-way discriminator;
- * neither alone separates a transient window from a genuinely absent row.
+ * {@link describeFlowReadback}, the two reads narrow it to three cases — but only
+ * two of them are a verdict. When BOTH reads resolve the same row and both come
+ * back negative, a still-open commit window and a genuinely absent row are
+ * indistinguishable: measured on `1.13.0.dev12` under a forced 300 ms window,
+ * `LE-2598` produces that pair 10 times out of 10 (#1777). What separates them is
+ * a LATER read or the container log, never a second one issued in the same breath.
  *
  * Two properties are contractual, and both are pinned in
  * `describe-response-detail.test.ts`:
