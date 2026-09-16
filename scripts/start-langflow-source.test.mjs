@@ -262,26 +262,45 @@ function runStop(r, extraEnv = {}) {
 /**
  * Asserts the script's exit code, attaching what it printed (#1888).
  *
- * A bare `assert.equal(r.status, 0)` reports `1 !== 0` and nothing else, and the
- * code alone is thinner than it looks here: `runScript`'s catch normalises a
- * TIMEOUT into the same value. When `execFileSync` kills the child at
- * `timeout: 12000` it throws with `status: null` and `signal: SIGTERM`, and
- * `e.status ?? 1` turns that `null` into `1` — measured beside a real `exit 1`
- * (`status: 1`, `signal: null`), indistinguishable by status. What names the
- * cause is `stdout`: the script's own error lines, plus the
- * `TIMED OUT: the starter did not return` line the same catch appends.
+ * A bare `assert.equal(r.status, 0)` reports `1 !== 0` and nothing else, and a
+ * `1` from this script is ambiguous three ways. `runScript`'s catch normalises a
+ * TIMEOUT into it: `execFileSync` killing the child at `timeout: 12000` throws
+ * with `status: null` and `signal: SIGTERM`, and `e.status ?? 1` turns that
+ * `null` into `1`, indistinguishable from a real `exit 1` (`status: 1`,
+ * `signal: null`). A SPAWN failure (`ENOENT`, and `EAGAIN`/`EMFILE` under the
+ * parallel runner) collapses the same way — that one arrives with `stdout`
+ * EMPTY, which is what the `(nothing captured)` fallback below is for. And the
+ * script's own `1` has two sources of its own, below.
  *
- * `duration_ms` is the cheap bound and it is NOT what this message replaces —
- * `node:test` prints it for every subtest, so a red near 12 s is a timeout
- * candidate and a fast one is not. On the red this was written for, that field
- * already settled more than an earlier version of this comment admitted: PR
- * #1877, `TypeScript Check`, `duration_ms: 32.625602`. At 33 ms neither the
- * 12 s spawn timeout nor the 30 s readiness budget (`healthy: true`,
- * `serverExits: false`) can have elapsed, so both were ruled out before anyone
- * read a line of output, and the occurrence narrows to *the script exited 1
- * within 33 ms* — the pre-launch path, not the probe. What is still unknown is
- * WHICH pre-launch check, which is the half `stdout` would have answered and
- * the reason this helper exists.
+ * `duration_ms` is the cheap bound and this message does not replace it:
+ * `node:test` prints it for every subtest. But read it against the script's exit
+ * topology rather than against intuition, because the intuitive reading is
+ * backwards here and an earlier version of this comment shipped it.
+ *
+ *   start-langflow-source.sh, every pre-launch refusal   -> exit 2  (8 sites)
+ *   SERVER_PID=$! ......................................... line 298
+ *   readiness loop, liveness check, FIRST statement ...... exit 1  (line 311)
+ *   readiness deadline ................................... exit 1  (line 348)
+ *
+ * So the script answers `1` only AFTER the launch, and the liveness branch runs
+ * before the loop's first sleep — it fires in milliseconds. A fast `1` is
+ * therefore the probe, not a pre-launch check; there is no pre-launch path that
+ * can produce a `1` at all.
+ *
+ * Measured on the three CI reds this was written for (`TypeScript Check`, the
+ * `LANGFLOW_SRC_RUN_CMD` test, runs 34913042595 / 35055750120 / 35120011003):
+ * `duration_ms` 25.780076, 32.38826, 32.625602 — all on the liveness branch,
+ * and the same test's GREEN path takes ~5.5 s, because `runScript` then waits
+ * out `waitFor(…, 5000)` for a process that never enters the process table.
+ * Fast is the failure here and slow is the success.
+ *
+ * The cause is in the fixture rather than in the script: `${RUN_CMD}` is
+ * launched with `--host … --port … --no-open-browser --workers 1` appended
+ * (start-langflow-source.sh:296), and this test's stub is `sleep 30.<pid>`,
+ * which rejects those and exits 1 in ~20 ms. The test passes only while bash has
+ * not reaped the zombie by the time `kill -0` runs. Tracked separately — fixing
+ * it is a change to what the test does, where this helper is a change to what a
+ * failure says.
  */
 function assertExit(result, expected) {
   assert.equal(
@@ -291,6 +310,32 @@ function assertExit(result, expected) {
       `--- script output ---\n${result.stdout || "(nothing captured)"}`,
   );
 }
+
+// `assertExit` builds a message on all 30 calls below and no assertion reads it,
+// so its CONTENT can regress in total silence: replace the template with
+// "failed" and this file stays 26/26 and `npm run test:scripts` stays green.
+// That is the shape the second commit of #1888 removed a dead parameter over,
+// so the payload does not get to keep it. Pinned here rather than in a sibling
+// file because the helper is local to this one.
+test("assertExit puts the script's own output in the failure message", () => {
+  assert.throws(
+    () => assertExit({ status: 1, stdout: "MARKER: the script said this" }, 0),
+    (e) =>
+      /MARKER: the script said this/.test(e.message) &&
+      /exit 1, expected 0/.test(e.message),
+    "the captured output and both codes must reach the assertion message",
+  );
+  // The empty-stdout case is a signal, not a gap: a spawn failure collapses to
+  // status 1 with nothing captured, and the fallback is what says so.
+  assert.throws(
+    () => assertExit({ status: 1, stdout: "" }, 0),
+    /\(nothing captured\)/,
+    "an empty capture must say so rather than render as a blank section",
+  );
+  // A passing exit code must not throw, or the 30 call sites below would all be
+  // vacuous.
+  assertExit({ status: 0, stdout: "" }, 0);
+});
 
 test("a missing source clone fails with exit 2, naming the path and the override", () => {
   const r = runScript({ repoExists: false });
