@@ -61,11 +61,20 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
 5. **When step 4 fails, read `GET /api/v1/flows/{id}` and attach its status together
    with the list's length** — the assertion is unchanged, this only makes the failure
    say which of two different defects it is. `200` there means the row exists and the
-   **list** did not return it; `404` means the row is not there at all. Without this
-   the failure reads `expect(received).toBeDefined() / Received: undefined` and names
-   neither. This is the one symptom of the three that #1759 could not attribute, and
-   this reading is what closed it: under a forced window the readback answers `404`, so
-   the **row** is not there and `read_flows` is not the defect.
+   **list** did not return it. `404` means the row is **not visible to a by-id read
+   either** — which is not the same as "the row is not there": a write that answered
+   before it committed is invisible to both routes (#1881, and the family's measured
+   collapse — #1777 / #1876 / #1878). Without this the failure reads
+   `expect(received).toBeDefined() / Received: undefined` and names neither.
+
+   **The asymmetry is the point, and it is what makes this readback worth keeping.**
+   Unlike the sibling routes in that family, the read that fails here is the **LIST**,
+   not the by-id route, so the two reads ask genuinely different questions and the
+   `200` branch stays a verdict — that is the attribution #1759 was opened to add.
+   Only the `404` branch is undecided between *absent* and *written and not yet
+   committed*, and the argument this test needs survives it intact: under a forced
+   window the readback answers `404` **too**, so the row is invisible to every read
+   rather than missing from one page, and `read_flows` is not the defect.
 6. Cleanup
 
 **Test 3 — `GET by ID returns correct flow`**
@@ -162,7 +171,7 @@ the confounder:
 |---|---|---|
 | first list read contains the flow, **un-forced** | 10/10 | 10/10 |
 | first list read contains the flow, **under the delay** | **0/10** | **10/10** |
-| by-id readback at that moment (the read step 5 performs, driven by hand) | `404` × 10 — the **row** is not there | n/a |
+| by-id readback at that moment (the read step 5 performs, driven by hand) | `404` × 10 — invisible to the by-id route **as well**. Not "the row is not there": under this window it had been written and merely not committed, which is exactly what makes both reads miss (#1881) | n/a |
 | list showed it after | 276-433 ms (3-4 polls) | n/a |
 | `POST` latency under the delay | 9-11 ms — the client is not waiting for the commit | **316-331 ms** — it is |
 | marker removed again, same process | 10/10 | 10/10 |
@@ -170,8 +179,11 @@ the confounder:
 Row three is what attributes the failure #1759 left open, and the strength is worth
 stating honestly: the forced window shows this mechanism produces **exactly** Test 2's
 observable, while no in-lane failure of Test 2 ever carried a readback, so the 08-19 and
-09-08 occurrences are attributed by shape rather than caught in the act. The competing
-explanation is refuted structurally rather than by the experiment — `read_flows`
+09-08 occurrences are attributed by shape rather than caught in the act. Note what row
+three does and does not say — it rules out *the list dropped a row that is otherwise
+readable*, and it does **not** establish that the row was absent, since under this very
+window it demonstrably was not. The competing explanation is refuted structurally rather
+than by the experiment — `read_flows`
 (`api/v1/flows.py`) takes `get_all: bool = True` and the spec calls it unparameterised,
 so "the list returned an incomplete page" is not a state that route can be in. The `POST`
 latency is what shows the ordering instead of inferring it: the delay moved from *after*
