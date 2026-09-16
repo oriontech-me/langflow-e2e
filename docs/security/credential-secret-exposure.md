@@ -1,6 +1,6 @@
 # Credential Secret Exposure
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
@@ -17,6 +17,15 @@ Asserting only "the secret is absent" would pass just as well on a run where the
 
 If these tests fail, a Credential global variable — the mechanism Langflow offers precisely so that a secret is *not* stored in the flow — is readable by anyone who can open a trace, export the flow, or call the run endpoint.
 
+The export carries **two** contracts, and they are pinned by two separate tests because only one of them holds today:
+
+- **The secret never leaves** (Test 3). This is the contract upstream PR `langflow-ai/langflow#14639` (LE-2240, *incomplete secret sanitization in flow and project export*) hardened, and it holds on the nightly.
+- **The binding survives** (Test 4). A bound field stores the global variable's **name**, not the secret, and that name is what an import needs to re-resolve the credential — an export that drops it imports as a flow whose secret fields are silently unbound. Langflow documents this contract (*Import and export flows* → *Save with my API keys*): non-API-key variables are exported regardless of that setting, and an importing instance needs global variables **with the same names**. The same PR broke it as collateral: the export call site uses the scrubber's default mode, which nulls `load_from_db` bindings together with literal secrets (issue #1546, `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md`). Test 4 is therefore **declared failing** until the upstream fix lands — see its note below.
+
+What the double check of 2026-09-16 settled, so the claim is not read wider than it is. **The field names matter:** on this endpoint an API-key-shaped field (`api_key`, `openai_api_key` …) already lost its binding before #14639 — the legacy `remove_api_keys` nulled it with no `load_from_db` exemption — while `secret_token` and `gateway_pin` kept theirs until that PR (measured on `1.11.4` against `1.13.0.dev14`, for one id and for a ZIP alike). Both fields here are not API-key-shaped, so the spec measures the regression itself. **The reach is the backend export:** the documented single-flow API export, the Projects page's *Download selected* with two or more flows, and the project *Download*. The UI's single-flow *Download selected* and *Share → Export* build the file in the browser and never call this endpoint.
+
+Until #1546 split them, both contracts lived in one test, with the binding assertion first. While the binding was broken the secret assertion never executed, and quarantining that test (`test.fixme`, 2026-08-21) took the export's secret boundary out of every lane along with it — the one contract that still held was the one nothing checked.
+
 ---
 
 ## Tags *(required)*
@@ -25,19 +34,21 @@ If these tests fail, a Credential global variable — the mechanism Langflow off
 
 No **functional** tag applies: the tag table has no security area, and the sibling `security/tweaks-injection.spec.ts` also carries only cross-cutting tags. `@regression` is what issue #1393 asks for; `@api` marks the layer. `@observability` is deliberately **not** applied even though Test 1 reads `/api/v1/monitor/traces/{id}`: the tag drives lane selection and area ownership, and this file's subject is the secret boundary, not the trace payload's shape (which `core-functionality/observability-monitoring/traces-detail*.spec.ts` already owns).
 
-`@stable` ships with the first delivery, mirroring the sibling security spec: the file is pure API (no browser, no LLM, no provider key, ~10 s for all three tests), so it costs the daily almost nothing and cannot fail for a provider-outage reason. It is **not** `@destructive` — it creates and deletes only its own flow, its own two global variables and its own API key.
+`@stable` ships with the first delivery, mirroring the sibling security spec: the file is pure API (no browser, no LLM, no provider key, ~10 s for all four tests), so it costs the daily almost nothing and cannot fail for a provider-outage reason. It is **not** `@destructive` — it creates and deletes only its own flow, its own two global variables and its own API key.
 
-**Test 2 currently runs without `@stable`** — quarantined via `test.fixme` against the upstream export regression tracked by issue #1546 (see the note on Test 2 below). Tests 1 and 3 keep `@stable`.
+**All four tests carry `@stable`, including Test 4, which is declared failing** (`test.fail()`) against the live upstream defect tracked by #1546. The declaration inverts the *verdict*, never the assertions, so nothing is weakened — and it is in the daily **because the daily is what detects the fix**: the day upstream lands it, Test 4's body passes, Playwright reports it as *expected to fail but passed*, and the run goes red naming this test. Before #1546 split the export test, the only watch on that defect was a human re-reading upstream refs (§6 of the upstream-bug doc, done by hand on 2026-09-10 and 2026-09-16). Same shape as `api/flows/workflows-v2-job-lifecycle.spec.ts`'s Test 4, promoted to `@stable` by #1797.
 
-Bullets 1 and 3 of `QA-CHECKLIST.md` §17.3 are therefore `[x]`; bullet 2 is `[!]`
-while Test 2 is quarantined (#1546). Re-checked 2026-09-10 — the upstream fix has
-not landed; see §6 of `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md`.
+`test.fail()` is rejected elsewhere in this suite for a sound reason — `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`: it *"converts ANY failure (a broken bootstrap, a down instance …) into a green expected failure"*. That objection is answered **by construction**: Test 3 issues the same `POST /api/v1/flows/download/` and the same `GET /api/v1/flows/{id}`, on the same flow, and is **not** declared failing, so a dead instance, a failed export or a lost stored binding reddens Test 3 instead of disappearing into Test 4's declaration. The two tests run in that order in the serial describe, and Test 4 runs **last** so that its red on the fix day skips nothing after it.
+
+What that day looks like, measured by simulating the fix in the container (the export call site switched to the scrubber's binding-preserving mode): Test 4's JSON result is `status: "passed"` under a test `status: "unexpected"`, with **no error text at all** and a `fail` annotation, while Tests 1–3 stay `expected`. `remove-stable-from-failures.ts` selects on `status === "unexpected"`, so the daily's auto-removal strips `@stable` from Test 4 (unless the mass-failure guard trips), and the umbrella lists it with an empty error — the test's own comment is the explanation. The lift is the same either way: remove `test.fail()` and its comment, make sure `@stable` is on Test 4, flip the §17.3 binding bullet to `[x]`, mark LE-2649's `REGRESSIONS.md` row `Fixed`, and close #1546.
+
+`QA-CHECKLIST.md` §17.3: the trace, export-secret and run bullets are `[x]`; the export-binding bullet is `[!]` — the legend has no *declared failing* state, and `[x]` would claim coverage of a contract that does not hold today (the precedent is the `workflows-v2` bullet, kept `[!]` by #1797 for the same reason).
 
 ---
 
 ## Step by step *(required)*
 
-The spec runs **3 tests** in a serial describe via Playwright's `request` fixture. No browser, no LLM, no provider key. One flow, two global variables and one API key are created in `beforeAll` and deleted in `afterAll`; the flow is run **once** there and all three tests read that same run.
+The spec runs **4 tests** in a serial describe via Playwright's `request` fixture. No browser, no LLM, no provider key. One flow, two global variables and one API key are created in `beforeAll` and deleted in `afterAll`; the flow is run **once** there, and Tests 1 and 2 read that same run (its trace and its response). Tests 3 and 4 read the flow itself, through the export and the flow read.
 
 **Setup (`beforeAll`)**
 
@@ -46,7 +57,7 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 3. `POST /api/v1/variables/` **twice**, each `{ type: "Credential", value: <unique sentinel> }` — one per node. The sentinels are unique per run and of **different lengths**, so a `resolved_len` assertion cannot be satisfied by the wrong credential.
 4. `createCredentialConsumerFlowViaApi(request, headers, { fields })` (new helper): reads the **live** catalog (`GET /api/v1/all`), takes the `CustomComponent` template, and builds one node per requested field name. Each node's `code` declares `SecretStrInput(name=<field>)` and returns `Message(text=f"resolved_len={len(value)}")`; each node's template carries that field with `password: true`, `load_from_db: true` and `value: <variable name>` — the exact shape the UI writes when a Credential variable is bound to a secret field. The two nodes are independent roots of the same graph, so a single run executes both (measured on 1.12.0.dev23: both vertices appear in the `debug` response).
    Building the node from the running instance rather than a committed fixture is what makes an upstream change to the `SecretStrInput` contract surface as a failure instead of a stale fixture quietly testing nothing.
-5. `POST /api/v1/run/{flowId}` with `x-api-key` and `{ input_type: "text", output_type: "debug" }` — `debug` returns every vertex, not just a terminal one. The response body is kept for Test 3.
+5. `POST /api/v1/run/{flowId}` with `x-api-key` and `{ input_type: "text", output_type: "debug" }` — `debug` returns every vertex, not just a terminal one. The response body is kept for Test 2.
 
 **Teardown (`afterAll`)**
 
@@ -66,43 +77,60 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 5. Assert neither sentinel appears anywhere in the raw response body of the trace detail.
 6. Assert the same on `GET /api/v1/monitor/transactions?flow_id={flowId}` — the per-vertex record the same Traces panel renders alongside the spans. Neither sentinel appears there either. The masking on that path is name-based and therefore *different* (`secret_token` reads `***R...D***`; `gateway_pin` shows the unresolved variable **name**), so the assertion is on the sentinel's absence, not on a mask shape that would drift.
 
-**Test 2 — the export carries the binding, never the secret** *(`@api @regression`)*
-
-> **Quarantined (`test.fixme`, `@stable` removed) — upstream regression, tracked by issue #1546.**
-> Since upstream PR `langflow-ai/langflow#14639` (merged 2026-08-19 into `release-1.12.0`),
-> `POST /api/v1/flows/download/` nulls **every** `password=True` field — including a
-> `load_from_db` binding, whose `value` is the global-variable *name*, not the secret.
-> The exported flow comes back `{"load_from_db": true, "value": null}` and the variable
-> name is absent from the whole payload, so step 2 below fails deterministically
-> (5/5 on `1.12.0.dev33`) while `GET /api/v1/flows/{id}` keeps the binding.
-> This spec's expectation is **unchanged**: the export contract this doc pins is the
-> round-trippable one (binding preserved), and the scrubber itself has a
-> binding-preserving mode (`variable_references`, used by deployment packaging) that
-> the export call site does not use. Full analysis and reproduction:
-> `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md`.
-> Lifting the quarantine (remove `test.fixme`, restore `@stable`) is a deliverable of
-> #1546, due when the upstream fix lands in `langflowai/langflow-nightly:latest`.
-
-1. `POST /api/v1/flows/download/` with `[flowId]` — the endpoint behind the UI's Export/Download action — and assert `200`.
-2. Assert the exported payload contains **both variable names**. The export must keep the *binding* — a flow exported without it would import as a broken flow, so this is the control that step 3 is not passing because the field vanished. The check is textual here because a multi-id export answers with an archive rather than a flow object, and the variable name is the binding's observable in both shapes.
-3. Assert neither sentinel appears in the raw exported payload.
-4. `GET /api/v1/flows/{flowId}` — the read path the editor and every API client use, and the one an operator is most likely to pipe into a file. Assert the same absence, and assert the binding **structurally** on the stored flow: for each node, `template.<field>.value` is the variable name, `load_from_db` is `true` and `password` is `true`.
-
-**Test 3 — the run response resolves the credential without echoing it** *(`@api @regression`)*
+**Test 2 — the run response resolves the credential without echoing it** *(`@api @regression`)*
 
 1. Assert the run captured in `beforeAll` answered `200`.
 2. For each node, assert its vertex output text equals `resolved_len=<sentinel.length>` — the credential was fetched from the variable service and handed to the component, and the two lengths differ, so neither can stand in for the other.
 3. Assert neither sentinel appears in the raw run response body.
 4. Assert the same on `GET /api/v1/monitor/builds?flow_id={flowId}` — the vertex-build record the node inspector renders; it carries the component's params and is the surface a leak would surface on next.
 
+**Test 3 — the exported flow never carries the secret value** *(`@api @regression`)*
+
+Not declared failing, and deliberately silent about the binding's value: this test must stay green whichever way #1546 goes, because it is both the export's secret boundary and the attribution control for Test 4.
+
+1. `POST /api/v1/flows/download/` with `[flowId]` — the documented API export for one flow, and the endpoint the UI's *Download selected* uses for two or more flows — and assert `200`. A single id answers the exported flow **object** (`application/json`); only a multi-id export answers a ZIP (`_build_flows_download_response`), so the body is parsed as a flow. The scrub is the same either way (measured on `1.11.4` and `1.13.0.dev14`).
+2. For each credential node, assert it is present in the export's `data.nodes` and that its template carries the field with `password: true`. This is what makes step 3 evidence: the field was exported, so "the sentinel is absent" is not the absence of the field. Nothing is asserted about the field's `value` — that is Test 4's contract.
+3. Assert neither sentinel appears anywhere in the raw export body.
+4. `GET /api/v1/flows/{flowId}` — the read path the editor and every API client use, and the one an operator is most likely to pipe into a file — answers `200`. Assert the binding **structurally** on the stored flow: for each node, `template.<field>.value` is the variable name, `load_from_db` is `true` and `password` is `true`. This proves the flow the export was built from really is bound, so the export had a credential to leak.
+5. Assert neither sentinel appears anywhere in the raw flow-read body.
+
+**Test 4 — the exported flow carries the credential binding, never the secret** *(`@api @regression`, **declared failing**)*
+
+> **Declared failing (`test.fail()`) — upstream regression, tracked by issue #1546 and filed as [LE-2649](https://datastax.jira.com/browse/LE-2649).**
+> Since upstream PR `langflow-ai/langflow#14639` (merged 2026-08-19 into `release-1.12.0`,
+> and carried into the 1.13 line), `POST /api/v1/flows/download/` scrubs with the default
+> mode of the metadata-driven scrubber, which nulls **every** `password=True` field —
+> including a `load_from_db` binding, whose `value` is the global-variable *name*, not the
+> secret. The export reads `{"load_from_db": true, "password": true, "value": null}` for
+> both fields while `GET /api/v1/flows/{id}` keeps the binding: 5/5 on `1.12.0.dev33`, and
+> still so on `1.13.0.dev14` (2026-09-16).
+> The assertions below are the contract, **unweakened** — the round-trippable export — and
+> the scrubber already has the mode that satisfies it (`variable_references`, used by
+> deployment packaging). Both variable names this spec creates pass that mode's
+> `_is_variable_reference` shape check (measured on `1.13.0.dev14`), so a fix that adopts
+> it flips this test.
+> Today Playwright reports the test `expected` — failed, as declared. The day the fix lands
+> it reports *expected to fail but passed*, and that red is the signal to lift the
+> declaration (see Tags). Analysis and reproduction:
+> `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md`.
+
+Runs **last** in the serial describe, after Test 3, which issues the same two requests undeclared.
+
+1. `POST /api/v1/flows/download/` with `[flowId]` and assert `200`.
+2. `GET /api/v1/flows/{flowId}` and assert `200`.
+3. Assert the binding structurally on the stored flow, as in Test 3 step 4.
+4. Assert the binding **structurally on the export**: for each node, the exported `template.<field>.value` is the variable name and `load_from_db` is `true` — the values an import re-resolves the credential from. **This is the step that fails today**, and its message names the field and the value found. #1546 added it. Before, the test's only binding check was the textual one in step 5, justified by *"a multi-id export answers with an archive"*. But this test exports a single id, which answers a flow object (measured), and a textual match passes on any other occurrence of the name in the body — a flow named after its variable is enough (measured) — which would read as the fix having landed.
+5. For each surface (the export and the flow read), assert the payload contains **both variable names** and **neither sentinel**. The textual form stays: it is the observable a multi-id export shares.
+
 ---
 
 ## Validation criterion *(required)*
 
 - **Test 1:** the trace detail contains one span per credential-consuming node; `spans[].inputs.secret_token` and `spans[].inputs.gateway_pin` are both exactly `**********`; neither sentinel string occurs in the trace-detail body nor in the transactions body.
-- **Test 2:** `POST /api/v1/flows/download/` answers `200`; the payload carries both variable names with `"load_from_db": true`; neither sentinel occurs in it, nor in `GET /api/v1/flows/{id}`.
-- **Test 3:** the run answered `200`; each vertex output reads `resolved_len=<n>` with `n` equal to that node's sentinel length; neither sentinel occurs in the run body nor in the vertex-build records.
-- Across all three: the pairing is what carries the verdict — **the secret provably reached the component (`resolved_len`) and provably reached none of the three surfaces.**
+- **Test 2:** the run answered `200`; each vertex output reads `resolved_len=<n>` with `n` equal to that node's sentinel length; neither sentinel occurs in the run body nor in the vertex-build records.
+- **Test 3:** `POST /api/v1/flows/download/` answers `200` with a flow object whose two credential nodes each carry their field with `password: true`; neither sentinel occurs anywhere in that body, nor in `GET /api/v1/flows/{id}`, whose stored template keeps `value = <variable name>`, `load_from_db: true` and `password: true` for both fields.
+- **Test 4 (declared failing):** the contract is that the export's `template.<field>.value` equals the variable name with `load_from_db: true` for both fields, and that both surfaces carry both names and neither sentinel. While #1546's upstream defect is live, the Playwright outcome is **`expected`** — failed as declared, at step 4, on `value: null`. An outcome of **`unexpected`** reading *expected to fail but passed* means the fix has landed: lift the declaration (see Tags). Any other failure of the same requests shows up as a red Test 3, not here.
+- Across all four: the pairing is what carries the verdict — **the secret provably reached the component (`resolved_len`) and provably reached none of the surfaces**: the trace, the transactions, the run response, the vertex builds, the export and the flow read.
 - Teardown leaves nothing behind: the flow, both variables and the API key are deleted, and `GET /api/v1/flows/` returns the same count before and after the file runs.
 
 ---
@@ -115,6 +143,11 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 - **A secret typed directly into a component field** (no global variable). That path never involves the variable service, and the checklist bullets are scoped to Credential variables.
 - **The `/logs` and `/logs-stream` endpoints and container stdout.** A leak into server logs is a real class of defect, but asserting on it would couple the spec to the deployment shape (`docker logs`), and it is not one of the §17.3 bullets.
 - **Whether the *frontend* ever requests the variable's plaintext.** `GET /api/v1/variables/` is covered by `ui-ux/global-variables-crud.spec.ts`, which owns the secrecy-in-the-list guarantee.
+- **The export's sibling surfaces** — the project ZIP (`GET /api/v1/projects/download/{project_id}`) and the flow-version reads (`strip_version_data`). The same upstream PR moved both onto the same scrubber, and they share #1546's defect; they are named in the upstream report, not asserted here.
+- **A multi-id export** (a ZIP). This spec exports one flow, which answers a flow object; the ZIP goes through the same scrub.
+- **API-key-shaped fields on the export.** They already lost their binding here before #14639 — the same defect class, but not the regression this file pins, so the spec binds fields whose names are not API-key-shaped.
+- **The exports the browser builds** — *Share → Export* and the single-flow *Download selected*. Neither calls this endpoint, so neither is part of this contract here.
+- **Re-import of the exported flow.** Test 4 pins the value an import needs; whether an import then re-resolves it is the flow-import specs' concern.
 
 ---
 
@@ -124,7 +157,7 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 - Superuser credentials (`LANGFLOW_SUPERUSER` / `LANGFLOW_SUPERUSER_PASSWORD`) for `getAuthToken`.
 - The instance allows API-key creation via `POST /api/v1/api_key/`.
 - `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true`. With it `false`, `POST /api/v1/custom_component` and custom code execution are refused and the flow cannot run at all — the failure is loud (the `beforeAll` run assertion), never a vacuous pass. Every CI lane and both start scripts set it (#668/#746).
-- **Tracing enabled (`LANGFLOW_DEACTIVATE_TRACING=false`) — Test 1 only.** `daily-stable.yml`, `weekly-stable.yml` and `manual.yml` already set it; `pr-validation.yml` and `adaptive-impacted.yml` enable it only when the selected specs include `observability-monitoring`, so this spec's path must be added to those two conditions or Test 1 has no trace to read on the PR lane. **`scripts/start-langflow-docker.sh` sets it to `true` by decision** (local traces would pollute the token recorder — see the comment in the script), so a local run of Test 1 needs a second container:
+- **Tracing enabled (`LANGFLOW_DEACTIVATE_TRACING=false`) — Test 1 only.** `daily-stable.yml`, `weekly-stable.yml` and `manual.yml` set it unconditionally; `pr-validation.yml` and `adaptive-impacted.yml` enable it by substring match over the selected spec paths, and `credential-secret-exposure` is one of the matched substrings — a renamed file would lose it and run Test 1 against a tracing-off instance on those two lanes only. `nightly.yml` runs with tracing **off**. **`scripts/start-langflow-docker.sh` sets it to `true` by decision** (local traces would pollute the token recorder — see the comment in the script), so a local run of Test 1 needs a second container:
   ```bash
   docker run -d --name langflow-trace-probe -p 7861:7860 \
     -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
@@ -132,7 +165,7 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
     -e LANGFLOW_DEACTIVATE_TRACING=false -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true \
     -e LANGFLOW_WORKERS=1 langflowai/langflow-nightly:latest
   ```
-  Tests 2 and 3 are independent of the flag.
+  Tests 2–4 are independent of the flag — but the describe is serial, so a red Test 1 skips them; run them alone with `--grep` on a tracing-off instance.
 
 ---
 
@@ -146,7 +179,10 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 - `src/backend/base/langflow/services/database/models/transactions/model.py` — `SENSITIVE_KEYS_PATTERN`, `_mask_sensitive_value()`, `sanitize_data()`: the **independent, name-based** sanitizer behind `/api/v1/monitor/transactions`. Test 1 step 6 deliberately asserts absence rather than the mask shape, because this path masks differently per field name.
 - `src/backend/base/langflow/api/v1/monitor.py` — `GET /api/v1/monitor/traces`, `/traces/{trace_id}`, `/transactions`, `/builds`: the surfaces Tests 1 and 3 read.
 - `src/backend/base/langflow/services/tracing/formatting.py` — builds the span payload (`inputs`, `outputs`) the trace detail returns.
-- `src/backend/base/langflow/api/v1/flows.py` — `GET /api/v1/flows/{id}` and `POST /api/v1/flows/download/`: Test 2's two export surfaces.
+- `src/backend/base/langflow/api/v1/flows.py` — `GET /api/v1/flows/{id}` and the `POST /api/v1/flows/download/` route: the two surfaces Tests 3 and 4 read.
+- `src/backend/base/langflow/api/v1/flows_helpers.py` — `_build_flows_download_response`: a single id answers the flow object and several answer a ZIP; it calls `strip_flow_secrets` **without** the binding-preserving mode, which is #1546's defect. The call site a fix changes, and what flips Test 4.
+- `src/backend/base/langflow/utils/flow_secrets.py` — `strip_flow_secrets` and `strip_secret_field_values_in_place`: the default mode nulls every `password=True` value, `load_from_db` bindings included; the `variable_references` mode keeps a bound field's variable name when `_is_variable_reference` accepts it (both names this spec creates pass). Test 3 pins the first half, Test 4 the second.
+- `src/backend/base/langflow/api/utils/core.py` — `normalize_flow_for_export`, applied after the scrub; it keeps `data.nodes[].data.node.template`, the structure Tests 3 and 4 read from the export.
 - `src/backend/base/langflow/api/v1/variable.py` — `POST /api/v1/variables/` with `type: "Credential"`, and the variable service that resolves a `load_from_db` field at build time.
 - `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/run/{flow_id}`: the `SimplifiedAPIRequest` schema, `output_type: "debug"`, and the `RunResponse` shape Test 3 reads.
 - Upstream reference: `langflow-ai/langflow#7313` — the defect that defines the boundary.

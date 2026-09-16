@@ -2,14 +2,14 @@
 
 | Field | Value |
 |---|---|
-| **Filed upstream** | _still pending_ (report in §1–§4, suggested title in §6; owner: QA team) — **the blocking deliverable**: nothing has been reported to the people who can fix this, and the quarantine hides it from our own dailies |
-| **Last re-checked** | 2026-09-10 — **no upstream fix has landed**; the quarantine stands. Evidence in §6 |
+| **Filed upstream** | [LE-2649](https://datastax.jira.com/browse/LE-2649) — filed 2026-09-16 by the QA team, with the §2.4 before/after evidence attached. The daily watches for the fix by itself (§5) |
+| **Last re-checked** | 2026-09-16 — **no upstream fix on any watched ref**, and reproduced 5/5 on `1.13.0.dev14`. Evidence in §6 |
 | **Repo issue** | [oriontech-me/langflow-e2e#1546](https://github.com/oriontech-me/langflow-e2e/issues/1546) (spun out of daily triage #1544) |
-| **Affected builds** | `langflowai/langflow-nightly:latest` since `2026-08-20` (first nightly cut after the causing merge); reproduced 5/5 on `1.12.0.dev33` |
-| **Introduced by** | [langflow-ai/langflow#14639](https://github.com/langflow-ai/langflow/pull/14639) — *fix(security): scrub all secret fields on flow and project export* (commit `fc3810da0`, merged 2026-08-19T17:36Z into `release-1.12.0`) |
+| **Affected builds** | `langflowai/langflow-nightly:latest` since `2026-08-20` (first nightly cut after the causing merge); reproduced 5/5 on `1.12.0.dev33` and 5/5 on `1.13.0.dev14` (2026-09-16) — the 1.12 and 1.13 lines alike. The **1.11 line** too from `1.11.5`, which carries the LE-2240 backport (`release-1.11.5` and `release-1.11.6` call `strip_flow_secrets`); `1.11.4` still calls `remove_api_keys` and keeps the binding (measured) |
+| **Introduced by** | [langflow-ai/langflow#14639](https://github.com/langflow-ai/langflow/pull/14639) — *fix(security): scrub all secret fields on flow and project export* (commit `fc3810da0`, merged 2026-08-19T17:36Z into `release-1.12.0`), the fix for DataStax Jira **LE-2240** (*Langflow Incomplete Secret Sanitization in Flow and Project Export*). That ticket's owner is the natural reviewer for this one |
 | **Component** | `src/backend/base/langflow/api/v1/flows_helpers.py` → `_build_flows_download_response` → `langflow/utils/flow_secrets.py` (`strip_flow_secrets` / `strip_secret_field_values_in_place`) |
 | **Sibling surfaces** | `GET /api/v1/projects/download/{project_id}` and `flow_version.strip_version_data` were moved onto the same scrubber by the same PR and share the defect |
-| **Severity** | Medium. Data-fidelity regression, **not** a secret leak: every exported flow that binds a Credential global variable to a `SecretStrInput` imports back with the binding silently destroyed (`load_from_db: true`, `value: null`), so the re-imported flow cannot resolve its credentials until each field is re-bound by hand. Backup/share/round-trip workflows are all affected; nothing in the UI warns. |
+| **Severity** | Medium. Data-fidelity regression, **not** a secret leak: a flow exported through the backend imports back with every bound password field unbound (`load_from_db: true`, `value: null`), so it cannot resolve its credentials until each field is re-bound by hand, and nothing warns. **Reach:** the documented single-flow API export, the Projects page's *Download selected* with two or more flows, and the project *Download* (backups, moves between instances). **Not reached:** *Share → Export* and the single-flow *Download selected*, which the browser builds without calling this endpoint. **Regression scope:** password fields whose name is not API-key-shaped — API-key-shaped ones (`api_key` …) were already nulled here before #14639 (§2) |
 | **Discovered by** | Langflow E2E regression suite — `tests/tests-automations/regression/security/credential-secret-exposure.spec.ts` (test: *the exported flow carries the credential binding, never the secret*), hard-failing on the dailies of 2026-08-20 and 2026-08-21 |
 
 ---
@@ -20,7 +20,8 @@ A `SecretStrInput` field bound to a Credential-type global variable stores the
 variable's **name** in `value` with `load_from_db: true` — the name, not the
 secret, is what the stored flow carries, and it is what an import needs to
 re-resolve the credential. Since PR #14639, `POST /api/v1/flows/download/`
-(the endpoint behind the UI's Export action) nulls that name:
+(the documented single-flow API export, and what the Projects page calls to
+download two or more flows) nulls that name:
 
 ```json
 "secret_token": {
@@ -48,6 +49,13 @@ carried it).
 
 ## 2. Why this looks unintended rather than a contract change
 
+0. **The documented contract says the names travel.** *Import and export
+   flows* → *Save with my API keys* states that non-API-key variables are
+   included in the export regardless of that setting, and that an importing
+   instance needs global variables with the same names. The frontend's own
+   export (`removeApiKeys` in `src/frontend/src/utils/reactflowUtils.ts`) keeps
+   variable names on `api_key` fields *"so imported flows can still resolve
+   credentials"*. An export that names no variable at all satisfies neither.
 1. **The PR's stated scope is literal secrets.** The body describes the two
    leaking classes (`password: true` fields with ordinary names; connection
    strings). Variable bindings / `load_from_db` are not mentioned anywhere.
@@ -61,6 +69,19 @@ carried it).
    for exactly the round-trip reason: "a deployment target can re-resolve the
    credential it provisions under that name". The export call site simply does
    not pass it.
+4. **What changed, measured on both sides** (2026-09-16, one probe flow with a
+   bound non-API-key field, a bound `api_key` field and a literal password;
+   identical for one id and for a ZIP):
+
+   | `POST /api/v1/flows/download/` | bound `secret_token` | bound `api_key` | literal `password` |
+   |---|---|---|---|
+   | `1.11.4` (`remove_api_keys`) | variable name kept | `null` | kept — what LE-2240 fixed |
+   | `1.13.0.dev14` (`strip_flow_secrets`) | **`null`** | `null` | `null` |
+
+   The API-key-shaped binding was already lost before #14639, because
+   `remove_api_keys` nulls a `password` field by **name** with no `load_from_db`
+   exemption — the same defect class, older. What #14639 changed is every other
+   name. `GET /api/v1/flows/{id}` keeps both bindings on both builds.
 
 ## 3. Reproduction (API, deterministic)
 
@@ -89,14 +110,21 @@ curl -s -X POST $BASE/api/v1/flows/download/ -H "$AUTH" \
   -H 'Content-Type: application/json' -d "[\"$FLOW_ID\"]" | grep -c repro-binding  # -> 0  (binding gone)
 ```
 
+Name the flow differently from the variable: the `grep -c` above is textual, and a flow named after its variable prints `1` from the flow's own `name` while the binding is gone (measured on `1.13.0.dev14`). Reading `data.nodes[].data.node.template.<field>.value` settles it structurally.
+
 Observed on `1.12.0.dev33`: the download body carries
 `"load_from_db": true, "value": null` and the string `repro-binding` appears
 nowhere in it; the flow read returns `"value": "repro-binding"`. Import of the
 downloaded JSON therefore produces a flow whose secret fields are unbound.
 
-UI-level equivalent: create any flow with a provider component, bind a
-Credential global variable to its API-key field, use **Export** — open the
-downloaded JSON and the binding is gone.
+UI-level equivalent: on the **Projects** page, select **two or more** flows —
+one of them with a Credential global variable bound to a secret field whose
+name is not API-key-shaped — click **Download selected**, and open that flow's
+JSON inside the ZIP: the binding is gone. Neither *Share → Export* nor
+*Download selected* with a single flow reproduces it — both build the file in
+the browser without this endpoint (and *Share → Export* without *Save with my
+API keys* drops every non-`api_key` binding on its own, in the frontend, which
+is older and a different code path).
 
 ## 4. Expected behavior
 
@@ -109,15 +137,93 @@ mode; the fix is plausibly one line per call site
 
 ## 5. Suite impact while open
 
-- `security/credential-secret-exposure.spec.ts` — test *"the exported flow
-  carries the credential binding, never the secret"* is quarantined
-  (`test.fixme`, `@stable` removed) referencing this document and issue #1546.
-  The spec's contract is unchanged; the quarantine lifts when the upstream fix
-  lands in `langflowai/langflow-nightly:latest`.
-- The serial sibling *"the run resolves the credential without echoing it"*
-  resumes running (it was cascade-skipped while the export test hard-failed).
+- `security/credential-secret-exposure.spec.ts` — test *"the exported flow carries
+  the credential binding, never the secret"* is **declared failing**
+  (`test.fail()`, `@stable`), with its contract unchanged. It runs in the daily
+  and reports `expected` while this defect is live. The day the upstream fix
+  lands, it reports *expected to fail but passed* and the daily goes red naming
+  it. **That red is this document's trigger** — it replaces the by-hand watch in
+  §6 as the primary signal. It was `test.fixme` from 2026-08-21 to 2026-09-16,
+  and a fixme runs in no lane, so nothing noticed a fix.
+- The export's **secret boundary** — LE-2240's own contract — is pinned
+  separately by *"the exported flow never carries the secret value"*
+  (`@stable`, not declared). It sends the same two requests on the same flow, so
+  a dead instance or a broken export reddens it instead of hiding inside the
+  declaration. Until 2026-09-16 both contracts lived in the quarantined test, so
+  the export's secret boundary was unchecked in every lane for those four weeks.
+- The serial sibling *"the run resolves the credential without echoing it"* runs
+  normally.
+- The lift, once the fix is in `langflowai/langflow-nightly:latest`: remove the
+  `test.fail()` call and its comment, keep `@stable`, flip the `QA-CHECKLIST.md`
+  §17.3 binding bullet to `[x]`, mark LE-2649's `REGRESSIONS.md` row `Fixed`, close #1546.
 
 ## 6. Re-check log, and why re-measuring is not the next step
+
+**2026-09-16 — still no upstream fix, and reproduced 5/5 on `1.13.0.dev14`.**
+The watch below fired: three of the six blobs moved since 2026-09-10. None of the
+three is on the export's code path, and the re-measurement agrees.
+
+Checked with the contents API, so no local clone is needed. `release-1.12.3`
+appeared after the previous check, which is why the ref list below is derived
+from `git ls-remote --heads … 'release-1.1[2-9]*'` rather than copied from the
+entry that follows:
+
+```bash
+for p in utils/flow_secrets.py api/v1/flows_helpers.py api/v1/projects_files.py \
+         api/v1/flow_version.py api/utils/core.py api/utils/__init__.py; do
+  for r in fc3810da0c main release-1.12.0 release-1.12.1 release-1.12.2 \
+           release-1.12.3 release-1.13.0; do
+    gh api "repos/langflow-ai/langflow/contents/src/backend/base/langflow/$p?ref=$r" --jq '.sha[0:7]'
+  done
+done
+```
+
+| File | `fc3810da` | `main` | 1.12.0 | 1.12.1 | 1.12.2 | 1.12.3 | 1.13.0 |
+|---|---|---|---|---|---|---|---|
+| `api/v1/flows_helpers.py` (the export call site) | `96dab51` | same | same | same | same | same | same |
+| `utils/flow_secrets.py` | `12f2a5e` | same | same | same | same | same | **`c5ab2f1`** |
+| `api/v1/projects_files.py` | `05ecd47` | same | same | same | same | same | **`89b3ddd`** |
+| `api/v1/flow_version.py` | `b946d66` | same | same | same | same | same | same |
+| `api/utils/core.py` | `a7e336c` | **`9a3c756`** | same | same | **`9a3c756`** | **`9a3c756`** | **`9a3c756`** |
+| `api/utils/__init__.py` | `d78506f` | same | same | same | same | same | same |
+
+`same` = identical to the cause's own blob; **bold** = moved since the cause.
+
+- `flow_secrets.py` on 1.13 — `7d9f28e0e9` (#14921, *persistent connection
+  API*): a `connection_ref` branch at the top of `_strip_template_field_value`.
+  The default mode's handling of a `password=True` field is untouched.
+- `projects_files.py` on 1.13 — `e5784f7e00` (#14959): a pre-creation hook on the
+  project **upload** route. The download still calls
+  `normalize_flow_for_export(strip_flow_secrets(...))`.
+- `api/utils/core.py` — `f9ff3ecd5c` (#15078, the session-commit fix for
+  LE-2598). `normalize_flow_for_export` still runs after the scrub.
+
+The call site itself — `flows_helpers.py` — is byte-identical to the cause on
+every ref, so the product behaviour could not have changed. The measurement
+confirms it:
+
+- **Baseline**: 5/5 real failures on a pristine `1.13.0.dev14` container
+  (`sha256:7c44dc4c…`), with the same signature as the 2026-08-21 daily. The test
+  was run by title with its `test.fixme` lifted locally.
+- **Causal toggle, same process**: the export call site was switched, behind a
+  marker file read at call time, to
+  `strip_secret_field_values_in_place(..., variable_references=set())` — the mode
+  §4 asks for. Marker off, the bound field reads `value: null`. Marker on, it
+  reads the variable name, while a literal `password=True` field
+  (`load_from_db: false`) stays `null` and no secret reaches the body. Marker off
+  again, `null` again. So the fix §4 proposes keeps LE-2240's boundary intact.
+  The module was restored byte-identical before the baseline.
+- **The declaration can fire**: both variable names the spec creates pass
+  `_is_variable_reference` inside the container, so a fix that adopts that mode
+  flips the declared test (§5).
+- **Refute-first double check, same day.** Tried to show the change was
+  intended or harmless, and it held on four counts: the LE-2240 report and
+  #14639 never mention bindings; the docs promise the names travel (§2.0); a
+  pre-backport build (`1.11.4`) keeps a non-API-key binding that
+  `1.13.0.dev14` nulls (§2.4); and the fix shape keeps LE-2240's boundary (the
+  toggle above). It **narrowed** the claim on three: API-key-shaped bindings
+  were already lost on this endpoint; the UI reaches it only for multi-flow and
+  project downloads (§3); and the 1.11 line is affected from `1.11.5`.
 
 **2026-09-10 — no upstream fix. The quarantine stands and nothing about the
 product has changed.** Checked against `langflow-ai/langflow` rather than against
@@ -201,18 +307,26 @@ correctly; an earlier version of this section contradicted it.)
 
 ### Why a re-measurement is not the next step
 
-Two reasons, and the mechanical one comes first: the test is `test.fixme`, so **no
-`manual.yml` dispatch runs it at all** — not by tag, not by `--grep`. Re-measuring
-today means §3's by-hand reproduction, or lifting the quarantine first. And even
-then it would spend CI to confirm what the blob identity above already settles.
+**Superseded on 2026-09-16.** The paragraph below was true while the test was
+`test.fixme`. Now the test is declared failing and runs in the daily, so the
+daily *is* the re-measurement: every weekday it reports `expected` while the
+defect is live, and it goes red the day the defect is gone (§5). The blob watch
+remains useful for one thing only: showing, without a container, that a moved
+blob is off the export's code path.
 
-It becomes the right move the moment any of those blobs changes on any watched
-ref — and at that point the order is: reproduce by hand (§3), then lift.
+*As recorded on 2026-09-10:* two reasons, and the mechanical one comes first:
+the test is `test.fixme`, so **no `manual.yml` dispatch runs it at all** — not by
+tag, not by `--grep`. Re-measuring meant §3's by-hand reproduction, or lifting
+the quarantine first. And even then it would spend CI to confirm what the blob
+identity above already settled.
 
 ### What filing it needs
 
+**Done 2026-09-16: filed as [LE-2649](https://datastax.jira.com/browse/LE-2649).**
+Kept below as the record of how it was framed.
+
 §1–§4 are the report; §3 is a deterministic reproduction that needs no LLM key.
-The one thing missing is the act of posting. **The usual channel here is DataStax
+The one thing missing was the act of posting. **The usual channel here is DataStax
 Jira** — every other `UPSTREAM-BUG-*` file in this directory names an `LE-####`
 except one, which reads *"Not yet — evidence collected here first"* — and
 `REGRESSIONS.md:12` accepts either a Jira ticket or a `langflow-ai/langflow`
@@ -221,7 +335,7 @@ so this does not require an upstream GitHub account or a public statement; a Jir
 ticket is enough to unblock the deliverable. Suggested title, covering all three
 surfaces rather than only the one the H1 names:
 
-> Flow and project export null `load_from_db` credential bindings — `POST /api/v1/flows/download/` and `GET /api/v1/projects/download/{id}` drop the variable name, and version reads (`strip_version_data`) do the same
+> Flow and project export drop global-variable bindings — `POST /api/v1/flows/download/` and `GET /api/v1/projects/download/{id}` null the variable name of every password field since the LE-2240 fix
 
 Once filed, put the ticket in the **Filed upstream** row above and, if upstream
 disputes the intent (§2), record the answer in §4 rather than in the ticket thread

@@ -93,6 +93,27 @@ async function deleteVariable(
     .catch(() => undefined);
 }
 
+/**
+ * One credential field of one node, as `surface` returned it. Asserted present
+ * first, so an assertion on its content is never an assertion on its absence.
+ */
+function templateField(
+  flow: StoredFlow,
+  nodeId: string,
+  fieldName: string,
+  surface: string,
+): Record<string, unknown> {
+  const node = (flow.data?.nodes ?? []).find((n) => n.id === nodeId);
+  expect(node, `node ${nodeId} is missing from ${surface}`).toBeDefined();
+
+  const field = node!.data?.node?.template?.[fieldName];
+  expect(
+    field,
+    `${fieldName} is missing from ${surface}'s template`,
+  ).toBeDefined();
+  return field!;
+}
+
 test.describe("Credential secret exposure", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -110,6 +131,23 @@ test.describe("Credential secret exposure", () => {
     string,
     { variableName: string; variableId: string; sentinel: string }
   >();
+
+  /**
+   * Every credential field on `surface` is still bound: its value is the
+   * variable NAME — what an import re-resolves the credential from — rather
+   * than the secret or nothing at all.
+   */
+  function expectBinding(flow: StoredFlow, surface: string): void {
+    for (const { fieldName, nodeId } of fields) {
+      const { variableName } = credentials.get(fieldName)!;
+      const field = templateField(flow, nodeId, fieldName, surface);
+      expect(field.value, `${surface} dropped the ${fieldName} binding`).toBe(
+        variableName,
+      );
+      expect(field.load_from_db).toBe(true);
+      expect(field.password).toBe(true);
+    }
+  }
 
   test.beforeAll(async ({ request }) => {
     bearerToken = await getAuthToken(request);
@@ -161,8 +199,8 @@ test.describe("Credential secret exposure", () => {
     fields = flow.fields;
     deleteCreatedFlow = flow.deleteFlow;
 
-    // One run, read by all three tests. `debug` returns every vertex, and both
-    // nodes are independent roots, so a single run executes both.
+    // One run, read by the trace and run tests. `debug` returns every vertex,
+    // and both nodes are independent roots, so a single run executes both.
     const runRes = await request.post(`/api/v1/run/${flowId}`, {
       headers: { "x-api-key": apiKey },
       data: {
@@ -296,89 +334,6 @@ test.describe("Credential secret exposure", () => {
     },
   );
 
-  // Quarantined at #1546 (dailies of 2026-08-20 and 08-21): upstream PR
-  // langflow-ai/langflow#14639 (fc3810da0, merged 2026-08-19 into
-  // release-1.12.0) moved POST /api/v1/flows/download/ onto the metadata-driven
-  // scrubber WITHOUT its binding-preserving `variable_references` mode, so every
-  // password=True field is nulled — including a load_from_db binding, whose
-  // value is the variable NAME, not the secret. The export comes back
-  // `{load_from_db: true, value: null}` and the round-trip breaks; GET
-  // /api/v1/flows/{id} keeps the binding (asserted below, still green). The
-  // spec's contract is unchanged — this is a product regression, 5/5 on
-  // 1.12.0.dev33: see docs/upstream-bugs/
-  // UPSTREAM-BUG-flow-export-drops-credential-binding.md. Being `fixme` (a
-  // skip, not a failure) lets the serial sibling below run again. Lifting the
-  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1546,
-  // due when the upstream fix lands in langflowai/langflow-nightly:latest.
-  //
-  // Re-checked 2026-09-10: NOT fixed. Every file the causing commit touched is
-  // byte-identical to its own tree on `main` and on all four release lines — see
-  // the doc's re-check log (§6), which also records why `flow_secrets.py` reads
-  // like a repair: the binding-preserving mode predates the bug (#14437, nine
-  // days earlier) and the export path simply never opts into it.
-  test.fixme(
-    "the exported flow carries the credential binding, never the secret",
-    { tag: ["@api", "@regression"] },
-    async ({ request }) => {
-      const surfaces: Array<{ label: string; body: string }> = [];
-
-      await test.step("export the flow the way the UI does", async () => {
-        const res = await request.post("/api/v1/flows/download/", {
-          headers: { Authorization: bearerToken },
-          data: [flowId],
-        });
-        expect(res.status()).toBe(200);
-        surfaces.push({
-          label: "POST /api/v1/flows/download/",
-          body: await res.text(),
-        });
-      });
-
-      let storedFlow: StoredFlow;
-
-      await test.step("read the flow back through the API", async () => {
-        const res = await request.get(`/api/v1/flows/${flowId}`, {
-          headers: { Authorization: bearerToken },
-        });
-        expect(res.status()).toBe(200);
-        const body = await res.text();
-        surfaces.push({ label: "GET /api/v1/flows/{id}", body });
-        storedFlow = JSON.parse(body) as StoredFlow;
-      });
-
-      await test.step("the stored flow keeps the binding, not the secret", async () => {
-        // Structural, not textual: the binding is what an import needs, and a
-        // flow that lost it would satisfy every "the sentinel is absent"
-        // assertion below for entirely the wrong reason.
-        for (const { fieldName, nodeId } of fields) {
-          const { variableName } = credentials.get(fieldName)!;
-          const node = (storedFlow.data?.nodes ?? []).find((n) => n.id === nodeId);
-          expect(node, `node ${nodeId} is missing from the stored flow`).toBeDefined();
-
-          const field = node!.data?.node?.template?.[fieldName];
-          expect(field, `${fieldName} is missing from the stored template`).toBeDefined();
-          expect(field!.value).toBe(variableName);
-          expect(field!.load_from_db).toBe(true);
-          expect(field!.password).toBe(true);
-        }
-      });
-
-      for (const { label, body } of surfaces) {
-        await test.step(`${label} drops the secret`, async () => {
-          for (const { variableName, sentinel } of credentials.values()) {
-            // The download body is checked textually because a multi-id export
-            // answers with an archive rather than a flow object — the variable
-            // name is the binding's observable there.
-            expect(body, `${label} lost the variable binding`).toContain(
-              variableName,
-            );
-            expect(body).not.toContain(sentinel);
-          }
-        });
-      }
-    },
-  );
-
   test(
     "the run resolves the credential without echoing it",
     { tag: ["@stable", "@api", "@regression"] },
@@ -417,6 +372,182 @@ test.describe("Credential secret exposure", () => {
           expect(buildsText).not.toContain(sentinel);
         }
       });
+    },
+  );
+
+  test(
+    "the exported flow never carries the secret value",
+    { tag: ["@stable", "@api", "@regression"] },
+    async ({ request }) => {
+      // Not declared failing, and silent about the binding's VALUE on purpose:
+      // this is the export's secret boundary, which holds, and the attribution
+      // control for the declared-failing test below. It issues the same two
+      // requests on the same flow, so a dead instance or a broken export
+      // reddens HERE instead of vanishing into that test's declaration.
+      let exportText = "";
+      let exportedFlow: StoredFlow;
+
+      await test.step("export the flow through the download endpoint", async () => {
+        const res = await request.post("/api/v1/flows/download/", {
+          headers: { Authorization: bearerToken },
+          data: [flowId],
+        });
+        expect(res.status()).toBe(200);
+        // One id answers the flow object; only several ids answer a ZIP. This
+        // is the documented single-flow API export. The UI builds its own
+        // single-flow download from GET /api/v1/flows/{id} and reaches this
+        // endpoint only for two or more flows — the same scrub, measured
+        // identical for one id and for a ZIP.
+        expect(
+          res.headers()["content-type"],
+          "a single-id export no longer answers a flow object",
+        ).toContain("application/json");
+        exportText = await res.text();
+        exportedFlow = JSON.parse(exportText) as StoredFlow;
+      });
+
+      await test.step("the export still carries every secret field", async () => {
+        // What makes the absence below evidence: the field was exported, so a
+        // missing sentinel is not a missing field.
+        for (const { fieldName, nodeId } of fields) {
+          const field = templateField(
+            exportedFlow,
+            nodeId,
+            fieldName,
+            "the export",
+          );
+          expect(
+            field.password,
+            `${fieldName} is no longer a password field in the export`,
+          ).toBe(true);
+        }
+      });
+
+      await test.step("no sentinel reaches the export", async () => {
+        for (const { sentinel } of credentials.values()) {
+          expect(
+            exportText,
+            "the export carries a credential value",
+          ).not.toContain(sentinel);
+        }
+      });
+
+      let readText = "";
+
+      await test.step("the stored flow is bound to both variables", async () => {
+        // The export was built from a bound flow, so it had a credential to leak.
+        const res = await request.get(`/api/v1/flows/${flowId}`, {
+          headers: { Authorization: bearerToken },
+        });
+        expect(res.status()).toBe(200);
+        readText = await res.text();
+        expectBinding(JSON.parse(readText) as StoredFlow, "the stored flow");
+      });
+
+      await test.step("no sentinel reaches the flow read", async () => {
+        for (const { sentinel } of credentials.values()) {
+          expect(
+            readText,
+            "GET /api/v1/flows/{id} carries a credential value",
+          ).not.toContain(sentinel);
+        }
+      });
+    },
+  );
+
+  test(
+    "the exported flow carries the credential binding, never the secret",
+    { tag: ["@stable", "@api", "@regression"] },
+    async ({ request }) => {
+      // DECLARED FAILING (#1546, LE-2649), and the declaration is the alarm in
+      // both directions.
+      //
+      // The assertions below are the contract, unweakened: the export keeps each
+      // bound field's variable NAME — what an import re-resolves the credential
+      // from — and never the secret. Langflow's own docs (Import and export
+      // flows) promise that contract: an importing instance needs global
+      // variables with the same names. Upstream PR langflow-ai/langflow#14639
+      // (fc3810da0, the LE-2240 fix, merged 2026-08-19 into release-1.12.0)
+      // moved POST /api/v1/flows/download/ onto the scrubber's default mode,
+      // which nulls load_from_db bindings together with literal secrets, so this
+      // body fails today at "the export keeps the binding an import resolves"
+      // (5/5 on 1.13.0.dev14; see docs/upstream-bugs/
+      // UPSTREAM-BUG-flow-export-drops-credential-binding.md). Field names
+      // matter here: an API-key-shaped field (`api_key`) lost its binding on
+      // this endpoint even before #14639, through the legacy remove_api_keys,
+      // while `secret_token` and `gateway_pin` kept theirs until that PR
+      // (measured on 1.11.4) — so this file measures the regression itself. The
+      // scrubber already ships the mode that fixes it (`variable_references`),
+      // and both variable names this file creates pass its shape check.
+      // Declaring the failure keeps a known-broken product path out of a
+      // permanent red and — the half the test.fixme this replaces never gave —
+      // makes the FIX detectable: the day upstream lands it, this body passes,
+      // Playwright reports "expected to fail but passed", and the daily goes red
+      // naming this test. The lift: delete this call and this comment, keep
+      // @stable, flip the QA-CHECKLIST §17.3 binding bullet, mark LE-2649's
+      // REGRESSIONS.md row Fixed, close #1546.
+      //
+      // test.fail() turns ANY failure green (see
+      // mcp-client-agent-gemini-tool-regression.spec.ts), which is why the test
+      // above issues the same two requests undeclared: a dead instance or a
+      // broken export reddens it instead of hiding here. This test runs LAST, so
+      // its red on the fix day skips nothing behind it in the serial describe.
+      test.fail();
+
+      const surfaces: Array<{ label: string; body: string }> = [];
+      let exportedFlow: StoredFlow;
+
+      await test.step("export the flow through the download endpoint", async () => {
+        const res = await request.post("/api/v1/flows/download/", {
+          headers: { Authorization: bearerToken },
+          data: [flowId],
+        });
+        expect(res.status()).toBe(200);
+        const body = await res.text();
+        surfaces.push({ label: "POST /api/v1/flows/download/", body });
+        exportedFlow = JSON.parse(body) as StoredFlow;
+      });
+
+      let storedFlow: StoredFlow;
+
+      await test.step("read the flow back through the API", async () => {
+        const res = await request.get(`/api/v1/flows/${flowId}`, {
+          headers: { Authorization: bearerToken },
+        });
+        expect(res.status()).toBe(200);
+        const body = await res.text();
+        surfaces.push({ label: "GET /api/v1/flows/{id}", body });
+        storedFlow = JSON.parse(body) as StoredFlow;
+      });
+
+      await test.step("the stored flow keeps the binding, not the secret", async () => {
+        // Structural, not textual: the binding is what an import needs, and a
+        // flow that lost it would satisfy every "the sentinel is absent"
+        // assertion below for entirely the wrong reason.
+        expectBinding(storedFlow, "the stored flow");
+      });
+
+      await test.step("the export keeps the binding an import resolves", async () => {
+        // Structural as well, and the step that fails while #1546 is live. The
+        // textual check below passes on ANY other occurrence of the name in the
+        // payload — a flow named after its variable is enough — which here
+        // would read as the fix having landed.
+        expectBinding(exportedFlow, "POST /api/v1/flows/download/");
+      });
+
+      for (const { label, body } of surfaces) {
+        await test.step(`${label} drops the secret`, async () => {
+          for (const { variableName, sentinel } of credentials.values()) {
+            // Textual on top of the structural steps: a multi-id export answers
+            // with an archive rather than a flow object, and the variable name
+            // is the binding's observable in both shapes.
+            expect(body, `${label} lost the variable binding`).toContain(
+              variableName,
+            );
+            expect(body).not.toContain(sentinel);
+          }
+        });
+      }
     },
   );
 });
