@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/api/flows/api-flows-batch.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev12`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev14`)
 
 Owning issue: #1699 (Wave 7 — OSS API coverage, `flows` family). Gauge, definitions
 and denominator: `docs/api/api-surface-coverage-gauge.md`.
@@ -114,10 +114,11 @@ the batch are tracked from the `201` list and deleted by id in `afterEach`.
    read of the same route (`describeFlowReadback`, the #1759 helper). Neither throws,
    both run only on the failing branch, and the assertion is unchanged.
 
-   **The two reads differ by TIME, not by route — and that is why the pair reaches a
-   verdict in only two of its three cases.** Time discriminates only when the second
-   read lands *after* the commit window, which two calls issued in the same breath
-   cannot guarantee:
+   **The pair narrows the failure to three cases, and two of them are a verdict.** The
+   two reads differ by TIME rather than by route, which is what separates rows 1 and 2 —
+   and why row 2 is not a verdict: time discriminates only when the second read lands
+   *after* the commit window, which two calls issued in the same breath cannot
+   guarantee. Row 3 needs neither read beyond the `detail` string:
 
    | `detail` | second read | shape |
    |---|---|---|
@@ -136,8 +137,9 @@ the batch are tracked from the `201` list and deleted by id in `afterEach`.
    `yield` and its `commit`, gated on a marker file so control and mutation run in the
    same process — gives 10/10 first reads answering `200` in control, **0/10 under the
    delay with BOTH reads negative in all ten**, and 10/10 again on revert. `LE-2598`
-   produces row 2 itself. PR #1873 recorded the same thing from the other side —
-   `404 {"detail":"Flow not found"}` **×2** — it was simply never carried here.
+   produces row 2 itself. (An earlier draft cited PR #1873's `×2` on this row as
+   corroboration; that `×2` is the **two flows** the batch creates, each read once, not
+   two reads of one flow — the row stands on the measurement above.)
 
    The reason is structural rather than an artefact of that experiment: the second read
    is the **same request** as the failing one, same route and same id, issued

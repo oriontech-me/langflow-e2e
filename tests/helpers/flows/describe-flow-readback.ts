@@ -65,7 +65,19 @@ export async function describeFlowReadback(
     return `readback GET ${route} -> 200: the row EXISTS${suffix}`;
   }
   if (status === 404) {
-    return `readback GET ${route} -> 404: the row is absent from the database${suffix}`;
+    // NOT "absent from the database" (#1878). This read is issued milliseconds
+    // after the one that failed, and on four of the five callers it is the SAME
+    // request — same route, same id — so a commit window wider than that gap
+    // makes both miss: measured on 1.13.0.dev12 under a forced 300 ms window,
+    // both negative 10 times out of 10 on every sequence tried. Claiming the
+    // database state here is the one thing this line must not do, because it is
+    // the string a triage reads out of `results.json` — on `api-invalid-key` it
+    // sent the reader straight at a broken authorization check. What settles it
+    // is a LATER read or the container log, never this one.
+    return (
+      `readback GET ${route} -> 404: the row is not visible to this read — ` +
+      `absent, or written and not yet committed${suffix}`
+    );
   }
   return (
     `readback GET ${route} -> ${status}: UNDECIDED — ` +
