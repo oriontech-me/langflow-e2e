@@ -38,14 +38,35 @@ const PIP_START = join(HERE, "start-langflow-pip.sh");
 // the stop script can be told apart from an unrelated sleep — including one left by a
 // concurrent run of this same file. A shared constant made the orphan assertion read
 // the whole machine's process table and answer about somebody else's leftovers.
-const SERVER_MARKER = `30.${process.pid}`;
+// Unique per START, like `start-ollama-source.test.mjs` and
+// `start-echo-source.test.mjs`, which solved this first and whose reason applies
+// here unchanged: most tests leave their stub server running, so a marker shared
+// across the file makes "a server is alive" answer about SOMEBODY ELSE'S process.
+// A shared marker is not merely untidy — it makes the liveness check below
+// vacuous, demonstrably: with one, a stub mutated to `exec sleep 0.4` plus one
+// leftover from an earlier test passes every assertion with a dead server
+// (#1893). What keeps a CONCURRENT run of a sibling file apart is `process.pid`,
+// not the base: the bases only stagger the ranges and echo's (41-62) sits inside
+// this file's (31-63). Mind what the base also selects — the integer part IS the
+// sleep duration, so these stubs live 31-63 s against a file runtime of ~35 s,
+// and a leaked one can outlive the run that made it. That is why both throws
+// below kill before they report.
+let markerSeq = 30;
+function nextMarker() {
+  markerSeq += 1;
+  return `${markerSeq}.${process.pid}`;
+}
 
 function processTable() {
   return execFileSync("ps", ["-ax", "-o", "command="], { encoding: "utf8" });
 }
 
-function serverPattern() {
-  return new RegExp(`sleep ${SERVER_MARKER.replace(".", "\\.")}`);
+function serverPattern(marker) {
+  // `(?!\d)` because the marker ends in a pid and the match would otherwise be a
+  // prefix one: `sleep 31.1234` matches `sleep 31.12345`, so two concurrent runs
+  // whose pids stand in that relation read each other's servers — a false green
+  // on the `assert.match` sites and a false RED on the `doesNotMatch` ones.
+  return new RegExp(`sleep ${marker.replace(".", "\\.")}(?!\\d)`);
 }
 
 /**
@@ -90,7 +111,15 @@ function runScript({
   ignoresTerm = false,
   withUv = true,
   stamp = null,
+  runCmdForwardsArgv = false,
+  runCmdDecoyMarker = false,
+  // The guard below waits this long for the launched process to appear. 5 s is
+  // the real budget; the two tests that EXPECT a bail shorten it, because they
+  // would otherwise pay it in full and the pinning would cost more wall clock
+  // than the defect it pins ever cost (measured: +11 s on `test:scripts`).
+  waitBudgetMs = 5000,
 } = {}) {
+  const marker = nextMarker();
   const dir = makeTempDir("start-langflow-source-test-");
   const bin = join(dir, "bin");
   // uv lives in its own directory so `withUv: false` can drop it from PATH without
@@ -127,7 +156,7 @@ function runScript({
 echo "$*" >> "${uvLog}"
 if [ "$1" = "run" ]; then
   env | grep -E '^LANGFLOW_' | sort >> "${envLog}"
-  ${serverExits ? "exit 1" : `${ignoresTerm ? "trap '' TERM\n" : ""}exec sleep ${SERVER_MARKER}`}
+  ${serverExits ? "exit 1" : `${ignoresTerm ? "trap '' TERM\n" : ""}exec sleep ${marker}`}
 fi
 exit 0
 `,
@@ -155,8 +184,27 @@ if [ "$N" -eq 1 ]; then exit ${portBusy ? 0 : 1}; fi
 exit ${healthy ? 0 : 1}
 `,
   );
+  // The override stub for `LANGFLOW_SRC_RUN_CMD`. It must not NEED quoting, and
+  // it must ignore its arguments — two reasons that are both properties of the
+  // starter rather than choices here. (Several words are fine: the production
+  // value is `uv run langflow run`, start-langflow-source.sh:176.) `${RUN_CMD}`
+  // is expanded UNQUOTED
+  // (start-langflow-source.sh:296), so a quoted shell fragment would be word-split
+  // and its quotes never re-processed; and four flags are appended to it, which a
+  // real server parses and `sleep` does not. Passing `sleep <marker>` directly —
+  // which this file did until #1893 — hands `sleep` a `--host` it rejects, so the
+  // "server" was dead ~30 ms in and the test passed only while bash had not yet
+  // reaped the zombie when the starter's `kill -0` ran. Same shape as the `uv`
+  // stub above, which was always correct because a bash script ignores `"$@"`
+  // unless it reads it.
+  writeFileSync(
+    join(bin, "fake-server"),
+    `#!/usr/bin/env bash
+exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArgv ? ' "$@"' : ""}
+`,
+  );
   chmodSync(join(uvBin, "uv"), 0o755);
-  for (const f of ["git", "curl"]) chmodSync(join(bin, f), 0o755);
+  for (const f of ["git", "curl", "fake-server"]) chmodSync(join(bin, f), 0o755);
 
   // `withUv: false` must not inherit the caller's PATH, or a real uv on the machine
   // answers `command -v uv` and the branch under test is never reached. The minimal
@@ -200,13 +248,62 @@ exit ${healthy ? 0 : 1}
   // Settle the two things the launched process writes on its own schedule, so no
   // assertion below has to race it.
   if (status === 0 && existsSync(pidFile)) {
-    waitFor(() => serverPattern().test(processTable()));
-    if (withUv && !env.LANGFLOW_SRC_RUN_CMD) waitFor(() => read(envLog).length > 0);
+    // Checked, not merely awaited (#1893). `waitFor` returns a boolean and both
+    // call sites used to discard it, so a launch command that died on arrival
+    // was indistinguishable from one that was simply slow: the run burnt the
+    // whole 5 s budget, every assertion below still passed, and the only
+    // symptom was a test that flaked whenever bash reaped the corpse first.
+    // The starter exits 0 only after `kill -0` and the health probe both
+    // answered, so a process missing here is a broken FIXTURE, and saying so is
+    // the difference between finding that in one run and finding it in a daily.
+    // Both throws below run BEFORE the result object exists, so the caller's
+    // `r.cleanup()` never happens on this path. Sweep first: the marker is unique
+    // per start, so a leak can no longer make a later assertion vacuous, but a
+    // live stub is still a live stub for up to 30 s.
+    // Kill FIRST, then gather, then throw. Killing first because a read that
+    // throws (EISDIR, permissions) must not skip the sweep this exists for; and
+    // each throw names the file that answers ITS OWN question, because a failure
+    // that names a hypothesis and hands over the wrong evidence is #1888's defect
+    // wearing a fix. The log is NOT deleted: `makeTempDir` sweeps at process exit
+    // anyway, so the eager `rmSync` an earlier revision did here bought nothing
+    // and destroyed the one artefact a human would want. Tail-20 mirrors what the
+    // starter itself prints (start-langflow-source.sh:309).
+    const bail = (message, label, file) => {
+      const pid = read(pidFile).trim();
+      if (pid) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch {
+          /* already gone — which is the case this throw is usually about */
+        }
+      }
+      const tail = read(file).trim().split("\n").slice(-20).join("\n");
+      throw new Error(`${message}\n--- ${label} ---\n${tail || "(empty)"}`);
+    };
+    if (!waitFor(() => serverPattern(marker).test(processTable()), waitBudgetMs)) {
+      bail(
+        `the launched server never appeared in the process table (looked for ` +
+          `"sleep ${marker}" for ${waitBudgetMs}ms). The starter reported ready, ` +
+          `so the ` +
+          `stub it launched died on arrival — check that the run command ` +
+          `tolerates the flags start-langflow-source.sh appends to it.`,
+        "langflow.log",
+        join(stateDir, "langflow.log"),
+      );
+    }
+    if (
+      withUv &&
+      !env.LANGFLOW_SRC_RUN_CMD &&
+      !waitFor(() => read(envLog).length > 0, waitBudgetMs)
+    ) {
+      bail("the uv stub never wrote its env dump", "uv.log", uvLog);
+    }
   }
 
   return {
     status,
     stdout,
+    marker,
     uv: read(uvLog),
     git: read(gitLog),
     langflowEnv: read(envLog),
@@ -290,20 +387,37 @@ function runStop(r, extraEnv = {}) {
  *
  * Measured on the three CI reds this was written for (`TypeScript Check`, the
  * `LANGFLOW_SRC_RUN_CMD` test, runs 34913042595 / 35055750120 / 35120011003):
- * `duration_ms` 25.780076, 32.38826, 32.625602 — all on the liveness branch,
- * and the same test's GREEN path takes ~5.5 s, because `runScript` then waits
- * out `waitFor(…, 5000)` for a process that never enters the process table.
- * Fast is the failure here and slow is the success.
+ * `duration_ms` 25.780076, 32.38826, 32.625602 — all on the liveness branch.
+ * At the time, that test's GREEN path took ~5.5 s, because `runScript` then
+ * waited out `waitFor(…, 5000)` for a process that never entered the process
+ * table, so fast was the failure and slow was the success.
  *
- * The cause is in the fixture rather than in the script: `${RUN_CMD}` is
- * launched with `--host … --port … --no-open-browser --workers 1` appended
- * (start-langflow-source.sh:296), and this test's stub is `sleep 30.<pid>`,
- * which rejects those and exits 1 immediately — well inside the loop's first
- * iteration, which is why the reds land in the tens of milliseconds rather than
- * at any budget. The test passes only while bash has not reaped the zombie by
- * the time `kill -0` runs. Tracked separately — fixing
- * it is a change to what the test does, where this helper is a change to what a
- * failure says.
+ * **That is no longer the shape, and reading it as current inverts the
+ * triage.** Since #1893 the green path is ~680 ms and it is the GUARD that
+ * spends the 5 s budget before it throws, so a fast green is the healthy case
+ * and a slow red is usually the fixture failing — usually, not always: the
+ * `timeout: 12000` above also produces a slow red, and that one is a SCRIPT
+ * defect (the starter holding the caller's pipes), which is what the timeout
+ * exists to catch. The captured output tells them apart. Kept in the past tense because
+ * the three reds are the worked example this message was built for — a `1`, a
+ * duration, and, had it existed then, one line of captured output naming the
+ * branch.
+ *
+ * The cause was in the fixture rather than in the script, and is FIXED (#1893):
+ * `${RUN_CMD}` is launched with `--host … --port … --no-open-browser
+ * --workers 1` appended (start-langflow-source.sh:296), and this test's stub
+ * used to be a bare `sleep 30.<pid>`, which rejects those and exits 1 well
+ * inside the readiness loop's first iteration — which is why those reds landed
+ * in the tens of milliseconds rather than at any budget, and why the test passed
+ * only while bash had not yet reaped the zombie when `kill -0` ran. The override
+ * is now the `fake-server` stub, and `runScript` FAILS when the process it
+ * launched never appears, so the same mistake is a deterministic red with the
+ * cause named rather than an intermittent one with none.
+ *
+ * The three reds above are kept because they are what this message was built
+ * for, and because they are the worked example: a `1`, a duration in the tens of
+ * milliseconds, and — had it existed then — one line of captured output naming
+ * the branch.
  */
 function assertExit(result, expected) {
   assert.equal(
@@ -390,7 +504,7 @@ test("the PID file names the server itself, so the stop script leaves no orphan"
   assert.ok(r.pid, "expected a PID");
   assert.match(
     processTable(),
-    serverPattern(),
+    serverPattern(r.marker),
     "the stub server should be running before the stop",
   );
 
@@ -401,7 +515,7 @@ test("the PID file names the server itself, so the stop script leaves no orphan"
   // reported success here while the server survived, reparented, still on the port.
   assert.doesNotMatch(
     processTable(),
-    serverPattern(),
+    serverPattern(r.marker),
     "the server survived the stop script — the PID file is not naming it",
   );
   assert.equal(existsSync(r.pidFile), false, "the stop script should clear the PID file");
@@ -421,7 +535,7 @@ test("the starter returns while the server keeps running, holding none of the ca
   const elapsed = Date.now() - started;
   assertExit(r, 0);
   assert.ok(elapsed < 10000, `the starter took ${elapsed}ms to return; it is holding the caller's pipes`);
-  assert.match(processTable(), serverPattern(), "the server should still be running behind it");
+  assert.match(processTable(), serverPattern(r.marker), "the server should still be running behind it");
   r.cleanup();
 });
 
@@ -515,7 +629,7 @@ test("a process that ignores SIGTERM is escalated, not left as an orphan", () =>
   assert.match(r.stdout, /ignored SIGTERM/);
   assert.doesNotMatch(
     processTable(),
-    serverPattern(),
+    serverPattern(r.marker),
     "the process that ignored SIGTERM survived the starter's failure path",
   );
   // Gone for real, so the handle is no longer needed — and the next start must not be
@@ -593,10 +707,93 @@ test("the sync keeps the lockfile frozen, so the clone is not rewritten", () => 
   r.cleanup();
 });
 
+// The two tests below pin what the guard and the marker are FOR. Without them the
+// mechanism is regressible in silence, which is the shape this file refuses two
+// screens up for `assertExit`: measured on the commit that introduced it, five
+// separate mutations left 27/27 green — `markerSeq += 0` (every marker identical,
+// i.e. the exact defect #1893 fixes), a `serverPattern` that ignores its argument,
+// `bail` dropping the log read, `bail` sweeping before reading it, and `bail`
+// dropping the kill. Only removing `marker` from the result object was caught.
+test("a stub that dies on arrival fails with the log that says why, not just a hypothesis", () => {
+  // `runCmdForwardsArgv` reproduces the original defect exactly: the starter
+  // appends four flags, and a stub that forwards them to `sleep` dies before the
+  // readiness loop's first poll.
+  assert.throws(
+    () =>
+      runScript({
+        env: { LANGFLOW_SRC_RUN_CMD: "fake-server" },
+        runCmdForwardsArgv: true,
+        waitBudgetMs: 500,
+      }),
+    // Match the stub's own error PREFIX, not its wording: BSD `sleep` rejects
+    // `--host` as an operand ("invalid time interval"), GNU rejects it as an
+    // option ("unrecognized option"), and pinning either one makes this test
+    // pass on the author's machine and fail on the runner — measured, on CI.
+    (e) =>
+      /never appeared in the process table/.test(e.message) &&
+      /--- langflow\.log ---[\s\S]*sleep:/.test(e.message),
+    "the guard must name the hypothesis AND hand over the log that settles it",
+  );
+});
+
+test("a bail kills the server it could not identify, instead of leaking it", () => {
+  // The other bail test dies on arrival, so its kill is a no-op and cannot pin
+  // one. Here the stub is ALIVE under a marker the guard will not match, which is
+  // the only state where the kill does work — and it is the state that matters,
+  // because `bail` throws before the result object exists, so the caller's
+  // `cleanup()` never runs. Unpinned, dropping the kill left 27/27 green.
+  // It costs the guard's 5 s budget by construction; so does the test above.
+  const decoy = new RegExp(`sleep 8\\.${process.pid}(?!\\d)`);
+  assert.throws(
+    () =>
+      runScript({
+        env: { LANGFLOW_SRC_RUN_CMD: "fake-server" },
+        runCmdDecoyMarker: true,
+        waitBudgetMs: 500,
+      }),
+    /never appeared in the process table/,
+  );
+  assert.ok(
+    !decoy.test(processTable()),
+    "bail must kill the process it launched, not leave it for up to 63 s",
+  );
+});
+
+test("the marker identifies THIS start, and cannot be a prefix of another", () => {
+  const a = runScript();
+  const b = runScript();
+  assert.notEqual(a.marker, b.marker, "each start must get its own marker");
+  assert.ok(
+    serverPattern(a.marker).test(processTable()),
+    "a run's own server must match its own marker",
+  );
+  assert.ok(
+    !serverPattern(b.marker).test(`sleep ${a.marker}`),
+    "one run's server must not satisfy another run's marker",
+  );
+  // The pid is the tail, so an unanchored pattern matches a longer pid that
+  // starts with this one — a foreign process passing as ours.
+  assert.ok(
+    !serverPattern("31.1234").test("sleep 31.12345"),
+    "a marker must not match another whose pid merely extends it",
+  );
+  a.cleanup();
+  b.cleanup();
+});
+
 test("LANGFLOW_SRC_RUN_CMD replaces the uv path entirely", () => {
-  const r = runScript({ env: { LANGFLOW_SRC_RUN_CMD: `sleep ${SERVER_MARKER}` } });
+  // `fake-server`, not a bare `sleep`: see the stub's definition in `runScript`.
+  // Reaching `assertExit` at all now proves the override produced a LIVE server,
+  // since `runScript` throws when it cannot find one — which is what this test
+  // was silently not proving before #1893.
+  const r = runScript({ env: { LANGFLOW_SRC_RUN_CMD: "fake-server" } });
   assertExit(r, 0);
   assert.equal(r.uv, "", "uv must not be invoked when the run command is overridden");
+  assert.match(
+    processTable(),
+    serverPattern(r.marker),
+    "the overridden run command must leave a live server, not a corpse",
+  );
   r.cleanup();
 });
 
