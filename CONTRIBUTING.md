@@ -866,6 +866,12 @@ Three cases where the tag is intentionally absent:
 
 **When `@stable` is temporarily absent** (cases 1 and 2): no spec doc update is required — the absence is tracked via the GitHub issue and the commit that removed the tag (auto-removed by the workflow on a hard failure, or a manual PR for inherited tests).
 
+**The tracking is checked, not just expected (#1770).** A spec whose tests carry no `@stable` runs in no scheduled lane, so it needs an **open** issue that names the file, or a declared absence in `scripts/lib/stable-orphan-exemptions.json` (the same file #1746's reconciler reads). `pr-validation.yml` runs `npm run check:stable-ownership -- --base-ref origin/main` on every PR:
+
+- a spec **your PR** leaves with no `@stable` test, outside the frozen triage baseline (`tests/assets/triage/inherited-backlog-baseline.json`, read from the **base** branch — regenerating it in your PR does not help), with no open issue naming it, **fails** the job. Fix it by opening the issue or restoring the tag;
+- a pre-existing case never fails your PR: the baseline is one notice, and a spec that lost its last `@stable` on `main` (the daily's auto-removal) is a warning;
+- the daily keeps a standing `qa-infra` issue listing every unowned spec, refreshed in place and closed when there is nothing left.
+
 ### @stable lifecycle: from the triage issue to restoration
 
 On a red scheduled `daily-stable.yml` run, the workflow does two things **automatically**:

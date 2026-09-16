@@ -457,9 +457,9 @@ test("the CLI refuses an unknown --topology instead of defaulting to container",
 //
 // The bug survived review because `pr-validation.yml` is `runs-on: ubuntu-latest`
 // with no `container:`, where `jq` is preinstalled: the PR lane CANNOT reach the
-// topology it broke. `daily-stable.yml` is the only lane whose jobs are all
-// containerized, and it is unattended. So the invariant has to be asserted here or
-// it is only ever discovered by a lost day of @stable coverage.
+// topology it broke. `daily-stable.yml` is the only lane whose test-and-report jobs
+// are all containerized, and it is unattended. So the invariant has to be asserted
+// here or it is only ever discovered by a lost day of @stable coverage.
 //
 // The convention already held everywhere else — every `jq` call site in the repo
 // (pr-validation, adaptive-impacted, migration-test, guard-dedicated-issue) sits in
@@ -484,7 +484,18 @@ function jqInvocations(yaml) {
 
 const CONTAINERIZED_LANE = "daily-stable.yml";
 
-test(`${CONTAINERIZED_LANE} itself invokes no jq (all three of its jobs run in a container)`, () => {
+// Jobs deliberately NOT containerized, each with its reason. Revisited rather than
+// relaxed (#1770): the `@stable` ownership report shells out to `gh` for its issue
+// lookup, and the Playwright image ships no `gh` either — so it runs on the host,
+// where `jq` would even be available. It calls none, and the no-jq assertion below
+// still covers the WHOLE file, host job included. The list is checked in both
+// directions, so a job cannot be exempted by a name that no longer exists, and an
+// exempted job that gains a container is reported rather than silently counted.
+const HOST_JOBS = new Map([
+  ["stable-ownership", "needs `gh`, which the Playwright image does not ship (#1770)"],
+]);
+
+test(`${CONTAINERIZED_LANE} itself invokes no jq (every job but the named host jobs runs in a container)`, () => {
   const text = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", CONTAINERIZED_LANE), "utf8");
   const lines = text.split("\n");
 
@@ -495,14 +506,35 @@ test(`${CONTAINERIZED_LANE} itself invokes no jq (all three of its jobs run in a
   const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
   assert.ok(jobsAt > -1, `no top-level jobs: block found in ${CONTAINERIZED_LANE}`);
   const body = lines.slice(jobsAt + 1);
-  const jobs = body.filter((l) => /^ {2}[a-z][a-z0-9-]*:\s*$/.test(l)).length;
-  const containers = body.filter((l) => /^ {4}container:\s*$/.test(l)).length;
 
-  assert.ok(jobs > 0, "no jobs parsed — the guard would pass vacuously");
-  assert.equal(
-    containers,
-    jobs,
-    `every job in ${CONTAINERIZED_LANE} must be containerized for this guard's premise to hold (${containers} container: for ${jobs} jobs)`,
+  // Per job, not two global counts: a host job and a containerized one must not be
+  // able to cancel each other out.
+  const containerized = new Map();
+  let current = null;
+  for (const l of body) {
+    const key = l.match(/^ {2}([a-z][a-z0-9-]*):\s*$/);
+    if (key) {
+      current = key[1];
+      containerized.set(current, false);
+    } else if (current && /^ {4}container:\s*$/.test(l)) {
+      containerized.set(current, true);
+    }
+  }
+
+  assert.ok(containerized.size > 0, "no jobs parsed — the guard would pass vacuously");
+  for (const [job, reason] of HOST_JOBS) {
+    assert.ok(containerized.has(job), `HOST_JOBS names "${job}", which ${CONTAINERIZED_LANE} no longer has (${reason})`);
+    assert.equal(containerized.get(job), false, `"${job}" is listed as a host job but now has a container: — drop it from HOST_JOBS`);
+  }
+  const bare = [...containerized].filter(([job, inContainer]) => !inContainer && !HOST_JOBS.has(job)).map(([job]) => job);
+  assert.deepEqual(
+    bare,
+    [],
+    `every job in ${CONTAINERIZED_LANE} must be containerized or named in HOST_JOBS with a reason for this guard's premise to hold`,
+  );
+  assert.ok(
+    [...containerized.values()].some(Boolean),
+    "no containerized job left — the jq guard would be guarding nothing",
   );
   assert.deepEqual(jqInvocations(text), []);
 });

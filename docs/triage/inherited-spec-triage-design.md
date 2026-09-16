@@ -361,6 +361,13 @@ delete is not an available outcome.
 
 ## 5. The guard — the item that stops the backlog regrowing
 
+> **Built in #1770**, with three refinements measured on the way — the section
+> below is the design as argued, and the plan's Task 8/9 notes record what
+> changed: the exemptions are #1746's file (not a second one), a declaration does
+> not expire because the issue it cites for provenance is closed, and a spec
+> outside the baseline fails a PR only when that PR touched it (the daily's own
+> auto-removal can move a spec out of the daily with no PR at all).
+
 **Invariant.** Every spec with **zero** `@stable` tests must have either an
 **open** issue that owns it, or a committed exemption declaring a reason (the
 `groq` / `mistral` pattern).

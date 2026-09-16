@@ -1740,6 +1740,36 @@ merge away from putting a known-broken test back in the daily.
 
 ### Task 8: The ownership guard
 
+> **As built (#1770) — the code below is the first draft, and four of its
+> decisions were changed on measurements taken before the first line was
+> written.** Read `scripts/lib/stable-ownership.ts` for the shipped verdict.
+>
+> 1. **No `tests/assets/triage/stable-exemptions.json`.** Its only two entries
+>    (groq, mistral) were already declared in
+>    `scripts/lib/stable-orphan-exemptions.json` for #1746. One declaration in two
+>    files is the silent-expiry hazard both checks were built to close, so the
+>    guard reads #1746's file, per spec.
+> 2. **No `expired-exemption` keyed on "the cited issue is closed".** Both real
+>    declarations cite #1039, which is closed and is *provenance* for a standing
+>    packaging policy — that rule expires both on the first run. #1746 already
+>    verifies each declaration against the test's actual state.
+> 3. **No basename matcher and no `gh issue list --limit 500`.** The guard reuses
+>    #1746's `fetchOpenIssues` (paginated, open only) and `buildSpecTrackerIndex`
+>    (boundary-safe: `run-flow.spec.ts` does not match inside
+>    `api-run-flow.spec.ts`). Both report issues are excluded from both searches
+>    by `withoutReportIssues`, or each guard's report would "own" what it lists.
+> 4. **Severity follows the diff, not only the baseline.** The daily strips
+>    `@stable` from a hard-failing test by itself, so a spec can leave the daily
+>    with no PR involved. `unowned-new` fails only when the PR touched the spec;
+>    otherwise it is a warning. The PR lane reads the baseline from the **base
+>    ref**, so regenerating it in the PR cannot hide a new spec. The draft's
+>    Enterprise test fed `ownershipReport` an empty list, which passes whatever
+>    the backlog predicate does; the shipped test goes through `classifyBacklog`.
+>
+> Measured when built (2026-09-16): 32 specs / 54 tests in the backlog, the
+> baseline in sync; 1 owned (#963), 2 declared (groq, mistral), 29 unowned in the
+> baseline, 0 outside it. Exit 0 on both lanes.
+
 **Files:**
 - Create: `scripts/lib/stable-ownership.ts`
 - Create: `scripts/check-stable-ownership.ts`
@@ -2089,6 +2119,17 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ---
 
 ### Task 9: Wire the guard into the PR lane and the daily
+
+> **As built (#1770):** the daily half is its **own job** (`stable-ownership`),
+> not a step in `merge`. The issue lookup shells out to `gh`, and the Playwright
+> image `merge` runs in ships none (measured: `command -v gh` → not found in
+> `mcr.microsoft.com/playwright:v1.58.2-noble`). The job has no `needs:`, runs on
+> `ubuntu-latest` and carries `continue-on-error` at job level. The PR half added
+> `permissions: {contents: read, issues: read}` to `checklist-guard`, because
+> `pr-validation.yml` never read issues before and a 403 there would fail every
+> PR. The wiring test lives in `scripts/check-stable-ownership.test.ts`, and the
+> jq guard in `scripts/resolve-echo-endpoint.test.mjs` names the host job instead
+> of assuming every daily job is containerized.
 
 A warning nobody reads is not a mechanism — `mode=count` sat in the daily's prep log for weeks. The PR lane gets the diff-scoped verdict; the daily owns the standing report, and it reaches a human as an issue body.
 

@@ -839,6 +839,171 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # ─── @stable ownership (#1770) ─────────────────────────────────────────────
+  # Every spec whose tests carry no `@stable` runs in no scheduled lane, and
+  # nothing reconciled those specs against open issues that own putting them
+  # somewhere. This job reports the ones nobody holds into ONE standing issue,
+  # kept current — never a log line (`mode=count` sat unread for weeks, #1252).
+  #
+  # Its own job rather than a step in `merge`, on one mechanical fact: the issue
+  # lookup shells out to `gh` (it shares #1746's `fetchOpenIssues`, so the two
+  # reports cannot disagree about who owns a spec), and the Playwright image
+  # `merge` runs in ships no `gh`. It needs nothing from the shards either — it
+  # reads the spec ASTs and live issue state — so it has no `needs:` and runs on
+  # a green day and a red one alike.
+  #
+  # `continue-on-error` at the JOB level: an observation must not redden a green
+  # daily (#980), and that includes an API hiccup in the publish steps.
+  stable-ownership:
+    name: "@stable ownership report"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # `--ignore-scripts`: nothing here drives a browser.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # No `--base-ref`: the daily has no diff, so nothing is a diff failure and
+      # the working-tree baseline is the one that counts. The step exits 1 only
+      # when it could not decide (an unreadable input, a failed issue lookup).
+      - name: Report specs no scheduled lane runs (check-stable-ownership)
+        id: ownership
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_LABEL: >-
+            [`daily-stable`
+            #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        run: npx ts-node scripts/check-stable-ownership.ts
+
+      - name: Warn when the ownership lookup could not be made
+        if: always() && steps.ownership.outputs.tracker_lookup_failed == 'true'
+        run: |
+          echo "::warning::The open-issue lookup failed, so ownership is undecided. The @stable ownership report issue was left untouched — see this job's summary."
+
+      # One issue, kept current. The title comes from the script's output and is
+      # never spelled here: two spellings would be two identities, and both
+      # guards exclude the report issue BY TITLE from their tracker search — an
+      # issue opened under another spelling would "own" every spec it lists.
+      # Not run when the lookup failed: every row is then `unknown` for the same
+      # reason, and a body rewrite would replace a standing list (and any human
+      # notes on it) with a page that says less.
+      - name: Open or refresh the ownership report
+        if: >-
+          always() && steps.ownership.outputs.has_findings == 'true'
+          && steps.ownership.outputs.tracker_lookup_failed == 'false'
+        uses: actions/github-script@v9
+        env:
+          OWNERSHIP_TITLE: ${{ steps.ownership.outputs.issue_title }}
+          OWNERSHIP_BODY: ${{ steps.ownership.outputs.summary_md }}
+        with:
+          script: |
+            const title = process.env.OWNERSHIP_TITLE;
+            const body = process.env.OWNERSHIP_BODY || '';
+            if (!title || !body.trim()) {
+              core.setFailed('The ownership check reported findings but emitted no title or body — refusing to open an empty issue.');
+              return;
+            }
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = open.find(i => i.title === title && !i.pull_request);
+            if (existing) {
+              // Refresh the body only when it changed: this runs every weekday,
+              // and the state it describes moves in weeks.
+              if (existing.body === body) {
+                core.info(`#${existing.number} already describes this state.`);
+                return;
+              }
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.info(`Refreshed #${existing.number}.`);
+              return;
+            }
+            const created = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+            });
+            core.info(`Opened #${created.data.number}.`);
+            // Labelled separately and tolerantly: a renamed label must not cost
+            // the report itself.
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: created.data.number,
+                labels: ['qa-infra'],
+              });
+            } catch (e) {
+              core.warning(`Opened #${created.data.number} but could not label it: ${e.message}`);
+            }
+
+      # The other half of "kept current". A stale open issue listing specs that
+      # have since been owned or promoted is the silent-expiry failure this check
+      # exists to catch, pointed at its own output.
+      - name: Close the ownership report when every spec is owned
+        if: >-
+          always() && steps.ownership.outputs.has_findings == 'false'
+          && steps.ownership.outputs.tracker_lookup_failed == 'false'
+        uses: actions/github-script@v9
+        env:
+          OWNERSHIP_TITLE: ${{ steps.ownership.outputs.issue_title }}
+          OWNERSHIP_BODY: ${{ steps.ownership.outputs.summary_md }}
+        with:
+          script: |
+            const title = process.env.OWNERSHIP_TITLE;
+            if (!title) return;
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = open.find(i => i.title === title && !i.pull_request);
+            if (!existing) {
+              core.info('Every spec with no @stable test is owned or declared, and no report is open.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing.number,
+              body: [
+                'Every spec whose tests carry no `@stable` now has an open owner or a declared absence.',
+                '',
+                process.env.OWNERSHIP_BODY || '',
+                '',
+                'Closing. A new finding opens a fresh issue rather than reopening this one.',
+              ].join('\n'),
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing.number,
+              state: 'closed',
+            });
+            core.info(`Closed #${existing.number}.`);
+
   merge:
     name: Merge shard reports & report
     needs: [prep, test]

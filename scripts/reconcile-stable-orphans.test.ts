@@ -35,9 +35,11 @@ import {
   readBlobs,
   resolveRefStates,
   walkSpec,
+  withoutReportIssues,
   type RawIssue,
   type Revision,
 } from "./reconcile-stable-orphans";
+import { OWNERSHIP_ISSUE_TITLE } from "./lib/stable-ownership";
 import { REPO_ROOT, type DeclaredTest } from "./lib/stable-tests";
 import { historyKey } from "./lib/stable-orphans";
 import {
@@ -877,6 +879,34 @@ test("buildSpecTrackerIndex excludes PRs and this check's OWN report issue", () 
   ];
   const idx = buildSpecTrackerIndex(issues, ["a/x.spec.ts"]);
   assert.deepEqual(idx["a/x.spec.ts"].map((t) => t.number), [1]);
+});
+
+// #1770's ownership report names every spec that has no `@stable` test, and a
+// spec that loses its last `@stable` to the daily is in BOTH populations. If
+// either guard counted the OTHER guard's report issue as a tracker, that issue
+// would "own" every spec it lists: a real orphan here would read as owned the
+// day the ownership report named it, and the ownership report would read
+// groq/mistral as owned by this one. The self-exclusion each builder already
+// does is not enough on its own — it has to hold in both directions, which is
+// why it lives in the fetch both guards share.
+test("withoutReportIssues drops BOTH guards' report issues, and nothing else", () => {
+  const issues: RawIssue[] = [
+    { number: 1, title: "about x.spec.ts", html_url: "u1" },
+    { number: 2, title: ORPHAN_ISSUE_TITLE, body: "x.spec.ts", html_url: "u2" },
+    { number: 3, title: OWNERSHIP_ISSUE_TITLE, body: "x.spec.ts", html_url: "u3" },
+    // A title that merely CONTAINS the report title is a different issue.
+    { number: 4, title: `Re: ${OWNERSHIP_ISSUE_TITLE}`, body: "x.spec.ts", html_url: "u4" },
+  ];
+  assert.notEqual(ORPHAN_ISSUE_TITLE, OWNERSHIP_ISSUE_TITLE, "the two reports need distinct identities");
+  const kept = withoutReportIssues(issues);
+  assert.deepEqual(kept.map((i) => i.number), [1, 4]);
+
+  const orphanIdx = buildTrackerIndex(kept, [
+    { title: "t", relativePath: "a/x.spec.ts", line: 1, tags: [], stable: false, fixme: false, modifier: "", unparseableTags: false, grepTitle: "t" } as DeclaredTest,
+  ]);
+  assert.deepEqual(orphanIdx[historyKey("a/x.spec.ts", "t")].map((r) => r.number), [1, 4]);
+  const specIdx = buildSpecTrackerIndex(kept, ["a/x.spec.ts"]);
+  assert.deepEqual(specIdx["a/x.spec.ts"].map((r) => r.number), [1, 4]);
 });
 
 test("buildSpecTrackerIndex matches the basename on a boundary, not as a substring", () => {
