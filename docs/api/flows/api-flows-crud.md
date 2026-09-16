@@ -27,9 +27,10 @@ serial and 0/80 concurrent while #1759 was open, and 10/10 clean first list read
 `1.13.0.dev12` and `1.13.0.dev14` un-forced — so a green burst says nothing about it. The
 measurement that does is in *Known product defects* below.
 
-The test was never quarantined with `test.fixme` while the tag was off, and that is what
-made the attribution possible: it kept running in the PR gate and the full suite, so its
-step-5 diagnostic stayed readable. A discriminant on a muted test is never read.
+It was quarantined with `test.fixme` at triage (#1761) and **un-quarantined the same
+day** (#1768, four hours later) while the tag stayed off, and that lift is what made the attribution
+possible: it kept the test running in the PR gate and the full suite, so its step-5
+diagnostic stayed readable. A discriminant on a muted test is never read.
 
 Tests 5 and 9 kept `@stable` throughout — they were first occurrences, absorbed by the
 daily's retry budget, and while the defect was live they were what said it was still
