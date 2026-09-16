@@ -275,28 +275,28 @@ project). Teardown deletes the flow and then the project.
   client can call. Measured on `1.12.0.dev20`. Not asserted here — this spec's subject
   is the selection, and MCP tool naming deserves a spec of its own — but it is why the
   guard above is a hard failure rather than a comment.
-- **The project's name prefix must be at most six characters, and that is load-bearing.**
-  Creating a project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
-  (`MAX_MCP_SERVER_NAME_LENGTH` is 30 minus the `lf-` prefix) and that derived name
-  must be unique per user, while `createProjectViaApi` appends a 20-character
-  `-${Date.now()}-${rand5}`. Six or fewer is what **guarantees** the whole unique part
-  stays inside the cut. Past six the suffix is truncated from the right and the
-  conflict risk grows with the prefix rather than becoming certain at once — at seven
-  characters four of the five random characters still survive — whereas the
-  22-character prefix the first version of this spec used (`e2e_mcp_project_config`)
-  left nothing past the first three digits of the timestamp, so there every project it
-  created collided with the previous one: `POST /api/v1/projects/` → **409**
-  `MCP server name conflict: 'lf-e2e_mcp_project_config_178' already exists for a
-  different project`. That is how that version failed under
-  `--workers=4 --repeat-each=3`.
-  **This is a product behaviour, not a test artefact** — reproduced with two ordinary
-  names on `1.12.0.dev20`: `Marketing Automation Project Alpha` creates, and
-  `Marketing Automation Project Beta` is refused, because they share their first 26
-  characters. Filed as **#1409**. Worth knowing before adding another project-creating spec: of the
-  prefixes the suite uses today, `a2a-authgate` (12 chars) truncates to exactly the
-  timestamp boundary, so it survives only because two projects are unlikely to be
-  created in the same millisecond. This spec's own prefix is five characters, one
-  inside the cut.
+- **The prefix length used to be load-bearing, and since #1883 it is not.** Creating a
+  project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
+  (`MAX_MCP_SERVER_NAME_LENGTH` is 30 minus the `lf-` prefix) and that derived name must
+  be unique per user. `createProjectViaApi` used to append a 20-character
+  `-${Date.now()}-${rand5}`, so only `26 - len(prefix) - 1` digits of the timestamp
+  survived and the caller carried the whole burden: a prefix of six or fewer characters
+  was what kept the unique part inside the cut. The 22-character prefix the first
+  version of this spec used (`e2e_mcp_project_config`) left nothing past the first three
+  digits of the timestamp, so every project it created collided with the previous one:
+  `POST /api/v1/projects/` → **409** `MCP server name conflict:
+  'lf-e2e_mcp_project_config_178' already exists for a different project`. That is how
+  that version failed under `--workers=4 --repeat-each=3`.
+  The helper now budgets the discriminator first and truncates the **prefix** to what is
+  left, so the whole unique part survives for any prefix — long, variable or empty. This
+  spec's `e2ecf` is kept for readability, not for correctness, and a longer one would be
+  safe.
+  **The product behaviour behind it is unchanged, and is not a test artefact** —
+  reproduced with two ordinary names on `1.12.0.dev20` and again on `1.13.0.dev14`:
+  `Marketing Automation Project Alpha` creates, and `Marketing Automation Project Beta`
+  is refused, because they share their first 26 characters. Filed as **#1409**, still
+  open — so a spec that creates projects by any route other than `createProjectViaApi`
+  still has to think about it.
 - **`PATCH` merges per flow id.** `update_project_mcp_settings` iterates the project's
   flows and touches only those named in `settings`, so this test cannot disable
   anything it did not create — worth knowing before reusing this pattern against a

@@ -202,17 +202,36 @@ test("a non-201 creation throws instead of returning an unusable project", async
 // truncation, not just as a whole string.
 //
 // `sanitizeMcpName` below replicates `lfx/base/mcp/util.py::sanitize_mcp_name`
-// over the ASCII subset these names live in — JS `\w` is `[A-Za-z0-9_]` where
-// Python's is unicode-aware, which is the only divergence and is unreachable for
-// a generated name. It is replicated rather than imported because the rule lives
-// in the product, not in this repo: these tests pin OUR name against THEIR cut,
-// and a drift in the cut should surface here rather than in a red daily.
+// over the ASCII subset these names live in. It is replicated rather than
+// imported because the rule lives in the product, not in this repo: these tests
+// pin OUR name against THEIR cut, and a drift in the cut should surface here
+// rather than in a red daily.
+//
+// Two divergences, both unreachable for a generated name, and the SECOND one is
+// worth knowing because it decides what these tests can prove:
+//
+//   * The emoji strip is omitted. Benign by accident rather than by design —
+//     Python's emoji class spans `\U000024c2-\U0001f251`, which swallows Hangul
+//     and CJK, and the ASCII `\w` below strips those too. The divergences cancel.
+//   * JS `\w` is `[A-Za-z0-9_]` where Python's is unicode-aware, so for scripts
+//     BELOW U+24C2 (Cyrillic, Greek, Arabic, Hebrew, Devanagari, Thai) Python
+//     KEEPS letters this replica strips — i.e. the replica is more permissive
+//     there, not stricter. So `discriminatorSurvives` cannot pin the removal of
+//     `normalizePrefix`: mutate it away and `uniqueProjectName("проектпроект")`
+//     sanitizes to 27 characters under real Python while this replica reports 14
+//     and returns true. That mutation is caught, by the separator and
+//     recognisability tests instead — which is why those two are not decoration.
 
 const MCP_CUT = 26;
 /** `${ts base36}-${rand}` — 8 + 1 + 5. */
 const DISCRIMINATOR_LENGTH = 14;
 
 function sanitizeMcpName(name: string, maxLength = 46): string {
+  // Python bails before every other transform, and answers "" rather than the
+  // "unnamed" default below — measured: sanitize_mcp_name("   ") is `''`, so the
+  // server is a bare `lf-`. Unreachable for a generated name (the discriminator
+  // is never blank), replicated so the helper stays correct if it is reused.
+  if (!name || !name.trim()) return "";
   let n = name.normalize("NFD").replace(/\p{Mn}/gu, "");
   n = n.replace(/[^\w\s-]/g, "");
   n = n.replace(/[-\s]+/g, "_");
@@ -272,6 +291,7 @@ const PREFIXES = [
   "---",
   "***",
   "Mixed Case With Spaces",
+  "abcdefghij-klmn", // the character at the budget boundary is a separator
 ];
 
 test("the discriminator survives Langflow's 26-character cut, for every prefix shape", () => {
@@ -306,6 +326,7 @@ test("no generated name starts or ends with a separator", () => {
     const name = uniqueProjectName(prefix);
     assert.ok(!name.startsWith("-"), `leading separator: ${name}`);
     assert.ok(!name.endsWith("-"), `trailing separator: ${name}`);
+    assert.ok(!name.includes("--"), `doubled separator: ${name}`);
   }
 });
 

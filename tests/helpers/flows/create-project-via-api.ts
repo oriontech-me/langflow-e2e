@@ -112,7 +112,11 @@ export function uniqueProjectName(namePrefix: string): string {
   const startsWithDigit = /^[0-9]/.test(prefix) ? 1 : 0;
   const budget =
     MCP_DERIVED_NAME_BUDGET - discriminator.length - 1 - startsWithDigit;
-  const trimmed = budget > 0 ? prefix.slice(0, budget) : "";
+  // `.replace` because a prefix whose character at `budget` is a hyphen would
+  // otherwise leave `--` in the middle of the name. Harmless (Langflow collapses
+  // the run to one `_`), but the name is asserted on elsewhere and shortening is
+  // always safe here — it only lets more of the discriminator survive.
+  const trimmed = budget > 0 ? prefix.slice(0, budget).replace(/-+$/, "") : "";
   return trimmed ? `${trimmed}-${discriminator}` : discriminator;
 }
 
