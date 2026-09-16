@@ -717,32 +717,32 @@
 
 > Keyless and deterministic. Picking the card from *All templates* creates a flow whose persisted component types, edges and notes equal the template's entry in `GET /api/v1/flows/basic_examples/`, and the editor opens on it — measured 26 of 26 exact on `1.13.0.dev12`. Planned as one parametrized spec, one test per template.
 
-- [~] Basic Prompting — the editor opens on a non-empty graph named after the template → `flow-functionality/create-flow-from-template.spec.ts`. **Partial:** the composition (component types, edges, notes) is not compared
-- [ ] Blog Writer
-- [ ] Content Aggregator
-- [ ] Custom Component Generator
-- [ ] Deep Research Agent
-- [ ] Document Q&A
-- [ ] Financial Report Parser
-- [ ] Hybrid Search RAG
-- [ ] Image Sentiment Analysis
-- [ ] Instagram Copywriter
-- [ ] Knowledge Retrieval
-- [ ] Market Research
-- [ ] Meeting Summary
-- [~] Memory Chatbot — the canvas holds exactly 5 nodes after the template loads → `llm-agents/memory-history-regression.spec.ts`. **Partial:** node types and edges are not compared
-- [ ] Multi Agent Flow
-- [ ] Portfolio Website Code Generator
-- [ ] Price Deal Finder
-- [ ] SaaS Pricing
-- [ ] SEO Keyword Generator
-- [ ] Sequential Tasks Agents
-- [ ] Simple Agent
-- [ ] Social Media Agent
-- [ ] Text Sentiment Analysis
-- [ ] Travel Planning Agents
-- [ ] Twitter Thread Generator
-- [ ] Vector Store RAG
+- [x] Basic Prompting — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Blog Writer — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Content Aggregator — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Custom Component Generator — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Deep Research Agent — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Document Q&A — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Financial Report Parser — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Hybrid Search RAG — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Image Sentiment Analysis — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Instagram Copywriter — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Knowledge Retrieval — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Market Research — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Meeting Summary — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Memory Chatbot — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Multi Agent Flow — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Portfolio Website Code Generator — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Price Deal Finder — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] SaaS Pricing — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] SEO Keyword Generator — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Sequential Tasks Agents — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Simple Agent — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Social Media Agent — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Text Sentiment Analysis — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Travel Planning Agents — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Twitter Thread Generator — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
+- [x] Vector Store RAG — the created flow’s component types, edge count and note count equal the template’s entry in `GET /api/v1/flows/basic_examples/` → `core-functionality/templates/templates-instantiate.spec.ts`
 
 #### 11.3 Execution — prompts, agents and image input
 
