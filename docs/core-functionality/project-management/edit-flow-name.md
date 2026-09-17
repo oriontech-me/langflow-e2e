@@ -1,6 +1,6 @@
 # Project Management – Edit Flow Name
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x
 
 ---
 
