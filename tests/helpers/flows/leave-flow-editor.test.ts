@@ -33,7 +33,11 @@ import {
   AUTOSAVE_INTERVAL_FALLBACK_MS,
   publishAutosaveInterval,
 } from "./autosave-interval";
-import { stripComments } from "./strip-comments";
+import {
+  countDrainCalls,
+  derivedWindowFailure,
+  drainCallsWithoutDerivedWindow,
+} from "./derived-drain-window";
 import {
   BLOCKER_GRACE_MS,
   HOME_TIMEOUT_MS,
@@ -255,79 +259,28 @@ test("an unknown autosave interval still gets a window above the fallback", () =
 // green (measured). `editorExitDrainQuietMs` would stay exported, typechecked
 // and unit-tested while nothing used it.
 //
-// So this is a STRUCTURAL guard, and it is worth being plain about what that
-// buys: it pins a spelling, not a behaviour (#1226). That is adequate here and
-// nowhere near generally — the mutation this has to catch IS the spelling, one
-// argument present or absent at a single call site, so there is no gap between
-// "the source says it" and "the helper does it". A behavioural version would
-// need a fake `Page` covering `getByTestId`, `expect` and the polling loop, to
-// assert one argument.
-//
-// Comments are blanked first: this module's own JSDoc names the 700 ms default
-// it replaced, and matching prose would report the explanation as the offender.
-const DRAIN_CALL = /waitForFlowSaveSettled\(([\s\S]*?)\)\s*;/g;
-
-/** Drain calls that do not pass the derived window. Returns the call text. */
-function drainCallsWithoutDerivedWindow(source: string): string[] {
-  const offenders: string[] = [];
-  for (const match of stripComments(source).matchAll(DRAIN_CALL)) {
-    const args = match[1];
-    // The constant, not just any `quietMs`: `quietMs: 700` is the state this
-    // exists to reject, and it satisfies a presence-only test.
-    if (!/quietMs\s*:\s*editorExitDrainQuietMs\(\s*\)/.test(args)) {
-      offenders.push(`waitForFlowSaveSettled(${args.replace(/\s+/g, " ").trim()})`);
-    }
-  }
-  return offenders;
-}
-
+// The scanner moved to `derived-drain-window.ts` when #1902 needed the same
+// guard in `node-config-guard.ts` and `rename-flow.ts`; what it buys, and what
+// it does not (it pins a spelling, not a behaviour — #1226), is argued there,
+// along with its own tests.
 test("the exit drain call site passes the derived window, not the default", () => {
   const source = readFileSync(join(__dirname, "leave-flow-editor.ts"), "utf8");
-  const offenders = drainCallsWithoutDerivedWindow(source);
+  const offenders = drainCallsWithoutDerivedWindow(
+    source,
+    "editorExitDrainQuietMs",
+  );
   assert.deepEqual(
     offenders,
     [],
-    `leave-flow-editor.ts drains with the helper's 700 ms default, which arms ` +
-      `immediately and expires before the autosave an edit schedules one debounce ` +
-      `later — the exit then happens with the store diverged (#1743/#1153). Pass ` +
-      `{ quietMs: editorExitDrainQuietMs() }. Offenders: ${offenders.join("; ")}`,
+    derivedWindowFailure("leave-flow-editor.ts", "editorExitDrainQuietMs", offenders),
   );
   // The guard is only meaningful if the file has a call to find: a rename or a
   // refactor that moved the drain out would otherwise report "no offenders" for
   // the same reason a missing file would (#1012).
   assert.equal(
-    [...stripComments(source).matchAll(DRAIN_CALL)].length,
+    countDrainCalls(source),
     1,
     "leave-flow-editor.ts no longer holds exactly one drain call — the guard " +
       "above is scoped to that call and cannot vouch for a second one",
-  );
-});
-
-test("the drain guard catches the reversion it claims to catch", () => {
-  // Each of these is a real reversion path, and the middle one is why the
-  // pattern asserts the CONSTANT rather than the presence of `quietMs`.
-  assert.deepEqual(
-    drainCallsWithoutDerivedWindow(`await waitForFlowSaveSettled(page);`),
-    ["waitForFlowSaveSettled(page)"],
-  );
-  assert.deepEqual(
-    drainCallsWithoutDerivedWindow(
-      `await waitForFlowSaveSettled(page, { quietMs: 700 });`,
-    ),
-    ["waitForFlowSaveSettled(page, { quietMs: 700 })"],
-  );
-  // And it must not fire on the correct form, nor on prose describing the
-  // default: a guard that fails a correct edit gets deleted, not fixed.
-  assert.deepEqual(
-    drainCallsWithoutDerivedWindow(
-      `await waitForFlowSaveSettled(page, { quietMs: editorExitDrainQuietMs() });`,
-    ),
-    [],
-  );
-  assert.deepEqual(
-    drainCallsWithoutDerivedWindow(
-      `// reverting to waitForFlowSaveSettled(page); would reopen #1743\n`,
-    ),
-    [],
   );
 });
