@@ -522,3 +522,148 @@ test("the missing list is read as the JSON both lanes publish, and never throws"
     assert.deepEqual(entry.listing_completeness.missing, expected, raw);
   }
 });
+
+// ─── outage_overlap: the per-attempt backend measurement on the row (#1763) ──
+//
+// `infra_signature` classifies the error TEXT, so it is blind by construction to
+// a spec that wraps its wait in an assertion: the message is about the state
+// that never arrived, not about the transport. This block is the other evidence,
+// and it has to be on the ROW because the `liveness-*` artifacts expire after 7
+// days while the flake-recurrence window is 30.
+
+const SPEC_FILE = "tests-automations/regression/smoke/a.spec.ts";
+
+/** A results.json whose single flaky test failed `retries` times, then passed. */
+function flakyReport(title, retries) {
+  return report([
+    {
+      title,
+      status: "flaky",
+      results: [
+        ...retries.map((retry) => ({ ...result("failed", SPEC_ERROR), retry })),
+        { ...result("passed"), retry: retries.length },
+      ],
+    },
+  ]);
+}
+
+function withOutageFile(payload, rep, envOver = {}) {
+  const dir = makeTempDir("outage-");
+  const file = join(dir, "outage-attempts.json");
+  writeFileSync(file, JSON.stringify(payload));
+  return append(rep, { OUTAGE_ATTEMPTS: file, ...envOver });
+}
+
+const outagePayload = (attempts, over = {}) => ({
+  measured: true,
+  reportRead: true,
+  specMeasured: { [SPEC_FILE]: true },
+  attempts,
+  ...over,
+});
+
+test("#1763 a flake measured inside an outage carries the fraction, per attempt", () => {
+  const entry = withOutageFile(
+    outagePayload([
+      { file: SPEC_FILE, title: "boots", retry: 0, shard: "2", coverage: 0.82, downSeconds: 108, shardDownPct: 41.2 },
+      { file: SPEC_FILE, title: "boots", retry: 1, shard: "2", coverage: 0.87, downSeconds: 112, shardDownPct: 41.2 },
+    ]),
+    flakyReport("boots", [0, 1]),
+  );
+  const o = entry.flaky[0].outage_overlap;
+  assert.equal(o.state, "overlapped");
+  assert.equal(o.failed_attempts, 2);
+  assert.equal(o.min_coverage, 0.82);
+  assert.equal(o.shard, "2");
+  assert.equal(o.shard_down_pct, 41.2);
+  // The signature half is untouched and still says nothing — which is the whole
+  // reason this block exists.
+  assert.equal(entry.flaky[0].infra_signature, null);
+  assert.equal(entry.flaky[0].infra_signature_any_attempt, null);
+});
+
+test("#1763 a hard failure carries it too, since the blindness is not flake-specific", () => {
+  const entry = withOutageFile(
+    outagePayload([
+      { file: SPEC_FILE, title: "boots", retry: 0, shard: "2", coverage: 0.9, downSeconds: 90, shardDownPct: 30 },
+    ]),
+    report([
+      {
+        title: "boots",
+        status: "unexpected",
+        results: [{ ...result("failed", SPEC_ERROR), retry: 0 }],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].outage_overlap.state, "overlapped");
+  assert.equal(entry.failures[0].outage_overlap.min_coverage, 0.9);
+});
+
+test("#1763 a measured run with no overlap says `clear`, which is a measurement", () => {
+  const entry = withOutageFile(outagePayload([]), flakyReport("boots", [0]));
+  assert.equal(entry.flaky[0].outage_overlap.state, "clear");
+  assert.equal(entry.flaky[0].outage_overlap.min_coverage, 0);
+});
+
+test("#1763 an unmeasured shard says so, and never reads as clear", () => {
+  const entry = withOutageFile(
+    outagePayload([], { specMeasured: { [SPEC_FILE]: false } }),
+    flakyReport("boots", [0]),
+  );
+  assert.equal(entry.flaky[0].outage_overlap.state, "unmeasured");
+  assert.match(entry.flaky[0].outage_overlap.why, /no liveness probes/);
+});
+
+test("#1763 a lane that does not measure omits the field entirely", () => {
+  // Absence is this schema's word for "this lane does not measure it"; a null
+  // would read as a measured nothing. weekly-stable.yml has no recorder at all.
+  const entry = append(flakyReport("boots", [0]));
+  assert.equal("outage_overlap" in entry.flaky[0], false);
+});
+
+test("#1763 an unreadable outage file degrades to absent and says why on stderr", () => {
+  const dir = makeTempDir("outage-");
+  const reportPath = join(dir, "results.json");
+  const historyPath = join(dir, "history.jsonl");
+  writeFileSync(reportPath, JSON.stringify(flakyReport("boots", [0])));
+  const stderr = execFileSync(process.execPath, [SCRIPT], {
+    env: {
+      ...process.env,
+      PLAYWRIGHT_JSON: reportPath,
+      HISTORY_FILE: historyPath,
+      WORKFLOW: "unit",
+      GITHUB_RUN_ID: "1",
+      LANGFLOW_IMAGE: "img:tag",
+      OUTAGE_ATTEMPTS: join(dir, "absent.json"),
+    },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const entry = JSON.parse(readFileSync(historyPath, "utf8").trim());
+  assert.equal("outage_overlap" in entry.flaky[0], false);
+  assert.ok(stderr !== undefined);
+});
+
+test("#1763 a SKIPPED retry is not counted as a failed attempt", () => {
+  // A describe.serial abort turns the retries into skipped results that carry no
+  // error and never ran. Counting one would put a phantom attempt in
+  // failed_attempts with coverage 0 and drag min_coverage down — silently
+  // turning a fully corroborated collateral failure into an uncorroborated one.
+  const entry = withOutageFile(
+    outagePayload([
+      { file: SPEC_FILE, title: "boots", retry: 0, shard: "2", coverage: 0.8, downSeconds: 80, shardDownPct: 40 },
+    ]),
+    report([
+      {
+        title: "boots",
+        status: "unexpected",
+        results: [
+          { ...result("failed", SPEC_ERROR), retry: 0 },
+          { ...result("skipped"), retry: 1 },
+        ],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].outage_overlap.failed_attempts, 1);
+  assert.equal(entry.failures[0].outage_overlap.min_coverage, 0.8);
+});

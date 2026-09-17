@@ -1551,8 +1551,16 @@ phase_merge() {
 
   # Mid-run backend outages: the cause has to come BEFORE the per-test material, or
   # triage starts from the collateral specs (#1030).
+  # OUTAGE_ATTEMPTS_OUT is the per-attempt half of the same measurement (#1763),
+  # and it has to be written HERE because this is the only step that knows which
+  # shard ran which spec. The history append below reads it back; without it the
+  # row carries the per-shard aggregate only, and a triage recomputing recurrence
+  # 30 days later has nothing per attempt to read (the liveness artifacts are
+  # 7-day). Both lanes write the field or the comparator sits permanently on
+  # UNVERIFIED, which reads like a check and is not one.
   LIVENESS_DIR="$RUN_DIR/all-liveness" PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
   SHARD_TOTAL="$SHARD_TOTAL" GITHUB_OUTPUT="$outputs" \
+  OUTAGE_ATTEMPTS_OUT="$RUN_DIR/outage-attempts.json" \
     node scripts/report-backend-outages.mjs || true
   LIVENESS_MEASURED="$(gh_out "$outputs" measured)"
   LIVENESS_WEDGED="$(gh_out "$outputs" wedged)"
@@ -1824,6 +1832,7 @@ phase_publish() {
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
+    OUTAGE_ATTEMPTS="$RUN_DIR/outage-attempts.json" \
     COLLECTION_GATE_KEYS="${COLLECTION_GATE_KEYS:-}" \
     COLLECTION_GATE_KEYS_ABSENT="${COLLECTION_GATE_KEYS_ABSENT:-}" \
     LISTING_VERIFIED="${LISTING_VERIFIED:-}" \

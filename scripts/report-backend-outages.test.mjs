@@ -515,3 +515,81 @@ test("an unwritable corroboration path costs the exemption, never the liveness o
   );
   assert.match(outputs, /^measured=/m);
 });
+
+// ─── How MUCH of the attempt sat in downtime (#1763) ─────────────────────────
+//
+// `collateral` counts attempts that TOUCH a window, and this file's own honesty
+// note says why that cannot decide anything: on a shard measured 33-73 % down,
+// touching one is close to a coin flip. The fraction is a different instrument,
+// and it is the only evidence available for a failure whose error text will
+// never classify as transport-level — an assertion about state that never
+// arrived. Measured, never adjudicated: the threshold lives with the consumer.
+
+test("attemptCoverage measures the fraction of the attempt span inside downtime", () => {
+  const agg = attribute([shard3, shard4], collectAttempts(report));
+  const s3 = agg.shards.find((s) => s.shard === "3");
+  const byRetry = Object.fromEntries(s3.collateralIds.map((i) => [i.retry, i]));
+  // 10:50:30 +40 s sits wholly inside 10:50:00 -> 10:52:00.
+  assert.equal(byRetry[0].coverage, 1);
+  assert.equal(byRetry[0].downSeconds, 40);
+  assert.equal(byRetry[0].spanSeconds, 40);
+  // 10:51:30 +40 s runs 10 s past the window's end.
+  assert.equal(byRetry[1].coverage, 0.75);
+  assert.equal(byRetry[1].downSeconds, 30);
+  // The shard's own down-share travels with it: a coverage figure is only
+  // readable against the base rate on the shard that produced it.
+  assert.equal(byRetry[0].shardDownPct, 20);
+});
+
+test("attemptCoverage scores the blip #1763 says must not exempt anything", () => {
+  // "a 6-second blip inside a 130-second attempt should not exempt anything".
+  const blipShard = {
+    ...shard3,
+    windows: [{ startAt: "2026-07-29T10:50:30.000Z", endAt: "2026-07-29T10:50:36.000Z", seconds: 6, probes: 3 }],
+  };
+  const longAttempt = {
+    suites: [
+      {
+        file: FILE_A,
+        specs: [
+          {
+            title: "agent answers",
+            file: FILE_A,
+            tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:50:00.000Z", duration: 130000 }] }],
+          },
+        ],
+      },
+    ],
+  };
+  const agg = attribute([blipShard], collectAttempts(longAttempt));
+  const [id] = agg.shards[0].collateralIds;
+  assert.equal(agg.shards[0].collateral, 1, "it IS collateral by the boolean rule — that is the point");
+  assert.equal(id.coverage, 0.046);
+});
+
+test("overlapping windows are unioned, so coverage can never exceed 1", () => {
+  // A shard summary is not required to emit disjoint windows. Summing them would
+  // let a doubly-covered attempt report 150 % of itself and clear any threshold.
+  const doubled = {
+    ...shard3,
+    windows: [
+      { startAt: "2026-07-29T10:50:00.000Z", endAt: "2026-07-29T10:52:00.000Z", seconds: 120, probes: 60 },
+      { startAt: "2026-07-29T10:50:20.000Z", endAt: "2026-07-29T10:51:20.000Z", seconds: 60, probes: 30 },
+    ],
+  };
+  const agg = attribute([doubled], collectAttempts(report));
+  for (const id of agg.shards[0].collateralIds) {
+    assert.ok(id.coverage <= 1, `coverage ${id.coverage} exceeded the attempt's own span`);
+  }
+});
+
+test("collateralPayload carries the coverage through to the file the consumers read", () => {
+  const payload = collateralPayload(attribute([shard3, shard4], collectAttempts(report)));
+  assert.ok(payload.attempts.length > 0);
+  for (const a of payload.attempts) {
+    assert.equal(typeof a.coverage, "number");
+    assert.equal(typeof a.downSeconds, "number");
+    assert.equal(typeof a.shardDownPct, "number");
+    assert.equal(a.shard, "3");
+  }
+});

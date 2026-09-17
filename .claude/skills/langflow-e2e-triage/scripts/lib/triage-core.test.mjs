@@ -751,3 +751,116 @@ test('#1310 the gap counts hard failures too, not only flakes', () => {
   const ds = buildDataset(rows, [], { runId: 'r2' });
   assert.equal(ds.infra_classification_gap.entries, 2);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1763 — the exemption that reads a MEASUREMENT, for the failures no signature
+// can ever reach.
+//
+// `infra_signature` matches the error TEXT against a transport-level list. A
+// spec that wraps its wait in an assertion reports the state that never arrived
+// — `expect(received).toBe(expected)`, `"de-AT": the application never reached
+// its main page` — so a wedge-caused failure of it classifies `null` on every
+// attempt of every run, and no pattern can be added to change that. Measured
+// twice in three weeks: agent-system-prompt.spec.ts:213 (2026-09-08, 82 %/87 %
+// of both failing attempts inside outages on a shard 41 % down) and
+// locale-resilience.spec.ts:116 (2026-09-10, 66 %).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ASSERTION_SIG = 'Error: expect(received).toBe(expected) // Object.is equality';
+
+/** A flake entry whose error is an assertion, with an optional outage block. */
+const assertionFlake = (outage) => ({
+  test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+  error_signature: ASSERTION_SIG, infra_signature: null,
+  ...(outage ? { outage_overlap: outage } : {}),
+});
+
+const overlapped = (min, max = min, over = {}) => ({
+  state: 'overlapped', failed_attempts: 2, min_coverage: min, max_coverage: max,
+  attempts: [{ retry: 0, coverage: min, down_seconds: 100 }, { retry: 1, coverage: max, down_seconds: 100 }],
+  shard: '2', shard_down_pct: 41.2, ...over,
+});
+
+test('#1763 a recurrent assertion-shaped flake measured deep inside an outage is NOT actionable', () => {
+  const f = onlyFlake(infraRows(assertionFlake(overlapped(0.82, 0.87))), { classifyInfra: classifyInfraError });
+  assert.equal(f.recurrence.same_signature, true, 'the recurrence is true — that was never the defect');
+  assert.equal(f.infra_signature, null, 'and no signature will ever classify it');
+  assert.equal(f.actionable, false);
+  assert.equal(f.outage_excluded.min_coverage, 0.82);
+  assert.equal(f.outage_excluded.threshold, 0.5);
+  assert.equal(f.outage_excluded.shard, '2');
+  assert.equal(f.outage_excluded.shard_down_pct, 41.2, 'the base rate the coverage must be read against');
+  assert.match(f.outage_excluded.why, /not attributable to this spec/);
+});
+
+test('#1763 below the threshold it stays actionable — and the measurement is printed anyway', () => {
+  // "a 6-second blip inside a 130-second attempt should not exempt anything".
+  const f = onlyFlake(infraRows(assertionFlake(overlapped(0.046))), { classifyInfra: classifyInfraError });
+  assert.equal(f.actionable, true);
+  assert.equal(f.outage_excluded, undefined);
+  assert.equal(f.outage_overlap.min_coverage, 0.046,
+    'branch 3: the analyst sees the downtime without having to download four artifacts');
+});
+
+test('#1763 one corroborated attempt beside one clean one is the spec failing on its own', () => {
+  // min_coverage, not max: a test that failed once inside an outage and once
+  // while the backend was answering failed by itself the second time.
+  const f = onlyFlake(infraRows(assertionFlake(overlapped(0, 0.99))), { classifyInfra: classifyInfraError });
+  assert.equal(f.actionable, true);
+  assert.equal(f.outage_excluded, undefined);
+});
+
+test('#1763 `clear`, `unmeasured` and an absent block all leave the flake actionable', () => {
+  const clear = { state: 'clear', failed_attempts: 2, min_coverage: 0, max_coverage: 0, attempts: [] };
+  const unmeasured = { state: 'unmeasured', failed_attempts: 2, why: 'no shard summary claims this spec' };
+  for (const block of [clear, unmeasured, undefined]) {
+    const f = onlyFlake(infraRows(assertionFlake(block)), { classifyInfra: classifyInfraError });
+    assert.equal(f.actionable, true, `${block?.state ?? 'absent'} must never exempt (#1012)`);
+    assert.equal(f.outage_excluded, undefined);
+  }
+});
+
+test('#1763 the signature keeps precedence — it is the stronger evidence, and says so', () => {
+  const f = onlyFlake(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: 'api-request-timeout',
+      outage_overlap: overlapped(0.9),
+    }),
+    { classifyInfra: classifyInfraError },
+  );
+  assert.equal(f.actionable, false);
+  assert.equal(f.infra_excluded.signature, 'api-request-timeout');
+  assert.equal(f.outage_excluded, undefined, 'one exclusion block, and it names the strongest evidence');
+});
+
+test('#1763 a demoted flake is never dropped, and hard failures carry the block too', () => {
+  const rows = infraRows(assertionFlake(overlapped(0.82, 0.87)));
+  // Put the same measurement on a hard failure of the latest run.
+  rows[1].failures = [{
+    test: 'hf', file: 'b.spec.ts', line: 2, tags: ['@stable'], attempts: 1,
+    error_signature: ASSERTION_SIG, infra_signature: null, outage_overlap: overlapped(0.7),
+  }];
+  const ds = buildDataset(rows, [], { runId: 'r2', classifyInfra: classifyInfraError });
+  assert.equal(ds.flakes.length, 1, 'demoted, never dropped (#1012)');
+  assert.equal(ds.hard_failures[0].outage_overlap.min_coverage, 0.7,
+    'the auto-removal already ran in-run; here the block is evidence for the reader');
+});
+
+test('#1763 recurrence records what the backend was doing on EACH earlier occurrence', () => {
+  // The liveness artifacts expire after 7 days and this window is 30, so the
+  // history row is the only place a past refutation survives. `unrecorded` is a
+  // fourth state: a row written before #1763 measured nothing, which is not the
+  // same as measuring and finding nothing.
+  // A JSON round-trip, deliberately, and NOT structuredClone: the latter
+  // preserves object identity inside the cloned graph, and infraRows() puts ONE
+  // object in both rows — so the "clone" still shares it, the delete below hits
+  // both rows, and the test passes while asserting nothing (measured).
+  const rows = JSON.parse(JSON.stringify(infraRows(assertionFlake(overlapped(0.82, 0.87)))));
+  delete rows[0].flaky[0].outage_overlap;
+  const f = onlyFlake(rows, { classifyInfra: classifyInfraError });
+  assert.deepEqual(f.recurrence.outage_by_date, {
+    '2026-07-29': 'unrecorded',
+    '2026-08-05': 'overlapped',
+  });
+});

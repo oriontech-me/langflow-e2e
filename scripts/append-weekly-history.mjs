@@ -20,6 +20,12 @@
 //                             `backend` block (#1077); otherwise it is omitted.
 //   SHARD_TOTAL               Optional. The run's declared shard count, recorded
 //                             so a shard that uploaded nothing cannot vanish.
+//   OUTAGE_ATTEMPTS           Optional. Path to the `outage-attempts.json` that
+//                             `report-backend-outages.mjs` writes earlier in the same
+//                             job (its `OUTAGE_ATTEMPTS_OUT`). When set AND readable,
+//                             every failure/flake entry carries `outage_overlap`
+//                             (#1763). Unset means the lane does not measure it and the
+//                             field is omitted — never recorded as a clean measurement.
 //   COLLECTION_GATE_KEYS      Optional, and read as a PAIR with the one below:
 //   COLLECTION_GATE_KEYS_ABSENT
 //                             the collection-gating provider keys the run's listing
@@ -68,6 +74,23 @@
 //   credential guard being the usual wrapper). Rows written before #1310 lack
 //   the field, and the triage dataset falls back to classifying
 //   `error_signature` for those — a strictly weaker check.
+//   `outage_overlap` (optional, additive to schema v1, #1763) is, PER ENTRY, how
+//   much of each of its failed attempts sat inside measured backend downtime on
+//   the shard that ran it: `{ state, failed_attempts, min_coverage, max_coverage,
+//   attempts[], shard?, shard_down_pct?, why? }`. It exists because
+//   `infra_signature` classifies the error TEXT, and a spec that wraps its wait in
+//   an assertion reports the state that never arrived rather than the transport —
+//   so a wedge-caused failure comes back `infra_signature: null` on every attempt
+//   and a recurrence of it reads as attributable (measured twice in three weeks:
+//   `agent-system-prompt.spec.ts:213` on 2026-09-08, `locale-resilience.spec.ts:116`
+//   on 2026-09-10). The three states are not two: `overlapped` and `clear` are
+//   measurements, `unmeasured` is the absence of one and carries `why` (#1012).
+//   It is a MEASUREMENT, never a verdict — the coverage threshold that demotes a
+//   flake lives in the triage dataset (`triage-core.mjs`), the same split
+//   `infra_signature` keeps with `remove-stable-from-failures.ts`. Recorded here
+//   because the `liveness-*` artifacts expire after 7 days while the flake
+//   recurrence window is 30, so without it a later triage recomputing recurrence
+//   sees the same `actionable: true` with no trace of the earlier refutation.
 //   `backend` (optional, additive to schema v1, #1077) is the in-run backend
 //   liveness measurement for the run — outage count, unreachable seconds, and
 //   the per-shard breakdown of the same, alongside each shard's observed span
@@ -134,6 +157,7 @@
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { classifyInfraError } from "./lib/infra-signatures.mjs";
+import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -256,6 +280,43 @@ function paramFromSuitePath(suitePath) {
   return null;
 }
 
+// The per-attempt outage corroboration (#1763), read ONCE for the whole run.
+//
+// Fail-closed and silent-never: an unset path, an unreadable file or a malformed
+// payload all come back unavailable with a reason, which is PRINTED and makes
+// every entry omit the field rather than record `clear`. The difference is the
+// whole point of the block — a consumer that cannot tell "measured and clean"
+// from "never measured" has no evidence at all (#1012).
+const outagePayload = loadOutagePayload(process.env.OUTAGE_ATTEMPTS || "", readFileSync);
+if (process.env.OUTAGE_ATTEMPTS && outagePayload.available !== true) {
+  console.error(`[history] outage_overlap omitted: ${outagePayload.reason}`);
+}
+
+// `result.retry` of every attempt that did not pass, oldest first.
+//
+// `skipped` is excluded for the same reason the hard-failure path below excludes
+// it: a `describe.serial` abort turns the retries into skipped results that
+// carry no error and never ran, so counting them would put a phantom attempt in
+// `failed_attempts` and drag `min_coverage` to 0 — i.e. it would silently
+// convert a fully-corroborated collateral failure into an uncorroborated one.
+function failedRetries(test) {
+  return (test?.results || [])
+    .filter((r) => r.status !== "passed" && r.status !== "skipped")
+    .map((r) => Number(r.retry) || 0);
+}
+
+// The spread-ready `outage_overlap` field for one entry: `{}` when the lane does
+// not measure, so the field is ABSENT rather than null. Absence is already this
+// schema's word for "this lane does not measure it" (`collection_gate_keys`,
+// `listing_completeness`), and a null would read as a measured nothing.
+function outageOverlapField(file, title, test) {
+  const block = overlapForEntry(
+    { specPath: file, title, failedRetries: failedRetries(test) },
+    outagePayload,
+  );
+  return block ? { outage_overlap: block } : {};
+}
+
 function visit(node, suitePath = []) {
   const path = node.title ? [...suitePath, node.title] : suitePath;
   const param = paramFromSuitePath(path);
@@ -299,6 +360,7 @@ function visit(node, suitePath = []) {
           error_signature: firstFailedSignature || "unknown",
           infra_signature: infraSignatureId(firstFailedResult),
           infra_signature_any_attempt: infraSignatureAnyAttempt(test),
+          ...outageOverlapField(file, title, test),
           ...(param ? { param } : {}),
         });
         continue;
@@ -336,6 +398,7 @@ function visit(node, suitePath = []) {
         // collateral block cannot disagree about the same failure.
         infra_signature: infraSignatureId(lastFailed),
         infra_signature_any_attempt: infraSignatureAnyAttempt(test),
+        ...outageOverlapField(file, title, test),
         ...(param ? { param } : {}),
       });
     }
