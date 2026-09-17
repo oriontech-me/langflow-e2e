@@ -884,3 +884,59 @@ test('#1763 recurrence records what the backend was doing on EACH earlier occurr
     '2026-08-05': 'overlapped',
   });
 });
+
+// ─── The dedupe key carries the variant too (#1763) ──────────────────────────
+
+test('dedupeEntries keeps two provider variants of one spec apart', () => {
+  // Same title, same line — the variant lives only in the enclosing describe,
+  // which is what `param` records (#899). Without it in the key the two collapse
+  // and the survivor's verdict answers for both.
+  const input = [
+    { test: 'a', line: 1, param: 'openai / gpt-4o-mini', tag: 'openai' },
+    { test: 'a', line: 1, param: 'google / gemini-3.5-flash', tag: 'google' },
+    { test: 'a', line: 1, param: 'openai / gpt-4o-mini', tag: 'dup' },
+    { test: 'a', line: 1, tag: 'unparameterized' },
+    { test: 'a', line: 1, tag: 'unparameterized-dup' },
+  ];
+  assert.deepEqual(
+    dedupeEntries(input).map((e) => e.tag),
+    ['openai', 'google', 'unparameterized'],
+    'variants survive; a repeat of the SAME variant and the pre-#899 pair still collapse',
+  );
+});
+
+test('#1763 one variant is exempted without the other one disappearing', () => {
+  // The defect this pins, measured end to end before the key was widened: the
+  // openai variant sat 90 % inside a measured outage and the google variant
+  // failed while the backend was answering, and `dedupeEntries` dropped one of
+  // them by describe declaration order. Whichever survived decided BOTH — which
+  // is exactly the collision `attemptKey` already refuses one layer down, and it
+  // also silently shortened the list the demotion exists to keep visible (#1012).
+  const variant = (param, outage) => ({
+    test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+    error_signature: ASSERTION_SIG, infra_signature: null, param, outage_overlap: outage,
+  });
+  const clear = { state: 'clear', failed_attempts: 1, min_coverage: 0, max_coverage: 0,
+    attempts: [{ retry: 0, coverage: 0, down_seconds: 0 }] };
+
+  for (const order of [0, 1]) {
+    const entries = [
+      variant('openai / gpt-4o-mini', overlapped(0.9)),
+      variant('google / gemini-3.5-flash', clear),
+    ];
+    if (order) entries.reverse();
+    const rows = infraRows(null);
+    for (const row of rows) row.flaky = entries;
+
+    const flakes = buildDataset(rows, [], { runId: 'r2', classifyInfra: classifyInfraError }).flakes;
+    assert.equal(flakes.length, 2, `both variants survive whatever order they were declared in (order ${order})`);
+    const byParam = Object.fromEntries(flakes.map((f) => [f.param ?? f.provider, f]));
+    const openai = flakes.find((f) => f.outage_overlap.state === 'overlapped');
+    const google = flakes.find((f) => f.outage_overlap.state === 'clear');
+    assert.equal(openai.actionable, false, 'the corroborated variant is still exempted');
+    assert.ok(openai.outage_excluded, 'and says why');
+    assert.equal(google.actionable, true, 'the variant that failed while the backend answered is NOT exempted');
+    assert.equal(google.outage_excluded, undefined);
+    assert.equal(Object.keys(byParam).length, 2, 'and the two are told apart by their provider');
+  }
+});

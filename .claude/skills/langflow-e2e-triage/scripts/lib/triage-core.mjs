@@ -230,12 +230,31 @@ export function matchUmbrella(issues, runId) {
   return hit ? hit.number : null;
 }
 
-/** De-duplicate history entries by test+line, keeping the first occurrence. */
+/**
+ * De-duplicate history entries by test+line+param, keeping the first occurrence.
+ *
+ * `param` is in the key for the reason #1763's join key carries it (see
+ * `scripts/lib/spec-param.mjs`): a model-parameterized spec emits one entry per
+ * provider with the SAME title and the SAME line — the variant lives only in the
+ * enclosing describe — so a 2-part key collapses them into one row and the
+ * SURVIVOR's verdict answers for both. That is decided by describe declaration
+ * order, and it is not hypothetical: 3 of the 55 committed history rows already
+ * carry a colliding `(test, line)` pair in `flaky[]` (2026-07-13/15/22, all
+ * agent specs), and the weekday provider rotation (#1185) is `continue-on-error`
+ * with the multi-provider run as its documented fallback.
+ *
+ * It costs nothing on the common path — a spec with no `param` keys on the empty
+ * string, so the pre-#1763 rows (whose `param` is absent on both sides) still
+ * collapse exactly as before. What it buys is the two guarantees the exemptions
+ * are written on: one variant's evidence never decides another's verdict, and a
+ * variant that was NOT exempted is no longer dropped from the list in silence
+ * (#1012) — the failure `outage_excluded` exists to make visible.
+ */
 export function dedupeEntries(entries) {
   const seen = new Set();
   const out = [];
   for (const e of entries || []) {
-    const key = `${e.test}\0${e.line}`;
+    const key = `${e.test}\0${e.line}\0${e.param ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(e);
