@@ -321,6 +321,11 @@ async function retrieveViaMessageHistory(
   await page.getByTestId("int_int_n_messages").fill("100");
   await page.getByTestId("popover-anchor-input-session_id").fill(session);
   await page.getByTestId("popover-anchor-input-context_id").fill(contextId);
+  // Stays a DRAIN, audited for #1743: the run below builds from the
+  // FRONTEND's in-memory graph — `flowStore.buildFlow` sends
+  // `flowData: { nodes, edges }` straight from the store — so no assertion
+  // after this line depends on the edit having reached the server, and a
+  // `watchFlowSave` would pay a full debounce to prove nothing.
   await waitForFlowSaveSettled(page);
 
   await page.getByTestId("button_run_message history").click();
@@ -441,6 +446,10 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("seed the task and run through the Playground", async () => {
           await setChatInputText(page, task);
+          // Stays a DRAIN, audited for #1743: the Playground run posts
+          // `flowData: { nodes, edges }` from the store, not the persisted
+          // flow, and the assertion below reads the session messages the RUN
+          // produced. Nothing here waits on the seed reaching the server.
           await waitForFlowSaveSettled(page);
           await openPlaygroundAndSend(page, task);
         });
