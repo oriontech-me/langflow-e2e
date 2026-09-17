@@ -1,6 +1,6 @@
 # Agent context_id — switching isolates history between contexts
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev1`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`, #1743)
 
 ---
 
@@ -149,6 +149,16 @@ the geometry above was measured.
 > once the server confirms the intended context on all three nodes. If the
 > editor wins three times in a row the test fails as an explicit **setup**
 > error naming the reverted write — never as a fake isolation defect.
+>
+> The drain is `waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() })`
+> and the window is load-bearing (#1743): the helper's 700 ms default arms
+> immediately and expires ~1.3 s before a 2000 ms debounce fires, so the
+> read-back used to race the very autosave it is guarding against. Deliberately
+> NOT `watchFlowSave` — that primitive fails when no save appears, and on
+> attempt 2+ none does, because the reload restores the task text this same
+> loop persisted on attempt 1 and `fill()` then rewrites an identical value,
+> leaving the node clean. A drain is correct whether or not the edit mutated
+> anything; a watch would turn a recoverable retry into a hard red.
 
 > **Canvas bottom-overlay note (#1643).** Langflow renders two different
 > components into ONE fixed container over the canvas —
