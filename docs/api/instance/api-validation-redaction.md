@@ -49,6 +49,18 @@ its request. The handler's own rule is a keyed allow-list (`_SCHEMA_CTX_KEYS`:
 `min_length`, `max_length`, `pattern`, `expected`, `ge`, `lt`, …), applied **only** to
 built-in pydantic error types — a custom error keeps no `ctx` at all.
 
+**Rows 2 and 3 pin the same branch of that rule, and an earlier version of this document
+said otherwise.** `value_error` **is** a built-in pydantic error type — measured,
+`'value_error' in get_args(pydantic_core.core_schema.ErrorType)` is `True`, as it is for
+`uuid_parsing`, `missing`, `string_too_long` and `string_pattern_mismatch` (104 types in
+all). So the icon error's `ctx` is not dropped because the type is custom: `builtin` is
+true for it, and `ctx: {"error": ValueError(…)}` is dropped by the **`_SCHEMA_CTX_KEYS`
+filter**, exactly as `uuid_parsing`'s is. The `msg` scrub fires on the same key for the
+same reason — through `any(key not in _SCHEMA_CTX_KEYS for key in ctx)`, not through
+`not builtin`. The genuinely non-built-in branch (`kept_ctx = … if builtin else {}`,
+reachable from a `PydanticCustomError`) is therefore asserted **nowhere in this spec**,
+and is recorded below as a gap rather than claimed as coverage.
+
 ### Two measured boundaries, recorded and deliberately not asserted
 
 - **`MIN_REDACTED_LENGTH` is exactly 8, measured on the wire.** `icon: ":abcdef"` (7
@@ -116,7 +128,8 @@ resolve the release gate (below); each test then runs its own shapes.
    one is the branch that raises `f"Invalid emoji. {v} is not a valid emoji."`) → `422`.
 2. Every entry is `value_error` on `["body","icon"]`, its `msg` **contains the literal
    `[redacted]`** and does **not** contain `SENTINEL`, and it carries **no `ctx`** —
-   a custom error's ctx is dropped whole.
+   pydantic puts the raised `ValueError` in `ctx.error`, which the `_SCHEMA_CTX_KEYS`
+   filter drops (`value_error` is itself a built-in type; see above).
 3. The raw response text does not contain `SENTINEL`.
 4. `icon: ":abcdefg"` — exactly 8 submitted characters — also answers `[redacted]`,
    pinning `MIN_REDACTED_LENGTH`.
@@ -228,6 +241,10 @@ The four tests pass three consecutive times at `--retries=0 --workers=1` against
 
 - **`ResponseValidationError`** — a different exception, deliberately out of the
   handler's scope and unreachable without a backend defect (see above).
+- **The handler's non-built-in branch.** `kept_ctx` is emptied wholesale for an error
+  type outside `ErrorType` (a `PydanticCustomError`), and no route found on a request
+  path produces one — every shape this spec can reach is built-in, including
+  `value_error`. Asserted nowhere; see the note under the contract table.
 - **Secrets submitted as field *names***, which land in `loc` by design.
 - **Every route.** The handler is registered once on the app, so this spec asserts the
   contract on five routes chosen for the *shapes* they produce, not for the routes

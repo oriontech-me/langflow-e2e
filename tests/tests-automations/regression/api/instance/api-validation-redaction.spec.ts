@@ -180,8 +180,10 @@ test.describe("422 validation errors do not echo submitted values", () => {
           // request that never carried it, or on a route that stopped validating; this
           // token can only appear because the scrub ran over a submitted string.
           expect(String(entry.msg)).toContain(REDACTED);
-          // A custom error's ctx is the author's own, so the handler keeps none of it —
-          // pydantic would have put the raised ValueError in `ctx.error`.
+          // pydantic puts the raised ValueError in `ctx.error`, which is input-derived
+          // and so not in `_SCHEMA_CTX_KEYS` — the SAME branch Test 3 pins through
+          // `uuid_parsing`. Not the handler's custom-type branch: `value_error` IS a
+          // built-in pydantic error type (measured), so `builtin` is true here too.
           expect(entry).not.toHaveProperty("ctx");
         }
       });
