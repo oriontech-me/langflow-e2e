@@ -3,6 +3,7 @@ import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
+import { pendingSaveQuietMs } from "../../../../helpers/flows/autosave-interval";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
@@ -199,7 +200,32 @@ async function prepareTurn(
     await page.reload();
     await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
     await setChatInputText(page, task);
-    await waitForFlowSaveSettled(page);
+    // The read below only means anything if the editor has NO write left to
+    // make: a PATCH still pending would land after it and revert the context
+    // the loop just confirmed — the exact failure this function exists to
+    // detect, passed off as success. The 700 ms default window cannot give
+    // that: it arms immediately and expires ~1.3 s before a 2000 ms debounce
+    // fires, so the read used to race the very autosave being guarded against
+    // (#1741/#1743). `pendingSaveQuietMs()` is the smallest window that also
+    // closes a save that is merely SCHEDULED.
+    //
+    // NOT `watchFlowSave`, and the reason is specific to this loop rather than
+    // a general preference. That primitive FAILS when no save appears, and on
+    // attempt 2+ none does: the reload restores the task text this same loop
+    // persisted on attempt 1, so `setChatInputText`'s `fill()` rewrites an
+    // identical value and the node never goes dirty. The watch would turn a
+    // recoverable retry into a hard red.
+    //
+    // Measured end to end on `1.13.0.dev15`, not inferred from the mechanism:
+    // fill a ChatInput with a new value -> 1 PATCH; `page.reload()` -> 0; refill
+    // the IDENTICAL value -> 0. (`use-save-flow.ts` gates the whole mutation on
+    // `customStringify(requested) !== customStringify(saved)`, and the reload
+    // path rehydrates with a bare `set()` rather than `setNodes`, so neither the
+    // load nor the no-op edit diffs.) A drain is correct whether or not the edit
+    // mutated anything, which is what this call needs.
+
+    // Each attempt pays the full ~2.5 s window, up to 3 attempts per turn.
+    await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
 
     stored = await readContextIds(request, bearer, flowId, CONTEXT_NODE_TYPES);
     if (CONTEXT_NODE_TYPES.every((type) => stored[type] === contextId)) return;
@@ -462,6 +488,11 @@ async function setupMessageHistoryNode(
 // next scoped run starts from the canvas.
 async function runRetrievalScopedTo(page: Page, contextId: string): Promise<string> {
   await page.getByTestId("popover-anchor-input-context_id").fill(contextId);
+  // Stays a DRAIN, audited for #1743: the run below builds from the
+  // FRONTEND's in-memory graph — `flowStore.buildFlow` sends
+  // `flowData: { nodes, edges }` straight from the store — so no assertion
+  // after this line depends on the edit having reached the server, and a
+  // `watchFlowSave` would pay a full debounce to prove nothing.
   await waitForFlowSaveSettled(page);
 
   // The success toast of a previous run must be gone before waiting on the

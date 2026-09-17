@@ -801,8 +801,13 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
             .getByTestId(`${PROVIDER_NAME}-${FOUNDRY_DEPLOYMENT}-option`)
             .first()
             .click();
-          // The selection autosaves with a debounce; the Playground builds the
-          // PERSISTED flow.
+          // Stays a DRAIN, audited for #1743 — and the claim this replaces was
+          // wrong: the Playground does NOT build the persisted flow. Opened
+          // from the editor it runs `flowStore.buildFlow`, which posts
+          // `flowData: { nodes, edges }` from the store. Both assertions below
+          // (the node's model widget, then the reply) therefore hold without
+          // the selection having reached the server, so there is nothing here
+          // for a `watchFlowSave` to prove.
           await waitForFlowSaveSettled(page);
         });
 

@@ -3,7 +3,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
-import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
+import { watchFlowSave } from "../../../helpers/flows/watch-flow-save";
 
 // Getting a component from the sidebar onto the canvas — QA-CHECKLIST §15.2:
 // double-click, drag-and-drop, and the state the added component arrives in.
@@ -137,6 +137,19 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
     // Every test starts from an empty canvas; asserting it here is what makes
     // "one node exists afterwards" a causal check instead of a coincidence.
     await expect(page.locator(".react-flow__node")).toHaveCount(0);
+    // NO drain here, and that is measured rather than assumed (#1743). The
+    // tests below arm `watchFlowSave`, which resolves on the first save it
+    // observes and cannot tell which mutation produced it — so a PATCH merely
+    // SCHEDULED at arming time would satisfy it while carrying pre-add state.
+    // On `1.13.0.dev15` the editor schedules none here: opening a flow issues
+    // no PATCH (empty flow AND a 6-node one, `updated_at` unchanged after 8 s),
+    // and neither does a viewport change — fit-view plus zoom-out moved the
+    // transform with zero PATCHes in 6 s, while the control (one node-field
+    // edit) produced exactly one. Only graph/node mutations autosave.
+    //
+    // The backstop if that ever changes is `readPersistedNodes`, which polls:
+    // a watch satisfied by a stale save degrades to the 20 s poll this spec
+    // already had, never to a false green.
   });
 
   test.afterEach(async ({ page, request }) => {
@@ -175,45 +188,62 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
     async ({ page, request }) => {
       const frame = await readCanvasFrame(page);
 
-      await test.step("drag the Chat Output card onto the canvas", async () => {
-        await page.getByTestId("sidebar-search-input").fill("chat output");
-        await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-          timeout: 30000,
+      // Armed BEFORE the drop and awaited in the persistence step below
+      // (#1743). The barrier this replaces drained network SILENCE, and on an
+      // editor whose debounce is 2000 ms that returns ~700 ms after the drop
+      // with the autosave not yet issued — leaving `readPersistedNodes` to
+      // burn its own 20 s poll on a PATCH nothing had proved was coming, and
+      // to report "the node never persisted" for a save that never left the
+      // browser. This observes the save being issued and completing, and FAILS
+      // naming the cause when none appears.
+      const save = watchFlowSave(page);
+      // `dispose()` in a `finally` because the window between arming and
+      // `settled()` contains assertions that can throw: the watch's own
+      // contract asks for it on the abort path, and it is idempotent after
+      // `settled()`. Same shape as `human-input-node-config.spec.ts`.
+      try {
+        await test.step("drag the Chat Output card onto the canvas", async () => {
+          await page.getByTestId("sidebar-search-input").fill("chat output");
+          await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
+            timeout: 30000,
+          });
+
+          await page
+            .getByTestId("input_outputChat Output")
+            .dragTo(page.locator(".react-flow__pane"), {
+              targetPosition: DROP_POINT,
+            });
         });
 
-        await page
-          .getByTestId("input_outputChat Output")
-          .dragTo(page.locator(".react-flow__pane"), {
-            targetPosition: DROP_POINT,
-          });
-      });
+        await test.step("one Chat Output node appears", async () => {
+          const nodes = page.locator(".react-flow__node");
+          await expect(nodes).toHaveCount(1, { timeout: 15000 });
+          await expect(nodes.first()).toHaveAttribute(
+            "data-testid",
+            /^rf__node-ChatOutput-/,
+          );
+        });
 
-      await test.step("one Chat Output node appears", async () => {
-        const nodes = page.locator(".react-flow__node");
-        await expect(nodes).toHaveCount(1, { timeout: 15000 });
-        await expect(nodes.first()).toHaveAttribute(
-          "data-testid",
-          /^rf__node-ChatOutput-/,
-        );
-      });
+        await test.step("the node is persisted at the drop position", async () => {
+          // This is what separates a real drop from a click-to-add: the node has
+          // to land where the pointer was released, not at an app-chosen default.
+          await save.settled();
+          const [node] = await readPersistedNodes(request, token, flowId, 1);
 
-      await test.step("the node is persisted at the drop position", async () => {
-        // This is what separates a real drop from a click-to-add: the node has
-        // to land where the pointer was released, not at an app-chosen default.
-        await waitForFlowSaveSettled(page);
-        const [node] = await readPersistedNodes(request, token, flowId, 1);
-
-        const expected = {
-          x: (DROP_POINT.x - frame.viewport.x) / frame.viewport.scale,
-          y: (DROP_POINT.y - frame.viewport.y) / frame.viewport.scale,
-        };
-        expect(Math.abs(node.position.x - expected.x)).toBeLessThanOrEqual(
-          DROP_TOLERANCE,
-        );
-        expect(Math.abs(node.position.y - expected.y)).toBeLessThanOrEqual(
-          DROP_TOLERANCE,
-        );
-      });
+          const expected = {
+            x: (DROP_POINT.x - frame.viewport.x) / frame.viewport.scale,
+            y: (DROP_POINT.y - frame.viewport.y) / frame.viewport.scale,
+          };
+          expect(Math.abs(node.position.x - expected.x)).toBeLessThanOrEqual(
+            DROP_TOLERANCE,
+          );
+          expect(Math.abs(node.position.y - expected.y)).toBeLessThanOrEqual(
+            DROP_TOLERANCE,
+          );
+        });
+      } finally {
+        save.dispose();
+      }
     });
 
   test("an added component arrives with its catalog default settings",
@@ -245,17 +275,26 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
         expect(Object.keys(catalogTemplate).length).toBeGreaterThan(0);
       });
 
-      await test.step("add Chat Input to the canvas", async () => {
-        await addComponentByDoubleClick(
-          page,
-          "chat input",
-          "input_outputChat Input",
-        );
-        await expect(page.locator(".react-flow__node")).toHaveCount(1, {
-          timeout: 15000,
+      // Same contract as the drag test: armed before the add, awaited before
+      // the persisted read (#1743). The catalog read above issues no flow
+      // mutation, so the editor is still quiescent here.
+      const save = watchFlowSave(page);
+
+      try {
+        await test.step("add Chat Input to the canvas", async () => {
+          await addComponentByDoubleClick(
+            page,
+            "chat input",
+            "input_outputChat Input",
+          );
+          await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+            timeout: 15000,
+          });
+          await save.settled();
         });
-        await waitForFlowSaveSettled(page);
-      });
+      } finally {
+        save.dispose();
+      }
 
       await test.step("the persisted node carries every catalog default", async () => {
         const [node] = await readPersistedNodes(request, token, flowId, 1);

@@ -31,9 +31,10 @@
 // Shape of the workaround, following `renameFlow`'s #995 contract — PREVENTION
 // first, recovery last, and loud either way:
 //
-//  - Prevention: drain in-flight flow saves before the click. `changesNotSaved`
-//    is exactly what `useBlocker` gates on, so a settled store keeps most exits
-//    out of the blocked state entirely.
+//  - Prevention: drain the flow saves before the click — in flight AND merely
+//    scheduled (#1743; see `editorExitDrainQuietMs`). `changesNotSaved` is
+//    exactly what `useBlocker` gates on, so a settled store keeps most exits out
+//    of the blocked state entirely.
 //  - Recovery: only where the caller opts in. A full document load leaves the
 //    SPA blocker behind — measured: `page.goto("/")` lands on `/flows` with the
 //    home markers rendered and the dialog gone, the same route the chevron's own
@@ -43,7 +44,48 @@
 //    instead, which is strictly better than the same failure 90 s downstream.
 
 import { type Page, expect } from "@playwright/test";
+import { pendingSaveQuietMs } from "./autosave-interval";
 import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
+
+/**
+ * The quiet window this helper drains with, and the reason it is not the
+ * default (#1743).
+ *
+ * `waitForFlowSaveSettled`'s 700 ms default arms IMMEDIATELY when nothing is in
+ * flight, and the autosave an edit schedules is issued one full debounce later —
+ * 2000 ms on `1.13.0.dev15`. So the default window expires BEFORE the save this
+ * prevention step exists to wait out, and the exit then happens with the store
+ * still diverged: `useBlocker(changesNotSaved || isBuilding)` fires, which is
+ * precisely the state that leads to the #1153 deadlock below. Measured by
+ * `general-bugs-save-changes-on-node.spec.ts` at its own call site — the drain
+ * resolved ~707 ms after a fill whose PATCH fired at ~1015 ms, and the blocker
+ * then showed on 4 of 4 iterations.
+ *
+ * `pendingSaveQuietMs()` is the only window that closes a save that is SCHEDULED
+ * rather than in flight: one debounce plus slack, read from the instance. A
+ * pending save restarts the window when it lands, so the barrier still returns
+ * only once the editor is genuinely quiet.
+ *
+ * Measured cost ~+1.8 s per exit — the window itself, since on this build most
+ * exits have no save to wait out at all (8 tests across the 5 caller specs went
+ * 1.1 m -> 1.3 m). Paid on every call, including `edit-flow-name`'s, which
+ * exits once per name in its loop. That buys the blocker PREVENTION this helper
+ * leads with; the alternative is paying `BLOCKER_GRACE_MS` (15 s) whenever the
+ * dialog does show, plus — where `escapeDeadlock` is on — a full page load that
+ * discards the editor's unsaved state.
+ *
+ * NOT `watchFlowSave`, and that is a deliberate verdict rather than an
+ * oversight. That primitive has to be armed BEFORE the edit it guards, and this
+ * helper is called AFTER whatever the caller did — it cannot arm anything. It
+ * also FAILS on silence, which is wrong here: leaving an editor nobody edited is
+ * the common case and must not be a red. A caller whose LATER assertions depend
+ * on an edit having persisted still owes itself a server-truth gate before this
+ * call (`export-import-flow.spec.ts` and `general-bugs-save-changes-on-node.spec.ts`
+ * both have one); this window buys the blocker prevention, not that proof.
+ */
+export function editorExitDrainQuietMs(): number {
+  return pendingSaveQuietMs();
+}
 
 /** The blocker dialog's title, `flow.unsavedChangesTitle` with `name: "Flow"`. */
 const BLOCKER_TITLE = "Flow has unsaved changes";
@@ -213,10 +255,12 @@ export async function leaveFlowEditor(
   { escapeDeadlock = false }: LeaveFlowEditorOptions = {},
 ): Promise<EditorExitVerdict> {
   // Prevention. `useBlocker(changesNotSaved || isBuilding)` only fires when the
-  // store has diverged from what is persisted, so draining the in-flight saves
-  // first keeps most exits out of the blocked state. Request-aware, not a
-  // silence probe (#995), so a PATCH already issued still holds the barrier.
-  await waitForFlowSaveSettled(page);
+  // store has diverged from what is persisted, so draining the saves first keeps
+  // most exits out of the blocked state. Request-aware, not a silence probe
+  // (#995), so a PATCH already issued still holds the barrier — and widened to
+  // `editorExitDrainQuietMs()` (#1743) so a save that is merely SCHEDULED holds
+  // it too, which the 700 ms default never did.
+  await waitForFlowSaveSettled(page, { quietMs: editorExitDrainQuietMs() });
 
   const home = page.getByTestId(HOME_MARKER).first();
   // Scoped to the dialog and `.first()`: an unscoped `getByText` that matched

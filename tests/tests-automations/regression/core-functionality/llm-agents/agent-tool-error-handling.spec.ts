@@ -243,6 +243,10 @@ for (const { label, options, skipReason } of targets) {
         await test.step("force the fetch tool, instruct the failure sentinel, seed the task", async () => {
           await setSystemPrompt(page, SYSTEM_PROMPT);
           await setChatInputText(page, task);
+          // Stays a DRAIN, audited for #1743: the Playground run below posts
+          // `flowData: { nodes, edges }` from the store rather than building
+          // the persisted flow, so neither the prompt nor the task has to have
+          // reached the server for this test's assertions to hold.
           await waitForFlowSaveSettled(page);
         });
 

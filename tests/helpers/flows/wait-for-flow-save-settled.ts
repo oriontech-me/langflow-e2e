@@ -3,12 +3,21 @@ import type { Page, Request } from "@playwright/test";
 /**
  * Block until the flow's debounced autosave has settled.
  *
- * Many editor actions mutate the flow and schedule a debounced (300 ms)
- * `PATCH /api/v1/flows/{id}` autosave (upstream `use-autosave-flow.ts` /
- * `SAVE_DEBOUNCE_TIME`): adding a node, fitting/zooming the canvas viewport,
- * or simply opening a flow (the editor fits the view on mount). If such an
- * autosave is still in flight when the next flow-mutating action fires its own
- * PATCH — e.g. saving the prompt modal, or saving the flow-settings modal — the
+ * Many editor actions mutate the flow and schedule a debounced
+ * `PATCH /api/v1/flows/{id}` autosave (upstream `use-autosave-flow.ts`): adding
+ * a node, editing a node field, connecting an edge.
+ *
+ * WHICH actions is a property of the build and has narrowed. This header used
+ * to list "fitting/zooming the canvas viewport, or simply opening a flow (the
+ * editor fits the view on mount)" as well; measured on `1.13.0.dev15` neither
+ * does — opening a flow issued no PATCH at all (empty and 6-node alike,
+ * `updated_at` unchanged after 8 s), and fit-view plus zoom-out moved the
+ * viewport transform with zero PATCHes in 6 s, against a control node-field
+ * edit that produced exactly one (#1743). Do not re-derive a quiescence
+ * precondition from the old list.
+ *
+ * If such an autosave is still in flight when the next flow-mutating action
+ * fires its own PATCH — e.g. saving the prompt modal, or saving the flow-settings modal — the
  * two requests race. The endpoint has no version check and the frontend applies
  * whichever response lands LAST (`use-save-flow.ts` → `setCurrentFlow(updatedFlow)`
  * in the mutation's `onSuccess`), so the loser silently overwrites the winner in

@@ -1,6 +1,6 @@
 # Agent config persistence — settings preserved on save & reopen
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`, #1743)
 
 ---
 
@@ -24,7 +24,8 @@ serializations:
 
 Both persistence halves are asserted:
 
-1. **Saved** — after `waitForFlowSaveSettled`, the flows API shows the three
+1. **Saved** — each sentinel edit is wrapped in `watchFlowSave(page)` (armed
+   before the edit, awaited after), and the flows API then shows the three
    sentinel values in the Agent node's template.
 2. **Reopened preserved** — navigating home and reopening the flow from its
    card, the node body renders the exact sentinels (the inspector-added
@@ -71,19 +72,30 @@ Agent configuration surface; `@workspace` — flow save/reopen lifecycle.
    node outside the initial viewport, so its body fields do not mount until
    the canvas is fit — the sibling agent specs get this for free from
    `SimpleAgentTemplatePage.load`, which this model-free spec does not use),
-   then `waitForFlowSaveSettled` — the load + fit-view schedule an autosave
-   whose response would otherwise revert the first edit.
+   then `waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() })` —
+   a DRAIN whose job here is to leave the editor quiescent before the steps
+   below arm `watchFlowSave` (a save merely *scheduled* at arming time would
+   satisfy the watch while carrying pre-edit state). The window has to outlast
+   the debounce; the helper's 700 ms default does not (#1741/#1743). Note that
+   the load + fit-view no longer schedule an autosave at all — measured on
+   `1.13.0.dev15`, a viewport change issues ZERO `PATCH`es against a control
+   node-field edit that issues exactly one — so this is insurance against a
+   pending save from the template instantiation, not a known-needed settle.
 3. Expose the advanced fields. dev49 replaced the old **Controls** dialog
    (`edit-button-modal`) with the node **inspector** side-panel: select the
    Agent node → `parameters-button` (`openAdvancedOptions`) → toggle
    `inspector-add-max_iterations` and `inspector-add-add_current_date_tool`
    to expose both on the node body → `inspection-panel-close`
-   (`closeAdvancedOptions`). Add both in ONE inspector session, then
-   `waitForFlowSaveSettled` — the add-autosave (debounced PATCH) must land
-   before any value is edited, or its response re-renders the node and
-   detaches the field mid-edit (the documented autosave race).
-4. Set the sentinels on the node body, `waitForFlowSaveSettled` after each so
-   the serialized edits never race one another's PATCH. On the body the field
+   (`closeAdvancedOptions`). Add both in ONE inspector session, under a
+   `watchFlowSave` armed before the adds — the add-autosave (debounced PATCH)
+   must LAND before any value is edited, or its response re-renders the node
+   and detaches the field mid-edit (the documented autosave race). The barrier
+   this replaced returned ~700 ms after the adds with the PATCH still only
+   scheduled on a 2000 ms debounce, i.e. it never once did that job (#1743).
+4. Set the sentinels on the node body, each under its own `watchFlowSave`
+   (armed before the edit, awaited after) so the serialized edits never race
+   one another's PATCH — and so an edit that never marked the node dirty fails
+   here, naming the cause, instead of passing (#1743). On the body the field
    testids drop the `_edit_` infix:
    - `textarea_str_system_prompt` → `PERSIST_PROBE_<nonce>` — on the body by
      default (no inspector-add). **Clear + typed, never `fill()`**: the

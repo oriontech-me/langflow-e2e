@@ -27,10 +27,18 @@
 //     same mis-attribution as a bare timeout, only with a confident label.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  AUTOSAVE_INTERVAL_FALLBACK_MS,
+  publishAutosaveInterval,
+} from "./autosave-interval";
+import { stripComments } from "./strip-comments";
 import {
   BLOCKER_GRACE_MS,
   HOME_TIMEOUT_MS,
   classifyEditorExit,
+  editorExitDrainQuietMs,
   formatEditorExitStuckFailure,
   formatEditorExitWarning,
   type EditorExitVerdict,
@@ -187,5 +195,139 @@ test("the home budget stays above the blocker grace, and above what the call sit
   assert.ok(
     HOME_TIMEOUT_MS >= 30000,
     `home budget ${HOME_TIMEOUT_MS}ms is below the 30000ms the call sites already allowed`,
+  );
+});
+
+// The prevention half (#1743). `waitForFlowSaveSettled`'s 700 ms default arms
+// immediately when nothing is in flight, so it expires BEFORE the save an edit
+// schedules one debounce later — the exit then happens with the store still
+// diverged, which is the state `useBlocker` fires on and the one this helper's
+// prevention step exists to avoid. These pin the window against the interval
+// actually resolved for the run rather than against a number pasted here.
+test("the exit drain outlasts the autosave debounce it must wait out", () => {
+  try {
+    publishAutosaveInterval(2000);
+    assert.ok(
+      editorExitDrainQuietMs() > 2000,
+      `drain window ${editorExitDrainQuietMs()}ms does not outlast a 2000ms debounce`,
+    );
+    // The default this replaces. Asserted explicitly so any window under the
+    // debounce fails here instead of silently reopening #1743.
+    assert.ok(
+      editorExitDrainQuietMs() > 700,
+      `drain window ${editorExitDrainQuietMs()}ms is back at or below the 700ms default`,
+    );
+    // DERIVED from the interval, not merely above the values shipped so far.
+    // The two bounds above are lower bounds that any large constant satisfies —
+    // measured, `return 3500` passes both — so on its own this test would bless
+    // the one shape `pendingSaveQuietMs` exists to prevent: a number pasted into
+    // our source, which goes stale silently the next time upstream edits its
+    // default (`autosave-interval.ts`, #1741). A second interval is what makes
+    // the dependence observable at all.
+    publishAutosaveInterval(9000);
+    assert.ok(
+      editorExitDrainQuietMs() > 9000,
+      `drain window ${editorExitDrainQuietMs()}ms does not track the resolved ` +
+        `interval — a hardcoded window satisfies the bounds above and reopens #1743 ` +
+        `the next time upstream raises auto_saving_interval`,
+    );
+  } finally {
+    publishAutosaveInterval(null);
+  }
+});
+
+test("an unknown autosave interval still gets a window above the fallback", () => {
+  // Unknown is not a default (#1012): a run that could not read the interval
+  // must over-wait, never under-wait, because under-waiting returns on a save
+  // that was never issued and the exit proceeds with a diverged store.
+  publishAutosaveInterval(null);
+  assert.ok(
+    editorExitDrainQuietMs() > AUTOSAVE_INTERVAL_FALLBACK_MS,
+    `drain window ${editorExitDrainQuietMs()}ms does not exceed the ` +
+      `${AUTOSAVE_INTERVAL_FALLBACK_MS}ms unknown-interval fallback`,
+  );
+});
+
+// The window is only worth deriving if the helper actually PASSES it, and the
+// three assertions above never observe the call site: reverting the drain to
+// `waitForFlowSaveSettled(page)` — the exact regression #1743 is about, and the
+// bare spelling every other caller in the suite still uses — left all of them
+// green (measured). `editorExitDrainQuietMs` would stay exported, typechecked
+// and unit-tested while nothing used it.
+//
+// So this is a STRUCTURAL guard, and it is worth being plain about what that
+// buys: it pins a spelling, not a behaviour (#1226). That is adequate here and
+// nowhere near generally — the mutation this has to catch IS the spelling, one
+// argument present or absent at a single call site, so there is no gap between
+// "the source says it" and "the helper does it". A behavioural version would
+// need a fake `Page` covering `getByTestId`, `expect` and the polling loop, to
+// assert one argument.
+//
+// Comments are blanked first: this module's own JSDoc names the 700 ms default
+// it replaced, and matching prose would report the explanation as the offender.
+const DRAIN_CALL = /waitForFlowSaveSettled\(([\s\S]*?)\)\s*;/g;
+
+/** Drain calls that do not pass the derived window. Returns the call text. */
+function drainCallsWithoutDerivedWindow(source: string): string[] {
+  const offenders: string[] = [];
+  for (const match of stripComments(source).matchAll(DRAIN_CALL)) {
+    const args = match[1];
+    // The constant, not just any `quietMs`: `quietMs: 700` is the state this
+    // exists to reject, and it satisfies a presence-only test.
+    if (!/quietMs\s*:\s*editorExitDrainQuietMs\(\s*\)/.test(args)) {
+      offenders.push(`waitForFlowSaveSettled(${args.replace(/\s+/g, " ").trim()})`);
+    }
+  }
+  return offenders;
+}
+
+test("the exit drain call site passes the derived window, not the default", () => {
+  const source = readFileSync(join(__dirname, "leave-flow-editor.ts"), "utf8");
+  const offenders = drainCallsWithoutDerivedWindow(source);
+  assert.deepEqual(
+    offenders,
+    [],
+    `leave-flow-editor.ts drains with the helper's 700 ms default, which arms ` +
+      `immediately and expires before the autosave an edit schedules one debounce ` +
+      `later — the exit then happens with the store diverged (#1743/#1153). Pass ` +
+      `{ quietMs: editorExitDrainQuietMs() }. Offenders: ${offenders.join("; ")}`,
+  );
+  // The guard is only meaningful if the file has a call to find: a rename or a
+  // refactor that moved the drain out would otherwise report "no offenders" for
+  // the same reason a missing file would (#1012).
+  assert.equal(
+    [...stripComments(source).matchAll(DRAIN_CALL)].length,
+    1,
+    "leave-flow-editor.ts no longer holds exactly one drain call — the guard " +
+      "above is scoped to that call and cannot vouch for a second one",
+  );
+});
+
+test("the drain guard catches the reversion it claims to catch", () => {
+  // Each of these is a real reversion path, and the middle one is why the
+  // pattern asserts the CONSTANT rather than the presence of `quietMs`.
+  assert.deepEqual(
+    drainCallsWithoutDerivedWindow(`await waitForFlowSaveSettled(page);`),
+    ["waitForFlowSaveSettled(page)"],
+  );
+  assert.deepEqual(
+    drainCallsWithoutDerivedWindow(
+      `await waitForFlowSaveSettled(page, { quietMs: 700 });`,
+    ),
+    ["waitForFlowSaveSettled(page, { quietMs: 700 })"],
+  );
+  // And it must not fire on the correct form, nor on prose describing the
+  // default: a guard that fails a correct edit gets deleted, not fixed.
+  assert.deepEqual(
+    drainCallsWithoutDerivedWindow(
+      `await waitForFlowSaveSettled(page, { quietMs: editorExitDrainQuietMs() });`,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    drainCallsWithoutDerivedWindow(
+      `// reverting to waitForFlowSaveSettled(page); would reopen #1743\n`,
+    ),
+    [],
   );
 });
