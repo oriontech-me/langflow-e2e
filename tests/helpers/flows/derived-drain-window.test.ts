@@ -140,8 +140,7 @@ test("nested parentheses in the arguments do not end the call early", () => {
   // old regex stopped at the first `)` followed by `;`, so a call ending in a
   // nested call reported a TRUNCATED offender: a false positive on a correct
   // call, which is how a guard gets deleted rather than fixed.
-  const source =
-    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}(), timeout: capMs(2) });`;
+  const source = `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}(), timeout: capMs(2) });`;
   assert.equal(countDrainCalls(source), 1);
   assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
 });
@@ -167,5 +166,68 @@ test("a longer identifier ENDING in the callee name is not a drain call", () => 
   // would fail the count floor of a file that is perfectly correct.
   const source = `await myWaitForFlowSaveSettled(page);`;
   assert.equal(countDrainCalls(source), 0);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
+});
+
+// The three ways the balanced scanner could still have been WRONG rather than
+// loud, all measured in the second review round of #1902.
+test("an unterminated quote inside the arguments does not swallow the file", () => {
+  // A `'` in a regex literal is the realistic carrier. Tracking it as a string
+  // to EOF hid every call after it: measured `count 1, offenders []` on a source
+  // holding a correct call followed by a bare one — the silence class the
+  // balanced scan exists to close, reappearing through the quote.
+  const source = [
+    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}(), re: /it's/ });`,
+    `await waitForFlowSaveSettled(page);`,
+  ].join("\n");
+
+  assert.equal(countDrainCalls(source), 2);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), [
+    "waitForFlowSaveSettled(page)",
+  ]);
+});
+
+test("the callee named inside a STRING is prose, not a call site", () => {
+  // Every module this scans carries multi-line error-message literals. Counting
+  // one would redden the guard on a correct edit — which this module's header
+  // names as the way a guard gets deleted rather than fixed.
+  const source = [
+    `throw new Error("call waitForFlowSaveSettled(page) before this");`,
+    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}() });`,
+  ].join("\n");
+
+  assert.equal(countDrainCalls(source), 1);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
+});
+
+test("a template literal may span lines; a bare quote may not", () => {
+  // The asymmetry is `strip-comments.ts`'s rule, adopted so the two passes agree
+  // about where a string is. A backtick really does span; an apostrophe on one
+  // line is prose.
+  const spanning = [
+    "const msg = `line one",
+    "line two`;",
+    `await waitForFlowSaveSettled(page);`,
+  ].join("\n");
+  assert.equal(countDrainCalls(spanning), 1);
+
+  const apostrophe = [
+    "// it's fine",
+    `await waitForFlowSaveSettled(page);`,
+  ].join("\n");
+  assert.equal(countDrainCalls(apostrophe), 1);
+});
+
+test("an unterminated quote does not resurrect a comment the blanker skipped", () => {
+  // `stripComments` bails at the newline on an unterminated quote, so a `//`
+  // after one on the same line is never blanked. Because this walk uses the same
+  // rule it is inside that same span and does not read the prose either — the
+  // offender would otherwise be a COMMENT, on a file whose real call is correct.
+  const source = [
+    `const re = /it's/;  // never waitForFlowSaveSettled(page) here`,
+    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}() });`,
+  ].join("\n");
+
+  assert.equal(countDrainCalls(source), 1);
   assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
 });

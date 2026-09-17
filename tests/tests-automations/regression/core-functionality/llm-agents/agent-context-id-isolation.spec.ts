@@ -224,7 +224,7 @@ async function prepareTurn(
     // load nor the no-op edit diffs.) A drain is correct whether or not the edit
     // mutated anything, which is what this call needs.
 
-    // Each attempt pays the full ~2.5 s window, up to 3 attempts per turn.
+    // Each attempt pays the full ~3.5 s window, up to 3 attempts per turn.
     await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
 
     stored = await readContextIds(request, bearer, flowId, CONTEXT_NODE_TYPES);

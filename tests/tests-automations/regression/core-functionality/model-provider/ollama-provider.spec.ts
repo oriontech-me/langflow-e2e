@@ -374,10 +374,11 @@ test.describe("Ollama Provider", () => {
             probe.model,
             { timeout: 10000 },
           );
-          // Not just `waitForFlowSaveSettled` (#1302): that barrier proves no
-          // flow-save PATCH is in flight, and says nothing about whether the
-          // selection survived one that already landed. This re-reads the widget
-          // after the quiet window and re-applies once if the value is gone.
+          // Not just `waitForFlowSaveSettled` (#1302): that barrier drains the
+          // PATCHes in flight and, at the derived window, the one the selection
+          // just scheduled (#1902) — and says nothing about whether the selection
+          // survived one that landed. This re-reads the widget after the quiet
+          // window and re-applies once if the value is gone.
           await waitForNodeConfigSettled(page, {
             valueTestId: "value-dropdown-dropdown_str_model_name",
             expected: probe.model,

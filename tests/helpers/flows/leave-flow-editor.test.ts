@@ -37,6 +37,8 @@ import {
   countDrainCalls,
   derivedWindowFailure,
   drainCallsWithoutDerivedWindow,
+  intervalDependenceFailure,
+  measureIntervalDependence,
 } from "./derived-drain-window";
 import {
   BLOCKER_GRACE_MS,
@@ -228,12 +230,17 @@ test("the exit drain outlasts the autosave debounce it must wait out", () => {
     // our source, which goes stale silently the next time upstream edits its
     // default (`autosave-interval.ts`, #1741). A second interval is what makes
     // the dependence observable at all.
-    publishAutosaveInterval(9000);
-    assert.ok(
-      editorExitDrainQuietMs() > 9000,
-      `drain window ${editorExitDrainQuietMs()}ms does not track the resolved ` +
-        `interval — a hardcoded window satisfies the bounds above and reopens #1743 ` +
-        `the next time upstream raises auto_saving_interval`,
+    // DERIVED, and that is a DIFFERENCE rather than a bound. The two assertions
+    // above are lower bounds that any large constant satisfies — measured in the
+    // second review round of #1902, a pasted `return 35000` passed every
+    // "derived" assertion in all three of these suites, including ones whose
+    // comments said a constant could not. Moving the interval by a known amount
+    // must move the window by the same amount; a constant moves by 0.
+    const measured = measureIntervalDependence(editorExitDrainQuietMs);
+    assert.equal(
+      measured.observedDelta,
+      measured.expectedDelta,
+      intervalDependenceFailure("editorExitDrainQuietMs", measured),
     );
   } finally {
     publishAutosaveInterval(null);
@@ -272,7 +279,11 @@ test("the exit drain call site passes the derived window, not the default", () =
   assert.deepEqual(
     offenders,
     [],
-    derivedWindowFailure("leave-flow-editor.ts", "editorExitDrainQuietMs", offenders),
+    derivedWindowFailure(
+      "leave-flow-editor.ts",
+      "editorExitDrainQuietMs",
+      offenders,
+    ),
   );
   // The guard is only meaningful if the file has a call to find: a rename or a
   // refactor that moved the drain out would otherwise report "no offenders" for

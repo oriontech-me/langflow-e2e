@@ -35,7 +35,11 @@ test("a non-positive or non-integer value reads as unknown", () => {
   // A 0 would collapse every derived deadline to 'already due' — the one state
   // no caller can recover from, so it must not survive as a value.
   for (const bad of ["0", "-1", "abc", "2000.5", "NaN", "Infinity"]) {
-    assert.equal(readAutosaveIntervalMs(env(bad)), null, `${bad} must be unknown`);
+    assert.equal(
+      readAutosaveIntervalMs(env(bad)),
+      null,
+      `${bad} must be unknown`,
+    );
   }
 });
 
@@ -59,16 +63,23 @@ test("the deadline allows a full debounce plus slack", () => {
 test("an unknown interval falls back ABOVE every value upstream has shipped", () => {
   const deadline = saveScheduledDeadlineMs(null, { slackMs: 0 });
   assert.equal(deadline, AUTOSAVE_INTERVAL_FALLBACK_MS);
-  // 300 (SAVE_DEBOUNCE_TIME) -> 1000 -> 2000 are the values this repo has
-  // measured; the fallback must not be a regression against the largest.
-  assert.ok(deadline > 2000, "the fallback must exceed the largest known interval");
+  // 1000 then 2000 are the intervals this repo has read from an instance
+  // (`SAVE_DEBOUNCE_TIME = 300` is a different constant and was miscounted here
+  // until #1902); the fallback must not be a regression against the largest.
+  assert.ok(
+    deadline > 2000,
+    "the fallback must exceed the largest known interval",
+  );
 });
 
 test("the description names which of the two states produced the number", () => {
   assert.match(describeAutosaveInterval(2000), /2000 ms/);
   assert.match(describeAutosaveInterval(2000), /auto_saving_interval/);
   assert.match(describeAutosaveInterval(null), /UNKNOWN/);
-  assert.match(describeAutosaveInterval(null), new RegExp(String(AUTOSAVE_INTERVAL_FALLBACK_MS)));
+  assert.match(
+    describeAutosaveInterval(null),
+    new RegExp(String(AUTOSAVE_INTERVAL_FALLBACK_MS)),
+  );
 });
 
 test("the pending-save quiet window is longer than the debounce itself", () => {

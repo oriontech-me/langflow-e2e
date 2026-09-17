@@ -20,6 +20,8 @@ import {
   countDrainCalls,
   derivedWindowFailure,
   drainCallsWithoutDerivedWindow,
+  intervalDependenceFailure,
+  measureIntervalDependence,
 } from "./derived-drain-window";
 import {
   classifyConfigOutcome,
@@ -155,12 +157,17 @@ test("the config drain outlasts the autosave debounce it must wait out", () => {
     // number in our source, which goes stale silently the next time upstream
     // edits `auto_saving_interval` (#1741). A second interval is what makes the
     // dependence observable at all.
-    publishAutosaveInterval(9000);
-    assert.ok(
-      nodeConfigDrainQuietMs() > 9000,
-      `drain window ${nodeConfigDrainQuietMs()}ms does not track the resolved ` +
-        `interval — a hardcoded window satisfies the bounds above and reopens #1902 ` +
-        `the next time upstream raises auto_saving_interval`,
+    // DERIVED, and that is a DIFFERENCE rather than a bound. The two assertions
+    // above are lower bounds that any large constant satisfies — measured in the
+    // second review round of #1902, a pasted `return 35000` passed every
+    // "derived" assertion in all three of these suites, including ones whose
+    // comments said a constant could not. Moving the interval by a known amount
+    // must move the window by the same amount; a constant moves by 0.
+    const measured = measureIntervalDependence(nodeConfigDrainQuietMs);
+    assert.equal(
+      measured.observedDelta,
+      measured.expectedDelta,
+      intervalDependenceFailure("nodeConfigDrainQuietMs", measured),
     );
   } finally {
     publishAutosaveInterval(null);
@@ -192,7 +199,11 @@ test("both config drain call sites pass the derived window, not the default", ()
   assert.deepEqual(
     offenders,
     [],
-    derivedWindowFailure("node-config-guard.ts", "nodeConfigDrainQuietMs", offenders),
+    derivedWindowFailure(
+      "node-config-guard.ts",
+      "nodeConfigDrainQuietMs",
+      offenders,
+    ),
   );
   // TWO, and the count matters beyond the empty-file case: the second drain is
   // the one after `reapply`, i.e. the repair path. A refactor that dropped it

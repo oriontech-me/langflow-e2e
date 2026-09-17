@@ -76,12 +76,17 @@ export const NODE_CONFIG_SETTLE_TIMEOUT_MS = 15000;
  * (#1302), and its only consumer is `@stable` in the daily, where a hard failure
  * strips the tag by unreviewed commit.
  *
- * Cost: `pendingSaveQuietMs()` is ~3500 ms against the 700 ms it replaces, so
- * ~+2.8 s per call — at most twice, and the second only on the repair path —
- * against a playground step measured at 5 408-6 503 ms and the 180 s budget this
- * guard protects (#1302). Paid only on the way to a run, and NOT idle time here:
- * measured on `1.13.0.dev15`, this drain observes a real PATCH issued 2433 ms
- * after it arms, on every run, because the model selection itself schedules it.
+ * Cost, and it is NOT the window delta here — that reading was in this comment
+ * for a commit and its own next sentence refutes it. Measured on `1.13.0.dev15`,
+ * this drain observes a real PATCH issued **2433 ms** after it arms, on every
+ * run, because the model selection itself schedules the save. A PATCH restarts
+ * the quiet window when it settles, so the drain returns at roughly
+ * `2433 + response + 3500 ≈ 6 s`, against ~0.7 s before: **~+5.3 s per call**,
+ * doubled on the repair path. The rename helper's ~+2.8 s per drain is the
+ * figure for a barrier that sees NOTHING, which is the case this one measured
+ * itself out of. Still the right trade — the playground step it precedes costs
+ * 5 408-6 503 ms and the budget it protects is 180 s (#1302) — and paid only on
+ * the way to a run.
  */
 export function nodeConfigDrainQuietMs(): number {
   return pendingSaveQuietMs();
@@ -193,9 +198,12 @@ export async function waitForNodeConfigSettled(
 ): Promise<void> {
   const timeout = opts.timeoutMs ?? NODE_CONFIG_SETTLE_TIMEOUT_MS;
 
-  await expect(page.getByTestId(opts.valueTestId)).toContainText(opts.expected, {
-    timeout,
-  });
+  await expect(page.getByTestId(opts.valueTestId)).toContainText(
+    opts.expected,
+    {
+      timeout,
+    },
+  );
   await waitForFlowSaveSettled(page, { quietMs: nodeConfigDrainQuietMs() });
 
   if (

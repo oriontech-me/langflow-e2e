@@ -275,8 +275,13 @@ The mechanism is the one `helpers/flows/wait-for-flow-save-settled.ts`
 documents: `PATCH /api/v1/flows/{id}` has no version check and the frontend
 applies whichever response lands LAST, so a stale autosave overwrites the store
 and the database (the root of #358, #357, #995). The spec already calls that
-barrier; it guarantees PATCH quiescence for 700 ms and nothing about what
-persisted. **Which write reverts it is not pinned** — a stale autosave and the
+barrier, and this paragraph used to describe it as guaranteeing "PATCH
+quiescence for 700 ms": both halves are wrong and were still here after #1902's
+first pass corrected the same claim eleven lines below. The window arms
+IMMEDIATELY when nothing is in flight, so 700 ms against a 2000 ms debounce
+guaranteed nothing about a save that was merely scheduled; it is derived from
+the instance now (#1902). What was right is the second half — quiescence says
+nothing about what persisted. **Which write reverts it is not pinned** — a stale autosave and the
 bulk `DELETE /api/v1/flows/` that appears mid-test under `actualWorkers: 2` are
 both candidates, and the artifacts do not separate them.
 

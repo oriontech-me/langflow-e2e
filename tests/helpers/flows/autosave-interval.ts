@@ -37,9 +37,11 @@
 export const AUTOSAVE_INTERVAL_ENV = "PW_AUTOSAVE_INTERVAL_MS";
 
 /**
- * Used when the interval could not be read. Above every value upstream has
- * shipped (300 → 1000 → 2000), because over-waiting costs seconds and
- * under-waiting costs a false green.
+ * Used when the interval could not be read. Above every value this repo has ever
+ * READ from an instance (1000, then 2000), because over-waiting costs seconds
+ * and under-waiting costs a false green. The 300 this list used to open with was
+ * `SAVE_DEBOUNCE_TIME`, which is not an autosave interval at all — see the
+ * header — so it never belonged in the sequence.
  */
 export const AUTOSAVE_INTERVAL_FALLBACK_MS = 3000;
 

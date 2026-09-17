@@ -26,6 +26,8 @@ import {
   countDrainCalls,
   derivedWindowFailure,
   drainCallsWithoutDerivedWindow,
+  intervalDependenceFailure,
+  measureIntervalDependence,
 } from "./derived-drain-window";
 import { renameDrainQuietMs } from "./rename-flow";
 
@@ -47,12 +49,17 @@ test("the rename drain outlasts the autosave debounce it must wait out", () => {
     // pasted `return 3500` passes both — so on its own this test would bless the
     // one shape `pendingSaveQuietMs` exists to prevent (#1741). A second
     // interval is what makes the dependence observable at all.
-    publishAutosaveInterval(9000);
-    assert.ok(
-      renameDrainQuietMs() > 9000,
-      `drain window ${renameDrainQuietMs()}ms does not track the resolved ` +
-        `interval — a hardcoded window satisfies the bounds above and reopens #1902 ` +
-        `the next time upstream raises auto_saving_interval`,
+    // DERIVED, and that is a DIFFERENCE rather than a bound. The two assertions
+    // above are lower bounds that any large constant satisfies — measured in the
+    // second review round of #1902, a pasted `return 35000` passed every
+    // "derived" assertion in all three of these suites, including ones whose
+    // comments said a constant could not. Moving the interval by a known amount
+    // must move the window by the same amount; a constant moves by 0.
+    const measured = measureIntervalDependence(renameDrainQuietMs);
+    assert.equal(
+      measured.observedDelta,
+      measured.expectedDelta,
+      intervalDependenceFailure("renameDrainQuietMs", measured),
     );
   } finally {
     publishAutosaveInterval(null);
@@ -83,7 +90,10 @@ test("every rename drain call site passes the derived window, not the default", 
   // would be an argument to re-derive on every edit of this file rather than a
   // property a test can state.
   const source = readFileSync(join(__dirname, "rename-flow.ts"), "utf8");
-  const offenders = drainCallsWithoutDerivedWindow(source, "renameDrainQuietMs");
+  const offenders = drainCallsWithoutDerivedWindow(
+    source,
+    "renameDrainQuietMs",
+  );
   assert.deepEqual(
     offenders,
     [],

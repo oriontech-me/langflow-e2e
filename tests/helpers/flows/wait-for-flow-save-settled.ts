@@ -1,8 +1,18 @@
 import type { Page, Request } from "@playwright/test";
 import { SAVE_COMPLETION_BUDGET_MS } from "./autosave-interval";
 
-/** The cap a caller that passes no `quietMs` has always had. */
-export const DEFAULT_DRAIN_CAP_MS = 10000;
+/**
+ * The cap every caller had before #1902 — kept as the reference the derived one
+ * is compared against, NOT as a floor it is clamped to.
+ *
+ * It was written as `Math.max(HISTORICAL_DRAIN_CAP_MS, …)` first, and the
+ * second review round measured that branch unreachable: any positive `quietMs`
+ * plus the completion budget already exceeds it, so the clamp was dead code
+ * carrying a false claim ("the cap a caller that passes no quietMs has always
+ * had" — a bare caller now gets 10 700 ms). Removed rather than explained: dead
+ * code that a test appears to pin is worse than either.
+ */
+export const HISTORICAL_DRAIN_CAP_MS = 10000;
 
 /**
  * The safety cap for a given quiet window (#1902).
@@ -19,11 +29,14 @@ export const DEFAULT_DRAIN_CAP_MS = 10000;
  * already noted as a known gap in #1901 and is what makes a derived window
  * meaningful rather than approximately meaningful.
  *
- * `Math.max` with the historical floor, so a caller that passes no window keeps
- * a cap no shorter than the one it has always had.
+ * No clamp: for any window the suite uses, one debounce plus the completion
+ * budget is already longer than the 10 000 ms this replaced, so a bare caller's
+ * cap grows slightly (700 -> 10 700 ms) rather than staying put. That is a
+ * behaviour change for the ~40 call sites still on the default window, and it
+ * only ever lengthens a wait that was about to give up anyway.
  */
 export function drainCapMs(quietMs: number): number {
-  return Math.max(DEFAULT_DRAIN_CAP_MS, quietMs + SAVE_COMPLETION_BUDGET_MS);
+  return quietMs + SAVE_COMPLETION_BUDGET_MS;
 }
 
 /**

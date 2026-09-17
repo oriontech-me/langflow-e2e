@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import type { Page, Request } from "@playwright/test";
 import { SAVE_COMPLETION_BUDGET_MS } from "./autosave-interval";
 import {
-  DEFAULT_DRAIN_CAP_MS,
+  HISTORICAL_DRAIN_CAP_MS,
   drainCapMs,
   waitForFlowSaveSettled,
 } from "./wait-for-flow-save-settled";
@@ -32,8 +32,8 @@ test("the cap leaves room for a save to be issued AND to complete", () => {
 });
 
 test("the cap tracks the window rather than staying a constant", () => {
-  // The regression: a fixed 10 000 ms cap against a window raised 700 -> 2500
-  // shrinks the drainable interval from ~9.3 s to ~7.5 s, and past it the helper
+  // The regression: a fixed 10 000 ms cap against a window raised 700 -> 3500
+  // shrinks the drainable interval from ~9.3 s to ~6.5 s, and past it the helper
   // returns with a PATCH possibly still in flight.
   assert.ok(
     drainCapMs(3500) > drainCapMs(2500),
@@ -41,8 +41,26 @@ test("the cap tracks the window rather than staying a constant", () => {
   );
 });
 
-test("a caller that passes no window keeps at least the cap it always had", () => {
-  assert.ok(drainCapMs(700) >= DEFAULT_DRAIN_CAP_MS);
+test("the cap is the window plus the completion budget, exactly", () => {
+  // The derivation itself, not a bound: a bound is what the first version of
+  // this file asserted, and it passed the dead `Math.max` clamp it claimed to
+  // pin (measured — deleting the clamp changed nothing).
+  for (const quietMs of [700, 2500, 3500]) {
+    assert.equal(drainCapMs(quietMs), quietMs + SAVE_COMPLETION_BUDGET_MS);
+  }
+});
+
+test("no window the suite uses ends up with a cap shorter than the old one", () => {
+  // A CONSEQUENCE of the derivation, asserted because it is what makes dropping
+  // the clamp safe: the ~40 call sites still on the 700 ms default keep a cap no
+  // shorter than the 10 000 ms they had (they get 10 700).
+  for (const quietMs of [700, 2500, 3500]) {
+    assert.ok(
+      drainCapMs(quietMs) >= HISTORICAL_DRAIN_CAP_MS,
+      `a ${quietMs}ms window would cap at ${drainCapMs(quietMs)}ms, below the ` +
+        `${HISTORICAL_DRAIN_CAP_MS}ms every caller had before #1902`,
+    );
+  }
 });
 
 /** The only two members of `Page` this helper touches. */
@@ -108,7 +126,10 @@ test("a drain that really went quiet says nothing", async () => {
   const realWarn = console.warn;
   console.warn = (...args: unknown[]) => void warnings.push(String(args[0]));
   try {
-    const settled = waitForFlowSaveSettled(page, { quietMs: 40, timeout: 5000 });
+    const settled = waitForFlowSaveSettled(page, {
+      quietMs: 40,
+      timeout: 5000,
+    });
     page.emit("request", patch());
     page.emit("requestfinished", patch());
     await settled;

@@ -60,8 +60,10 @@ const MODAL_TIMEOUT = 15000;
  * 2 runs each side, which is the arithmetic and not a surprise. Know that number
  * before reading this as free. Against it: #357 and #995 are both a PATCH landing
  * inside this helper, each of which cost far more than seconds to diagnose, and
- * the 8 affected spec files together measured 2.3 m -> 4.1 m for 13 tests — about
- * +27 s on a daily shard of ~950 s, since the suite runs them once.
+ * the 8 affected spec files together measured 2.3 m -> 4.1 m for 13 tests, i.e.
+ * **+108 s** for one pass over all of them. What that is worth per daily shard
+ * depends on how the partition lands them (`partition-shards.mjs`), so it is not
+ * stated as a per-shard number here.
  */
 export function renameDrainQuietMs(): number {
   return pendingSaveQuietMs();
