@@ -294,9 +294,16 @@ key replaced (the CI secret was rotated 2026-09-13) and the assertion fixed
   asserted `validateResp.ok()`, which is `true` for a rejected key, and awaited
   both responses concurrently — so the only half that could fail was the
   `/variables/` waiter, as a 60 s timeout carrying no cause. On the 2026-09-11
-  daily that shape cost the run 300 s of the collector's sweep budget and an
-  unreviewed `@stable` removal (commit `883047fc`) on a test whose logic was
-  correct.
+  daily that shape cost the run an unreviewed `@stable` removal (commit
+  `883047fc`) on a test whose logic was correct.
+  **It did not cost the collector's sweep budget, and an earlier version of this
+  bullet said it did** (corrected in #1867). That run (`34599745145`) hard-failed
+  **two** tests — this one and `collect providers status and models from UI` — and
+  their common cause is the dead key, not this assertion's shape: the collector is
+  a separate instrument, with its own ceiling (`collect-models.ts`
+  `CREDENTIAL_SAVE_TIMEOUT_MS = 240_000`, so the figure quoted here was not its
+  budget either) and its own fix (#1823's remedy (i)). Nothing in #1829 or #1867
+  recovers it.
 - **Why the gate is per test, not per file (#1415, mechanism from #1029;
   rationale corrected in #1829):** only Tests 2–3 make a live completion call, so
   only they are gated. Test 1 keeps the env-presence gate on purpose, and the
