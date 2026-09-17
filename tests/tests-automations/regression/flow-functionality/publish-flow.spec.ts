@@ -10,17 +10,38 @@ const FLOW_BASE = {
   is_component: false,
 };
 
-// Quarantined at triage (2026-09-08 daily, umbrella #1757): after the flow is
-// unpublished, `access_type` still reads back as "PUBLIC" where the test expects
-// "PRIVATE". Recurrent on two consecutive dailies, and byte-identical on both
-// (2026-09-07, 2026-09-08) — same expected/received pair, failing on attempt 0 and
-// passing on attempt 1. Not wedge collateral: 2026-09-07 was a clean daily (0 hard
-// failures, 306 s of total measured downtime against this run's 1644 s), and the
-// failure is a concrete wrong value at 8.9 s / 12.5 s, not a timeout. Lifting the
-// quarantine (remove test.fixme + restore @stable) is a deliverable of #1760.
-test.fixme(
+// The 2026-09-07 and 2026-09-08 dailies read `access_type` back as "PUBLIC" after the
+// unpublish, byte-identical on both, which cost this test `@stable` AND a `test.fixme`
+// at triage (#1760).
+//
+// The quarantine is LIFTED and `@stable` is BACK on the mechanism, not on a green run:
+// it is `LE-2598` — every write route taking `DbSession` answered its 2xx BEFORE the
+// transaction committed, so the read-back below could correctly read the pre-commit
+// row. `PATCH /api/v1/flows/{id}` never commits (`grep -n commit` is empty for
+// `api/v1/flows.py` and `flows_helpers.py`); the commit belongs to `session_scope`'s
+// yield-dependency teardown, which FastAPI runs after the response is written.
+// Measured for THIS test's shape (`PATCH {access_type: PRIVATE}` then `GET
+// /api/v1/flows/{id}`) with a 300 ms delay gated on a marker file between
+// `session_scope`'s `yield` and its `commit`, control and mutation in one process:
+//
+//   1.13.0.dev6    (the 2026-09-08 daily's image) mutation 0/10 — the read-back
+//                  answered "PUBLIC" every time, PATCH 9-19 ms, row PRIVATE 301-524 ms
+//                  later; this spec itself fails under the same toggle
+//   1.13.0.dev14   mutation 10/10 "PRIVATE", PATCH 319-345 ms — the delay moved from
+//                  after the response to inside it; this spec passes under the toggle
+//
+// Un-forced both images are 10/10 and this spec passes on dev6 in 8.9 s, which is why
+// a green run was never the evidence. `langflow#15078`
+// (`Depends(injectable_session_scope, scope="function")`) is the fix and reached the
+// nightly at 1.13.0.dev14. Sibling symptoms of the same defect: #1759, #1777, #1807.
+//
+// Keep the two read-backs and their `accessTypePatches` message: the defect has a
+// second route into this test — the editor derives the toggle's DIRECTION from a store
+// that the same pre-commit response can leave stale, so the unpublish click then sends
+// `access_type: PUBLIC` — and which of the two happened is all the daily triage gets.
+test(
   "user can publish a flow and access it via shareable URL, then unpublish to revoke access",
-  { tag: ["@release", "@workspace", "@playground"] },
+  { tag: ["@stable", "@release", "@workspace", "@playground"] },
   async ({ page, browser, request }) => {
     await awaitBootstrapTest(page);
 
@@ -51,6 +72,29 @@ test.fixme(
     const flowId = page.url().match(/\/flow\/([0-9a-f-]+)/)![1];
     const authToken = await getAuthToken(request);
 
+    // Record the direction of every access_type write the EDITOR issues. It is the
+    // discriminator when a read-back below disagrees: `[PUBLIC, PRIVATE]` means the read
+    // raced the write's commit, `[PUBLIC, PUBLIC]` means the toggle re-published because
+    // the store it reads was stale. Both are LE-2598; the spec doc has the measurement.
+    const accessTypePatches: string[] = [];
+    page.on("request", (req) => {
+      if (
+        req.method() !== "PATCH" ||
+        !req.url().includes(`/api/v1/flows/${flowId}`)
+      ) {
+        return;
+      }
+      const body = req.postData();
+      if (!body?.includes("access_type")) return;
+      try {
+        accessTypePatches.push(JSON.parse(body).access_type);
+      } catch {
+        accessTypePatches.push("<unparseable body>");
+      }
+    });
+    const patchTrail = () =>
+      `access_type PATCHes the editor sent: [${accessTypePatches.join(", ")}]`;
+
     try {
       await page.getByTestId("publish-button").click();
       await expect(page.getByTestId("shareable-playground")).toBeVisible({
@@ -73,7 +117,9 @@ test.fixme(
         headers: { Authorization: authToken },
       });
       expect(flowAfterPublish.status()).toBe(200);
-      expect((await flowAfterPublish.json()).access_type).toBe("PUBLIC");
+      expect((await flowAfterPublish.json()).access_type, patchTrail()).toBe(
+        "PUBLIC",
+      );
 
       // Read the shareable URL from the rendered <a> — the stable contract Langflow exposes to
       // consumers, and the locator the sibling playground-shareable-url spec also relies on.
@@ -130,7 +176,10 @@ test.fixme(
           { headers: { Authorization: authToken } },
         );
         expect(flowAfterUnpublish.status()).toBe(200);
-        expect((await flowAfterUnpublish.json()).access_type).toBe("PRIVATE");
+        expect(
+          (await flowAfterUnpublish.json()).access_type,
+          patchTrail(),
+        ).toBe("PRIVATE");
 
         // Previously-public URL must no longer render the playground — the SPA redirects to the
         // home dashboard (mainpage_title is the home heading)
