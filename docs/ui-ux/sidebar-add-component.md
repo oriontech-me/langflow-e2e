@@ -79,8 +79,14 @@ asserts the persisted position instead.
   A component renamed or moved out of the `input_output` category fails test 3 by
   design (it is the source of truth for what "default settings" means).
 - `POST /api/v1/flows/` + `GET /api/v1/flows/{id}` — flow creation and the
-  persisted-node read (after `waitForFlowSaveSettled`, polled to the expected
-  node count so the assert never runs on a stale read).
+  persisted-node read. Each persisted read is gated by `watchFlowSave(page)`,
+  armed BEFORE the add/drop and awaited after (#1743): it observes the autosave
+  `PATCH` being issued and completing, and fails naming the cause when none
+  appears. The barrier it replaced (`waitForFlowSaveSettled`) only drained
+  network silence, which on a 2000 ms debounce returns before the `PATCH`
+  exists. The read is still polled to the expected node count, so a watch that
+  ever resolved on the wrong save degrades to the old behaviour rather than to
+  a false green.
 
 No provider API key, no LLM call, no flow build.
 
@@ -139,4 +145,4 @@ after `awaitBootstrapTest` and deleted nothing.
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev6`)
+1.13.x (nightly `1.13.0.dev15`, #1743)

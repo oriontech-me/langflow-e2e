@@ -3,6 +3,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { watchFlowSave } from "../../../helpers/flows/watch-flow-save";
 import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 
 // Getting a component from the sidebar onto the canvas — QA-CHECKLIST §15.2:
@@ -137,6 +138,19 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
     // Every test starts from an empty canvas; asserting it here is what makes
     // "one node exists afterwards" a causal check instead of a coincidence.
     await expect(page.locator(".react-flow__node")).toHaveCount(0);
+    // NO drain here, and that is measured rather than assumed (#1743). The
+    // tests below arm `watchFlowSave`, which resolves on the first save it
+    // observes and cannot tell which mutation produced it — so a PATCH merely
+    // SCHEDULED at arming time would satisfy it while carrying pre-add state.
+    // On `1.13.0.dev15` the editor schedules none here: opening a flow issues
+    // no PATCH (empty flow AND a 6-node one, `updated_at` unchanged after 8 s),
+    // and neither does a viewport change — fit-view plus zoom-out moved the
+    // transform with zero PATCHes in 6 s, while the control (one node-field
+    // edit) produced exactly one. Only graph/node mutations autosave.
+    //
+    // The backstop if that ever changes is `readPersistedNodes`, which polls:
+    // a watch satisfied by a stale save degrades to the 20 s poll this spec
+    // already had, never to a false green.
   });
 
   test.afterEach(async ({ page, request }) => {
@@ -175,6 +189,16 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
     async ({ page, request }) => {
       const frame = await readCanvasFrame(page);
 
+      // Armed BEFORE the drop and awaited in the persistence step below
+      // (#1743). The barrier this replaces drained network SILENCE, and on an
+      // editor whose debounce is 2000 ms that returns ~700 ms after the drop
+      // with the autosave not yet issued — leaving `readPersistedNodes` to
+      // burn its own 20 s poll on a PATCH nothing had proved was coming, and
+      // to report "the node never persisted" for a save that never left the
+      // browser. This observes the save being issued and completing, and FAILS
+      // naming the cause when none appears.
+      const save = watchFlowSave(page);
+
       await test.step("drag the Chat Output card onto the canvas", async () => {
         await page.getByTestId("sidebar-search-input").fill("chat output");
         await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
@@ -200,7 +224,7 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
       await test.step("the node is persisted at the drop position", async () => {
         // This is what separates a real drop from a click-to-add: the node has
         // to land where the pointer was released, not at an app-chosen default.
-        await waitForFlowSaveSettled(page);
+        await save.settled();
         const [node] = await readPersistedNodes(request, token, flowId, 1);
 
         const expected = {
@@ -245,6 +269,11 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
         expect(Object.keys(catalogTemplate).length).toBeGreaterThan(0);
       });
 
+      // Same contract as the drag test: armed before the add, awaited before
+      // the persisted read (#1743). The catalog read above issues no flow
+      // mutation, so the editor is still quiescent here.
+      const save = watchFlowSave(page);
+
       await test.step("add Chat Input to the canvas", async () => {
         await addComponentByDoubleClick(
           page,
@@ -254,7 +283,7 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
         await expect(page.locator(".react-flow__node")).toHaveCount(1, {
           timeout: 15000,
         });
-        await waitForFlowSaveSettled(page);
+        await save.settled();
       });
 
       await test.step("the persisted node carries every catalog default", async () => {
