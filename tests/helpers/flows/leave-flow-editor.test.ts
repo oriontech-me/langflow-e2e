@@ -28,9 +28,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  AUTOSAVE_INTERVAL_FALLBACK_MS,
+  publishAutosaveInterval,
+} from "./autosave-interval";
+import {
   BLOCKER_GRACE_MS,
   HOME_TIMEOUT_MS,
   classifyEditorExit,
+  editorExitDrainQuietMs,
   formatEditorExitStuckFailure,
   formatEditorExitWarning,
   type EditorExitVerdict,
@@ -187,5 +192,42 @@ test("the home budget stays above the blocker grace, and above what the call sit
   assert.ok(
     HOME_TIMEOUT_MS >= 30000,
     `home budget ${HOME_TIMEOUT_MS}ms is below the 30000ms the call sites already allowed`,
+  );
+});
+
+// The prevention half (#1743). `waitForFlowSaveSettled`'s 700 ms default arms
+// immediately when nothing is in flight, so it expires BEFORE the save an edit
+// schedules one debounce later — the exit then happens with the store still
+// diverged, which is the state `useBlocker` fires on and the one this helper's
+// prevention step exists to avoid. These pin the window against the interval
+// actually resolved for the run rather than against a number pasted here.
+test("the exit drain outlasts the autosave debounce it must wait out", () => {
+  try {
+    publishAutosaveInterval(2000);
+    assert.ok(
+      editorExitDrainQuietMs() > 2000,
+      `drain window ${editorExitDrainQuietMs()}ms does not outlast a 2000ms debounce`,
+    );
+    // The default this replaces. Asserted explicitly so a future edit that
+    // reverts to `waitForFlowSaveSettled(page)` — or to any window under the
+    // debounce — fails here instead of silently reopening #1743.
+    assert.ok(
+      editorExitDrainQuietMs() > 700,
+      `drain window ${editorExitDrainQuietMs()}ms is back at or below the 700ms default`,
+    );
+  } finally {
+    publishAutosaveInterval(null);
+  }
+});
+
+test("an unknown autosave interval still gets a window above the fallback", () => {
+  // Unknown is not a default (#1012): a run that could not read the interval
+  // must over-wait, never under-wait, because under-waiting returns on a save
+  // that was never issued and the exit proceeds with a diverged store.
+  publishAutosaveInterval(null);
+  assert.ok(
+    editorExitDrainQuietMs() > AUTOSAVE_INTERVAL_FALLBACK_MS,
+    `drain window ${editorExitDrainQuietMs()}ms does not exceed the ` +
+      `${AUTOSAVE_INTERVAL_FALLBACK_MS}ms unknown-interval fallback`,
   );
 });
