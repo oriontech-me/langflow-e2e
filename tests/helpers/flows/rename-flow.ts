@@ -1,4 +1,5 @@
 import { type Page, expect } from "@playwright/test";
+import { pendingSaveQuietMs } from "./autosave-interval";
 import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
 import { openFlowSettings } from "./open-flow-settings";
 
@@ -20,6 +21,36 @@ import { openFlowSettings } from "./open-flow-settings";
 // own evidence, not this issue's.
 const MODAL_TIMEOUT = 15000;
 
+/**
+ * The quiet window EVERY drain in this helper waits out, and why it is not the
+ * helper's own default (#1902).
+ *
+ * `waitForFlowSaveSettled`'s 700 ms default arms IMMEDIATELY when nothing is in
+ * flight, and the autosave an edit schedules is issued one full debounce later —
+ * `GET /api/v1/config.auto_saving_interval` answered 2000 on `1.13.0.dev15`
+ * (#1741). So the default expires BEFORE the save these barriers exist to wait
+ * out. That is not a theory here, it is this file's own history: the second
+ * barrier below was added precisely because the first kept returning early, with
+ * the clobbering PATCH observed 183 ms after it on `1.12.0.dev7`. A save issued
+ * just after a barrier resolved is what a scheduled save looks like from the
+ * outside.
+ *
+ * `pendingSaveQuietMs()` is read from the instance under test and is the only
+ * window that also closes a save that is merely SCHEDULED. It is ONE rule for
+ * all four drains rather than a window per site: a mixed regime is where the
+ * next gap opens, and one rule is a property `rename-flow.test.ts` can state and
+ * guard, where "this site needs it and that one does not" is an argument that
+ * has to be re-derived every time the file is edited.
+ *
+ * Cost: ~+1.8 s per drain (~2500 ms against 700 ms), i.e. ~+7.2 s per rename
+ * pass that edits the modal and ~+3.6 s for the no-edit reopen. #357 and #995
+ * are both a PATCH landing inside this helper, and each cost far more than
+ * seconds to diagnose.
+ */
+export function renameDrainQuietMs(): number {
+  return pendingSaveQuietMs();
+}
+
 // One re-apply is enough in practice: the clobbering autosave belongs to the
 // editor's mount burst, which is long over by the time a second attempt runs.
 // A third attempt costs ~15s and has never been observed to be needed.
@@ -38,9 +69,11 @@ const applyFlowSettings = async (
   page: Page,
   { flowName, flowDescription }: RenameOptions,
 ): Promise<RenameResult> => {
-  // Let any in-flight editor autosave settle so opening/saving the modal does
-  // not race a PATCH that would re-render the dialog and detach its inputs.
-  await waitForFlowSaveSettled(page);
+  // Drain the editor's autosave before the modal opens, so no PATCH response
+  // lands while it is up: that re-render detaches the dialog's inputs mid-edit
+  // (#357) and, if it carries a pre-rename store, clobbers the rename (#995).
+  // In flight AND merely scheduled — see `renameDrainQuietMs` (#1902).
+  await waitForFlowSaveSettled(page, { quietMs: renameDrainQuietMs() });
 
   // Open the flow-settings popover from the header, through the shared opener.
   //
@@ -102,14 +135,17 @@ const applyFlowSettings = async (
     await expect(saveButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
 
     // Second barrier, immediately before the PATCH we are about to fire
-    // (issue #995). The barrier at the top of the helper is not enough: the
-    // editor's mount autosave is debounced, so under load it is routinely
+    // (issue #995). The barrier at the top of the helper was not enough: the
+    // editor's mount autosave is debounced, so under load it was routinely
     // *issued* after that barrier returned (observed 183 ms after it, natural
-    // repro on 1.12.0.dev7). Waiting here — with the modal already filled, so
-    // nothing else can mutate the flow — leaves only the click→request hop
-    // between the last observed save and ours. Re-assert the button afterwards:
-    // a landing autosave re-renders the dialog.
-    await waitForFlowSaveSettled(page);
+    // repro on 1.12.0.dev7) — which #1741 later named, that being exactly what a
+    // scheduled save does to a window shorter than the debounce. With both
+    // windows derived (#1902) the first barrier now covers that case, and this
+    // one keeps its own job: with the modal already filled, so nothing else can
+    // mutate the flow, it leaves only the click→request hop between the last
+    // observed save and ours. Re-assert the button afterwards: a landing
+    // autosave re-renders the dialog.
+    await waitForFlowSaveSettled(page, { quietMs: renameDrainQuietMs() });
     await expect(saveButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
     await saveButton.click();
 
@@ -150,11 +186,18 @@ const applyFlowSettings = async (
  * non-waiting `locator.isVisible()/isEnabled()/isDisabled()` queries, whose
  * boolean results were discarded — they never actually waited. Before opening
  * the modal we also wait for the editor's autosave to settle
- * (`waitForFlowSaveSettled`): entering the editor fits the viewport and
- * schedules a debounced `PATCH /api/v1/flows/{id}`, and if that response lands
- * while the modal is open it re-renders the dialog, detaching `input-flow-name`
- * mid-click and briefly disabling `save-flow-settings` — exactly the race that
- * destabilised this helper.
+ * (`waitForFlowSaveSettled`, with the derived window — see
+ * `renameDrainQuietMs`): a debounced `PATCH /api/v1/flows/{id}` whose response
+ * lands while the modal is open re-renders the dialog, detaching
+ * `input-flow-name` mid-click and briefly disabling `save-flow-settings` —
+ * exactly the race that destabilised this helper.
+ *
+ * WHICH action scheduled that PATCH is a property of the build, and this header
+ * used to name one that no longer does it: *"entering the editor fits the
+ * viewport and schedules"* it. Measured on `1.13.0.dev15`, opening a flow issues
+ * no PATCH at all and neither does a viewport change — only graph and node
+ * mutations autosave (#1743). The caller's own edits before the rename are what
+ * this barrier drains now; do not re-derive a precondition from the old claim.
  *
  * Hardening (issue #995): the same PATCH race has a second, worse outcome — an
  * UPSTREAM defect this helper can only work around. `PATCH /api/v1/flows/{id}`
@@ -164,8 +207,11 @@ const applyFlowSettings = async (
  * in the store AND in the database. Confirmed live on 1.12.0.dev7: the header
  * reverts and `GET /api/v1/flows/` returns the old name.
  *
- * Two of the three variants are now prevented by closing the save barrier twice
- * (before opening the modal, and again once it is interactive). The third is not
+ * Two of the three variants are prevented by closing the save barrier twice
+ * (before opening the modal, and again once it is interactive) — and by closing
+ * it for long enough, which is the half #1902 repaired: at the helper's 700 ms
+ * default both barriers expired before a save still sitting on a 2000 ms
+ * debounce. The third is not
  * preventable from the test side: the clobbering autosave can be *issued after*
  * our own PATCH — observed 176 ms after it — built from a store that has not yet
  * received our response. For that one the rename is re-applied once, after the
@@ -196,7 +242,13 @@ export const renameFlow = async (
     // Drain the trailing autosave burst before judging the header: the
     // clobbering PATCH lands up to ~350 ms after ours, so reading the header
     // straight after the modal closes would see the correct name and miss it.
-    await waitForFlowSaveSettled(page);
+    //
+    // The ~350 ms is a measurement of a save already IN FLIGHT, which this
+    // barrier does hold (#995). What it does not cover on its own is a save
+    // still on the debounce — the window has to outlast that too, or the drain
+    // returns, the header reads correct, and this loop skips the re-apply it
+    // exists to perform (#1741/#1902).
+    await waitForFlowSaveSettled(page, { quietMs: renameDrainQuietMs() });
     if ((await header.textContent())?.trim() === flowName) break;
 
     // Loud on purpose — a silent retry would hide how often the upstream race
@@ -216,7 +268,10 @@ export const renameFlow = async (
     }
   }
 
-  await waitForFlowSaveSettled(page);
+  // The arbiter, and the same window for the same reason: `toHaveText` passes on
+  // the first matching tick, so a revert still sitting on the debounce would
+  // land after this assertion had already succeeded (#1902).
+  await waitForFlowSaveSettled(page, { quietMs: renameDrainQuietMs() });
   await expect(header).toHaveText(flowName, { timeout: 30000 });
 
   return previous;
