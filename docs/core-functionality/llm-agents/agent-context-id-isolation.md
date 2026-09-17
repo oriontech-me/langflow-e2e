@@ -157,8 +157,11 @@ the geometry above was measured.
 > NOT `watchFlowSave` — that primitive fails when no save appears, and on
 > attempt 2+ none does, because the reload restores the task text this same
 > loop persisted on attempt 1 and `fill()` then rewrites an identical value,
-> leaving the node clean. A drain is correct whether or not the edit mutated
-> anything; a watch would turn a recoverable retry into a hard red.
+> leaving the node clean. Measured end to end on `1.13.0.dev15`: a new value
+> issues 1 `PATCH`, the reload issues 0, and the identical refill issues 0. A
+> drain is correct whether or not the edit mutated anything; a watch would turn
+> a recoverable retry into a hard red. Cost: the full ~2.5 s window per attempt,
+> up to 3 attempts per turn.
 
 > **Canvas bottom-overlay note (#1643).** Langflow renders two different
 > components into ONE fixed container over the canvas —

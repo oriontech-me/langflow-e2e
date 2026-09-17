@@ -331,9 +331,16 @@ for (const { label, options, skipReason } of targets) {
           // silence against a 2000 ms debounce, i.e. it returned before the
           // PATCH existed. The watch also FAILS when the fill never marked the
           // node dirty, instead of passing on an edit that never left the page.
+          // Disposed in a `finally`: `setChatInputText` asserts the field is
+          // visible and can throw, and the watch's contract asks for
+          // `dispose()` on that abort path (idempotent after `settled()`).
           const seeded = watchFlowSave(page);
-          await setChatInputText(page, `John is 25 years old. (${nonce})`);
-          await seeded.settled();
+          try {
+            await setChatInputText(page, `John is 25 years old. (${nonce})`);
+            await seeded.settled();
+          } finally {
+            seeded.dispose();
+          }
         });
 
         const parsed = await test.step("run the Agent node and parse the Structured Response", () =>
@@ -377,8 +384,12 @@ for (const { label, options, skipReason } of targets) {
           // Same contract as test 1 above (#1743) — the run helper may reload,
           // so the seeded task has to have reached the server first.
           const seeded = watchFlowSave(page);
-          await setChatInputText(page, `The flag is red, white and blue. (${nonce})`);
-          await seeded.settled();
+          try {
+            await setChatInputText(page, `The flag is red, white and blue. (${nonce})`);
+            await seeded.settled();
+          } finally {
+            seeded.dispose();
+          }
         });
 
         const parsed = await test.step("run the Agent node and parse the Structured Response", () =>

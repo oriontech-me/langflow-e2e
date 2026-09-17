@@ -126,7 +126,9 @@ test(
       // zoom-out) issued ZERO PATCHes in 6 s while the control, one node-field
       // edit, issued exactly one. So this is now insurance against a pending
       // save from the template instantiation, kept because the claim is a
-      // property of the build rather than a contract.
+      // property of the build rather than a contract. Costs the full ~2.5 s
+      // window every run, since nothing is there to cut it short — the price of
+      // the precondition the four watches below rely on.
       await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
     });
 
@@ -137,9 +139,17 @@ test(
       // the adds and awaited after (#1743): the barrier this replaces returned
       // ~700 ms later with the PATCH still only scheduled on a 2000 ms
       // debounce, i.e. it never once did the job this comment claims for it.
+      // Every watch below is disposed in a `finally`: the window between arming
+      // and `settled()` contains assertions that can throw, and the primitive's
+      // own contract asks for `dispose()` on that abort path (idempotent after
+      // `settled()`). Same shape as `human-input-node-config.spec.ts`.
       const addsSaved = watchFlowSave(page);
-      await addAgentFieldsToBody(page, ["max_iterations", "add_current_date_tool"]);
-      await addsSaved.settled();
+      try {
+        await addAgentFieldsToBody(page, ["max_iterations", "add_current_date_tool"]);
+        await addsSaved.settled();
+      } finally {
+        addsSaved.dispose();
+      }
     });
 
     await test.step("set string, int and bool sentinels on the node body", async () => {
@@ -161,23 +171,31 @@ test(
       // point on a field whose historical failure mode was "the edit never
       // marked the node dirty" (0/5 persisted, see the comment above).
       const promptSaved = watchFlowSave(page);
-      await prompt.click();
-      await page.keyboard.press("ControlOrMeta+a");
-      await page.keyboard.press("Backspace");
-      await prompt.pressSequentially(nonce, { delay: 20 });
-      await expect(prompt).toHaveValue(nonce, { timeout: 5000 });
-      await prompt.blur();
-      await promptSaved.settled();
+      try {
+        await prompt.click();
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Backspace");
+        await prompt.pressSequentially(nonce, { delay: 20 });
+        await expect(prompt).toHaveValue(nonce, { timeout: 5000 });
+        await prompt.blur();
+        await promptSaved.settled();
+      } finally {
+        promptSaved.dispose();
+      }
 
       // max_iterations (int) — body int fields accept fill() + blur.
       const maxIter = page.getByTestId("int_int_max_iterations");
       await expect(maxIter).toBeVisible({ timeout: 15000 });
       await maxIter.scrollIntoViewIfNeeded();
       const maxIterSaved = watchFlowSave(page);
-      await maxIter.fill(MAX_ITERATIONS_SENTINEL);
-      await expect(maxIter).toHaveValue(MAX_ITERATIONS_SENTINEL, { timeout: 5000 });
-      await maxIter.blur();
-      await maxIterSaved.settled();
+      try {
+        await maxIter.fill(MAX_ITERATIONS_SENTINEL);
+        await expect(maxIter).toHaveValue(MAX_ITERATIONS_SENTINEL, { timeout: 5000 });
+        await maxIter.blur();
+        await maxIterSaved.settled();
+      } finally {
+        maxIterSaved.dispose();
+      }
 
       // add_current_date_tool (bool) — assert the pre-flip default so the flip
       // is a proven WRITE (a changed template default fails loudly instead of
@@ -187,9 +205,13 @@ test(
       await toggle.scrollIntoViewIfNeeded();
       await expect(toggle).toHaveAttribute("aria-checked", "true");
       const toggleSaved = watchFlowSave(page);
-      await toggle.click();
-      await expect(toggle).toHaveAttribute("aria-checked", "false");
-      await toggleSaved.settled();
+      try {
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-checked", "false");
+        await toggleSaved.settled();
+      } finally {
+        toggleSaved.dispose();
+      }
     });
 
     await test.step("saved: the flows API shows all three sentinels", async () => {

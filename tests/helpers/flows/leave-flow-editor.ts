@@ -66,6 +66,14 @@ import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
  * pending save restarts the window when it lands, so the barrier still returns
  * only once the editor is genuinely quiet.
  *
+ * Measured cost ~+1.8 s per exit — the window itself, since on this build most
+ * exits have no save to wait out at all (8 tests across the 5 caller specs went
+ * 1.1 m -> 1.3 m). Paid on every call, including `edit-flow-name`'s, which
+ * exits once per name in its loop. That buys the blocker PREVENTION this helper
+ * leads with; the alternative is paying `BLOCKER_GRACE_MS` (15 s) whenever the
+ * dialog does show, plus — where `escapeDeadlock` is on — a full page load that
+ * discards the editor's unsaved state.
+ *
  * NOT `watchFlowSave`, and that is a deliberate verdict rather than an
  * oversight. That primitive has to be armed BEFORE the edit it guards, and this
  * helper is called AFTER whatever the caller did — it cannot arm anything. It

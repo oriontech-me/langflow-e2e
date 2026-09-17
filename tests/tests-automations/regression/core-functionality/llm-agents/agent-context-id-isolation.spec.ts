@@ -213,9 +213,18 @@ async function prepareTurn(
     // a general preference. That primitive FAILS when no save appears, and on
     // attempt 2+ none does: the reload restores the task text this same loop
     // persisted on attempt 1, so `setChatInputText`'s `fill()` rewrites an
-    // identical value, the node never goes dirty and no PATCH is issued. The
-    // watch would turn a recoverable retry into a hard red. A drain is correct
-    // whether or not the edit mutated anything, which is what this call needs.
+    // identical value and the node never goes dirty. The watch would turn a
+    // recoverable retry into a hard red.
+    //
+    // Measured end to end on `1.13.0.dev15`, not inferred from the mechanism:
+    // fill a ChatInput with a new value -> 1 PATCH; `page.reload()` -> 0; refill
+    // the IDENTICAL value -> 0. (`use-save-flow.ts` gates the whole mutation on
+    // `customStringify(requested) !== customStringify(saved)`, and the reload
+    // path rehydrates with a bare `set()` rather than `setNodes`, so neither the
+    // load nor the no-op edit diffs.) A drain is correct whether or not the edit
+    // mutated anything, which is what this call needs.
+
+    // Each attempt pays the full ~2.5 s window, up to 3 attempts per turn.
     await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
 
     stored = await readContextIds(request, bearer, flowId, CONTEXT_NODE_TYPES);

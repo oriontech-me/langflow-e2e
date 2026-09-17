@@ -4,7 +4,6 @@ import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { watchFlowSave } from "../../../helpers/flows/watch-flow-save";
-import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 
 // Getting a component from the sidebar onto the canvas — QA-CHECKLIST §15.2:
 // double-click, drag-and-drop, and the state the added component arrives in.
@@ -198,46 +197,53 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
       // browser. This observes the save being issued and completing, and FAILS
       // naming the cause when none appears.
       const save = watchFlowSave(page);
+      // `dispose()` in a `finally` because the window between arming and
+      // `settled()` contains assertions that can throw: the watch's own
+      // contract asks for it on the abort path, and it is idempotent after
+      // `settled()`. Same shape as `human-input-node-config.spec.ts`.
+      try {
+        await test.step("drag the Chat Output card onto the canvas", async () => {
+          await page.getByTestId("sidebar-search-input").fill("chat output");
+          await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
+            timeout: 30000,
+          });
 
-      await test.step("drag the Chat Output card onto the canvas", async () => {
-        await page.getByTestId("sidebar-search-input").fill("chat output");
-        await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-          timeout: 30000,
+          await page
+            .getByTestId("input_outputChat Output")
+            .dragTo(page.locator(".react-flow__pane"), {
+              targetPosition: DROP_POINT,
+            });
         });
 
-        await page
-          .getByTestId("input_outputChat Output")
-          .dragTo(page.locator(".react-flow__pane"), {
-            targetPosition: DROP_POINT,
-          });
-      });
+        await test.step("one Chat Output node appears", async () => {
+          const nodes = page.locator(".react-flow__node");
+          await expect(nodes).toHaveCount(1, { timeout: 15000 });
+          await expect(nodes.first()).toHaveAttribute(
+            "data-testid",
+            /^rf__node-ChatOutput-/,
+          );
+        });
 
-      await test.step("one Chat Output node appears", async () => {
-        const nodes = page.locator(".react-flow__node");
-        await expect(nodes).toHaveCount(1, { timeout: 15000 });
-        await expect(nodes.first()).toHaveAttribute(
-          "data-testid",
-          /^rf__node-ChatOutput-/,
-        );
-      });
+        await test.step("the node is persisted at the drop position", async () => {
+          // This is what separates a real drop from a click-to-add: the node has
+          // to land where the pointer was released, not at an app-chosen default.
+          await save.settled();
+          const [node] = await readPersistedNodes(request, token, flowId, 1);
 
-      await test.step("the node is persisted at the drop position", async () => {
-        // This is what separates a real drop from a click-to-add: the node has
-        // to land where the pointer was released, not at an app-chosen default.
-        await save.settled();
-        const [node] = await readPersistedNodes(request, token, flowId, 1);
-
-        const expected = {
-          x: (DROP_POINT.x - frame.viewport.x) / frame.viewport.scale,
-          y: (DROP_POINT.y - frame.viewport.y) / frame.viewport.scale,
-        };
-        expect(Math.abs(node.position.x - expected.x)).toBeLessThanOrEqual(
-          DROP_TOLERANCE,
-        );
-        expect(Math.abs(node.position.y - expected.y)).toBeLessThanOrEqual(
-          DROP_TOLERANCE,
-        );
-      });
+          const expected = {
+            x: (DROP_POINT.x - frame.viewport.x) / frame.viewport.scale,
+            y: (DROP_POINT.y - frame.viewport.y) / frame.viewport.scale,
+          };
+          expect(Math.abs(node.position.x - expected.x)).toBeLessThanOrEqual(
+            DROP_TOLERANCE,
+          );
+          expect(Math.abs(node.position.y - expected.y)).toBeLessThanOrEqual(
+            DROP_TOLERANCE,
+          );
+        });
+      } finally {
+        save.dispose();
+      }
     });
 
   test("an added component arrives with its catalog default settings",
@@ -274,17 +280,21 @@ test.describe("ui-ux — add components to the canvas from the sidebar", () => {
       // mutation, so the editor is still quiescent here.
       const save = watchFlowSave(page);
 
-      await test.step("add Chat Input to the canvas", async () => {
-        await addComponentByDoubleClick(
-          page,
-          "chat input",
-          "input_outputChat Input",
-        );
-        await expect(page.locator(".react-flow__node")).toHaveCount(1, {
-          timeout: 15000,
+      try {
+        await test.step("add Chat Input to the canvas", async () => {
+          await addComponentByDoubleClick(
+            page,
+            "chat input",
+            "input_outputChat Input",
+          );
+          await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+            timeout: 15000,
+          });
+          await save.settled();
         });
-        await save.settled();
-      });
+      } finally {
+        save.dispose();
+      }
 
       await test.step("the persisted node carries every catalog default", async () => {
         const [node] = await readPersistedNodes(request, token, flowId, 1);
