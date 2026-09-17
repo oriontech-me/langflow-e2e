@@ -243,10 +243,17 @@ test.describe("Anthropic Provider", () => {
         // `const isValid = await validateCredentials(); if (!isValid …) return;`),
         // so a rejected key issues no /variables/ request at all and awaiting
         // both at once reported a sub-second refusal as a 60 s timeout carrying
-        // no cause — the shape that cost the 2026-09-11 daily 300 s and an
-        // unreviewed @stable removal (#1829). `armProviderSave` is the one
-        // implementation of that rule, shared with the four sibling provider
-        // specs #1849 measured the same shape on.
+        // no cause — the shape that cost the 2026-09-11 daily an unreviewed
+        // @stable removal (commit 883047fc, #1829) on a test whose logic was
+        // correct. What it did NOT cost is the COLLECTOR's sweep budget, which an
+        // earlier version of this comment charged here: that run hard-failed both
+        // this test and `collect providers status and models from UI`, and their
+        // common cause is the dead key, not the assertion shape — the collector is
+        // a separate instrument with its own ceiling (collect-models.ts
+        // CREDENTIAL_SAVE_TIMEOUT_MS = 240 s, so not 300 s either) and its own fix
+        // (#1823's remedy (i)), and nothing here recovers it. `armProviderSave` is
+        // the one implementation of that rule, shared with the four sibling
+        // provider specs #1849 measured the same shape on.
         const save = armProviderSave(page, { subject: "key" });
 
         await page.getByRole("button", { name: /Save|Replace/i }).first().click();

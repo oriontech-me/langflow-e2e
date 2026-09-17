@@ -13,6 +13,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
+import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 
 /**
@@ -25,11 +26,12 @@ import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-g
  * select; the execution in Test 2 proves the selected Gemini model is genuinely
  * usable, not merely picked in the UI.
  *
- * False-positive guards: Test 1 asserts the save *requests* succeed
- * (validate-provider + PATCH /variables, both 2xx) rather than a pre-existing
- * configured state, so a no-op save cannot pass. Test 2 asserts a Gemini model is
- * selected and echoes a per-run sentinel, so the response can't be stale or from
- * another provider.
+ * False-positive guards: Test 1 asserts the save *requests* succeed and say so in
+ * the body (validate-provider -> 200 AND {"valid": true}, then POST|PATCH
+ * /variables -> 2xx) rather than a pre-existing configured state, so neither a
+ * no-op save nor a key Google rejects can pass (#1867). Test 2 asserts a Gemini
+ * model is selected and echoes a per-run sentinel, so the response can't be stale
+ * or from another provider.
  */
 
 if (!process.env.CI) {
@@ -110,14 +112,29 @@ test.describe("Google Provider", () => {
       );
 
       // The gate above is env presence, NOT provider health — deliberate
-      // (#1415). This test makes no completion call, and the backend's
-      // validate_model_provider_key (lfx/base/models/unified_models.py) only
-      // rejects a key when the error message contains "401"/"authentication"/
-      // "api key"; every other failure hits a bare `return` ("allow saving
-      // despite minor errors"), so a spend-capped or drained key still answers
-      // {valid: true} and this test still passes. Gating it would trade real
-      // coverage of the Settings save path for nothing on exactly the days the
-      // account is down. Test 2, which does call the model, IS gated.
+      // (#1415), and the reason holds for exactly ONE of the two ways the
+      // account can be unusable (#1867).
+      //   DRAINED / spend-capped: this test makes no completion call, and the
+      //   backend's validate_model_provider_key (lfx/base/models/unified_models.py)
+      //   only rejects a key when the error message contains "401"/
+      //   "authentication"/"api key"; every other failure hits a bare `return`
+      //   ("allow saving despite minor errors"), so such a key is expected to
+      //   still answer {valid: true} and leave this test passing, genuinely
+      //   exercising the Settings save path. That is a derivation from the shared
+      //   code path, NOT a Google measurement — the measured instance is the
+      //   Anthropic sibling on the 2026-07-27 daily (dry account, Test 1 passed,
+      //   Test 2 hard-failed); #1029 records only that collect-models marked
+      //   google inactive on run 30374528125, never this test's outcome. Gating
+      //   would trade real coverage for nothing on exactly the days the account is
+      //   down — and google is the provider that went spend-capped in #1029.
+      //   REJECTED (401): the product correctly refuses to persist the
+      //   credential, so this test CANNOT pass however healthy Langflow is. That
+      //   is the test working — the remedy is a new key — and its job is to say
+      //   so in seconds with Google's own message, which is what the ordered
+      //   read below does.
+      // providerSkipGate is still refused because it does not separate those two
+      // states; the discriminator that does is the validate-provider body.
+      // Test 2, which does call the model, IS gated.
       trackCreatedFlows(page);
       await awaitBootstrapTest(page, { skipModal: true });
 
@@ -142,39 +159,48 @@ test.describe("Google Provider", () => {
         await keyInput.fill(process.env.GOOGLE_API_KEY ?? "");
 
         // Arm both waiters BEFORE clicking so the pass is caused by THIS save, not
-        // a "Disconnect"/"Replace" state a prior configuration left behind.
-        // Google validation can be slow on a cold provider — allow 60s.
-        const validatePromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/models/validate-provider") &&
-            r.request().method() === "POST",
-          { timeout: 60000 },
-        );
+        // a "Disconnect"/"Replace" state a prior configuration left behind — and
+        // read them in the order the panel issues them, never concurrently.
+        //
+        // A 2xx is NOT an authentication verdict: validate-provider answers 200
+        // for a rejected key too and puts the verdict in the body,
+        // {"valid":false,"error":"Invalid API key for …"} (#1823/#1829). The
+        // frontend then gates the write on that body (useProviderConfiguration.ts
+        // -> handleSaveAllVariables: `const isValid = await validateCredentials();
+        // if (!isValid …) return;`), so a rejected key issues no /variables/
+        // request at all and awaiting both at once reported a sub-second refusal
+        // as the persist waiter's 60 s timeout, carrying no cause — the shape that
+        // cost the 2026-09-11 daily an unreviewed @stable removal on the Anthropic
+        // sibling (commit 883047fc, #1829), on a test whose logic was correct.
+        // (That daily also burnt the COLLECTOR's sweep budget on the same dead
+        // key, but that is a different instrument with its own ceiling and its own
+        // fix — collect-models.ts CREDENTIAL_SAVE_TIMEOUT_MS, #1823's remedy (i) —
+        // and no change here recovers it.) `armProviderSave` is the one
+        // implementation of that rule, shared with the five sibling provider
+        // specs (#1849/#1867).
+        //
         // Persist is a CREATE (POST /variables/ 201) when the global key does
         // not yet exist and an UPDATE (PATCH /variables/{id} 200) when it does
-        // — the frontend branches on existence (#636). Match BOTH: a fresh
-        // instance, or a run where no earlier test configured the provider
-        // first, takes the POST path, so a PATCH-only predicate waits forever
-        // on a request that never fires — the confirmed flake (POST 201
+        // — the frontend branches on existence (#636). The helper matches BOTH:
+        // a fresh instance, or a run where no earlier test configured the
+        // provider first, takes the POST path, so a PATCH-only predicate waits
+        // forever on a request that never fires — the confirmed flake (POST 201
         // observed live on a deleted-var repro; validate-provider itself
         // returns 200, so the backend is healthy — a test defect, not a
         // product hang).
-        const persistPromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/variables/") &&
-            (r.request().method() === "POST" || r.request().method() === "PATCH"),
-          { timeout: 60000 },
-        );
+        //
+        // 60 s, not the helper's 30 s default: Google validation can be slow on a
+        // cold provider. The refusal path no longer spends that budget either way.
+        const save = armProviderSave(page, { subject: "key", timeout: 60000 });
 
         await page.getByRole("button", { name: /Save|Replace/i }).first().click();
 
-        const [validateResp, persistResp] = await Promise.all([
-          validatePromise,
-          persistPromise,
-        ]);
-        // validate-provider 2xx = the key authenticates against Google live;
-        // POST/PATCH /variables 2xx = the key is persisted globally.
-        expect(validateResp.ok()).toBe(true);
+        // Throws naming Google's own reason when the key is refused.
+        await save.validated();
+
+        // POST|PATCH /variables 2xx = the key is persisted globally — the
+        // consequence of a validated save, asserted second.
+        const persistResp = await save.persisted();
         expect(persistResp.ok()).toBe(true);
       });
     },
