@@ -1,6 +1,6 @@
 # Agent structured output — output_schema returns schema-shaped JSON
 
-**Last validated:** Langflow 1.11.x (re-validated on 1.11.0.dev38, #724)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`, #1743; earlier 1.11.0.dev38, #724)
 
 ---
 
@@ -82,7 +82,13 @@ output_schema → structured_response wiring; `@agents` — Agent surface;
    set `add_current_date_tool = false` and `add_calculator_tool = false`
    (no tools ⇒ native structured-output path). Reload.
 3. Set the Chat Input text to a trivially extractable sentence carrying a
-   per-run nonce ("John is 25 years old. (nonce)").
+   per-run nonce ("John is 25 years old. (nonce)"), under a `watchFlowSave`
+   armed before the edit and awaited after (#1743). The seed HAS to reach the
+   server: step 4's helper re-reads the Agent's model widget and reloads the
+   page up to twice when the selection is missing, and a reload discards a task
+   that is still only scheduled for autosave — the Agent would then run on the
+   template's default text. The barrier this replaced drained 700 ms of silence
+   against a 2000 ms debounce, i.e. it returned before the `PATCH` existed.
 4. Run the **Agent node** (node run button) and open the output inspector of
    the **Structured Response** output.
 5. **Assert:** the inspector payload parses as JSON; the parsed object (or
@@ -94,7 +100,8 @@ output_schema → structured_response wiring; `@agents` — Agent surface;
 
 1. Same template load + PATCH mechanism; schema
    `[{name: "colors", type: "str", multiple: true}]`, tools off.
-2. Chat Input: "The flag is red, white and blue. (nonce)".
+2. Chat Input: "The flag is red, white and blue. (nonce)", under the same
+   `watchFlowSave` contract as test 1 step 3.
 3. Run the Agent node, open the Structured Response inspector.
 4. **Assert:** parsed JSON has key `colors` whose value is an **Array** with
    length ≥ 1 and every element of type string.

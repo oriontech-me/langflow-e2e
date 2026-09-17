@@ -3,6 +3,7 @@ import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
+import { watchFlowSave } from "../../../../helpers/flows/watch-flow-save";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -244,6 +245,12 @@ async function runAgentAndParseStructuredOutput(
 
   await page.getByTestId("dropdown-output-undefined").click();
   await page.getByTestId("dropdown-item-output-undefined-structured response").click();
+  // Stays a DRAIN (#1743, audited): the only thing after it is the node run,
+  // and that builds from the frontend's in-memory graph — `flowStore.buildFlow`
+  // sends `flowData: { nodes, edges }` straight from the store, as the header
+  // of this function already records. Nothing here reads the persisted flow, so
+  // there is no edit whose arrival at the server the next line depends on, and
+  // a `watchFlowSave` would buy a debounce's wait for no assertion.
   await waitForFlowSaveSettled(page);
 
   await page.getByTestId("button_run_agent").click();
@@ -315,8 +322,18 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("seed a trivially extractable task", async () => {
+          // Armed before the seed and awaited after (#1743). The run helper
+          // below re-reads the Agent's model widget and RELOADS the page up to
+          // twice when the selection is missing — so a task that is still only
+          // scheduled for autosave is discarded by that reload and the Agent
+          // runs on the template's default text, which is not the input this
+          // test asserts about. The barrier this replaces drained ~700 ms of
+          // silence against a 2000 ms debounce, i.e. it returned before the
+          // PATCH existed. The watch also FAILS when the fill never marked the
+          // node dirty, instead of passing on an edit that never left the page.
+          const seeded = watchFlowSave(page);
           await setChatInputText(page, `John is 25 years old. (${nonce})`);
-          await waitForFlowSaveSettled(page);
+          await seeded.settled();
         });
 
         const parsed = await test.step("run the Agent node and parse the Structured Response", () =>
@@ -357,8 +374,11 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("seed a task listing multiple values", async () => {
+          // Same contract as test 1 above (#1743) — the run helper may reload,
+          // so the seeded task has to have reached the server first.
+          const seeded = watchFlowSave(page);
           await setChatInputText(page, `The flag is red, white and blue. (${nonce})`);
-          await waitForFlowSaveSettled(page);
+          await seeded.settled();
         });
 
         const parsed = await test.step("run the Agent node and parse the Structured Response", () =>
