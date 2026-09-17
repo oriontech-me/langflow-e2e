@@ -681,3 +681,62 @@ test("two variants that BOTH sat in an outage each get their own payload record"
     ["google / gemini-3.5-flash", "openai / gpt-4o-mini"],
   );
 });
+
+// ── Adoption guard: producer and consumer must stay wired, in both lanes ─────
+//
+// The join is only ever as good as the two env vars that carry it, and losing
+// either is SILENT in the product: the reporter simply writes no file, the
+// appender simply omits the field, and every row afterwards reads like a lane
+// that does not measure. #1763 shipped with "the final proof is the next
+// scheduled daily" as its plan, which is a 35-minute feedback loop for a
+// one-token typo.
+//
+// Line-based rather than YAML-parsed, the way `wait-for-backend.test.mjs` does
+// it: the repo ships no YAML parser, and what this has to pin is the ORDER of
+// two named steps and the PATH they agree on, both of which lines express
+// directly. It pins a spelling, which #1226 is right to say does not pin a
+// behaviour — here the spelling IS the behaviour, because the two sides never
+// meet in any code a unit test could drive.
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const lineIndex = (lines, needle) => lines.findIndex((l) => l.includes(needle));
+// An env KEY, not a mention of one: both names appear in the comments that
+// explain them, and `findIndex` takes the first match it is given.
+const envIndex = (lines, key) => lines.findIndex((l) => new RegExp(`^\\s+${key}:\\s`).test(l));
+
+test("daily-stable.yml writes outage-attempts.json before the history step reads it", () => {
+  const lines = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8").split("\n");
+
+  const reporter = lineIndex(lines, "- name: Report mid-run backend outages");
+  const out = envIndex(lines, "OUTAGE_ATTEMPTS_OUT");
+  const appender = lineIndex(lines, "- name: Append daily history");
+  const read = envIndex(lines, "OUTAGE_ATTEMPTS");
+
+  assert.ok(reporter > -1 && appender > -1, "both steps must still exist");
+  assert.ok(out > reporter && out < appender, "the reporter step must still set OUTAGE_ATTEMPTS_OUT (#1763)");
+  assert.ok(read > appender, "the history step must still set OUTAGE_ATTEMPTS (#1763)");
+  assert.ok(
+    reporter < appender,
+    "the file has to be WRITTEN before it is read — a reordering would leave the field absent in silence",
+  );
+
+  const path = (i) => lines[i].split(":").slice(1).join(":").trim();
+  assert.equal(path(out), path(read), "both steps must name the same file");
+
+  // Same job, or the file does not survive between them: a GitHub Actions job
+  // gets its own workspace. Job keys are the only 2-space-indented keys here.
+  const between = lines.slice(reporter, read).filter((l) => /^ {2}[A-Za-z_-]+:\s*$/.test(l));
+  assert.deepEqual(between, [], "a job boundary opened between the writer and the reader");
+});
+
+test("run-e2e.sh writes outage-attempts.json before its publish phase reads it", () => {
+  // The VM twin has to write the field too, or `compare-lane-verdicts.mjs` sits
+  // permanently on parity UNVERIFIED — which reads like a check and is not one.
+  const text = readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8");
+  const out = /OUTAGE_ATTEMPTS_OUT="([^"]+)"/.exec(text);
+  const read = /\bOUTAGE_ATTEMPTS="([^"]+)"/.exec(text);
+  assert.ok(out, "phase_merge must still pass OUTAGE_ATTEMPTS_OUT to the reporter (#1763)");
+  assert.ok(read, "phase_publish must still pass OUTAGE_ATTEMPTS to the appender (#1763)");
+  assert.equal(out[1], read[1], "both phases must name the same file");
+  assert.ok(text.indexOf(out[0]) < text.indexOf(read[0]), "the file is written in phase_merge, read in phase_publish");
+});
