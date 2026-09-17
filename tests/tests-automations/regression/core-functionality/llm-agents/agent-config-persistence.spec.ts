@@ -7,6 +7,8 @@ import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../../helpers/ui/open-advanced-options";
+import { pendingSaveQuietMs } from "../../../../helpers/flows/autosave-interval";
+import { watchFlowSave } from "../../../../helpers/flows/watch-flow-save";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -41,7 +43,10 @@ const MAX_ITERATIONS_SENTINEL = "7";
 // Expose the given advanced Agent fields on the node body in ONE inspector
 // session, then close. Doing all the adds before touching any value keeps the
 // add-autosave (debounced PATCH) from re-rendering the node mid-edit and
-// detaching a field being filled (waitForFlowSaveSettled's documented race).
+// detaching a field being filled. The caller arms `watchFlowSave` around this
+// (#1743) — the barrier that used to follow it drained network silence and
+// returned before the add-autosave was even issued, so the race it is written
+// to prevent was left wide open.
 async function addAgentFieldsToBody(page: Page, fields: string[]): Promise<void> {
   await page.locator('[data-testid^="rf__node-Agent"]').first().click();
   await openAdvancedOptions(page);
@@ -107,19 +112,34 @@ test(
       // mounts its body fields — SimpleAgentTemplatePage does this for the
       // sibling agent specs; this model-free spec must do it itself.
       await adjustScreenView(page);
-      // The template load + fit-view schedule a debounced autosave PATCH.
-      // Editing before it lands lets its response re-render the node from
-      // server state and revert the edit — settle it FIRST (the sibling specs
-      // get this settle from provider setup, which this spec skips).
-      await waitForFlowSaveSettled(page);
+      // Leave the editor QUIESCENT before the steps below arm `watchFlowSave`:
+      // that watch resolves on the first save it observes and cannot tell which
+      // mutation produced it, so a PATCH merely SCHEDULED at arming time would
+      // satisfy it while carrying pre-edit state. The window therefore has to
+      // outlast the debounce, which the 700 ms default does not (#1741/#1743).
+      //
+      // A DRAIN and never a watch here: nothing in this step asserts that
+      // anything saved, and a watch FAILS on silence — which on this build is
+      // the expected outcome. The comment this replaces claimed "the template
+      // load + fit-view schedule a debounced autosave PATCH"; measured on
+      // `1.13.0.dev15` that is no longer true — a viewport change (fit-view +
+      // zoom-out) issued ZERO PATCHes in 6 s while the control, one node-field
+      // edit, issued exactly one. So this is now insurance against a pending
+      // save from the template instantiation, kept because the claim is a
+      // property of the build rather than a contract.
+      await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
     });
 
     await test.step("expose the two advanced fields on the node body", async () => {
       // Add both advanced fields in one inspector session, then let the
-      // add-autosave settle BEFORE editing any value — otherwise the PATCH
-      // response detaches the just-filled field mid-edit.
+      // add-autosave REACH THE SERVER before editing any value — otherwise the
+      // PATCH response detaches the just-filled field mid-edit. Armed before
+      // the adds and awaited after (#1743): the barrier this replaces returned
+      // ~700 ms later with the PATCH still only scheduled on a 2000 ms
+      // debounce, i.e. it never once did the job this comment claims for it.
+      const addsSaved = watchFlowSave(page);
       await addAgentFieldsToBody(page, ["max_iterations", "add_current_date_tool"]);
-      await waitForFlowSaveSettled(page);
+      await addsSaved.settled();
     });
 
     await test.step("set string, int and bool sentinels on the node body", async () => {
@@ -133,22 +153,31 @@ test(
       );
       await expect(prompt).toBeVisible({ timeout: 15000 });
       await prompt.scrollIntoViewIfNeeded();
+      // One armed watch per sentinel, in place of the barrier that followed it
+      // (#1743). Two things ride on the save having actually landed here: the
+      // next edit must not start while this PATCH is in flight (its response
+      // re-renders the node), and the API poll at the end reads all three
+      // values from the server. A watch also FAILS on silence, which is the
+      // point on a field whose historical failure mode was "the edit never
+      // marked the node dirty" (0/5 persisted, see the comment above).
+      const promptSaved = watchFlowSave(page);
       await prompt.click();
       await page.keyboard.press("ControlOrMeta+a");
       await page.keyboard.press("Backspace");
       await prompt.pressSequentially(nonce, { delay: 20 });
       await expect(prompt).toHaveValue(nonce, { timeout: 5000 });
       await prompt.blur();
-      await waitForFlowSaveSettled(page);
+      await promptSaved.settled();
 
       // max_iterations (int) — body int fields accept fill() + blur.
       const maxIter = page.getByTestId("int_int_max_iterations");
       await expect(maxIter).toBeVisible({ timeout: 15000 });
       await maxIter.scrollIntoViewIfNeeded();
+      const maxIterSaved = watchFlowSave(page);
       await maxIter.fill(MAX_ITERATIONS_SENTINEL);
       await expect(maxIter).toHaveValue(MAX_ITERATIONS_SENTINEL, { timeout: 5000 });
       await maxIter.blur();
-      await waitForFlowSaveSettled(page);
+      await maxIterSaved.settled();
 
       // add_current_date_tool (bool) — assert the pre-flip default so the flip
       // is a proven WRITE (a changed template default fails loudly instead of
@@ -157,9 +186,10 @@ test(
       await expect(toggle).toBeVisible({ timeout: 15000 });
       await toggle.scrollIntoViewIfNeeded();
       await expect(toggle).toHaveAttribute("aria-checked", "true");
+      const toggleSaved = watchFlowSave(page);
       await toggle.click();
       await expect(toggle).toHaveAttribute("aria-checked", "false");
-      await waitForFlowSaveSettled(page);
+      await toggleSaved.settled();
     });
 
     await test.step("saved: the flows API shows all three sentinels", async () => {
