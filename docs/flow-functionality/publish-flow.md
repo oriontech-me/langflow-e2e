@@ -1,6 +1,6 @@
 # Flow Functionality — Publish Flow (Shareable Playground)
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev15`)
 
 ---
 
@@ -16,10 +16,85 @@ Together the pair guarantees the publish dropdown action wires up to the real ba
 
 ---
 
+## Known product defect — `LE-2598` (#1760, in the nightly from `1.13.0.dev14`)
+
+The UI test reads `access_type` back over the API after each toggle. On the 2026-09-07
+and 2026-09-08 dailies the read after the **unpublish** answered `PUBLIC`, byte-identical
+on both days, failing on attempt 0 and passing on attempt 1 — which cost the test
+`@stable` **and** a `test.fixme` at triage.
+
+The cause is not this route and not the read: **every write route taking `DbSession`
+answered its 2xx before the transaction committed.** `PATCH /api/v1/flows/{id}` never
+commits (`grep -n commit` is empty for `api/v1/flows.py` and for `flows_helpers.py`); the
+commit belongs to `session_scope`'s `yield`-dependency teardown, and FastAPI runs that
+teardown **after** the response has been written. So the `200` echoing `PRIVATE` does not
+attest that the row says `PRIVATE`, and the very next `GET` — issued by Playwright's
+request context, a different client from the browser that sent the `PATCH` — can correctly
+read the pre-commit row.
+
+### Proven causally, on the image that failed
+
+Same method as the sibling symptoms (#1759, #1777, #1807): an isolated container whose
+`session_scope` sleeps 300 ms between the `yield` and the `commit`, gated on a marker file
+so control and mutation run in the **same process**. Replaying this test's own sequence
+(`PATCH {access_type: "PRIVATE"}` then `GET /api/v1/flows/{id}`), 10 iterations each:
+
+| | `1.13.0.dev6` — the 2026-09-08 daily's image | `1.13.0.dev14` |
+|---|---|---|
+| read-back answers `PRIVATE`, **un-forced** | 10/10 | 10/10 |
+| read-back answers `PRIVATE`, **under the delay** | **0/10** — every one answered `PUBLIC` | **10/10** |
+| `PATCH` latency under the delay | 9-19 ms — the client is not waiting for the commit | **319-345 ms** — it is |
+| the row became `PRIVATE` after | 301-524 ms | n/a |
+| marker removed again, same process | 10/10 | n/a |
+| **this spec itself** under the delay | **fails** | passes (11.6 s) |
+| **this spec itself**, un-forced | passes (8.9 s) | passes |
+
+`langflow#15078` (`Depends(injectable_session_scope, scope="function")` on `DbSession` and
+on the five auth dependencies) is the fix; it back-merged into the 1.13 line between
+`1.13.0.dev12` and `1.13.0.dev14`. The delay moved from *after* the response to *inside*
+it — which is the ordering, measured rather than inferred. A green run was never the
+evidence: un-forced, both images pass.
+
+### The second route into this test, and why the `accessTypePatches` trail exists
+
+The same pre-commit response reaches this test a second way, through the editor rather
+than through the read-back. `usePatchUpdateFlow`'s `onSettled` invalidates
+`useGetRefreshFlowsQuery`, so a `GET /flows/?get_all=true&header_flows=true` is fired
+immediately after the `PATCH` **response** — i.e. potentially before its commit. That row
+carries `access_type`, `setFlows` merges it over `currentFlow`, and the switch is
+`checked={currentFlow?.access_type === "PUBLIC"}`: a pre-commit row therefore flips the
+toggle back to its old position and **leaves it there**, with the flow still public. The
+next click then reads its direction from that stale store and sends
+`access_type: "PUBLIC"` — a user trying to revoke public access re-publishes instead, with
+no error shown. Measured under the same toggle on `dev6`: the switch stays `unchecked`
+while `GET /api/v1/flows/{id}` answers `PUBLIC`, and the spec fails at the publish step
+rather than at the read-back; on `dev14`, under the same toggle, it does not happen.
+
+Both routes produce the *same* failed assertion, so the run's artifacts cannot tell them
+apart — which is what `patchTrail()` is for. It records the `access_type` of every `PATCH`
+the **editor** issued and prints it in the failure message:
+
+- `[PUBLIC, PRIVATE]` — the editor asked for `PRIVATE`; the read-back raced the commit.
+- `[PUBLIC, PUBLIC]` — the editor asked for `PUBLIC`; the store it reads was stale and the
+  toggle re-published.
+- `[PUBLIC]` — no second `PATCH` was sent at all (the click never landed).
+
+Never soften either read-back with a retry, a sleep or a poll: `access_type` being correct
+on the read immediately after the write **is** the contract, and a bounded wait around it
+would have hidden this defect on both routes.
+
+---
+
 ## Tags *(required)*
 
-UI test: `@release` `@workspace` `@playground` `@stable`
-API test: `@release` `@workspace` `@api` `@stable`
+UI test: `@stable` `@release` `@workspace` `@playground`
+API test: `@stable` `@release` `@workspace` `@api`
+
+**`@stable` is back on the UI test, and the `test.fixme` quarantine from #1762 is
+lifted.** The daily's triage took both on 2026-09-08; they are restored on the upstream
+fix being in `langflowai/langflow-nightly:latest` and re-validated there — never on a
+test-side change, which is what #1760's *Deliverables* forbid. The evidence is the
+ordering measurement above, not the burst: un-forced, `dev6` and `dev14` both pass.
 
 ---
 
@@ -70,6 +145,7 @@ The UI test must:
 - Open the public URL in `browser.newContext()` and assert the playground renders — does not piggyback on the editor's cookies, so a regression that makes `/playground/{id}` require an existing editor session would fail here
 - After unpublish, re-navigate the same fresh page to the URL and assert `mainpage_title` is visible — proves the route is gated by `access_type` and not by stale cached state on the original tab
 - `finally` blocks delete the flow via API — repeated runs do not accumulate workspace artifacts
+- Carry the `patchTrail()` message on **both** `access_type` read-backs — on failure it names which of `LE-2598`'s two routes was taken (see the section above); without it the daily triage gets `Expected "PRIVATE" / Received "PUBLIC"` and nothing else, which is what cost this issue two dailies of investigation
 
 The API test must assert **all** of:
 
@@ -90,6 +166,11 @@ The API test must assert **all** of:
 - `src/frontend/src/components/core/flowToolbarComponent/components/deploy-dropdown.tsx` (`handlePublishedSwitch`) — calls `usePatchUpdateFlow` with `access_type: "PUBLIC" | "PRIVATE"`; the API test mirrors this round-trip directly
 - `src/backend/base/langflow/api/v1/flows.py` (`PATCH /api/v1/flows/{id}`) — owns the `access_type` write; the API test asserts this contract
 - `/playground/{flowId}` route (frontend SPA) — owns the redirect-to-home behavior when a flow is not `PUBLIC`; the UI test depends on `mainpage_title` being visible after navigating to a now-private URL
+- `src/lfx/src/lfx/services/deps.py` — `session_scope`, where the `PATCH`'s commit actually happens (`LE-2598`)
+- `src/backend/base/langflow/api/utils/core.py` — `DbSession`, the commit-at-teardown session dependency; `scope="function"` here is the fix
+- `src/backend/base/langflow/api/v1/flows_helpers.py` — `_patch_flow`, which applies the update without committing
+- `src/frontend/src/controllers/API/queries/flows/use-patch-update-flow.ts` — the `onSettled` invalidation that refetches the flows list right after the `PATCH` response
+- `src/frontend/src/components/core/appHeaderComponent/components/FlowMenu/index.tsx` — mounts `useGetRefreshFlowsQuery`, whose response `setFlows` merges into `currentFlow` and therefore into the switch's position
 
 ---
 
