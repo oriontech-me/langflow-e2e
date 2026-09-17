@@ -1,0 +1,194 @@
+// Join a run's failing attempts to the in-run backend-liveness measurement, per
+// attempt, and say HOW MUCH of each attempt sat in measured downtime (#1763).
+//
+// WHY THIS EXISTS. The infra-signature exemption (#1031/#1310) classifies a
+// failure by its ERROR TEXT, and `scripts/lib/infra-signature-patterns.json` is
+// transport-level by design. That works for a failure that reports the transport
+// ("apiRequestContext: Timeout", "ECONNREFUSED") and cannot work at all for one
+// that reports the STATE THAT NEVER ARRIVED — `expect(received).toBe(expected)`,
+// `"de-AT": the application never reached its main page` — which is the shape
+// most specs produce when the backend goes away mid-wait. Adding patterns cannot
+// close that: the message is about the state, not about the transport.
+//
+// So the evidence has to come from somewhere other than the string, and it
+// already exists: `report-backend-outages.mjs` measures, per shard, when the
+// backend answered nothing, and the merged report carries every attempt's span.
+// What this module adds is the join and its THREE honest states — because the
+// question "was this attempt inside an outage?" has an answer only where the
+// shard that ran it was measured, and "no shard measured it" must never read
+// like "it was measured and it was clean" (#1012).
+//
+// It records; it decides nothing. The coverage threshold that turns a
+// measurement into an exemption lives with the consumer that acts on it
+// (`triage-core.mjs`), for the same reason `infra_signature` is a signature and
+// the removal decision lives in `remove-stable-from-failures.ts`.
+import { normalizeSpecPath } from "./spec-path.mjs";
+
+// Written as an ESCAPE, never as the byte. A literal NUL here makes git classify
+// the module as binary: the diff renders as "Binary file not shown", `grep`
+// silently finds nothing without `-a`, and blame and conflict resolution degrade
+// — on the one file holding the whole join. Its two siblings
+// (`report-backend-outages.mjs`, `remove-stable-from-failures.ts`) spell it the
+// same way for the same reason.
+const NUL = "\u0000";
+
+/**
+ * `<specPath>NUL<title>NUL<retry>NUL<param>` — #1589's join key plus the variant.
+ *
+ * The fourth component is not optional politeness. A model-parameterized spec
+ * emits one `spec` per provider with the SAME file, the SAME `spec.title` and the
+ * SAME line: the variant lives only in the enclosing describe, which is exactly
+ * what the history row records as `param` (#899). #1589's consumer can live with
+ * the 3-part key because it ALSO requires the attempt's own error to classify
+ * transport-level, and it records the leniency; this consumer decides on the
+ * measurement alone, so the same collision would exempt a spec that failed while
+ * the backend was answering, on another provider's downtime. Five of the 55
+ * committed history rows already carry a duplicate `(file, test)` pair.
+ *
+ * A non-parameterized spec passes `null` on both sides and keys on the empty
+ * string, so nothing changes for the overwhelmingly common case.
+ */
+export function attemptKey(specPath, title, retry, param = null) {
+  return `${normalizeSpecPath(specPath)}${NUL}${title}${NUL}${Number(retry) || 0}${NUL}${param ?? ""}`;
+}
+
+/**
+ * Read `outage-attempts.json` (the payload `collateralPayload()` writes).
+ *
+ * FAIL-CLOSED, and the failure is NAMED rather than swallowed: an absent path,
+ * an unreadable file, a malformed payload and a payload that does not itself
+ * claim BOTH that a shard was measured and that the merged report was read all
+ * come back `available: false` with a reason. Every one of those makes the
+ * recorded block say "unmeasured", never "clear" — an unmeasured attempt is
+ * unknown, not innocent, and the whole point of this data is that a consumer can
+ * tell the two apart.
+ *
+ * `readFile` is injected so the module stays pure and testable; callers pass
+ * `fs.readFileSync`.
+ */
+export function loadOutagePayload(file, readFile) {
+  if (!file) return { available: false, reason: "no outage-attempts file was provided" };
+  let parsed;
+  try {
+    parsed = JSON.parse(readFile(file, "utf8"));
+  } catch (e) {
+    const first = e instanceof Error ? String(e.message).split("\n")[0] : String(e);
+    return { available: false, reason: `${file} could not be read (${first})` };
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.attempts)) {
+    return { available: false, reason: `${file} has no \`attempts\` array` };
+  }
+  const measured = parsed.measured === true;
+  const reportRead = parsed.reportRead === true;
+  const specMeasured = new Map();
+  const declared = parsed.specMeasured;
+  if (declared && typeof declared === "object" && !Array.isArray(declared)) {
+    for (const [spec, value] of Object.entries(declared)) {
+      specMeasured.set(normalizeSpecPath(spec), value === true);
+    }
+  }
+  const byKey = new Map();
+  // Same guard `loadCorroboration` carries in remove-stable-from-failures.ts: a
+  // payload claiming attempts without claiming that anything was measured is a
+  // payload today's producer cannot emit, and a guarantee that holds only
+  // because the other side happens to behave is the shape #1084 was raised about.
+  if (measured && reportRead) {
+    for (const a of parsed.attempts) {
+      if (!a || typeof a.file !== "string" || typeof a.title !== "string") continue;
+      byKey.set(attemptKey(a.file, a.title, a.retry, a.param), {
+        coverage: Number(a.coverage) || 0,
+        downSeconds: Number(a.downSeconds) || 0,
+        shard: a.shard === undefined || a.shard === null ? null : String(a.shard),
+        shardDownPct: Number(a.shardDownPct) || 0,
+      });
+    }
+  }
+  return { available: true, measured, reportRead, specMeasured, byKey };
+}
+
+const round3 = (n) => Math.round(n * 1000) / 1000;
+
+/**
+ * The `outage_overlap` block for ONE history entry, or `null` when the lane did
+ * not measure at all (in which case the field is omitted from the row entirely —
+ * an absent block means "this lane does not measure it", exactly as
+ * `listing_completeness` and `collection_gate_keys` use absence).
+ *
+ * @param {object}   entry
+ * @param {string}   entry.specPath       spec path as the merged report spells it
+ * @param {string}   entry.title          the test title, WITHOUT its describes
+ * @param {string|null} entry.param       the parameterization label, when any
+ * @param {number[]} entry.failedRetries  `result.retry` of every failed attempt
+ * @param {object}   payload              from `loadOutagePayload`
+ */
+export function overlapForEntry(entry, payload) {
+  if (!payload || payload.available !== true) return null;
+  const retries = Array.isArray(entry?.failedRetries) ? entry.failedRetries : [];
+  // No failed attempt means there is nothing to place inside a window. It is not
+  // an "unmeasured" entry — there is no question to answer.
+  if (retries.length === 0) return null;
+
+  const specPath = normalizeSpecPath(entry.specPath);
+  const unmeasured = (why) => ({ state: "unmeasured", failed_attempts: retries.length, why });
+
+  if (!payload.reportRead) {
+    return unmeasured(
+      "the liveness reporter did not report reading the merged report, so no attempt was examined for overlap at all",
+    );
+  }
+  if (!payload.measured) {
+    return unmeasured("no shard produced liveness probes, so the backend state during this run was never measured");
+  }
+  const measuredHere = payload.specMeasured.get(specPath);
+  if (measuredHere === undefined) {
+    return unmeasured("no shard summary claims this spec, so the backend state where it ran was never measured");
+  }
+  if (!measuredHere) {
+    return unmeasured("the shard that ran this spec produced no liveness probes, so nothing could corroborate it");
+  }
+
+  const attempts = retries.map((retry) => {
+    const hit = payload.byKey.get(attemptKey(specPath, entry.title, retry, entry.param ?? null));
+    return {
+      retry: Number(retry) || 0,
+      coverage: hit ? round3(hit.coverage) : 0,
+      down_seconds: hit ? hit.downSeconds : 0,
+      // Whether the REPORTER listed this attempt as collateral, which is not the
+      // same question as "is its rounded coverage above zero". The reporter's
+      // `overlapsAny` is inclusive at both ends, and `round3` floors anything
+      // under ~0.05 % of the span to 0 — so an attempt starting exactly at a
+      // window's end, or a zero-duration one inside a window, is named in the
+      // umbrella's "Specs failing inside an outage" list while this block would
+      // call it `clear`. Two surfaces built from the same data contradicting each
+      // other is the #1012 failure this block exists to prevent, so the state
+      // follows the reporter and the THRESHOLD (which reads `coverage`) is what
+      // keeps such an attempt from exempting anything.
+      _listed: hit !== undefined,
+      _shard: hit?.shard ?? null,
+      _shardDownPct: hit?.shardDownPct ?? 0,
+    };
+  });
+
+  const coverages = attempts.map((a) => a.coverage);
+  const overlapping = attempts.find((a) => a._listed);
+  const block = {
+    // `clear` is a MEASUREMENT, not a clean bill of health for the spec: it says
+    // the shard was measured and the reporter placed no failed attempt of this
+    // test inside a window.
+    state: overlapping ? "overlapped" : "clear",
+    failed_attempts: attempts.length,
+    min_coverage: round3(Math.min(...coverages)),
+    max_coverage: round3(Math.max(...coverages)),
+    attempts: attempts.map(({ retry, coverage, down_seconds }) => ({ retry, coverage, down_seconds })),
+  };
+  if (overlapping) {
+    // Only knowable from an attempt the reporter listed — `specMeasured` says
+    // whether a shard measured the spec, never which shard did. Carried because
+    // the shard's own down-share is the baseline a coverage figure has to be read
+    // against: 66 % of an attempt on a shard 3 % down is a finding, and on a
+    // shard 73 % down it is close to the base rate this file's honesty note names.
+    block.shard = overlapping._shard;
+    block.shard_down_pct = overlapping._shardDownPct;
+  }
+  return block;
+}

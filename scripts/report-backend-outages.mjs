@@ -80,6 +80,7 @@ const DEFAULT_MAX_WINDOWS = 12;
 // — the $GITHUB_OUTPUT equivalent of the injection guard in
 // scripts/check-run-integrity.mjs.
 import { normalizeSpecPath } from "./lib/spec-path.mjs";
+import { paramFromSuitePath } from "./lib/spec-param.mjs";
 
 export const MD_DELIMITER = "LIVENESS_MD_EOF";
 
@@ -120,9 +121,17 @@ export function readSummaries(dir) {
 // of a wedge is precisely that each collateral test burns its whole retry budget.
 export function collectAttempts(report) {
   const attempts = [];
-  const walk = (node, inheritedFile) => {
+  const walk = (node, inheritedFile, suitePath = []) => {
     const file = node.file || inheritedFile;
-    for (const sub of node.suites || []) walk(sub, file);
+    // The enclosing describe titles, accumulated exactly as
+    // `append-weekly-history.mjs` accumulates them, so the `param` both sides
+    // derive is the same string (#1763). Without it a parameterized spec's
+    // variants are indistinguishable here: same file, same `spec.title`, same
+    // line, and the join key would let one variant's outage exempt another's
+    // failure.
+    const path = node.title ? [...suitePath, node.title] : suitePath;
+    const param = paramFromSuitePath(path);
+    for (const sub of node.suites || []) walk(sub, file, path);
     for (const spec of node.specs || []) {
       const specFile = spec.file || file;
       for (const test of spec.tests || []) {
@@ -132,6 +141,7 @@ export function collectAttempts(report) {
           attempts.push({
             file: normalizeSpecPath(specFile),
             title: spec.title || "",
+            param,
             status: result.status,
             retry: Number(result.retry) || 0,
             startAt,
@@ -154,6 +164,51 @@ function overlapsAny(attempt, windows) {
     if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
     return attempt.startAt <= end && attempt.endAt >= start;
   });
+}
+
+/**
+ * How much of an attempt's span sat inside measured downtime (#1763).
+ *
+ * `overlapsAny` answers a BOOLEAN, and that is the right input for the
+ * `collateral` count it has always fed — but it is a weak one to decide
+ * anything with, and this file's own honesty requirement says why: on a shard
+ * measured 33-73 % down, "the failing attempt touched a window" is close to a
+ * coin flip. The fraction is not: the two instances #1763 was raised on measured
+ * 82 %, 87 % and 66 % of their attempt spans inside one contiguous window, which
+ * a 41 %-down shard does not hand out by accident, while the 6-second blip the
+ * issue names as the case that must NOT exempt anything scores 0.046.
+ *
+ * Windows are UNIONED before measuring, not summed: two overlapping windows (a
+ * shard summary is not required to emit disjoint ones) would otherwise let
+ * coverage exceed the attempt's own span. A non-positive span scores 0 rather
+ * than dividing by it.
+ *
+ * Returns seconds and the ratio, never a verdict — the threshold lives with the
+ * consumer that acts on it (`triage-core.mjs`), the way `infra_signature` is a
+ * signature and the exemption decision lives elsewhere.
+ */
+export function attemptCoverage(attempt, windows) {
+  const span = attempt.endAt - attempt.startAt;
+  const spans = [];
+  for (const w of windows || []) {
+    const start = Date.parse(w.startAt);
+    const end = Date.parse(w.endAt);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const lo = Math.max(start, attempt.startAt);
+    const hi = Math.min(end, attempt.endAt);
+    if (hi > lo) spans.push([lo, hi]);
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  let covered = 0;
+  let cursor = -Infinity;
+  for (const [lo, hi] of spans) {
+    const from = Math.max(lo, cursor);
+    if (hi > from) covered += hi - from;
+    cursor = Math.max(cursor, hi);
+  }
+  const downSeconds = Math.round((covered / 1000) * 10) / 10;
+  const ratio = span > 0 ? covered / span : 0;
+  return { downSeconds, spanSeconds: Math.round((span / 1000) * 10) / 10, coverage: Math.round(ratio * 1000) / 1000 };
 }
 
 export function attribute(summaries, attempts) {
@@ -192,6 +247,17 @@ export function attribute(summaries, attempts) {
         file: a.file,
         title: a.title,
         retry: a.retry,
+        // The variant, when the spec is model-parameterized (#1763). The #1589
+        // consumer keys on (file, title, retry) and ignores this; the triage
+        // dataset includes it, because it decides on the measurement alone and
+        // the 3-part key cannot tell two providers of one spec apart.
+        param: a.param ?? null,
+        // How MUCH of the attempt sat in downtime, not just that it did (#1763).
+        // The `@stable` exemption (#1589) reads the identity and ignores this;
+        // the triage dataset reads this, because for an assertion-shaped failure
+        // the fraction is the only evidence there is.
+        ...attemptCoverage(a, windows),
+        shardDownPct: Number(summary.downPct) || 0,
       })),
       // The spec paths this shard claims. Carried so `collateralPayload` can
       // say whether the shard that ran a given spec was measured at all —
@@ -236,6 +302,13 @@ export function attribute(summaries, attempts) {
  * all, which is a third state again. And `reportRead` says whether the merged
  * report was even parseable — with `collectAttempts(null)` the overlap is not
  * "found to be absent", it was never computed.
+ *
+ * Since #1763 each attempt also carries `coverage` / `downSeconds` / `shard` /
+ * `shardDownPct`. The `@stable` exemption ignores all four — it reads the
+ * identity and requires the attempt's own error to classify — but the triage
+ * dataset reads them, because for an ASSERTION-shaped failure no error text will
+ * ever classify and the fraction is the only evidence there is. The fields are
+ * additive; the attempt list itself is unchanged.
  */
 export function collateralPayload(agg, { reportRead = true } = {}) {
   const attempts = [];
@@ -248,7 +321,10 @@ export function collateralPayload(agg, { reportRead = true } = {}) {
       specMeasured[file] = (specMeasured[file] ?? false) || shard.measured;
     }
     for (const id of shard.collateralIds || []) {
-      const key = `${id.file}\u0000${id.title}\u0000${id.retry}`;
+      // `param` is in the dedupe key too: without it, two variants of one spec
+      // that BOTH sat in an outage collapse to a single record, and the variant
+      // that is dropped then looks unmeasured to the per-entry reader (#1763).
+      const key = `${id.file}\u0000${id.title}\u0000${id.retry}\u0000${id.param ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
       attempts.push({ ...id, shard: shard.shard });

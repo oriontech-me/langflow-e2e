@@ -49,6 +49,47 @@ export function rowsWithinDays(rows, asOfDate, windowDays) {
   });
 }
 
+/**
+ * How much of a failed attempt must sit inside measured backend downtime before
+ * the run's own measurement outranks the recurrence criterion (#1763).
+ *
+ * WHY A FRACTION AND NOT A BOOLEAN. `report-backend-outages.mjs` already counts
+ * failing attempts that TOUCH an outage window, and its own honesty note says
+ * why that count cannot decide anything: on a shard measured 33-73 % down,
+ * "the attempt touched a window" is close to a coin flip, and in this repo's
+ * history `collateral_attempts > 0` on 11 of the 15 days that carry a `backend`
+ * block. The fraction is a different instrument. The two instances #1763 was
+ * raised on measured 82 % / 87 % (`agent-system-prompt.spec.ts:213`, 2026-09-08)
+ * and 66 % (`locale-resilience.spec.ts:116`, 2026-09-10) of the attempt span
+ * inside one contiguous window, while the case the issue names as one that must
+ * NOT exempt anything — a 6-second blip inside a 130-second attempt — scores
+ * 0.046.
+ *
+ * 0.5 sits well above that blip and well below every measured instance, and it
+ * is deliberately a KNOB with the measurement printed beside it: an entry below
+ * the threshold keeps `actionable: true` and still carries its `outage_overlap`,
+ * so raising or lowering this never hides evidence, it only moves who decides.
+ * Read a coverage figure against the shard's own `shard_down_pct`, which travels
+ * on the block for exactly that reason.
+ */
+export const OUTAGE_COVERAGE_THRESHOLD = 0.5;
+
+/**
+ * Did the run MEASURE this entry into a backend outage hard enough to outrank
+ * the recurrence criterion? Requires every failed attempt to clear the
+ * threshold — one corroborated attempt beside one clean one is a test that
+ * failed while the backend was answering, which is the spec's own failure.
+ *
+ * `unmeasured` and `clear` both return false, and a missing block returns false
+ * too: a row written before #1763, or by a lane with no liveness recorder, has
+ * no measurement, and absence of evidence never exempts anything (#1012).
+ */
+export function outageCorroborated(overlap, threshold = OUTAGE_COVERAGE_THRESHOLD) {
+  if (!overlap || overlap.state !== 'overlapped') return false;
+  if (!(Number(overlap.failed_attempts) > 0)) return false;
+  return Number(overlap.min_coverage) >= threshold;
+}
+
 /** Occurrences of `item.test` across rowsInWindow (failures + flaky).
  *  rowsInWindow must already include the latest run.
  *
@@ -64,12 +105,23 @@ export function computeRecurrence(item, rowsInWindow) {
   const target = normalizeSignature(item.error_signature);
   const allDates = [];
   const sameDates = [];
+  // What the backend was doing on each of the earlier occurrences (#1763). The
+  // `liveness-*` artifacts expire after 7 days and this window is 30, so the
+  // history row is the only place a past occurrence's outage state survives —
+  // without it a triage recomputing recurrence sees a clean `actionable: true`
+  // and has no trace of a refutation someone already paid for by hand. Four
+  // states, and `unrecorded` is the fourth: a row written before #1763, which is
+  // not the same as a row that measured and found nothing.
+  const outageByDate = {};
   for (const row of rowsInWindow) {
     const entries = [...(row.failures || []), ...(row.flaky || [])];
     const hit = entries.find((e) => e.test === item.test);
     if (!hit) continue;
     allDates.push(row.date);
-    if (normalizeSignature(hit.error_signature) === target) sameDates.push(row.date);
+    if (normalizeSignature(hit.error_signature) === target) {
+      sameDates.push(row.date);
+      outageByDate[row.date] = hit.outage_overlap?.state || 'unrecorded';
+    }
   }
   allDates.sort();
   sameDates.sort();
@@ -79,6 +131,7 @@ export function computeRecurrence(item, rowsInWindow) {
     same_signature: sameDates.length >= 2,
     total_count: allDates.length,
     total_dates: allDates,
+    outage_by_date: outageByDate,
   };
 }
 
@@ -177,12 +230,31 @@ export function matchUmbrella(issues, runId) {
   return hit ? hit.number : null;
 }
 
-/** De-duplicate history entries by test+line, keeping the first occurrence. */
+/**
+ * De-duplicate history entries by test+line+param, keeping the first occurrence.
+ *
+ * `param` is in the key for the reason #1763's join key carries it (see
+ * `scripts/lib/spec-param.mjs`): a model-parameterized spec emits one entry per
+ * provider with the SAME title and the SAME line — the variant lives only in the
+ * enclosing describe — so a 2-part key collapses them into one row and the
+ * SURVIVOR's verdict answers for both. That is decided by describe declaration
+ * order, and it is not hypothetical: 3 of the 55 committed history rows already
+ * carry a colliding `(test, line)` pair in `flaky[]` (2026-07-13/15/22, all
+ * agent specs), and the weekday provider rotation (#1185) is `continue-on-error`
+ * with the multi-provider run as its documented fallback.
+ *
+ * It costs nothing on the common path — a spec with no `param` keys on the empty
+ * string, so the pre-#1763 rows (whose `param` is absent on both sides) still
+ * collapse exactly as before. What it buys is the two guarantees the exemptions
+ * are written on: one variant's evidence never decides another's verdict, and a
+ * variant that was NOT exempted is no longer dropped from the list in silence
+ * (#1012) — the failure `outage_excluded` exists to make visible.
+ */
 export function dedupeEntries(entries) {
   const seen = new Set();
   const out = [];
   for (const e of entries || []) {
-    const key = `${e.test}\0${e.line}`;
+    const key = `${e.test}\0${e.line}\0${e.param ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(e);
@@ -581,6 +653,13 @@ export function buildDataset(rows, issues, opts = {}) {
       error_signature: stripAnsi(e.error_signature),
       infra_signature: infra.id,
       infra_classified_from: infra.from,
+      // Echoed on EVERY entry, exempting or not (#1763). The measurement is what
+      // a human had to reconstruct by hand twice — downloading results.json,
+      // four liveness artifacts and four container logs — and printing it only
+      // where it happens to exempt would rebuild exactly that cost for the
+      // entries below the threshold. Absent on a lane with no liveness recorder
+      // and on rows written before #1763.
+      ...(e.outage_overlap ? { outage_overlap: e.outage_overlap } : {}),
       recurrence: computeRecurrence(e, window),
     };
   };
@@ -602,15 +681,40 @@ export function buildDataset(rows, issues, opts = {}) {
   // silently shortening the list (#1012).
   const flakes = dedupeEntries(run.flaky).map(withRecurrence).map((f) => {
     const recurrent = f.recurrence.same_signature;
+    // The second exemption, and it reads a MEASUREMENT where the first reads a
+    // STRING (#1763). `infra_signature` can only ever see a failure that reports
+    // the transport; a spec that wraps its wait in an assertion reports the state
+    // that never arrived, so a wedge-caused failure of it classifies `null` on
+    // every attempt of every run and no pattern can be added to change that.
+    // Adjudicated in this order on purpose: the signature is the stronger
+    // evidence (an `ECONNREFUSED` is transport-level whatever the backend was
+    // doing), so it keeps its own block and its own wording, and the overlap
+    // answers only for the entries it could never reach.
+    const outageExempt = !f.infra_signature && outageCorroborated(f.outage_overlap);
     return {
       ...f,
-      actionable: recurrent && !f.infra_signature,
+      actionable: recurrent && !f.infra_signature && !outageExempt,
       ...(recurrent && f.infra_signature
         ? {
             infra_excluded: {
               signature: f.infra_signature,
               classified_from: f.infra_classified_from,
               why: 'recurs under the same signature, but the error is transport-level — the harness could not reach the backend, so the failure is not attributable to this spec (#1031/#1310). Note it against the run backend outage; do not file or quarantine.',
+            },
+          }
+        : {}),
+      ...(recurrent && outageExempt
+        ? {
+            outage_excluded: {
+              state: f.outage_overlap.state,
+              min_coverage: f.outage_overlap.min_coverage,
+              failed_attempts: f.outage_overlap.failed_attempts,
+              threshold: OUTAGE_COVERAGE_THRESHOLD,
+              ...(f.outage_overlap.shard !== undefined ? { shard: f.outage_overlap.shard } : {}),
+              ...(f.outage_overlap.shard_down_pct !== undefined
+                ? { shard_down_pct: f.outage_overlap.shard_down_pct }
+                : {}),
+              why: `recurs under the same signature, and the error is NOT transport-level — but the in-run liveness recorder measured every failed attempt of it at least ${Math.round(OUTAGE_COVERAGE_THRESHOLD * 100)}% inside a backend outage on its own shard, so the failure is not attributable to this spec (#1763). Note it against the run backend outage; do not file or quarantine. Read min_coverage against shard_down_pct before accepting it, and say so in the proposal — this is a measurement, not a signature.`,
             },
           }
         : {}),

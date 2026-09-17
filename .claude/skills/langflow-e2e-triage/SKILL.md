@@ -236,7 +236,27 @@ classifier and the run needs re-building before any flake is filed. A flake whos
 run's backend outage (the umbrella's liveness section) and neither file nor
 quarantine it, exactly as for a collateral hard failure. Read the block rather
 than the flag alone when reporting, so the exclusion is visible in the proposal
-instead of the flake merely vanishing from the list. A
+instead of the flake merely vanishing from the list.
+
+**A second exclusion reads a MEASUREMENT, not the signature (#1763).** `infra_signature`
+can only see a failure that reports the transport; a spec that wraps its wait in an
+assertion reports the state that never arrived (`expect(received).toBe(expected)`,
+`"de-AT": the application never reached its main page`), so a wedge-caused failure of it
+classifies `null` on every attempt and no pattern can be added to change that. Such a
+flake comes back `actionable: false` with an **`outage_excluded`** block when the in-run
+liveness recorder measured **every** failed attempt of it at least 50 % inside a backend
+outage on its own shard. Treat it exactly like `infra_excluded` — note it against the
+run's outage, neither file nor quarantine — with one extra sentence in the proposal: it
+is a measurement, not a signature, so **print `min_coverage` next to `shard_down_pct`**,
+because a boolean overlap is close to a coin flip on a heavily-down shard and the
+fraction is what makes it evidence. Below the threshold the flake stays `actionable: true`
+and still carries **`outage_overlap`** — quote it beside the quarantine row rather than
+proposing the quarantine bare, which is the whole cost this closes (two hand judgements in
+three weeks, each paid for with four artifact downloads). `recurrence.outage_by_date`
+gives the same state for every earlier occurrence in the window, with `unrecorded` for a
+row written before #1763 — which is not the same as `clear`.
+
+A
 flake with `actionable: false` (a first occurrence, or a different signature
 each time) is **only noted** in the panorama — the retry budget absorbs
 single-run noise, and opening an issue for it would be triage noise of its

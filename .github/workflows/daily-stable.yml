@@ -1652,6 +1652,20 @@ jobs:
           # shard whose job died before writing a summary disappears from the row
           # instead of reading as a gap.
           SHARD_TOTAL: ${{ needs.prep.outputs.shard_total }}
+          # The PER-ATTEMPT half of that measurement (#1763). `LIVENESS_DIR` gives
+          # the row a per-SHARD aggregate, which is the wrong grain for the
+          # question triage actually asks — "was THIS attempt of THIS test inside
+          # an outage?" — and the only place that is answerable is the outage
+          # reporter above, because the merged report carries no shard column.
+          # It runs earlier in this same job and writes the file; reading it here
+          # is what makes the answer outlive the 7-day `liveness-N` retention,
+          # against a 30-day flake-recurrence window.
+          #
+          # Absent or unreadable => the field is omitted from every entry and the
+          # reason is printed. It is never recorded as a clean measurement: the
+          # `Report mid-run backend outages` step is continue-on-error, so its
+          # absence is a state this lane can really reach.
+          OUTAGE_ATTEMPTS: outage-attempts.json
           # The gate the MATRIX was built under, both halves (#1813). Read as a pair by
           # the appender: a lane that resolved nothing and a lane that never measured
           # both send an empty string, and only the absent list separates them. Recorded

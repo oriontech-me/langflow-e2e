@@ -515,3 +515,228 @@ test("an unwritable corroboration path costs the exemption, never the liveness o
   );
   assert.match(outputs, /^measured=/m);
 });
+
+// ─── How MUCH of the attempt sat in downtime (#1763) ─────────────────────────
+//
+// `collateral` counts attempts that TOUCH a window, and this file's own honesty
+// note says why that cannot decide anything: on a shard measured 33-73 % down,
+// touching one is close to a coin flip. The fraction is a different instrument,
+// and it is the only evidence available for a failure whose error text will
+// never classify as transport-level — an assertion about state that never
+// arrived. Measured, never adjudicated: the threshold lives with the consumer.
+
+test("attemptCoverage measures the fraction of the attempt span inside downtime", () => {
+  const agg = attribute([shard3, shard4], collectAttempts(report));
+  const s3 = agg.shards.find((s) => s.shard === "3");
+  const byRetry = Object.fromEntries(s3.collateralIds.map((i) => [i.retry, i]));
+  // 10:50:30 +40 s sits wholly inside 10:50:00 -> 10:52:00.
+  assert.equal(byRetry[0].coverage, 1);
+  assert.equal(byRetry[0].downSeconds, 40);
+  assert.equal(byRetry[0].spanSeconds, 40);
+  // 10:51:30 +40 s runs 10 s past the window's end.
+  assert.equal(byRetry[1].coverage, 0.75);
+  assert.equal(byRetry[1].downSeconds, 30);
+  // The shard's own down-share travels with it: a coverage figure is only
+  // readable against the base rate on the shard that produced it.
+  assert.equal(byRetry[0].shardDownPct, 20);
+});
+
+test("attemptCoverage scores the blip #1763 says must not exempt anything", () => {
+  // "a 6-second blip inside a 130-second attempt should not exempt anything".
+  const blipShard = {
+    ...shard3,
+    windows: [{ startAt: "2026-07-29T10:50:30.000Z", endAt: "2026-07-29T10:50:36.000Z", seconds: 6, probes: 3 }],
+  };
+  const longAttempt = {
+    suites: [
+      {
+        file: FILE_A,
+        specs: [
+          {
+            title: "agent answers",
+            file: FILE_A,
+            tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:50:00.000Z", duration: 130000 }] }],
+          },
+        ],
+      },
+    ],
+  };
+  const agg = attribute([blipShard], collectAttempts(longAttempt));
+  const [id] = agg.shards[0].collateralIds;
+  assert.equal(agg.shards[0].collateral, 1, "it IS collateral by the boolean rule — that is the point");
+  assert.equal(id.coverage, 0.046);
+});
+
+test("overlapping windows are unioned, so coverage can never exceed 1", () => {
+  // A shard summary is not required to emit disjoint windows. Summing them would
+  // let a doubly-covered attempt report 150 % of itself and clear any threshold.
+  const doubled = {
+    ...shard3,
+    windows: [
+      { startAt: "2026-07-29T10:50:00.000Z", endAt: "2026-07-29T10:52:00.000Z", seconds: 120, probes: 60 },
+      { startAt: "2026-07-29T10:50:20.000Z", endAt: "2026-07-29T10:51:20.000Z", seconds: 60, probes: 30 },
+    ],
+  };
+  const agg = attribute([doubled], collectAttempts(report));
+  for (const id of agg.shards[0].collateralIds) {
+    assert.ok(id.coverage <= 1, `coverage ${id.coverage} exceeded the attempt's own span`);
+  }
+});
+
+test("collateralPayload carries the coverage through to the file the consumers read", () => {
+  const payload = collateralPayload(attribute([shard3, shard4], collectAttempts(report)));
+  assert.ok(payload.attempts.length > 0);
+  for (const a of payload.attempts) {
+    assert.equal(typeof a.coverage, "number");
+    assert.equal(typeof a.downSeconds, "number");
+    assert.equal(typeof a.shardDownPct, "number");
+    assert.equal(a.shard, "3");
+  }
+});
+
+test("a zero-duration failed attempt scores 0, never NaN", () => {
+  // `span > 0 ? covered / span : 0` is the guard. Without it the ratio is 0/0,
+  // which JSON.stringify writes as `null` and every downstream `Number(x) || 0`
+  // silently reads as 0 — a documented behaviour held up by luck rather than by
+  // the guard that claims it.
+  const instant = {
+    suites: [
+      {
+        file: FILE_A,
+        specs: [
+          {
+            title: "agent answers",
+            file: FILE_A,
+            tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:51:00.000Z", duration: 0 }] }],
+          },
+        ],
+      },
+    ],
+  };
+  const agg = attribute([shard3], collectAttempts(instant));
+  const [id] = agg.shards[0].collateralIds;
+  assert.equal(agg.shards[0].collateral, 1, "it is inside the window, so the reporter does count it");
+  assert.equal(id.coverage, 0);
+  assert.ok(Number.isFinite(id.coverage), "coverage must be a number, not NaN");
+});
+
+test("collectAttempts records the parameterization variant from the enclosing describe", () => {
+  // Without it, two providers of one spec are indistinguishable here: same file,
+  // same spec.title, same line (#1763).
+  const parameterized = {
+    suites: [
+      {
+        title: "agent-a.spec.ts",
+        file: FILE_A,
+        suites: [
+          {
+            title: "Agent max iterations [google / gemini-3.5-flash]",
+            file: FILE_A,
+            specs: [
+              {
+                title: "agent answers",
+                file: FILE_A,
+                tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:50:30.000Z", duration: 40000 }] }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const [attempt] = collectAttempts(parameterized);
+  assert.equal(attempt.param, "google / gemini-3.5-flash");
+  const [id] = attribute([shard3], collectAttempts(parameterized)).shards[0].collateralIds;
+  assert.equal(id.param, "google / gemini-3.5-flash");
+  // And a spec with no parameterization carries null rather than the file name.
+  assert.equal(collectAttempts(report)[0].param, null);
+});
+
+test("two variants that BOTH sat in an outage each get their own payload record", () => {
+  // The dedupe key carries the variant too. Collapsing them would leave the
+  // dropped variant looking unmeasured to the per-entry reader (#1763).
+  const both = {
+    suites: [
+      {
+        title: "agent-a.spec.ts",
+        file: FILE_A,
+        suites: ["openai / gpt-4o-mini", "google / gemini-3.5-flash"].map((label) => ({
+          title: `Agent max iterations [${label}]`,
+          file: FILE_A,
+          specs: [
+            {
+              title: "agent answers",
+              file: FILE_A,
+              tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:50:30.000Z", duration: 40000 }] }],
+            },
+          ],
+        })),
+      },
+    ],
+  };
+  const payload = collateralPayload(attribute([shard3], collectAttempts(both)));
+  assert.equal(payload.attempts.length, 2);
+  assert.deepEqual(
+    payload.attempts.map((a) => a.param).sort(),
+    ["google / gemini-3.5-flash", "openai / gpt-4o-mini"],
+  );
+});
+
+// ── Adoption guard: producer and consumer must stay wired, in both lanes ─────
+//
+// The join is only ever as good as the two env vars that carry it, and losing
+// either is SILENT in the product: the reporter simply writes no file, the
+// appender simply omits the field, and every row afterwards reads like a lane
+// that does not measure. #1763 shipped with "the final proof is the next
+// scheduled daily" as its plan, which is a 35-minute feedback loop for a
+// one-token typo.
+//
+// Line-based rather than YAML-parsed, the way `wait-for-backend.test.mjs` does
+// it: the repo ships no YAML parser, and what this has to pin is the ORDER of
+// two named steps and the PATH they agree on, both of which lines express
+// directly. It pins a spelling, which #1226 is right to say does not pin a
+// behaviour — here the spelling IS the behaviour, because the two sides never
+// meet in any code a unit test could drive.
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const lineIndex = (lines, needle) => lines.findIndex((l) => l.includes(needle));
+// An env KEY, not a mention of one: both names appear in the comments that
+// explain them, and `findIndex` takes the first match it is given.
+const envIndex = (lines, key) => lines.findIndex((l) => new RegExp(`^\\s+${key}:\\s`).test(l));
+
+test("daily-stable.yml writes outage-attempts.json before the history step reads it", () => {
+  const lines = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8").split("\n");
+
+  const reporter = lineIndex(lines, "- name: Report mid-run backend outages");
+  const out = envIndex(lines, "OUTAGE_ATTEMPTS_OUT");
+  const appender = lineIndex(lines, "- name: Append daily history");
+  const read = envIndex(lines, "OUTAGE_ATTEMPTS");
+
+  assert.ok(reporter > -1 && appender > -1, "both steps must still exist");
+  assert.ok(out > reporter && out < appender, "the reporter step must still set OUTAGE_ATTEMPTS_OUT (#1763)");
+  assert.ok(read > appender, "the history step must still set OUTAGE_ATTEMPTS (#1763)");
+  assert.ok(
+    reporter < appender,
+    "the file has to be WRITTEN before it is read — a reordering would leave the field absent in silence",
+  );
+
+  const path = (i) => lines[i].split(":").slice(1).join(":").trim();
+  assert.equal(path(out), path(read), "both steps must name the same file");
+
+  // Same job, or the file does not survive between them: a GitHub Actions job
+  // gets its own workspace. Job keys are the only 2-space-indented keys here.
+  const between = lines.slice(reporter, read).filter((l) => /^ {2}[A-Za-z_-]+:\s*$/.test(l));
+  assert.deepEqual(between, [], "a job boundary opened between the writer and the reader");
+});
+
+test("run-e2e.sh writes outage-attempts.json before its publish phase reads it", () => {
+  // The VM twin has to write the field too, or `compare-lane-verdicts.mjs` sits
+  // permanently on parity UNVERIFIED — which reads like a check and is not one.
+  const text = readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8");
+  const out = /OUTAGE_ATTEMPTS_OUT="([^"]+)"/.exec(text);
+  const read = /\bOUTAGE_ATTEMPTS="([^"]+)"/.exec(text);
+  assert.ok(out, "phase_merge must still pass OUTAGE_ATTEMPTS_OUT to the reporter (#1763)");
+  assert.ok(read, "phase_publish must still pass OUTAGE_ATTEMPTS to the appender (#1763)");
+  assert.equal(out[1], read[1], "both phases must name the same file");
+  assert.ok(text.indexOf(out[0]) < text.indexOf(read[0]), "the file is written in phase_merge, read in phase_publish");
+});
