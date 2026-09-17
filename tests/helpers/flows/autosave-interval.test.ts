@@ -82,6 +82,30 @@ test("the pending-save quiet window is longer than the debounce itself", () => {
   );
 });
 
+test("the quiet window clears the post-debounce latency by more than a hair", () => {
+  // #1902 measured the latency the slack exists to cover: on 1.13.0.dev15 the
+  // PATCH was issued 2433 ms after the drain armed against a 2000 ms interval —
+  // 433 ms of render and request setup, on an IDLE local box. At the 500 ms slack
+  // this shipped with, the window backing the whole mechanism cleared its own
+  // measurement by 67 ms, and under-waiting is the silent failure (#1741).
+  const MEASURED_LATENCY_MS = 433;
+  for (const interval of [1000, 2000]) {
+    assert.ok(
+      pendingSaveQuietMs(interval) - interval >= MEASURED_LATENCY_MS * 2,
+      `slack ${pendingSaveQuietMs(interval) - interval}ms leaves less than 2x the ` +
+        `${MEASURED_LATENCY_MS}ms of post-debounce latency measured on an idle box`,
+    );
+  }
+  // And the two sibling budgets for that same latency must not diverge again:
+  // one of them was 500 and the other 1500, which is how the optimistic half
+  // went unnoticed.
+  assert.equal(
+    pendingSaveQuietMs(2000) - 2000,
+    saveScheduledDeadlineMs(2000) - 2000,
+    "the drain window and the watcher deadline budget the same latency differently",
+  );
+});
+
 test("the completion budget is separate from, and larger than, the issuance slack", () => {
   // Folding them into one makes a healthy-but-slow round trip indistinguishable
   // from an edit that never marked the node dirty.
