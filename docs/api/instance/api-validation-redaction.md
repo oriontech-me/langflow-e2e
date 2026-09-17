@@ -168,6 +168,17 @@ The gate is on the **version**, never on the behaviour. A capability probe — *
 instance redact?"* — would skip precisely when the contract is broken, which is the
 green all-skip #1010 exists to prevent.
 
+**One floor gates five routes, so a vehicle newer than the handler would 404 at exactly
+the boundary the gate calls safe** — measured on the upstream clone rather than assumed,
+because a `404` there reads as a product failure and the gate would say the image was in
+scope. It does not happen: `api/v1/connections.py` landed in `7d9f28e` (#14921,
+2026-09-11 13:22 PDT) and `api/validation_errors.py` in `23d408a` (#15038, the same day
+at 13:41), **19 minutes later on the same branch**, so every build carrying the handler
+carries the `provider` pattern; and `X-Langflow-Operation-ID` predates both, from
+`a1527d1` (#14782, 2026-09-01). The other three routes are years older. The floor is
+therefore the handler's alone, and the coherence is a measurement — re-derive it if a
+sixth shape is added on a route younger than `1.13.0.dev10`.
+
 **The release triple decides; the suffix is consulted only on a tie, and that split is
 the whole robustness of the gate.** Langflow has published `1.1.4.post1`, `1.8.0qa1`,
 `1.7.0-pre` and a run of `0.5.0b*` alongside the `devN`/`rcN` it ships today, and a gate
