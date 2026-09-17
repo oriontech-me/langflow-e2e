@@ -78,7 +78,10 @@ export interface ParsedVersion {
  * at all), and only a tie on the triple makes the suffix load-bearing. Refusing
  * the whole string instead would turn every such image into a hard failure —
  * the opposite of the skip this gate exists to produce (Langflow has published
- * `1.1.4.post1`, `1.8.0qa1` and `1.7.0-pre`).
+ * `1.1.4.post1`, `1.8.0qa1` and `1.7.0-pre`). Of those three only `qa1` is in
+ * fact unreadable here: `post` and `pre` are legal PEP 440 spellings and are in
+ * `SEGMENT_ALIASES`, so they parse as `post1` and `rc0`. The split is what makes
+ * `1.8.0qa1` safe, not what makes the other two safe.
  */
 export function parseLangflowVersion(raw: unknown): ParsedVersion | null {
   if (typeof raw !== "string") return null;

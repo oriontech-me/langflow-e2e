@@ -192,6 +192,13 @@ release with an unreadable suffix (`1.13.0qa1`) is undecidable — reported as *
 which **fails**, because an unevaluated precondition is unknown, not clean (#1012). A
 string with no readable `X.Y.Z` at all fails the same way.
 
+Of that list, though, **only `qa1` is actually unreadable to this gate**, and saying
+otherwise undersells what the alias table already covers: PEP 440 spells the post segment
+`post`/`rev`/`r` and the release-candidate segment `c`/`rc`/`pre`/`preview`, all of which
+`SEGMENT_ALIASES` carries — so `1.1.4.post1` parses as `post1`, `1.7.0-pre` as `rc0` and
+`0.5.0b6` as `b6`. They skip on the triple *and* would skip on the suffix. The split is
+what makes `1.8.0qa1` safe, not what makes the other three safe.
+
 A PEP 440 **local** identifier (`1.13.0.dev14+g1234`, what a `setuptools-scm` build of
 the release line emits) is stripped before ordering: it records where a build came from,
 never where it sits, and such a build does carry the handler — so it runs rather than
