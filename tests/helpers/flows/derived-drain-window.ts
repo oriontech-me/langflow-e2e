@@ -28,23 +28,80 @@
 // Comments are blanked first (`stripComments`): every one of these modules has
 // JSDoc naming the 700 ms default it replaced, and matching prose would report
 // the explanation as the offender.
+import { describeAutosaveInterval } from "./autosave-interval";
 import { stripComments } from "./strip-comments";
 
+const CALLEE = "waitForFlowSaveSettled";
+
 /**
- * Every `waitForFlowSaveSettled(...)` call in a source, as written.
+ * Every `waitForFlowSaveSettled(...)` call in a source, as its argument text.
  *
- * Non-greedy up to the first `)` followed by `;`, which is what every call in
- * the tree looks like; a call whose arguments contain a `);` would be missed,
- * and the count floor below is what stops that from reading as "no offenders".
+ * Balanced-paren scanning rather than a regex, and the regex it replaces is why
+ * (found in review of this module's first version). That one was
+ * `/waitForFlowSaveSettled\(([\s\S]*?)\)\s*;/g` — it required a terminating
+ * SEMICOLON, which an `await`ed statement happens to have and an expression does
+ * not. A call in argument position (`Promise.all([waitForFlowSaveSettled(page)])`,
+ * a `.then` chain) therefore did not match on its own: the non-greedy body ran on
+ * to the NEXT call's `);` and merged the two into one match whose text contains
+ * the derived accessor. Measured on the real file, adding such a call gave
+ * `count = 4` (unchanged) and `offenders = []` — the merge subtracts one match
+ * and adds one, so the count floor could not see it either, and a fifth drain on
+ * the 700 ms default was invisible to BOTH halves of the guard. A guard that goes
+ * quiet is worse than no guard, because it reports the regression it exists to
+ * catch as clean (#1012).
+ *
+ * Quoted spans are skipped while walking, so a parenthesis inside a string
+ * argument cannot unbalance the scan. Comments are blanked by the caller before
+ * this ever runs.
  */
-const DRAIN_CALL = /waitForFlowSaveSettled\(([\s\S]*?)\)\s*;/g;
+function scanDrainCalls(source: string): string[] {
+  const calls: string[] = [];
+  let i = 0;
+  while (true) {
+    const at = source.indexOf(CALLEE, i);
+    if (at === -1) return calls;
+    i = at + CALLEE.length;
+    // An identifier boundary on the left, so `myWaitForFlowSaveSettled` is not
+    // this function — and on the right only whitespace before the `(`.
+    const before = at === 0 ? "" : source[at - 1];
+    if (/[\w$]/.test(before)) continue;
+    let j = i;
+    while (j < source.length && /\s/.test(source[j])) j++;
+    if (source[j] !== "(") continue;
+
+    const start = j + 1;
+    let depth = 1;
+    let k = start;
+    let quote = "";
+    while (k < source.length && depth > 0) {
+      const c = source[k];
+      if (quote) {
+        if (c === "\\") k++;
+        else if (c === quote) quote = "";
+      } else if (c === '"' || c === "'" || c === "`") {
+        quote = c;
+      } else if (c === "(") {
+        depth++;
+      } else if (c === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+      k++;
+    }
+    // An unbalanced tail is a call this scanner could not read. Reported as an
+    // offender with what it did see, never dropped: silence is the one outcome
+    // this module exists to rule out.
+    calls.push(source.slice(start, Math.min(k, source.length)));
+    i = k + 1;
+  }
+}
 
 /** Identifiers only — a regex-special character here would match by accident. */
 const ACCESSOR = /^[A-Za-z_$][\w$]*$/;
 
 /** How many drain calls a source holds, comments excluded. */
 export function countDrainCalls(source: string): number {
-  return [...stripComments(source).matchAll(DRAIN_CALL)].length;
+  return scanDrainCalls(stripComments(source)).length;
 }
 
 /**
@@ -70,12 +127,9 @@ export function drainCallsWithoutDerivedWindow(
   }
   const derived = new RegExp(`quietMs\\s*:\\s*${accessor}\\(\\s*\\)`);
   const offenders: string[] = [];
-  for (const match of stripComments(source).matchAll(DRAIN_CALL)) {
-    const args = match[1];
+  for (const args of scanDrainCalls(stripComments(source))) {
     if (!derived.test(args)) {
-      offenders.push(
-        `waitForFlowSaveSettled(${args.replace(/\s+/g, " ").trim()})`,
-      );
+      offenders.push(`${CALLEE}(${args.replace(/\s+/g, " ").trim()})`);
     }
   }
   return offenders;
@@ -93,11 +147,13 @@ export function derivedWindowFailure(
   accessor: string,
   offenders: string[],
 ): string {
+  // The interval is RESOLVED, not quoted: a number pasted into a failure message
+  // goes stale in exactly the way the mechanism it describes exists to prevent.
   return (
     `${file} drains with waitForFlowSaveSettled's 700 ms default, which arms ` +
     `immediately when nothing is in flight and therefore expires BEFORE a save ` +
-    `an edit merely scheduled — one full autosave debounce later, 2000 ms on ` +
-    `1.13.0.dev15 (#1741/#1743/#1902). Pass { quietMs: ${accessor}() }. ` +
-    `Offenders: ${offenders.join("; ")}`
+    `an edit merely scheduled — one full autosave debounce later ` +
+    `(${describeAutosaveInterval()}) — #1741/#1743/#1902. ` +
+    `Pass { quietMs: ${accessor}() }. Offenders: ${offenders.join("; ")}`
   );
 }

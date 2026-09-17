@@ -25,10 +25,13 @@ import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
  * window IMMEDIATELY when nothing is in flight, so at the 700 ms default this
  * module used to pass it returned before a save an edit had merely SCHEDULED —
  * one full debounce later, 2000 ms on `1.13.0.dev15`. The window is derived from
- * the instance now (`nodeConfigDrainQuietMs`), which is what closes the
- * scheduled case. The rest of the old sentence still stands and is still why
- * this guard exists: quiescence says nothing about whether what survived carries
- * the selection, and the Playground is opened after it.
+ * the instance now (`nodeConfigDrainQuietMs`), which closes the DEBOUNCED case —
+ * not every case: a save upstream deferred into `pendingAutoSaveRef` while the
+ * permissions query is loading is bounded by no window at all
+ * (`pendingSaveQuietMs`'s header has the mechanism). The rest of the old
+ * sentence still stands and is still why this guard exists: quiescence says
+ * nothing about whether what survived carries the selection, and the Playground
+ * is opened after it.
  *
  * **This reads the WIDGET, never the API, and that is measured rather than
  * conventional:** the run is dispatched as `POST /api/v2/workflows` with a
@@ -73,10 +76,12 @@ export const NODE_CONFIG_SETTLE_TIMEOUT_MS = 15000;
  * (#1302), and its only consumer is `@stable` in the daily, where a hard failure
  * strips the tag by unreviewed commit.
  *
- * Cost: `pendingSaveQuietMs()` is ~2500 ms against the 700 ms it replaces, so
- * ~+1.8 s per call — at most twice, and the second only on the repair path —
+ * Cost: `pendingSaveQuietMs()` is ~3500 ms against the 700 ms it replaces, so
+ * ~+2.8 s per call — at most twice, and the second only on the repair path —
  * against a playground step measured at 5 408-6 503 ms and the 180 s budget this
- * guard protects (#1302). Paid only on the way to a run.
+ * guard protects (#1302). Paid only on the way to a run, and NOT idle time here:
+ * measured on `1.13.0.dev15`, this drain observes a real PATCH issued 2433 ms
+ * after it arms, on every run, because the model selection itself schedules it.
  */
 export function nodeConfigDrainQuietMs(): number {
   return pendingSaveQuietMs();

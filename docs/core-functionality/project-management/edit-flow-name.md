@@ -126,7 +126,10 @@ quiet window immediately when nothing is in flight, so at its 700 ms default
 every barrier here expired before a save still sitting on the autosave
 debounce — 2000 ms on `1.13.0.dev15` (#1741). All four now use
 `renameDrainQuietMs()`, derived from
-`GET /api/v1/config.auto_saving_interval` for the run. What that cost was the
+`GET /api/v1/config.auto_saving_interval` for the run (interval + 1500 ms of
+slack, the slack itself measured — see `autosave-interval.ts`). It costs this
+spec ~+28 s: it renames twice, and a pass that edits the modal drains 4 times
+against 1 for the no-edit reopen. What that cost was the
 **retry**, not the verdict: the loop read a header the clobbering PATCH had not
 reverted yet and skipped the re-apply, and the failure then surfaced at the
 closing assertion (and at this spec's own home-listing check after
@@ -150,12 +153,11 @@ The old entry was `awaitBootstrapTest` → templates modal → click the shared
 **Basic Prompting** card, with **nothing waiting for the navigation that click
 starts**. "New Flow" eagerly creates a blank *placeholder* flow and opens the
 welcome overlay on it; picking a template then creates a SECOND flow and
-navigates to that one. `renameFlow` opens with `waitForFlowSaveSettled` (then 700 ms
-of PATCH silence; the derived window since #1902) and an assertion that
-`flow_name` is visible — both of which are already satisfied *by the
-placeholder's header*. So the helper would start
-driving the wrong flow, mid-navigation, with the welcome overlay still painted
-over the canvas. The hover call log proves it: the resolved span reads
+navigates to that one. `renameFlow` opens with `waitForFlowSaveSettled` (then 700 ms of PATCH silence;
+the derived window since #1902) and an assertion that `flow_name` is visible —
+both of which are already satisfied *by the placeholder's header*. So the helper
+would start driving the wrong flow, mid-navigation, with the welcome overlay
+still painted over the canvas. The hover call log proves it: the resolved span reads
 `New Flow`, `<html>` intercepts the pointer, and the element then detaches.
 
 Addressing the flow by id removes the whole class: `createFlowFromStarter` copies

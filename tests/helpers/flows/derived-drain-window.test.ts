@@ -116,3 +116,56 @@ test("the failure text names the cause, the fix and the offenders", () => {
   assert.match(message, new RegExp(`quietMs: ${ACCESSOR}\\(\\)`));
   assert.match(message, /waitForFlowSaveSettled\(page\)/);
 });
+
+// The silence path the first version of this module had, and documented as
+// impossible (found in review). The old regex required a terminating `;`, so a
+// call in ARGUMENT position did not match on its own — its body ran on to the
+// next call's `);` and merged the two into one match carrying the derived
+// accessor. Both halves of the guard went quiet: `offenders` empty AND the count
+// unchanged, because the merge subtracts one match and adds one.
+test("a drain call with no trailing semicolon is found, not merged into the next", () => {
+  const source = [
+    `await Promise.all([waitForFlowSaveSettled(page)]);`,
+    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}() });`,
+  ].join("\n");
+
+  assert.equal(countDrainCalls(source), 2);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), [
+    "waitForFlowSaveSettled(page)",
+  ]);
+});
+
+test("nested parentheses in the arguments do not end the call early", () => {
+  // A second argument is not hypothetical — the drain also takes `timeout`. The
+  // old regex stopped at the first `)` followed by `;`, so a call ending in a
+  // nested call reported a TRUNCATED offender: a false positive on a correct
+  // call, which is how a guard gets deleted rather than fixed.
+  const source =
+    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}(), timeout: capMs(2) });`;
+  assert.equal(countDrainCalls(source), 1);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
+});
+
+test("a parenthesis inside a STRING argument does not unbalance the scan", () => {
+  const source = `await waitForFlowSaveSettled(page, { label: ")(", quietMs: ${ACCESSOR}() });`;
+  assert.equal(countDrainCalls(source), 1);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
+});
+
+test("a call whose parentheses never close is an offender, not a silence", () => {
+  // Unreadable is not clean (#1012). A truncated file, or a scan this walker
+  // cannot follow, must surface as something a reader can act on.
+  const offenders = drainCallsWithoutDerivedWindow(
+    `await waitForFlowSaveSettled(page, { quietMs: ${ACCESSOR}(`,
+    ACCESSOR,
+  );
+  assert.equal(offenders.length, 1);
+});
+
+test("a longer identifier ENDING in the callee name is not a drain call", () => {
+  // `myWaitForFlowSaveSettled(page)` is someone else's function; counting it
+  // would fail the count floor of a file that is perfectly correct.
+  const source = `await myWaitForFlowSaveSettled(page);`;
+  assert.equal(countDrainCalls(source), 0);
+  assert.deepEqual(drainCallsWithoutDerivedWindow(source, ACCESSOR), []);
+});

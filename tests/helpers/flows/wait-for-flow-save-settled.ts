@@ -1,4 +1,30 @@
 import type { Page, Request } from "@playwright/test";
+import { SAVE_COMPLETION_BUDGET_MS } from "./autosave-interval";
+
+/** The cap a caller that passes no `quietMs` has always had. */
+export const DEFAULT_DRAIN_CAP_MS = 10000;
+
+/**
+ * The safety cap for a given quiet window (#1902).
+ *
+ * The cap is not a deadline the caller chose, it is the escape hatch that stops
+ * a never-quiet editor from hanging the run — so it has to leave room for the
+ * whole thing it is capping: a save still to be ISSUED (`quietMs`) and then to
+ * COMPLETE (`SAVE_COMPLETION_BUDGET_MS`, the budget `autosave-interval.ts`
+ * already sizes for exactly that). A fixed 10 000 ms did not: with `quietMs`
+ * raised from 700 to a derived ~3500 ms, the interval in which a late PATCH
+ * could still be fully drained shrank from ~9.3 s to ~6.5 s, and past it the
+ * helper returns with a request possibly still IN FLIGHT — the state #995 made
+ * it request-aware to prevent. Found in review of #1902; the coupling was
+ * already noted as a known gap in #1901 and is what makes a derived window
+ * meaningful rather than approximately meaningful.
+ *
+ * `Math.max` with the historical floor, so a caller that passes no window keeps
+ * a cap no shorter than the one it has always had.
+ */
+export function drainCapMs(quietMs: number): number {
+  return Math.max(DEFAULT_DRAIN_CAP_MS, quietMs + SAVE_COMPLETION_BUDGET_MS);
+}
 
 /**
  * Block until the flow's debounced autosave has settled.
@@ -37,9 +63,11 @@ import type { Page, Request } from "@playwright/test";
  * immediately when nothing is in flight, so called right after an edit it
  * returns having tracked no request at all — the save is still only SCHEDULED.
  * The header used to justify `quietMs = 700` as "comfortably above the 300 ms
- * autosave debounce", and that is wrong twice over: 300 ms is
- * `SAVE_DEBOUNCE_TIME`, merely the store's pre-fetch default, while the
- * effective delay is `GET /api/v1/config.auto_saving_interval` — measured
+ * autosave debounce", and that is wrong twice over: `SAVE_DEBOUNCE_TIME = 300`
+ * is used elsewhere and is not the store's pre-fetch default either — that is
+ * `AUTOSAVE_DEBOUNCE_TIME = 2000` (`flowsManagerStore.ts:57`, checked against
+ * `release-1.13.0` in #1902) — while the effective delay is
+ * `GET /api/v1/config.auto_saving_interval` — measured
  * **1000** in `SimpleAgentTemplatePage.ts` and **2000** on `1.13.0.dev4`. Both
  * exceed the window, so the barrier expires first, by design of the numbers
  * rather than by accident of load.
@@ -66,7 +94,10 @@ import type { Page, Request } from "@playwright/test";
  */
 export async function waitForFlowSaveSettled(
   page: Page,
-  { quietMs = 700, timeout = 10000 }: { quietMs?: number; timeout?: number } = {},
+  {
+    quietMs = 700,
+    timeout = drainCapMs(quietMs),
+  }: { quietMs?: number; timeout?: number } = {},
 ): Promise<void> {
   const isFlowSave = (req: Request) =>
     req.url().includes("/api/v1/flows/") && req.method() === "PATCH";
@@ -74,6 +105,21 @@ export async function waitForFlowSaveSettled(
   await new Promise<void>((resolve) => {
     let quietTimer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = 0;
+
+    // The cap is the one exit that does NOT mean the editor went quiet, and it
+    // used to resolve indistinguishably from one that did — a silence about a
+    // silence (#1012). It cannot throw: this helper drains traffic the caller
+    // did not cause, and failing here would redden a test over a busy editor.
+    // It can say so, and a reader who sees it knows not to read the next
+    // assertion as having run on a settled store.
+    const finishOnCap = () => {
+      console.warn(
+        `[waitForFlowSaveSettled] gave up at the ${timeout}ms safety cap without ` +
+          `${quietMs}ms of quiet — ${inFlight} flow-save PATCH(es) still in flight. ` +
+          `Whatever runs next is NOT starting from a settled store (#995/#1902).`,
+      );
+      finish();
+    };
 
     const finish = () => {
       clearTimeout(quietTimer);
@@ -106,7 +152,7 @@ export async function waitForFlowSaveSettled(
       arm();
     };
 
-    const cap = setTimeout(finish, timeout);
+    const cap = setTimeout(finishOnCap, timeout);
     page.on("request", onRequest);
     page.on("requestfinished", onSettled);
     page.on("requestfailed", onSettled);

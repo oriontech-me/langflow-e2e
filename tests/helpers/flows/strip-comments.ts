@@ -1,5 +1,6 @@
 // Blank the comments out of a TypeScript source, for the structural guards that
-// scan the suite's own code (`open-flow-settings.test.ts`, `permissions-gate.test.ts`).
+// scan the suite's own code (`open-flow-settings.test.ts`, `permissions-gate.test.ts`
+// and, since #1902, `derived-drain-window.ts`).
 //
 // ONE COPY, FOR THE SAME REASON THE BUDGET IS ONE CONSTANT
 //
@@ -7,7 +8,7 @@
 // defect twice: the guard that #1222 added cloned it from the guard #1215 added.
 // A leaf module importing nothing, so it couples nothing in
 // `impacted-specs-by-import.mjs`'s transitive graph (#1054) — no spec imports it,
-// only the two guards do.
+// only the guards do.
 //
 // BLANKED, NOT DELETED
 //

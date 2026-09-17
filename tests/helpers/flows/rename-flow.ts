@@ -36,16 +36,29 @@ const MODAL_TIMEOUT = 15000;
  * outside.
  *
  * `pendingSaveQuietMs()` is read from the instance under test and is the only
- * window that also closes a save that is merely SCHEDULED. It is ONE rule for
- * all four drains rather than a window per site: a mixed regime is where the
- * next gap opens, and one rule is a property `rename-flow.test.ts` can state and
- * guard, where "this site needs it and that one does not" is an argument that
- * has to be re-derived every time the file is edited.
+ * window that also closes a save still on the DEBOUNCE. It does not close one
+ * upstream has DEFERRED into `pendingAutoSaveRef` while the permissions query is
+ * loading — no window does, that helper's header has the mechanism, and this is
+ * the helper where it is most live, since #1005 recorded the permissions query
+ * re-entering `isLoading` on every save. A drain is not a proof of quiescence
+ * here; it is the part of it that arithmetic can deliver.
  *
- * Cost: ~+1.8 s per drain (~2500 ms against 700 ms), i.e. ~+7.2 s per rename
- * pass that edits the modal and ~+3.6 s for the no-edit reopen. #357 and #995
- * are both a PATCH landing inside this helper, and each cost far more than
- * seconds to diagnose.
+ * It is ONE rule for all four drains rather than a window per site: a mixed
+ * regime is where the next gap opens, and one rule is a property
+ * `rename-flow.test.ts` can state and guard, where "this site needs it and that
+ * one does not" is an argument that has to be re-derived every time the file is
+ * edited.
+ *
+ * Cost: ~+2.8 s per drain (~3500 ms against 700 ms). Count the drains per call,
+ * because they are not uniform and an earlier version of this note halved one of
+ * them: a `renameFlow({flowName})` pass is **4** (~+11.2 s) — the two in
+ * `applyFlowSettings` plus the loop's and the arbiter's — a `renameFlow()`
+ * no-edit reopen is **1** (~+2.8 s), since the second barrier is inside the
+ * edited branch and the function returns before the loop, and a re-apply pass
+ * adds **2** more. `edit-flow-name.spec.ts`, the heaviest caller, runs 2 names ×
+ * (4 + 1) = 10 drains, ~+28 s on a file `reports/spec-durations.json` measures at
+ * 21.7 s. Against that: #357 and #995 are both a PATCH landing inside this
+ * helper, and each cost far more than seconds to diagnose.
  */
 export function renameDrainQuietMs(): number {
   return pendingSaveQuietMs();
