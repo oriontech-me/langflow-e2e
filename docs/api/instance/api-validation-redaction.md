@@ -111,9 +111,13 @@ resolve the release gate (below); each test then runs its own shapes.
 2. Every `detail` entry has **no `input`** key, and its key set is a subset of
    `{type, loc, msg, ctx}`.
 3. The raw response text does **not** contain `SENTINEL`.
-4. The two entries are `missing` on `["body","name"]` and `["body","default_fields"]`,
-   with the fixed pydantic template `"Field required"` **unchanged** — the control that
-   the body was parsed and refused on the right fields rather than rejected unread.
+4. **Every** entry is `missing` with the fixed pydantic template `"Field required"`
+   **unchanged**, and `["body","name"]` is among the `loc`s — the control that the body
+   was parsed and refused on its own fields rather than rejected unread. The instance
+   answers two entries (`name` and `default_fields`), but the assertion is written over
+   every entry and over one required `loc`, not over a count or a pair: `default_fields`
+   becoming optional upstream is a schema change, not a redaction regression, and must
+   not redden this file. Same reasoning as the duplicate entries in *Notes*.
 5. **The response does not depend on what was submitted**: the same request with a
    harmless value in `value` answers a **byte-identical** body.
 6. No variable was created: the whole `GET /api/v1/variables/` listing, serialised, does
