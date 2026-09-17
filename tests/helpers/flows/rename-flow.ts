@@ -56,9 +56,12 @@ const MODAL_TIMEOUT = 15000;
  * no-edit reopen is **1** (~+2.8 s), since the second barrier is inside the
  * edited branch and the function returns before the loop, and a re-apply pass
  * adds **2** more. `edit-flow-name.spec.ts`, the heaviest caller, runs 2 names ×
- * (4 + 1) = 10 drains, ~+28 s on a file `reports/spec-durations.json` measures at
- * 21.7 s. Against that: #357 and #995 are both a PATCH landing inside this
- * helper, and each cost far more than seconds to diagnose.
+ * (4 + 1) = 10 drains — measured on `1.13.0.dev15`, **20.8/21.1 s -> 50.4/50.4 s**,
+ * 2 runs each side, which is the arithmetic and not a surprise. Know that number
+ * before reading this as free. Against it: #357 and #995 are both a PATCH landing
+ * inside this helper, each of which cost far more than seconds to diagnose, and
+ * the 8 affected spec files together measured 2.3 m -> 4.1 m for 13 tests — about
+ * +27 s on a daily shard of ~950 s, since the suite runs them once.
  */
 export function renameDrainQuietMs(): number {
   return pendingSaveQuietMs();

@@ -128,8 +128,9 @@ debounce — 2000 ms on `1.13.0.dev15` (#1741). All four now use
 `renameDrainQuietMs()`, derived from
 `GET /api/v1/config.auto_saving_interval` for the run (interval + 1500 ms of
 slack, the slack itself measured — see `autosave-interval.ts`). It costs this
-spec ~+28 s: it renames twice, and a pass that edits the modal drains 4 times
-against 1 for the no-edit reopen. What that cost was the
+spec **20.8 s -> 50.4 s** (measured, 2 runs each side on `1.13.0.dev15`): it
+renames twice, and a pass that edits the modal drains 4 times against 1 for the
+no-edit reopen, so this is the heaviest caller of the helper in the suite. What that cost was the
 **retry**, not the verdict: the loop read a header the clobbering PATCH had not
 reverted yet and skipped the re-apply, and the failure then surfaced at the
 closing assertion (and at this spec's own home-listing check after
