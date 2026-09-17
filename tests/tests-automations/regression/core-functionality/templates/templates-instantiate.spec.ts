@@ -133,18 +133,19 @@ test.describe("Templates — every registered template instantiates as itself", 
     // why it costs: that log is read by a human, and the deterministic pipeline's
     // VALIDATE gate greps the string.
     //
-    // **Honest scope, because the two measurements disagree.** The PR lane's run
-    // of this file logged 57 of them over 17 flows (`/api/v1/models`,
+    // Measured on the lane, both sides: without this line the PR lane's run of
+    // this file logged 57 of them over 17 flows (`/api/v1/models`,
     // `/custom_component/update`, `/flows/{id}/events`, `/variables/`,
-    // `/note_translations` — all flow-scoped 404s for flows this run had created
-    // and deleted). It does NOT reproduce locally: 26/26 green against the same
-    // image (`1.13.0.dev12`) at `workers=2`, WITH and WITHOUT this navigation,
-    // logged 0 of that class either way (3 unrelated 400s on a shared dev
-    // instance, identical in both runs). So the CI figure is the observation and
-    // this line is the suite's convention applied to it — the confirmation that
-    // it goes to zero is the next PR-lane run, not the local pair. The timing is
-    // the plausible difference (a slower runner leaves more editor polls in
-    // flight when the delete lands), and it was not chased further.
+    // `/note_translations` — all flow-scoped 404s for flows the run had created
+    // and deleted); with it, the same job over the same 26 specs logged 0.
+    //
+    // **A LOCAL run cannot check this, which is the part to carry.** 26/26 green
+    // against the same image (`1.13.0.dev12`) at `workers=2`, WITH and WITHOUT
+    // this navigation, logged 0 of that class either way (3 unrelated 400s on a
+    // shared dev instance, identical in both runs) — so a green local pair looks
+    // exactly like a fix and proves nothing here. The plausible difference is
+    // timing, a slower runner leaving more editor polls in flight when the delete
+    // lands; it was not chased further.
     //
     // `about:blank` rather than `/` so the teardown adds no backend traffic of
     // its own, and unconditionally: Playwright captures the failure screenshot

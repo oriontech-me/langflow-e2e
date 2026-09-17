@@ -198,10 +198,9 @@ failure is scoped to **one** template's test; the other 25 stay green.
 | Fail the comparison **and** the cleanup together | The PRODUCT failure is still reported; the cleanup problem is a warning beside it, never a replacement |
 
 **No `🚨 Backend Error`** is part of the criterion, and it was not met by the first version:
-the PR lane's run of it logged **57** (see *Build notes*, including why the local pair cannot
-confirm the fix). The `about:blank` teardown is the suite's answer to that class; **the
-verdict is the next PR-lane run**, and until it is green this criterion is recorded as
-UNVERIFIED rather than met.
+the PR lane's run of it logged **57**. With the `about:blank` teardown the same job over the
+same 26 specs logs **0** — measured, not expected (see *Build notes* for both figures, and
+for why a local run cannot settle this one).
 
 **Flow cleanup is proven, not assumed** — on a green run *and* on a forced-red run, because a
 red test that leaks is the case a green-only check never sees. Already measured on the probe:
@@ -265,14 +264,20 @@ For each template `T` in the committed baseline:
   that log is read by a human, and the deterministic pipeline's VALIDATE gate greps that
   string.
 
-  **Honest scope, because the two measurements disagree.** The PR lane's run of this file
+  **Measured on the lane, both sides.** Without the navigation, the PR lane's run of this file
   logged **57 of them over 17 flows** (`/api/v1/models`, `/custom_component/update`,
   `/flows/{id}/events`, `/variables/`, `/note_translations` — all flow-scoped 404s for flows
-  that run had created and deleted). It does **not** reproduce locally: 26/26 green against
-  the same image at `workers=2`, **with and without** the navigation, logged **0 of that
-  class either way** (3 unrelated 400s on a shared dev instance, identical in both runs). So
-  the CI figure is the observation and this is the convention applied to it; the confirmation
-  that it goes to zero is the next PR-lane run, not the local pair.
+  that run had created and deleted); with it, the same job over the same 26 specs logged
+  **0** (run
+  [35166215203](https://github.com/oriontech-me/langflow-e2e/actions/runs/35166215203), 26
+  passed in 1.5 min).
+
+  **It does not reproduce locally, and that is worth carrying rather than filing away:** 26/26
+  green against the same image at `workers=2`, **with and without** the navigation, logged 0
+  of that class either way (3 unrelated 400s on a shared dev instance, identical in both
+  runs). A local green therefore says nothing about this criterion — only the lane does. The
+  plausible difference is timing, a slower runner leaving more editor polls in flight when the
+  delete lands; it was not chased further.
 
 ---
 
