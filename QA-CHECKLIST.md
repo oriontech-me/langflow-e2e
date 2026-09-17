@@ -1471,7 +1471,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 100 | 94 | 1 | 3 | 2 |
+| `api/flows/` — REST API | 101 | 95 | 1 | 3 | 2 |
 | `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 91 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
@@ -1494,7 +1494,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **674** | **580 (86%)** | **33 (5%)** | **13 (2%)** | **48 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **675** | **581 (86%)** | **33 (5%)** | **13 (2%)** | **48 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1510,7 +1510,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 649 `test()` calls carrying the `@stable` tag, distributed across 254 spec
+> 653 `test()` calls carrying the `@stable` tag, distributed across 255 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1616,6 +1616,10 @@
 - [x] code validation answers 200 for broken code, with the verdict in the body → `api-validation-endpoints.spec.ts`
 - [x] prompt validation extracts variables only when it is given a node → `api-validation-endpoints.spec.ts`
 - [x] a custom component is described, and a field update echoes the code back → `api-validation-endpoints.spec.ts`
+- [x] a missing field does not echo the object it was missing from → `api-validation-redaction.spec.ts`
+- [x] a validator that quotes its input answers [redacted] → `api-validation-redaction.spec.ts`
+- [x] a non-uuid path parameter drops both the value and its input-derived ctx → `api-validation-redaction.spec.ts`
+- [x] schema-derived ctx survives while the value does not → `api-validation-redaction.spec.ts`
 
 #### api/models/
 - [x] the three provider lists are a strict hierarchy, not three views of one list → `api-models-catalog.spec.ts`
