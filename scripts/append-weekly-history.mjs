@@ -26,6 +26,9 @@
 //                             every failure/flake entry carries `outage_overlap`
 //                             (#1763). Unset means the lane does not measure it and the
 //                             field is omitted — never recorded as a clean measurement.
+//                             Unset while LIVENESS_DIR IS set is a broken wiring rather
+//                             than such a lane, and says so on stderr: the row it writes
+//                             is otherwise indistinguishable from weekly-stable.yml's.
 //   COLLECTION_GATE_KEYS      Optional, and read as a PAIR with the one below:
 //   COLLECTION_GATE_KEYS_ABSENT
 //                             the collection-gating provider keys the run's listing
@@ -279,8 +282,43 @@ function specRelFile(spec) {
 // whole point of the block — a consumer that cannot tell "measured and clean"
 // from "never measured" has no evidence at all (#1012).
 const outagePayload = loadOutagePayload(process.env.OUTAGE_ATTEMPTS || "", readFileSync);
-if (process.env.OUTAGE_ATTEMPTS && outagePayload.available !== true) {
-  console.error(`[history] outage_overlap omitted: ${outagePayload.reason}`);
+for (const line of outageOmissionNotice(process.env, outagePayload)) console.error(line);
+
+/**
+ * Why `outage_overlap` will be absent from every entry — or nothing, when the
+ * lane legitimately does not measure.
+ *
+ * The distinction this exists for is the one an absent field cannot carry.
+ * Absence is this schema's word for "this lane does not measure it"
+ * (`collection_gate_keys`, `listing_completeness`), and `weekly-stable.yml`
+ * really is such a lane — it has no liveness recorder at all. But a lane that
+ * DOES record liveness and passes no `OUTAGE_ATTEMPTS` is not that: it is a
+ * broken wiring, and the row it writes is indistinguishable from the weekly's.
+ * Losing the daily's `OUTAGE_ATTEMPTS` — a rename, a reordered step, an edit to
+ * the env block — would therefore have cost the measurement on every future run
+ * and said nothing at all, in the file that invokes #1012 in five places.
+ *
+ * `LIVENESS_DIR` is the discriminator because it is already exactly that claim:
+ * the appender reads it to build the row's `backend` block (#1077), and the two
+ * lanes that set it (`daily-stable.yml`'s merge job, `run-e2e.sh`'s publish
+ * phase) are precisely the two that produce `outage-attempts.json` a step
+ * earlier. `weekly-stable.yml` sets neither, so it stays silent.
+ *
+ * Not exported: importing this module runs the whole script (it reads env and
+ * appends a line), which is why every test here drives it as a subprocess. The
+ * notice is asserted on the real stderr for the same reason.
+ */
+function outageOmissionNotice(env, payload) {
+  if (payload?.available === true) return [];
+  if (env.OUTAGE_ATTEMPTS) return [`[history] outage_overlap omitted: ${payload.reason}`];
+  if (!env.LIVENESS_DIR) return []; // a lane with no recorder — absence is the honest record
+  return [
+    "[history] outage_overlap omitted: this run records backend liveness (LIVENESS_DIR is set) " +
+      "but passed no OUTAGE_ATTEMPTS path, so no failing attempt could be placed inside a measured " +
+      "outage. Point it at the `OUTAGE_ATTEMPTS_OUT` file `report-backend-outages.mjs` writes " +
+      "earlier in the same job (#1763) — the row is otherwise indistinguishable from a lane that " +
+      "does not measure at all.",
+  ];
 }
 
 // `result.retry` of every attempt that did not pass, oldest first.

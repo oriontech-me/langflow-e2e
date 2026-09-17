@@ -13,7 +13,7 @@
 // `error_signature: "unknown"` while their real message sat on attempt 0.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync } from "node:fs";
 
 import { join } from "node:path";
@@ -737,4 +737,66 @@ test("#1763 the parameterization variant reaches the join, per provider", () => 
   assert.equal(byParam["openai / gpt-4o-mini"].state, "overlapped");
   assert.equal(byParam["google / gemini-3.5-flash"].state, "clear",
     "google failed while the backend was answering — openai's outage must not answer for it");
+});
+
+// ─── A lost wiring must not read as "this lane does not measure" (#1763) ─────
+
+/** Run the appender and return its stderr alongside the entry it wrote. */
+function appendCapturingStderr(rep, envOver = {}) {
+  const dir = makeTempDir("history-stderr-");
+  const reportPath = join(dir, "results.json");
+  const historyPath = join(dir, "history.jsonl");
+  writeFileSync(reportPath, JSON.stringify(rep));
+  const proc = spawnSync(process.execPath, [SCRIPT], {
+    env: {
+      ...process.env,
+      PLAYWRIGHT_JSON: reportPath,
+      HISTORY_FILE: historyPath,
+      WORKFLOW: "unit",
+      GITHUB_RUN_ID: "1",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_REPOSITORY: "o/r",
+      LANGFLOW_IMAGE: "img:tag",
+      OUTAGE_ATTEMPTS: "",
+      LIVENESS_DIR: "",
+      ...envOver,
+    },
+    encoding: "utf8",
+  });
+  assert.equal(proc.status, 0, `the appender must still write the row: ${proc.stderr}`);
+  const entry = JSON.parse(readFileSync(historyPath, "utf8").trim());
+  return { entry, stderr: proc.stderr };
+}
+
+test("#1763 a lane that records liveness but passes no OUTAGE_ATTEMPTS says so", () => {
+  // The failure this pins is the one an absent field cannot report. Absence is
+  // this schema's word for "this lane does not measure it", so a daily that lost
+  // its OUTAGE_ATTEMPTS env — a rename, a reordered step — would write rows
+  // indistinguishable from weekly-stable.yml's, on every run, in silence.
+  const dir = makeTempDir("liveness-");
+  const { entry, stderr } = appendCapturingStderr(flakyReport("boots", [0]), { LIVENESS_DIR: dir });
+  assert.equal(entry.flaky[0].outage_overlap, undefined, "the field is still absent — this is a report, not a gate");
+  assert.match(stderr, /outage_overlap omitted/);
+  assert.match(stderr, /LIVENESS_DIR is set/);
+  assert.match(stderr, /OUTAGE_ATTEMPTS_OUT/, "and names the file to point it at");
+});
+
+test("#1763 a lane with no liveness recorder at all stays silent", () => {
+  // weekly-stable.yml sets neither, and its rows are honestly unmeasured — a
+  // warning there would be noise on every run and would train the reader to
+  // ignore the one case above.
+  const { entry, stderr } = appendCapturingStderr(flakyReport("boots", [0]));
+  assert.equal(entry.flaky[0].outage_overlap, undefined);
+  assert.equal(stderr.includes("outage_overlap omitted"), false, stderr);
+});
+
+test("#1763 an OUTAGE_ATTEMPTS that cannot be read still names the reason, not the wiring", () => {
+  const dir = makeTempDir("liveness-");
+  const { stderr } = appendCapturingStderr(flakyReport("boots", [0]), {
+    LIVENESS_DIR: dir,
+    OUTAGE_ATTEMPTS: join(dir, "does-not-exist.json"),
+  });
+  assert.match(stderr, /outage_overlap omitted/);
+  assert.match(stderr, /could not be read/);
+  assert.equal(stderr.includes("LIVENESS_DIR is set"), false, "the path was provided — this is a different failure");
 });
