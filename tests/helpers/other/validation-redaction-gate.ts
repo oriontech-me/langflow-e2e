@@ -171,6 +171,21 @@ export function redactionVerdict(versionBody: unknown): RedactionVerdict {
  *
  * An unreachable or non-ok version endpoint is `unknown`, not a skip: it says the
  * instance is unhealthy, which is never a verdict about the handler.
+ *
+ * **The two unhealthy branches are not triaged the same way, and the difference is
+ * worth knowing before reading a red daily.** The spec throws on `unknown` from
+ * `beforeAll`, which takes all four tests with it — so whether that day costs the
+ * file its `@stable` tag comes down to whether the message carries an infra
+ * signature (`scripts/lib/infra-signature-patterns.json`, #1031/#1310). The THROW
+ * branch below keeps the original error's first line, so `ECONNREFUSED` and
+ * `apiRequestContext.get: Timeout` survive into the failure text and the exemption
+ * applies. The **non-ok** branch cannot: those patterns are transport-level by
+ * design, and a wedged backend answering `502`/`503` here produces prose that
+ * matches none of them, so `remove-stable-from-failures.ts` would score it
+ * attributable and strip the tag in an unreviewed commit. Deliberately not worked
+ * around — widening the transport list to swallow a 5xx would blind it on every
+ * spec — so the status is named in the message instead, for the human who triages
+ * it.
  */
 export async function resolveRedactionVerdict(
   request: APIRequestContext,
