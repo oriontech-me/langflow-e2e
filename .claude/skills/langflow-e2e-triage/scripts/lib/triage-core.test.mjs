@@ -811,13 +811,33 @@ test('#1763 one corroborated attempt beside one clean one is the spec failing on
 });
 
 test('#1763 `clear`, `unmeasured` and an absent block all leave the flake actionable', () => {
-  const clear = { state: 'clear', failed_attempts: 2, min_coverage: 0, max_coverage: 0, attempts: [] };
-  const unmeasured = { state: 'unmeasured', failed_attempts: 2, why: 'no shard summary claims this spec' };
-  for (const block of [clear, unmeasured, undefined]) {
+  // Every fixture here carries a coverage that WOULD clear the threshold, so the
+  // state guard is what has to reject them. With `min_coverage: 0` on the clear
+  // one and none on the unmeasured one, the arithmetic returns false either way
+  // and the branch these cases are named for is never the one that fires —
+  // measured: dropping the state guard entirely left the whole suite green.
+  const clear = { state: 'clear', failed_attempts: 2, min_coverage: 0.9, max_coverage: 0.9, attempts: [] };
+  const unmeasured = { state: 'unmeasured', failed_attempts: 2, min_coverage: 0.9, why: 'no shard summary claims this spec' };
+  const invented = { state: 'overlapped-ish', failed_attempts: 2, min_coverage: 0.9 };
+  for (const block of [clear, unmeasured, invented, undefined]) {
     const f = onlyFlake(infraRows(assertionFlake(block)), { classifyInfra: classifyInfraError });
     assert.equal(f.actionable, true, `${block?.state ?? 'absent'} must never exempt (#1012)`);
     assert.equal(f.outage_excluded, undefined);
   }
+});
+
+test('#1763 a block claiming an overlap over ZERO failed attempts exempts nothing', () => {
+  // `failed_attempts` is what `min_coverage` is a minimum OVER. A block that
+  // reports none is a claim about an empty set: `Math.min()` of nothing is
+  // Infinity, which clears any threshold. Reachable from a hand-edited row, and
+  // unpinned until this test (measured: replacing the guard with `if (false)`
+  // left the whole suite green).
+  const f = onlyFlake(
+    infraRows(assertionFlake({ state: 'overlapped', failed_attempts: 0, min_coverage: 0.9, attempts: [] })),
+    { classifyInfra: classifyInfraError },
+  );
+  assert.equal(f.actionable, true);
+  assert.equal(f.outage_excluded, undefined);
 });
 
 test('#1763 the signature keeps precedence — it is the stronger evidence, and says so', () => {

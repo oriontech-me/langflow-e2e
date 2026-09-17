@@ -667,3 +667,74 @@ test("#1763 a SKIPPED retry is not counted as a failed attempt", () => {
   assert.equal(entry.failures[0].outage_overlap.failed_attempts, 1);
   assert.equal(entry.failures[0].outage_overlap.min_coverage, 0.8);
 });
+
+test("#1763 a timedOut or interrupted attempt counts as a failed attempt", () => {
+  // The filter is the COMPLEMENT of {passed, skipped}, not `status === "failed"`.
+  // Playwright's failing statuses are failed / timedOut / interrupted, and a
+  // timeout is the single most likely shape for a wedge-adjacent failure —
+  // narrowing to "failed" would drop a non-overlapping attempt from
+  // failed_attempts and stop it dragging min_coverage below the threshold, i.e.
+  // it would WIDEN the exemption.
+  for (const status of ["timedOut", "interrupted"]) {
+    const entry = withOutageFile(
+      outagePayload([
+        { file: SPEC_FILE, title: "boots", retry: 1, shard: "2", coverage: 0.9, downSeconds: 90, shardDownPct: 30 },
+      ]),
+      report([
+        {
+          title: "boots",
+          status: "unexpected",
+          results: [
+            { ...result(status, SPEC_ERROR), retry: 0 },
+            { ...result("failed", SPEC_ERROR), retry: 1 },
+          ],
+        },
+      ]),
+    );
+    const o = entry.failures[0].outage_overlap;
+    assert.equal(o.failed_attempts, 2, `${status} must count as a failed attempt`);
+    assert.equal(o.min_coverage, 0, `${status} attempt 0 overlapped nothing and must drag min_coverage down`);
+  }
+});
+
+test("#1763 the parameterization variant reaches the join, per provider", () => {
+  const parameterized = {
+    config: {},
+    stats: { duration: 1000 },
+    suites: [
+      {
+        title: "a.spec.ts",
+        suites: ["openai / gpt-4o-mini", "google / gemini-3.5-flash"].map((label) => ({
+          title: `Agent max iterations [${label}]`,
+          specs: [
+            {
+              title: "boots",
+              file: `tests/${SPEC_FILE}`,
+              line: 10,
+              tags: ["@stable"],
+              tests: [
+                {
+                  status: "flaky",
+                  results: [
+                    { ...result("failed", SPEC_ERROR), retry: 0 },
+                    { ...result("passed"), retry: 1 },
+                  ],
+                },
+              ],
+            },
+          ],
+        })),
+      },
+    ],
+  };
+  const entry = withOutageFile(
+    outagePayload([
+      { file: SPEC_FILE, title: "boots", retry: 0, param: "openai / gpt-4o-mini", shard: "2", coverage: 1, downSeconds: 60, shardDownPct: 3.3 },
+    ]),
+    parameterized,
+  );
+  const byParam = Object.fromEntries(entry.flaky.map((f) => [f.param, f.outage_overlap]));
+  assert.equal(byParam["openai / gpt-4o-mini"].state, "overlapped");
+  assert.equal(byParam["google / gemini-3.5-flash"].state, "clear",
+    "google failed while the backend was answering — openai's outage must not answer for it");
+});

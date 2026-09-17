@@ -80,6 +80,7 @@ const DEFAULT_MAX_WINDOWS = 12;
 // — the $GITHUB_OUTPUT equivalent of the injection guard in
 // scripts/check-run-integrity.mjs.
 import { normalizeSpecPath } from "./lib/spec-path.mjs";
+import { paramFromSuitePath } from "./lib/spec-param.mjs";
 
 export const MD_DELIMITER = "LIVENESS_MD_EOF";
 
@@ -120,9 +121,17 @@ export function readSummaries(dir) {
 // of a wedge is precisely that each collateral test burns its whole retry budget.
 export function collectAttempts(report) {
   const attempts = [];
-  const walk = (node, inheritedFile) => {
+  const walk = (node, inheritedFile, suitePath = []) => {
     const file = node.file || inheritedFile;
-    for (const sub of node.suites || []) walk(sub, file);
+    // The enclosing describe titles, accumulated exactly as
+    // `append-weekly-history.mjs` accumulates them, so the `param` both sides
+    // derive is the same string (#1763). Without it a parameterized spec's
+    // variants are indistinguishable here: same file, same `spec.title`, same
+    // line, and the join key would let one variant's outage exempt another's
+    // failure.
+    const path = node.title ? [...suitePath, node.title] : suitePath;
+    const param = paramFromSuitePath(path);
+    for (const sub of node.suites || []) walk(sub, file, path);
     for (const spec of node.specs || []) {
       const specFile = spec.file || file;
       for (const test of spec.tests || []) {
@@ -132,6 +141,7 @@ export function collectAttempts(report) {
           attempts.push({
             file: normalizeSpecPath(specFile),
             title: spec.title || "",
+            param,
             status: result.status,
             retry: Number(result.retry) || 0,
             startAt,
@@ -237,6 +247,11 @@ export function attribute(summaries, attempts) {
         file: a.file,
         title: a.title,
         retry: a.retry,
+        // The variant, when the spec is model-parameterized (#1763). The #1589
+        // consumer keys on (file, title, retry) and ignores this; the triage
+        // dataset includes it, because it decides on the measurement alone and
+        // the 3-part key cannot tell two providers of one spec apart.
+        param: a.param ?? null,
         // How MUCH of the attempt sat in downtime, not just that it did (#1763).
         // The `@stable` exemption (#1589) reads the identity and ignores this;
         // the triage dataset reads this, because for an assertion-shaped failure
@@ -306,7 +321,10 @@ export function collateralPayload(agg, { reportRead = true } = {}) {
       specMeasured[file] = (specMeasured[file] ?? false) || shard.measured;
     }
     for (const id of shard.collateralIds || []) {
-      const key = `${id.file}\u0000${id.title}\u0000${id.retry}`;
+      // `param` is in the dedupe key too: without it, two variants of one spec
+      // that BOTH sat in an outage collapse to a single record, and the variant
+      // that is dropped then looks unmeasured to the per-entry reader (#1763).
+      const key = `${id.file}\u0000${id.title}\u0000${id.retry}\u0000${id.param ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
       attempts.push({ ...id, shard: shard.shard });

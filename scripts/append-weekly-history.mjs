@@ -158,6 +158,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
+import { paramFromSuitePath } from "./lib/spec-param.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -266,19 +267,9 @@ function specRelFile(spec) {
   }
 }
 
-// Extract the parameterization label a model-parameterized spec carries on its
-// `describe` title — e.g. `Agent max_tokens [google / gemini-2.5-flash]` →
-// `google / gemini-2.5-flash`, or `[model:gpt-4o-mini]` → `model:gpt-4o-mini`.
-// Scan the suite path innermost-first and return the first bracketed content;
-// null when nothing is parameterized. Recorded as `param` so the triage dataset
-// can group failures by provider variant (#899).
-function paramFromSuitePath(suitePath) {
-  for (let i = suitePath.length - 1; i >= 0; i--) {
-    const m = /\[([^\]]+)\]/.exec(suitePath[i] || "");
-    if (m) return m[1].trim();
-  }
-  return null;
-}
+// The parameterization label lives in `lib/spec-param.mjs` (#899, shared since
+// #1763): `report-backend-outages.mjs` derives the same string for the join key,
+// and a second copy here would only have to agree with it.
 
 // The per-attempt outage corroboration (#1763), read ONCE for the whole run.
 //
@@ -309,9 +300,9 @@ function failedRetries(test) {
 // not measure, so the field is ABSENT rather than null. Absence is already this
 // schema's word for "this lane does not measure it" (`collection_gate_keys`,
 // `listing_completeness`), and a null would read as a measured nothing.
-function outageOverlapField(file, title, test) {
+function outageOverlapField(file, title, param, test) {
   const block = overlapForEntry(
-    { specPath: file, title, failedRetries: failedRetries(test) },
+    { specPath: file, title, param, failedRetries: failedRetries(test) },
     outagePayload,
   );
   return block ? { outage_overlap: block } : {};
@@ -360,7 +351,7 @@ function visit(node, suitePath = []) {
           error_signature: firstFailedSignature || "unknown",
           infra_signature: infraSignatureId(firstFailedResult),
           infra_signature_any_attempt: infraSignatureAnyAttempt(test),
-          ...outageOverlapField(file, title, test),
+          ...outageOverlapField(file, title, param, test),
           ...(param ? { param } : {}),
         });
         continue;
@@ -398,7 +389,7 @@ function visit(node, suitePath = []) {
         // collateral block cannot disagree about the same failure.
         infra_signature: infraSignatureId(lastFailed),
         infra_signature_any_attempt: infraSignatureAnyAttempt(test),
-        ...outageOverlapField(file, title, test),
+        ...outageOverlapField(file, title, param, test),
         ...(param ? { param } : {}),
       });
     }

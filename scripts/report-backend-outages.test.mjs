@@ -593,3 +593,91 @@ test("collateralPayload carries the coverage through to the file the consumers r
     assert.equal(a.shard, "3");
   }
 });
+
+test("a zero-duration failed attempt scores 0, never NaN", () => {
+  // `span > 0 ? covered / span : 0` is the guard. Without it the ratio is 0/0,
+  // which JSON.stringify writes as `null` and every downstream `Number(x) || 0`
+  // silently reads as 0 — a documented behaviour held up by luck rather than by
+  // the guard that claims it.
+  const instant = {
+    suites: [
+      {
+        file: FILE_A,
+        specs: [
+          {
+            title: "agent answers",
+            file: FILE_A,
+            tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:51:00.000Z", duration: 0 }] }],
+          },
+        ],
+      },
+    ],
+  };
+  const agg = attribute([shard3], collectAttempts(instant));
+  const [id] = agg.shards[0].collateralIds;
+  assert.equal(agg.shards[0].collateral, 1, "it is inside the window, so the reporter does count it");
+  assert.equal(id.coverage, 0);
+  assert.ok(Number.isFinite(id.coverage), "coverage must be a number, not NaN");
+});
+
+test("collectAttempts records the parameterization variant from the enclosing describe", () => {
+  // Without it, two providers of one spec are indistinguishable here: same file,
+  // same spec.title, same line (#1763).
+  const parameterized = {
+    suites: [
+      {
+        title: "agent-a.spec.ts",
+        file: FILE_A,
+        suites: [
+          {
+            title: "Agent max iterations [google / gemini-3.5-flash]",
+            file: FILE_A,
+            specs: [
+              {
+                title: "agent answers",
+                file: FILE_A,
+                tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:50:30.000Z", duration: 40000 }] }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const [attempt] = collectAttempts(parameterized);
+  assert.equal(attempt.param, "google / gemini-3.5-flash");
+  const [id] = attribute([shard3], collectAttempts(parameterized)).shards[0].collateralIds;
+  assert.equal(id.param, "google / gemini-3.5-flash");
+  // And a spec with no parameterization carries null rather than the file name.
+  assert.equal(collectAttempts(report)[0].param, null);
+});
+
+test("two variants that BOTH sat in an outage each get their own payload record", () => {
+  // The dedupe key carries the variant too. Collapsing them would leave the
+  // dropped variant looking unmeasured to the per-entry reader (#1763).
+  const both = {
+    suites: [
+      {
+        title: "agent-a.spec.ts",
+        file: FILE_A,
+        suites: ["openai / gpt-4o-mini", "google / gemini-3.5-flash"].map((label) => ({
+          title: `Agent max iterations [${label}]`,
+          file: FILE_A,
+          specs: [
+            {
+              title: "agent answers",
+              file: FILE_A,
+              tests: [{ results: [{ status: "failed", retry: 0, startTime: "2026-07-29T10:50:30.000Z", duration: 40000 }] }],
+            },
+          ],
+        })),
+      },
+    ],
+  };
+  const payload = collateralPayload(attribute([shard3], collectAttempts(both)));
+  assert.equal(payload.attempts.length, 2);
+  assert.deepEqual(
+    payload.attempts.map((a) => a.param).sort(),
+    ["google / gemini-3.5-flash", "openai / gpt-4o-mini"],
+  );
+});
