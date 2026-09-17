@@ -58,7 +58,14 @@
  * There is no "empty" verdict: a graph that cannot be read is `null` — UNKNOWN,
  * never "a graph with zero components" (#1012). A template with zero component
  * nodes does not exist on this image (the smallest, *Image Sentiment Analysis*,
- * has 3), so a zero reading is a parse failure, not a measurement.
+ * has 3).
+ *
+ * **What a zero reading MEANS differs by side, and the caller says so.** On the
+ * expected side (the listing) it is a parse failure, because no registered
+ * template is empty. On the ACTUAL side it can also be the product's own answer —
+ * the template instantiated as an empty canvas, which is the severest defect this
+ * spec exists to catch. Both are `null` here, both are red, and the spec's message
+ * names both readings rather than calling the second one unparseable.
  */
 
 /** A graph reduced to what instantiation must preserve. */
@@ -93,7 +100,9 @@ const isNonEmptyString = (v: unknown): v is string =>
  *  - a node that is not an object;
  *  - a `genericNode` with no readable `data.type` — the component type IS the
  *    observation, so an unreadable one is not "a component called undefined";
- *  - zero component nodes, which no registered template has.
+ *  - zero component nodes, which no registered template has — and which, read
+ *    from a CREATED flow, is the empty-canvas defect rather than a parse failure
+ *    (see the module header).
  */
 export function graphShape(data: unknown): GraphShape | null {
   if (!isRecord(data)) return null;

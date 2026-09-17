@@ -17,7 +17,7 @@ collects zero tests vanishes from the lane), #1812 (`unresolvedTitles`)
 
 Picking a template's card creates a flow that **is** that template. One test per registered
 template — 26 on this image — each asserting that `GET /api/v1/flows/{id}` for the created
-flow equals that template's entry in `GET /api/v1/flows/basic_examples/` on four things:
+flow equals that template's entry in `GET /api/v1/flows/basic_examples/` on five things:
 
 | Compared | Read from |
 |---|---|
@@ -121,16 +121,27 @@ this file is expected in it.
 through the UI and lands on the daily's duration-balanced shards. Measured on `1.13.0.dev12`
 with a throwaway probe driving the real `loadTemplateByName` journey 26 times:
 
-| Parallelism | Where that is the real condition | Wall clock | Runs | Failures |
+| Parallelism | What it models | Wall clock | Runs | Failures |
 |---|---|---|---|---|
-| `workers=1` | the **daily** (`PW_SHARD_FILE_LEVEL=1` ⇒ `fullyParallel: false`) | **1.3–1.4 min** | 3 | 0 |
-| `workers=2` | the **PR lane** (`fullyParallel: true`) | **1.0–1.2 min** | 4 | 0 |
+| `workers=1` | this file's tests running **serially**, which is how the daily schedules them | **1.3–1.4 min** | 3 | 0 |
+| `workers=2` | the **PR lane** (`fullyParallel: true`), where two of THIS file's tests overlap | **1.0–1.2 min** | 4 | 0 |
 | `workers=5` | local default (`cpus/2`) — no lane | 1.1–1.3 min | 4 | **2** |
+
+**Neither row is "the daily" on its own, and reading the first one that way gets the lane
+wrong.** `playwright.config.ts` sets `workers: SERIAL_LANE ? 1 : process.env.CI ? 2 :
+undefined`, and the daily's shard sets `PW_SHARD_FILE_LEVEL=1`, which only flips
+`fullyParallel` to **false**. So the daily runs **two workers**: this file's 26 tests
+serialize inside one of them (row 1), while a *different* spec file runs concurrently in the
+other against the same backend. The `workers=2` row is not that condition either — it
+overlaps this file with itself, which is the heavier contention of the two for the shared
+templates-modal helper. The daily's true condition sits between the two rows, and both were
+green.
 
 Per-pick: median **3.0 s**, min 2.6 s (*Knowledge Retrieval*), max 3.9 s (*Deep Research
 Agent*), 77.3 s summed. So `@stable` is carried: ~1.4 min on a shard whose `@stable` selection
-measures 55–140 min is a rounding error, and the file is green in 7 of 7 runs across both lane
-conditions.
+measures 55–140 min is a rounding error, the file is green in 7 of 7 probe runs across both
+conditions, and the PR lane ran the real spec **26 of 26 green in 1.6 min** (run
+[35049167652](https://github.com/oriontech-me/langflow-e2e/actions/runs/35049167652)).
 
 **A contention flake exists above that, and it is recorded rather than filed.** At
 `workers=5` — a parallelism no lane uses — 2 of 4 runs lost exactly one template with:
@@ -186,6 +197,12 @@ failure is scoped to **one** template's test; the other 25 stay green.
 | Revert the `afterEach` delete | RED on the 404 readback, naming the surviving flow |
 | Fail the comparison **and** the cleanup together | The PRODUCT failure is still reported; the cleanup problem is a warning beside it, never a replacement |
 
+**No `🚨 Backend Error`** is part of the criterion, and it was not met by the first version:
+the PR lane's run of it logged **57** (see *Build notes*, including why the local pair cannot
+confirm the fix). The `about:blank` teardown is the suite's answer to that class; **the
+verdict is the next PR-lane run**, and until it is green this criterion is recorded as
+UNVERIFIED rather than met.
+
 **Flow cleanup is proven, not assumed** — on a green run *and* on a forced-red run, because a
 red test that leaks is the case a green-only check never sees. Already measured on the probe:
 the account held **28 user flows before and 28 after**, across 7 runs and the 2 contention
@@ -212,11 +229,11 @@ For each template `T` in the committed baseline:
 2. `loadTemplateByName(page, T.name)` — New Flow → welcome panel → *Browse more templates* →
    *All templates* → the card's heading. Returns the created flow's id.
 3. `GET /api/v1/flows/{id}`.
-4. Compare component types (multiset), edge count and note count.
+4. Compare component types (multiset), edge count, note count and wiring.
 5. Assert the persisted name is `T.name` or `T.name (N)`.
-6. `afterEach`: delete the id.
+6. `afterEach`: navigate the page to `about:blank`, then delete the id and read it back.
 
-**Validation:** the three comparisons are equal and the name matches.
+**Validation:** the four comparisons are equal and the name matches.
 
 ---
 
@@ -234,6 +251,28 @@ For each template `T` in the committed baseline:
 - **The comparison is a multiset, not a set**: several templates repeat a component type
   (*Multi Agent Flow* has three Agents, *Deep Research Agent* has three). A set comparison
   would pass with two of the three dropped.
+- **The baseline is validated by R1's own `describeBaselineDefect`**
+  (`tests/helpers/other/registered-templates-drift.ts`), not by a second check written in this
+  spec. One validator for one file: it already rejects a non-string or whitespace `nameKey`
+  (which would match no `name_key` in the listing and make a BASELINE defect read as a
+  registration one), a whitespace `name` (an unusable card locator) and a **duplicate**
+  `nameKey` (two generated tests with the same title) — none of which the first,
+  hand-rolled check noticed.
+- **The teardown navigates to `about:blank` before deleting**, the shape
+  `api/flows/api-component-regression.spec.ts` and the folder specs already use (#1023/#1103).
+  An editor left mounted over a flow being deleted keeps asking for it, and each of those 404s
+  is logged as `🚨 Backend Error` — which fails no test (#1084) and is precisely the cost:
+  that log is read by a human, and the deterministic pipeline's VALIDATE gate greps that
+  string.
+
+  **Honest scope, because the two measurements disagree.** The PR lane's run of this file
+  logged **57 of them over 17 flows** (`/api/v1/models`, `/custom_component/update`,
+  `/flows/{id}/events`, `/variables/`, `/note_translations` — all flow-scoped 404s for flows
+  that run had created and deleted). It does **not** reproduce locally: 26/26 green against
+  the same image at `workers=2`, **with and without** the navigation, logged **0 of that
+  class either way** (3 unrelated 400s on a shared dev instance, identical in both runs). So
+  the CI figure is the observation and this is the convention applied to it; the confirmation
+  that it goes to zero is the next PR-lane run, not the local pair.
 
 ---
 

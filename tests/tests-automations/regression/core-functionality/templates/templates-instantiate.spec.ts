@@ -9,6 +9,11 @@ import {
   graphShape,
   nameMatchesTemplate,
 } from "../../../../helpers/flows/template-graph-shape";
+import {
+  describeBaselineDefect,
+  type BaselineTemplate,
+  type RegisteredTemplatesBaseline,
+} from "../../../../helpers/other/registered-templates-drift";
 
 /**
  * Every registered template instantiates as itself (#1864, row S1 of the #1860
@@ -35,11 +40,6 @@ const BASELINE_PATH = path.join(
   __dirname,
   "../../../../assets/templates/registered-templates-baseline.json",
 );
-
-interface BaselineTemplate {
-  nameKey: string;
-  name: string;
-}
 
 /**
  * The templates to generate a test for, read at MODULE SCOPE so the list exists
@@ -70,24 +70,28 @@ function templatesToCover(): BaselineTemplate[] {
         `Recreate it with: npm run templates:baseline`,
     );
   }
-  const templates = (parsed as { templates?: unknown })?.templates;
-  if (!Array.isArray(templates) || templates.length === 0) {
+  // R1's validator, not a second one written here. It is exported, unit-tested,
+  // and its sibling `describeListingDefect` already names S1 (#1864) as a
+  // consumer of this module. The hand-rolled check it replaces was weaker in
+  // three ways that all fail SILENTLY at this scope: it accepted a non-string or
+  // whitespace `nameKey` (which then matches no `name_key` in the listing, so the
+  // test fails claiming the image does not REGISTER the template — a defect in
+  // the baseline reported as a defect in R1's area), it accepted a whitespace
+  // `name` (an unusable card locator), and it did not notice a DUPLICATE
+  // `nameKey`, which generates two tests with the same title.
+  const defect = describeBaselineDefect(parsed);
+  if (defect) {
     throw new Error(
-      `templates-instantiate: ${path.relative(process.cwd(), BASELINE_PATH)} carries no templates, ` +
-        `so this file would generate ZERO tests and vanish from the run instead of failing in it (#1764). ` +
+      `templates-instantiate: ${path.relative(process.cwd(), BASELINE_PATH)} is unusable — ${defect}. ` +
+        `Refusing to generate tests from it: zero or wrong tests here means this file is ABSENT from the ` +
+        `shard listing rather than red in it, and \`--pass-with-no-tests\` keeps the lane green (#1764). ` +
         `Recreate it with: npm run templates:baseline`,
     );
   }
-  return templates.map((t, i) => {
-    const entry = t as Partial<BaselineTemplate>;
-    if (!entry?.nameKey || !entry?.name) {
-      throw new Error(
-        `templates-instantiate: ${path.relative(process.cwd(), BASELINE_PATH)} templates[${i}] ` +
-          `is not { nameKey, name } — refusing to generate a test that cannot name what it covers.`,
-      );
-    }
-    return { nameKey: entry.nameKey, name: entry.name };
-  });
+  return (parsed as RegisteredTemplatesBaseline).templates.map(({ nameKey, name }) => ({
+    nameKey,
+    name,
+  }));
 }
 
 const TEMPLATES = templatesToCover();
@@ -96,20 +100,58 @@ test.describe("Templates — every registered template instantiates as itself", 
   /**
    * The flow the running test created, for `afterEach` to delete.
    *
-   * Describe-scoped rather than in-body on purpose. An in-body `finally` is NOT
-   * equivalent: Playwright gives `afterEach` its own timeout budget and runs it
-   * after a test TIMES OUT, whereas a `finally` inside the timed-out body is not
-   * guaranteed to complete — and this file creates one flow per test, so the
-   * timeout case is exactly when a leak compounds. Safe under `fullyParallel`
-   * because each worker has its own module instance and runs its tests serially;
-   * it is the same shape the merged `create-flow-from-template.spec.ts` uses.
+   * Describe-scoped rather than in-body on purpose, for two gains of different
+   * sizes. The load-bearing one: an in-body `finally` that throws REPLACES the
+   * product failure (plain JS semantics — measured, the "edge count" message was
+   * gone and only the cleanup's error was reported). The smaller one: Playwright
+   * gives `afterEach` its own timeout budget and runs it after a test TIMES OUT,
+   * whereas a `finally` inside the timed-out body is not guaranteed to complete.
+   *
+   * **That second gain is narrower than it reads, so do not lean on it.** The long
+   * pole here is `loadTemplateByName` — two 30 s gates — and it runs BEFORE
+   * `createdFlowId` is assigned, so a timeout in the window where a timeout is
+   * actually likely leaves this hook with no id to delete. What covers that window
+   * is the helper's own cleanup, which deletes what it created on every throw path
+   * of its own.
+   *
+   * Safe under `fullyParallel` because each worker has its own module instance and
+   * runs its tests serially; it is the same shape the merged
+   * `create-flow-from-template.spec.ts` uses.
    */
   let createdFlowId: string | null = null;
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }) => {
     const id = createdFlowId;
     createdFlowId = null;
     if (!id) return;
+
+    // Take the page OFF the flow canvas before deleting anything, the shape the
+    // folder and API specs already use (#1023/#1103,
+    // `api/flows/api-component-regression.spec.ts`). An editor left mounted over
+    // a flow that is being deleted keeps asking for it, and every such 404 is
+    // logged as `🚨 Backend Error` — which fails no test (#1084) and is exactly
+    // why it costs: that log is read by a human, and the deterministic pipeline's
+    // VALIDATE gate greps the string.
+    //
+    // **Honest scope, because the two measurements disagree.** The PR lane's run
+    // of this file logged 57 of them over 17 flows (`/api/v1/models`,
+    // `/custom_component/update`, `/flows/{id}/events`, `/variables/`,
+    // `/note_translations` — all flow-scoped 404s for flows this run had created
+    // and deleted). It does NOT reproduce locally: 26/26 green against the same
+    // image (`1.13.0.dev12`) at `workers=2`, WITH and WITHOUT this navigation,
+    // logged 0 of that class either way (3 unrelated 400s on a shared dev
+    // instance, identical in both runs). So the CI figure is the observation and
+    // this line is the suite's convention applied to it — the confirmation that
+    // it goes to zero is the next PR-lane run, not the local pair. The timing is
+    // the plausible difference (a slower runner leaves more editor polls in
+    // flight when the delete lands), and it was not chased further.
+    //
+    // `about:blank` rather than `/` so the teardown adds no backend traffic of
+    // its own, and unconditionally: Playwright captures the failure screenshot
+    // BEFORE this hook runs (measured on 1.58.2), so navigating here does not
+    // destroy the artifact of a red test.
+    await page.goto("about:blank").catch(() => {});
+
     // Id-scoped, never a wipe (#553). A cleanup problem must NOT replace the
     // product failure — measured: with the comparison failing AND the delete
     // failing, the only error reported was the cleanup's, and the "edge count"
@@ -117,8 +159,13 @@ test.describe("Templates — every registered template instantiates as itself", 
     // for its own cleanup, and the triage cost this repo keeps writing guards
     // about. So a cleanup failure is surfaced and re-thrown only when the test
     // had otherwise passed.
-    const authToken = await getAuthToken(request);
+    //
+    // The token read is INSIDE the try for the same reason: it retries a wedged
+    // backend for ~30 s and then rethrows (#1086), and a throw out here would be
+    // a cleanup failure replacing the product failure by the one path this hook
+    // is written to close.
     try {
+      const authToken = await getAuthToken(request);
       await deleteFlow(request, id, { headers: { Authorization: authToken } });
       const gone = await request.get(`/api/v1/flows/${id}`, {
         headers: { Authorization: authToken },
@@ -145,72 +192,74 @@ test.describe("Templates — every registered template instantiates as itself", 
       async ({ page, request }) => {
         const authToken = await getAuthToken(request);
 
-        {
-          const expectedShape = await test.step("read the template's entry from the live listing", async () => {
-            const res = await request.get("/api/v1/flows/basic_examples/", {
-              // Pinned for the same reason #1862 pins it: the endpoint localizes
-              // `name`, and this spec picks the card BY its display name.
-              headers: { Authorization: authToken, "Accept-Language": "en-US" },
-            });
-            expect(res.status()).toBe(200);
-            const listing = (await res.json()) as Array<{ name_key?: string; data?: unknown }>;
-            const entry = listing.find((e) => e?.name_key === template.nameKey);
-            expect(
-              entry,
-              `${template.nameKey} is in the committed baseline but this image does not register it — ` +
-                `that is a REGISTRATION problem, which templates-registration.spec.ts (#1862) owns. ` +
-                `Refresh the baseline with: npm run templates:baseline`,
-            ).toBeTruthy();
-
-            const shape = graphShape(entry?.data);
-            expect(
-              shape,
-              `the listing's graph for ${template.nameKey} could not be read — an unreadable expected ` +
-                `side is unknown, never a match (#1012)`,
-            ).not.toBeNull();
-            return shape!;
+        const expectedShape = await test.step("read the template's entry from the live listing", async () => {
+          const res = await request.get("/api/v1/flows/basic_examples/", {
+            // Pinned for the same reason #1862 pins it: the endpoint localizes
+            // `name`, and this spec picks the card BY its display name.
+            headers: { Authorization: authToken, "Accept-Language": "en-US" },
           });
+          expect(res.status()).toBe(200);
+          const listing = (await res.json()) as Array<{ name_key?: string; data?: unknown }>;
+          const entry = listing.find((e) => e?.name_key === template.nameKey);
+          expect(
+            entry,
+            `${template.nameKey} is in the committed baseline but this image does not register it — ` +
+              `that is a REGISTRATION problem, which templates-registration.spec.ts (#1862) owns. ` +
+              `Refresh the baseline with: npm run templates:baseline`,
+          ).toBeTruthy();
 
-          createdFlowId = await test.step(`pick ${template.name} from All templates`, async () => {
-            // The canonical journey, concurrency-hardened in #1002: it retries the
-            // creation POST on the upstream same-name 500, recovers a lost
-            // navigation, deletes the entry point's own `New Flow`, and resolves
-            // once canvas_controls_dropdown is visible — so the editor being open
-            // is part of this step, not a separate assertion.
-            const id = await loadTemplateByName(page, template.name);
-            expect(id).toBeTruthy();
-            return id;
+          const shape = graphShape(entry?.data);
+          expect(
+            shape,
+            `the listing's graph for ${template.nameKey} could not be read — an unreadable expected ` +
+              `side is unknown, never a match (#1012)`,
+          ).not.toBeNull();
+          return shape!;
+        });
+
+        createdFlowId = await test.step(`pick ${template.name} from All templates`, async () => {
+          // The canonical journey, concurrency-hardened in #1002: it retries the
+          // creation POST on the upstream same-name 500, recovers a lost
+          // navigation, deletes the entry point's own `New Flow`, and resolves
+          // once canvas_controls_dropdown is visible — so the editor being open
+          // is part of this step, not a separate assertion.
+          const id = await loadTemplateByName(page, template.name);
+          expect(id).toBeTruthy();
+          return id;
+        });
+
+        await test.step("the persisted flow is the template", async () => {
+          const res = await request.get(`/api/v1/flows/${createdFlowId}`, {
+            headers: { Authorization: authToken },
           });
+          expect(res.status()).toBe(200);
+          const flow = (await res.json()) as { name?: unknown; data?: unknown };
 
-          await test.step("the persisted flow is the template", async () => {
-            const res = await request.get(`/api/v1/flows/${createdFlowId}`, {
-              headers: { Authorization: authToken },
-            });
-            expect(res.status()).toBe(200);
-            const flow = (await res.json()) as { name?: unknown; data?: unknown };
+          const actualShape = graphShape(flow?.data);
+          expect(
+            actualShape,
+            `the created flow's graph carried no signal: either it could not be read, or it ` +
+              `holds NO component node at all — which on this side is not a parse failure but ` +
+              `the severest instantiation defect there is, the template arriving as an empty ` +
+              `canvas. Either way it is unknown, never a match (#1012). Body: ` +
+              `${JSON.stringify(flow?.data)?.slice(0, 400) ?? "undefined"}`,
+          ).not.toBeNull();
 
-            const actualShape = graphShape(flow?.data);
-            expect(
-              actualShape,
-              `the created flow's graph could not be read — unknown, never a match (#1012)`,
-            ).not.toBeNull();
+          const diff = describeShapeDiff(expectedShape, actualShape!);
+          expect(
+            diff,
+            `${template.name} was instantiated with a graph that is not the template's:\n` +
+              diff.map((l) => `  • ${l}`).join("\n"),
+          ).toEqual([]);
 
-            const diff = describeShapeDiff(expectedShape, actualShape!);
-            expect(
-              diff,
-              `${template.name} was instantiated with a graph that is not the template's:\n` +
-                diff.map((l) => `  • ${l}`).join("\n"),
-            ).toEqual([]);
-
-            expect(
-              nameMatchesTemplate(flow?.name, template.name),
-              `the created flow is named ${JSON.stringify(flow?.name)}, which is neither ` +
-                `"${template.name}" nor a "${template.name} (N)" duplicate of it. ` +
-                `loadTemplateByName matches the card heading without \`exact\`, so a template ` +
-                `name that became a substring of another would land here.`,
-            ).toBe(true);
-          });
-        }
+          expect(
+            nameMatchesTemplate(flow?.name, template.name),
+            `the created flow is named ${JSON.stringify(flow?.name)}, which is neither ` +
+              `"${template.name}" nor a "${template.name} (N)" duplicate of it. ` +
+              `loadTemplateByName matches the card heading without \`exact\`, so a template ` +
+              `name that became a substring of another would land here.`,
+          ).toBe(true);
+        });
       },
     );
   }
