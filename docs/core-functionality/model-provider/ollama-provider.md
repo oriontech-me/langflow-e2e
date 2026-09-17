@@ -289,12 +289,22 @@ pass while the run executes the reverted state.
 It does two things, in this order:
 
 1. **Converge** — after selecting the model, wait for the node's configuration
-   to hold (widget value stable, no flow-save PATCH in flight), re-applying the
-   selection at most once. This is condition-based waiting on a known product
-   race, not a blind retry of a failed interaction.
+   to hold (widget value stable, no flow-save PATCH in flight **or still
+   scheduled**), re-applying the selection at most once. This is condition-based
+   waiting on a known product race, not a blind retry of a failed interaction.
+   The quiet window is `nodeConfigDrainQuietMs()`, derived from
+   `GET /api/v1/config.auto_saving_interval` for the run: it was a 700 ms
+   constant until #1902, below every debounce upstream ships, so the drain
+   returned before a revert the selection had merely scheduled and step 1
+   returned `held` **without ever running the re-apply** — the repair it exists
+   to perform. Step 2 still caught the revert, so no run ever started against a
+   reverted node; what the short window cost was the recovery, which is the
+   opposite of the trade this guard was built to make.
 2. **Attribute** — immediately before `button-send`, assert the node still
    carries the model. If it does not, fail **there**, naming the revert and the
-   two fields observed, in ~1 s instead of 180 s.
+   two fields observed, in ~1 s instead of 180 s. This one takes no drain at all
+   and is correct as it stands: it is a read at the last moment the graph that
+   will execute can still be observed.
 
 Step 2 does not mask the defect: a persistent revert still fails the test, just
 quickly and with the cause named instead of as a bare `toHaveCount` timeout on a
