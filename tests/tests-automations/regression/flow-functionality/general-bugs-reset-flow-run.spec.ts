@@ -1,204 +1,122 @@
-import dotenv from "dotenv";
-import { readFileSync } from "fs";
-import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
-import { addLegacyComponents } from "../../../helpers/flows/add-legacy-components";
-import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { zoomOut } from "../../../helpers/ui/zoom-out";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import {
+  createCatalogFlow,
+  fetchComponentCatalog,
+} from "../../../helpers/flows/build-catalog-flow";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
+import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-for-cleanup";
+
+// Re-running the same flow with If-Else routing the other way resets the previous
+// run's branch state: the branch skipped last time builds now, the branch built last
+// time is now the inactive one. Four runs alternate True / False / True / False, and
+// after each one both halves of the state are asserted — presences AND absences,
+// because a stale badge from the previous run would satisfy the presences alone.
+// See docs/flow-functionality/general-bugs-reset-flow-run.md.
+//
+// Sibling coverage, not repeated here: each If-Else operator on a fresh flow, run
+// once, in core-components/if-else-component-regression.spec.ts.
+
+const ROUTER_ID = "ConditionalRouter-reset";
+const TRUE_BRANCH = "true branch";
+const FALSE_BRANCH = "false branch";
+const MATCH_TEXT = "1";
+
+// The one flow this file creates, deleted id-scoped in afterEach. The inherited
+// version built it through the sidebar after `awaitBootstrapTest` and deleted
+// nothing: 3 flows leaked per run on an empty project (#1911).
+let createdFlow: { id: string; bearer: string } | undefined;
+
+test.afterEach(async ({ page, request }) => {
+  // Null out BEFORE awaiting, so a later test can never inherit this binding.
+  const flow = createdFlow;
+  createdFlow = undefined;
+  if (!flow) return;
+  // Leave the editor first: an editor mounted over a deleted flow keeps polling
+  // `GET /flows/{id}/events` and 404s into the backend-error log (#1288).
+  await unmountEditorForCleanup(page);
+  await deleteFlow(request, flow.id, {
+    headers: { Authorization: flow.bearer },
+  }).catch((error: unknown) => {
+    console.warn(
+      `general-bugs-reset-flow-run: flow cleanup failed — ${String(error).split("\n")[0]}`,
+    );
+  });
+});
 
 test(
   "user can run flow with If-Else component multiple times with different branches",
-  { tag: ["@release", "@components"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page);
+  { tag: ["@stable", "@release", "@regression", "@components", "@ui-ux"] },
+  async ({ page, request }) => {
+    const inputText = page.getByTestId("popover-anchor-input-input_text");
 
-    await page.waitForSelector('[data-testid="blank-flow"]', {
-      timeout: 30000,
-    });
-    await page.getByTestId("blank-flow").click();
-
-    await addLegacyComponents(page);
-
-    //---------------------------------- If-Else
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("if else");
-    await page.waitForSelector('[data-testid="flow_controlsIf-Else"]', {
-      timeout: 2000,
-    });
-
-    await page
-      .getByTestId("flow_controlsIf-Else")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-if-else").click();
+    await test.step("Open an If-Else flow with a Chat Output on each branch, built from the live catalog", async () => {
+      const bearer = await getAuthToken(request);
+      const headers = { Authorization: bearer };
+      const catalog = await fetchComponentCatalog(request, headers);
+      const id = await createCatalogFlow(
+        request,
+        catalog,
+        {
+          nodes: [
+            { id: ROUTER_ID, type: "ConditionalRouter" },
+            // Canvas testids derive from the display name: button_run_true branch, …
+            { id: "ChatOutput-true", type: "ChatOutput", displayName: TRUE_BRANCH },
+            { id: "ChatOutput-false", type: "ChatOutput", displayName: FALSE_BRANCH },
+          ],
+          edges: [
+            { source: ROUTER_ID, output: "true_result", target: "ChatOutput-true", field: "input_value" },
+            { source: ROUTER_ID, output: "false_result", target: "ChatOutput-false", field: "input_value" },
+          ],
+        },
+        {
+          name: `Reset Flow Run ${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          headers,
+        },
+      );
+      createdFlow = { id, bearer };
+      await openFlowById(page, id);
+      await expect(page.locator(".react-flow__edge")).toHaveCount(2, {
+        timeout: 15000,
       });
 
-    await zoomOut(page, 3);
-
-    //---------------------------------- Text Output
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("text output");
-    await page.waitForSelector('[data-testid="input_outputText Output"]', {
-      timeout: 100000,
+      const matchText = page.getByTestId("popover-anchor-input-match_text");
+      await matchText.fill(MATCH_TEXT);
+      await expect(matchText).toHaveValue(MATCH_TEXT);
     });
 
-    await page
-      .getByTestId("input_outputText Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 100 },
+    const runs: Array<{ label: string; input: string; routed: string; other: string }> = [
+      { label: "Run 1 — matching input goes True", input: "1", routed: TRUE_BRANCH, other: FALSE_BRANCH },
+      { label: "Run 2 — non-matching input goes False", input: "2", routed: FALSE_BRANCH, other: TRUE_BRANCH },
+      { label: "Run 3 — matching input goes True again", input: "1", routed: TRUE_BRANCH, other: FALSE_BRANCH },
+      { label: "Run 4 — non-matching input goes False again", input: "2", routed: FALSE_BRANCH, other: TRUE_BRANCH },
+    ];
+
+    for (const run of runs) {
+      await test.step(run.label, async () => {
+        await inputText.fill(run.input);
+        await expect(inputText).toHaveValue(run.input);
+        await page.getByTestId(`button_run_${run.routed}`).click();
+
+        // Presences first: every one of them is a state the PREVIOUS run did not
+        // leave behind, so they can only be satisfied by this run's result.
+        await expect(page.getByTestId(`node_duration_${run.routed}`)).toHaveCount(1, {
+          timeout: 30000,
+        });
+        await expect(
+          page.getByTestId(`node_status_icon_${run.other}_inactive`),
+        ).toHaveCount(1, { timeout: 30000 });
+
+        // Then the absences, read after the run settled: nothing of the previous
+        // run's status may survive on either branch.
+        await expect(
+          page.getByTestId(`node_status_icon_${run.routed}_inactive`),
+        ).toHaveCount(0, { timeout: 10000 });
+        await expect(page.getByTestId(`node_duration_${run.other}`)).toHaveCount(0, {
+          timeout: 10000,
+        });
       });
-
-    await adjustScreenView(page);
-
-    //---------------------------------- Text Output
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("text output");
-    await page.waitForSelector('[data-testid="input_outputText Output"]', {
-      timeout: 100000,
-    });
-
-    await page
-      .getByTestId("input_outputText Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 200, y: 400 },
-      });
-
-    await adjustScreenView(page);
-
-    await page.getByTestId("generic-node-title-arrangement").last().click();
-
-    await page.getByTestId("panel-description").hover();
-    await page
-      .getByTestId("panel-description")
-      .getByTestId("edit-name-description-button")
-      .click();
-
-    await page.getByTestId("inspection-panel-name").fill("textoutputfalse");
-
-    await page
-      .getByTestId("panel-description")
-      .getByTestId("save-name-description-button")
-      .click();
-
-    await page.waitForTimeout(2000);
-
-    await page
-      .getByTestId("handle-conditionalrouter-shownode-true-right")
-      .click();
-    await page
-      .getByTestId("handle-textoutput-shownode-inputs-left")
-      .first()
-      .click();
-
-    await page
-      .getByTestId("handle-conditionalrouter-shownode-false-right")
-      .click();
-
-    await page
-      .getByTestId("handle-textoutput-shownode-inputs-left")
-      .last()
-      .click();
-
-    await page.getByTestId("popover-anchor-input-input_text").fill("1");
-    await page.getByTestId("popover-anchor-input-match_text").fill("1");
-
-    await page.waitForTimeout(2000);
-
-    await page.getByTestId("button_run_text output").click();
-
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-    await page.waitForTimeout(3000);
-
-    let numberOfSuccessfullComponentsRun = 0;
-    let numberOfInactiveComponentsRun = 0;
-
-    numberOfSuccessfullComponentsRun = await page
-      .getByTestId("node_duration_text output")
-      .count();
-    numberOfInactiveComponentsRun = await page
-      .getByTestId("node_status_icon_textoutputfalse_inactive")
-      .count();
-
-    expect(numberOfSuccessfullComponentsRun).toBe(1);
-    expect(numberOfInactiveComponentsRun).toBe(1);
-
-    // Now we will change the input to make the flow go through the other branch of the If-Else component
-
-    await page.waitForTimeout(2000);
-
-    await page.getByTestId("popover-anchor-input-input_text").fill("2");
-    await page.getByTestId("button_run_textoutputfalse").click();
-
-    await page.waitForTimeout(2000);
-
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-    await page.waitForTimeout(3000);
-
-    numberOfSuccessfullComponentsRun = 0;
-    numberOfInactiveComponentsRun = 0;
-
-    numberOfSuccessfullComponentsRun = await page
-      .getByTestId("node_duration_textoutputfalse")
-      .count();
-    numberOfInactiveComponentsRun = await page
-      .getByTestId("node_status_icon_text output_inactive")
-      .count();
-
-    expect(numberOfSuccessfullComponentsRun).toBe(1);
-    expect(numberOfInactiveComponentsRun).toBe(1);
-
-    // retest to make sure we can run again the flow with the first branch of the If-Else component
-
-    await page.waitForTimeout(3000);
-
-    await page.getByTestId("popover-anchor-input-input_text").fill("1");
-    await page.waitForTimeout(2000);
-
-    await page.getByTestId("button_run_text output").click();
-
-    await page.waitForTimeout(2000);
-
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-    await page.waitForTimeout(3000);
-
-    numberOfSuccessfullComponentsRun = 0;
-    numberOfInactiveComponentsRun = 0;
-
-    numberOfSuccessfullComponentsRun = await page
-      .getByTestId("node_duration_text output")
-      .count();
-    numberOfInactiveComponentsRun = await page
-      .getByTestId("node_status_icon_textoutputfalse_inactive")
-      .count();
-
-    expect(numberOfSuccessfullComponentsRun).toBe(1);
-    expect(numberOfInactiveComponentsRun).toBe(1);
-
-    // retest to make sure we can run again the flow with the second branch of the If-Else componen
-    //
-    await page.waitForTimeout(500);
-
-    await page.getByTestId("popover-anchor-input-input_text").fill("2");
-    await page.getByTestId("button_run_textoutputfalse").click();
-
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-    numberOfSuccessfullComponentsRun = 0;
-    numberOfInactiveComponentsRun = 0;
-
-    numberOfSuccessfullComponentsRun = await page
-      .getByTestId("node_duration_textoutputfalse")
-      .count();
-    numberOfInactiveComponentsRun = await page
-      .getByTestId("node_status_icon_text output_inactive")
-      .count();
-
-    expect(numberOfSuccessfullComponentsRun).toBe(1);
-    expect(numberOfInactiveComponentsRun).toBe(1);
+    }
   },
 );

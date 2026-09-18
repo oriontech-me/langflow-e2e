@@ -1,64 +1,139 @@
-import * as dotenv from "dotenv";
-import path from "path";
+import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { createProjectViaApi } from "../../../helpers/flows/create-project-via-api";
+import { deleteProject } from "../../../helpers/flows/delete-project";
+import { dismissWelcomeOverlayAndWaitForModal } from "../../../helpers/flows/open-new-flow-templates-modal";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../helpers/flows/track-created-flows";
+import { waitForPageEntry } from "../../../helpers/other/page-entry-barrier";
+
+// Regression guard for upstream langflow-ai/langflow#3909 ("Button 'Start Here' not
+// working"): an empty project's call to action must create a flow IN THAT PROJECT and
+// open its canvas; picking Basic Prompting from there opens the template in the same
+// project. See docs/flow-functionality/general-bugs-shard-3909.md.
+//
+// Sibling coverage, not repeated here: project CRUD in
+// project-management/folder-crud.spec.ts; the template gallery and the graph a
+// template instantiates in templates/templates-gallery.spec.ts and
+// templates/templates-instantiate.spec.ts.
+
+// Every flow the page creates (the call to action's placeholder and the template's
+// flow) is captured from its POST /api/v1/flows 201 and deleted id-scoped; the
+// project is deleted by id. The inherited version deleted nothing: 3 flows leaked per
+// run on an empty project, plus its project whenever it passed (#1911).
+let flows: FlowTracker | undefined;
+let projectId: string | undefined;
+
+test.beforeEach(async ({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+test.afterEach(async ({ request }) => {
+  // Null out BEFORE awaiting, so a later test can never inherit these bindings.
+  const tracker = flows;
+  flows = undefined;
+  const project = projectId;
+  projectId = undefined;
+  // Leaves the editor, then deletes the captured ids; a failure is logged, never thrown.
+  await tracker?.cleanup(request);
+  tracker?.dispose();
+  if (project) {
+    await deleteProject(request, project, {
+      headers: { Authorization: await getAuthToken(request) },
+    }).catch((error: unknown) => {
+      console.warn(
+        `general-bugs-shard-3909: project cleanup failed — ${String(error).split("\n")[0]}`,
+      );
+    });
+  }
+});
+
+/** Names of the flows `GET /api/v1/projects/{id}` lists for the project. */
+async function projectFlowNames(
+  request: APIRequestContext,
+  id: string,
+): Promise<string[] | string> {
+  const res = await request.get(`/api/v1/projects/${id}`, {
+    headers: { Authorization: await getAuthToken(request) },
+  });
+  if (!res.ok()) return `GET /api/v1/projects/{id} -> ${res.status()}`;
+  const body = (await res.json()) as { flows?: Array<{ name?: string }> };
+  return (body.flows ?? []).map((f) => String(f.name));
+}
 
 test(
   "user must be able to create a new flow clicking on New Flow button",
-  { tag: ["@release", "@mainpage"] },
-  async ({ page }) => {
-    // Left on env-var presence (#1029 audit): this test only asserts that the
-    // per-node run buttons RENDER (`button_run_chat output`, `button_run_language
-    // model`, …) after creating a project and opening Basic Prompting. It never
-    // clicks one, so no completion is driven and a dead key cannot produce the
-    // hung request that wedges a shard.
-    //
-    // As in lock-flow.spec.ts, the gate reads as vestigial — nothing here consumes
-    // OPENAI_API_KEY. Dropping it would make the test run where it currently
-    // skips, a behaviour change left to whoever revisits this spec.
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
+  { tag: ["@stable", "@release", "@regression", "@mainpage", "@ui-ux"] },
+  async ({ page, request }) => {
+    const emptyPageButton = page.getByTestId("new_project_btn_empty_page");
 
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-    }
+    await test.step("Create a project and open its empty page", async () => {
+      // Over the API and opened by its route: on an instance with no flow at all the
+      // home page renders no project sidebar, so `add-project-button` is not a
+      // dependable entry (measured on 1.13.0.dev16). Sidebar creation is
+      // folder-crud.spec.ts's subject.
+      const project = await createProjectViaApi(
+        request,
+        { Authorization: await getAuthToken(request) },
+        { namePrefix: "shard-3909" },
+      );
+      projectId = project.projectId;
 
-    await awaitBootstrapTest(page);
-
-    await page.getByText("Close").last().click();
-
-    await page.getByTestId("add-project-button").click();
-
-    await page.getByText("New Project").last().click();
-
-    await page.waitForSelector("text=new flow", { timeout: 30000 });
-
-    await expect(page.getByText("new flow")).toBeVisible({ timeout: 30000 });
-
-    await expect(page.getByTestId("new_project_btn_empty_page")).toBeVisible({
-      timeout: 5000,
+      await page.goto(`/all/folder/${projectId}`);
+      await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
+      await expect(emptyPageButton).toBeVisible({ timeout: 15000 });
     });
 
-    await page.getByTestId("new_project_btn_empty_page").click();
+    await test.step("The call to action creates a flow in that project and opens it", async () => {
+      const created = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname.replace(/\/$/, "") === "/api/v1/flows" &&
+          response.status() === 201,
+        { timeout: 30000 },
+      );
+      await emptyPageButton.click();
+      // The frontend's attribution, read from the REQUEST: the body of this response
+      // can stay undelivered once the SPA navigates away (see load-template-by-name).
+      const sent = (await created).request().postDataJSON() as { folder_id?: string };
+      expect(sent.folder_id, "the call to action created its flow for another project").toBe(
+        projectId,
+      );
+      await expect(page).toHaveURL(/\/flow\//, { timeout: 30000 });
 
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-    await page.waitForSelector("text=playground", { timeout: 30000 });
-    await page.waitForSelector("text=share", { timeout: 30000 });
+      // Server truth: the project now holds the flow.
+      await expect
+        .poll(() => projectFlowNames(request, projectId!), {
+          timeout: 15000,
+          message: "the project should list the flow its call to action created",
+        })
+        .toHaveLength(1);
+    });
 
-    await expect(page.getByTestId("button_run_chat output")).toBeVisible({
-      timeout: 30000,
+    await test.step("Pick Basic Prompting from the template gallery", async () => {
+      await dismissWelcomeOverlayAndWaitForModal(page);
+      await page.getByTestId("side_nav_options_all-templates").click();
+      await page.getByRole("heading", { name: "Basic Prompting", exact: true }).click();
     });
-    await expect(page.getByTestId("button_run_language model")).toBeVisible({
-      timeout: 30000,
+
+    await test.step("The template opens on the canvas with its four components", async () => {
+      for (const node of ["chat input", "prompt template", "language model", "chat output"]) {
+        await expect(page.getByTestId(`button_run_${node}`)).toBeVisible({
+          timeout: 30000,
+        });
+      }
     });
-    await expect(page.getByTestId("button_run_prompt template")).toBeVisible({
-      timeout: 30000,
-    });
-    await expect(page.getByTestId("button_run_chat input")).toBeVisible({
-      timeout: 30000,
+
+    await test.step("The template flow lives in the new project", async () => {
+      await expect
+        .poll(() => projectFlowNames(request, projectId!), {
+          timeout: 15000,
+          message: "the project should list the Basic Prompting flow picked from its call to action",
+        })
+        .toContain("Basic Prompting");
     });
   },
 );
