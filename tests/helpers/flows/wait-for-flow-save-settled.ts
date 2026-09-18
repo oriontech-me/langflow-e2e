@@ -125,10 +125,23 @@ export async function waitForFlowSaveSettled(
     // did not cause, and failing here would redden a test over a busy editor.
     // It can say so, and a reader who sees it knows not to read the next
     // assertion as having run on a settled store.
+    //
+    // TWO states reach this exit and they are different observations (found in
+    // review of #1902). One is a PATCH issued and never completed. The other is
+    // an editor whose saves all COMPLETED, none of the gaps between them
+    // reaching `quietMs` — `onSettled` re-arms the window on every response, so
+    // steady traffic caps out with `inFlight` at 0. One sentence for both
+    // printed "0 flow-save PATCH(es) still in flight" next to "not starting
+    // from a settled store", which reads as a contradiction in the one line
+    // this warning exists to be read on.
     const finishOnCap = () => {
+      const observed =
+        inFlight > 0
+          ? `${inFlight} flow-save PATCH(es) still in flight`
+          : `nothing in flight, but saves kept arriving — the window never elapsed`;
       console.warn(
         `[waitForFlowSaveSettled] gave up at the ${timeout}ms safety cap without ` +
-          `${quietMs}ms of quiet — ${inFlight} flow-save PATCH(es) still in flight. ` +
+          `${quietMs}ms of quiet — ${observed}. ` +
           `Whatever runs next is NOT starting from a settled store (#995/#1902).`,
       );
       finish();

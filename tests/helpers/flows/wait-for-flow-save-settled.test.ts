@@ -119,6 +119,44 @@ test("a PATCH still in flight at the cap is reported, not resolved in silence", 
   assert.match(warnings[0], /NOT starting from a settled store/);
 });
 
+test("a cap reached with nothing in flight does not claim a PATCH is", async () => {
+  // The OTHER cap state (found in review of #1902): every PATCH completed and
+  // none of the gaps between them reached `quietMs`, so the helper gives up with
+  // `inFlight` at 0. The single-sentence warning printed "0 flow-save PATCH(es)
+  // still in flight" next to "NOT starting from a settled store" — a line that
+  // contradicts itself, on the one exit whose whole job is to let a reader
+  // classify it without opening the helper (#1012). It is also the state a busy
+  // editor actually produces, so it is the likelier of the two to be read.
+  const page = fakePage();
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(String(args[0]));
+  // A completed save every 20 ms against a 150 ms window: `onSettled` re-arms on
+  // every response, so the quiet timer is cleared long before it can fire. The
+  // beat is always scheduled ahead of the quiet timer, so even a stalled event
+  // loop resumes with the beat first — the cap, not the window, is the exit.
+  const beat = setInterval(() => {
+    page.emit("request", patch());
+    page.emit("requestfinished", patch());
+  }, 20);
+  try {
+    await waitForFlowSaveSettled(page, { quietMs: 150, timeout: 400 });
+  } finally {
+    clearInterval(beat);
+    console.warn = realWarn;
+  }
+
+  assert.equal(warnings.length, 1, "the cap exit said nothing");
+  assert.match(warnings[0], /safety cap/);
+  assert.doesNotMatch(
+    warnings[0],
+    /flow-save PATCH\(es\) still in flight/,
+    "the cap exit claimed a PATCH was in flight when none was",
+  );
+  assert.match(warnings[0], /the window never elapsed/);
+  assert.match(warnings[0], /NOT starting from a settled store/);
+});
+
 test("a drain that really went quiet says nothing", async () => {
   // The other half: a warning on every healthy drain is a warning nobody reads.
   const page = fakePage();
