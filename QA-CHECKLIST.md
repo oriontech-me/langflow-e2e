@@ -635,7 +635,7 @@
 - [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] Attach and send an image on a live LLM flow (Basic Prompting) — the image renders in the chat messages → `core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts`
-- [-] Custom `sender_name` on Chat Input/Output is applied to a live LLM turn — messages render as `chat-message-<custom name>` after a default-label turn → `core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
+- [x] Custom `sender_name` on Chat Input/Output is applied to a live LLM turn — messages render as `chat-message-<custom name>` after a default-label turn → `core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
 
 #### 9.2 History and Session
 - [x] Configure custom session ID → `core-functionality/playground/playground-session-id.spec.ts`

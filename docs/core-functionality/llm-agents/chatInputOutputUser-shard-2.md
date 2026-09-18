@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`)
 
 ---
 
@@ -31,13 +31,22 @@ expanded, so the input is directly fillable).
 
 ## Tags
 
-`@release` `@components` `@agents`
+`@stable` `@release` `@components` `@agents` `@playground`
 
 ---
 
 ## Step by step
 
-1. `test.skip` unless `OPENAI_API_KEY` is set. Bootstrap; open the **Basic
+1. `providerSkipGate("openai")` decides whether the test runs. It skips when
+   `OPENAI_API_KEY` is absent **or** when `collect-models` recorded the provider
+   `inactive` — the missing key is reported first, and the two are alternatives,
+   not a conjunction. The gate exists because the flow makes a real completion
+   and a dead key blocks the backend past gunicorn's timeout (#1029). It fails
+   **open**: no `providers.json` (it is gitignored, so a fresh clone and any
+   targeted local run have none), an unreadable one, no `openai` record in it, or
+   `IGNORE_PROVIDER_HEALTH=1` all let the test run — which is deliberate (#980),
+   and is why a drained key with no health record still reaches the flow.
+   Bootstrap; open the **Basic
    Prompting** template; `initialGPTsetup`. Every flow created is captured from
    its `POST /api/v1/flows → 201` and deleted id-scoped in `afterEach`.
 2. Open the Playground; send "Hello, how are you?"; wait for the build to finish;
@@ -66,8 +75,9 @@ messages would fall back to the default `User`/`AI` labels.
 
 ## External dependencies
 
-- **OpenAI** — `test.skip` without `OPENAI_API_KEY`; the flow runs an OpenAI model
-  via `initialGPTsetup`.
+- **OpenAI** — a real completion, so the gate is `providerSkipGate("openai")`
+  (health, not the env var alone); the flow runs an OpenAI model via
+  `initialGPTsetup`.
 - Basic Prompting starter template (Chat Input → … → Chat Output).
 - `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions` /
   `closeAdvancedOptions` (dev46 inspector).
@@ -84,7 +94,11 @@ messages would fall back to the default `User`/`AI` labels.
 
 ## Preconditions
 
-- Langflow running at `PLAYWRIGHT_BASE_URL`; `OPENAI_API_KEY` set.
+- Langflow running at `PLAYWRIGHT_BASE_URL`; `OPENAI_API_KEY` set. A
+  `providers.json` recording `openai` as `inactive` skips the test, but the file
+  is **not** required — the gate fails open on its absence, so a targeted local
+  run needs no `collect-models` first. Nothing here establishes that the key can
+  actually complete; that gap is #1904.
 
 ---
 
@@ -97,3 +111,18 @@ messages would fall back to the default `User`/`AI` labels.
 - Validated on `1.11.0.dev46` (2026-07-20): 3/3 green (~59s), `--workers=1
   --retries=0`, 0 orphan flows. Force-fail: breaking `inspector-add-sender_name`
   fails the custom-sender-name assertions.
+- Promoted to `@stable` on `1.13.0.dev15` (2026-09-18, issue #1905). Re-measured
+  for the promotion: burst **3/3 green** (13.0s / 12.2s / 13.3s), `--workers=1
+  --retries=0`, no `🚨 Backend Error` and no provider-outage verdict; flow-leak
+  audit **28 flows before → 28 after**, 0 orphans. Force-fail, both assertion
+  groups, both coupled to what the product rendered rather than to the
+  expectation itself: sending a different first-turn message reddens the
+  default-label assertion on its text, and filling a different `sender_name`
+  reddens the custom-label assertion with `element(s) not found`.
+- The promotion was blocked once and the reason was the credential, not the spec:
+  PR #1797 dropped it from Wave 8's T1 batch on a `429 insufficient_quota` and
+  promised a follow-up that was never filed (#1905). The tag has never been on
+  `main` before this commit — `git log -S "@stable"` over this file returns it
+  alone — so 2026-09-10 is the date the spec lost its *owner*, not a date it left
+  a lane it had been running in. The gate reading that let it run against a dead
+  key is #1904.
