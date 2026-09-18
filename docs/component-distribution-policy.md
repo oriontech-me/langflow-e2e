@@ -109,8 +109,10 @@ Two consequences that are easy to get wrong:
 
 Two directions, because they fail differently and only one of them is visible today.
 
-**(a) Specs that PLACE a component from a vendor distribution the image ships — 9 of 247.**
+**(a) Specs that PLACE a component from a vendor distribution the image ships — 8 of 247.**
 These pass today and are coupled to a packaging choice, not to a Langflow feature.
+(9 when measured; `flow-functionality/generalBugs-shard-7.spec.ts` placed Ollama
+Embeddings only to type into a node field, and moved to the core Split Text in #1908.)
 A *vendor* category is one that is not a core directory; there are 20 such
 categories in the catalog, and the command that derives all of this is in
 *How to re-measure* — read that before trusting the list, since the number depends
@@ -122,7 +124,6 @@ entirely on the criterion.
 | `duckduckgo` | `core-functionality/llm-agents/duckduckgo.spec.ts` |
 | `ollama` | `core-functionality/model-provider/ollama-provider.spec.ts` |
 | `openai` | `flow-functionality/generalBugs-shard-3.spec.ts` |
-| `ollama` | `flow-functionality/generalBugs-shard-7.spec.ts` |
 | `datastax` | `ui-ux/filterSidebar.spec.ts` |
 | `ollama` | `ui-ux/settings-shortcuts-edit.spec.ts` |
 | `openai` | `ui-ux/sidebar-search-and-filter.spec.ts` |
@@ -142,7 +143,7 @@ a sidebar card. The published grep matches the component testid
 (`getByTestId("<vendorCategory><Display Name>")`) and the bundle disclosure
 (`disclosure-bundles-<vendor>`), which are the two ways a spec actually reaches one.
 
-**The 9 in (a) is a floor, not the blast radius.** The method matches source text,
+**The 8 in (a) is a floor, not the blast radius.** The method matches source text,
 so it only sees specs that name a component — and only components the image
 currently exposes. Three known misses, the first of which is a real one already
 found:
