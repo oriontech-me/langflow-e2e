@@ -5,7 +5,10 @@
  *
  * Every flow-mutating edit schedules a debounced `PATCH /api/v1/flows/{id}`. The
  * delay is NOT the 300 ms `SAVE_DEBOUNCE_TIME` that upstream's frontend constant
- * names — that is only the store's pre-fetch default. The effective value is
+ * names — that constant is used elsewhere; the store's own pre-fetch default is
+ * `AUTOSAVE_DEBOUNCE_TIME = 2000` (`flowsManagerStore.ts:57`, corrected in #1902
+ * against `release-1.13.0`, where this header and
+ * `wait-for-flow-save-settled.ts` both said 300). The effective value is
  * `autoSavingInterval`, seeded from `GET /api/v1/config.auto_saving_interval`
  * (`use-get-config.ts`), and the server has already moved it: this repo measured
  * **1000** while writing `SimpleAgentTemplatePage.ts` and **2000** on
@@ -34,9 +37,11 @@
 export const AUTOSAVE_INTERVAL_ENV = "PW_AUTOSAVE_INTERVAL_MS";
 
 /**
- * Used when the interval could not be read. Above every value upstream has
- * shipped (300 → 1000 → 2000), because over-waiting costs seconds and
- * under-waiting costs a false green.
+ * Used when the interval could not be read. Above every value this repo has ever
+ * READ from an instance (1000, then 2000), because over-waiting costs seconds
+ * and under-waiting costs a false green. The 300 this list used to open with was
+ * `SAVE_DEBOUNCE_TIME`, which is not an autosave interval at all — see the
+ * header — so it never belonged in the sequence.
  */
 export const AUTOSAVE_INTERVAL_FALLBACK_MS = 3000;
 
@@ -84,17 +89,42 @@ export function readAutosaveIntervalMs(
 export const SAVE_COMPLETION_BUDGET_MS = 10000;
 
 /**
- * How long the editor must be quiet before NO save can still be pending.
+ * How long the editor must be quiet before no DEBOUNCED save can still be
+ * pending.
  *
  * The gap `waitForFlowSaveSettled` leaves open is a save that is scheduled but
  * not yet issued, and the only window that closes it is one longer than the
  * debounce itself. Callers that must start from a clean slate — including
  * anything arming `watchFlowSave` after an earlier mutation — pass this as that
  * helper's `quietMs`.
+ *
+ * **What no window of any length closes**, stated here so the consumers can
+ * stop claiming otherwise (#1902): upstream `use-autosave-flow.ts:92-111` runs
+ * the debounce callback and, when `usePermissions().isLoading` is true or a
+ * blocked component pauses it, stores the save in `pendingAutoSaveRef` and
+ * returns WITHOUT issuing anything; the `useEffect` at :126-151 re-issues it
+ * whenever that flips. Such a save is neither in flight nor on a timer, so its
+ * issuance is not bounded by a quiet window at all. The path is live in
+ * `renameFlow`, whose #1005 notes record the permissions query re-entering
+ * `isLoading` on every save. A drain closes the debounced case; that is the
+ * claim to make.
+ *
+ * ## Why the slack is 1500 and not 500
+ *
+ * The window has to cover the debounce PLUS the render and request setup that
+ * follow it, which is the same latency `saveScheduledDeadlineMs` below already
+ * budgets 1500 ms for — the two were inconsistent, and this one was the
+ * optimistic half. Measured on `1.13.0.dev15` with the drain instrumented
+ * (#1902): at `waitForNodeConfigSettled`'s barrier the PATCH was issued
+ * **2433 ms** after the drain armed, against a 2000 ms interval — i.e. **433 ms
+ * of latency on an idle local box**, inside a 500 ms budget. A 67 ms margin on
+ * the one measurement backing a window is not a margin, and under-waiting fails
+ * silently (that is the whole of #1741). Over-waiting costs seconds on a path
+ * that is already waiting.
  */
 export function pendingSaveQuietMs(
   intervalMs: number | null = readAutosaveIntervalMs(),
-  { slackMs = 500 }: { slackMs?: number } = {},
+  { slackMs = 1500 }: { slackMs?: number } = {},
 ): number {
   return (intervalMs ?? AUTOSAVE_INTERVAL_FALLBACK_MS) + slackMs;
 }
@@ -105,6 +135,12 @@ export function pendingSaveQuietMs(
  * The debounce is trailing and restarted by every flow mutation, so the earliest
  * a PATCH can appear is one full interval after the last edit; the slack covers
  * the render and the request setup that follow it.
+ *
+ * Numerically identical to `pendingSaveQuietMs` since #1902 reconciled the two
+ * slacks, and deliberately still two functions: this one is a DEADLINE a watcher
+ * fails at, that one is a WINDOW a drain waits out. They answer different
+ * questions about the same latency, and collapsing them would make the next
+ * change to either silently a change to both.
  */
 export function saveScheduledDeadlineMs(
   intervalMs: number | null = readAutosaveIntervalMs(),

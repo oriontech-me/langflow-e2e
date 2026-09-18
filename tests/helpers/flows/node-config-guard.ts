@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { pendingSaveQuietMs } from "./autosave-interval";
 import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
 
 /**
@@ -17,9 +18,20 @@ import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
  * The mechanism is the one `wait-for-flow-save-settled.ts` documents:
  * `PATCH /api/v1/flows/{id}` has no version check and the frontend applies
  * whichever response lands LAST, so a stale autosave overwrites the store and
- * the database (the root of #358, #357, #995). That barrier guarantees PATCH
- * quiescence; it says nothing about whether what persisted still carries the
- * selection, and the Playground is opened after it.
+ * the database (the root of #358, #357, #995).
+ *
+ * **That barrier does not guarantee PATCH quiescence by itself, and this header
+ * used to say it does (#1741/#1902).** `waitForFlowSaveSettled` arms its quiet
+ * window IMMEDIATELY when nothing is in flight, so at the 700 ms default this
+ * module used to pass it returned before a save an edit had merely SCHEDULED —
+ * one full debounce later, 2000 ms on `1.13.0.dev15`. The window is derived from
+ * the instance now (`nodeConfigDrainQuietMs`), which closes the DEBOUNCED case —
+ * not every case: a save upstream deferred into `pendingAutoSaveRef` while the
+ * permissions query is loading is bounded by no window at all
+ * (`pendingSaveQuietMs`'s header has the mechanism). The rest of the old
+ * sentence still stands and is still why this guard exists: quiescence says
+ * nothing about whether what survived carries the selection, and the Playground
+ * is opened after it.
  *
  * **This reads the WIDGET, never the API, and that is measured rather than
  * conventional:** the run is dispatched as `POST /api/v2/workflows` with a
@@ -43,8 +55,42 @@ import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
  */
 export const NODE_CONFIG_SETTLE_TIMEOUT_MS = 15000;
 
-/** Quiet window with no flow-save PATCH in flight before the value is trusted. */
-export const NODE_CONFIG_QUIET_MS = 700;
+/**
+ * Quiet window the editor must hold before the widget's value is trusted.
+ *
+ * **Derived from the instance, never pasted (#1902).** This was a
+ * `NODE_CONFIG_QUIET_MS = 700` constant, and 700 is below every autosave
+ * debounce upstream currently ships — `GET /api/v1/config.auto_saving_interval`
+ * answered 2000 on `1.13.0.dev15`. Since `waitForFlowSaveSettled` arms its quiet
+ * window immediately when nothing is in flight, that window expired before the
+ * reverting PATCH was issued at all.
+ *
+ * **What that cost is RECOVERY, not a false green, and the distinction is the
+ * whole point.** The drain returned early, the widget still showed the
+ * selection, `classifyConfigOutcome` said `held`, and `waitForNodeConfigSettled`
+ * returned WITHOUT ever exercising `reapply` — the one repair it exists to
+ * perform. The revert was still caught by `assertNodeConfigHeld`, a pure read
+ * placed immediately before the send, so no run ever started against a reverted
+ * node; a RECOVERABLE state was simply reported as a hard failure one step
+ * later. That is the opposite of the trade this helper was built to make
+ * (#1302), and its only consumer is `@stable` in the daily, where a hard failure
+ * strips the tag by unreviewed commit.
+ *
+ * Cost, and it is NOT the window delta here — that reading was in this comment
+ * for a commit and its own next sentence refutes it. Measured on `1.13.0.dev15`,
+ * this drain observes a real PATCH issued **2433 ms** after it arms, on every
+ * run, because the model selection itself schedules the save. A PATCH restarts
+ * the quiet window when it settles, so the drain returns at roughly
+ * `2433 + response + 3500 ≈ 6 s`, against ~0.7 s before: **~+5.3 s per call**,
+ * doubled on the repair path. The rename helper's ~+2.8 s per drain is the
+ * figure for a barrier that sees NOTHING, which is the case this one measured
+ * itself out of. Still the right trade — the playground step it precedes costs
+ * 5 408-6 503 ms and the budget it protects is 180 s (#1302) — and paid only on
+ * the way to a run.
+ */
+export function nodeConfigDrainQuietMs(): number {
+  return pendingSaveQuietMs();
+}
 
 export type ConfigOutcome = "held" | "reverted";
 
@@ -126,7 +172,13 @@ const readValue = async (
 
 /**
  * Waits until the node's configuration is settled: the widget shows what the
- * caller set AND no flow-save PATCH is in flight.
+ * caller set AND no flow-save PATCH is in flight or still scheduled.
+ *
+ * The second half of that is what `nodeConfigDrainQuietMs` buys and what the
+ * 700 ms window it replaced could not deliver (#1902): a revert issued one
+ * debounce after the selection landed AFTER the old drain returned, so this
+ * function read a widget that still held the value and returned `held` without
+ * repairing anything.
  *
  * When it does not hold, `reapply` is invoked ONCE and the check repeats. The
  * re-apply is bounded and deliberate: this is a known product race that
@@ -146,10 +198,13 @@ export async function waitForNodeConfigSettled(
 ): Promise<void> {
   const timeout = opts.timeoutMs ?? NODE_CONFIG_SETTLE_TIMEOUT_MS;
 
-  await expect(page.getByTestId(opts.valueTestId)).toContainText(opts.expected, {
-    timeout,
-  });
-  await waitForFlowSaveSettled(page, { quietMs: NODE_CONFIG_QUIET_MS });
+  await expect(page.getByTestId(opts.valueTestId)).toContainText(
+    opts.expected,
+    {
+      timeout,
+    },
+  );
+  await waitForFlowSaveSettled(page, { quietMs: nodeConfigDrainQuietMs() });
 
   if (
     classifyConfigOutcome(
@@ -166,7 +221,7 @@ export async function waitForNodeConfigSettled(
       opts.expected,
       { timeout },
     );
-    await waitForFlowSaveSettled(page, { quietMs: NODE_CONFIG_QUIET_MS });
+    await waitForFlowSaveSettled(page, { quietMs: nodeConfigDrainQuietMs() });
   }
 }
 

@@ -126,7 +126,7 @@ test(
       // zoom-out) issued ZERO PATCHes in 6 s while the control, one node-field
       // edit, issued exactly one. So this is now insurance against a pending
       // save from the template instantiation, kept because the claim is a
-      // property of the build rather than a contract. Costs the full ~2.5 s
+      // property of the build rather than a contract. Costs the full ~3.5 s
       // window every run, since nothing is there to cut it short — the price of
       // the precondition the four watches below rely on.
       await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });

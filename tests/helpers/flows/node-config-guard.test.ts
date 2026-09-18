@@ -9,9 +9,23 @@
 // the four dailies measured, cold container or warm.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { classifyInfraError } from "../../../scripts/lib/infra-signatures";
 import {
+  AUTOSAVE_INTERVAL_FALLBACK_MS,
+  publishAutosaveInterval,
+} from "./autosave-interval";
+import {
+  countDrainCalls,
+  derivedWindowFailure,
+  drainCallsWithoutDerivedWindow,
+  intervalDependenceFailure,
+  measureIntervalDependence,
+} from "./derived-drain-window";
+import {
   classifyConfigOutcome,
+  nodeConfigDrainQuietMs,
   revertedConfigMessage,
 } from "./node-config-guard";
 
@@ -113,4 +127,88 @@ test("the reverted-config message is NOT classifiable as an infra failure", () =
   // #1262's rule: claiming infra would exempt this from @stable auto-removal
   // and hide a node that silently drops its configuration.
   assert.equal(classifyInfraError(revertedConfigMessage(DETAIL)), null);
+});
+
+// The drain window (#1902). `waitForFlowSaveSettled`'s 700 ms default — what
+// this module passed until #1902 — arms immediately when nothing is in flight,
+// so it expired before a revert an edit had merely SCHEDULED one debounce later
+// (2000 ms on `1.13.0.dev15`). The drain then returned with the widget still
+// showing the selection, `classifyConfigOutcome` said `held`, and
+// `waitForNodeConfigSettled` returned without ever exercising `reapply` — so a
+// RECOVERABLE revert was reported as a hard failure by `assertNodeConfigHeld`
+// one step later, on a spec that is `@stable` in the daily.
+test("the config drain outlasts the autosave debounce it must wait out", () => {
+  try {
+    publishAutosaveInterval(2000);
+    assert.ok(
+      nodeConfigDrainQuietMs() > 2000,
+      `drain window ${nodeConfigDrainQuietMs()}ms does not outlast a 2000ms debounce`,
+    );
+    // The constant this replaces. Asserted explicitly so any window under the
+    // debounce fails here instead of silently costing the repair path again.
+    assert.ok(
+      nodeConfigDrainQuietMs() > 700,
+      `drain window ${nodeConfigDrainQuietMs()}ms is back at or below the 700ms NODE_CONFIG_QUIET_MS`,
+    );
+    // DERIVED, and that is a DIFFERENCE rather than a bound. The two assertions
+    // above are lower bounds that any large constant satisfies, and publishing a
+    // second interval plus a third bound was one too: measured in the second
+    // review round of #1902, a pasted `return 35000` passed every "derived"
+    // assertion in all three of these suites. Moving the interval by a known
+    // amount must move the window by the same amount; a constant moves by 0.
+    // That is what keeps the window from being a number in our source, which
+    // goes stale silently the next time upstream edits `auto_saving_interval`
+    // (#1741).
+    const measured = measureIntervalDependence(nodeConfigDrainQuietMs);
+    assert.equal(
+      measured.observedDelta,
+      measured.expectedDelta,
+      intervalDependenceFailure("nodeConfigDrainQuietMs", measured),
+    );
+  } finally {
+    publishAutosaveInterval(null);
+  }
+});
+
+test("an unknown autosave interval still gets a window above the fallback", () => {
+  // Unknown is not a default (#1012): a run that could not read the interval
+  // must over-wait. Under-waiting here does not fail loudly — it silently skips
+  // the re-apply, which is the whole cost this window buys back.
+  publishAutosaveInterval(null);
+  assert.ok(
+    nodeConfigDrainQuietMs() > AUTOSAVE_INTERVAL_FALLBACK_MS,
+    `drain window ${nodeConfigDrainQuietMs()}ms does not exceed the ` +
+      `${AUTOSAVE_INTERVAL_FALLBACK_MS}ms unknown-interval fallback`,
+  );
+});
+
+test("both config drain call sites pass the derived window, not the default", () => {
+  // The assertions above never observe the call site: `nodeConfigDrainQuietMs`
+  // can stay exported, typechecked and unit-tested while the helper drains with
+  // the default (measured on #1901's equivalent). What this guard buys, and what
+  // it does not, is argued in `derived-drain-window.ts`.
+  const source = readFileSync(join(__dirname, "node-config-guard.ts"), "utf8");
+  const offenders = drainCallsWithoutDerivedWindow(
+    source,
+    "nodeConfigDrainQuietMs",
+  );
+  assert.deepEqual(
+    offenders,
+    [],
+    derivedWindowFailure(
+      "node-config-guard.ts",
+      "nodeConfigDrainQuietMs",
+      offenders,
+    ),
+  );
+  // TWO, and the count matters beyond the empty-file case: the second drain is
+  // the one after `reapply`, i.e. the repair path. A refactor that dropped it
+  // would leave the re-applied value judged with a save still scheduled — the
+  // same defect this issue closed, on the branch that exists to fix it (#1012).
+  assert.equal(
+    countDrainCalls(source),
+    2,
+    "node-config-guard.ts no longer holds exactly two drain calls — the guard " +
+      "above is scoped to the converge and repair paths and cannot vouch for a third",
+  );
 });

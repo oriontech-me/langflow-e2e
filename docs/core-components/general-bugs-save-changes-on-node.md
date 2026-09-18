@@ -24,7 +24,8 @@ measurements from the #1290 review, deliberately reported together because they 
 
 - the review's trace of the pre-gate version showed the **exit** persisting the value — the
   debounced `PATCH` fires at fill + ~1015 ms, while `leaveFlowEditor`'s drain
-  (`quietMs = 700`, armed immediately because nothing is in flight yet) resolved ~707 ms
+  (`quietMs = 700` at the time — derived from the instance since #1902, and this
+  measurement is part of why — armed immediately because nothing is in flight yet) resolved ~707 ms
   after the fill, so the unsaved-changes blocker rendered and `FlowPage.handleSave` saved the
   flow itself, on 4 of 4 exits;
 - re-measuring the same shape here (gate removed) showed the **autosave** winning instead —

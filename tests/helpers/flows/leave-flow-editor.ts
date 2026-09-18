@@ -61,15 +61,20 @@ import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
  * resolved ~707 ms after a fill whose PATCH fired at ~1015 ms, and the blocker
  * then showed on 4 of 4 iterations.
  *
- * `pendingSaveQuietMs()` is the only window that closes a save that is SCHEDULED
- * rather than in flight: one debounce plus slack, read from the instance. A
- * pending save restarts the window when it lands, so the barrier still returns
- * only once the editor is genuinely quiet.
+ * `pendingSaveQuietMs()` is the only window that closes a save that is on the
+ * DEBOUNCE rather than in flight: one debounce plus slack, read from the
+ * instance. A pending save restarts the window when it lands, so the barrier
+ * still returns only once the editor is genuinely quiet. It does not close a
+ * save upstream has DEFERRED into `pendingAutoSaveRef` while the permissions
+ * query is loading — no window does, and `pendingSaveQuietMs`'s own header
+ * records that (#1902).
  *
- * Measured cost ~+1.8 s per exit — the window itself, since on this build most
- * exits have no save to wait out at all (8 tests across the 5 caller specs went
- * 1.1 m -> 1.3 m). Paid on every call, including `edit-flow-name`'s, which
- * exits once per name in its loop. That buys the blocker PREVENTION this helper
+ * Measured cost ~+1.8 s per exit at the window this shipped with, and ~+2.8 s
+ * since #1902 reconciled the slack (500 -> 1500 ms, on a measurement of 433 ms
+ * of post-debounce latency on an IDLE box). The window itself is the whole cost,
+ * since on this build most exits have no save to wait out at all (8 tests across
+ * the 5 caller specs went 1.1 m -> 1.3 m at the narrower window). Paid on every
+ * call, including `edit-flow-name`'s, which exits once per name in its loop. That buys the blocker PREVENTION this helper
  * leads with; the alternative is paying `BLOCKER_GRACE_MS` (15 s) whenever the
  * dialog does show, plus — where `escapeDeadlock` is on — a full page load that
  * discards the editor's unsaved state.

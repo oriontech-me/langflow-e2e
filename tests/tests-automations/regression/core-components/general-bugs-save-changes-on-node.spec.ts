@@ -76,7 +76,9 @@ async function readPersistedInputValue(
  *
  *  1. **It is what makes autosave the thing under test.** Without it the value was
  *     persisted by the EXIT, not by the autosave: the debounced `PATCH` fires at
- *     fill + ~1015 ms, while `leaveFlowEditor`'s drain (`quietMs = 700`, armed
+ *     fill + ~1015 ms, while `leaveFlowEditor`'s drain (`quietMs = 700` AT THE
+ *     TIME — derived from the instance since #1902, and this measurement is why —
+ *     armed
  *     immediately because nothing is in flight yet) resolved ~707 ms after the
  *     fill — before the autosave was even issued. `FlowPage.handleSave`, reached
  *     through the unsaved-changes blocker, then saved the flow itself, so the

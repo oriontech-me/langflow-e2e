@@ -35,7 +35,11 @@ test("a non-positive or non-integer value reads as unknown", () => {
   // A 0 would collapse every derived deadline to 'already due' — the one state
   // no caller can recover from, so it must not survive as a value.
   for (const bad of ["0", "-1", "abc", "2000.5", "NaN", "Infinity"]) {
-    assert.equal(readAutosaveIntervalMs(env(bad)), null, `${bad} must be unknown`);
+    assert.equal(
+      readAutosaveIntervalMs(env(bad)),
+      null,
+      `${bad} must be unknown`,
+    );
   }
 });
 
@@ -59,16 +63,23 @@ test("the deadline allows a full debounce plus slack", () => {
 test("an unknown interval falls back ABOVE every value upstream has shipped", () => {
   const deadline = saveScheduledDeadlineMs(null, { slackMs: 0 });
   assert.equal(deadline, AUTOSAVE_INTERVAL_FALLBACK_MS);
-  // 300 (SAVE_DEBOUNCE_TIME) -> 1000 -> 2000 are the values this repo has
-  // measured; the fallback must not be a regression against the largest.
-  assert.ok(deadline > 2000, "the fallback must exceed the largest known interval");
+  // 1000 then 2000 are the intervals this repo has read from an instance
+  // (`SAVE_DEBOUNCE_TIME = 300` is a different constant and was miscounted here
+  // until #1902); the fallback must not be a regression against the largest.
+  assert.ok(
+    deadline > 2000,
+    "the fallback must exceed the largest known interval",
+  );
 });
 
 test("the description names which of the two states produced the number", () => {
   assert.match(describeAutosaveInterval(2000), /2000 ms/);
   assert.match(describeAutosaveInterval(2000), /auto_saving_interval/);
   assert.match(describeAutosaveInterval(null), /UNKNOWN/);
-  assert.match(describeAutosaveInterval(null), new RegExp(String(AUTOSAVE_INTERVAL_FALLBACK_MS)));
+  assert.match(
+    describeAutosaveInterval(null),
+    new RegExp(String(AUTOSAVE_INTERVAL_FALLBACK_MS)),
+  );
 });
 
 test("the pending-save quiet window is longer than the debounce itself", () => {
@@ -79,6 +90,30 @@ test("the pending-save quiet window is longer than the debounce itself", () => {
   assert.ok(
     pendingSaveQuietMs(null) > AUTOSAVE_INTERVAL_FALLBACK_MS - 1,
     "an unknown interval must not shrink the window",
+  );
+});
+
+test("the quiet window clears the post-debounce latency by more than a hair", () => {
+  // #1902 measured the latency the slack exists to cover: on 1.13.0.dev15 the
+  // PATCH was issued 2433 ms after the drain armed against a 2000 ms interval —
+  // 433 ms of render and request setup, on an IDLE local box. At the 500 ms slack
+  // this shipped with, the window backing the whole mechanism cleared its own
+  // measurement by 67 ms, and under-waiting is the silent failure (#1741).
+  const MEASURED_LATENCY_MS = 433;
+  for (const interval of [1000, 2000]) {
+    assert.ok(
+      pendingSaveQuietMs(interval) - interval >= MEASURED_LATENCY_MS * 2,
+      `slack ${pendingSaveQuietMs(interval) - interval}ms leaves less than 2x the ` +
+        `${MEASURED_LATENCY_MS}ms of post-debounce latency measured on an idle box`,
+    );
+  }
+  // And the two sibling budgets for that same latency must not diverge again:
+  // one of them was 500 and the other 1500, which is how the optimistic half
+  // went unnoticed.
+  assert.equal(
+    pendingSaveQuietMs(2000) - 2000,
+    saveScheduledDeadlineMs(2000) - 2000,
+    "the drain window and the watcher deadline budget the same latency differently",
   );
 });
 

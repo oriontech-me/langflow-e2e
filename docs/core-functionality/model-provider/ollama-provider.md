@@ -275,8 +275,13 @@ The mechanism is the one `helpers/flows/wait-for-flow-save-settled.ts`
 documents: `PATCH /api/v1/flows/{id}` has no version check and the frontend
 applies whichever response lands LAST, so a stale autosave overwrites the store
 and the database (the root of #358, #357, #995). The spec already calls that
-barrier; it guarantees PATCH quiescence for 700 ms and nothing about what
-persisted. **Which write reverts it is not pinned** — a stale autosave and the
+barrier, and this paragraph used to describe it as guaranteeing "PATCH
+quiescence for 700 ms": both halves are wrong and were still here after #1902's
+first pass corrected the same claim eleven lines below. The window arms
+IMMEDIATELY when nothing is in flight, so 700 ms against a 2000 ms debounce
+guaranteed nothing about a save that was merely scheduled; it is derived from
+the instance now (#1902). What was right is the second half — quiescence says
+nothing about what persisted. **Which write reverts it is not pinned** — a stale autosave and the
 bulk `DELETE /api/v1/flows/` that appears mid-test under `actualWorkers: 2` are
 both candidates, and the artifacts do not separate them.
 
@@ -289,12 +294,22 @@ pass while the run executes the reverted state.
 It does two things, in this order:
 
 1. **Converge** — after selecting the model, wait for the node's configuration
-   to hold (widget value stable, no flow-save PATCH in flight), re-applying the
-   selection at most once. This is condition-based waiting on a known product
-   race, not a blind retry of a failed interaction.
+   to hold (widget value stable, no flow-save PATCH in flight **or still
+   scheduled**), re-applying the selection at most once. This is condition-based
+   waiting on a known product race, not a blind retry of a failed interaction.
+   The quiet window is `nodeConfigDrainQuietMs()`, derived from
+   `GET /api/v1/config.auto_saving_interval` for the run: it was a 700 ms
+   constant until #1902, below every debounce upstream ships, so the drain
+   returned before a revert the selection had merely scheduled and step 1
+   returned `held` **without ever running the re-apply** — the repair it exists
+   to perform. Step 2 still caught the revert, so no run ever started against a
+   reverted node; what the short window cost was the recovery, which is the
+   opposite of the trade this guard was built to make.
 2. **Attribute** — immediately before `button-send`, assert the node still
    carries the model. If it does not, fail **there**, naming the revert and the
-   two fields observed, in ~1 s instead of 180 s.
+   two fields observed, in ~1 s instead of 180 s. This one takes no drain at all
+   and is correct as it stands: it is a read at the last moment the graph that
+   will execute can still be observed.
 
 Step 2 does not mask the defect: a persistent revert still fails the test, just
 quickly and with the cause named instead of as a bare `toHaveCount` timeout on a
