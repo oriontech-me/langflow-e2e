@@ -310,10 +310,17 @@ knowledge base instead.
 Incidental use today: *Basic Prompting* is opened by 30 spec files as a fixture, *Simple
 Agent* by the 29 that load `SimpleAgentTemplatePage`, *Memory Chatbot* by 3, *SaaS
 Pricing* by the two catalog-policy specs. *Portfolio Website Code Generator* was opened
-by `ui-ux/refresh-dropdown-list.spec.ts` until that spec was **deleted on 2026-09-18**
-(#1913 — its only closing line was a non-asserting `isVisible()`, so it could not fail);
-**no spec opens that template today**, and the loss is incidental-fixture exposure only,
-since it asserted nothing about the template. Opening a template as a fixture exercises the path
+as a fixture by `ui-ux/refresh-dropdown-list.spec.ts` until that spec was **deleted on
+2026-09-18** (#1913 — its only closing line was a non-asserting `isVisible()`, so it
+could not fail); no spec opens it **as an incidental fixture** today. That costs the
+template nothing: `core-functionality/templates/templates-instantiate.spec.ts` opens it
+as its own SUBJECT — one `@stable` test per entry in
+`tests/assets/templates/registered-templates-baseline.json`, this template included —
+and asserts its component types, edge count, note count and per-node wiring (§11.2,
+`QA-CHECKLIST.md` `[x]`). **The counts in this paragraph come from a literal-name grep,
+and that is the trap to know before reading a zero here as a coverage loss:**
+`templates-instantiate` builds its test titles from a variable, so it is invisible to
+that grep while running every weekday. Opening a template as a fixture exercises the path
 while asserting nothing about the template, so it earns no bullet state on its own; the
 two `[~]` in §11.2 are the specs that do assert part of a template's composition.
 
