@@ -45,7 +45,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must interact with chat with Input/Output",
-  { tag: ["@stable", "@release", "@components", "@agents"] },
+  { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
   async ({ page }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });

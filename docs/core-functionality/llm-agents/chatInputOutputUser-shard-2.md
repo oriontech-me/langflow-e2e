@@ -31,16 +31,22 @@ expanded, so the input is directly fillable).
 
 ## Tags
 
-`@stable` `@release` `@components` `@agents`
+`@stable` `@release` `@components` `@agents` `@playground`
 
 ---
 
 ## Step by step
 
-1. `providerSkipGate("openai")` decides whether the test runs — it skips when
-   the key is absent **and** when `collect-models` recorded the provider
-   `inactive`, because the flow makes a real completion and a dead key blocks the
-   backend past gunicorn's timeout (#1029). Bootstrap; open the **Basic
+1. `providerSkipGate("openai")` decides whether the test runs. It skips when
+   `OPENAI_API_KEY` is absent **or** when `collect-models` recorded the provider
+   `inactive` — the missing key is reported first, and the two are alternatives,
+   not a conjunction. The gate exists because the flow makes a real completion
+   and a dead key blocks the backend past gunicorn's timeout (#1029). It fails
+   **open**: no `providers.json` (it is gitignored, so a fresh clone and any
+   targeted local run have none), an unreadable one, no `openai` record in it, or
+   `IGNORE_PROVIDER_HEALTH=1` all let the test run — which is deliberate (#980),
+   and is why a drained key with no health record still reaches the flow.
+   Bootstrap; open the **Basic
    Prompting** template; `initialGPTsetup`. Every flow created is captured from
    its `POST /api/v1/flows → 201` and deleted id-scoped in `afterEach`.
 2. Open the Playground; send "Hello, how are you?"; wait for the build to finish;
@@ -88,8 +94,11 @@ messages would fall back to the default `User`/`AI` labels.
 
 ## Preconditions
 
-- Langflow running at `PLAYWRIGHT_BASE_URL`; `OPENAI_API_KEY` set and the key
-  able to complete — `providers.json` must record `openai` as `active`.
+- Langflow running at `PLAYWRIGHT_BASE_URL`; `OPENAI_API_KEY` set. A
+  `providers.json` recording `openai` as `inactive` skips the test, but the file
+  is **not** required — the gate fails open on its absence, so a targeted local
+  run needs no `collect-models` first. Nothing here establishes that the key can
+  actually complete; that gap is #1904.
 
 ---
 
@@ -106,11 +115,14 @@ messages would fall back to the default `User`/`AI` labels.
   for the promotion: burst **3/3 green** (13.0s / 12.2s / 13.3s), `--workers=1
   --retries=0`, no `🚨 Backend Error` and no provider-outage verdict; flow-leak
   audit **28 flows before → 28 after**, 0 orphans. Force-fail, both assertion
-  groups: breaking the first-turn `toHaveText` reddens at the default-label
-  assertion, and filling a different `sender_name` reddens the custom-label
-  assertion with `element(s) not found`.
+  groups, both coupled to what the product rendered rather than to the
+  expectation itself: sending a different first-turn message reddens the
+  default-label assertion on its text, and filling a different `sender_name`
+  reddens the custom-label assertion with `element(s) not found`.
 - The promotion was blocked once and the reason was the credential, not the spec:
   PR #1797 dropped it from Wave 8's T1 batch on a `429 insufficient_quota` and
-  promised a follow-up that was never filed, leaving the spec in no scheduled
-  lane from 2026-09-10 to 2026-09-18 (#1905). The gate reading that let it run
-  against a dead key is #1904.
+  promised a follow-up that was never filed (#1905). The tag has never been on
+  `main` before this commit — `git log -S "@stable"` over this file returns it
+  alone — so 2026-09-10 is the date the spec lost its *owner*, not a date it left
+  a lane it had been running in. The gate reading that let it run against a dead
+  key is #1904.
