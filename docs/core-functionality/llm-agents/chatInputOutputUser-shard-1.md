@@ -42,9 +42,16 @@ opened the selected node's output" from "some output dialog is open".
 `@stable` `@release` `@components` `@ui-ux`
 
 `@ui-ux` is the functional tag for keyboard shortcuts. The previous array carried
-`@agents`; it was dropped because the test runs no model (see Notes) — keeping it
-would make `scripts/provider-dependent-specs.mjs` treat an LLM-free spec as
-provider-dependent and couple it to key health on the PR lane.
+`@agents`; it was dropped because the test no longer exercises any agent or model
+behaviour (see Notes), so the tag would name a product area it does not touch.
+
+The tag is **not** what couples this spec to provider health on the PR lane, and
+reading it that way is the trap: `scripts/provider-dependent-specs.mjs` also
+classifies by folder, and `core-functionality/llm-agents/` is in its
+`ALWAYS_LLM_AREAS`, so a PR that selects this spec still forces the `Collect models`
+sweep — observed on this spec's own promotion PR (#1919), where `collect-models`
+ran ahead of two LLM-free specs. Moving the file out of the folder would end that;
+it keeps its inherited path on purpose (see Notes).
 
 ---
 
