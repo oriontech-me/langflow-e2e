@@ -1486,7 +1486,7 @@
 | `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 34 | 0 | 0 | 12 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
-| `flow-functionality/` | 35 | 32 | 0 | 1 | 2 |
+| `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
@@ -1497,7 +1497,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **677** | **585 (86%)** | **32 (5%)** | **14 (2%)** | **46 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **678** | **586 (86%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1513,7 +1513,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 660 `test()` calls carrying the `@stable` tag, distributed across 257 spec
+> 662 `test()` calls carrying the `@stable` tag, distributed across 258 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2097,6 +2097,8 @@
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
 - [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
+- [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
+- [x] a partial failure flags the failed node and shows the completed branches on the canvas → `graph-execution-canvas.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
@@ -2256,7 +2258,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 0 | 2 |
+| `flow-functionality/` | 0 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 12 |
 | `ui-ux/` — Settings | 0 | 0 |
