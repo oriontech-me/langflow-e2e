@@ -77,7 +77,7 @@ in total — the deleted file's own loop count, not a reduction of it.
 
 It also carried one assertion that did not come along: `Toolset` being absent from
 the node. That is covered more purposefully by
-`core-components/general-bugs-component-as-tool-shortcut.spec.ts`, which asserts it
+`flow-functionality/general-bugs-component-as-tool-shortcut.spec.ts`, which asserts it
 absent *and then present* after enabling tool mode, so nothing was lost by dropping
 a bare absence check here.
 Moving it here rather than migrating that file keeps one owner for the behaviour

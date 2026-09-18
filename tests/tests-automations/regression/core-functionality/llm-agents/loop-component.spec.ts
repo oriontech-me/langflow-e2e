@@ -1,235 +1,163 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { addLegacyComponents } from "../../../../helpers/flows/add-legacy-components";
-import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import {
+  createCatalogFlow,
+  fetchComponentCatalog,
+  type CatalogComponent,
+} from "../../../../helpers/flows/build-catalog-flow";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 
-import { uploadFile } from "../../../../helpers/filesystem/upload-file";
-import { zoomOut } from "../../../../helpers/ui/zoom-out";
+// The Loop feeds every item through its body and `done` aggregates the BODY'S
+// results: Create List (alpha, beta) -> Loop <-> Data Operations (JSON, Append or
+// Update tag=modified_value) -> Parser "{text}={tag}" -> Chat Output must produce
+// exactly "alpha=modified_value\nbeta=modified_value". No model, no network.
+// See docs/core-functionality/llm-agents/loop-component.md.
+//
+// Sibling coverage, not repeated here: the Loop's handles, its standalone-run error
+// and the N=3 / N=1 exit condition in core-components/loop-component-regression.spec.ts.
+
+const SOURCE_ID = "CreateList-items";
+const LOOP_ID = "LoopComponent-items";
+const BODY_ID = "Operations-body";
+const PARSER_ID = "ParserComponent-rows";
+const CHAT_ID = "ChatOutput-loopResult";
+
+const EXPECTED_OUTPUT = "alpha=modified_value\nbeta=modified_value";
+
+/**
+ * Seeds Data Operations with the configuration its UI produces for JSON input and the
+ * "Append or Update" operation (operations.py `update_build_config` /
+ * `update_outputs`): the JSON input shown, the text input hidden, the key/value editor
+ * shown with `entries`, and the JSON output (`data_output`) in place of the default
+ * Message one. A renamed field fails here, naming it.
+ */
+function appendOrUpdate(entries: Record<string, string>) {
+  return (component: CatalogComponent): void => {
+    const t = component.template;
+    for (const name of ["input_type", "operation", "data", "text_input", "append_update_data"]) {
+      if (!t[name]) {
+        throw new Error(
+          `Data Operations has no field "${name}" — the seeded JSON / Append or Update ` +
+            "configuration no longer matches the component",
+        );
+      }
+    }
+    const operation = { name: "Append or Update", icon: "circle-plus" };
+    t.input_type.value = "JSON";
+    t.operation.options = [operation];
+    t.operation.value = [operation];
+    t.text_input.show = false;
+    t.text_input.required = false;
+    t.data.show = true;
+    t.data.required = true;
+    t.append_update_data.show = true;
+    t.append_update_data.value = entries;
+    const [base] = component.outputs;
+    component.outputs = [
+      {
+        ...base,
+        name: "data_output",
+        display_name: "JSON",
+        method: "as_data",
+        types: ["JSON"],
+        selected: "JSON",
+      },
+    ];
+  };
+}
+
+// The one flow this file creates, deleted id-scoped in afterEach. The inherited
+// version built it through the sidebar after `awaitBootstrapTest` and deleted
+// nothing: 3 flows leaked per run on an empty project (#1911).
+let createdFlow: { id: string; bearer: string } | undefined;
+
+test.afterEach(async ({ page, request }) => {
+  // Null out BEFORE awaiting, so a later test can never inherit this binding.
+  const flow = createdFlow;
+  createdFlow = undefined;
+  if (!flow) return;
+  // Leave the editor first: an editor mounted over a deleted flow keeps polling
+  // `GET /flows/{id}/events` and 404s into the backend-error log (#1288).
+  await unmountEditorForCleanup(page);
+  await deleteFlow(request, flow.id, {
+    headers: { Authorization: flow.bearer },
+  }).catch((error: unknown) => {
+    console.warn(`loop-component: flow cleanup failed — ${String(error).split("\n")[0]}`);
+  });
+});
 
 test(
   "should process loop with update data correctly",
-  { tag: ["@release", "@workspace", "@components"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page);
-    await page.getByTestId("blank-flow").click();
-
-    await addLegacyComponents(page);
-
-    await page.waitForSelector(
-      '[data-testid="sidebar-custom-component-button"]',
-      {
-        timeout: 3000,
-      },
-    );
-
-    // Add URL component
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("url");
-    await page.waitForSelector('[data-testid="data_sourceURL"]', {
-      timeout: 1000,
+  { tag: ["@stable", "@release", "@workspace", "@components", "@ui-ux"] },
+  async ({ page, request }) => {
+    await test.step("Open the loop flow built from the live catalog", async () => {
+      const bearer = await getAuthToken(request);
+      const headers = { Authorization: bearer };
+      const catalog = await fetchComponentCatalog(request, headers);
+      const id = await createCatalogFlow(
+        request,
+        catalog,
+        {
+          nodes: [
+            {
+              id: SOURCE_ID,
+              type: "CreateList",
+              values: { texts: ["alpha", "beta"] },
+              // Without it the canvas shows `list` and drops the `dataframe` edge.
+              selectedOutput: "dataframe",
+            },
+            { id: LOOP_ID, type: "LoopComponent" },
+            {
+              id: BODY_ID,
+              type: "Operations",
+              configure: appendOrUpdate({ tag: "modified_value" }),
+            },
+            { id: PARSER_ID, type: "ParserComponent", values: { pattern: "{text}={tag}" } },
+            { id: CHAT_ID, type: "ChatOutput" },
+          ],
+          edges: [
+            { source: SOURCE_ID, output: "dataframe", target: LOOP_ID, field: "data" },
+            { source: LOOP_ID, output: "item", target: BODY_ID, field: "data" },
+            // The feedback edge: the body's result goes back into the Loop's `item`.
+            { source: BODY_ID, output: "data_output", target: LOOP_ID, loopOutput: "item" },
+            { source: LOOP_ID, output: "done", target: PARSER_ID, field: "input_data" },
+            { source: PARSER_ID, output: "parsed_text", target: CHAT_ID, field: "input_value" },
+          ],
+        },
+        {
+          name: `Loop Update Data ${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          headers,
+        },
+      );
+      createdFlow = { id, bearer };
+      await openFlowById(page, id);
+      // All five edges survived the canvas load (a dropped one is removed silently).
+      await expect(page.locator(".react-flow__edge")).toHaveCount(5, {
+        timeout: 15000,
+      });
     });
 
-    await zoomOut(page, 3);
-
-    await page
-      .getByTestId("data_sourceURL")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 50, y: 100 },
+    await test.step("Run the flow from the Chat Output", async () => {
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.getByTestId("node_duration_loop")).toBeVisible({
+        timeout: 60000,
       });
-
-    // Add Loop component
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("loop");
-    await page.waitForSelector('[data-testid="flow_controlsLoop"]', {
-      timeout: 1000,
+      await expect(page.getByTestId("node_duration_chat output")).toBeVisible({
+        timeout: 60000,
+      });
     });
 
-    await page
-      .getByTestId("flow_controlsLoop")
-      .first()
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 280, y: 100 },
-      });
-
-    // Add Update Data component
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("data operations");
-    await page.waitForSelector('[data-testid="processingData Operations"]', {
-      timeout: 1000,
+    await test.step("done aggregated the updated items, once each and in order", async () => {
+      await page.getByTestId("output-inspection-output message-chatoutput").click();
+      // `<nodeId>-<output>-output-modal` marks the dialog's header title, not its root
+      // (outputModal/index.tsx), so the dialog is the one that contains it.
+      const dialog = page
+        .getByRole("dialog")
+        .filter({ has: page.getByTestId(`${CHAT_ID}-message-output-modal`) });
+      await expect(dialog).toBeVisible({ timeout: 10000 });
+      await expect(dialog.getByTestId("textarea")).toHaveValue(EXPECTED_OUTPUT);
     });
-
-    await page
-      .getByTestId("processingData Operations")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 500, y: 100 },
-      });
-
-    await adjustScreenView(page, { numberOfZoomOut: 3 });
-
-    // Add Parse Data component
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("Parser");
-    await page.waitForSelector('[data-testid="processingParser"]', {
-      timeout: 1000,
-    });
-
-    await page
-      .getByTestId("processingParser")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 600, y: 200 },
-      });
-
-    //This one is for testing the wrong loop message
-
-    await page.getByTestId("sidebar-search-input").fill("Read File");
-    await page.waitForSelector('[data-testid="files_and_knowledgeRead File"]', {
-      timeout: 1000,
-    });
-
-    await page
-      .getByTestId("files_and_knowledgeRead File")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 600, y: 400 },
-      });
-
-    const _loopItemInput = await page
-      .getByTestId("handle-loopcomponent-shownode-item-left")
-      .first()
-      .click();
-
-    // Add Chat Output component
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-
-    await page.locator(".react-flow__renderer").click();
-
-    await page.waitForTimeout(1000);
-
-    await page
-      .getByTestId("input_outputChat Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 200, y: 100 },
-      });
-
-    await adjustScreenView(page, { numberOfZoomOut: 3 });
-
-    // Loop Item -> Update Data
-
-    await page
-      .getByTestId("handle-loopcomponent-shownode-item-right")
-      .first()
-      .click();
-    await page
-      .getByTestId("handle-dataoperations-shownode-data-left")
-      .first()
-      .click();
-
-    // URL -> Loop Data
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .first()
-      .click();
-    await page
-      .getByTestId("handle-loopcomponent-shownode-inputs-left")
-      .first()
-      .click();
-
-    // Loop Done -> Parse Data
-    await page
-      .getByTestId("handle-loopcomponent-shownode-done-right")
-      .first()
-      .click();
-    await page
-      .getByTestId("handle-parsercomponent-shownode-data or dataframe-left")
-      .first()
-      .click();
-
-    // Parse Data -> Chat Output
-    await page
-      .getByTestId("handle-parsercomponent-shownode-parsed text-right")
-      .first()
-      .click();
-
-    await page
-      .getByTestId("handle-chatoutput-noshownode-inputs-target")
-      .first()
-      .click();
-
-    await page.getByTestId("div-generic-node").nth(5).click();
-
-    await page.waitForTimeout(1000);
-
-    await page.getByTestId("input-list-plus-btn_urls-0").click();
-
-    // Configure components
-    await page
-      .getByTestId("inputlist_str_urls_0")
-      .fill("https://en.wikipedia.org/wiki/Artificial_intelligence");
-    await page
-      .getByTestId("inputlist_str_urls_1")
-      .fill("https://en.wikipedia.org/wiki/Human_intelligence");
-
-    await page.getByTestId("title-Data Operations").click();
-
-    await page.waitForTimeout(1000);
-
-    // Click on the "Select Operation" text/button in the Data Operations component
-    await page.getByText("Select Operation").click();
-
-    await page.getByTestId("list_item_append_or_update").click();
-
-    await page.getByTestId("keypair0").fill("text");
-    await page.getByTestId("keypair100").fill("modified_value");
-
-    await uploadFile(page, "test_file.txt");
-
-    // Build and run, expect the wrong loop message
-    await page.getByTestId("button_run_read file").click();
-
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-    // Delete the second parse data used to test
-
-    await page.getByTestId("title-Read File").last().click();
-
-    await page.getByTestId("more-options-modal").click();
-
-    await page.getByText("Delete").first().click();
-
-    // Update Data -> Loop Item (left side)
-
-    await page
-      .getByTestId("handle-dataoperations-shownode-data-right")
-      .first()
-      .click();
-    await page
-      .getByTestId("handle-loopcomponent-shownode-item-left")
-      .first()
-      .click();
-
-    // Build and run
-    await page.getByTestId("title-Chat Output").click();
-    await page.keyboard.press(`ControlOrMeta+.`);
-    await page.getByTestId("button_run_chat output").click();
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-    // Verify output
-    await page.waitForSelector(
-      '[data-testid="output-inspection-output message-chatoutput"]',
-      {
-        timeout: 1000,
-      },
-    );
-    await page
-      .getByTestId("output-inspection-output message-chatoutput")
-      .first()
-      .click();
-
-    const output = await page.getByPlaceholder("Empty").textContent();
-    expect(output).toContain("modified_value");
-
-    // Count occurrences of modified_value in output
-    const matches = output?.match(/modified_value/g) || [];
-    expect(matches).toHaveLength(2);
   },
 );

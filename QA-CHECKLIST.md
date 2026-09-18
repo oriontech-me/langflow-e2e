@@ -263,6 +263,8 @@
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component → `core-components/tool-mode.spec.ts`
 - [x] Group components in Tool Mode → `core-components/tool-mode-group.spec.ts`
+- [x] A Group node never offers Tool Mode, although its persisted template carries the inner Prompt Template's `tool_mode` input (upstream's `hasToolMode = … && !isGroup`): the Group's toolbar shows Freeze in its place and `Ctrl/Cmd+Shift+M` sends no component refresh — calibrated by the same shortcut toggling a standalone Prompt Template → `core-components/toolModeGroup.spec.ts`
+- [x] Tool Mode follows the component's `tool_mode` declaration: the stock Prompt Template offers it and the shortcut toggles it; after Check & Save of its code with `tool_mode=False`, the toolbar shows Freeze instead and the shortcut sends no component refresh → `flow-functionality/general-bugs-component-as-tool-shortcut.spec.ts`
 - [x] Edit tools (slug, description, requires-approval persistence) → core-components/edit-tools.spec.ts
 - [x] Tool Mode stale-update guard: a pre-edit `tools_metadata` refresh response released across the editor close does not revert the action's slug or description — asserted in the reopened editor and in the persisted flow (LE-2272, upstream `langflow-ai/langflow#14741`) → `core-components/edit-tools.spec.ts`
 
@@ -371,6 +373,7 @@
 - [x] Run without connections shows "Flow build failed" notification without crash → `core-components/loop-component-regression.spec.ts`
 - [x] Loop iterates over 2 ArXiv articles (Research Translation Loop template) and aggregates response in Playground → `core-components/loop-component-regression.spec.ts`
 - [x] Loop stops when exit condition is met → `core-components/loop-component-regression.spec.ts`
+- [x] `done` aggregates the loop body's results, once per item and in order: Create List (`alpha`, `beta`) → Loop ⇄ Data Operations (JSON, Append or Update `tag=modified_value`) → Parser `{text}={tag}` → Chat Output shows exactly `alpha=modified_value\nbeta=modified_value` → `core-functionality/llm-agents/loop-component.spec.ts`
 
 #### 3.7 Nested / Grouping
 - [x] Nested component → `core-components/nested-grouping-regression.spec.ts`
@@ -386,6 +389,7 @@
 - [x] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
 - [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
 - [x] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than` → `core-components/if-else-component-regression.spec.ts`
+- [x] Re-running the same flow with the route flipped resets the previous run's branch state — four alternating runs (True, False, True, False), each asserting the routed branch built with no stale inactive mark and the other branch inactive with no stale build badge → `flow-functionality/general-bugs-reset-flow-run.spec.ts`
 - [ ] `max_iterations` + `default_route` cycle break (not implementable as a standalone If-Else feedback loop on 1.12.x — Langflow forms graph cycles only via loop-aware target handles (`from_loop_target_handle`, `target_handle.type is None`) that `LoopComponent` ports provide; a feedback edge into the router's regular `match_text` field-input persists in the flow JSON but does not make the graph iterate (`is_cyclic` stays false, router runs once). `conditional_router.py`'s cycle-break only fires when the router already sits inside a Loop-created cycle. Confirmed live on 1.12.0.dev3; product finding filed upstream; #891, follow-up of #822)
 
 #### 3.9 Human Input (HITL, 1.11.0)
@@ -691,6 +695,7 @@
 - [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) and never requests a project with a missing id (`/api/v1/projects/undefined` or `/null` — the `LE-2231` regression guard, #1008) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010; stays `[-]` permanently, since `[x]` requires `@stable` and `@destructive` must never carry it — the pair would mean "runs nowhere")
 - [x] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
 - [x] Create a flow inside a specific folder via API — `POST /api/v1/flows/` with an explicit `folder_id` echoes back that same `folder_id`, so the flow lands in the folder and not in the default project → `core-functionality/project-management/folder-drag-drop-flow.spec.ts`
+- [x] An empty project's "New Flow" call to action (`new_project_btn_empty_page`) creates a flow inside that project and opens its canvas, and Basic Prompting picked from there lands in the same project — regression guard for upstream `langflow-ai/langflow#3909` → `flow-functionality/general-bugs-shard-3909.spec.ts`
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
