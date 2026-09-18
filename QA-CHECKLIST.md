@@ -1477,7 +1477,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 101 | 95 | 1 | 3 | 2 |
-| `core-components/` — Component Config | 28 | 27 | 1 | 0 | 0 |
+| `core-components/` — Component Config | 29 | 28 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 92 | 91 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
@@ -1492,14 +1492,14 @@
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
-| `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
+| `ui-ux/` — Settings | 8 | 7 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 24 | 0 | 1 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **678** | **586 (86%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **680** | **588 (86%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1515,7 +1515,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 662 `test()` calls carrying the `@stable` tag, distributed across 258 spec
+> 664 `test()` calls carrying the `@stable` tag, distributed across 260 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1890,6 +1890,7 @@
 - [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send an image on chat → `chatInputOutputUser-shard-0.spec.ts`
+- [x] user must be able to see output inspection using 'o' shortcut → `chatInputOutputUser-shard-1.spec.ts`
 - [x] user must interact with chat with Input/Output → `chatInputOutputUser-shard-2.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] user must not experience message duplication in mathematical expressions with agent component → `general-bugs-agent-sum-duplicate-message-playground.spec.ts`
@@ -2095,6 +2096,7 @@
 - [x] a frozen component serves its cached output instead of recomputing → `freeze-and-state.spec.ts`
 - [x] freezing a component also freezes every component upstream of it → `freeze-and-state.spec.ts`
 - [x] unfreezing releases the whole path and the component recomputes → `freeze-and-state.spec.ts`
+- [x] user must be able to use a component with undefined replacement → `general-bugs-frontend-crashing-on-invalid-replace.spec.ts`
 - [x] user should not be able to hide connected inputs → `general-bugs-hidden-input-edges.spec.ts`
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
