@@ -1479,7 +1479,7 @@
 | `core-functionality/llm-agents/` | 40 | 36 | 0 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 33 | 2 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 52 | 49 | 1 | 1 | 1 |
+| `core-functionality/playground/` | 52 | 50 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 34 | 0 | 0 | 12 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
@@ -1494,7 +1494,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **675** | **581 (86%)** | **33 (5%)** | **13 (2%)** | **48 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **675** | **582 (86%)** | **32 (5%)** | **13 (2%)** | **48 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1510,7 +1510,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 654 `test()` calls carrying the `@stable` tag, distributed across 255 spec
+> 655 `test()` calls carrying the `@stable` tag, distributed across 256 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1880,6 +1880,7 @@
 - [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send an image on chat → `chatInputOutputUser-shard-0.spec.ts`
+- [x] user must interact with chat with Input/Output → `chatInputOutputUser-shard-2.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] user must not experience message duplication in mathematical expressions with agent component → `general-bugs-agent-sum-duplicate-message-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
@@ -2232,7 +2233,7 @@
 | `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 0 | 3 |
 | `core-functionality/model-provider/` | 2 | 1 |
-| `core-functionality/playground/` | 1 | 1 |
+| `core-functionality/playground/` | 0 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
