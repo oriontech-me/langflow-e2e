@@ -321,8 +321,12 @@ and asserts its component types, edge count, note count and per-node wiring (§1
 and that is the trap to know before reading a zero here as a coverage loss:**
 `templates-instantiate` builds its test titles from a variable, so it is invisible to
 that grep while running every weekday. Opening a template as a fixture exercises the path
-while asserting nothing about the template, so it earns no bullet state on its own; the
-two `[~]` in §11.2 are the specs that do assert part of a template's composition.
+while asserting nothing about the template, so it earns no bullet state on its own — the
+bullet state comes from the spec that takes the template as its subject. §11.2 is now
+**26 bullets, all `[x]`**, one per baseline entry, all of them
+`templates-instantiate.spec.ts`. (This sentence used to read "the two `[~]` in §11.2";
+there are none left — measured 2026-09-18, and the count moves with the baseline, so
+re-derive it rather than quoting it.)
 
 ---
 
