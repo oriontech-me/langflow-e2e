@@ -223,19 +223,15 @@ test("the exit drain outlasts the autosave debounce it must wait out", () => {
       editorExitDrainQuietMs() > 700,
       `drain window ${editorExitDrainQuietMs()}ms is back at or below the 700ms default`,
     );
-    // DERIVED from the interval, not merely above the values shipped so far.
-    // The two bounds above are lower bounds that any large constant satisfies —
-    // measured, `return 3500` passes both — so on its own this test would bless
-    // the one shape `pendingSaveQuietMs` exists to prevent: a number pasted into
-    // our source, which goes stale silently the next time upstream edits its
-    // default (`autosave-interval.ts`, #1741). A second interval is what makes
-    // the dependence observable at all.
     // DERIVED, and that is a DIFFERENCE rather than a bound. The two assertions
-    // above are lower bounds that any large constant satisfies — measured in the
-    // second review round of #1902, a pasted `return 35000` passed every
-    // "derived" assertion in all three of these suites, including ones whose
-    // comments said a constant could not. Moving the interval by a known amount
-    // must move the window by the same amount; a constant moves by 0.
+    // above are lower bounds that any large constant satisfies, and publishing a
+    // second interval plus a third bound was one too: measured in the second
+    // review round of #1902, a pasted `return 35000` passed every "derived"
+    // assertion in all three of these suites. Moving the interval by a known
+    // amount must move the window by the same amount; a constant moves by 0.
+    // That is what keeps the window from being a number in our source, which
+    // goes stale silently the next time upstream edits `auto_saving_interval`
+    // (#1741).
     const measured = measureIntervalDependence(editorExitDrainQuietMs);
     assert.equal(
       measured.observedDelta,
