@@ -1485,7 +1485,7 @@
 | `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 34 | 0 | 0 | 12 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
-| `flow-functionality/` | 33 | 29 | 0 | 0 | 4 |
+| `flow-functionality/` | 35 | 32 | 0 | 1 | 2 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
@@ -1496,7 +1496,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **675** | **582 (86%)** | **32 (5%)** | **13 (2%)** | **48 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **677** | **585 (86%)** | **32 (5%)** | **14 (2%)** | **46 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1512,7 +1512,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 655 `test()` calls carrying the `@stable` tag, distributed across 256 spec
+> 660 `test()` calls carrying the `@stable` tag, distributed across 257 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1601,6 +1601,11 @@
 - [x] GET /api/v1/version response has correct content-type → `api-version.spec.ts`
 - [x] GET /api/v1/version responds within 5 seconds → `api-version.spec.ts`
 - [x] POST /api/v1/version returns 405 Method Not Allowed → `api-version.spec.ts`
+- [x] execution order follows data dependency, and a consumer receives its producers' output → `graph-execution-contract.spec.ts`
+- [x] a component failure is contained: independent branches still build, the failed node is flagged → `graph-execution-contract.spec.ts`
+- [x] a branch stopped by Component.stop() never builds and is reported inactive → `graph-execution-contract.spec.ts`
+- [x] sync reports an acyclic terminal as completed with its output (attribution control) → `graph-execution-contract.spec.ts`
+- [x] sync must not report a node downstream of a regular-port cycle as completed → `graph-execution-contract.spec.ts`
 - [x] the instance under test has no serving identity header configured → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v2/workflows → `serving-end-user-identity-default.spec.ts`
 - [x] two identities on one session share it on POST /api/v1/run/{id} → `serving-end-user-identity-default.spec.ts`
@@ -2250,7 +2255,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 0 | 4 |
+| `flow-functionality/` | 0 | 2 |
 | `core-functionality/project-management/` | 3 | 0 |
 | `core-functionality/templates/` | 0 | 12 |
 | `ui-ux/` — Settings | 0 | 0 |
