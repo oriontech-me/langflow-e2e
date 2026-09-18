@@ -1485,7 +1485,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 101 | 95 | 1 | 3 | 2 |
-| `core-components/` — Component Config | 31 | 30 | 1 | 0 | 0 |
+| `core-components/` — Component Config | 32 | 31 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 93 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
@@ -1499,7 +1499,7 @@
 | `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
-| `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
+| `ui-ux/` — Canvas | 46 | 42 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 8 | 7 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 24 | 0 | 1 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
@@ -1507,7 +1507,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **685** | **593 (87%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **688** | **596 (87%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1523,7 +1523,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 669 `test()` calls carrying the `@stable` tag, distributed across 265 spec
+> 672 `test()` calls carrying the `@stable` tag, distributed across 268 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2114,6 +2114,8 @@
 - [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
 - [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
+- [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
+- [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
 - [x] a partial failure flags the failed node and shows the completed branches on the canvas → `graph-execution-canvas.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
@@ -2209,6 +2211,7 @@
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
 - [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
 - [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
+- [x] user must be able to see icons fallback if the icon is not found → `general-bugs-icons-fallback.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
