@@ -273,6 +273,7 @@
 - [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
 - [x] Beta component visible via configuration → `core-components/beta-components-toggle-regression.spec.ts`
 - [x] Re-saving code removes handles from previously-toggled advanced fields → `core-components/general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] A `replacement` that names no existing component (two entries in a category that does not exist, one fully fictitious) keeps the node on the canvas and its Legacy banner falls back to "No direct replacement." — regression guard for upstream `langflow-ai/langflow#10110`, whose missing-category lookup used to crash the canvas → `flow-functionality/general-bugs-frontend-crashing-on-invalid-replace.spec.ts`
 
 #### 2.4 Code Editing
 - [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
@@ -968,7 +969,8 @@
 - [x] Message history settings — Settings → Messages grid keeps the 11-column contract, renders messages oldest-first (1.12 `get_messages` defaults to `order=ASC`) and the sender "Equals User" filter narrows/restores the row set → `ui-ux/settings-message-history.spec.ts`
 - [x] Change appearance/theme settings — dark/light toggle updates #body.dark class → `ui-ux/settings-theme-toggle.spec.ts`
 - [x] Keyboard shortcuts work in editor — Duplicate/Delete/Copy/Paste/Cut/Undo/Redo each act on the selected node (node count asserted after every keypress) → `ui-ux/langflowShortcuts.spec.ts`
-- [~] All documented shortcuts work — all 27 `defaultShortcuts` rows are listed with a non-empty key binding in Settings → Shortcuts (`ui-ux/settings-navigation.spec.ts`), and 7 of them are exercised on canvas (`ui-ux/langflowShortcuts.spec.ts`) plus 1 rebound end-to-end (`ui-ux/settings-shortcuts-edit.spec.ts`); the remaining 20 (API, Docs, Download, Play, Group, Minimize, Freeze, Save, Code, Update, Controls, sidebar search, …) are not exercised yet
+- [x] Output Inspection shortcut (`o`) opens the output dialog of the SELECTED built node — `<node id>-message-output-modal`, showing the value the run produced — both for a node whose output feeds an edge (Chat Input) and for one with no outgoing edge (Chat Output), and opens nothing with no node selected → `core-functionality/llm-agents/chatInputOutputUser-shard-1.spec.ts`
+- [~] All documented shortcuts work — all 27 `defaultShortcuts` rows are listed with a non-empty key binding in Settings → Shortcuts (`ui-ux/settings-navigation.spec.ts`), and 8 of them are exercised on canvas — 7 in `ui-ux/langflowShortcuts.spec.ts` and Output Inspection in `core-functionality/llm-agents/chatInputOutputUser-shard-1.spec.ts` — plus 1 rebound end-to-end (`ui-ux/settings-shortcuts-edit.spec.ts`); the remaining 19 (API, Docs, Download, Play, Group, Minimize, Freeze, Save, Code, Update, Controls, sidebar search, …) are not exercised yet
 - [x] Edit a keyboard shortcut (Duplicate → `Ctrl/Cmd+Alt+U`) persists to the table and the new combination triggers the action on canvas → `ui-ux/settings-shortcuts-edit.spec.ts`
 - [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
 

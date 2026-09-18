@@ -1,259 +1,186 @@
-import * as dotenv from "dotenv";
-import path from "path";
+import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
-import { zoomOut } from "../../../../helpers/ui/zoom-out";
-import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
+import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 
-// Why this file does NOT call `clearCanvasBottomOverlay` (#1675, measured on
-// 1.13.0.dev0 rather than assumed).
+// The Output Inspection shortcut (`o`), against its contract in
+// `NodeOutputfield` (see docs/core-functionality/llm-agents/chatInputOutputUser-shard-1.md).
 //
-// Both tests here click an `output-inspection-*` button shortly after a build,
-// which is the shape that cost #1643 two specs — but the occupant that made that
-// shape dangerous cannot arise here. `UpdateAllComponents` ("Flow needs review /
-// N components need updates") only mounts for a node the running image reports
-// outdated, and neither test loads a stored fixture: the first builds from the
-// live **Basic Prompting** template and the second drags **URL** + two **Chat
-// Output** components onto a blank flow, so every node is created by the image
-// under test and none can be behind it. Probed end to end on the second test's
-// flow, the slot is empty before the run, holds the transient build bar at the
-// spec's own +600 ms wait (y 598.0-656.0), and is empty again by +2.6 s and at
-// +6.6 s — the banner never appears.
+// Rewritten for #1907 (Wave 9 T2 triage). The two inherited tests this file
+// carried were green without asserting their subject: the first discarded three
+// `isVisible()` booleans after a real OpenAI completion, and the second followed
+// every `o` press with an un-awaited `getByText(...)` and ended on
+// `expect(count).toBeGreaterThanOrEqual(0)`. The first is consolidated into the
+// `@stable` `playground/output-modal-copy-button.spec.ts`; this one keeps its title
+// and subject on a flow that needs no model and no network.
 //
-// What remains is the build bar, which leaves on its own 2 s after "built
-// successfully", and it clears the inspect button's bottom edge (y 551.5) by
-// 46.5 px — an order of magnitude more than the ~5 px that decided #1643, and
-// nine times `agent-n-messages-limit`'s ~37 px. Calling the helper here would
-// also be wrong in one direction the other call sites are not: after the bar
-// auto-dismisses the slot stays EMPTY for good, so the default
-// `allowAlreadyClear: false` would report a lost selector on a healthy page.
-//
-// Revisit if either test starts seeding a stored flow fixture — that is the one
-// change that puts `UpdateAllComponents` back on this canvas.
-test(
-  "user must be able to see output inspection",
-  { tag: ["@release", "@components", "@agents"] },
-  async ({ page }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-    }
+// Why a seeded flow now, when the previous header argued against one (#1675):
+// `createRunnableChatFlowViaApi` hands back Chat Input -> Chat Output already
+// expanded and connected, which is what makes the node ids and both branches of
+// the shortcut deterministic. Its nodes carry an old `lf_version`, so the nightly
+// can raise the "Flow needs review" banner in the canvas' bottom slot — cleared
+// once at flow open, the shape `clearCanvasBottomOverlay` documents for seeded
+// flows.
 
-    // Real completions run below, so gate on provider HEALTH, not on the env var
-    // alone — a drained key would block the backend past gunicorn's 300s timeout
-    // and kill the shard's Langflow worker (#1029).
-    const gate = providerSkipGate("openai");
-    test.skip(gate.skip, gate.reason);
+/** Every open output-inspection dialog: `${nodeId}-${outputName}-output-modal`. */
+const OUTPUT_MODALS = '[data-testid$="-output-modal"]';
 
-    await awaitBootstrapTest(page);
+let removeFlow: ((request?: APIRequestContext) => Promise<void>) | undefined;
 
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-    await adjustScreenView(page);
+test.afterEach(async ({ page, request }) => {
+  // Null out BEFORE awaiting, so a later test can never inherit this binding.
+  const remove = removeFlow;
+  removeFlow = undefined;
+  if (!remove) return;
+  // Leave the editor first: an editor mounted over a deleted flow keeps polling
+  // `GET /flows/{id}/events` and 404s into the backend-error log (#1288).
+  await unmountEditorForCleanup(page);
+  await remove(request).catch((error: unknown) => {
+    console.warn(
+      `chatInputOutputUser-shard-1: flow cleanup failed — ${String(error).split("\n")[0]}`,
+    );
+  });
+});
 
-    await initialGPTsetup(page);
+/** The canvas node carrying this title — never a text filter, which matches notes. */
+function nodeByTitle(page: Page, title: string): Locator {
+  return page
+    .locator(".react-flow__node")
+    .filter({ has: page.getByTestId(`title-${title}`) });
+}
 
-    await page.getByTestId("button_run_chat output").last().click();
+async function nodeIdByTitle(page: Page, title: string): Promise<string> {
+  const node = nodeByTitle(page, title);
+  await expect(node).toHaveCount(1);
+  await expect(node).toHaveAttribute("data-id", /\S/);
+  return (await node.getAttribute("data-id")) as string;
+}
 
-    await page.waitForTimeout(600);
+/**
+ * The autosave write that carries `value`, armed before the edit that causes it.
+ *
+ * The node's run button executes the PERSISTED flow (measured on #1791), and the
+ * autosave is debounced ~2 s behind the canvas, so a run clicked right after the
+ * fill can execute the fixture's old input. Matching the payload, not just the
+ * URL, keeps an unrelated write in flight from satisfying the wait.
+ */
+function flowWriteCarrying(page: Page, flowId: string, value: string) {
+  return page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      new URL(response.url()).pathname === `/api/v1/flows/${flowId}` &&
+      response.ok() &&
+      (response.request().postData() ?? "").includes(value),
+    { timeout: 60000 },
+  );
+}
 
-    await page.waitForSelector("text=built successfully", {
-      timeout: 30000 * 3,
-    });
+/**
+ * Selects the node, presses `o`, and asserts the ONE dialog that opens is this
+ * node's `message` output, showing `value`; then closes it.
+ */
+async function expectShortcutOpensOutputOf(
+  page: Page,
+  title: string,
+  nodeId: string,
+  value: string,
+): Promise<void> {
+  await page.getByTestId(`title-${title}`).click();
+  const selected = page.locator(".react-flow__node.selected");
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toHaveAttribute("data-id", nodeId);
 
-    await page.waitForSelector('[data-testid="icon-TextSearchIcon"]', {
-      timeout: 30000,
-    });
+  await page.keyboard.press("o");
 
-    await page.getByTestId("icon-TextSearchIcon").nth(2).click();
+  const modalId = `${nodeId}-message-output-modal`;
+  await expect(page.getByTestId(modalId)).toBeVisible({ timeout: 10000 });
+  await expect(page.locator(OUTPUT_MODALS)).toHaveCount(1);
 
-    await page.getByText("Sender", { exact: true }).isVisible();
-    await page.getByText("Type", { exact: true }).isVisible();
-    await page.getByText("User", { exact: true }).last().isVisible();
-  },
-);
+  const dialog = page
+    .getByRole("dialog")
+    .filter({ has: page.getByTestId(modalId) });
+  await expect(dialog.getByTestId("textarea")).toHaveValue(value);
+
+  await dialog.getByTestId("btn-close-modal").click();
+  await expect(page.locator(OUTPUT_MODALS)).toHaveCount(0, { timeout: 10000 });
+}
 
 test(
   "user must be able to see output inspection using 'o' shortcut",
-  { tag: ["@release", "@components", "@agents"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page);
+  { tag: ["@stable", "@release", "@components", "@ui-ux"] },
+  async ({ page, request }) => {
+    const sentinel = `O-SHORTCUT-SENTINEL-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+    let flowId = "";
+    let chatInputId = "";
+    let chatOutputId = "";
 
-    await page.getByTestId("blank-flow").click();
-
-    // Add URL component
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("url");
-    await page.waitForSelector('[data-testid="data_sourceURL"]', {
-      timeout: 3000,
-    });
-
-    await page
-      .getByTestId("data_sourceURL")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 200 },
+    await test.step("Create a Chat Input -> Chat Output flow over the API and open it", async () => {
+      const bearer = await getAuthToken(request);
+      const flow = await createRunnableChatFlowViaApi(request, {
+        Authorization: bearer,
       });
+      flowId = flow.flowId;
+      removeFlow = flow.deleteFlow;
 
-    await page.waitForTimeout(1000);
-
-    // Get URL node ID
-    const urlNode = await page.locator(".react-flow__node").first();
-    const _urlNodeId = await urlNode.getAttribute("data-id");
-
-    await zoomOut(page, 2);
-
-    // Add two chat outputs
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-    await page.waitForSelector('[data-testid="input_outputChat Output"]', {
-      timeout: 1000,
-    });
-
-    await page.waitForTimeout(1000);
-
-    await page
-      .getByTestId("input_outputChat Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 500, y: 100 },
+      await openFlowById(page, flowId);
+      await expect(page.getByTestId("title-Chat Input")).toBeVisible({
+        timeout: 30000,
       });
-
-    await page.waitForTimeout(1000);
-
-    await page
-      .getByTestId("input_outputChat Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 500, y: 500 },
+      await expect(page.getByTestId("title-Chat Output")).toBeVisible({
+        timeout: 30000,
       });
+      await clearCanvasBottomOverlay(page, { allowAlreadyClear: true });
 
-    // Fill URL input
-    await page
-      .getByTestId("inputlist_str_urls_0")
-      .fill("https://www.example.com");
-
-    await adjustScreenView(page);
-
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .click();
-
-    await page.waitForTimeout(600);
-
-    await page
-      .getByTestId("handle-chatoutput-noshownode-inputs-target")
-      .nth(0)
-      .click();
-
-    await page.waitForTimeout(1000);
-
-    // Run flow and test text output inspection
-    await page.getByTestId("button_run_url").first().click();
-    await page.waitForSelector("text=built successfully", {
-      timeout: 30000 * 3,
-    });
-    await page.keyboard.press("o");
-    await page.getByText(`Inspect the output of the component below.`, {
-      exact: true,
+      chatInputId = await nodeIdByTitle(page, "Chat Input");
+      chatOutputId = await nodeIdByTitle(page, "Chat Output");
     });
 
-    await page.getByText(`Component Output`, {
-      exact: true,
-    });
-    await page.getByText("Close").first().click();
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .click();
-    await page
-      .getByTestId("handle-chatoutput-noshownode-inputs-target")
-      .nth(1)
-      .click();
-    await page.waitForTimeout(2000);
-
-    // Run and verify text output is still shown
-    await page.getByTestId("button_run_url").first().click();
-    await page.waitForSelector("text=built successfully", {
-      timeout: 30000 * 3,
+    await test.step("Type a sentinel into Chat Input and wait until the flow persisted it", async () => {
+      const persisted = flowWriteCarrying(page, flowId, sentinel);
+      await nodeByTitle(page, "Chat Input")
+        .getByTestId("textarea_str_input_value")
+        .fill(sentinel);
+      await persisted;
     });
 
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .click();
-    await page.waitForTimeout(600);
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .click();
-
-    await page
-      .getByTestId("output-inspection-extracted pages-urlcomponent")
-      .nth(0)
-      .click();
-
-    await page.getByText(`Inspect the output of the component below.`, {
-      exact: true,
+    await test.step("Run the flow and wait for both nodes to build", async () => {
+      await page.getByTestId("button_run_chat output").click();
+      // The duration badge renders only on a node's successful build.
+      await expect(page.getByTestId("node_duration_chat input")).toBeVisible({
+        timeout: 45000,
+      });
+      await expect(page.getByTestId("node_duration_chat output")).toBeVisible({
+        timeout: 45000,
+      });
     });
 
-    await page.getByText(`Component Output`, {
-      exact: true,
-    });
-    await page.getByText("Close").first().click();
-    await page.waitForTimeout(600);
-
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .nth(0)
-      .click();
-
-    await page
-      .getByTestId("handle-chatoutput-noshownode-inputs-target")
-      .nth(1)
-      .click();
-
-    // Run and verify dataframe output is now shown
-    await page.getByTestId("button_run_url").first().click();
-    await page.waitForSelector("text=built successfully", {
-      timeout: 30000 * 3,
-    });
-    await page.waitForTimeout(600);
-    await page
-      .getByTestId("output-inspection-extracted pages-urlcomponent")
-      .click();
-    await page.getByText(`Inspect the output of the component below.`, {
-      exact: true,
+    await test.step("With no node selected, 'o' opens no output dialog", async () => {
+      await page
+        .locator(".react-flow__pane")
+        .click({ position: { x: 10, y: 10 } });
+      await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
+      await page.keyboard.press("o");
+      // Decided again in the next step: output dialogs close only on Close, so
+      // one opened here would still be open there and break "exactly one".
+      await expect(page.locator(OUTPUT_MODALS)).toHaveCount(0);
     });
 
-    await page.getByText(`Component Output`, {
-      exact: true,
-    });
-    await page.getByText("Close").first().click();
-    await page.waitForTimeout(600);
-    // Remove all connections
-    const dataEdge = await page.locator(".react-flow__edge").first();
-    await dataEdge.click();
-    await page.keyboard.press("Backspace");
-
-    await page.waitForTimeout(5000);
-
-    // Run and verify data output is shown
-    await page.getByTestId("button_run_url").first().click();
-    await page.waitForSelector("text=built successfully", {
-      timeout: 30000 * 3,
-    });
-    await page.waitForTimeout(600);
-    await page.keyboard.press("o");
-    await page.getByText(`Inspect the output of the component below.`, {
-      exact: true,
+    await test.step("Chat Input selected: 'o' opens the output that feeds its edge", async () => {
+      await expectShortcutOpensOutputOf(page, "Chat Input", chatInputId, sentinel);
     });
 
-    await page.getByText(`Component Output`, {
-      exact: true,
+    await test.step("Chat Output selected: 'o' opens the output of a node with no outgoing edge", async () => {
+      await expectShortcutOpensOutputOf(
+        page,
+        "Chat Output",
+        chatOutputId,
+        sentinel,
+      );
     });
-
-    const closeButton = await page
-      .getByText(`Close`, {
-        exact: true,
-      })
-      .count();
-
-    expect(closeButton).toBeGreaterThanOrEqual(0);
   },
 );
