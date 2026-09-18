@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`)
 
 ---
 
@@ -31,13 +31,16 @@ expanded, so the input is directly fillable).
 
 ## Tags
 
-`@release` `@components` `@agents`
+`@stable` `@release` `@components` `@agents`
 
 ---
 
 ## Step by step
 
-1. `test.skip` unless `OPENAI_API_KEY` is set. Bootstrap; open the **Basic
+1. `providerSkipGate("openai")` decides whether the test runs — it skips when
+   the key is absent **and** when `collect-models` recorded the provider
+   `inactive`, because the flow makes a real completion and a dead key blocks the
+   backend past gunicorn's timeout (#1029). Bootstrap; open the **Basic
    Prompting** template; `initialGPTsetup`. Every flow created is captured from
    its `POST /api/v1/flows → 201` and deleted id-scoped in `afterEach`.
 2. Open the Playground; send "Hello, how are you?"; wait for the build to finish;
@@ -66,8 +69,9 @@ messages would fall back to the default `User`/`AI` labels.
 
 ## External dependencies
 
-- **OpenAI** — `test.skip` without `OPENAI_API_KEY`; the flow runs an OpenAI model
-  via `initialGPTsetup`.
+- **OpenAI** — a real completion, so the gate is `providerSkipGate("openai")`
+  (health, not the env var alone); the flow runs an OpenAI model via
+  `initialGPTsetup`.
 - Basic Prompting starter template (Chat Input → … → Chat Output).
 - `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions` /
   `closeAdvancedOptions` (dev46 inspector).
@@ -84,7 +88,8 @@ messages would fall back to the default `User`/`AI` labels.
 
 ## Preconditions
 
-- Langflow running at `PLAYWRIGHT_BASE_URL`; `OPENAI_API_KEY` set.
+- Langflow running at `PLAYWRIGHT_BASE_URL`; `OPENAI_API_KEY` set and the key
+  able to complete — `providers.json` must record `openai` as `active`.
 
 ---
 
@@ -97,3 +102,15 @@ messages would fall back to the default `User`/`AI` labels.
 - Validated on `1.11.0.dev46` (2026-07-20): 3/3 green (~59s), `--workers=1
   --retries=0`, 0 orphan flows. Force-fail: breaking `inspector-add-sender_name`
   fails the custom-sender-name assertions.
+- Promoted to `@stable` on `1.13.0.dev15` (2026-09-18, issue #1905). Re-measured
+  for the promotion: burst **3/3 green** (13.0s / 12.2s / 13.3s), `--workers=1
+  --retries=0`, no `🚨 Backend Error` and no provider-outage verdict; flow-leak
+  audit **28 flows before → 28 after**, 0 orphans. Force-fail, both assertion
+  groups: breaking the first-turn `toHaveText` reddens at the default-label
+  assertion, and filling a different `sender_name` reddens the custom-label
+  assertion with `element(s) not found`.
+- The promotion was blocked once and the reason was the credential, not the spec:
+  PR #1797 dropped it from Wave 8's T1 batch on a `429 insufficient_quota` and
+  promised a follow-up that was never filed, leaving the spec in no scheduled
+  lane from 2026-09-10 to 2026-09-18 (#1905). The gate reading that let it run
+  against a dead key is #1904.
