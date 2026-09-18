@@ -281,6 +281,7 @@
 - [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
 - [x] Full custom component → `core-components/full-custom-component.spec.ts`
 - [x] `configureCustomComponent` helper compiles code into a node with its declared interface → `core-components/configure-mcp-and-custom-component.spec.ts`
+- [x] Check & Save of code whose `import` names a module the server does not have is refused — `POST /api/v1/custom_component` → 400 naming the module, `title_error_code_modal` shows that module and the editor stays open → `flow-functionality/generalBugs-shard-6.spec.ts`
 
 ---
 
@@ -912,6 +913,7 @@
 - [~] Hover over component shows tooltip/preview — **no product surface on 1.12.0.dev6**: hovering a sidebar card renders zero `[role="tooltip"]` elements, zero Radix poppers, no `title` and no `aria-describedby`; the only hover affordance is the `+` button, already covered by `core-components/componentHoverAdd.spec.ts` (#937)
 - [x] Keyboard search (keyboard shortcut) — `/` focuses the search, Tab reaches a result, Space/Enter add that exact component → `ui-ux/keyboardComponentSearch.spec.ts`
 - [x] Filter components by category — disclosure collapse/expand and non-matching categories removed while filtering → `ui-ux/sidebar-search-and-filter.spec.ts`
+- [x] A component whose icon cannot be loaded still renders with the icon fallback (`icon-placeholder`) instead of a pending loader — its sidebar entry keeps its name, its node renders when added, and the other entries keep their icons → `ui-ux/general-bugs-icons-fallback.spec.ts`
 - [~] Sidebar shows correct provider count — **no count surface on 1.12.0.dev6**: the sidebar renders no numeric badge or count text anywhere (the count lives on Settings → Model Providers, §7). What exists is grouping under `disclosure-bundles-<provider>`, covered by `ui-ux/sidebar-search-and-filter.spec.ts` (#937)
 
 #### 15.2 Add Components to Canvas
@@ -933,6 +935,7 @@
 - [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Canvas keyboard shortcuts — Duplicate/Delete/Copy/Paste/Cut/Undo/Redo each act on the selected node, with the selection re-gated before every keypress → `ui-ux/langflowShortcuts.spec.ts`
+- [x] Keystrokes typed in a selected node's own text field stay in the field — Ctrl/Cmd+A, Ctrl/Cmd+C and Backspace clear it, Ctrl/Cmd+V restores it, and the canvas still holds that one node (the node copy/paste/delete shortcuts do not fire) → `flow-functionality/generalBugs-shard-7.spec.ts`
 - [x] Minimize component on canvas — the options menu collapses the node (every handle gains `no-show`, height shrinks) and persists `data.showNode = false`; the item swaps to Expand, which restores both; four further minimize/expand cycles keep both states correct and the persisted `showNode` in step (#1290) → `ui-ux/minimize.spec.ts`
 - [x] Move component within canvas — dragging a node by its title moves it on canvas and the new coordinates reach the backend (`GET /api/v1/flows/{id}` `position` matches the rendered transform) → `flow-functionality/canvas-move-node.spec.ts`
 - [x] Select multiple components via box selection — a Shift+drag marquee enclosing two separated nodes takes `.react-flow__node.selected` from 0 to 2, while a marquee drawn away from them selects nothing (negative control) → `flow-functionality/canvas-multiselect.spec.ts`
