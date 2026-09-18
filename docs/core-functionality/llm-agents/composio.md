@@ -2,7 +2,10 @@
 
 **Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`)
 
-> **Parked, not pending.** The test is `test.fixme` and runs in no lane. The
+> **Parked, not pending.** The test is gated on component availability and skips with an
+> attributed reason on every run — the treatment `docs/component-distribution-policy.md`
+> prescribes for a distribution the tested image does not install, and the same one
+> `groq-provider` / `mistral-provider` carry (#1039). The
 > component it drives is not shipped by the image this suite tests, and the surface
 > is already recorded as out of scope for this QA team (`QA-CHECKLIST.md` § 6.2,
 > decision dated 2026-08-06). The park is owned by issue **#1916**; the triage row is
@@ -62,7 +65,9 @@ the spec **must not be promoted**. Tracked by **#1916**.
 **Three facts, each measured, and any one of them is decisive.**
 
 1. **The component is not in the catalog.** `GET /api/v1/all` on the running nightly
-   returns **30 categories / 366 component types**, and a case-insensitive search for
+   returns **29 categories / 183 component types** (the 30th top-level key is
+   `component_display_names`, a metadata map and not a category — folding it in is what
+   `CLAUDE.md` warns doubles the type count), and a case-insensitive search for
    `composio` over every `category/type` pair returns **0 hits**. The only Gmail
    components present are Google's own
    (`ext:google:GmailLoaderComponent@official`, `ext:google:GmailSendComponent@official`) —
@@ -80,12 +85,22 @@ the spec **must not be promoted**. Tracked by **#1916**.
    is the standing answer for (#1039 / #1040): component availability is a packaging
    decision per image, not a tracker item.
 
-3. **The test's own gate can never open in CI.** The body begins with
+3. **The test's own credential gate can never open in CI either.** The body carries
    `test.skip(!process.env.COMPOSIO_API_KEY, …)`, and `COMPOSIO_API_KEY` is **not a
    repository secret** and appears in **no workflow**. That is why the #1784
    measurement reports `skipped in 3/3 run(s)` — the skip is a credential fact, not a
    product verdict — and it is also why this spec has never executed once in any
    lane since it was imported.
+
+**Why gate-and-skip rather than `test.fixme`.** `docs/component-distribution-policy.md`'s
+decision table answers "the family's distribution is not installed in the image we test,
+and that is upstream's packaging choice" with *"Gate and skip, with an attributed reason.
+Do not delete the spec, do not leave it failing"*, implemented as
+`isProviderComponentAvailable()` before the first UI step. That gate **self-heals**: the
+day the image installs `lfx-bundles` it opens and the spec runs. A `test.fixme` is inert
+until a human edits it, so it would trade a recovering gate for a silent one. The
+availability probe runs **before** the credential gate, so the reported reason names the
+packaging rather than a missing key.
 
 `generalBugs-shard-11.spec.ts` carries the same absence from the other side (it
 hard-fails waiting for the ComposIO sidebar entry) and is triaged in **#1912**.

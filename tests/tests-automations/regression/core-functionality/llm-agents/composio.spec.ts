@@ -2,24 +2,42 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { clearApiKeyBadges } from "../../../../helpers/ui/clear-api-key-badges";
+import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
 
 // PARKED — #1916. ComposIO is not shipped by the image this suite tests, and the
 // surface is already out of scope for this team (QA-CHECKLIST.md § 6.2, 2026-08-06).
-// Measured on the nightly `1.13.0.dev15`: `GET /api/v1/all` returns 30 categories /
-// 366 component types with ZERO `composio` hits, so `getByTestId("composioGmail")` can
+// Measured on the nightly `1.13.0.dev15`: `GET /api/v1/all` returns 29 categories /
+// 183 component types with ZERO `composio` hits, so `getByTestId("composioGmail")` can
 // never resolve; `src/lfx/src/lfx/components/composio/__init__.py` is an
 // `lfx-bundles-shim` and `import lfx_bundles` raises ModuleNotFoundError in the
 // container, which makes this packaging (#1039/#1040,
 // docs/component-distribution-policy.md) rather than drift.
 //
-// `test.fixme` rather than a declaration in scripts/lib/stable-orphan-exemptions.json:
-// #1746's reconciler reports a declaration whose test NEVER carried `@stable` as
-// expired, and this one never did. The open issue is the owner #1770's guard accepts.
+// GATE AND SKIP, not `test.fixme`, and the distinction is the standing policy's rather
+// than a preference: docs/component-distribution-policy.md's decision table answers a
+// distribution the tested image does not install with "Gate and skip, with an attributed
+// reason. Do not delete the spec, do not leave it failing" — the groq/mistral treatment.
+// A `test.fixme` is inert forever; the availability gate below opens by itself the day
+// the image installs `lfx-bundles`.
+//
+// The park's OWNER is an open issue rather than a declaration in
+// scripts/lib/stable-orphan-exemptions.json: #1746's reconciler reports a declaration
+// whose test NEVER carried `@stable` as expired, and this one never did.
 // See docs/core-functionality/llm-agents/composio.md.
-test.fixme(
+test(
   "user should be able to interact with composio component",
   { tag: ["@release", "@workspace", "@api", "@components"] },
-  async ({ page, context }) => {
+  async ({ page, context, request }) => {
+    // Runs BEFORE the credential gate and before the first UI step: when the
+    // component cannot be placed at all, "which key is missing" is the wrong
+    // attribution, and `getByTestId("composioGmail")` would otherwise hard-fail on a
+    // 20 s hover timeout that names nothing (#1039's whole point).
+    const componentAvailable = await isProviderComponentAvailable(request, "composio");
+    test.skip(
+      !componentAvailable,
+      "ComposIO components not exposed by this Langflow build — the `lfx-bundles` distribution that ships them is not installed (#1039, #1916)",
+    );
+
     // Env-var presence is the CORRECT gate here (#1029 audit): Composio is a tool
     // provider, not an LLM provider — `collect-models` never probes it, so
     // providers.json holds no health record to consume. The test also drives no
