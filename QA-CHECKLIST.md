@@ -1482,15 +1482,15 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 101 | 95 | 1 | 3 | 2 |
-| `core-components/` — Component Config | 29 | 28 | 1 | 0 | 0 |
-| `core-components/` — Core Components | 92 | 91 | 0 | 0 | 1 |
+| `core-components/` — Component Config | 31 | 30 | 1 | 0 | 0 |
+| `core-components/` — Core Components | 94 | 93 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 36 | 0 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 33 | 2 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 50 | 0 | 1 | 1 |
-| `core-functionality/project-management/` | 15 | 12 | 3 | 0 | 0 |
+| `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 34 | 0 | 0 | 12 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
@@ -1504,7 +1504,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **680** | **588 (86%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **685** | **593 (87%)** | **32 (5%)** | **15 (2%)** | **45 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1520,7 +1520,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 664 `test()` calls carrying the `@stable` tag, distributed across 260 spec
+> 669 `test()` calls carrying the `@stable` tag, distributed across 265 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1788,6 +1788,7 @@
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
 - [x] a component in Tool Mode can be grouped with its Agent consumer → `tool-mode-group.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
+- [x] a Group node offers no Tool Mode even when it contains a component that does → `toolModeGroup.spec.ts`
 - [x] applying a single component update refreshes it, decrements the outdated count, and creates a backup → `update-component-action.spec.ts`
 - [x] user should be able to see errors on popups when raise an error → `validate-raise-errors-components.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
@@ -1905,6 +1906,7 @@
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
+- [x] should process loop with update data correctly → `loop-component.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
@@ -2101,9 +2103,12 @@
 - [x] a frozen component serves its cached output instead of recomputing → `freeze-and-state.spec.ts`
 - [x] freezing a component also freezes every component upstream of it → `freeze-and-state.spec.ts`
 - [x] unfreezing releases the whole path and the component recomputes → `freeze-and-state.spec.ts`
+- [x] user must be able to use component as tool shortcut only if has tool mode is True → `general-bugs-component-as-tool-shortcut.spec.ts`
 - [x] user must be able to use a component with undefined replacement → `general-bugs-frontend-crashing-on-invalid-replace.spec.ts`
 - [x] user should not be able to hide connected inputs → `general-bugs-hidden-input-edges.spec.ts`
+- [x] user can run flow with If-Else component multiple times with different branches → `general-bugs-reset-flow-run.spec.ts`
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
+- [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
 - [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
