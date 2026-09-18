@@ -161,9 +161,24 @@ const applyFlowSettings = async (
     // windows derived (#1902) the first barrier now covers that case, and this
     // one keeps its own job: with the modal already filled, so nothing else can
     // mutate the flow, it leaves only the click→request hop between the last
-    // observed save and ours. Re-assert the button afterwards: a landing
-    // autosave re-renders the dialog.
+    // observed save and ours. Re-assert the filled value and the button
+    // afterwards: a landing autosave re-renders the dialog.
     await waitForFlowSaveSettled(page, { quietMs: renameDrainQuietMs() });
+
+    // Re-assert the CAUSE, not only its consequence (#1902 review). The
+    // `toHaveValue` further up exists because a dialog that remounts resets
+    // `name` in silence and `save-flow-settings` — `disabled={disableSave ||
+    // isReadOnly}`, with `disableSave` recomputed from `flow.name !== name` —
+    // then stays disabled for the full budget with nothing in the failure
+    // naming the cause (#1005). Since #1902 this drain holds the modal open for
+    // one autosave debounce plus slack instead of 700 ms, so the window in
+    // which that remount can happen now sits BETWEEN that assertion and the
+    // click: the attribution it buys was silently given back. It costs nothing
+    // when the value holds, and when it does not it fails on the reset field
+    // rather than on a button that has been disabled for 15 s.
+    if (flowName) {
+      await expect(nameInput).toHaveValue(flowName, { timeout: MODAL_TIMEOUT });
+    }
     await expect(saveButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
     await saveButton.click();
 
