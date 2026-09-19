@@ -66,7 +66,7 @@ each and differs only in which Mock Data output is selected.
 
 - `src/lfx/src/lfx/components/data_source/` — Mock Data component; changes to serialization logic (`_serialize_data` or `df.to_markdown`) would alter the rendered output format
 - `src/frontend/src/components/core/chatComponents/` — Markdown and code block rendering in the Playground chat; changes to react-markdown plugins or code block CSS classes would break the assertions
-- `src/backend/base/langflow/api/v1/flows.py` and `api/v1/flows_helpers.py` — flow creation and its name deduplication; the setup enters the editor by id after creating through this endpoint, so a change to the create contract (status codes, name handling) changes how the setup fails
+- `src/backend/base/langflow/api/v1/flows.py` and `src/backend/base/langflow/api/v1/flows_helpers.py` — flow creation and its name deduplication; the setup enters the editor by id after creating through this endpoint, so a change to the create contract (status codes, name handling) changes how the setup fails
 
 ---
 

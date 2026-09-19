@@ -163,20 +163,20 @@ terminal state.
   `new-chat`, `playground-close-button`.
 - **Decision card** — `human-input-card`, `human-input-decision-<action_id>` (and
   `human-input-field-<name>` for extra fields, unused here), from
-  `components/core/chatComponents/HumanInputCard.tsx`. `action_id` is the slugified label
+  `src/frontend/src/components/core/chatComponents/HumanInputCard.tsx`. `action_id` is the slugified label
   (`_action_id()`: lowercase, spaces → underscores), so the defaults are `approve` and
   `reject`.
 - **Chat bubbles** — `chat-message-${sender_name}-${text}`
-  (`modals/IOModal/.../chat-message.tsx`). The suspend also renders an **empty**
+  (`src/frontend/src/modals/IOModal/components/chatView/chatMessage/chat-message.tsx`). The suspend also renders an **empty**
   `chat-message-AI-` bubble. It is **not** the component's return value: the frontend
   synthesizes it in `injectHumanInputCard()`
-  (`controllers/API/agui/human-input-card.ts` — `text: ""`, `sender: "Machine"`,
+  (`src/frontend/src/controllers/API/agui/human-input-card.ts` — `text: ""`, `sender: "Machine"`,
   `sender_name: "AI"`, `id: human-input-${request_id}`) purely to carry the card's content
   block, which means it appears on every pause render, including a replayed one. The spec
   ignores it and scopes every assertion to the sender-named bubbles.
 - **Run/resume transport** — the run is `POST /api/v2/workflows` and the answer is
-  `POST /api/v2/workflows/{job_id}/resume` (`api/v2/workflow.py` → `resume_workflow`, with
-  helpers in `api/v2/hitl.py`: 422 when the `action_id` is outside `allowed_decisions`, 409
+  `POST /api/v2/workflows/{job_id}/resume` (`src/backend/base/langflow/api/v2/workflow.py` → `resume_workflow`, with
+  helpers in `src/backend/base/langflow/api/v2/hitl.py`: 422 when the `action_id` is outside `allowed_decisions`, 409
   on a stale `request_id`). Neither is asserted directly — the user path is the card click,
   and pinning the transport would couple this spec to a mechanism that moved once already
   (v1 build → v2 workflows).

@@ -1,0 +1,25 @@
+{
+  "$comment": "Tokens in a spec doc's `## External dependencies` section that name a real upstream file WITHOUT its `src/` prefix and are NOT dependencies — so declaring them as paths would couple a spec to a file whose deletion cannot break it. Read by `scripts/watch-upstream-areas.mjs --mode=check-doc-abbrevs` (issue #1592). Verified in BOTH directions (#1084): an entry that no longer silences a finding is reported as expired, naming the row to delete. This is a repo-side declaration, never an in-doc sentence giving a reason not to declare — that is #1587's defect.",
+  "declarations": [
+    {
+      "doc": "docs/api/instance/api-validation-redaction.md",
+      "token": "traces/model.py",
+      "reason": "Named to say the OPPOSITE of a dependency: the bullet cites it as one of the validators that exist deeper in the package but that no request reaches as a 422, which is why Test 2 is built on flow/model.py instead. Declaring it would make the spec fail a guard over a file it deliberately does not exercise."
+    },
+    {
+      "doc": "docs/core-functionality/observability-monitoring/traces.md",
+      "token": "SpanTree.tsx",
+      "reason": "One of the three Trace Details modal files the sentence explicitly places OUT of this spec's scope (\"is not exercised by this spec\"); they are declared as real dependencies by traces-latency-tokens.md, which does exercise them."
+    },
+    {
+      "doc": "docs/core-functionality/observability-monitoring/traces.md",
+      "token": "TraceDetailView.tsx",
+      "reason": "Same sentence, same scope statement — see the SpanTree.tsx row."
+    },
+    {
+      "doc": "docs/core-functionality/observability-monitoring/traces.md",
+      "token": "SpanDetail.tsx",
+      "reason": "Same sentence, same scope statement — see the SpanTree.tsx row."
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import {
   AREAS,
   BODY_DELIMITER,
   DOC_DEPS_EXEMPT_FILES,
+  DOC_DEP_DECLARATIONS_FILE,
   assertValidSince,
   parseArgs,
   LANGFLOW_AREAS,
@@ -27,6 +28,10 @@ import {
   RELEASE_LINES_TRACKED,
   areaCommands,
   buildAreas,
+  abbreviationTarget,
+  findAbbreviatedDeps,
+  parseDocDepTokens,
+  readDocDepDeclarations,
   buildGuardVerdict,
   checkDocDeps,
   classifyDepToken,
@@ -1779,4 +1784,574 @@ test("pr-validation.yml runs the doc-deps guard with a diff list and a real upst
   assert.match(yml, /git clone --filter=blob:none --depth 1 --no-checkout/);
   // The clone must not fail open: no tree means no verdict, which is not a pass.
   assert.match(yml, /::error::could not clone langflow-ai\/langflow/);
+});
+
+/* ---------------------------------------------------------------------------
+ * Abbreviated upstream modules — the silence one step before the resolver (#1592)
+ * ------------------------------------------------------------------------- */
+
+const abbrevTrees = [
+  {
+    ref: "origin/main",
+    entries: [
+      "src/backend/base/langflow/api/v2/hitl.py",
+      "src/backend/base/langflow/api",
+      "src/frontend/src/stores/flowStore.ts",
+      "src/frontend/src/modals/IOModal/components/session-view.tsx",
+      "src/frontend/src/pages/AdminPage",
+      "src/frontend/src/pages/AdminPage/index.tsx",
+      "src/frontend/tests/utils/flow/add-component-from-sidebar.ts",
+      "src/frontend/src/modals/IOModal/components/chatView/chatMessage/chat-message.tsx",
+      "src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/chat-message.tsx",
+    ],
+  },
+];
+
+const abbrevDoc = (markdown) => ({ file: "docs/area/spec.md", markdown });
+const depsSection = (...bullets) => `## External dependencies\n\n${bullets.map((b) => `- ${b}`).join("\n")}\n`;
+
+test("an upstream module named without src/ is a finding, with the path it should have been", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`api/v2/hitl.py` — the resume helpers"))],
+    trees: abbrevTrees,
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].token, "api/v2/hitl.py");
+  assert.equal(result.findings[0].resolved, "src/backend/base/langflow/api/v2/hitl.py");
+  assert.deepEqual(result.findings[0].refs, ["origin/main"]);
+});
+
+test("the same file already declared in full, in the same section, is not a hole", () => {
+  // A bullet routinely names a file in full and refers to it again by basename.
+  // The resolver already holds the full path, so the second mention costs nothing.
+  const result = findAbbreviatedDeps({
+    docs: [
+      abbrevDoc(
+        depsSection("`src/backend/base/langflow/api/v2/hitl.py` — the module", "`hitl.py` — again, mid-sentence"),
+      ),
+    ],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+});
+
+test("a token that is one of OUR files is out of scope, even when upstream carries the name", () => {
+  // Measured: upstream has `src/frontend/tests/utils/flow/add-component-from-sidebar.ts`
+  // and so do we. Six docs name ours without a directory; resolving them upstream
+  // would rewrite this repo's own helper references into Langflow paths.
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`add-component-from-sidebar.ts` — our helper"))],
+    trees: abbrevTrees,
+    ownFiles: ["tests/helpers/flows/add-component-from-sidebar.ts"],
+  });
+  assert.deepEqual(result.findings, []);
+});
+
+test("an abbreviation matching two upstream files is reported as ambiguous, never guessed", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`chat-message.tsx` — the bubble"))],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.ambiguous.length, 1);
+  assert.equal(result.ambiguous[0].candidates.length, 2);
+});
+
+test("an ellipsis is resolved by its tail — the elided prefix is what goes stale", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`stores/.../flowStore.ts` — the store"))],
+    trees: abbrevTrees,
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].resolved, "src/frontend/src/stores/flowStore.ts");
+});
+
+test("a directory is a finding too — `-t` puts directory entries in the tree", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`pages/AdminPage/` — holds only the admin LoginPage"))],
+    trees: abbrevTrees,
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].resolved, "src/frontend/src/pages/AdminPage");
+});
+
+test("prose that resolves to nothing is silent — that is what keeps the check gateable", () => {
+  // Every shape below survives the character filter and is emphatically not a
+  // module; uniqueness against the tree, not a keyword list, is what drops them.
+  const result = findAbbreviatedDeps({
+    docs: [
+      abbrevDoc(
+        depsSection(
+          "`text/event-stream` — the run stream's content type",
+          "`store/tags` — the external Store endpoint",
+          "`models/gemini-embedding-001` — the embedding model id",
+        ),
+      ),
+    ],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.ambiguous, []);
+});
+
+test("severity follows the diff: a changed doc fails, a pre-existing one is reported", () => {
+  // #980 — one upstream rename must not redden every PR that edits an unrelated
+  // doc, and it must not be invisible either (#1012).
+  const docs = [
+    { file: "docs/changed.md", markdown: depsSection("`api/v2/hitl.py` — here") },
+    { file: "docs/untouched.md", markdown: depsSection("`api/v2/hitl.py` — here too") },
+  ];
+  const result = findAbbreviatedDeps({ docs, trees: abbrevTrees, changedFiles: ["docs/changed.md"] });
+  assert.deepEqual(
+    result.findings.map((f) => [f.file, f.severity]),
+    [
+      ["docs/changed.md", "fail"],
+      ["docs/untouched.md", "warn"],
+    ],
+  );
+});
+
+test("a declared token is silenced, and a declaration that silences nothing is reported", () => {
+  // #1084's rule, both directions: the exemption whose justification expired
+  // silently is the failure that issue was raised about.
+  const declarations = [
+    { doc: "docs/area/spec.md", token: "api/v2/hitl.py", reason: "named to say the spec does NOT touch it" },
+    { doc: "docs/area/spec.md", token: "api/v2/gone.py", reason: "stale" },
+  ];
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`api/v2/hitl.py` — not exercised here"))],
+    trees: abbrevTrees,
+    declarations,
+  });
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.declared, 1);
+  assert.deepEqual(
+    result.expired.map((e) => e.token),
+    ["api/v2/gone.py"],
+  );
+});
+
+test("a declaration is keyed to ITS doc — it cannot silence the same token elsewhere", () => {
+  const result = findAbbreviatedDeps({
+    docs: [{ file: "docs/other.md", markdown: depsSection("`api/v2/hitl.py` — a real dependency here") }],
+    trees: abbrevTrees,
+    declarations: [{ doc: "docs/area/spec.md", token: "api/v2/hitl.py", reason: "context there, not here" }],
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.expired.length, 1);
+});
+
+test("the exempt template is skipped whole — its bullets exist to show the SHAPE", () => {
+  const result = findAbbreviatedDeps({
+    docs: [{ file: DOC_DEPS_EXEMPT_FILES[0], markdown: depsSection("`api/v2/hitl.py` — illustrative") }],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+});
+
+test("no tree is undecidable, not `no doc abbreviates anything`", () => {
+  assert.throws(() => findAbbreviatedDeps({ docs: [], trees: [] }), /at least one/);
+  assert.throws(() => findAbbreviatedDeps({ docs: [], trees: [{ ref: "x" }] }), /at least one/);
+});
+
+test("a token outside the External dependencies section is not read at all", () => {
+  const markdown = `## Steps\n\n- \`api/v2/hitl.py\` mentioned in prose\n\n## External dependencies\n\n- nothing here\n`;
+  assert.deepEqual(findAbbreviatedDeps({ docs: [abbrevDoc(markdown)], trees: abbrevTrees }).findings, []);
+});
+
+test("parseDocDepTokens and parseDocDeps are one parser, so they cannot disagree on the section", () => {
+  const markdown = depsSection("`src/a/b.py` and `b.py` and `POST /api/v1/flows/`");
+  const all = parseDocDepTokens(markdown).map((t) => t.token);
+  assert.deepEqual(all, ["src/a/b.py", "b.py", "POST /api/v1/flows/"]);
+  assert.deepEqual(
+    parseDocDeps(markdown).map((t) => t.token),
+    all.filter((t) => t.startsWith("src/")),
+  );
+});
+
+test("abbreviationTarget refuses what is not a path, and keeps what is", () => {
+  const rejected = [
+    ".py", // a bare extension written mid-sentence: an empty stem, a word
+    "/api/v1/flows/", // an endpoint
+    "http://localhost", // a URL
+    "langflow-ai/langflow#14469", // an issue reference
+    "@modelcontextprotocol/server-everything", // an npm scope
+    "Ctrl/Cmd+G", // a keyboard chord
+    "decisions", // a field name — one segment, no extension
+    "waitForURL(/\\/settings(?:\\/|$)/)", // a regex literal
+  ];
+  for (const token of rejected) assert.equal(abbreviationTarget(token), "", `should reject ${token}`);
+  assert.equal(abbreviationTarget("api/v2/hitl.py:70-78"), "api/v2/hitl.py");
+  assert.equal(abbreviationTarget("pages/AdminPage/"), "pages/AdminPage");
+  assert.equal(abbreviationTarget("flowStore.ts"), "flowStore.ts");
+});
+
+test("the declarations file is readable, shaped, and every entry carries a reason", () => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const read = readDocDepDeclarations(repoRoot);
+  assert.equal(read.error, undefined, `${DOC_DEP_DECLARATIONS_FILE}: ${read.error}`);
+  assert.ok(read.declarations.length > 0, "an empty file would read as `nothing is declared`, which is not measured");
+  for (const entry of read.declarations) {
+    assert.ok(fs.existsSync(path.join(repoRoot, entry.doc)), `${entry.doc} does not exist`);
+    assert.ok(entry.reason.length > 40, `${entry.token}: a reason has to say WHY, not name the token again`);
+  }
+});
+
+test("an unreadable or malformed declarations file is refused, never read as empty", () => {
+  const tmp = makeTempDir("docdeps-");
+  assert.match(readDocDepDeclarations(tmp).error, /could not read/);
+  fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true });
+  const file = path.join(tmp, DOC_DEP_DECLARATIONS_FILE);
+  fs.writeFileSync(file, "{ not json");
+  assert.match(readDocDepDeclarations(tmp).error, /not valid JSON/);
+  fs.writeFileSync(file, JSON.stringify({}));
+  assert.match(readDocDepDeclarations(tmp).error, /no `declarations` array/);
+  fs.writeFileSync(file, JSON.stringify({ declarations: [{ doc: "d", token: "t" }] }));
+  assert.match(readDocDepDeclarations(tmp).error, /entry 0 needs/);
+});
+
+test("no doc abbreviates a module that ANOTHER doc already names in full", () => {
+  // A PARTIAL whole-repo assertion, and the name says which part. The complete
+  // check needs the upstream tree and lives in `pr-validation.yml`; this one runs
+  // against the real docs and a SYNTHETIC tree built from the `src/…` paths they
+  // already declare, so it needs no checkout at all — at the cost of seeing only
+  // the abbreviations whose full path some other doc carries.
+  //
+  // Measured by the only method that answers it — revert ONE corrected occurrence
+  // at a time, rebuild the synthetic tree from the mutated corpus, re-run this
+  // construction: **22 of the 52** corrected occurrences, or **18 of the 48**
+  // distinct modules. Under half either way.
+  //
+  // It took three numbers to get one right, and the failure repeated itself: the
+  // first draft said "24 of the 55", reproducible by no construction; the second
+  // said "18 of the 39", which is the DISTINCT-MODULE numerator pinned to a
+  // denominator invented by a diff locator that silently dropped every line where
+  // two tokens changed at once — i.e. exactly the mixed-unit error the second
+  // draft indicted the first for. Ground truth comes from comparing each changed
+  // doc line-for-line against `origin/main` and taking the multiset difference of
+  // backticked tokens, which needs no alignment heuristic: 52 occurrences, 28
+  // docs. The concrete shape: reverting `hitl.py` leaves this test GREEN, because
+  // one doc names it; reverting `assistant-discovery-storage.ts` reddens it,
+  // because two do.
+  // It earns its place anyway: an abbreviation of a file another doc spells out is
+  // the commonest way this class comes back, and it is caught with no network.
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const docs = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".md")) docs.push({ file: path.relative(repoRoot, full), markdown: fs.readFileSync(full, "utf8") });
+    }
+  };
+  walk(path.join(repoRoot, "docs"));
+  const entries = new Set();
+  for (const doc of docs) {
+    for (const { token } of parseDocDeps(doc.markdown)) {
+      const { target } = classifyDepToken(token);
+      if (!target.includes("*")) entries.add(target);
+    }
+  }
+  const declarations = readDocDepDeclarations(repoRoot).declarations || [];
+  const result = findAbbreviatedDeps({
+    docs,
+    trees: [{ ref: "declared-paths", entries: [...entries] }],
+    ownFiles: [],
+    declarations,
+  });
+  assert.deepEqual(
+    result.findings.map((f) => `${f.file}:${f.line} \`${f.token}\` → ${f.resolved}`),
+    [],
+  );
+  assert.deepEqual(
+    result.ambiguous.map((a) => `${a.file}:${a.line} \`${a.token}\``),
+    [],
+  );
+});
+
+test("the PR lane runs the abbreviation check, after the path resolver and on the same trees", () => {
+  // The check is only as good as its wiring: an unwired mode is a guard that
+  // cannot fire, which is the state #1092 was filed about.
+  const yml = fs.readFileSync(
+    path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."), ".github/workflows/pr-validation.yml"),
+    "utf8",
+  );
+  assert.match(yml, /--mode=check-doc-abbrevs/);
+  // Same refs and same diff scope as its sibling — a narrower ref list would
+  // report a path as un-abbreviated only because nobody fetched the line it is on.
+  const step = yml.slice(yml.indexOf("--mode=check-doc-abbrevs"));
+  assert.match(step, /--releases "\$RELEASE_CSV"/);
+  assert.match(step, /--changed changed-docs\.txt/);
+  assert.ok(
+    yml.indexOf("--mode=check-docs") < yml.indexOf("--mode=check-doc-abbrevs"),
+    "a path that does not exist is the more urgent annotation and must come first",
+  );
+});
+
+/**
+ * The `Collect the docs this PR changed` step's own `run:` body, extracted from
+ * the workflow and EXECUTED — never matched as text. A regex over YAML pins a
+ * spelling, not a behaviour, and this repo has measured such a guard passing the
+ * mutation it existed to catch (#1226); the defect below shipped past one.
+ */
+function collectChangedStepBody() {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const yml = fs.readFileSync(path.join(repoRoot, ".github/workflows/pr-validation.yml"), "utf8");
+  const start = yml.indexOf("- name: Collect the docs this PR changed");
+  assert.ok(start > 0, "the step was renamed — this test is pinned to it by name");
+  const afterRun = yml.indexOf("run: |", start);
+  // Without this, a step written `run: >` (or with no `run:` at all) would make
+  // `indexOf` find the NEXT step's body, or return -1 and slice the whole file —
+  // and the test would happily exercise the wrong shell.
+  assert.ok(afterRun > start, "the step no longer has a `run: |` block — this extraction would read another step");
+  const body = yml.slice(yml.indexOf("\n", afterRun) + 1);
+  const lines = [];
+  for (const line of body.split("\n")) {
+    if (line.trim() === "") { lines.push(""); continue; }
+    if (!line.startsWith("          ")) break; // dedented → the step ended
+    lines.push(line.slice(10));
+  }
+  return lines.join("\n");
+}
+
+test("the changed-file list the guards key on can carry the declarations file", () => {
+  // #1592's severity rule escalates a STALE DECLARATION when the diff owns it.
+  // The list is built with a `-- docs README.md` pathspec and then filtered to
+  // `.md$`, so before this the JSON could never appear in it: the clause was dead
+  // in the only lane that runs it, an expired declaration was a `::warning::` on a
+  // green job, and "verified in both directions" (#1084) held by accident.
+  const repo = makeTempDir("collect-changed-");
+  const git = (...args) => {
+    const r = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: { ...process.env, HOME: repo } });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  };
+  git("init", "--quiet", "-b", "base");
+  git("config", "user.email", "t@example.com");
+  git("config", "user.name", "t");
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "scripts", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "docs", "untouched.md"), "base\n");
+  fs.writeFileSync(path.join(repo, DOC_DEP_DECLARATIONS_FILE), '{"declarations":[]}\n');
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "base");
+  // A remote-tracking ref, because the step resolves `origin/$BASE_REF`.
+  git("update-ref", "refs/remotes/origin/base", "HEAD");
+  git("checkout", "--quiet", "-b", "head");
+  fs.writeFileSync(path.join(repo, "docs", "changed.md"), "new\n");
+  fs.writeFileSync(path.join(repo, DOC_DEP_DECLARATIONS_FILE), '{"declarations":[{"doc":"d","token":"t","reason":"r"}]}\n');
+  fs.writeFileSync(path.join(repo, "docs", "note.txt"), "not markdown\n");
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "head");
+
+  const body = collectChangedStepBody().replace(/^\s*git fetch origin .*$/m, ":");
+  const run = spawnSync("bash", ["-c", body], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: repo, BASE_REF: "base" },
+  });
+  assert.equal(run.status, 0, `step failed: ${run.stderr}`);
+  const list = fs.readFileSync(path.join(repo, "changed-docs.txt"), "utf8").split("\n").filter(Boolean);
+  assert.ok(list.includes("docs/changed.md"), `the changed doc must still be listed: ${list}`);
+  assert.ok(
+    list.includes(DOC_DEP_DECLARATIONS_FILE),
+    `an edit to the declarations file must reach the list, or its stale-entry gate cannot fire: ${list}`,
+  );
+  // The `.md$` filter's own job is unchanged — a non-markdown file under docs/
+  // must still be dropped, or the doc guards would key severity on it.
+  assert.ok(!list.includes("docs/note.txt"), `the .md filter must still hold: ${list}`);
+});
+
+/**
+ * A CLI harness for `--mode=check-doc-abbrevs`.
+ *
+ * The sibling `--mode=check-docs` has one (`docsFixture` + `runCliFrom`) and its
+ * comment records WHY: reverting `--releases` to a no-op, deleting the printed
+ * report, or letting an unlistable ref be skipped all leave the suite green —
+ * measured, all three survived the pure tests alone. The same held here and was
+ * found in review: `process.exit(1)`, the `::error::`/`::warning::` choice and the
+ * entire expired-declaration report could each be deleted with the unit lane at
+ * 93/93. A pure function that nothing calls is not a gate.
+ *
+ * `docsFixture` cannot be reused verbatim: this mode also runs `git ls-files` in
+ * the home, so the home has to be a git repo with an index.
+ */
+function abbrevUpstreamFixture() {
+  const root = makeTempDir("abbrev-upstream-");
+  const run = (...args) =>
+    spawnSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+  const write = (rel) => {
+    fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), "");
+  };
+  run("init", "-q", "-b", "main");
+  write("src/backend/base/langflow/api/v2/hitl.py");
+  // Two live files of the same basename — the ambiguity class, on the transport.
+  write("src/frontend/src/a/session-selector.tsx");
+  write("src/frontend/src/b/session-selector.tsx");
+  run("add", "-A");
+  run("commit", "-qm", "upstream");
+  return root;
+}
+
+function abbrevCliFixture({ docs, declarations = [], ownFiles = {} }) {
+  const home = makeTempDir("abbrev-home-");
+  fs.mkdirSync(path.join(home, "scripts", "lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"),
+    path.join(home, "scripts/watch-upstream-areas.mjs"),
+  );
+  fs.writeFileSync(path.join(home, DOC_DEP_DECLARATIONS_FILE), JSON.stringify({ declarations }, null, 2));
+  for (const [rel, body] of Object.entries({ ...docs, ...ownFiles })) {
+    fs.mkdirSync(path.join(home, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(home, rel), body);
+  }
+  const git = (...args) =>
+    spawnSync("git", args, {
+      cwd: home,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+  // `git ls-files` reads the INDEX, so adding is enough — no commit needed.
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  return { home, upstream: abbrevUpstreamFixture() };
+}
+
+function runAbbrevCli(home, upstream, changed) {
+  const args = [path.join(home, "scripts/watch-upstream-areas.mjs"), "--mode=check-doc-abbrevs", "--root", upstream, "--ref", "main"];
+  if (changed) {
+    fs.writeFileSync(path.join(home, "changed.txt"), `${changed.join("\n")}\n`);
+    args.push("--changed", path.join(home, "changed.txt"));
+  }
+  const r = spawnSync(process.execPath, args, { encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+test("the CLI is a GATE: a finding in a changed doc exits 1 and is an ::error::", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`api/v2/hitl.py` — the resume helpers") },
+  });
+
+  const owned = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(owned.status, 1, `a finding the diff owns must fail: ${owned.stdout}${owned.stderr}`);
+  assert.match(owned.stderr, /::error::docs\/area\/spec\.md:\d+/);
+  assert.match(owned.stdout, /is `src\/backend\/base\/langflow\/api\/v2\/hitl\.py`/);
+
+  // #980's half: the same finding, in a doc nobody touched, is reported and green.
+  const untouched = runAbbrevCli(home, upstream, ["docs/other.md"]);
+  assert.equal(untouched.status, 0, untouched.stderr);
+  assert.match(untouched.stderr, /::warning::docs\/area\/spec\.md:\d+/);
+  assert.doesNotMatch(untouched.stderr, /::error::/);
+});
+
+test("the CLI prints the ambiguity rather than picking one, and fails on it the same way", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`session-selector.tsx` — the row") },
+  });
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /matches 2: src\/frontend\/src\/a\/session-selector\.tsx \| src\/frontend\/src\/b\/session-selector\.tsx/);
+});
+
+test("the CLI reports a clean corpus as clean, and says what it actually read", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: {
+      // One `src/` token (never counted — the sibling step owns those) and one
+      // path-shaped token that IS counted and resolves to nothing: the clean
+      // corpus has to have something in it for "clean" to mean anything.
+      "docs/area/spec.md": depsSection(
+        "`src/backend/base/langflow/api/v2/hitl.py` — in full",
+        "`text/event-stream` — the run stream's content type, not a module",
+      ),
+      // The exempt template, so the corpus counts below have both halves to state.
+      [DOC_DEPS_EXEMPT_FILES[0]]: depsSection("`api/v2/hitl.py` — illustrative, by design"),
+    },
+  });
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Every upstream module named in a dependency section is written as a resolvable `src\/` path\./);
+  // EXACT counts, not `\d+`. A loose match here passed with the CLI reading NO
+  // docs at all — the header degraded to `Checked 0 … of 0 doc(s)` and still
+  // matched, so the test asserted the shape of a sentence and nothing about the
+  // corpus. It also leaves the exempt split pinned: both halves of it were
+  // mutable with the suite green.
+  assert.match(r.stdout, /Checked 1 non-`src\/` token\(s\) in the External dependencies of 1 doc\(s\)/);
+  assert.match(r.stdout, /1 doc\(s\) exempt\./);
+});
+
+test("the CLI refuses an unreadable declarations file with exit 2 — undecidable, not clean", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`api/v2/hitl.py` — the resume helpers") },
+  });
+  fs.writeFileSync(path.join(home, DOC_DEP_DECLARATIONS_FILE), "{ not json");
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /not valid JSON/);
+});
+
+test("the CLI refuses an empty `git ls-files` — the one input with no floor", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`api/v2/hitl.py` — the resume helpers") },
+  });
+  // A git directory with no index: `git ls-files` exits 0 printing nothing, which
+  // would disable ours-wins in silence and turn our own helper references into
+  // findings — and, in a doc the PR touched, into hard failures.
+  fs.rmSync(path.join(home, ".git", "index"), { force: true });
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /listed nothing/);
+});
+
+test("a stale declaration fails the run when the diff owns the declarations file", () => {
+  // The other half of the same rule, at the CLI. Together with the test above
+  // this is the whole path: the workflow puts the file in the list, and the
+  // runner escalates on it.
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`src/backend/base/langflow/api/v2/hitl.py` — declared in full") },
+    declarations: [{ doc: "docs/area/spec.md", token: "api/v2/hitl.py", reason: "a".repeat(50) }],
+  });
+  const reported = runAbbrevCli(home, upstream, ["docs/unrelated.md"]);
+  assert.equal(reported.status, 0, "a stale entry nobody touched is reported, not failed (#980)");
+  assert.match(reported.stderr, /::warning::.*silences nothing/);
+
+  const owned = runAbbrevCli(home, upstream, [DOC_DEP_DECLARATIONS_FILE]);
+  assert.equal(owned.status, 1, "the diff owns the declarations file, so the stale entry fails");
+  assert.match(owned.stderr, /::error::.*silences nothing/);
+
+  // The rule is a disjunction and this commit added a test for one side of it.
+  // The other side — the diff owns the DOC the declaration names — is the half
+  // that was already live before the workflow fix, and dropping it left the suite
+  // green.
+  const docOwned = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(docOwned.status, 1, "the diff owns the doc the declaration names, so the stale entry fails too");
+  assert.match(docOwned.stderr, /::error::.*silences nothing/);
+});
+
+test("a declaration needs a non-empty doc, not just a token and a reason", () => {
+  // `token` and `reason` were both pinned and `doc` was not, so an entry with
+  // `doc: ""` was accepted — and a declaration keyed to no doc silences nothing
+  // anywhere, which is the expired case arriving through the validator instead.
+  const tmp = makeTempDir("docdeps-doc-");
+  fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, DOC_DEP_DECLARATIONS_FILE),
+    JSON.stringify({ declarations: [{ doc: "", token: "t", reason: "r".repeat(50) }] }),
+  );
+  assert.match(readDocDepDeclarations(tmp).error, /entry 0 needs/);
 });

@@ -86,7 +86,7 @@ References in the **main Langflow repository** (compatible with Langflow 1.10.x)
 - `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanNode.tsx` (line 56) — defines `data-testid="span-node-${span.id}"` (consumed by the `toHaveCount(4)` assertion and by the `Language Model` span click in test 3)
 - `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanDetail.tsx` (line 44) — defines `data-testid="span-detail"`; the `(hasTokenUsage || isLlmSpan)` branch around line 100 keeps the Tokens / Prompt / Completion metric cards on screen for the unconfigured fixture's null `tokenUsage`, and the `getSpanTypeLabel(span.type)` render at line 68 produces the `LLM` header label asserted by test 3
 - `src/frontend/src/pages/FlowPage/components/TraceComponent/traceViewHelpers.ts` (lines 52, 81) — `getSpanTypeLabel` (`llm` → `"LLM"`, drives the test 3 type-label assertion) and `formatTotalLatency` (drives the dual-branch `<n> ms` / `<n.nn> s` regex used by tests 2 and 3)
-- `data-testid="sidebar-nav-traces"` is asserted in Langflow's own unit tests under `flowSidebarComponent/components/__tests__/sidebarSegmentedNav.test.tsx`
+- `data-testid="sidebar-nav-traces"` is asserted in Langflow's own unit tests under `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/__tests__/sidebarSegmentedNav.test.tsx`
 
 References in this repository:
 

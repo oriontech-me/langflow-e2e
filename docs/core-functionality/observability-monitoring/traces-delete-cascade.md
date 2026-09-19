@@ -51,7 +51,7 @@ The test seeds a flow whose run emits a trace with a **guaranteed non-empty span
 
 ## External dependencies *(required)*
 
-> ⚠️ **This bug is only observable when the database enforces foreign keys.** Postgres always does. **SQLite does NOT by default** — Langflow's default `sqlite_pragmas` (`lfx/services/settings/base.py`) omit `foreign_keys`, so `span_trace_id_fkey` is not enforced and the buggy `DELETE` "succeeds" (204, leaving orphaned spans) — the test would then pass for the wrong reason. To exercise the bug against a SQLite SUT, launch Langflow with `LANGFLOW_SQLITE_PRAGMAS` including `"foreign_keys": "ON"` (the dict replaces the default wholesale, so repeat the default pragmas), or run against Postgres. Wiring FK enforcement into the CI SUT (`scripts/start-langflow-docker.sh`) is tracked separately from this spec — see Notes.
+> ⚠️ **This bug is only observable when the database enforces foreign keys.** Postgres always does. **SQLite does NOT by default** — Langflow's default `sqlite_pragmas` (`src/lfx/src/lfx/services/settings/groups/database.py`) omit `foreign_keys`, so `span_trace_id_fkey` is not enforced and the buggy `DELETE` "succeeds" (204, leaving orphaned spans) — the test would then pass for the wrong reason. To exercise the bug against a SQLite SUT, launch Langflow with `LANGFLOW_SQLITE_PRAGMAS` including `"foreign_keys": "ON"` (the dict replaces the default wholesale, so repeat the default pragmas), or run against Postgres. Wiring FK enforcement into the CI SUT (`scripts/start-langflow-docker.sh`) is tracked separately from this spec — see Notes.
 
 References in the **main Langflow repository**:
 

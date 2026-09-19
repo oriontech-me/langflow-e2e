@@ -60,8 +60,8 @@ The Default session is excluded from bulk operations by design: `selectableSessi
 
 ## External dependencies *(required)*
 
-- `chat-sidebar.tsx` — `data-testid="select-all-checkbox"` (appears between Default session and first non-default session when `selectableSessions.length > 0`); `data-testid="bulk-delete-button"` (appears when `selectedSessions.size > 0`)
-- `session-selector.tsx` — `data-testid="session-${session}-checkbox"` (dynamic; rendered only when `showCheckbox={selectableSessions.includes(session)}`); a custom `div` — selected state is indicated by `.text-status-red` on the inner icon (`SquareCheck`), not by a native checked attribute
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/chat-sidebar.tsx` — `data-testid="select-all-checkbox"` (appears between Default session and first non-default session when `selectableSessions.length > 0`); `data-testid="bulk-delete-button"` (appears when `selectedSessions.size > 0`)
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-selector.tsx` — `data-testid="session-${session}-checkbox"` (dynamic; rendered only when `showCheckbox={selectableSessions.includes(session)}`); a custom `div` — selected state is indicated by `.text-status-red` on the inner icon (`SquareCheck`), not by a native checked attribute
 - Default session is never selectable; its entry never has a checkbox
 
 References in this repository:

@@ -81,7 +81,7 @@ Cleanup tracks the ids returned by this page's own flow-creating responses (`POS
 - `src/frontend/src/modals/apiModal/codeTabs/code-tabs.tsx` — renders the `api_tab_${title}` language tabs and `btn-copy-code`; owns the `setSelectedTab` switch
 - `src/frontend/src/modals/apiModal/index.tsx` — modal shell; renders the `API access` title (`modal.api.title`) and the `endpoint-name-button` header entry point
 - `src/frontend/src/components/ui/dialog.tsx` — the `Close` (X) button with the `Close` accessible name
-- `src/frontend/src/modals/apiModal/utils/get-curl-code.tsx` / `get-python-api-code.tsx` — build the snippets whose `/api/v1/run/{flowId}` URL the flow-ID test asserts
+- `src/frontend/src/modals/apiModal/utils/get-curl-code.tsx` / `src/frontend/src/modals/apiModal/utils/get-python-api-code.tsx` — build the snippets whose `/api/v1/run/{flowId}` URL the flow-ID test asserts
 - `src/backend/base/langflow/api/v1/endpoints.py` — owns `/api/v1/run/{flow_id}`; the URL shape encoded in the snippet must keep matching this route
 
 ---

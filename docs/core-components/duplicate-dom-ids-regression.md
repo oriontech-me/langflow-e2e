@@ -105,10 +105,10 @@ In every build the field **testid** resolved to 2 elements — the contract half
 - `src/frontend/src/components/core/parameterRenderComponent/index.tsx` — builds the base id from the template type/name and threads `nodeId` down to the renderers.
 - `src/frontend/src/components/core/parameterRenderComponent/components/textAreaComponent/index.tsx` — renders the `textarea_str_*` fields the Agent case asserts; `id` scoped, `data-testid` unscoped.
 - `src/frontend/src/components/core/parameterRenderComponent/components/strRenderComponent/index.tsx` — routes single-line string fields and forwards `nodeId`.
-- `src/frontend/src/components/core/parameterRenderComponent/components/inputComponent/index.tsx` and `.../components/popover/index.tsx` — render the `popover-anchor-input-*` fields the API Request case asserts. Any renderer added here that does not call `getNodeScopedDomId` reintroduces the defect.
+- `src/frontend/src/components/core/parameterRenderComponent/components/inputComponent/index.tsx` and `src/frontend/src/components/core/parameterRenderComponent/components/inputComponent/components/popover/index.tsx` — render the `popover-anchor-input-*` fields the API Request case asserts. Any renderer added here that does not call `getNodeScopedDomId` reintroduces the defect.
 - `src/frontend/src/types/components/index.ts` — declares the optional `nodeId` prop. The helper falls back to the unscoped id when it is absent, so a renderer that simply fails to receive the prop regresses silently.
 - Sidebar add affordances — `sidebar-search-input`, `add-component-button-api-request`, `disclosure-models & agents`, `models_and_agentsAgent`.
-- Node titles — `title-API Request` (rendered by `CustomNodes/GenericNode/components/NodeName`).
+- Node titles — `title-API Request` (rendered by `src/frontend/src/CustomNodes/GenericNode/components/NodeName/`).
 - React Flow canvas — `.react-flow__node` for node counting, `#react-flow-id` as both the sweep root and the drag drop target.
 - Field testids — `popover-anchor-input-url_input`, `textarea_str_system_prompt`.
 - `tests/helpers/flows/setup-blank-flow.ts` — API-based flow creation plus the id used for cleanup.

@@ -168,7 +168,7 @@ error event, so an auth failure cannot pass silently).
 
 ## External dependencies *(required)*
 
-- `lfx_bundles/mistral/mistral.py` (MistralAI component) — `api_key`
+- `src/bundles/lfx-bundles/src/lfx_bundles/mistral/mistral.py` (MistralAI component) — `api_key`
   (SecretStrInput, required), static `model_name` dropdown; shim in
   `lfx.components.mistral` until the lfx-bundles deprecation window closes.
 - `src/frontend/` canvas — sidebar search (`sidebar-search-input`,

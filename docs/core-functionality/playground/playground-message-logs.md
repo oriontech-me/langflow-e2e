@@ -53,11 +53,11 @@ Message Logs give users a structured view of a session's full message history an
 
 ## External dependencies *(required)*
 
-- `session-more-menu.tsx` — `data-testid="message-logs-option"` (visible by default for all sessions; `showMessageLogs` defaults to `true`)
-- `session-logs-modal.tsx` — renders `SessionView` inside `BaseModal`
-- `session-view.tsx` — ag-grid table with `rowSelection="multiple"` and `onDelete` enabled when `playgroundPage = false` (which is the case in the embedded playground); row and checkbox selectors (`.ag-row`, `.ag-row .ag-checkbox-input`) are ag-grid internal CSS classes — ag-grid does not expose `data-testid` on row elements; the header row also has a `.ag-checkbox-input` (select-all), so the selector must be scoped to `.ag-row` to target individual row checkboxes
-- `tableComponent/TableOptions/index.tsx` — `data-testid="delete-row-button"` (disabled until `hasSelection = true`)
-- `flowStore.ts` — `playgroundPage` defaults to `false`; deletion is only disabled on the standalone shareable playground page
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-more-menu.tsx` — `data-testid="message-logs-option"` (visible by default for all sessions; `showMessageLogs` defaults to `true`)
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-logs-modal.tsx` — renders `SessionView` inside `BaseModal`
+- `src/frontend/src/modals/IOModal/components/session-view.tsx` — ag-grid table with `rowSelection="multiple"` and `onDelete` enabled when `playgroundPage = false` (which is the case in the embedded playground); row and checkbox selectors (`.ag-row`, `.ag-row .ag-checkbox-input`) are ag-grid internal CSS classes — ag-grid does not expose `data-testid` on row elements; the header row also has a `.ag-checkbox-input` (select-all), so the selector must be scoped to `.ag-row` to target individual row checkboxes
+- `src/frontend/src/components/core/parameterRenderComponent/components/tableComponent/components/TableOptions/index.tsx` — `data-testid="delete-row-button"` (disabled until `hasSelection = true`)
+- `src/frontend/src/stores/flowStore.ts` — `playgroundPage` defaults to `false`; deletion is only disabled on the standalone shareable playground page
 
 ---
 
