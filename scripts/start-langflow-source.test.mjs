@@ -111,6 +111,13 @@ function runScript({
   ignoresTerm = false,
   withUv = true,
   stamp = null,
+  // `serveInstalled: true` is the shape #1927 added: no clone anywhere, the run
+  // command supplied and the UI served from a directory that belongs to an
+  // installed distribution rather than to a checkout. It drops LANGFLOW_SRC_REPO
+  // from the child's environment entirely — passing it empty would not do, since
+  // the script's own default fills an empty value back in.
+  serveInstalled = false,
+  passRepo = !serveInstalled,
   runCmdForwardsArgv = false,
   runCmdDecoyMarker = false,
   // The guard below waits this long for the launched process to appear. 5 s is
@@ -140,11 +147,18 @@ function runScript({
   // answers every rev-parse with "abc1234", so that is the sha a MATCHING stamp
   // carries and anything else is the stale case.
   if (repoExists && stamp) writeFileSync(join(repo, ".langflow-e2e-build-stamp"), `sha=${stamp}\n`);
+  // The frontend an installed distribution carries, outside any clone.
+  const installedFrontend = join(dir, "site-packages/langflow/frontend");
+  if (serveInstalled) {
+    mkdirSync(installedFrontend, { recursive: true });
+    writeFileSync(join(installedFrontend, "index.html"), "<!doctype html>");
+  }
 
   const uvLog = join(dir, "uv.log");
   const gitLog = join(dir, "git.log");
   const envLog = join(dir, "env.log");
   const curlCount = join(dir, "curl.count");
+  const cwdLog = join(dir, "cwd.log");
 
   // Logs its arguments, plus the Langflow variables the run inherits — the run
   // command is what carries them, so they are only observable from inside it. Then
@@ -197,9 +211,13 @@ exit ${healthy ? 0 : 1}
   // reaped the zombie when the starter's `kill -0` ran. Same shape as the `uv`
   // stub above, which was always correct because a bash script ignores `"$@"`
   // unless it reads it.
+  // `pwd` before the exec: the working directory is a property of the launch that
+  // is invisible from outside it, and #1927 made it depend on whether a clone was
+  // given at all.
   writeFileSync(
     join(bin, "fake-server"),
     `#!/usr/bin/env bash
+pwd > "${cwdLog}"
 exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArgv ? ' "$@"' : ""}
 `,
   );
@@ -215,17 +233,28 @@ exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArg
   let stdout = "";
   let status = 0;
   try {
+    const childEnv = {
+      ...process.env,
+      PATH: path,
+      LANGFLOW_SRC_REPO: repo,
+      LANGFLOW_SRC_STATE_ROOT: stateRoot,
+      LANGFLOW_POLL_INTERVAL_S: "1",
+      LANGFLOW_START_TIMEOUT_S: healthy && !serverExits ? "30" : "3",
+      ...(serveInstalled
+        ? {
+            LANGFLOW_SRC_RUN_CMD: "fake-server",
+            LANGFLOW_SRC_FRONTEND_DIR: installedFrontend,
+          }
+        : {}),
+      ...env,
+    };
+    // Deleted rather than emptied: `${LANGFLOW_SRC_REPO:-default}` treats an empty
+    // value as unset and puts the default path back, so an empty string would test
+    // the default-clone branch while claiming to test the cloneless one.
+    if (!passRepo) delete childEnv.LANGFLOW_SRC_REPO;
     stdout = execFileSync("bash", [START], {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: path,
-        LANGFLOW_SRC_REPO: repo,
-        LANGFLOW_SRC_STATE_ROOT: stateRoot,
-        LANGFLOW_POLL_INTERVAL_S: "1",
-        LANGFLOW_START_TIMEOUT_S: healthy && !serverExits ? "30" : "3",
-        ...env,
-      },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
       // The starter must RETURN once the instance is ready, with the server still
       // running behind it. It only can because the launch `exec`s: without that the
@@ -294,6 +323,7 @@ exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArg
     if (
       withUv &&
       !env.LANGFLOW_SRC_RUN_CMD &&
+      !serveInstalled &&
       !waitFor(() => read(envLog).length > 0, waitBudgetMs)
     ) {
       bail("the uv stub never wrote its env dump", "uv.log", uvLog);
@@ -316,6 +346,8 @@ exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArg
     port,
     repo,
     binPath: path,
+    cwd: read(cwdLog).trim(),
+    installedFrontend,
     // Callers that let a stub server start are responsible for stopping it; the
     // teardown is deliberately theirs, since two tests stop it through the real
     // stop script and that is the thing being measured.
@@ -459,6 +491,74 @@ test("a missing source clone fails with exit 2, naming the path and the override
   assertExit(r, 2);
   assert.match(r.stdout, /Langflow source clone not found/);
   assert.match(r.stdout, /LANGFLOW_SRC_REPO/);
+  r.cleanup();
+});
+
+// --- serving an installed distribution, with no clone at all (#1927) -------------
+// The VM lane has served the target from a venv since 2026-09-10, and the clone it
+// still had to name was read by nothing: sync skipped, UI from
+// LANGFLOW_SRC_FRONTEND_DIR, stamp with no HEAD to disagree with. These pin the mode
+// itself, because its whole point is that a machine can carry no Langflow source.
+
+test("no clone is required when the run command is supplied", () => {
+  const r = runScript({ serveInstalled: true });
+  assertExit(r, 0);
+  assert.doesNotMatch(r.stdout, /source clone not found/);
+  assert.match(r.stdout, /Langflow source: none/);
+  r.cleanup();
+});
+
+test("the state directory is the working directory when there is no clone", () => {
+  const r = runScript({ serveInstalled: true });
+  assertExit(r, 0);
+  // Asserted from inside the launch, because the working directory is the one
+  // property of it that leaves no other trace — and it is what the clone was
+  // still being demanded for.
+  assert.equal(r.cwd, r.stateDir);
+  r.cleanup();
+});
+
+test("a clone that IS named still has to exist, and is still what the server runs in", () => {
+  const missing = runScript({ repoExists: false, env: { LANGFLOW_SRC_RUN_CMD: "fake-server" } });
+  assertExit(missing, 2);
+  assert.match(missing.stdout, /Langflow source clone not found/);
+  missing.cleanup();
+
+  const present = runScript({ env: { LANGFLOW_SRC_RUN_CMD: "fake-server" } });
+  assertExit(present, 0);
+  assert.equal(present.cwd, present.repo);
+  present.cleanup();
+});
+
+test("serving without a clone refuses when the frontend is not named", () => {
+  const r = runScript({ serveInstalled: true, env: { LANGFLOW_SRC_FRONTEND_DIR: "" } });
+  assertExit(r, 2);
+  assert.match(r.stdout, /LANGFLOW_SRC_FRONTEND_DIR/);
+  r.cleanup();
+});
+
+test("a ref is refused without a clone, rather than silently serving the venv", () => {
+  const r = runScript({ serveInstalled: true, env: { LANGFLOW_SRC_REF: "v1.12.0" } });
+  assertExit(r, 2);
+  assert.match(r.stdout, /LANGFLOW_SRC_REF/);
+  assert.match(r.stdout, /no source clone/);
+  r.cleanup();
+});
+
+test("a sync command is refused without a clone to run it in", () => {
+  const r = runScript({ serveInstalled: true, env: { LANGFLOW_SRC_SYNC_CMD: "uv sync --frozen" } });
+  assertExit(r, 2);
+  assert.match(r.stdout, /LANGFLOW_SRC_SYNC_CMD/);
+  r.cleanup();
+});
+
+test("the stamp guarantee is refused without a clone, never skipped quietly", () => {
+  // The lane asks for provenance with LANGFLOW_REQUIRE_BUILD_STAMP=1. With no clone
+  // nothing can answer it, and answering "fine" would be the unperformed check this
+  // file exists to prevent.
+  const r = runScript({ serveInstalled: true, env: { LANGFLOW_REQUIRE_BUILD_STAMP: "1" } });
+  assertExit(r, 2);
+  assert.match(r.stdout, /LANGFLOW_REQUIRE_BUILD_STAMP=1/);
   r.cleanup();
 });
 
