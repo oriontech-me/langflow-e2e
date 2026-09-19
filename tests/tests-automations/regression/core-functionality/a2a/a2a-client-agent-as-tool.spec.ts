@@ -276,8 +276,22 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`A2A Client — A2AAgent as an Agent tool [${label}]`, () => {
+    // `@stable` removed for #1921 — a confirmed product defect in `lfx`, not a test
+    // or wait-strategy problem. `lfx/graph/checkpoint/schema.py` infers "this field is
+    // opaque" from `model_dump(mode="json")` raising; langchain-core >= 1.6 made
+    // `args_schema` serializable, so the guard stopped firing and the Agent toolset's
+    // `coroutine` is now checkpointed as a `repr` string. The resumed run then dies in
+    // `model_validate`, and this is the only `@stable` spec that pauses a run holding
+    // an agent's toolset. The nightly IMAGE still pins langchain-core 1.5.1 and masks
+    // it, which is why the Actions lane passes while the VM lane (published dist in a
+    // venv, current dependencies) fails 10/10 — so the tag comes off ahead of the VM
+    // lane becoming the source of truth, instead of the VM gate opening red or
+    // `auto-remove-stable` filing the finding away as triage. No `test.fixme`: the
+    // spec is green on the impacted-specs lane, which runs the masked image, so #871
+    // does not apply and that lane keeps the signal for when the image picks the
+    // dependency up. Restoring the tag is a deliverable of #1921.
     test("an approved send_to_agent call resumes the run and executes the published agent",
-      { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a", "@agents"] },
+      { tag: ["@regression", "@components", "@workspace", "@a2a", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
