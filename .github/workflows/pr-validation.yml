@@ -325,6 +325,25 @@ jobs:
             --releases "$RELEASE_CSV" \
             --changed changed-docs.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # The same silence one step EARLIER (#1592). The step above resolves what it
+      # is GIVEN, and only `src/…` tokens are given to it — so an upstream module
+      # written `api/v2/hitl.py` is not a path that fails to resolve, it is a path
+      # the resolver never sees, and the count printed above cannot show it. This
+      # answers the other question: is there an upstream module in this section
+      # that was never written as one? Same severity rule as above — the changed
+      # docs fail, the rest are reported (#980/#1012) — and it runs AFTER, because
+      # a `::error::` about a path that does not exist is the more urgent of the
+      # two and must not be pushed down the annotation list by this one.
+      - name: Find upstream modules named without their src/ prefix
+        run: |
+          set -eo pipefail
+          node scripts/watch-upstream-areas.mjs \
+            --mode=check-doc-abbrevs \
+            --root langflow-upstream \
+            --ref origin/main \
+            --releases "$RELEASE_CSV" \
+            --changed changed-docs.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
   detect-specs:
     name: Detect changed specs
     runs-on: ubuntu-latest

@@ -17,6 +17,7 @@ import {
   AREAS,
   BODY_DELIMITER,
   DOC_DEPS_EXEMPT_FILES,
+  DOC_DEP_DECLARATIONS_FILE,
   assertValidSince,
   parseArgs,
   LANGFLOW_AREAS,
@@ -27,6 +28,10 @@ import {
   RELEASE_LINES_TRACKED,
   areaCommands,
   buildAreas,
+  abbreviationTarget,
+  findAbbreviatedDeps,
+  parseDocDepTokens,
+  readDocDepDeclarations,
   buildGuardVerdict,
   checkDocDeps,
   classifyDepToken,
@@ -1779,4 +1784,295 @@ test("pr-validation.yml runs the doc-deps guard with a diff list and a real upst
   assert.match(yml, /git clone --filter=blob:none --depth 1 --no-checkout/);
   // The clone must not fail open: no tree means no verdict, which is not a pass.
   assert.match(yml, /::error::could not clone langflow-ai\/langflow/);
+});
+
+/* ---------------------------------------------------------------------------
+ * Abbreviated upstream modules — the silence one step before the resolver (#1592)
+ * ------------------------------------------------------------------------- */
+
+const abbrevTrees = [
+  {
+    ref: "origin/main",
+    entries: [
+      "src/backend/base/langflow/api/v2/hitl.py",
+      "src/backend/base/langflow/api",
+      "src/frontend/src/stores/flowStore.ts",
+      "src/frontend/src/modals/IOModal/components/session-view.tsx",
+      "src/frontend/src/pages/AdminPage",
+      "src/frontend/src/pages/AdminPage/index.tsx",
+      "src/frontend/tests/utils/flow/add-component-from-sidebar.ts",
+      "src/frontend/src/modals/IOModal/components/chatView/chatMessage/chat-message.tsx",
+      "src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/chat-message.tsx",
+    ],
+  },
+];
+
+const abbrevDoc = (markdown) => ({ file: "docs/area/spec.md", markdown });
+const depsSection = (...bullets) => `## External dependencies\n\n${bullets.map((b) => `- ${b}`).join("\n")}\n`;
+
+test("an upstream module named without src/ is a finding, with the path it should have been", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`api/v2/hitl.py` — the resume helpers"))],
+    trees: abbrevTrees,
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].token, "api/v2/hitl.py");
+  assert.equal(result.findings[0].resolved, "src/backend/base/langflow/api/v2/hitl.py");
+  assert.deepEqual(result.findings[0].refs, ["origin/main"]);
+});
+
+test("the same file already declared in full, in the same section, is not a hole", () => {
+  // A bullet routinely names a file in full and refers to it again by basename.
+  // The resolver already holds the full path, so the second mention costs nothing.
+  const result = findAbbreviatedDeps({
+    docs: [
+      abbrevDoc(
+        depsSection("`src/backend/base/langflow/api/v2/hitl.py` — the module", "`hitl.py` — again, mid-sentence"),
+      ),
+    ],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+});
+
+test("a token that is one of OUR files is out of scope, even when upstream carries the name", () => {
+  // Measured: upstream has `src/frontend/tests/utils/flow/add-component-from-sidebar.ts`
+  // and so do we. Six docs name ours without a directory; resolving them upstream
+  // would rewrite this repo's own helper references into Langflow paths.
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`add-component-from-sidebar.ts` — our helper"))],
+    trees: abbrevTrees,
+    ownFiles: ["tests/helpers/flows/add-component-from-sidebar.ts"],
+  });
+  assert.deepEqual(result.findings, []);
+});
+
+test("an abbreviation matching two upstream files is reported as ambiguous, never guessed", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`chat-message.tsx` — the bubble"))],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.ambiguous.length, 1);
+  assert.equal(result.ambiguous[0].candidates.length, 2);
+});
+
+test("an ellipsis is resolved by its tail — the elided prefix is what goes stale", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`stores/.../flowStore.ts` — the store"))],
+    trees: abbrevTrees,
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].resolved, "src/frontend/src/stores/flowStore.ts");
+});
+
+test("a directory is a finding too — `-t` puts directory entries in the tree", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`pages/AdminPage/` — holds only the admin LoginPage"))],
+    trees: abbrevTrees,
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].resolved, "src/frontend/src/pages/AdminPage");
+});
+
+test("prose that resolves to nothing is silent — that is what keeps the check gateable", () => {
+  // Every shape below survives the character filter and is emphatically not a
+  // module; uniqueness against the tree, not a keyword list, is what drops them.
+  const result = findAbbreviatedDeps({
+    docs: [
+      abbrevDoc(
+        depsSection(
+          "`text/event-stream` — the run stream's content type",
+          "`store/tags` — the external Store endpoint",
+          "`models/gemini-embedding-001` — the embedding model id",
+        ),
+      ),
+    ],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.ambiguous, []);
+});
+
+test("severity follows the diff: a changed doc fails, a pre-existing one is reported", () => {
+  // #980 — one upstream rename must not redden every PR that edits an unrelated
+  // doc, and it must not be invisible either (#1012).
+  const docs = [
+    { file: "docs/changed.md", markdown: depsSection("`api/v2/hitl.py` — here") },
+    { file: "docs/untouched.md", markdown: depsSection("`api/v2/hitl.py` — here too") },
+  ];
+  const result = findAbbreviatedDeps({ docs, trees: abbrevTrees, changedFiles: ["docs/changed.md"] });
+  assert.deepEqual(
+    result.findings.map((f) => [f.file, f.severity]),
+    [
+      ["docs/changed.md", "fail"],
+      ["docs/untouched.md", "warn"],
+    ],
+  );
+});
+
+test("a declared token is silenced, and a declaration that silences nothing is reported", () => {
+  // #1084's rule, both directions: the exemption whose justification expired
+  // silently is the failure that issue was raised about.
+  const declarations = [
+    { doc: "docs/area/spec.md", token: "api/v2/hitl.py", reason: "named to say the spec does NOT touch it" },
+    { doc: "docs/area/spec.md", token: "api/v2/gone.py", reason: "stale" },
+  ];
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`api/v2/hitl.py` — not exercised here"))],
+    trees: abbrevTrees,
+    declarations,
+  });
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.declared, 1);
+  assert.deepEqual(
+    result.expired.map((e) => e.token),
+    ["api/v2/gone.py"],
+  );
+});
+
+test("a declaration is keyed to ITS doc — it cannot silence the same token elsewhere", () => {
+  const result = findAbbreviatedDeps({
+    docs: [{ file: "docs/other.md", markdown: depsSection("`api/v2/hitl.py` — a real dependency here") }],
+    trees: abbrevTrees,
+    declarations: [{ doc: "docs/area/spec.md", token: "api/v2/hitl.py", reason: "context there, not here" }],
+  });
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.expired.length, 1);
+});
+
+test("the exempt template is skipped whole — its bullets exist to show the SHAPE", () => {
+  const result = findAbbreviatedDeps({
+    docs: [{ file: DOC_DEPS_EXEMPT_FILES[0], markdown: depsSection("`api/v2/hitl.py` — illustrative") }],
+    trees: abbrevTrees,
+  });
+  assert.deepEqual(result.findings, []);
+});
+
+test("no tree is undecidable, not `no doc abbreviates anything`", () => {
+  assert.throws(() => findAbbreviatedDeps({ docs: [], trees: [] }), /at least one/);
+  assert.throws(() => findAbbreviatedDeps({ docs: [], trees: [{ ref: "x" }] }), /at least one/);
+});
+
+test("a token outside the External dependencies section is not read at all", () => {
+  const markdown = `## Steps\n\n- \`api/v2/hitl.py\` mentioned in prose\n\n## External dependencies\n\n- nothing here\n`;
+  assert.deepEqual(findAbbreviatedDeps({ docs: [abbrevDoc(markdown)], trees: abbrevTrees }).findings, []);
+});
+
+test("parseDocDepTokens and parseDocDeps are one parser, so they cannot disagree on the section", () => {
+  const markdown = depsSection("`src/a/b.py` and `b.py` and `POST /api/v1/flows/`");
+  const all = parseDocDepTokens(markdown).map((t) => t.token);
+  assert.deepEqual(all, ["src/a/b.py", "b.py", "POST /api/v1/flows/"]);
+  assert.deepEqual(
+    parseDocDeps(markdown).map((t) => t.token),
+    all.filter((t) => t.startsWith("src/")),
+  );
+});
+
+test("abbreviationTarget refuses what is not a path, and keeps what is", () => {
+  const rejected = [
+    ".py", // a bare extension written mid-sentence: an empty stem, a word
+    "/api/v1/flows/", // an endpoint
+    "http://localhost", // a URL
+    "langflow-ai/langflow#14469", // an issue reference
+    "@modelcontextprotocol/server-everything", // an npm scope
+    "Ctrl/Cmd+G", // a keyboard chord
+    "decisions", // a field name — one segment, no extension
+    "waitForURL(/\\/settings(?:\\/|$)/)", // a regex literal
+  ];
+  for (const token of rejected) assert.equal(abbreviationTarget(token), "", `should reject ${token}`);
+  assert.equal(abbreviationTarget("api/v2/hitl.py:70-78"), "api/v2/hitl.py");
+  assert.equal(abbreviationTarget("pages/AdminPage/"), "pages/AdminPage");
+  assert.equal(abbreviationTarget("flowStore.ts"), "flowStore.ts");
+});
+
+test("the declarations file is readable, shaped, and every entry carries a reason", () => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const read = readDocDepDeclarations(repoRoot);
+  assert.equal(read.error, undefined, `${DOC_DEP_DECLARATIONS_FILE}: ${read.error}`);
+  assert.ok(read.declarations.length > 0, "an empty file would read as `nothing is declared`, which is not measured");
+  for (const entry of read.declarations) {
+    assert.ok(fs.existsSync(path.join(repoRoot, entry.doc)), `${entry.doc} does not exist`);
+    assert.ok(entry.reason.length > 40, `${entry.token}: a reason has to say WHY, not name the token again`);
+  }
+});
+
+test("an unreadable or malformed declarations file is refused, never read as empty", () => {
+  const tmp = makeTempDir("docdeps-");
+  assert.match(readDocDepDeclarations(tmp).error, /could not read/);
+  fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true });
+  const file = path.join(tmp, DOC_DEP_DECLARATIONS_FILE);
+  fs.writeFileSync(file, "{ not json");
+  assert.match(readDocDepDeclarations(tmp).error, /not valid JSON/);
+  fs.writeFileSync(file, JSON.stringify({}));
+  assert.match(readDocDepDeclarations(tmp).error, /no `declarations` array/);
+  fs.writeFileSync(file, JSON.stringify({ declarations: [{ doc: "d", token: "t" }] }));
+  assert.match(readDocDepDeclarations(tmp).error, /entry 0 needs/);
+});
+
+test("no doc abbreviates a module that ANOTHER doc already names in full", () => {
+  // A PARTIAL whole-repo assertion, and the name says which part. The complete
+  // check needs the upstream tree and lives in `pr-validation.yml`; this one runs
+  // against the real docs and a SYNTHETIC tree built from the `src/…` paths they
+  // already declare, so it needs no checkout at all — at the cost of seeing only
+  // the abbreviations whose full path some other doc carries.
+  //
+  // Measured on the #1592 corrections: it reaches **24 of the 55** paths they
+  // introduced; the other 31 are named in exactly one doc and are invisible here.
+  // Stated because a test that reads as whole-repo coverage and delivers 44 % is
+  // the shape #1226 was raised about — measured, reverting `hitl.py` alone leaves
+  // this test green, while reverting `assistant-discovery-storage.ts` reddens it.
+  // It earns its place anyway: an abbreviation of a file another doc spells out is
+  // the commonest way this class comes back, and it is caught with no network.
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const docs = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".md")) docs.push({ file: path.relative(repoRoot, full), markdown: fs.readFileSync(full, "utf8") });
+    }
+  };
+  walk(path.join(repoRoot, "docs"));
+  const entries = new Set();
+  for (const doc of docs) {
+    for (const { token } of parseDocDeps(doc.markdown)) {
+      const { target } = classifyDepToken(token);
+      if (!target.includes("*")) entries.add(target);
+    }
+  }
+  const declarations = readDocDepDeclarations(repoRoot).declarations || [];
+  const result = findAbbreviatedDeps({
+    docs,
+    trees: [{ ref: "declared-paths", entries: [...entries] }],
+    ownFiles: [],
+    declarations,
+  });
+  assert.deepEqual(
+    result.findings.map((f) => `${f.file}:${f.line} \`${f.token}\` → ${f.resolved}`),
+    [],
+  );
+  assert.deepEqual(
+    result.ambiguous.map((a) => `${a.file}:${a.line} \`${a.token}\``),
+    [],
+  );
+});
+
+test("the PR lane runs the abbreviation check, after the path resolver and on the same trees", () => {
+  // The check is only as good as its wiring: an unwired mode is a guard that
+  // cannot fire, which is the state #1092 was filed about.
+  const yml = fs.readFileSync(
+    path.join(path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."), ".github/workflows/pr-validation.yml"),
+    "utf8",
+  );
+  assert.match(yml, /--mode=check-doc-abbrevs/);
+  // Same refs and same diff scope as its sibling — a narrower ref list would
+  // report a path as un-abbreviated only because nobody fetched the line it is on.
+  const step = yml.slice(yml.indexOf("--mode=check-doc-abbrevs"));
+  assert.match(step, /--releases "\$RELEASE_CSV"/);
+  assert.match(step, /--changed changed-docs\.txt/);
+  assert.ok(
+    yml.indexOf("--mode=check-docs") < yml.indexOf("--mode=check-doc-abbrevs"),
+    "a path that does not exist is the more urgent annotation and must come first",
+  );
 });

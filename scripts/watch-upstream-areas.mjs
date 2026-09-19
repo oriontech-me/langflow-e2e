@@ -651,6 +651,22 @@ export const DOC_DEPS_EXEMPT_FILES = ["docs/TEST-SPEC-TEMPLATE.md"];
  * @returns {Array<{token: string, line: number}>}
  */
 export function parseDocDeps(markdown) {
+  return parseDocDepTokens(markdown).filter(({ token }) => token.startsWith("src/"));
+}
+
+/**
+ * EVERY backticked token in the section, `src/…` or not.
+ *
+ * `parseDocDeps` is the `src/` half of this, and the two are one parser rather
+ * than two that are supposed to agree: the whole class `findAbbreviatedDeps`
+ * exists for is a token the `src/` filter drops, so a second scanner that
+ * disagreed about where the section STARTS or ENDS would report holes in a
+ * region the guard never reads, or miss the ones it does.
+ *
+ * @param {string} markdown
+ * @returns {Array<{token: string, line: number}>}
+ */
+export function parseDocDepTokens(markdown) {
   const out = [];
   const lines = String(markdown).split("\n");
   let inSection = false;
@@ -665,8 +681,7 @@ export function parseDocDeps(markdown) {
       return;
     }
     for (const match of line.matchAll(/`([^`]+)`/g)) {
-      const token = match[1].trim();
-      if (token.startsWith("src/")) out.push({ token, line: index + 1 });
+      out.push({ token: match[1].trim(), line: index + 1 });
     }
   });
 
@@ -855,6 +870,234 @@ export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], ex
   }
 
   return { checked, failures, warnings, partial, exempt };
+}
+
+/* ---------------------------------------------------------------------------
+ * (4) The same silence one step EARLIER: an upstream module named without its
+ *     `src/` prefix is never handed to the resolver at all (issue #1592)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * `checkDocDeps` resolves what it is GIVEN, and `parseDocDeps` gives it only the
+ * tokens that start with `src/`. A doc that writes `api/v2/hitl.py` instead of
+ * `src/backend/base/langflow/api/v2/hitl.py` therefore has no path that fails to
+ * resolve — it has a path the resolver never sees. That is #1092's defect ("a
+ * nonexistent path is silent") with the silence moved one step earlier, and it is
+ * invisible to every count the guard prints: the summary counts what it was
+ * handed, never what the docs depend on.
+ *
+ * WHY NOT SIMPLY WIDEN `parseDocDeps`
+ *
+ * Because it would then try to resolve every `tests/helpers/foo.ts`, every
+ * `POST /api/v1/flows/`, every `text/event-stream` and every npm package name in
+ * the section against the Langflow tree, and report each one as a broken path.
+ * The guard's contract is upstream paths; this check keeps that contract and
+ * answers the other question — *is there an upstream module in here that was
+ * never written as one?* — which only has an answer once the tree is consulted.
+ *
+ * THE RULE, AND WHY EACH CLAUSE IS THERE
+ *
+ * A token is a finding when it resolves, by SUFFIX, to exactly one upstream path
+ * and to nothing in this repo. Uniqueness is what makes the check quiet enough to
+ * gate on: measured over the whole of `docs/`, the prose that survives every other
+ * clause (`text/event-stream`, `store/tags`, `models/gemini-embedding-001`,
+ * `@modelcontextprotocol/server-everything`) resolves to NOTHING, and the tokens
+ * that resolve to MANY are the ambiguity the issue asks to remove rather than
+ * findings to auto-correct.
+ *
+ * - **Resolving in this repo wins.** `delete-flow.ts` and `adjust-screen-view.ts`
+ *   are ours; upstream carries files of the same name under `src/frontend/tests/`,
+ *   so a suffix match alone would rewrite 20 of our own helper references into
+ *   Langflow paths. Our own tree is out of scope by the issue and checked by other
+ *   means.
+ * - **A `src/` token already in the SAME section covers its own abbreviation.** A
+ *   bullet routinely names a file in full and then refers to it again by basename;
+ *   that is not a hole, because the resolver already has the full path.
+ * - **An ellipsis is resolved by its tail**, not skipped. `.../components/popover/
+ *   index.tsx` is unresolvable as written and is exactly the class at hand, and
+ *   two docs carry that shape today.
+ *
+ * WHAT IT CANNOT SEE, MEASURED
+ *
+ * An abbreviation that is also WRONG resolves to nothing and stays invisible.
+ * `playground-message-logs.md` wrote `tableComponent/TableOptions/index.tsx` for a
+ * file whose real path carries one more `components/` segment, and no clause here
+ * reaches it. Falling back to the BASENAME when the written suffix resolves to
+ * nothing was measured over the whole of `docs/` and REJECTED: it yields ~130
+ * rows, essentially all of them HTTP endpoints (`POST /api/v1/flows/` → the seven
+ * upstream directories named `flows`), and the one true positive it would have
+ * found resolves 456 ways. A check that loud is a check nobody reads, which is the
+ * `mode=count` lesson. That token was corrected by hand and the limit is recorded
+ * here rather than worked around.
+ *
+ * WHAT IS *NOT* A FINDING, AND WHY IT IS DECLARED RATHER THAN HEURISTIC
+ *
+ * A doc may name a real upstream file to say the spec does **not** depend on it
+ * ("the Trace Details modal is not exercised by this spec") or to record a path
+ * that used to be written and no longer resolves. Declaring those as dependencies
+ * would couple a spec to a file whose deletion cannot break it. They are listed in
+ * `scripts/lib/doc-dep-abbreviation-declarations.json`, and — per #1084 — the
+ * declaration is verified in BOTH directions: one that no longer silences anything
+ * is reported as expired, naming the entry to delete. An in-doc sentence giving a
+ * reason NOT to declare is deliberately not the mechanism; that is #1587's defect.
+ *
+ * @param {{
+ *   docs: Array<{file: string, markdown: string}>,
+ *   trees: Array<{ref: string, entries: string[]}>,
+ *   ownFiles?: string[],
+ *   declarations?: Array<{doc: string, token: string, reason: string}>,
+ *   changedFiles?: string[],
+ *   exemptFiles?: string[],
+ * }} options
+ * @returns {{
+ *   checked: number,
+ *   findings: Array<{file: string, line: number, token: string, resolved: string, refs: string[], severity: "fail"|"warn"}>,
+ *   ambiguous: Array<{file: string, line: number, token: string, candidates: string[], severity: "fail"|"warn"}>,
+ *   expired: Array<{doc: string, token: string, reason: string}>,
+ *   declared: number,
+ * }}
+ */
+export function findAbbreviatedDeps({
+  docs,
+  trees,
+  ownFiles = [],
+  declarations = [],
+  changedFiles = [],
+  exemptFiles = DOC_DEPS_EXEMPT_FILES,
+}) {
+  if (!Array.isArray(trees) || trees.length === 0 || trees.some((t) => !t || !Array.isArray(t.entries))) {
+    // No tree resolves nothing, and "nothing resolves" here reads as "no doc
+    // abbreviates anything" — a clean verdict nobody measured (#1012).
+    throw new Error("findAbbreviatedDeps needs at least one { ref, entries } upstream tree to resolve against");
+  }
+
+  const changed = new Set(changedFiles);
+  const exemptSet = new Set(exemptFiles);
+  const ownSuffixes = buildSuffixIndex(ownFiles);
+  const upstream = new Map(); // suffix -> Map<path, ref[]>
+  for (const { ref, entries } of trees) {
+    for (const entry of entries) {
+      for (const suffix of pathSuffixes(entry)) {
+        let byPath = upstream.get(suffix);
+        if (!byPath) upstream.set(suffix, (byPath = new Map()));
+        const refs = byPath.get(entry);
+        if (refs) refs.push(ref);
+        else byPath.set(entry, [ref]);
+      }
+    }
+  }
+
+  const findings = [];
+  const ambiguous = [];
+  const used = new Set();
+  const declaredBy = new Map(declarations.map((d) => [`${d.doc}\u0000${d.token}`, d]));
+  let checked = 0;
+
+  for (const doc of docs) {
+    if (exemptSet.has(doc.file)) continue;
+    const tokens = parseDocDepTokens(doc.markdown);
+    const declaredHere = tokens
+      .map(({ token }) => token)
+      .filter((token) => token.startsWith("src/"))
+      .map((token) => classifyDepToken(token).target);
+
+    for (const { token, line } of tokens) {
+      if (token.startsWith("src/")) continue;
+      const target = abbreviationTarget(token);
+      if (!target) continue;
+      checked += 1;
+
+      // The resolver already holds this file under its full name.
+      if (declaredHere.some((declared) => declared === target || declared.endsWith(`/${target}`))) continue;
+      // Ours, not Langflow's — out of scope, and the reason the suffix index for
+      // this repo is consulted BEFORE the upstream one rather than beside it.
+      if (ownSuffixes.has(target)) continue;
+
+      const matches = upstream.get(target);
+      if (!matches || matches.size === 0) continue;
+
+      const key = `${doc.file}\u0000${token}`;
+      if (declaredBy.has(key)) {
+        used.add(key);
+        continue;
+      }
+      const severity = changed.has(doc.file) ? "fail" : "warn";
+      if (matches.size > 1) {
+        ambiguous.push({ file: doc.file, line, token, candidates: [...matches.keys()].sort(), severity });
+        continue;
+      }
+      const [resolved, refs] = [...matches.entries()][0];
+      findings.push({ file: doc.file, line, token, resolved, refs, severity });
+    }
+  }
+
+  const expired = declarations
+    .filter((d) => !used.has(`${d.doc}\u0000${d.token}`))
+    .map((d) => ({
+      doc: d.doc,
+      token: d.token,
+      reason: "silences nothing: that doc no longer carries this token, or the token no longer resolves upstream",
+    }));
+
+  return { checked, findings, ambiguous, expired, declared: used.size };
+}
+
+/**
+ * What a non-`src/` token would have to be written as, or `""` when it is not a
+ * path at all.
+ *
+ * The character rejections carry their own reason: every one of them is a shape
+ * measured in a real `## External dependencies` section that is emphatically not a
+ * module — a URL, an endpoint, a docker tag, a CSS class, an npm scope, a
+ * `langflow-ai/langflow#123` reference, a keyboard chord, a regex literal. They are
+ * cheap, and they are not load-bearing: a token that slipped past them still has to
+ * resolve uniquely against the upstream tree.
+ *
+ * A bare extension (`` `.py` ``, written mid-sentence to mean "the Python file")
+ * has an EMPTY stem and is rejected for that: it is a word, and it suffix-matches
+ * nothing.
+ *
+ * @param {string} token
+ * @returns {string} the suffix to resolve, or "" when the token is not a path
+ */
+export function abbreviationTarget(token) {
+  const target = classifyDepToken(String(token)).target.trim();
+  if (!target) return "";
+  if (target.startsWith("/")) return "";
+  if (/[<>${}()|\\`,+=?*@]|:\/\//.test(target)) return "";
+  if (target.includes("#")) return "";
+
+  // An ellipsis cannot be resolved as written, but its TAIL can, and that tail is
+  // the whole finding: the elided prefix is routinely the part that went stale.
+  const segments = target.split("/");
+  const lastGap = segments.reduce((at, segment, index) => (/^(\.\.\.|…)$/.test(segment) ? index : at), -1);
+  const tail = lastGap >= 0 ? segments.slice(lastGap + 1) : segments;
+  if (tail.length === 0 || tail.some((segment) => /\.\.\.|…/.test(segment))) return "";
+
+  const basename = tail[tail.length - 1];
+  if (!basename) return "";
+  const dot = basename.lastIndexOf(".");
+  const hasExtension = dot > 0 && dot < basename.length - 1;
+  // A single segment with no extension is a word, not a path — `decisions`,
+  // `Cursor`, `approve`. With a slash it may be a directory, which the tree
+  // carries because it is listed with `-t`.
+  if (!hasExtension && tail.length < 2) return "";
+  if (dot === 0) return "";
+  return tail.join("/");
+}
+
+/** Every `a/b/c` → `["a/b/c", "b/c", "c"]`, the suffixes a doc could abbreviate a path to. */
+function pathSuffixes(entry) {
+  const segments = String(entry).split("/");
+  const out = [];
+  for (let index = 0; index < segments.length; index += 1) out.push(segments.slice(index).join("/"));
+  return out;
+}
+
+function buildSuffixIndex(paths) {
+  const set = new Set();
+  for (const entry of paths) for (const suffix of pathSuffixes(entry)) set.add(suffix);
+  return set;
 }
 
 /**
@@ -1446,53 +1689,214 @@ function runReleaseRef(root) {
   }
 }
 
-function runCheckDocs(root, trunkRef, releaseRefs, changedListPath) {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/**
+ * Every declared ref must be listable. A ref that is absent from the checkout
+ * would otherwise narrow the resolution back to the remaining ones and fail a
+ * PR for a path that is correct on the ref nobody fetched — #1574 all over
+ * again, this time with nothing in the log to say so.
+ *
+ * `-t` puts DIRECTORY entries in the listing beside the blobs, which is what lets
+ * a declared `pages/MainPage/**` glob and an abbreviated `pages/AdminPage`
+ * resolve at all.
+ */
+function listUpstreamTree(root, ref) {
+  let entries;
+  try {
+    entries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
+  } catch (error) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
+    );
+    process.exit(2);
+  }
+  if (entries.length === 0) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
+    );
+    process.exit(2);
+  }
+  return { ref, entries };
+}
 
-  // Every declared ref must be listable. A ref that is absent from the checkout
-  // would otherwise narrow the resolution back to the remaining ones and fail a
-  // PR for a path that is correct on the ref nobody fetched — #1574 all over
-  // again, this time with nothing in the log to say so.
-  const listTree = (ref) => {
-    let entries;
-    try {
-      entries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
-    } catch (error) {
-      process.stderr.write(
-        `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
-      );
-      process.exit(2);
-    }
-    if (entries.length === 0) {
-      process.stderr.write(
-        `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
-      );
-      process.exit(2);
-    }
-    return { ref, entries };
-  };
+/**
+ * An unreadable changed-file list is undecidable: defaulting to "nothing changed"
+ * would silently downgrade every finding to a warning, which is the same fail-open
+ * the guard exists to remove. An ABSENT `--changed` is a different thing and is
+ * legitimate — the caller then asked for a report, not a verdict.
+ */
+function readChangedList(changedListPath) {
+  if (!changedListPath) return [];
+  try {
+    return fs
+      .readFileSync(changedListPath, "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch (error) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: could not read --changed "${changedListPath}" (${error.message}). Refusing to report a diff-scoped verdict without the diff.\n`,
+    );
+    process.exit(2);
+  }
+  return [];
+}
 
-  const trunk = listTree(trunkRef);
-  const releases = releaseRefs.map(listTree);
+/** How many findings of a kind the abbreviation report names before it elides (#1012: named, and capped visibly). */
+const MAX_NAMED_ABBREVS = 40;
 
-  // An unreadable changed-file list is undecidable too: defaulting to "nothing
-  // changed" would silently downgrade every finding to a warning, which is the
-  // same fail-open the guard exists to remove.
-  let changedFiles = [];
-  if (changedListPath) {
-    try {
-      changedFiles = fs
-        .readFileSync(changedListPath, "utf8")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-    } catch (error) {
-      process.stderr.write(
-        `::error::watch-upstream-areas: could not read --changed "${changedListPath}" (${error.message}). Refusing to report a diff-scoped verdict without the diff.\n`,
-      );
-      process.exit(2);
+/**
+ * Where the declarations live. A path rather than an import so an unreadable or
+ * malformed file is a verdict this run REFUSES, not a crash with a stack trace —
+ * the same reason `catalogVerdict` holds no I/O.
+ */
+export const DOC_DEP_DECLARATIONS_FILE = "scripts/lib/doc-dep-abbreviation-declarations.json";
+
+/**
+ * The declared context tokens, or a reason this run could not decide.
+ *
+ * Fail-closed: an absent or malformed file makes every declared token look like a
+ * fresh finding, which is loud and wrong; an empty list read as "no declarations"
+ * is loud and wrong in the same direction. Both are refused with the cause named,
+ * rather than degrading to a verdict nobody measured (#1012).
+ *
+ * @param {string} repoRoot
+ * @returns {{declarations: Array<{doc: string, token: string, reason: string}>} | {error: string}}
+ */
+export function readDocDepDeclarations(repoRoot) {
+  const file = path.join(repoRoot, DOC_DEP_DECLARATIONS_FILE);
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    return { error: `could not read ${DOC_DEP_DECLARATIONS_FILE} (${error.message})` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return { error: `${DOC_DEP_DECLARATIONS_FILE} is not valid JSON (${error.message})` };
+  }
+  if (!parsed || !Array.isArray(parsed.declarations)) {
+    return { error: `${DOC_DEP_DECLARATIONS_FILE} has no \`declarations\` array` };
+  }
+  for (const [index, entry] of parsed.declarations.entries()) {
+    const ok =
+      entry &&
+      typeof entry.doc === "string" &&
+      entry.doc &&
+      typeof entry.token === "string" &&
+      entry.token &&
+      typeof entry.reason === "string" &&
+      entry.reason.trim();
+    if (!ok) {
+      return { error: `${DOC_DEP_DECLARATIONS_FILE} entry ${index} needs a non-empty doc, token and reason` };
     }
   }
+  return { declarations: parsed.declarations };
+}
+
+function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const trees = [listUpstreamTree(root, trunkRef), ...releaseRefs.map((ref) => listUpstreamTree(root, ref))];
+  const changedFiles = readChangedList(changedListPath);
+
+  const declared = readDocDepDeclarations(repoRoot);
+  if (declared.error) {
+    process.stderr.write(`::error::watch-upstream-areas: ${declared.error}. Undecidable, not clean.\n`);
+    process.exit(2);
+  }
+
+  // What this repo owns. Resolved from the working tree rather than guessed from a
+  // prefix list: `tests/`, `scripts/` and `helpers/` were the prefixes the issue's
+  // one-off sweep used, and they miss every bare basename — `delete-flow.ts` is
+  // written without a directory in six docs and upstream carries a file of that
+  // name under `src/frontend/tests/utils/flow/`.
+  let ownFiles;
+  try {
+    ownFiles = git(repoRoot, ["ls-files"]).split("\n").filter(Boolean);
+  } catch (error) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: could not list this repo's own files (${error.message}), so an upstream match could not be told from one of ours.\n`,
+    );
+    process.exit(2);
+  }
+
+  const docs = collectDocFiles(repoRoot);
+  const { checked, findings, ambiguous, expired, declared: used } = findAbbreviatedDeps({
+    docs,
+    trees,
+    ownFiles,
+    declarations: declared.declarations,
+    changedFiles,
+  });
+
+  process.stdout.write(
+    `Checked ${checked} non-\`src/\` token(s) in the External dependencies of ${docs.length} doc(s) against ` +
+      `${trees.map((t) => t.ref).join(", ")}; ${used} declared as context.\n`,
+  );
+  if (!changedListPath) {
+    process.stdout.write(
+      "No --changed list given, so every finding is reported and none fails: the diff decides severity.\n",
+    );
+  }
+
+  const declarationsChanged = changedFiles.includes(DOC_DEP_DECLARATIONS_FILE);
+  const stale = expired.map((entry) => ({
+    ...entry,
+    severity: declarationsChanged || changedFiles.includes(entry.doc) ? "fail" : "warn",
+  }));
+
+  const emit = (items, render) => {
+    for (const item of items.slice(0, MAX_NAMED_ABBREVS)) {
+      const line = render(item);
+      process.stdout.write(`- ${line}\n`);
+      process.stderr.write(`::${item.severity === "fail" ? "error" : "warning"}::${line}\n`);
+    }
+    if (items.length > MAX_NAMED_ABBREVS) {
+      process.stdout.write(`- …and ${items.length - MAX_NAMED_ABBREVS} more, elided here and in the annotations.\n`);
+    }
+  };
+
+  if (findings.length > 0) {
+    process.stdout.write(
+      `\n${findings.length} upstream module(s) named without the \`src/\` prefix, so the dependency guard never resolves them:\n`,
+    );
+    emit(
+      findings,
+      (f) =>
+        `${f.file}:${f.line} \`${f.token}\` is \`${f.resolved}\` (on ${f.refs.join(", ")}) — write the full path, or declare it as context in ${DOC_DEP_DECLARATIONS_FILE}.`,
+    );
+  }
+  if (ambiguous.length > 0) {
+    process.stdout.write(
+      `\n${ambiguous.length} abbreviation(s) match more than one upstream file, so neither a reader nor the guard can tell which is meant:\n`,
+    );
+    emit(
+      ambiguous,
+      (a) => `${a.file}:${a.line} \`${a.token}\` matches ${a.candidates.length}: ${a.candidates.join(" | ")} — name the one meant, in full.`,
+    );
+  }
+  if (stale.length > 0) {
+    process.stdout.write(`\n${stale.length} declaration(s) silence nothing any more:\n`);
+    emit(stale, (e) => `${DOC_DEP_DECLARATIONS_FILE}: \`${e.token}\` for ${e.doc} ${e.reason} — delete the entry.`);
+  }
+
+  const failed = [...findings, ...ambiguous, ...stale].filter((item) => item.severity === "fail");
+  if (findings.length === 0 && ambiguous.length === 0 && stale.length === 0) {
+    process.stdout.write("Every upstream module named in a dependency section is written as a resolvable `src/` path.\n");
+    return;
+  }
+  process.stdout.write(
+    `\n${failed.length} of the above are in a doc this diff changed and fail; the rest are reported so drift stays visible (#980, #1012).\n`,
+  );
+  if (failed.length > 0) process.exit(1);
+}
+
+function runCheckDocs(root, trunkRef, releaseRefs, changedListPath) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const trunk = listUpstreamTree(root, trunkRef);
+  const releases = releaseRefs.map((ref) => listUpstreamTree(root, ref));
+  const changedFiles = readChangedList(changedListPath);
 
   const docs = collectDocFiles(repoRoot);
   const { checked, failures, warnings, partial, exempt } = checkDocDeps({ docs, trunk, releases, changedFiles });
@@ -1738,7 +2142,13 @@ function main(argv) {
     process.stdout.write(`${renderAreaTable()}\n`);
     return;
   }
-  if (mode !== "check" && mode !== "detect" && mode !== "check-docs" && mode !== "release-ref") {
+  if (
+    mode !== "check" &&
+    mode !== "detect" &&
+    mode !== "check-docs" &&
+    mode !== "check-doc-abbrevs" &&
+    mode !== "release-ref"
+  ) {
     process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
     process.exit(2);
   }
@@ -1774,12 +2184,14 @@ function main(argv) {
 
   // `allowEmpty` cannot throw, so there is nothing to catch here: an absent
   // `--releases` is the legitimate trunk-only run, announced by runCheckDocs.
-  const releaseRefs = mode === "check-docs" ? parseRefList(releases, { allowEmpty: true }) : [];
+  const releaseRefs =
+    mode === "check-docs" || mode === "check-doc-abbrevs" ? parseRefList(releases, { allowEmpty: true }) : [];
 
   try {
     if (mode === "check") return runCheck(root, verdict);
     if (mode === "release-ref") return runReleaseRef(root);
     if (mode === "check-docs") return runCheckDocs(root, ref, releaseRefs, changed);
+    if (mode === "check-doc-abbrevs") return runCheckDocAbbrevs(root, ref, releaseRefs, changed);
     return runDetect(root, since, verdict);
   } catch (error) {
     // The fail-closed throw from findLfxDrift: the table no longer describes the
