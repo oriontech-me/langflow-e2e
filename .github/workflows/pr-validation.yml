@@ -231,14 +231,17 @@ jobs:
           # `grep` exits 1 on no match, which under `pipefail` would abort a PR that
           # simply touches no doc — the empty list is a valid, common outcome.
           grep -E '\.md$' all-changed.txt > changed-docs.txt || :
-          # The abbreviation check (#1592) escalates a STALE DECLARATION the same
-          # way — it fails when this diff owns it. Its subject is not a doc, and
-          # the pathspec plus the `.md$` filter above mean it could never appear
-          # in this list: measured, that clause was dead in this lane, so an
-          # expired declaration was a `::warning::` on a green job and the
-          # "verified in both directions" claim (#1084) held only by accident.
-          # Appending it is harmless to the step above, whose severity keys on a
-          # doc path and can never match a `.json`.
+          # The abbreviation check (#1592) escalates a STALE DECLARATION when this
+          # diff owns it, and that rule is a DISJUNCTION: the diff touched the doc
+          # the declaration names, OR it touched the declarations file. Only the
+          # second disjunct was dead here — the pathspec plus the `.md$` filter
+          # above mean a `.json` could never reach this list — and the first was
+          # always live, which covers the commonest expiry (rewriting a token in
+          # full necessarily puts that doc in the diff). What the append closes is
+          # the residue: a PR that edits ONLY the declarations file, adding a
+          # typo'd or bogus entry, used to get a `::warning::` on a green job.
+          # Harmless to the step above, whose severity keys on a doc path and can
+          # never match a `.json`.
           git diff --name-only --diff-filter=d "origin/$BASE_REF...HEAD" \
             -- scripts/lib/doc-dep-abbreviation-declarations.json >> changed-docs.txt
           echo "changed docs: $(wc -l < changed-docs.txt)"

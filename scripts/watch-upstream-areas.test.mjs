@@ -2019,12 +2019,20 @@ test("no doc abbreviates a module that ANOTHER doc already names in full", () =>
   //
   // Measured by the only method that answers it — revert ONE corrected occurrence
   // at a time, rebuild the synthetic tree from the mutated corpus, re-run this
-  // construction: **18 of the 39** occurrences a diff-derived locator can isolate,
-  // i.e. under half. (The first version of this comment said "24 of the 55", which
-  // is not reproducible by any construction and mixed two units besides — modules
-  // in one clause, token instances in the other.) The concrete shape: reverting
-  // `hitl.py` leaves this test GREEN, because one doc names it; reverting
-  // `assistant-discovery-storage.ts` reddens it, because two do.
+  // construction: **22 of the 52** corrected occurrences, or **18 of the 48**
+  // distinct modules. Under half either way.
+  //
+  // It took three numbers to get one right, and the failure repeated itself: the
+  // first draft said "24 of the 55", reproducible by no construction; the second
+  // said "18 of the 39", which is the DISTINCT-MODULE numerator pinned to a
+  // denominator invented by a diff locator that silently dropped every line where
+  // two tokens changed at once — i.e. exactly the mixed-unit error the second
+  // draft indicted the first for. Ground truth comes from comparing each changed
+  // doc line-for-line against `origin/main` and taking the multiset difference of
+  // backticked tokens, which needs no alignment heuristic: 52 occurrences, 28
+  // docs. The concrete shape: reverting `hitl.py` leaves this test GREEN, because
+  // one doc names it; reverting `assistant-discovery-storage.ts` reddens it,
+  // because two do.
   // It earns its place anyway: an abbreviation of a file another doc spells out is
   // the commonest way this class comes back, and it is caught with no network.
   const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -2092,6 +2100,10 @@ function collectChangedStepBody() {
   const start = yml.indexOf("- name: Collect the docs this PR changed");
   assert.ok(start > 0, "the step was renamed — this test is pinned to it by name");
   const afterRun = yml.indexOf("run: |", start);
+  // Without this, a step written `run: >` (or with no `run:` at all) would make
+  // `indexOf` find the NEXT step's body, or return -1 and slice the whole file —
+  // and the test would happily exercise the wrong shell.
+  assert.ok(afterRun > start, "the step no longer has a `run: |` block — this extraction would read another step");
   const body = yml.slice(yml.indexOf("\n", afterRun) + 1);
   const lines = [];
   for (const line of body.split("\n")) {
@@ -2257,14 +2269,30 @@ test("the CLI prints the ambiguity rather than picking one, and fails on it the 
   assert.match(r.stdout, /matches 2: src\/frontend\/src\/a\/session-selector\.tsx \| src\/frontend\/src\/b\/session-selector\.tsx/);
 });
 
-test("the CLI reports a clean corpus as clean, and says what it read", () => {
+test("the CLI reports a clean corpus as clean, and says what it actually read", () => {
   const { home, upstream } = abbrevCliFixture({
-    docs: { "docs/area/spec.md": depsSection("`src/backend/base/langflow/api/v2/hitl.py` — in full") },
+    docs: {
+      // One `src/` token (never counted — the sibling step owns those) and one
+      // path-shaped token that IS counted and resolves to nothing: the clean
+      // corpus has to have something in it for "clean" to mean anything.
+      "docs/area/spec.md": depsSection(
+        "`src/backend/base/langflow/api/v2/hitl.py` — in full",
+        "`text/event-stream` — the run stream's content type, not a module",
+      ),
+      // The exempt template, so the corpus counts below have both halves to state.
+      [DOC_DEPS_EXEMPT_FILES[0]]: depsSection("`api/v2/hitl.py` — illustrative, by design"),
+    },
   });
   const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Every upstream module named in a dependency section is written as a resolvable `src\/` path\./);
-  assert.match(r.stdout, /Checked \d+ non-`src\/` token\(s\)/);
+  // EXACT counts, not `\d+`. A loose match here passed with the CLI reading NO
+  // docs at all — the header degraded to `Checked 0 … of 0 doc(s)` and still
+  // matched, so the test asserted the shape of a sentence and nothing about the
+  // corpus. It also leaves the exempt split pinned: both halves of it were
+  // mutable with the suite green.
+  assert.match(r.stdout, /Checked 1 non-`src\/` token\(s\) in the External dependencies of 1 doc\(s\)/);
+  assert.match(r.stdout, /1 doc\(s\) exempt\./);
 });
 
 test("the CLI refuses an unreadable declarations file with exit 2 — undecidable, not clean", () => {
@@ -2305,4 +2333,25 @@ test("a stale declaration fails the run when the diff owns the declarations file
   const owned = runAbbrevCli(home, upstream, [DOC_DEP_DECLARATIONS_FILE]);
   assert.equal(owned.status, 1, "the diff owns the declarations file, so the stale entry fails");
   assert.match(owned.stderr, /::error::.*silences nothing/);
+
+  // The rule is a disjunction and this commit added a test for one side of it.
+  // The other side — the diff owns the DOC the declaration names — is the half
+  // that was already live before the workflow fix, and dropping it left the suite
+  // green.
+  const docOwned = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(docOwned.status, 1, "the diff owns the doc the declaration names, so the stale entry fails too");
+  assert.match(docOwned.stderr, /::error::.*silences nothing/);
+});
+
+test("a declaration needs a non-empty doc, not just a token and a reason", () => {
+  // `token` and `reason` were both pinned and `doc` was not, so an entry with
+  // `doc: ""` was accepted — and a declaration keyed to no doc silences nothing
+  // anywhere, which is the expired case arriving through the validator instead.
+  const tmp = makeTempDir("docdeps-doc-");
+  fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, DOC_DEP_DECLARATIONS_FILE),
+    JSON.stringify({ declarations: [{ doc: "", token: "t", reason: "r".repeat(50) }] }),
+  );
+  assert.match(readDocDepDeclarations(tmp).error, /entry 0 needs/);
 });

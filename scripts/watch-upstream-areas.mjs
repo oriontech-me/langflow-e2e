@@ -1042,9 +1042,11 @@ export function findAbbreviatedDeps({
       doc: d.doc,
       token: d.token,
       reason:
-        "silences nothing — the sweep reported no finding for it. Either that doc no longer carries the token " +
-        "(commonest: it was rewritten as a full `src/` path, or one appeared beside it in the same section), or " +
-        "the token stopped resolving upstream, or it now matches one of this repo's own files",
+        "silences nothing — the sweep reported no finding for it. Causes, commonest first: the doc no longer " +
+        "carries the token (it was rewritten as a full `src/` path); the doc still carries it but a full `src/` " +
+        "path beside it in the same section now covers it; `doc` names a file the sweep does not collect (a typo, " +
+        "or a doc that moved) — the likeliest cause for a NEWLY added entry; the token stopped resolving upstream; " +
+        "it now matches one of this repo's own files; or the doc is exempt",
     }));
 
   return { checked, findings, ambiguous, expired, declared: used.size };
@@ -1769,7 +1771,10 @@ export const DOC_DEP_DECLARATIONS_FILE = "scripts/lib/doc-dep-abbreviation-decla
  * An EMPTY `declarations` array is ACCEPTED, and the asymmetry is deliberate. It
  * is the legitimate end state — the day no doc needs a context declaration the
  * array is empty and the file should still read — and its failure direction is
- * loud rather than silent: every token that WAS declared comes back as a finding.
+ * VISIBLE rather than silent: every token that WAS declared comes back as a
+ * finding. Read that precisely: measured on the real corpus, emptying the file
+ * yields 4 `::warning::` and exit 0 unless the diff also touched those docs, so
+ * "visible" means reported, NOT "the lane goes red".
  * That is the opposite of `--min-categories`, whose floor exists because a wrong
  * baseline is permanent and silent. So there is no floor here, and this says so,
  * because a JSDoc asserting a property the code does not have is the same
@@ -1824,9 +1829,16 @@ function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
 
   // What this repo owns. Resolved from the working tree rather than guessed from a
   // prefix list: `tests/`, `scripts/` and `helpers/` were the prefixes the issue's
-  // one-off sweep used, and they miss every bare basename — `delete-flow.ts` is
-  // written without a directory in six docs and upstream carries a file of that
-  // name under `src/frontend/tests/utils/flow/`.
+  // one-off sweep used, and they miss every bare basename — `adjust-screen-view.ts`
+  // is written without a directory and upstream carries a file of that name under
+  // `src/frontend/tests/utils/`.
+  //
+  // Pick the example from a measurement, not from memory: an earlier draft of this
+  // comment named `delete-flow.ts`, which appears in six docs but exists NOWHERE
+  // upstream (the nearest is `src/frontend/src/hooks/flows/use-delete-flow.ts`,
+  // whose basename does not suffix-match), so it is not one of the 17 references
+  // this clause actually saves. The same wrong example was corrected in the JSDoc
+  // above and survived here — one of two copies is not a fix.
   let ownFiles = [];
   try {
     ownFiles = git(repoRoot, ["ls-files"]).split("\n").filter(Boolean);
