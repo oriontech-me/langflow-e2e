@@ -124,7 +124,7 @@ the first component's update moved the banner from "5 components need updates" t
   (no testid — matched by role/name).
 - `tests/helpers/ui/assistant-onboarding.ts` — the pre-load seed that keeps the
   one-time onboarding tooltip from ever arming, and the `langflow-assistant-discovered`
-  localStorage key it writes (read by upstream's `assistant-discovery-storage.ts`).
+  localStorage key it writes (read by upstream's `src/frontend/src/components/core/assistantPanel/hooks/assistant-discovery-storage.ts`).
 - No model-provider credentials required — no flow is executed.
 
 ---

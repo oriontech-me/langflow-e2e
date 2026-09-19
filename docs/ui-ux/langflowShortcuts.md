@@ -103,7 +103,7 @@ One test walks a single **Chat Output** node through seven documented shortcuts:
 - `src/frontend/src/constants/constants.ts` — `defaultShortcuts` entries `Duplicate` (`mod+d`), `Copy` (`mod+c`), `Paste` (`mod+v`), `Cut` (`mod+x`), `Delete` (`backspace`), `Undo` (`mod+z`), `Redo` (`mod+y`).
 - `src/frontend/src/stores/shortcuts.ts` — the store the canvas keybind handler reads.
 - Core `Chat Output` component (`add-component-button-chat-output`) — bundled in Langflow core, no provider extra required.
-- `src/frontend/src/components/core/canvasControlsComponent/CanvasControls.tsx` — `ONBOARDING_TOOLTIP_DELAY_MS` and the mount-time read of the discovery flag; `assistant-discovery-storage.ts` — the `langflow-assistant-discovered` key the seed writes.
+- `src/frontend/src/components/core/canvasControlsComponent/CanvasControls.tsx` — `ONBOARDING_TOOLTIP_DELAY_MS` and the mount-time read of the discovery flag; `src/frontend/src/components/core/assistantPanel/hooks/assistant-discovery-storage.ts` — the `langflow-assistant-discovered` key the seed writes.
 
 No provider API key needed.
 

@@ -83,9 +83,9 @@ that makes 4 mean something.
 - **`LANGFLOW_A2A_ENABLED=true`** (#1240); enforced in-test by `requireA2aEnabled()`.
 - **The connector loopback exemption at its default.** The component's
   `_call_external_agent` and `_fetch_card` validate with
-  `validate_and_resolve_connector_url` (`lfx/utils/ssrf_protection.py`), which
+  `validate_and_resolve_connector_url` (`src/lfx/src/lfx/utils/ssrf_protection.py`), which
   returns early for a literal `localhost` / `127.0.0.0/8` / `::1` when
-  `connector_ssrf_allow_loopback` is on (`lfx/services/settings/groups/security.py`,
+  `connector_ssrf_allow_loopback` is on (`src/lfx/src/lfx/services/settings/groups/security.py`,
   default `True`). No lane overrides it.
 - **An address Langflow reaches ITSELF on.** The node needs a loopback URL *from
   Langflow's point of view*, which is not necessarily the address the test uses. The

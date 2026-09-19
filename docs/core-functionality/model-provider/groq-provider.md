@@ -182,7 +182,7 @@ valid key.
 
 ## External dependencies *(required)*
 
-- `lfx_bundles/groq/groq.py` (Groq component) — `api_key`
+- `src/bundles/lfx-bundles/src/lfx_bundles/groq/groq.py` (Groq component) — `api_key`
   (`real_time_refresh`), `model_name` dropdown fed by `get_groq_models`;
   moved from `lfx.components.groq` to the `lfx-bundles` distribution (shim in
   place on 1.11; the deprecation window closes at M4).

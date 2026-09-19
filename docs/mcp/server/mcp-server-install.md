@@ -262,7 +262,7 @@ The button is only asserted to be offered. It is never clicked — that would
   (`Cursor`, `Claude`, `Windsurf`) are the accessible names this spec locates by, since
   the buttons carry no `data-testid`.
 - `src/frontend/src/pages/MainPage/pages/homePage/components/McpJsonContent.tsx` and
-  `hooks/useMcpServer.ts` — the JSON configuration and the copy control.
+  `src/frontend/src/pages/MainPage/pages/homePage/hooks/useMcpServer.ts` — the JSON configuration and the copy control.
 - `tests/helpers/mcp/mcp-streamable-client.ts` (`mcpHandshake`),
   `tests/helpers/auth/get-auth-token.ts`.
 - UI testids: `mcp-btn`, `mcp-server-title`, `icon-copy`, `icon-check`.

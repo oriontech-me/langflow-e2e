@@ -87,7 +87,7 @@ provider, each test creates and deletes its own user.
   password `"langflow"`, refused since nightly `1.11.0.dev29` —
   `helpers/auth/credentials.ts` exists for exactly that).
 - `src/frontend/src/routes.tsx` (upstream) — after #14276,
-  `pages/AdminPage/` holds only the `/login/admin` LoginPage; no admin route
+  `src/frontend/src/pages/AdminPage/` holds only the `/login/admin` LoginPage; no admin route
   registers, which is what test 4 pins.
 
 ---

@@ -73,7 +73,7 @@ A shared `beforeEach` opens a blank flow via `setupBlankFlow` and waits for the 
 ## External dependencies
 
 - Sidebar add affordance — `sidebar-search-input` and `add-component-button-<name>` (`chat-input`, `webhook`). The oracle for the `+`-button path is the *absence* of these (`toHaveCount(0)`); the search term must match the component being checked, otherwise the sidebar filter hides it and the assertion becomes a false positive.
-- Node title — `title-<display_name>` (`title-Chat Input`, `title-Webhook`), rendered by `CustomNodes/GenericNode/components/NodeName`. Used to confirm the node landed on the canvas.
+- Node title — `title-<display_name>` (`title-Chat Input`, `title-Webhook`), rendered by `src/frontend/src/CustomNodes/GenericNode/components/NodeName/`. Used to confirm the node landed on the canvas.
 - React Flow canvas — `.react-flow__node` for node counting and node selection before the keyboard shortcuts.
 - Keyboard shortcuts — `ControlOrMeta+d` (duplicate) and `ControlOrMeta+c` / `ControlOrMeta+v` (copy/paste). Clipboard permissions are granted by the Playwright config.
 - Toast copy — the i18n strings `flow.duplicateComponentsNotPasted` / `flow.exclusiveComponentsNotPasted` (both contain "components were not pasted"). The test matches on that shared substring.

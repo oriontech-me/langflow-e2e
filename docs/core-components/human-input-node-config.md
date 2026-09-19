@@ -213,14 +213,14 @@ for it.
   (component `HumanInput`, category `flow_controls`, display name `Human Input`).
 - **Node markers** — `title-Human Input`, `.react-flow__node` for scoping and counting.
 - **`User Choices` field (`decisions`)** — an `ActionPickerInput` rendered by
-  `components/core/parameterRenderComponent/components/actionPickerComponent`: `+` button
+  `src/frontend/src/components/core/parameterRenderComponent/components/actionPickerComponent/`: `+` button
   `actionpicker-add-decisions`, inline input `action-add-input` (commits on `Enter` or
   blur, rejects a duplicate with an error toast), chip buttons `action-edit-<label>` /
   `action-remove-<label>` (the label verbatim, **not** slugified).
 - **Branch handles** — `handle-{component}-shownode-{output display name lowercased}-{side}`,
-  from `CustomNodes/GenericNode/components/handleRenderComponent`. `group_outputs: true`
+  from `src/frontend/src/CustomNodes/GenericNode/components/handleRenderComponent/`. `group_outputs: true`
   on every Human Input output is what makes each branch render its **own** handle instead
-  of the single selectable output most components show (`NodeOutputParameter/NodeOutputs.tsx`).
+  of the single selectable output most components show (`src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/NodeOutputs.tsx`).
 - **`POST /api/v1/custom_component/update`** — the round trip behind the live rebuild
   (`real_time_refresh` on `decisions`). **It carries a `?flow_id=<uuid>` query string**,
   added upstream in a nightly built between 2026-08-28 and 2026-08-31, so anything

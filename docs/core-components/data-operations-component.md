@@ -237,7 +237,7 @@ by an empty output, a passthrough, or a node that failed to build (the run gate 
 
 ## External dependencies
 
-- `lfx/components/processing/operations.py` — `OperationsComponent`: `OPERATIONS_BY_TYPE`
+- `src/lfx/src/lfx/components/processing/operations.py` — `OperationsComponent`: `OPERATIONS_BY_TYPE`
   (the picker's source of truth), `update_build_config` (input-type filtering + field
   reveal), `update_outputs` (per-operation output routing), `as_message` / `as_data` /
   `as_dataframe`, `_word_count`, `select_keys`, `_text_to_dataframe`,

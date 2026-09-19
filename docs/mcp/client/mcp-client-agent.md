@@ -80,7 +80,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 - `src/frontend/src/modals/addMcpServerModal/index.tsx` — JSON tab; testids `json-tab`, `json-input`, `add-mcp-server-button`
 - `src/backend/base/langflow/api/v2/mcp.py` — `GET /api/v2/mcp/servers?action_count=true` and `DELETE /api/v2/mcp/servers/{name}`
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle
-- `src/frontend/src/components/core/chatComponents/ToolCallCard.tsx` — renders the per-call step asserted by Proofs #1–#2: a status test id beside the tool title, one of `tool-status-done`, `tool-status-error` or `tool-status-running`, mounted by `ContentBlockDisplay.tsx` only under `if (run.item.type === "tool_use")`
+- `src/frontend/src/components/core/chatComponents/ToolCallCard.tsx` — renders the per-call step asserted by Proofs #1–#2: a status test id beside the tool title, one of `tool-status-done`, `tool-status-error` or `tool-status-running`, mounted by `src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx` only under `if (run.item.type === "tool_use")`
 - `src/frontend/src/components/core/chatComponents/toolStatus.ts` — derives `error | done | running`, with `error` winning over a duration; only `done` satisfies Proof #1
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx`
 - `tests/helpers/flows/agent-credential-settle.ts` — the shared probe, verdict taxonomy and failure formatter this spec's load guard settles on (#1274/#1371). Only the pure functions are shared; the wait loop is this spec's own

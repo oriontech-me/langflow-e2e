@@ -491,7 +491,7 @@ OpenRouter so the asserts cannot pass on a page-wide string.
   `request_azure_ai_foundry_model_entries` (credential validation) and the
   free-text enable merge.
 - `src/lfx/src/lfx/base/models/unified_models/credentials.py` /
-  `instantiation.py` — the Foundry validation branch and endpoint injection.
+  `src/lfx/src/lfx/base/models/unified_models/instantiation.py` — the Foundry validation branch and endpoint injection.
 - `src/backend/base/langflow/api/v1/models.py` —
   `validate-provider`, `enabled_models` (typed identities), and their variable
   storage.

@@ -178,11 +178,11 @@ asserts a value the component had to compute.
 
 ## External dependencies
 
-- `lfx/components/processing/data_operations.py`, `dataframe_operations.py`,
-  `text_operations.py` — each declares `legacy = True` and
+- `src/lfx/src/lfx/components/processing/data_operations.py`, `src/lfx/src/lfx/components/processing/dataframe_operations.py`,
+  `src/lfx/src/lfx/components/processing/text_operations.py` — each declares `legacy = True` and
   `replacement = ["processing.Operations"]`; `text_operations.py` also owns the
   `_case_conversion` behaviour test 4 asserts.
-- `lfx/components/processing/operations.py` — the replacement target; its
+- `src/lfx/src/lfx/components/processing/operations.py` — the replacement target; its
   `metadata.keywords` carry the three legacy names that test 3 searches for.
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeLegacyComponent/index.tsx` —
   renders the banner, the `dismiss-warning-bar` testid, the `Use <name>.` / `No direct

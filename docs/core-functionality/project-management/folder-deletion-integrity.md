@@ -496,7 +496,7 @@ seeded on the same instance:
   testid asserted by test 4.
 - `src/frontend/src/controllers/API/queries/folders/` — the folder query cache;
   a stale-cache regression here is exactly what tests 1 and 3 are built to catch.
-  `use-get-folder.ts` and `use-get-folders.ts` are also two of the three files in
+  `src/frontend/src/controllers/API/queries/folders/use-get-folder.ts` and `src/frontend/src/controllers/API/queries/folders/use-get-folders.ts` are also two of the three files in
   the #1008 chain above; `use-get-folder.ts` carries the `LE-2231` guard step 7
   depends on, so a change to either is a reason to re-check that the missing-id
   request stays unsent.

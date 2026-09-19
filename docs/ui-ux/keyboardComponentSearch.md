@@ -138,7 +138,7 @@ keeps its query on 1.12), `Escape` clearing the query (it does not), and the
   per-result `<category><Display Name>` rows (the keyboard tab stops), and the
   canvas `.react-flow__node` / `rf__node-<Type>-<hash>` testids.
 - The `/` shortcut binding and the row's `onKeyDown` `Space`/`Enter` handler
-  (upstream `sidebarDraggableComponent.tsx`). A change to the focus **order** does
+  (upstream `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarDraggableComponent.tsx`). A change to the focus **order** does
   not break the test (it walks by testid); moving the keyboard affordance to
   another element does, by design — that is the contract under test, and it has
   now moved twice (#1124, #1384).

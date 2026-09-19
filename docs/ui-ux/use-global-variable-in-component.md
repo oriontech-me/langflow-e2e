@@ -95,7 +95,7 @@ is never selected).
 - `src/frontend/src/components/core/parameterRenderComponent/components/inputGlobalComponent/`
   — the input that renders global-variable options and performs selection/binding
   (`handleVariableSelect` sets `value=<name>`, `load_from_db=true`)
-- `.../inputComponent/components/popover/index.tsx` — renders the option rows
+- `src/frontend/src/components/core/parameterRenderComponent/components/inputComponent/components/popover/index.tsx` — renders the option rows
   (`option-<name>` when selectable, `disabled-option-<name>` for Credential vars in
   non-secret fields) and the selected-value `OptionBadge`
 - `src/backend/base/langflow/api/v1/variable.py` — global variable CRUD endpoints

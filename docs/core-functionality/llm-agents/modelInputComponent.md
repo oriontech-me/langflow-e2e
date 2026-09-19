@@ -164,8 +164,8 @@ own their own flows.
   — the two frontend halves of the #14505 change. Restoring the empty-field
   auto-fill in either would flip test 4.4's first assertion; that is the
   regression this test now guards. Both resolve on `origin/main` and
-  `origin/release-1.12.0` today, together with `build-grouped-options.ts` and
-  `useRefreshAfterProviderClose.ts`. **The doc's earlier 2026-08-13 measurement —
+  `origin/release-1.12.0` today, together with `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/build-grouped-options.ts` and
+  `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/hooks/useRefreshAfterProviderClose.ts`. **The doc's earlier 2026-08-13 measurement —
   that they were `release-1.12.0`-only — was correct when taken, and the
   back-port is what changed it.** `#14505` merged to `release-1.12.0` on
   2026-08-12 (`aaa384a8`, `base: release-1.12.0`) and reached `main` only on
@@ -178,8 +178,8 @@ own their own flows.
   `base: release-1.12.0`) as a `main` tip — neither was, on the day. By
   first parent, `main`'s tip was `976ec789d` from 2026-08-12 22:34Z until
   `b1b0ce1a` on 2026-08-14 19:29Z, so it was the tip for the whole of 08-13, and
-  there the component's `hooks/` held only `useModelConnectionLogic.ts` and its
-  `helpers/` only `model-option-identity.ts` and `recover-model-option.ts` — as
+  there the component's `hooks/` held only `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/hooks/useModelConnectionLogic.ts` and its
+  `helpers/` only `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/model-option-identity.ts` and `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/recover-model-option.ts` — as
   did `b1b0ce1a`, the last `main` tip before the back-port (verified 2026-08-25).
 - **The same two paths resolve on both refs while carrying different code, and
   the difference is behavioural.** `release-1.12.0` is one commit ahead on each
@@ -188,9 +188,9 @@ own their own flows.
   (`12efda24`, LE-1960, 2026-08-21, not on `main`), which adds an
   `isSavedModelUnavailable` branch to `deriveSelectedModel` and its import to the
   hook. The listings differ too, by four `release-1.12.0`-only files: three from
-  that same change — the `saved-model-availability.ts` the branch calls, its
-  test, and `ModelInputComponent.restricted-model.test.tsx` — plus
-  `modelListboxLabel.a11y.test.tsx`, which is *not* in `12efda24` and arrived
+  that same change — the `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/saved-model-availability.ts` the branch calls, its
+  test, and `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/__tests__/ModelInputComponent.restricted-model.test.tsx` — plus
+  `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/__tests__/modelListboxLabel.a11y.test.tsx`, which is *not* in `12efda24` and arrived
   separately. A resolved path is evidence that a **file** exists, never that the
   code is in it — and since `deriveSelectedModel` is what
   test 4.4 reads, the line this spec is validated against has a branch `main`
