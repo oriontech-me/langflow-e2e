@@ -2017,11 +2017,14 @@ test("no doc abbreviates a module that ANOTHER doc already names in full", () =>
   // already declare, so it needs no checkout at all — at the cost of seeing only
   // the abbreviations whose full path some other doc carries.
   //
-  // Measured on the #1592 corrections: it reaches **24 of the 55** paths they
-  // introduced; the other 31 are named in exactly one doc and are invisible here.
-  // Stated because a test that reads as whole-repo coverage and delivers 44 % is
-  // the shape #1226 was raised about — measured, reverting `hitl.py` alone leaves
-  // this test green, while reverting `assistant-discovery-storage.ts` reddens it.
+  // Measured by the only method that answers it — revert ONE corrected occurrence
+  // at a time, rebuild the synthetic tree from the mutated corpus, re-run this
+  // construction: **18 of the 39** occurrences a diff-derived locator can isolate,
+  // i.e. under half. (The first version of this comment said "24 of the 55", which
+  // is not reproducible by any construction and mixed two units besides — modules
+  // in one clause, token instances in the other.) The concrete shape: reverting
+  // `hitl.py` leaves this test GREEN, because one doc names it; reverting
+  // `assistant-discovery-storage.ts` reddens it, because two do.
   // It earns its place anyway: an abbreviation of a file another doc spells out is
   // the commonest way this class comes back, and it is caught with no network.
   const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -2075,4 +2078,231 @@ test("the PR lane runs the abbreviation check, after the path resolver and on th
     yml.indexOf("--mode=check-docs") < yml.indexOf("--mode=check-doc-abbrevs"),
     "a path that does not exist is the more urgent annotation and must come first",
   );
+});
+
+/**
+ * The `Collect the docs this PR changed` step's own `run:` body, extracted from
+ * the workflow and EXECUTED — never matched as text. A regex over YAML pins a
+ * spelling, not a behaviour, and this repo has measured such a guard passing the
+ * mutation it existed to catch (#1226); the defect below shipped past one.
+ */
+function collectChangedStepBody() {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const yml = fs.readFileSync(path.join(repoRoot, ".github/workflows/pr-validation.yml"), "utf8");
+  const start = yml.indexOf("- name: Collect the docs this PR changed");
+  assert.ok(start > 0, "the step was renamed — this test is pinned to it by name");
+  const afterRun = yml.indexOf("run: |", start);
+  const body = yml.slice(yml.indexOf("\n", afterRun) + 1);
+  const lines = [];
+  for (const line of body.split("\n")) {
+    if (line.trim() === "") { lines.push(""); continue; }
+    if (!line.startsWith("          ")) break; // dedented → the step ended
+    lines.push(line.slice(10));
+  }
+  return lines.join("\n");
+}
+
+test("the changed-file list the guards key on can carry the declarations file", () => {
+  // #1592's severity rule escalates a STALE DECLARATION when the diff owns it.
+  // The list is built with a `-- docs README.md` pathspec and then filtered to
+  // `.md$`, so before this the JSON could never appear in it: the clause was dead
+  // in the only lane that runs it, an expired declaration was a `::warning::` on a
+  // green job, and "verified in both directions" (#1084) held by accident.
+  const repo = makeTempDir("collect-changed-");
+  const git = (...args) => {
+    const r = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: { ...process.env, HOME: repo } });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  };
+  git("init", "--quiet", "-b", "base");
+  git("config", "user.email", "t@example.com");
+  git("config", "user.name", "t");
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "scripts", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "docs", "untouched.md"), "base\n");
+  fs.writeFileSync(path.join(repo, DOC_DEP_DECLARATIONS_FILE), '{"declarations":[]}\n');
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "base");
+  // A remote-tracking ref, because the step resolves `origin/$BASE_REF`.
+  git("update-ref", "refs/remotes/origin/base", "HEAD");
+  git("checkout", "--quiet", "-b", "head");
+  fs.writeFileSync(path.join(repo, "docs", "changed.md"), "new\n");
+  fs.writeFileSync(path.join(repo, DOC_DEP_DECLARATIONS_FILE), '{"declarations":[{"doc":"d","token":"t","reason":"r"}]}\n');
+  fs.writeFileSync(path.join(repo, "docs", "note.txt"), "not markdown\n");
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "head");
+
+  const body = collectChangedStepBody().replace(/^\s*git fetch origin .*$/m, ":");
+  const run = spawnSync("bash", ["-c", body], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: repo, BASE_REF: "base" },
+  });
+  assert.equal(run.status, 0, `step failed: ${run.stderr}`);
+  const list = fs.readFileSync(path.join(repo, "changed-docs.txt"), "utf8").split("\n").filter(Boolean);
+  assert.ok(list.includes("docs/changed.md"), `the changed doc must still be listed: ${list}`);
+  assert.ok(
+    list.includes(DOC_DEP_DECLARATIONS_FILE),
+    `an edit to the declarations file must reach the list, or its stale-entry gate cannot fire: ${list}`,
+  );
+  // The `.md$` filter's own job is unchanged — a non-markdown file under docs/
+  // must still be dropped, or the doc guards would key severity on it.
+  assert.ok(!list.includes("docs/note.txt"), `the .md filter must still hold: ${list}`);
+});
+
+/**
+ * A CLI harness for `--mode=check-doc-abbrevs`.
+ *
+ * The sibling `--mode=check-docs` has one (`docsFixture` + `runCliFrom`) and its
+ * comment records WHY: reverting `--releases` to a no-op, deleting the printed
+ * report, or letting an unlistable ref be skipped all leave the suite green —
+ * measured, all three survived the pure tests alone. The same held here and was
+ * found in review: `process.exit(1)`, the `::error::`/`::warning::` choice and the
+ * entire expired-declaration report could each be deleted with the unit lane at
+ * 93/93. A pure function that nothing calls is not a gate.
+ *
+ * `docsFixture` cannot be reused verbatim: this mode also runs `git ls-files` in
+ * the home, so the home has to be a git repo with an index.
+ */
+function abbrevUpstreamFixture() {
+  const root = makeTempDir("abbrev-upstream-");
+  const run = (...args) =>
+    spawnSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+  const write = (rel) => {
+    fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), "");
+  };
+  run("init", "-q", "-b", "main");
+  write("src/backend/base/langflow/api/v2/hitl.py");
+  // Two live files of the same basename — the ambiguity class, on the transport.
+  write("src/frontend/src/a/session-selector.tsx");
+  write("src/frontend/src/b/session-selector.tsx");
+  run("add", "-A");
+  run("commit", "-qm", "upstream");
+  return root;
+}
+
+function abbrevCliFixture({ docs, declarations = [], ownFiles = {} }) {
+  const home = makeTempDir("abbrev-home-");
+  fs.mkdirSync(path.join(home, "scripts", "lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"),
+    path.join(home, "scripts/watch-upstream-areas.mjs"),
+  );
+  fs.writeFileSync(path.join(home, DOC_DEP_DECLARATIONS_FILE), JSON.stringify({ declarations }, null, 2));
+  for (const [rel, body] of Object.entries({ ...docs, ...ownFiles })) {
+    fs.mkdirSync(path.join(home, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(home, rel), body);
+  }
+  const git = (...args) =>
+    spawnSync("git", args, {
+      cwd: home,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+  // `git ls-files` reads the INDEX, so adding is enough — no commit needed.
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  return { home, upstream: abbrevUpstreamFixture() };
+}
+
+function runAbbrevCli(home, upstream, changed) {
+  const args = [path.join(home, "scripts/watch-upstream-areas.mjs"), "--mode=check-doc-abbrevs", "--root", upstream, "--ref", "main"];
+  if (changed) {
+    fs.writeFileSync(path.join(home, "changed.txt"), `${changed.join("\n")}\n`);
+    args.push("--changed", path.join(home, "changed.txt"));
+  }
+  const r = spawnSync(process.execPath, args, { encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+test("the CLI is a GATE: a finding in a changed doc exits 1 and is an ::error::", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`api/v2/hitl.py` — the resume helpers") },
+  });
+
+  const owned = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(owned.status, 1, `a finding the diff owns must fail: ${owned.stdout}${owned.stderr}`);
+  assert.match(owned.stderr, /::error::docs\/area\/spec\.md:\d+/);
+  assert.match(owned.stdout, /is `src\/backend\/base\/langflow\/api\/v2\/hitl\.py`/);
+
+  // #980's half: the same finding, in a doc nobody touched, is reported and green.
+  const untouched = runAbbrevCli(home, upstream, ["docs/other.md"]);
+  assert.equal(untouched.status, 0, untouched.stderr);
+  assert.match(untouched.stderr, /::warning::docs\/area\/spec\.md:\d+/);
+  assert.doesNotMatch(untouched.stderr, /::error::/);
+});
+
+test("the CLI prints the ambiguity rather than picking one, and fails on it the same way", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`session-selector.tsx` — the row") },
+  });
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /matches 2: src\/frontend\/src\/a\/session-selector\.tsx \| src\/frontend\/src\/b\/session-selector\.tsx/);
+});
+
+test("the CLI reports a clean corpus as clean, and says what it read", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`src/backend/base/langflow/api/v2/hitl.py` — in full") },
+  });
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Every upstream module named in a dependency section is written as a resolvable `src\/` path\./);
+  assert.match(r.stdout, /Checked \d+ non-`src\/` token\(s\)/);
+});
+
+test("the CLI refuses an unreadable declarations file with exit 2 — undecidable, not clean", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`api/v2/hitl.py` — the resume helpers") },
+  });
+  fs.writeFileSync(path.join(home, DOC_DEP_DECLARATIONS_FILE), "{ not json");
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /not valid JSON/);
+});
+
+test("the CLI refuses an empty `git ls-files` — the one input with no floor", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`api/v2/hitl.py` — the resume helpers") },
+  });
+  // A git directory with no index: `git ls-files` exits 0 printing nothing, which
+  // would disable ours-wins in silence and turn our own helper references into
+  // findings — and, in a doc the PR touched, into hard failures.
+  fs.rmSync(path.join(home, ".git", "index"), { force: true });
+  const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /listed nothing/);
+});
+
+test("a stale declaration fails the run when the diff owns the declarations file", () => {
+  // The other half of the same rule, at the CLI. Together with the test above
+  // this is the whole path: the workflow puts the file in the list, and the
+  // runner escalates on it.
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`src/backend/base/langflow/api/v2/hitl.py` — declared in full") },
+    declarations: [{ doc: "docs/area/spec.md", token: "api/v2/hitl.py", reason: "a".repeat(50) }],
+  });
+  const reported = runAbbrevCli(home, upstream, ["docs/unrelated.md"]);
+  assert.equal(reported.status, 0, "a stale entry nobody touched is reported, not failed (#980)");
+  assert.match(reported.stderr, /::warning::.*silences nothing/);
+
+  const owned = runAbbrevCli(home, upstream, [DOC_DEP_DECLARATIONS_FILE]);
+  assert.equal(owned.status, 1, "the diff owns the declarations file, so the stale entry fails");
+  assert.match(owned.stderr, /::error::.*silences nothing/);
 });

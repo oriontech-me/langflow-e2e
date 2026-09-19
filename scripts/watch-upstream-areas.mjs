@@ -900,16 +900,21 @@ export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], ex
  * A token is a finding when it resolves, by SUFFIX, to exactly one upstream path
  * and to nothing in this repo. Uniqueness is what makes the check quiet enough to
  * gate on: measured over the whole of `docs/`, the prose that survives every other
- * clause (`text/event-stream`, `store/tags`, `models/gemini-embedding-001`,
- * `@modelcontextprotocol/server-everything`) resolves to NOTHING, and the tokens
- * that resolve to MANY are the ambiguity the issue asks to remove rather than
- * findings to auto-correct.
+ * clause — `text/event-stream`, `store/tags`, `models/gemini-embedding-001` —
+ * resolves to NOTHING, and the tokens that resolve to MANY are the ambiguity the
+ * issue asks to remove rather than findings to auto-correct.
  *
- * - **Resolving in this repo wins.** `delete-flow.ts` and `adjust-screen-view.ts`
- *   are ours; upstream carries files of the same name under `src/frontend/tests/`,
- *   so a suffix match alone would rewrite 20 of our own helper references into
- *   Langflow paths. Our own tree is out of scope by the issue and checked by other
- *   means.
+ * Pick those examples from the right clause. A first draft of this paragraph cited
+ * `@modelcontextprotocol/server-everything` as prose that uniqueness drops, and it
+ * is the one example that disproves the point: the `@` rejects it in
+ * `abbreviationTarget`, so it never reaches the tree at all.
+ *
+ * - **Resolving in this repo wins.** `add-component-from-sidebar.ts` and
+ *   `adjust-screen-view.ts` are ours; upstream carries files of the same name
+ *   under `src/frontend/tests/`, so a suffix match alone would rewrite **17
+ *   references, 10 distinct tokens across 10 docs** into Langflow paths (measured;
+ *   an earlier draft said 20, which is neither count). Our own tree is out of
+ *   scope by the issue and checked by other means.
  * - **A `src/` token already in the SAME section covers its own abbreviation.** A
  *   bullet routinely names a file in full and then refers to it again by basename;
  *   that is not a hole, because the resolver already has the full path.
@@ -1036,7 +1041,10 @@ export function findAbbreviatedDeps({
     .map((d) => ({
       doc: d.doc,
       token: d.token,
-      reason: "silences nothing: that doc no longer carries this token, or the token no longer resolves upstream",
+      reason:
+        "silences nothing — the sweep reported no finding for it. Either that doc no longer carries the token " +
+        "(commonest: it was rewritten as a full `src/` path, or one appeared beside it in the same section), or " +
+        "the token stopped resolving upstream, or it now matches one of this repo's own files",
     }));
 
   return { checked, findings, ambiguous, expired, declared: used.size };
@@ -1754,10 +1762,18 @@ export const DOC_DEP_DECLARATIONS_FILE = "scripts/lib/doc-dep-abbreviation-decla
 /**
  * The declared context tokens, or a reason this run could not decide.
  *
- * Fail-closed: an absent or malformed file makes every declared token look like a
- * fresh finding, which is loud and wrong; an empty list read as "no declarations"
- * is loud and wrong in the same direction. Both are refused with the cause named,
- * rather than degrading to a verdict nobody measured (#1012).
+ * Fail-closed on the two states that are undecidable: an absent or malformed file
+ * is refused with the cause named, rather than degrading to a verdict nobody
+ * measured (#1012).
+ *
+ * An EMPTY `declarations` array is ACCEPTED, and the asymmetry is deliberate. It
+ * is the legitimate end state — the day no doc needs a context declaration the
+ * array is empty and the file should still read — and its failure direction is
+ * loud rather than silent: every token that WAS declared comes back as a finding.
+ * That is the opposite of `--min-categories`, whose floor exists because a wrong
+ * baseline is permanent and silent. So there is no floor here, and this says so,
+ * because a JSDoc asserting a property the code does not have is the same
+ * unverified claim this guard exists to remove.
  *
  * @param {string} repoRoot
  * @returns {{declarations: Array<{doc: string, token: string, reason: string}>} | {error: string}}
@@ -1811,12 +1827,23 @@ function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
   // one-off sweep used, and they miss every bare basename — `delete-flow.ts` is
   // written without a directory in six docs and upstream carries a file of that
   // name under `src/frontend/tests/utils/flow/`.
-  let ownFiles;
+  let ownFiles = [];
   try {
     ownFiles = git(repoRoot, ["ls-files"]).split("\n").filter(Boolean);
   } catch (error) {
     process.stderr.write(
       `::error::watch-upstream-areas: could not list this repo's own files (${error.message}), so an upstream match could not be told from one of ours.\n`,
+    );
+    process.exit(2);
+  }
+  // `git ls-files` is fail-loud only when it THROWS. Empty stdout — a git
+  // directory with no index — returns cleanly and disables the ours-wins clause
+  // in silence, which turns this repo's own helper references into findings and,
+  // for any sitting in a doc the PR touched, into hard failures. It is the one
+  // input to this mode with no floor, so it gets one.
+  if (ownFiles.length === 0) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: \`git ls-files\` in "${repoRoot}" listed nothing, so every upstream name match would read as an abbreviated Langflow path. Undecidable, not "this repo owns no files".\n`,
     );
     process.exit(2);
   }
@@ -1830,9 +1857,13 @@ function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
     changedFiles,
   });
 
+  // `docs.length` would count the exempt template this function skips, and the
+  // sibling step prints its own corpus size a few lines above in the same job —
+  // two adjacent verdicts disagreeing by one about the same docs is avoidable.
+  const scanned = docs.filter((doc) => !DOC_DEPS_EXEMPT_FILES.includes(doc.file)).length;
   process.stdout.write(
-    `Checked ${checked} non-\`src/\` token(s) in the External dependencies of ${docs.length} doc(s) against ` +
-      `${trees.map((t) => t.ref).join(", ")}; ${used} declared as context.\n`,
+    `Checked ${checked} non-\`src/\` token(s) in the External dependencies of ${scanned} doc(s) against ` +
+      `${trees.map((t) => t.ref).join(", ")}; ${used} declared as context; ${docs.length - scanned} doc(s) exempt.\n`,
   );
   if (!changedListPath) {
     process.stdout.write(
@@ -1886,8 +1917,10 @@ function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
     process.stdout.write("Every upstream module named in a dependency section is written as a resolvable `src/` path.\n");
     return;
   }
+  // Worded over the DIFF, not over "a doc": a stale declaration's subject is the
+  // JSON file, and the first draft of this line called it a doc.
   process.stdout.write(
-    `\n${failed.length} of the above are in a doc this diff changed and fail; the rest are reported so drift stays visible (#980, #1012).\n`,
+    `\n${failed.length} of the above are in a file this diff changed and fail; the rest are reported so drift stays visible (#980, #1012).\n`,
   );
   if (failed.length > 0) process.exit(1);
 }
