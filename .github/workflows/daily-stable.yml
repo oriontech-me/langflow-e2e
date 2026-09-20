@@ -1844,6 +1844,15 @@ jobs:
       # tests always execute), so this clause could not fire on this lane at all. What
       # fires now is the reachable case — a complete report, hundreds of green tests,
       # and NO usable provider, so the whole LLM surface went unmeasured.
+      # --- O CORTE, 2026-09-20 (#1940) -------------------------------------------
+      # A umbrella de um dia vermelho passou a nascer do run da VM, no destino. Este
+      # passo perdeu os DOIS eixos que a VM cobre -- `test` falhou, e run vazio --
+      # porque duas issues para um veredito sao piores do que nenhuma.
+      #
+      # Os tres que sobraram ficam aqui de proposito: a VM ainda nao os levanta, e cada
+      # um achou defeito real que nada mais reporta -- run verde sem provedor usavel
+      # (#1800) e spec que nunca entrou na matriz (#1812, #1176). Quando a faixa da VM
+      # aprender os tres, este passo sai inteiro.
       - name: Create issue on failure
         # The listing clauses (#1812) are the third and fourth way this step has to
         # fire on a run whose `test` job came back GREEN. A spec file that never
@@ -1853,7 +1862,7 @@ jobs:
         # reads them (`!= 'true'`, `!= '[]'`), so the two cannot disagree about
         # whether the day had a finding; which SHAPE the umbrella takes is then
         # decided by positive identification inside the script.
-        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.fail_recommended == 'true' || needs.prep.outputs.listing_verified != 'true' || needs.prep.outputs.listing_missing != '[]') && github.event_name == 'schedule'
+        if: always() && (steps.coverage.outputs.fail_recommended == 'true' || needs.prep.outputs.listing_verified != 'true' || needs.prep.outputs.listing_missing != '[]') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
