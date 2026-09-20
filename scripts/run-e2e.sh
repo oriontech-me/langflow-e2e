@@ -1954,6 +1954,7 @@ phase_publish() {
     MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
+    IMAGE="${IMAGE:-$LANGFLOW_VERSION}" \
       node scripts/create-failure-issue.mjs || warn "issue creation failed (does not fail the run)."
   fi
 
