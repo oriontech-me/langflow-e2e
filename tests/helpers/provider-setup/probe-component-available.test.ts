@@ -51,10 +51,12 @@ function response(
 const okRegistry = {
   agents: { "ext:openai:OpenAIModelComponent@official": {} },
   // Mixed case ON PURPOSE, and it is the registry side that needs it: with only
-  // lowercase keys, dropping `k.toLowerCase()` left the whole file green while
-  // breaking a real shape — the committed catalog baseline still carries bare
-  // CamelCase type keys (`CrewAIAgentComponent`, `CustomComponent`) alongside the
-  // namespaced `ext:…` ones.
+  // lowercase keys, dropping `k.toLowerCase()` left the whole file green. For the
+  // four live tokens that is forward protection rather than a live bug — measured
+  // against the committed catalog baseline, `ollama` matches its `ext:…` keys
+  // case-sensitively too, and groq/mistral/composio have no keys at all — but 127
+  // of its 175 type keys are bare CamelCase (`CrewAIAgentComponent`,
+  // `CustomComponent`), the pre-`ext:` shape a returning family would land in.
   mistral: { MistralAIModelComponent: {} },
   ollama: { "ext:ollama:OllamaModel@official": {} },
   component_display_names: { ollamamodel: "Ollama" },
@@ -208,9 +210,10 @@ describe("probeProviderComponent — undecided states", () => {
   });
 
   it("does not let `component_display_names` alone satisfy the floor", async () => {
-    // A metadata map with no category registered is a registry still building,
-    // not a build without this family — and reporting `absent` there would make
-    // every gated spec skip with a packaging reason on a starting instance.
+    // A metadata map with no category registered is a body this probe could not
+    // read as a catalog, not a build without this family — reporting `absent`
+    // there would put a packaging sentence on it. (Deliberately not "a registry
+    // still building": that shape is undemonstrated, see the helper's comment.)
     const metadataOnly = { component_display_names: { somethingelse: "X" } };
     const reason = undecided(await probe(metadataOnly, { token: "groq" }));
     assert.match(reason, /no component categories/);

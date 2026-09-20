@@ -185,6 +185,20 @@ export async function probeProviderComponent(
   // and answers 500 on any exception, so it does not appear to serve a partial
   // 200 — the floor is kept for the reachable shapes and this sentence records
   // that the third one is unverified rather than implying it was measured.
+  // `component-catalog-drift.ts` reads the opposite as measured ("an empty
+  // registry is what an instance whose registry is still building answers, ~11 s
+  // after /api/v1/version starts answering"), and the two are not reconciled
+  // here: `snapshotCatalog` normalises a non-2xx and an error envelope to zero
+  // categories alike, so that observation does not by itself establish a partial
+  // 200. Either way this probe answers `undecided`, so nothing turns on which it
+  // was — recorded so the next reader does not re-derive it.
+  //
+  // KNOWN LIMIT of the floor, since it is shape-based rather than value-based: a
+  // 200 carrying an object- or array-valued `detail` (a proxy's nested JSON
+  // error) counts as a category with components and comes back `absent`, with
+  // the packaging sentence. FastAPI emits those shapes at 422, which is already
+  // non-ok and therefore `undecided`, so this needs a proxy answering 200 to be
+  // reachable at all.
   //
   // `component_display_names` is excluded from the COUNT (it is a metadata map,
   // not a category) and kept in the MATCH, where a hit means the type really is

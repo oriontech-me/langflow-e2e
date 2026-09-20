@@ -102,11 +102,12 @@ until a human edits it, so it would trade a recovering gate for a silent one. Th
 availability probe runs **before** the credential gate, so the reported reason names the
 packaging rather than a missing key.
 
-The probe answers three states since #1930, and only `absent` produces the packaging
-sentence above. A backend that is wedged, erroring or still building the registry is
-`undecided`: the spec still skips, but the reason says the probe could not decide and
-carries the underlying error — an unknown must not be recorded as a verdict (#1012),
-least of all in the one sentence a lane-coverage reader parses.
+The probe answers three states since #1930, and only `absent` produces the
+packaging sentence above. A backend that is wedged or erroring — or any `200`
+whose body is not a readable catalog — is `undecided`: the spec still skips, but
+the reason says the probe could not decide and carries the underlying error. An
+unknown must not be recorded as a verdict (#1012), least of all in the one
+sentence a lane-coverage reader parses.
 
 `generalBugs-shard-11.spec.ts` carries the same absence from the other side (it
 hard-fails waiting for the ComposIO sidebar entry) and is triaged in **#1912**.

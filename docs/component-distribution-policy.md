@@ -219,8 +219,13 @@ decides what an `undecided` costs it:
   matched no pattern at all and would have stripped the tag.
 
 One floor comes with it, the same one `catalogVerdict` needed: a `200` that registers
-**no components at all** is `undecided`, not a build without this family — otherwise a
-still-building registry makes every gated spec skip with a packaging reason.
+**no components at all** is `undecided`, not a build without this family — otherwise
+such a body makes every gated spec skip with a packaging reason. Two shapes reach it: a
+`200` whose body is not a registry (a gateway or auth JSON error), and a catalog left
+empty by the governance filter, which preserves empty categories. The intuitive third
+one, a registry still building, is **not demonstrated** — `GET /api/v1/all` awaits the
+registry future and answers `500` on any exception, so it does not appear to serve a
+partial `200`.
 `component_display_names` does not satisfy that floor (it is a metadata map, not a
 category) while still counting as a match, where a hit means the type really is in the
 catalog. Pure and covered by `npm run test:units`.

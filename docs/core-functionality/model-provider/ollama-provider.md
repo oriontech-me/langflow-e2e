@@ -38,9 +38,10 @@ Unlike the Groq/Mistral siblings — whose distributions are absent from the
 image *by default*, so they `test.skip` (#1039) — `lfx-ollama` **ships in the
 stock nightly**. Its absence is therefore an image-packaging regression that
 must stay VISIBLE: this spec **fails** the pre-flight with an attributed
-message instead of skipping, so a repeat reports "Ollama component not
-exposed by this build (`lfx-ollama` not installed)" in ~1 s rather than an
-unattributable 30 s selector timeout. A skip here would turn the regression
+message instead of skipping, so a repeat reports "Ollama component not exposed
+by this Langflow build — the `lfx-ollama` distribution that ships it is not
+installed (#931)" in ~1 s rather than an unattributable 30 s selector
+timeout. A skip here would turn the regression
 into a silent green nobody triages.
 
 **And an UNDECIDED probe fails here too (#1930), which is this call site's own
