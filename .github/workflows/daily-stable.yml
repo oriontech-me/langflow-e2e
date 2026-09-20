@@ -151,7 +151,8 @@ jobs:
           # files — one of whose only occurrence is the comment "`@release`, never
           # `@stable`". Scope is `tests/`, not `tests/tests-automations/`: five listed
           # files live outside the regression tree, and the narrower scope reports them
-          # as phantom losses (measured, 242 against 247).
+          # as phantom losses (re-measured 2026-09-20 on #1934's branch, 267 against
+          # 272; the DELTA is the point and the absolutes move every week).
           #
           # The derivation must NOT be able to abort this step, and the `if !` is what
           # makes that explicit under `bash -eo pipefail` — the same asymmetry the

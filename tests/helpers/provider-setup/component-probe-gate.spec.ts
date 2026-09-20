@@ -22,9 +22,12 @@
 // re-learning (#1084, #1226, #1252).
 //
 // Classification is asserted through `classifyInfraError` — the module the
-// auto-removal path actually calls — never against a copy of the pattern. So
-// widening or narrowing `scripts/lib/infra-signature-patterns.json` cannot
-// silently unpin this either.
+// auto-removal path actually calls — never against a copy of the pattern, so
+// narrowing `scripts/lib/infra-signature-patterns.json` fails here. At DAILY
+// latency, though, not on the PR that narrows it: `impacted-specs-by-import.mjs`
+// only walks `tests/`, so a diff touching that JSON selects zero specs. #1310's
+// standing rule is what covers the PR side — a pattern change also needs a case
+// in `remove-stable-from-failures.test.ts`, which the unit lane runs.
 //
 // WHY THIS FILE IS HERE and not in `tests/fixtures/` beside the other
 // `*-gate.spec.ts`: those gate a fixture and live with the fixture. This gates a
@@ -38,6 +41,15 @@
 // A tiny local server stands in for Langflow: no container, no provider key, no
 // flow. Measured on this file: three tests under 1 s each, plus the timeout test,
 // which costs the probe's own 15 s bound and is the point of it — see there.
+//
+// DO NOT WRITE THE STRING `provider-setup` IN THIS FILE'S SOURCE. This spec needs
+// no provider and no key, and `scripts/provider-dependent-specs.mjs` classifies a
+// spec by grepping its SOURCE for markers of which `provider-setup` is one — it
+// reads the text, not the path, which is why living in a directory of that name
+// costs nothing today. Naming the helper's full path in a comment flips
+// `consumesModelData` to true (measured), which FORCES the `Collect models` sweep
+// on every PR that selects this file and couples a key-free transport gate to
+// provider-key health — the exact coupling #1216 removed.
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -54,8 +66,11 @@ import {
 const AUTH_PATH = "/api/v1/auto_login";
 const REGISTRY_PATH = "/api/v1/all";
 
+/** The token the stand-in mints, and the one it then REQUIRES on the registry call. */
+const AUTH_TOKEN = "gate-token";
+
 /** How the server should treat `GET /api/v1/all` for the context under test. */
-type RegistryMode = "serve" | "drop" | "hang";
+type RegistryMode = "serve" | "drop" | "hang" | "503" | "not-json";
 
 let server: http.Server;
 let origin: string;
@@ -80,17 +95,35 @@ test.beforeAll(async () => {
       // its own tests, and it retries a THROW for ~30 s (#1077). Letting it fail
       // here would measure that budget instead of this probe.
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ access_token: "gate-token" }));
+      res.end(JSON.stringify({ access_token: AUTH_TOKEN }));
       return;
     }
 
     if (path === REGISTRY_PATH) {
+      // The header is REQUIRED here so the round trip the header comment
+      // advertises is asserted rather than merely performed: dropping
+      // `Authorization` from the probe left every test green before this.
+      if (req.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: "the probe did not forward its token" }));
+        return;
+      }
       if (mode === "drop") {
         // Accepted, then the socket dies under the response: `socket hang up`.
         req.socket.destroy();
         return;
       }
       if (mode === "hang") return; // never answers — the probe's own bound decides
+      if (mode === "503") {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: "registry unavailable" }));
+        return;
+      }
+      if (mode === "not-json") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("<html>a proxy answered instead</html>");
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(REGISTRY_BODY));
       return;
@@ -124,7 +157,7 @@ function reasonOf(verdict: ComponentProbeVerdict): string {
 test.describe("component probe — real transport", () => {
   test(
     "answers present and absent against a real socket serving a registry",
-    { tag: ["@stable", "@regression", "@components"] },
+    { tag: ["@stable", "@regression"] },
     async () => {
       // The positive control. Every transport assertion below is satisfied by a
       // probe that only ever says `undecided`; this is what makes them mean
@@ -145,8 +178,34 @@ test.describe("component probe — real transport", () => {
   );
 
   test(
+    "a non-ok answer and a 200 that is not JSON are undecided on a real socket",
+    { tag: ["@stable", "@regression"] },
+    async () => {
+      // Named by #1934: the unit test decides both against a response DOUBLE,
+      // where `ok()` and `json()` are whatever the test wrote. These two are the
+      // same branches over a real HTTP response — cheap, since the server is
+      // already standing. Neither classifies as infra (a backend that ANSWERS is
+      // not a transport failure), which is why only the reason is asserted.
+      const ctx = await contextForGate();
+      try {
+        mode = "503";
+        expect(reasonOf(await probeProviderComponent(ctx, "ollama"))).toContain(
+          "answered 503",
+        );
+
+        mode = "not-json";
+        expect(reasonOf(await probeProviderComponent(ctx, "ollama"))).toContain(
+          "not JSON",
+        );
+      } finally {
+        await ctx.dispose();
+      }
+    },
+  );
+
+  test(
     "a dropped connection is undecided, and its reason still classifies as infra",
-    { tag: ["@stable", "@regression", "@components"] },
+    { tag: ["@stable", "@regression"] },
     async () => {
       // The whole path is real here — real auth round trip, real socket, real
       // Playwright error — which is what the unit test's double cannot be.
@@ -173,7 +232,7 @@ test.describe("component probe — real transport", () => {
 
   test(
     "a refused connection is undecided, and its reason still classifies as infra",
-    { tag: ["@stable", "@regression", "@components"] },
+    { tag: ["@stable", "@regression"] },
     async () => {
       // Port 9 (discard) with nothing bound: the whole origin is dead, so the
       // auth call would throw too and burn `get-auth-token`'s ~30 s retry budget
@@ -203,13 +262,23 @@ test.describe("component probe — real transport", () => {
 
   test(
     "a hung registry times out at the probe's own bound, undecided and classified",
-    { tag: ["@stable", "@regression", "@components"] },
+    { tag: ["@stable", "@regression"] },
     async () => {
       // This test costs ~15 s, and that IS the assertion. The unit test can pin
       // that `timeout: 15000` is PASSED; only a real socket pins that it is
-      // HONOURED — a bound silently dropped would hold this gate open for the
-      // spec's own 5-minute budget on a wedged backend instead of resolving to
-      // `undecided`, which is the state every caller's decision is built on.
+      // HONOURED — a probe that gave up on its own schedule would resolve to
+      // `undecided` at a moment no caller was told about.
+      //
+      // WHAT THE CLOCK ALONE CANNOT SEE, and the reason the reason string is
+      // asserted below: deleting the bound does NOT fall through to the test's
+      // 5-minute budget. `playwright/lib/index.js` seeds every APIRequestContext
+      // with `use.actionTimeout` (20 s here, `playwright.config.ts:145`), so a
+      // deleted bound lands at 20 s — measured — which a 14 s..30 s window waves
+      // through. The first version of this test had that window and nothing
+      // else, and the deletion mutation survived it. Playwright reports the
+      // REQUESTED bound in the message (`Timeout 15000ms exceeded` vs
+      // `Timeout 20000ms exceeded`), so the string is what actually pins it, and
+      // it is clock-free — it does not move when someone tunes `actionTimeout`.
       test.setTimeout(60_000);
       mode = "hang";
       const ctx = await contextForGate();
@@ -229,14 +298,22 @@ test.describe("component probe — real transport", () => {
           "api-request-timeout",
         );
 
-        // A window, not an equality: the bound is 15 s and the machine adds its
-        // own noise. The floor is what matters — a probe that gave up early would
-        // mean the bound is not the one the callers were told about.
+        // The load-bearing assertion: Playwright names the bound it was given, so
+        // this distinguishes "honoured 15 s" from "fell back to actionTimeout".
+        expect(
+          reason,
+          `the probe must time out at its own 15 s bound, not at some default. ` +
+            `Reason: ${reason}`,
+        ).toContain("Timeout 15000ms exceeded");
+
+        // The clock is corroboration, not the pin. A window, because the machine
+        // adds noise; the ceiling sits BELOW `actionTimeout` (20 s) so it cannot
+        // be satisfied by the fallback the string assertion above rules out.
         expect(
           elapsed,
           `the probe returned after ${elapsed} ms; its bound is 15 s`,
         ).toBeGreaterThanOrEqual(14_000);
-        expect(elapsed).toBeLessThan(30_000);
+        expect(elapsed).toBeLessThan(18_000);
       } finally {
         await ctx.dispose();
       }
