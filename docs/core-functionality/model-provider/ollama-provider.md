@@ -25,7 +25,7 @@ than a keyed cloud API:
 
 **Build-side pre-flight (added for #931) — test 2 only.** Test 2 first asserts
 that the running build actually EXPOSES the Ollama component, via
-`isProviderComponentAvailable(request, "ollama")` (`GET /api/v1/all`). In
+`probeProviderComponent(request, "ollama")` (`GET /api/v1/all`). In
 1.12 Langflow moved each component family into its own distribution:
 `lfx.components.ollama` is now a `# lfx-bundles-shim` re-pointing at the
 `lfx-ollama` package, and the shim's own docstring states it is *"removed

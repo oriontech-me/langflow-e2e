@@ -2,7 +2,10 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { clearApiKeyBadges } from "../../../../helpers/ui/clear-api-key-badges";
-import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
+import {
+  probeProviderComponent,
+  undecidedProbeMessage,
+} from "../../../../helpers/provider-setup/probe-component-available";
 
 // PARKED — #1916. ComposIO is not shipped by the image this suite tests, and the
 // surface is already out of scope for this team (QA-CHECKLIST.md § 6.2, 2026-08-06).
@@ -32,10 +35,15 @@ test(
     // component cannot be placed at all, "which key is missing" is the wrong
     // attribution, and `getByTestId("composioGmail")` would otherwise hard-fail on a
     // 20 s hover timeout that names nothing (#1039's whole point).
-    const componentAvailable = await isProviderComponentAvailable(request, "composio");
+    // Three states, and only `absent` may claim packaging (#1930): a wedged or
+    // erroring backend also skips this spec, but it says so rather than
+    // asserting a distribution it never managed to read.
+    const componentProbe = await probeProviderComponent(request, "composio");
     test.skip(
-      !componentAvailable,
-      "ComposIO components not exposed by this Langflow build — the `lfx-bundles` distribution that ships them is not installed (#1039, #1916)",
+      componentProbe.state !== "present",
+      componentProbe.state === "undecided"
+        ? undecidedProbeMessage("composio", componentProbe)
+        : "ComposIO components not exposed by this Langflow build — the `lfx-bundles` distribution that ships them is not installed (#1039, #1916)",
     );
 
     // Env-var presence is the CORRECT gate here (#1029 audit): Composio is a tool
