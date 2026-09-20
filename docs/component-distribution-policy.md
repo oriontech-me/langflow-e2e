@@ -129,8 +129,11 @@ entirely on the criterion.
 | `openai` | `ui-ux/sidebar-search-and-filter.spec.ts` |
 | `openai` | `ui-ux/use-global-variable-in-component.spec.ts` |
 
-**(b) Specs gated on a family the image does NOT ship — 3.**
-`groq-provider.spec.ts` and `mistral-provider.spec.ts` skip on every run (#1039).
+**(b) Specs gated on a family the image does NOT ship — 4.**
+`groq-provider.spec.ts` and `mistral-provider.spec.ts` skip on every run (#1039), and
+`core-functionality/llm-agents/composio.spec.ts` joined them on 2026-09-18 (#1913 →
+#1916): `composio` is an `lfx-bundles-shim`, `import lfx_bundles` raises
+`ModuleNotFoundError` in the nightly, and the catalog carries zero `composio` types.
 `ollama-provider.spec.ts` carries the same gate but Ollama **returned** to the default
 image, so its gate currently passes — it is insurance, not an active skip.
 

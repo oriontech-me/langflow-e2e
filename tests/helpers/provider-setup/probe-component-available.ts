@@ -40,10 +40,13 @@ import { getAuthToken } from "../auth/get-auth-token";
 //
 // KNOWN LIMITATION: the match is a substring, so a short token can hit a
 // neighbouring component type (`openai` also matches `OpenAI Compatible`). Fine
-// for the current callers, whose tokens (`groq`, `mistral`) are unambiguous.
+// for the current callers, whose tokens (`groq`, `mistral`, `ollama`, `composio`) are
+// unambiguous — `composio` measured on 1.13.0.dev15 as 0 hits across all 183 type keys
+// and all 183 `component_display_names` keys (#1913).
 //
 // SCOPE — this probe stays the per-spec gate for providers that are NOT bundled
-// in the image (groq, mistral — #1039). The providers `collect-models` validates
+// in the image (groq, mistral — #1039; composio since #1913/#1916, and ollama, which
+// carries the gate as insurance after the family RETURNED to the default image). The providers `collect-models` validates
 // go through `probe-component-buildable.ts` instead (#900), which uses exact
 // registry keys rather than this substring match AND adds the build layer this
 // one cannot supply: a registry hit does not prove the component builds, as the
