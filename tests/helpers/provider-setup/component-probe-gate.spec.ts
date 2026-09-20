@@ -39,17 +39,23 @@
 // real registry shape and asserts `present` AND `absent`.
 //
 // A tiny local server stands in for Langflow: no container, no provider key, no
-// flow. Measured on this file: three tests under 1 s each, plus the timeout test,
-// which costs the probe's own 15 s bound and is the point of it — see there.
+// flow. Measured on this file: four tests under 1 s each (19-39 ms), plus the
+// timeout test, which costs the probe's own 15 s bound and is the point of it.
 //
-// DO NOT WRITE THE STRING `provider-setup` IN THIS FILE'S SOURCE. This spec needs
-// no provider and no key, and `scripts/provider-dependent-specs.mjs` classifies a
-// spec by grepping its SOURCE for markers of which `provider-setup` is one — it
-// reads the text, not the path, which is why living in a directory of that name
-// costs nothing today. Naming the helper's full path in a comment flips
-// `consumesModelData` to true (measured), which FORCES the `Collect models` sweep
-// on every PR that selects this file and couples a key-free transport gate to
-// provider-key health — the exact coupling #1216 removed.
+// THIS FILE'S SOURCE MUST NOT SPELL THE MARKER NAMED AFTER ITS PARENT DIRECTORY,
+// and the warning cannot spell it either — which is how the first version of this
+// paragraph failed. This spec needs no provider and no key, but
+// `scripts/provider-dependent-specs.mjs` classifies a spec by grepping its SOURCE
+// for a marker list that includes that directory's name. It reads the text, not
+// the path, which is the only reason living in that directory costs nothing.
+// Writing the name in prose — in a comment, in a path, in a warning about writing
+// it — flips `consumesModelData` to true and FORCES the `Collect models` sweep on
+// every PR that selects this file, coupling a key-free transport gate to
+// provider-key health: the coupling #1216 removed.
+//
+// The comment is not the guard. Per #1226, a warning pins nothing; the assertion
+// that does is in `scripts/provider-dependent-specs.test.mjs`, which classifies
+// this file from disk and fails if it ever comes back provider-dependent.
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
