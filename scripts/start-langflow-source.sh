@@ -57,11 +57,29 @@
 #   LANGFLOW_PORT=7861 ./scripts/start-langflow-source.sh   # a second instance, side by side
 #   LANGFLOW_SRC_REF=v1.12.0 ./scripts/start-langflow-source.sh   # opt in to moving the clone
 #   LANGFLOW_SRC_REPO=/srv/langflow ./scripts/start-langflow-source.sh
+#   # served from something already installed, with no clone on the machine at all:
+#   LANGFLOW_SRC_RUN_CMD="$VENV/bin/langflow run" \
+#   LANGFLOW_SRC_FRONTEND_DIR="$VENV/lib/python3.14/site-packages/langflow/frontend" \
+#     ./scripts/start-langflow-source.sh
 #   LANGFLOW_BIND_HOST=0.0.0.0 ./scripts/start-langflow-source.sh # opt in to a reachable bind
 #   LANGFLOW_SRC_KEEP_STATE=1 ./scripts/start-langflow-source.sh  # keep the previous run's database and log
 set -euo pipefail
 
-REPO="${LANGFLOW_SRC_REPO:-$HOME/langflow-project/langflow}"
+# The clone is what this script BUILDS from, and only that. When the caller supplies
+# the run command, the instance is served from something already installed — a venv
+# holding a published distribution, which is what the scheduled VM lane serves — and
+# then nothing here reads the clone: the sync is skipped, the UI comes from
+# LANGFLOW_SRC_FRONTEND_DIR, and the stamp has no HEAD to be compared against. So a
+# clone is required when it is USED, not as a formality: demanding one anyway cost a
+# machine 4.9 GB of source it never executes (#1927).
+#
+# Given explicitly, it is still required to exist and still becomes the working
+# directory, so a caller that names a path and mistypes it gets the old refusal.
+if [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] && [ -z "${LANGFLOW_SRC_REPO:-}" ]; then
+  REPO=""
+else
+  REPO="${LANGFLOW_SRC_REPO:-$HOME/langflow-project/langflow}"
+fi
 PORT="${LANGFLOW_PORT:-7860}"
 # Loopback by default, unlike the pip starter's 0.0.0.0. That script targets a
 # developer's own box; this one targets a SHARED VM, where the same flags publish an
@@ -81,11 +99,11 @@ LOG_FILE="${STATE_DIR}/langflow.log"
 # The directory the backend serves the UI from. Overridable because a gate keyed on
 # an upstream path is a gate that goes stale — but stale here means a loud refusal
 # on a good clone, never a silent pass on a broken one.
-FRONTEND_DIR="${LANGFLOW_SRC_FRONTEND_DIR:-${REPO}/src/backend/base/langflow/frontend}"
+FRONTEND_DIR="${LANGFLOW_SRC_FRONTEND_DIR:-${REPO:+${REPO}/src/backend/base/langflow/frontend}}"
 # Written by scripts/prepare-target-source.sh, next to the clone rather than under
 # /tmp so that a reboot does not read as a stale build. Its only job here is to name
 # the commit the served assets were built from.
-BUILD_STAMP_FILE="${LANGFLOW_SRC_STAMP_FILE:-${REPO}/.langflow-e2e-build-stamp}"
+BUILD_STAMP_FILE="${LANGFLOW_SRC_STAMP_FILE:-${REPO:+${REPO}/.langflow-e2e-build-stamp}}"
 # A MISSING stamp is a warning by default and fatal on demand. Both are needed: a
 # clone prepared by hand has no stamp and must stay usable, while the scheduled lane
 # always runs the preparer first, so there "no stamp" means the preparer did not run
@@ -116,9 +134,21 @@ case "${POLL_INTERVAL_S}" in
 esac
 if [ "${POLL_INTERVAL_S}" -lt 1 ]; then poll_interval_invalid; fi
 
-if [ ! -d "${REPO}" ]; then
+if [ -n "${REPO}" ] && [ ! -d "${REPO}" ]; then
   echo "ERROR: Langflow source clone not found at ${REPO}" >&2
   echo "Clone langflow-ai/langflow there, or set LANGFLOW_SRC_REPO." >&2
+  exit 2
+fi
+
+# Without a clone there is no path to derive the served assets from, and serving none
+# is the failure this script refuses hardest: the backend answers /health_check with
+# 200 while every spec dies at page load. So the caller that drops the clone has to
+# say where the UI lives.
+if [ -z "${REPO}" ] && [ -z "${FRONTEND_DIR}" ]; then
+  echo "ERROR: no LANGFLOW_SRC_REPO and no LANGFLOW_SRC_FRONTEND_DIR." >&2
+  echo "Serving from an installed distribution needs the frontend path named, because" >&2
+  echo "there is no clone to derive it from. Point it at the package's frontend, e.g." >&2
+  echo "  LANGFLOW_SRC_FRONTEND_DIR=\$VENV/lib/pythonX.Y/site-packages/langflow/frontend" >&2
   exit 2
 fi
 
@@ -142,6 +172,17 @@ if curl -sf "http://${HEALTH_HOST}:${PORT}/health_check" > /dev/null 2>&1; then
   exit 2
 fi
 
+# A ref names a commit to move a CLONE to, so without one it cannot be honoured.
+# Refused rather than ignored: a caller asking for v1.12.0 and silently getting
+# whatever the venv holds is the "served the wrong build, reported green" failure
+# this script exists to make impossible.
+if [ -n "${LANGFLOW_SRC_REF:-}" ] && [ -z "${REPO}" ]; then
+  echo "ERROR: LANGFLOW_SRC_REF=${LANGFLOW_SRC_REF} was given with no source clone." >&2
+  echo "A ref moves a clone; serving an installed distribution has none to move." >&2
+  echo "Install the version you want into the venv instead, or name a clone." >&2
+  exit 2
+fi
+
 # Opt-in, and never a silent one: moving a shared clone is announced.
 if [ -n "${LANGFLOW_SRC_REF:-}" ]; then
   echo "Checking out ${LANGFLOW_SRC_REF} in ${REPO}..."
@@ -153,8 +194,12 @@ if [ -n "${LANGFLOW_SRC_REF:-}" ]; then
   echo "      to move the clone and rebuild in one step; it writes the stamp."
 fi
 
-SRC_SHA="$(git -C "${REPO}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-echo "Langflow source: ${REPO} @ ${SRC_SHA}"
+if [ -n "${REPO}" ]; then
+  SRC_SHA="$(git -C "${REPO}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "Langflow source: ${REPO} @ ${SRC_SHA}"
+else
+  echo "Langflow source: none — served by the supplied run command, UI from ${FRONTEND_DIR}"
+fi
 
 # uv is Langflow's own toolchain and the ONLY one that can build this clone: the root
 # package's dependencies (langflow-base, lfx and every lfx-* bundle) resolve through
@@ -186,8 +231,13 @@ mkdir -p "${STATE_DIR}"
 # Absolute from here on: the launch below changes this script's own working directory
 # to the clone, and every path it still writes (PID file, log, database, config dir)
 # has to survive that.
-REPO="$(cd "${REPO}" && pwd)"
+[ -n "${REPO}" ] && REPO="$(cd "${REPO}" && pwd)"
 STATE_DIR="$(cd "${STATE_DIR}" && pwd)"
+# What the server is launched from. The clone when there is one, so a source start
+# behaves exactly as before; the state directory when there is not, because every
+# path the server is given is already absolute and the one thing a working directory
+# must be is somewhere that exists and belongs to this instance.
+WORKDIR="${REPO:-${STATE_DIR}}"
 PID_FILE="${STATE_DIR}/langflow.pid"
 LOG_FILE="${STATE_DIR}/langflow.log"
 if [ "${KEEP_STATE}" != "1" ]; then
@@ -202,6 +252,11 @@ if [ "${KEEP_STATE}" != "1" ]; then
 fi
 mkdir -p "${STATE_DIR}/data"
 
+if [ -n "${SYNC_CMD}" ] && [ -z "${REPO}" ]; then
+  echo "ERROR: a sync command was given with no source clone to run it in." >&2
+  echo "LANGFLOW_SRC_SYNC_CMD builds a clone; pass LANGFLOW_SRC_SYNC_CMD= to skip it." >&2
+  exit 2
+fi
 if [ -n "${SYNC_CMD}" ]; then
   echo "Syncing dependencies (${SYNC_CMD})..."
   ( cd "${REPO}" && eval "${SYNC_CMD}" )
@@ -228,30 +283,44 @@ fi
 # The check the LANGFLOW_SRC_REF note used to only warn about. A stale build fails
 # GREEN in the cases that matter: an old UI against a new backend passes the specs
 # that did not change and fails the ones that did, and the report blames the product.
-HEAD_SHA_FULL="$(git -C "${REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
-STAMPED_SHA=""
-if [ -f "${BUILD_STAMP_FILE}" ]; then
-  STAMPED_SHA="$(grep -m1 '^sha=' "${BUILD_STAMP_FILE}" 2>/dev/null | sed 's/^sha=//' || true)"
-fi
-if [ -n "${STAMPED_SHA}" ] && [ "${STAMPED_SHA}" != "${HEAD_SHA_FULL}" ]; then
-  echo "ERROR: the frontend build at ${FRONTEND_DIR} was built from ${STAMPED_SHA:0:10}," >&2
-  echo "but the clone is at ${HEAD_SHA_FULL:0:10}. Starting would serve that older UI" >&2
-  echo "against this backend, and the run would attribute the difference to the product." >&2
-  echo "Rebuild and re-stamp:" >&2
-  echo "  TARGET_SHA=${HEAD_SHA_FULL} LANGFLOW_SRC_REPO=${REPO} ./scripts/prepare-target-source.sh" >&2
-  exit 2
-fi
-if [ -z "${STAMPED_SHA}" ]; then
+# With no clone there is no HEAD, so there is nothing for a stamp to disagree with.
+# The check is skipped rather than faked — and a lane that ASKED for the guarantee is
+# refused instead, because an unperformed check is not a weaker guarantee, it is none.
+if [ -z "${REPO}" ]; then
   if [ "${REQUIRE_BUILD_STAMP}" = "1" ]; then
-    echo "ERROR: no build stamp at ${BUILD_STAMP_FILE}, so the commit those assets were" >&2
-    echo "built from is unknown, and LANGFLOW_REQUIRE_BUILD_STAMP=1 asks for a guarantee." >&2
-    echo "An unperformed check is not a weaker guarantee, it is none. Run the preparer:" >&2
+    echo "ERROR: LANGFLOW_REQUIRE_BUILD_STAMP=1 asks which commit built the assets," >&2
+    echo "and with no source clone nothing on this machine can answer. Serve from a" >&2
+    echo "clone the preparer stamped, or drop the requirement for this start." >&2
+    exit 2
+  fi
+  echo "NOTE: no source clone, so the served assets are whatever the installed"
+  echo "      distribution carries. Its version is the target-version gate's job."
+else
+  HEAD_SHA_FULL="$(git -C "${REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  STAMPED_SHA=""
+  if [ -f "${BUILD_STAMP_FILE}" ]; then
+    STAMPED_SHA="$(grep -m1 '^sha=' "${BUILD_STAMP_FILE}" 2>/dev/null | sed 's/^sha=//' || true)"
+  fi
+  if [ -n "${STAMPED_SHA}" ] && [ "${STAMPED_SHA}" != "${HEAD_SHA_FULL}" ]; then
+    echo "ERROR: the frontend build at ${FRONTEND_DIR} was built from ${STAMPED_SHA:0:10}," >&2
+    echo "but the clone is at ${HEAD_SHA_FULL:0:10}. Starting would serve that older UI" >&2
+    echo "against this backend, and the run would attribute the difference to the product." >&2
+    echo "Rebuild and re-stamp:" >&2
     echo "  TARGET_SHA=${HEAD_SHA_FULL} LANGFLOW_SRC_REPO=${REPO} ./scripts/prepare-target-source.sh" >&2
     exit 2
   fi
-  echo "NOTE: no build stamp at ${BUILD_STAMP_FILE} — the assets exist but nothing says"
-  echo "      which commit they came from. Fine for a clone you build by hand; the"
-  echo "      scheduled lane sets LANGFLOW_REQUIRE_BUILD_STAMP=1 to make this fatal."
+  if [ -z "${STAMPED_SHA}" ]; then
+    if [ "${REQUIRE_BUILD_STAMP}" = "1" ]; then
+      echo "ERROR: no build stamp at ${BUILD_STAMP_FILE}, so the commit those assets were" >&2
+      echo "built from is unknown, and LANGFLOW_REQUIRE_BUILD_STAMP=1 asks for a guarantee." >&2
+      echo "An unperformed check is not a weaker guarantee, it is none. Run the preparer:" >&2
+      echo "  TARGET_SHA=${HEAD_SHA_FULL} LANGFLOW_SRC_REPO=${REPO} ./scripts/prepare-target-source.sh" >&2
+      exit 2
+    fi
+    echo "NOTE: no build stamp at ${BUILD_STAMP_FILE} — the assets exist but nothing says"
+    echo "      which commit they came from. Fine for a clone you build by hand; the"
+    echo "      scheduled lane sets LANGFLOW_REQUIRE_BUILD_STAMP=1 to make this fatal."
+  fi
 fi
 
 echo "Starting Langflow on ${BIND_HOST}:${PORT} (logs: ${LOG_FILE})..."
@@ -284,7 +353,7 @@ echo "Starting Langflow on ${BIND_HOST}:${PORT} (logs: ${LOG_FILE})..."
 # Backgrounding a simple command makes $! the process, with no fd left behind.
 # (`uv run` forwards SIGTERM to the langflow process it spawns — verified — so the one
 # signal the stop script sends reaches the server.)
-cd "${REPO}"
+cd "${WORKDIR}"
 LANGFLOW_AUTO_LOGIN=true \
 LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
 LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
