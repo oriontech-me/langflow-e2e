@@ -452,11 +452,21 @@ test("the mirrored values cross the ssh boundary, which a default alone does not
   // The failure mode this catches LOOKS fixed: the values are set here, the shell that
   // runs the starter is on the other machine, and it inherits nothing from this one.
   // A variable that never crosses is a variable that never applied.
-  const line = readFileSync(SCRIPT, "utf8")
-    .split("\n")
-    .find((l) => l.includes("bash -s; sleep 86400"));
-  assert.ok(line, "could not find the command that starts the backend on the target");
-  assert.match(line, /\$\(mirrored_target_env\)/);
+  // #1931 composed the launch environment in one function, and both launch paths —
+  // ssh for a remote target, plain bash for a local one — send that same string. So
+  // the tie is asserted on what they send, and on what the composer puts in it.
+  for (const needle of ["bash -s; sleep 86400", 'bash -c "$launch_env bash -s"']) {
+    const line = readFileSync(SCRIPT, "utf8")
+      .split("\n")
+      .find((l) => l.includes(needle));
+    assert.ok(line, `could not find the launch path containing: ${needle}`);
+    assert.match(line, /\$launch_env/);
+  }
+  const composed = sourced(`backend_launch_env 7860`, { ...BLANKED, STAMP_REQUIRED: "0" });
+  assert.equal(composed.status, 0, composed.stderr);
+  for (const name of MIRRORED) {
+    assert.match(composed.stdout, new RegExp(`(^|\\s)${name}=`), `${name} is not in the launch environment`);
+  }
 
   // And what that composer would actually produce, rather than the fact that it is
   // called: a variable dropped from the function is invisible to the line above.
@@ -471,11 +481,15 @@ test("the target's run command crosses on every run, and the sync command never 
   // distribution served the traces family with tracing ON — 23 of 23, no gunicorn
   // WORKER TIMEOUT — where the source clone wedges under the same selection on the same
   // machine (7, 8 and 9 failures across the three attribution runs of #1720).
-  const line = readFileSync(SCRIPT, "utf8")
-    .split("\n")
-    .find((l) => l.includes("bash -s; sleep 86400"));
-  assert.ok(line, "could not find the command that starts the backend on the target");
-  assert.match(line, /\$\(target_cmd_env\)/);
+  // The composer moved into backend_launch_env in #1931; the property is unchanged —
+  // the run command reaches the shell that starts the backend.
+  const carried = sourced(`backend_launch_env 7860`, {
+    LANGFLOW_SRC_RUN_CMD: "/venv/bin/langflow run",
+    LANGFLOW_SRC_FRONTEND_DIR: "/venv/frontend",
+    STAMP_REQUIRED: "0",
+  });
+  assert.equal(carried.status, 0, carried.stderr);
+  assert.match(carried.stdout, /LANGFLOW_SRC_RUN_CMD=/);
 
   // And it reaches the run's EARLY log, not only its metadata. The preflight line
   // exists because a run that dies in prep or in a shard never reaches phase_merge, and
@@ -1873,4 +1887,115 @@ test("an incomplete coverage count is reported, not swallowed", () => {
     /if \[ -z "\$stable_count" \] \|\| \[ -z "\$total_count" \]; then\n\s+warn /,
     "an empty count has to be warned about, naming which one",
   );
+});
+
+
+// --- a target on THIS machine (#1931) --------------------------------------------
+// Stage 2 puts the runner and the target on one box, and that box does not ssh to
+// itself (measured: `Permission denied (publickey)`). These pin the three properties
+// that make the local path a path and not a special case.
+
+test("TARGET_SSH=local runs the command here, with no ssh involved", () => {
+  // A decoy `ssh` earlier on PATH announces itself, so a regression to the ssh branch
+  // fails loudly here instead of passing because ssh happened to work.
+  const decoy = makeTempDir("local-target-decoy-");
+  writeFileSync(join(decoy, "ssh"), "#!/usr/bin/env bash\necho SSH-WAS-USED\n", { mode: 0o755 });
+  const r = sourced("target_ssh 'echo ran-here'", {
+    TARGET_SSH: "local",
+    PATH: `${decoy}:${process.env.PATH}`,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /ran-here/);
+  assert.doesNotMatch(r.stdout, /SSH-WAS-USED/);
+});
+
+test("stdin still flows to a local target, which every `bash -s` call site needs", () => {
+  // `bash -s` runs what it reads, which is how every call site ships a script from this
+  // repo to the target. Piped rather than redirected from a file for the same reason:
+  // it proves the stream survives the wrapper.
+  const r = sourced('printf %s "echo piped-ok" | target_ssh "bash -s"', {
+    TARGET_SSH: "local",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /piped-ok/);
+});
+
+test("a local target names no clone when the run command is supplied", () => {
+  const withCmd = sourced('backend_launch_env 7860', {
+    TARGET_SSH: "local",
+    LANGFLOW_SRC_RUN_CMD: "/venv/bin/langflow run",
+    LANGFLOW_SRC_FRONTEND_DIR: "/venv/frontend",
+    STAMP_REQUIRED: "0",
+  });
+  assert.equal(withCmd.status, 0, withCmd.stderr);
+  // The point of #1927 carried through to the caller: no clone is NAMED, so the machine
+  // needs none. Emptied rather than omitted, because a local child inherits the
+  // operator's environment where ssh forwards nothing — an exported LANGFLOW_SRC_REPO
+  // would otherwise put the starter back on the clone branch.
+  assert.match(withCmd.stdout, /LANGFLOW_SRC_REPO= /, "an inherited clone path is not neutralised");
+  assert.doesNotMatch(withCmd.stdout, /LANGFLOW_SRC_REPO=\S/, "a clone is named on the venv path");
+  assert.match(withCmd.stdout, /LANGFLOW_PORT=7860/);
+
+  // ...and the source path is untouched: with no run command, the clone is still named.
+  const withoutCmd = sourced('backend_launch_env 7860', {
+    TARGET_SSH: "local",
+    STAMP_REQUIRED: "0",
+  });
+  assert.match(withoutCmd.stdout, /LANGFLOW_SRC_REPO=/);
+});
+
+test("a local target never binds the backend to a private address", () => {
+  // LANGFLOW_TUNNEL=0 with a REMOTE target is the case that needs the override, and
+  // it still gets it; the local one must not, because loopback is already reachable
+  // and binding wider would publish an auto-login instance for nothing.
+  const local = sourced('TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0 backend_launch_env 7860', {
+    TARGET_SSH: "local",
+    STAMP_REQUIRED: "0",
+  });
+  // Checked before the doesNotMatch: an erroring composer writes nothing to stdout, and
+  // a negative assertion over nothing passes while proving nothing.
+  assert.equal(local.status, 0, local.stderr);
+  assert.doesNotMatch(local.stdout, /LANGFLOW_BIND_HOST/);
+
+  const remote = sourced('TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0 backend_launch_env 7860', {
+    TARGET_SSH: "some-alias",
+    STAMP_REQUIRED: "0",
+  });
+  assert.match(remote.stdout, /LANGFLOW_BIND_HOST=10\.0\.0\.9/);
+});
+
+
+test("the browser, the probe and the bind override agree on one host", () => {
+  // The defect this pins: a local target set LANGFLOW_TUNNEL=0, the probe was
+  // special-cased to localhost and the BROWSER was not, so PLAYWRIGHT_BASE_URL pointed
+  // at the private address while the backend listened on loopback. Every spec fails
+  // with connection refused BEHIND a healthy probe — a red run that names the product.
+  const cases = [
+    { name: "local target", env: { TARGET_SSH: "local" }, prefix: "TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0", host: "localhost" },
+    { name: "remote with tunnel", env: { TARGET_SSH: "a-host" }, prefix: "TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=1", host: "localhost" },
+    { name: "remote without tunnel", env: { TARGET_SSH: "a-host" }, prefix: "TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0", host: "10.0.0.9" },
+  ];
+  for (const c of cases) {
+    const r = sourced(`${c.prefix} target_reach_host`, c.env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, c.host, `${c.name}: reached on the wrong host`);
+  }
+
+  // And the three consumers read that one answer rather than re-deriving it, which is
+  // how they drifted apart in the first place.
+  const src = readFileSync(SCRIPT, "utf8");
+  const consumers = src.split("\n").filter((l) => l.includes("target_reach_host"));
+  assert.ok(consumers.length >= 4, `expected the helper and its three callers, found ${consumers.length}`);
+  assert.doesNotMatch(src, /\[ "\$LANGFLOW_TUNNEL" = "1" \] \|\| host=/, "the base URL must not re-derive the host");
+});
+
+test("a starter that fails on the local path is reported at once, not by the probe", () => {
+  // The ssh branch backgrounds the holder, so its failure can only arrive through the
+  // probe. The local branch is synchronous and must not throw that status away: the
+  // starter kills the server on its own timeout, so a swallowed status costs a second
+  // full BACKEND_START_TIMEOUT_S polling something already dead.
+  const src = readFileSync(SCRIPT, "utf8");
+  const localLaunch = src.slice(src.indexOf('if ! bash -c "$launch_env bash -s"'));
+  assert.ok(localLaunch.startsWith('if ! bash -c'), "the local launch no longer reads the starter's status");
+  assert.match(localLaunch.slice(0, 400), /return 1/);
 });
