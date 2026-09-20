@@ -2076,12 +2076,15 @@ test("only one lane opens the umbrella for a red day (#1940)", () => {
   const cond = step.split("\n").find((l) => l.trim().startsWith("if:"));
   assert.ok(cond, "the issue step lost its condition");
 
-  for (const covered of ["needs.test.result == 'failure'", "runguard.outputs.empty == 'true'"]) {
-    assert.ok(!cond.includes(covered), `this lane still opens an umbrella for: ${covered}`);
-  }
-  // And the three the VM does NOT raise stay, or a green run with no usable provider
-  // and a spec that never entered the matrix would go unwatched (#1800, #1812).
-  for (const kept of ["fail_recommended", "listing_verified", "listing_missing"]) {
+  assert.ok(
+    !cond.includes("needs.test.result == 'failure'"),
+    "this lane still opens an umbrella for a red day, which the VM now owns",
+  );
+  // Everything else STAYS, and the distinction is the one that matters: each lane's
+  // condition is about ITS OWN run. A run here that executes zero tests is invisible to
+  // the VM, which only knows its own — so this lane keeps reporting when it lies
+  // (#1012), and its two guard alarms (#1800, #1812/#1176) keep their surface.
+  for (const kept of ["runguard.outputs.empty", "fail_recommended", "listing_verified", "listing_missing"]) {
     assert.ok(cond.includes(kept), `the guard alarm was dropped with the overlap: ${kept}`);
   }
 });
