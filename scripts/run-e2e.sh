@@ -1307,46 +1307,66 @@ phase_prep() {
 # SHARD — one job of the `test` matrix
 # ---------------------------------------------------------------------------
 
+# Where THIS machine reaches the backend. One answer, because it feeds three decisions
+# that have to agree: the browser's base URL, the readiness probe, and whether the
+# backend is told to bind wider than loopback. They were derived separately from
+# LANGFLOW_TUNNEL, and a local target made them disagree — the probe said localhost, the
+# browser said the private address, and the backend was listening on neither for the
+# browser. That failure arrives as hundreds of product failures with a healthy probe in
+# front of them, which is the shape this lane exists to never produce.
+target_reach_host() {
+  if [ "$TARGET_IS_LOCAL" = "1" ] || [ "$LANGFLOW_TUNNEL" = "1" ]; then
+    printf '%s' localhost
+  else
+    printf '%s' "$TARGET_ADDR"
+  fi
+}
+
 # The environment the starter is launched with, built in one place so it can be read
 # without a machine. Everything in it is expanded by the shell on the TARGET side —
 # local or remote, the same string either way.
 backend_launch_env() {
   local port="$1"
-  # The private address is for a backend a browser reaches from ANOTHER machine. A local
-  # target is reached on loopback, which is also the starter's default, so the override
-  # stays out of it — keyed on where the target is, not on whether a tunnel exists.
+  # The bind override exists for a backend reached from ANOTHER machine. Derived from the
+  # same answer as the base URL and the probe, so the three cannot drift apart.
   local bind_env=""
-  if [ "$TARGET_IS_LOCAL" != "1" ] && [ "$LANGFLOW_TUNNEL" != "1" ]; then
-    bind_env="LANGFLOW_BIND_HOST=$TARGET_ADDR "
-  fi
+  [ "$(target_reach_host)" = "localhost" ] || bind_env="LANGFLOW_BIND_HOST=$(target_reach_host) "
   # Since #1927 the starter needs no clone when the caller supplies the run command, and
   # naming one here would re-impose exactly what that change removed: a machine serving
   # the published distribution would still have to carry 4.9 GB of source it never runs.
-  local repo_env=""
+  # Emptied rather than omitted, and that matters on the local path: ssh forwards no
+  # environment, but a local child inherits the operator's. An exported LANGFLOW_SRC_REPO
+  # would then put the starter back on the clone branch — build stamp and HEAD checks
+  # against a tree that is not serving — which is exactly what #1927 removed. The
+  # starter reads empty as "not given", so this neutralises an inherited value on both
+  # paths without changing what a source run does.
+  local repo_env="LANGFLOW_SRC_REPO= "
   [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || repo_env="LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} "
   printf '%s' "PATH=\$HOME/.local/bin:\$PATH ${repo_env}LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port"
 }
 
-# Starts a backend on the target and HOLDS the session open, because it does not
-# survive one that returns (see difference 2). The holder's stdout is the starter's,
-# so the readiness line and any failure land in the shard's log.
+# Starts a backend on the target. A REMOTE one needs its ssh session HELD open, because
+# the process does not survive a session that returns (see difference 2); a local one
+# needs no holder at all. Either way the starter's stdout is the shard's log, so the
+# readiness line and any failure land where the shard is read.
 start_backend_for_shard() {
   local idx="$1" port="$2"
   local holder_log="$RUN_DIR/logs/shard-$idx-backend.log"
-
-
-  # `sleep` outlives the run on purpose: the session must not close before the stop
-  # script has run, and cleanup kills the holder afterwards. LANGFLOW_SRC_REPO is
-  # explicit because the starter's default path is not where these machines keep the
-  # clone, and its absence fails with the right message for the wrong reason.
   local launch_env
   launch_env="$(backend_launch_env "$port")"
   if [ "$TARGET_IS_LOCAL" = "1" ]; then
     # No session to hold: the starter launches the server and returns, and a local child
     # outlives the shell that started it. The holder exists only because a remote process
     # dies with its ssh session.
-    # shellcheck disable=SC2086
-    bash -c "$launch_env bash -s" < scripts/start-langflow-source.sh > "$holder_log" 2>&1 || true
+    # Synchronous, so its exit status is the starter's own verdict — and it is READ.
+    # Swallowing it would hand a backend the starter already killed to the probe loop
+    # below, which would then spend its whole budget rediscovering that, doubling the
+    # time to report and naming the wrong cause.
+    if ! bash -c "$launch_env bash -s" < scripts/start-langflow-source.sh > "$holder_log" 2>&1; then
+      err "shard $idx: the starter failed on this machine. Last lines:"
+      tail -n 30 "$holder_log" >&2 || true
+      return 1
+    fi
   else
     # `sleep` outlives the run on purpose: the session must not close before the stop
     # script has run, and cleanup kills the holder afterwards.
@@ -1357,10 +1377,8 @@ start_backend_for_shard() {
     HELD_SESSIONS+=("$!")
   fi
 
-  local probe_host="localhost"
-  if [ "$TARGET_IS_LOCAL" != "1" ] && [ "$LANGFLOW_TUNNEL" != "1" ]; then
-    probe_host="$TARGET_ADDR"
-  fi
+  local probe_host
+  probe_host="$(target_reach_host)"
   local waited=0
   while [ "$waited" -lt "$BACKEND_START_TIMEOUT_S" ]; do
     if curl -sf --max-time 5 "http://${probe_host}:${port}/health_check" > /dev/null 2>&1; then
@@ -1391,8 +1409,8 @@ prepare_shard_workdir() {
 run_shard() {
   local idx="$1" files="$2"
   local port=$((BASE_PORT + idx - 1))
-  local host="localhost"
-  [ "$LANGFLOW_TUNNEL" = "1" ] || host="$TARGET_ADDR"
+  local host
+  host="$(target_reach_host)"
   local base_url="http://${host}:${port}/"
   local wd="$RUN_DIR/shard-$idx"
   local pidfile="$RUN_DIR/logs/shard-$idx.pids"

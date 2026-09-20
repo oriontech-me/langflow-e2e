@@ -1928,9 +1928,12 @@ test("a local target names no clone when the run command is supplied", () => {
     STAMP_REQUIRED: "0",
   });
   assert.equal(withCmd.status, 0, withCmd.stderr);
-  // The point of #1927 carried through to the caller: no clone is named, so the
-  // machine needs none.
-  assert.doesNotMatch(withCmd.stdout, /LANGFLOW_SRC_REPO/);
+  // The point of #1927 carried through to the caller: no clone is NAMED, so the machine
+  // needs none. Emptied rather than omitted, because a local child inherits the
+  // operator's environment where ssh forwards nothing — an exported LANGFLOW_SRC_REPO
+  // would otherwise put the starter back on the clone branch.
+  assert.match(withCmd.stdout, /LANGFLOW_SRC_REPO= /, "an inherited clone path is not neutralised");
+  assert.doesNotMatch(withCmd.stdout, /LANGFLOW_SRC_REPO=\S/, "a clone is named on the venv path");
   assert.match(withCmd.stdout, /LANGFLOW_PORT=7860/);
 
   // ...and the source path is untouched: with no run command, the clone is still named.
@@ -1949,6 +1952,9 @@ test("a local target never binds the backend to a private address", () => {
     TARGET_SSH: "local",
     STAMP_REQUIRED: "0",
   });
+  // Checked before the doesNotMatch: an erroring composer writes nothing to stdout, and
+  // a negative assertion over nothing passes while proving nothing.
+  assert.equal(local.status, 0, local.stderr);
   assert.doesNotMatch(local.stdout, /LANGFLOW_BIND_HOST/);
 
   const remote = sourced('TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0 backend_launch_env 7860', {
@@ -1956,4 +1962,40 @@ test("a local target never binds the backend to a private address", () => {
     STAMP_REQUIRED: "0",
   });
   assert.match(remote.stdout, /LANGFLOW_BIND_HOST=10\.0\.0\.9/);
+});
+
+
+test("the browser, the probe and the bind override agree on one host", () => {
+  // The defect this pins: a local target set LANGFLOW_TUNNEL=0, the probe was
+  // special-cased to localhost and the BROWSER was not, so PLAYWRIGHT_BASE_URL pointed
+  // at the private address while the backend listened on loopback. Every spec fails
+  // with connection refused BEHIND a healthy probe — a red run that names the product.
+  const cases = [
+    { name: "local target", env: { TARGET_SSH: "local" }, prefix: "TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0", host: "localhost" },
+    { name: "remote with tunnel", env: { TARGET_SSH: "a-host" }, prefix: "TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=1", host: "localhost" },
+    { name: "remote without tunnel", env: { TARGET_SSH: "a-host" }, prefix: "TARGET_ADDR=10.0.0.9 LANGFLOW_TUNNEL=0", host: "10.0.0.9" },
+  ];
+  for (const c of cases) {
+    const r = sourced(`${c.prefix} target_reach_host`, c.env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, c.host, `${c.name}: reached on the wrong host`);
+  }
+
+  // And the three consumers read that one answer rather than re-deriving it, which is
+  // how they drifted apart in the first place.
+  const src = readFileSync(SCRIPT, "utf8");
+  const consumers = src.split("\n").filter((l) => l.includes("target_reach_host"));
+  assert.ok(consumers.length >= 4, `expected the helper and its three callers, found ${consumers.length}`);
+  assert.doesNotMatch(src, /\[ "\$LANGFLOW_TUNNEL" = "1" \] \|\| host=/, "the base URL must not re-derive the host");
+});
+
+test("a starter that fails on the local path is reported at once, not by the probe", () => {
+  // The ssh branch backgrounds the holder, so its failure can only arrive through the
+  // probe. The local branch is synchronous and must not throw that status away: the
+  // starter kills the server on its own timeout, so a swallowed status costs a second
+  // full BACKEND_START_TIMEOUT_S polling something already dead.
+  const src = readFileSync(SCRIPT, "utf8");
+  const localLaunch = src.slice(src.indexOf('if ! bash -c "$launch_env bash -s"'));
+  assert.ok(localLaunch.startsWith('if ! bash -c'), "the local launch no longer reads the starter's status");
+  assert.match(localLaunch.slice(0, 400), /return 1/);
 });
