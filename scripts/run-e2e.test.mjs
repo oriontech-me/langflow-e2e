@@ -2065,3 +2065,26 @@ test("the failure issue is told which artifact the run was about (#1938)", () =>
     assert.match(tail, /LANGFLOW_VERSION|IMAGE=/, `${c} is invoked without the version in scope`);
   }
 });
+
+
+test("only one lane opens the umbrella for a red day (#1940)", () => {
+  // The cut, 2026-09-20: the VM's run opens the umbrella at the destination. Two
+  // issues in two repositories for one verdict is the "two voices" the plan calls
+  // worse than none, so this lane lost the two axes the VM covers.
+  const wf = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+  const step = wf.slice(wf.indexOf("- name: Create issue on failure"));
+  const cond = step.split("\n").find((l) => l.trim().startsWith("if:"));
+  assert.ok(cond, "the issue step lost its condition");
+
+  assert.ok(
+    !cond.includes("needs.test.result == 'failure'"),
+    "this lane still opens an umbrella for a red day, which the VM now owns",
+  );
+  // Everything else STAYS, and the distinction is the one that matters: each lane's
+  // condition is about ITS OWN run. A run here that executes zero tests is invisible to
+  // the VM, which only knows its own — so this lane keeps reporting when it lies
+  // (#1012), and its two guard alarms (#1800, #1812/#1176) keep their surface.
+  for (const kept of ["runguard.outputs.empty", "fail_recommended", "listing_verified", "listing_missing"]) {
+    assert.ok(cond.includes(kept), `the guard alarm was dropped with the overlap: ${kept}`);
+  }
+});

@@ -1844,6 +1844,17 @@ jobs:
       # tests always execute), so this clause could not fire on this lane at all. What
       # fires now is the reachable case — a complete report, hundreds of green tests,
       # and NO usable provider, so the whole LLM surface went unmeasured.
+      # --- O CORTE, 2026-09-20 (#1940) -------------------------------------------
+      # A umbrella de um dia vermelho passou a nascer do run da VM, no destino. Este
+      # passo perdeu UM eixo -- `test` falhou --, que e o unico que duplica de forma
+      # sistematica: as duas faixas ficam vermelhas no mesmo dia pelo mesmo produto, e
+      # duas issues para um veredito sao piores do que nenhuma.
+      #
+      # Os outros quatro FICAM, e a distincao e o que eu errei primeiro: a condicao de
+      # cada faixa fala do run DELA. Se o run daqui executar zero testes, a VM nao tem
+      # como saber -- ela so conhece o proprio. Run vazio (#1012), verde sem provedor
+      # usavel (#1800) e spec fora da matriz (#1812, #1176) sao integridade DESTA faixa,
+      # que segue de pe como retirada e precisa continuar dizendo quando mente.
       - name: Create issue on failure
         # The listing clauses (#1812) are the third and fourth way this step has to
         # fire on a run whose `test` job came back GREEN. A spec file that never
@@ -1853,7 +1864,7 @@ jobs:
         # reads them (`!= 'true'`, `!= '[]'`), so the two cannot disagree about
         # whether the day had a finding; which SHAPE the umbrella takes is then
         # decided by positive identification inside the script.
-        if: always() && (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.fail_recommended == 'true' || needs.prep.outputs.listing_verified != 'true' || needs.prep.outputs.listing_missing != '[]') && github.event_name == 'schedule'
+        if: always() && (steps.runguard.outputs.empty == 'true' || steps.coverage.outputs.fail_recommended == 'true' || needs.prep.outputs.listing_verified != 'true' || needs.prep.outputs.listing_missing != '[]') && github.event_name == 'schedule'
         run: node scripts/create-failure-issue.mjs
         env:
           # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
