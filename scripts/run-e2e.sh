@@ -433,13 +433,30 @@ warn() { printf '\033[1;33m::warning:: %s\033[0m\n' "$*" >&2; }
 err()  { printf '\033[1;31m::error:: %s\033[0m\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
-# ssh joins its arguments with spaces and hands ONE string to a shell on the other side.
-# `bash -c "$*"` is that same contract locally, and stdin still flows through it, which is
-# what every `target_ssh "… bash -s" < scripts/x.sh` call site here depends on.
+# ssh joins its arguments with spaces and hands ONE string to a shell on the other side,
+# and it forwards NO environment: what the other side sees is what the command string
+# states, plus whatever that machine's own profile sets. `run_on_target_locally` is that
+# same contract without a network, and stdin still flows through it, which is what every
+# `target_ssh "… bash -s" < scripts/x.sh` call site here depends on.
+#
+# The blank slate is the load-bearing half, not a detail (#1935). A local child inherits
+# the caller's environment, and this caller has the provider keys in it: measured on the
+# QA VM, a backend started without this saw thirteen of them, including OPENAI_API_KEY and
+# AZURE_AI_FOUNDRY_ENDPOINT. A backend holding keys reports providers as configured and
+# catalogs as live, which is a state four @stable specs exist to prove does NOT happen —
+# so the lane reported four product regressions that were its own environment. Unsetting
+# the names we know would be a denylist, and the next key added to the machine's secrets
+# file would leak past it.
+run_on_target_locally() {
+  # A login shell so the machine's own profile applies, as it does over ssh; HOME and TERM
+  # because a login shell needs them and ssh's side has them too.
+  env -i HOME="$HOME" TERM="${TERM:-dumb}" bash -lc "$*"
+}
+
 # shellcheck disable=SC2086
 target_ssh() {
   if [ "$TARGET_IS_LOCAL" = "1" ]; then
-    bash -c "$*"
+    run_on_target_locally "$*"
   else
     ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"
   fi
@@ -1362,7 +1379,7 @@ start_backend_for_shard() {
     # Swallowing it would hand a backend the starter already killed to the probe loop
     # below, which would then spend its whole budget rediscovering that, doubling the
     # time to report and naming the wrong cause.
-    if ! bash -c "$launch_env bash -s" < scripts/start-langflow-source.sh > "$holder_log" 2>&1; then
+    if ! run_on_target_locally "$launch_env bash -s" < scripts/start-langflow-source.sh > "$holder_log" 2>&1; then
       err "shard $idx: the starter failed on this machine. Last lines:"
       tail -n 30 "$holder_log" >&2 || true
       return 1
