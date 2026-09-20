@@ -1,5 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { getAuthToken } from "../auth/get-auth-token";
+import { readFailureReason } from "../../fixtures/http-error-body";
 
 // Probe whether a provider's component is actually EXPOSED by the running
 // Langflow build — a build-side check, distinct from the provider specs' cloud
@@ -93,17 +94,17 @@ export interface ProbeComponentOptions {
   getToken?: (request: APIRequestContext) => Promise<string>;
 }
 
-/** First non-blank line of a thrown value, capped — tolerant of a non-`Error` throw. */
-function reasonFrom(error: unknown, fallback: string): string {
-  const raw =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-  const line = raw.split("\n").find((l) => l.trim().length > 0);
-  return line ? line.trim().slice(0, 300) : fallback;
-}
+// The reason string comes from `readFailureReason` (`tests/fixtures/http-error-body.ts`,
+// #1432) rather than from a second reader written here. The first draft of this file
+// did write one, and review measured it doing precisely what #1432 records: `message`
+// is TYPED `string` while being a plain own property, so a thrown `Error` carrying a
+// `Symbol` there — or a `message` getter that throws — made `raw.split()` throw. That
+// turns this probe, whose whole contract is "never throws", into the thing that
+// reddens the run: the three skip sites would FAIL instead of skipping, and at ollama
+// the failure text would be `raw.split is not a function`, which classifies as nothing
+// transport-level and strips `@stable` unreviewed (#1031) — the exact harm this file
+// exists to remove. That module is a leaf with no imports of its own, so there is no
+// cycle, and one spelling beats two that are supposed to agree.
 
 /**
  * Ask the running build whether a component matching `providerToken` is exposed.
@@ -126,7 +127,7 @@ export async function probeProviderComponent(
   } catch (error) {
     return {
       state: "undecided",
-      reason: `the auth token request failed: ${reasonFrom(error, "unknown error")}`,
+      reason: `the auth token request failed: ${readFailureReason(error)}`,
     };
   }
 
@@ -139,7 +140,7 @@ export async function probeProviderComponent(
   } catch (error) {
     return {
       state: "undecided",
-      reason: `GET /api/v1/all did not answer: ${reasonFrom(error, "unknown error")}`,
+      reason: `GET /api/v1/all did not answer: ${readFailureReason(error)}`,
     };
   }
 
@@ -156,43 +157,71 @@ export async function probeProviderComponent(
   } catch (error) {
     return {
       state: "undecided",
-      reason: `GET /api/v1/all returned a body that is not JSON: ${reasonFrom(error, "unknown error")}`,
+      reason: `GET /api/v1/all returned a body that is not JSON: ${readFailureReason(error)}`,
     };
   }
 
-  if (!registry || typeof registry !== "object") {
+  if (!registry || typeof registry !== "object" || Array.isArray(registry)) {
+    // An array passes `typeof x === "object"`, so it has to be named here or it
+    // falls through to the floor below and is reported as a registry that
+    // registered nothing — a true verdict with a false description, which is the
+    // class of thing this file exists to stop.
     return {
       state: "undecided",
       reason: "GET /api/v1/all returned a body that is not a registry object",
     };
   }
 
-  // FLOOR, the same one `catalogVerdict` needed (#980/#1012): a 200 carrying no
-  // components at all is a registry that has not finished building, not a build
-  // without this family. Without it, every family would read as `absent` and
-  // every gated spec would skip with a packaging reason on a still-starting
-  // instance. `component_display_names` is excluded from the count because it is
-  // a metadata map rather than a category, and on its own it would satisfy the
-  // floor while no component is registered; it stays IN the match below, where a
-  // hit means the type really is in the catalog.
+  // FLOOR, the same one `catalogVerdict` needed (#980/#1012): a 200 that
+  // registered nothing is a body this probe could not read as a catalog, not a
+  // build without this family. Without it such a body makes every gated spec skip
+  // with a packaging reason.
+  //
+  // What is actually reachable here, stated rather than assumed: a 200 whose body
+  // is not a registry (a gateway or auth JSON error — `{"detail": "…"}` — which
+  // `snapshotCatalog` already normalises to zero categories), and a catalog left
+  // empty by the governance filter. The intuitive case, a registry still building,
+  // is NOT demonstrated: `GET /api/v1/all` awaits `get_and_cache_all_types_dict()`
+  // and answers 500 on any exception, so it does not appear to serve a partial
+  // 200 — the floor is kept for the reachable shapes and this sentence records
+  // that the third one is unverified rather than implying it was measured.
+  //
+  // `component_display_names` is excluded from the COUNT (it is a metadata map,
+  // not a category) and kept in the MATCH, where a hit means the type really is
+  // in the catalog — upstream derives that map from the same dict the categories
+  // come from, so it is non-empty iff something is registered.
   let componentKeys = 0;
+  let categories = 0;
   let matched = false;
   for (const [topLevel, comps] of Object.entries(registry)) {
     if (!comps || typeof comps !== "object") continue;
     const keys = Object.keys(comps as Record<string, unknown>);
-    if (topLevel !== "component_display_names") componentKeys += keys.length;
+    // The metadata map is not a category, so it is excluded from BOTH tallies —
+    // otherwise a body carrying nothing but the map reports "registered no
+    // components" when what it carried was no category at all.
+    if (topLevel !== "component_display_names") {
+      categories += 1;
+      componentKeys += keys.length;
+    }
     if (!matched && keys.some((k) => k.toLowerCase().includes(token))) {
       matched = true;
     }
   }
 
-  if (matched) return { state: "present" };
+  // The floor is consulted BEFORE the match, deliberately: a hit found only in the
+  // metadata map of a body that registered no component is not a component this
+  // build exposes. Upstream cannot produce that state, so this is about the code
+  // meaning what its comment says rather than about a reachable bug.
   if (componentKeys === 0) {
     return {
       state: "undecided",
-      reason: "GET /api/v1/all answered 200 but registered no components at all",
+      reason:
+        categories === 0
+          ? "GET /api/v1/all answered 200 with a body carrying no component categories"
+          : "GET /api/v1/all answered 200 but registered no components at all",
     };
   }
+  if (matched) return { state: "present" };
   return { state: "absent" };
 }
 

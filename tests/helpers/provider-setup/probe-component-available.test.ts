@@ -50,6 +50,12 @@ function response(
 
 const okRegistry = {
   agents: { "ext:openai:OpenAIModelComponent@official": {} },
+  // Mixed case ON PURPOSE, and it is the registry side that needs it: with only
+  // lowercase keys, dropping `k.toLowerCase()` left the whole file green while
+  // breaking a real shape — the committed catalog baseline still carries bare
+  // CamelCase type keys (`CrewAIAgentComponent`, `CustomComponent`) alongside the
+  // namespaced `ext:…` ones.
+  mistral: { MistralAIModelComponent: {} },
   ollama: { "ext:ollama:OllamaModel@official": {} },
   component_display_names: { ollamamodel: "Ollama" },
 };
@@ -74,6 +80,12 @@ describe("probeProviderComponent — decided states", () => {
 
   it("matches case-insensitively, and on a token the caller spelled in caps", async () => {
     assert.deepEqual(await probe(okRegistry, { token: "OLLAMA" }), {
+      state: "present",
+    });
+  });
+
+  it("lowercases the REGISTRY key too — a CamelCase type still matches a lowercase token", async () => {
+    assert.deepEqual(await probe(okRegistry, { token: "mistralaimodel" }), {
       state: "present",
     });
   });
@@ -162,9 +174,37 @@ describe("probeProviderComponent — undecided states", () => {
     }
   });
 
-  it("floors on a 200 that registered no components at all", async () => {
-    const reason = undecided(await probe({}));
-    assert.match(reason, /registered no components at all/);
+  it("floors on a 200 that registered no components, and says which shape it saw", async () => {
+    // Two bodies, two sentences: nothing object-valued at all (`{}`, or a JSON
+    // error like `{"detail": …}` whose values are strings) against categories
+    // that exist but are empty. Same verdict, different observation — reporting
+    // the second wording for the first is the misdescription this file is about.
+    assert.match(undecided(await probe({})), /no component categories/);
+    assert.match(
+      undecided(await probe({ detail: "Not authenticated" })),
+      /no component categories/,
+    );
+    assert.match(
+      undecided(await probe({ mistral: {}, agents: {} })),
+      /registered no components at all/,
+    );
+  });
+
+  it("names an array body as not-a-registry rather than as an empty one", async () => {
+    // `typeof [] === "object"`, so without the explicit check this fell through
+    // to the floor and was reported as a registry that registered nothing.
+    const reason = undecided(await probe(["OllamaModel"]));
+    assert.match(reason, /not a registry object/);
+  });
+
+  it("floors ahead of the match — a hit in the metadata map of an empty registry is not `present`", async () => {
+    // Unreachable upstream (the map is derived from the same dict the categories
+    // come from), and pinned anyway: with the two checks the other way round this
+    // body answered `present` while nothing at all was registered, which is the
+    // opposite of what the comment above the loop claims.
+    const metadataHitOnly = { component_display_names: { ollamamodel: "Ollama" } };
+    const reason = undecided(await probe(metadataHitOnly, { token: "ollama" }));
+    assert.match(reason, /no component categories/);
   });
 
   it("does not let `component_display_names` alone satisfy the floor", async () => {
@@ -173,11 +213,39 @@ describe("probeProviderComponent — undecided states", () => {
     // every gated spec skip with a packaging reason on a starting instance.
     const metadataOnly = { component_display_names: { somethingelse: "X" } };
     const reason = undecided(await probe(metadataOnly, { token: "groq" }));
-    assert.match(reason, /registered no components at all/);
+    assert.match(reason, /no component categories/);
+  });
+
+  it("tolerates an Error whose `message` is not a string, and one whose getter throws", async () => {
+    // The values the first version of this test picked were all safe. `message`
+    // is TYPED `string` and is a plain own property, so these two are what made
+    // the probe's own reader throw — at the skip sites that turns a skip into a
+    // FAILURE, and at ollama into a failure text that classifies as nothing
+    // transport-level (#1031). Delegating to `readFailureReason` (#1432) is what
+    // closes it; this pins that it stays delegated.
+    const withSymbolMessage = new Error("placeholder");
+    Object.defineProperty(withSymbolMessage, "message", { value: Symbol("boom") });
+    const withThrowingGetter = new Error("placeholder");
+    Object.defineProperty(withThrowingGetter, "message", {
+      get() {
+        throw new Error("getter boom");
+      },
+    });
+
+    for (const thrown of [withSymbolMessage, withThrowingGetter]) {
+      const reason = undecided(
+        await probe(okRegistry, {
+          getToken: async () => {
+            throw thrown;
+          },
+        }),
+      );
+      assert.match(reason, /auth token request failed/);
+    }
   });
 
   it("tolerates a non-Error throw rather than failing inside the probe", async () => {
-    for (const thrown of ["a bare string", { detail: "an object" }, 7]) {
+    for (const thrown of ["a bare string", { detail: "an object" }, 7, undefined]) {
       const reason = undecided(
         await probe(okRegistry, {
           getToken: async () => {
@@ -204,6 +272,22 @@ describe("probeProviderComponent — undecided states", () => {
     await capture("");
     assert.deepEqual(seen[0], { Authorization: "Bearer t" });
     assert.equal(seen[1], undefined);
+  });
+
+  it("bounds the registry request at 15 s", async () => {
+    // Unpinned until review: `timeout: 1` left the whole file green. The bound is
+    // what keeps a wedged backend from holding a gate open for the test's own
+    // 5-minute budget instead of resolving to `undecided`.
+    let seen: number | undefined;
+    await probeProviderComponent(
+      fakeRequest(async (_url, options) => {
+        seen = options?.timeout;
+        return response(200, okRegistry);
+      }),
+      "ollama",
+      { getToken: alwaysAuth },
+    );
+    assert.equal(seen, 15000);
   });
 });
 

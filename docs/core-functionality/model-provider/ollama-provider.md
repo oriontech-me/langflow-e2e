@@ -43,6 +43,21 @@ exposed by this build (`lfx-ollama` not installed)" in ~1 s rather than an
 unattributable 30 s selector timeout. A skip here would turn the regression
 into a silent green nobody triages.
 
+**And an UNDECIDED probe fails here too (#1930), which is this call site's own
+decision rather than the shared default.** The probe answers three states, and
+the other three call sites skip on both `absent` and `undecided`. This one
+cannot: its expected outcome is *run*, so a probe that could not read the
+registry — a wedged backend (#922/#927), a non-2xx, a timeout — must not resolve
+to a quiet skip, which is #1010's green that measured nothing. What the failure
+says changes with the state: `absent` keeps the packaging message above, while
+`undecided` carries the probe's own error verbatim. That last detail is
+load-bearing rather than cosmetic — `remove-stable-from-failures.ts` classifies
+the error TEXT, so the packaging wording matched nothing in
+`scripts/lib/infra-signature-patterns.json` and a wedge-caused failure of this
+`@stable` test was an attributable hard failure whose tag the daily stripped
+unreviewed (#1031). With the transport error in the message
+(`apiRequestContext.get: Timeout`, `ECONNREFUSED`) the exemption applies.
+
 Test 1 is deliberately NOT gated on it: the Settings → Model Providers
 surface is driven by the **provider catalog**
 (`GET /api/v1/models/providers`), which is independent of the component
