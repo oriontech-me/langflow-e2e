@@ -73,6 +73,7 @@
 # ## Usage
 #
 #   TARGET_SSH=<ssh-alias> ./scripts/run-e2e.sh              # 4 shards
+#   TARGET_SSH=local ./scripts/run-e2e.sh                    # target on THIS machine
 #   TARGET_SSH=<alias> SHARDS=2 ./scripts/run-e2e.sh
 #   TARGET_SSH=<alias> DRY_RUN=1 ./scripts/run-e2e.sh        # preflight + partition only
 #   TARGET_SSH=<alias> KEEP_LEDGER=0 ./scripts/run-e2e.sh    # a smoke: record nothing
@@ -97,6 +98,13 @@ cd "$REPO_DIR"
 
 # The machine hosting Langflow, the echo endpoint and Ollama. No default on purpose.
 TARGET_SSH="${TARGET_SSH:-}"
+# One value is not an ssh alias: `local` says the target is THIS machine, which is what
+# a consolidated runner is. It is spelled as a value of TARGET_SSH rather than as its own
+# switch so there stays exactly one place that answers "where is the target", and so the
+# existing requirement that the caller name it is not weakened. A machine whose ssh config
+# really has an alias called `local` cannot be reached by that name from here; rename it.
+TARGET_IS_LOCAL=0
+[ "$TARGET_SSH" = "local" ] && TARGET_IS_LOCAL=1
 # Extra ssh options, as a single string. The VMs resolve through a DNS the sandbox
 # does not always see, so a caller may need `-o HostName=<ip> -o HostKeyAlias=<name>`.
 TARGET_SSH_OPTS="${TARGET_SSH_OPTS:-}"
@@ -425,8 +433,17 @@ warn() { printf '\033[1;33m::warning:: %s\033[0m\n' "$*" >&2; }
 err()  { printf '\033[1;31m::error:: %s\033[0m\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
+# ssh joins its arguments with spaces and hands ONE string to a shell on the other side.
+# `bash -c "$*"` is that same contract locally, and stdin still flows through it, which is
+# what every `target_ssh "… bash -s" < scripts/x.sh` call site here depends on.
 # shellcheck disable=SC2086
-target_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"; }
+target_ssh() {
+  if [ "$TARGET_IS_LOCAL" = "1" ]; then
+    bash -c "$*"
+  else
+    ssh -o BatchMode=yes -o ConnectTimeout=15 $TARGET_SSH_OPTS "$TARGET_SSH" "$@"
+  fi
+}
 
 # Shell-quote a value for the shell on the OTHER side of ssh. ssh joins its arguments
 # with spaces and hands ONE string to a shell over there, so anything unquoted is
@@ -886,14 +903,18 @@ phase_preflight() {
   info "target env: $(mirrored_target_env)$(target_cmd_env)"
   warn_target_cmd_conflicts
 
-  [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives a second machine and will not guess its name."
+  [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives the target and will not guess where it is. Name an ssh alias, or 'local' for this machine."
   command -v node > /dev/null || die "node is not on PATH."
   command -v npm  > /dev/null || die "npm is not on PATH."
-  command -v ssh  > /dev/null || die "ssh is not on PATH."
+  [ "$TARGET_IS_LOCAL" = "1" ] || command -v ssh > /dev/null || die "ssh is not on PATH."
   info "node $(node -v), npm $(npm -v)"
 
-  target_ssh true > /dev/null 2>&1 || die "cannot reach the target over ssh ($TARGET_SSH). With the VPN down this is the first thing that fails."
-  info "target: reachable"
+  if [ "$TARGET_IS_LOCAL" = "1" ]; then
+    info "target: this machine — no ssh, no tunnel"
+  else
+    target_ssh true > /dev/null 2>&1 || die "cannot reach the target over ssh ($TARGET_SSH). With the VPN down this is the first thing that fails."
+    info "target: reachable"
+  fi
 
   # `uv` is the only thing that can build the Langflow source clone, and the trap is
   # PATH rather than absence: a non-interactive ssh does not load ~/.local/bin.
@@ -1057,7 +1078,15 @@ phase_preflight() {
   # The tunnel, checked before anything is started. `ssh -L` opens the local listener
   # as soon as it connects, so this is answerable now — and answering it later, from a
   # failed health probe, cannot tell "no tunnel" from "backend did not start".
-  if [ "$LANGFLOW_TUNNEL" = "1" ]; then
+  # A local target has nothing to tunnel TO, and needs nothing tunnelled: the backend
+  # binds 127.0.0.1 on this very machine, so `localhost` already is the target and the
+  # secure context the ten clipboard specs need is satisfied by construction. Skipped
+  # rather than left to ALLOW_NO_TUNNEL, which would say the specs will fail and bind the
+  # backend to a private address — both false here, and the second one gratuitous.
+  if [ "$TARGET_IS_LOCAL" = "1" ]; then
+    LANGFLOW_TUNNEL=0
+    info "tunnel: not needed — the target is this machine, so the backend answers on localhost"
+  elif [ "$LANGFLOW_TUNNEL" = "1" ]; then
     local missing
     missing="$(ports_without_listener $(seq "$BASE_PORT" $((BASE_PORT + SHARDS - 1))) | tr '\n' ' ')"
     missing="${missing% }"
@@ -1278,27 +1307,60 @@ phase_prep() {
 # SHARD — one job of the `test` matrix
 # ---------------------------------------------------------------------------
 
+# The environment the starter is launched with, built in one place so it can be read
+# without a machine. Everything in it is expanded by the shell on the TARGET side —
+# local or remote, the same string either way.
+backend_launch_env() {
+  local port="$1"
+  # The private address is for a backend a browser reaches from ANOTHER machine. A local
+  # target is reached on loopback, which is also the starter's default, so the override
+  # stays out of it — keyed on where the target is, not on whether a tunnel exists.
+  local bind_env=""
+  if [ "$TARGET_IS_LOCAL" != "1" ] && [ "$LANGFLOW_TUNNEL" != "1" ]; then
+    bind_env="LANGFLOW_BIND_HOST=$TARGET_ADDR "
+  fi
+  # Since #1927 the starter needs no clone when the caller supplies the run command, and
+  # naming one here would re-impose exactly what that change removed: a machine serving
+  # the published distribution would still have to carry 4.9 GB of source it never runs.
+  local repo_env=""
+  [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || repo_env="LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} "
+  printf '%s' "PATH=\$HOME/.local/bin:\$PATH ${repo_env}LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port"
+}
+
 # Starts a backend on the target and HOLDS the session open, because it does not
 # survive one that returns (see difference 2). The holder's stdout is the starter's,
 # so the readiness line and any failure land in the shard's log.
 start_backend_for_shard() {
   local idx="$1" port="$2"
   local holder_log="$RUN_DIR/logs/shard-$idx-backend.log"
-  local bind_env=""
-  [ "$LANGFLOW_TUNNEL" = "1" ] || bind_env="LANGFLOW_BIND_HOST=$TARGET_ADDR "
+
 
   # `sleep` outlives the run on purpose: the session must not close before the stop
   # script has run, and cleanup kills the holder afterwards. LANGFLOW_SRC_REPO is
   # explicit because the starter's default path is not where these machines keep the
   # clone, and its absence fails with the right message for the wrong reason.
-  # shellcheck disable=SC2086
-  ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
-    "PATH=\$HOME/.local/bin:\$PATH LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port bash -s; sleep 86400" \
-    < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
-  HELD_SESSIONS+=("$!")
+  local launch_env
+  launch_env="$(backend_launch_env "$port")"
+  if [ "$TARGET_IS_LOCAL" = "1" ]; then
+    # No session to hold: the starter launches the server and returns, and a local child
+    # outlives the shell that started it. The holder exists only because a remote process
+    # dies with its ssh session.
+    # shellcheck disable=SC2086
+    bash -c "$launch_env bash -s" < scripts/start-langflow-source.sh > "$holder_log" 2>&1 || true
+  else
+    # `sleep` outlives the run on purpose: the session must not close before the stop
+    # script has run, and cleanup kills the holder afterwards.
+    # shellcheck disable=SC2086
+    ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
+      "$launch_env bash -s; sleep 86400" \
+      < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
+    HELD_SESSIONS+=("$!")
+  fi
 
   local probe_host="localhost"
-  [ "$LANGFLOW_TUNNEL" = "1" ] || probe_host="$TARGET_ADDR"
+  if [ "$TARGET_IS_LOCAL" != "1" ] && [ "$LANGFLOW_TUNNEL" != "1" ]; then
+    probe_host="$TARGET_ADDR"
+  fi
   local waited=0
   while [ "$waited" -lt "$BACKEND_START_TIMEOUT_S" ]; do
     if curl -sf --max-time 5 "http://${probe_host}:${port}/health_check" > /dev/null 2>&1; then
