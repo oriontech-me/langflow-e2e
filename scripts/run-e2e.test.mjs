@@ -2037,3 +2037,31 @@ test("the local launch of the backend goes through the same sanitised path", () 
   assert.match(launch, /run_on_target_locally/);
   assert.doesNotMatch(launch, /bash -c/);
 });
+
+
+test("the failure issue is told which artifact the run was about (#1938)", () => {
+  // The title reads "[Daily Failure] @stable tests failed on <date> (<image>)", and with
+  // nothing passed it rendered "()" — measured against the destination before the VM
+  // lane's switch was turned on (github.ibm.com/Langflow/e2e-qa#4). Slack, the platform
+  // POST and run-metadata.json all carried the version; the issue, which triage opens
+  // first, did not, because LANGFLOW_VERSION is a shell variable and the child is a
+  // separate process.
+  const src = readFileSync(SCRIPT, "utf8");
+  const block = src.slice(
+    src.indexOf('log "Opening the failure issue"'),
+    src.indexOf("node scripts/create-failure-issue.mjs"),
+  );
+  assert.ok(block.length > 0, "could not find the issue-creation block");
+  assert.match(block, /IMAGE="\$\{IMAGE:-\$LANGFLOW_VERSION\}"/,
+    "the issue is created without naming the artifact the run served");
+
+  // The default is what makes it true on the VM: that lane serves a wheel and has no
+  // image ref, so the resolved version is the identifier. A lane that does serve an
+  // image overrides IMAGE and keeps its own.
+  const consumers = ["create-failure-issue.mjs", "notify-slack.mjs"];
+  for (const c of consumers) {
+    const upTo = src.slice(0, src.indexOf(c));
+    const tail = upTo.slice(-600);
+    assert.match(tail, /LANGFLOW_VERSION|IMAGE=/, `${c} is invoked without the version in scope`);
+  }
+});
