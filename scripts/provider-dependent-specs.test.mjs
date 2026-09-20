@@ -645,12 +645,22 @@ test("the component-probe gate spec does not read as provider-dependent", () => 
   assert.equal(
     verdict.consumesModelData,
     false,
-    `${file} classified as consuming model data (${verdict.reasons.join(", ")}). ` +
+    `${file} classified as consuming model data ` +
+      `(${(verdict.reasons ?? ["no reasons reported"]).join(", ")}). ` +
       `Something in its SOURCE now matches a model-data marker — most likely the ` +
       `name of its own parent directory, written in a comment or a path. Remove it: ` +
       `a true verdict here forces the Collect models sweep on every PR that selects ` +
       `this spec.`,
   );
   assert.equal(verdict.providerDependent, false);
-  assert.equal(verdict.isStable, true, "the gate is expected to run in the daily");
+
+  // `isStable` is deliberately NOT asserted. The daily strips `@stable` from a
+  // hard-failing test by itself and commits it to `main` unreviewed, and since
+  // #1822/#1857 that path reaches the gate specs too — so asserting the tag here
+  // would redden `test:scripts` on `main` and on every open PR until a human
+  // edited this file, landing a daily failure on uninvolved authors. CLAUDE.md
+  // records that inversion as the reason the ownership guard only WARNS for a
+  // spec the PR did not touch (#980). Who owns the tag is
+  // `stable-orphan-reconcile.yml` and `check-stable-ownership`; what this guard
+  // owns is the classification.
 });

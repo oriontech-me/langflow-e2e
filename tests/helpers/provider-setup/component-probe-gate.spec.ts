@@ -39,7 +39,7 @@
 // real registry shape and asserts `present` AND `absent`.
 //
 // A tiny local server stands in for Langflow: no container, no provider key, no
-// flow. Measured on this file: four tests under 1 s each (19-39 ms), plus the
+// flow. Measured on this file: four tests in the tens of milliseconds, plus the
 // timeout test, which costs the probe's own 15 s bound and is the point of it.
 //
 // THIS FILE'S SOURCE MUST NOT SPELL THE MARKER NAMED AFTER ITS PARENT DIRECTORY,
