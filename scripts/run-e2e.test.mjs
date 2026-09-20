@@ -455,7 +455,7 @@ test("the mirrored values cross the ssh boundary, which a default alone does not
   // #1931 composed the launch environment in one function, and both launch paths —
   // ssh for a remote target, plain bash for a local one — send that same string. So
   // the tie is asserted on what they send, and on what the composer puts in it.
-  for (const needle of ["bash -s; sleep 86400", 'bash -c "$launch_env bash -s"']) {
+  for (const needle of ["bash -s; sleep 86400", 'run_on_target_locally "$launch_env bash -s"']) {
     const line = readFileSync(SCRIPT, "utf8")
       .split("\n")
       .find((l) => l.includes(needle));
@@ -1995,7 +1995,45 @@ test("a starter that fails on the local path is reported at once, not by the pro
   // starter kills the server on its own timeout, so a swallowed status costs a second
   // full BACKEND_START_TIMEOUT_S polling something already dead.
   const src = readFileSync(SCRIPT, "utf8");
-  const localLaunch = src.slice(src.indexOf('if ! bash -c "$launch_env bash -s"'));
-  assert.ok(localLaunch.startsWith('if ! bash -c'), "the local launch no longer reads the starter's status");
+  const localLaunch = src.slice(src.indexOf('if ! run_on_target_locally "$launch_env bash -s"'));
+  assert.ok(localLaunch.startsWith("if ! run_on_target_locally"), "the local launch no longer reads the starter's status");
   assert.match(localLaunch.slice(0, 400), /return 1/);
+});
+
+
+test("a local target starts from a blank slate, as ssh does (#1935)", () => {
+  // The defect: a local child inherits the caller's environment, and this caller holds
+  // the provider keys. Measured on the QA VM before the fix, a backend started through
+  // the local path saw thirteen of them — and four @stable specs exist to assert states
+  // that only hold when the backend has none, so the lane reported its own environment
+  // as four product regressions.
+  const leaked = sourced('target_ssh "printenv OPENAI_API_KEY || echo ABSENT"', {
+    TARGET_SSH: "local",
+    OPENAI_API_KEY: "sk-should-not-cross",
+  });
+  assert.equal(leaked.status, 0, leaked.stderr);
+  assert.match(leaked.stdout, /ABSENT/, "a provider key crossed into the target's shell");
+  assert.doesNotMatch(leaked.stdout, /sk-should-not-cross/);
+
+  // The command string still decides what the other side gets — that is the contract,
+  // and the launch environment is built on it.
+  const stated = sourced('target_ssh "FOO=stated printenv FOO"', { TARGET_SSH: "local" });
+  assert.equal(stated.status, 0, stated.stderr);
+  assert.match(stated.stdout, /stated/);
+
+  // And stdin still flows, which every `bash -s` call site needs.
+  const piped = sourced('printf %s "echo piped-through" | target_ssh "bash -s"', {
+    TARGET_SSH: "local",
+  });
+  assert.match(piped.stdout, /piped-through/);
+});
+
+test("the local launch of the backend goes through the same sanitised path", () => {
+  // Asserted on the source because the launch needs a machine to run: what matters is
+  // that it does not call bare `bash -c`, which is what leaked.
+  const src = readFileSync(SCRIPT, "utf8");
+  const launch = src.split("\n").find((l) => l.includes("< scripts/start-langflow-source.sh") && l.includes("holder_log") && !l.includes("ssh -o"));
+  assert.ok(launch, "could not find the local launch of the backend");
+  assert.match(launch, /run_on_target_locally/);
+  assert.doesNotMatch(launch, /bash -c/);
 });
