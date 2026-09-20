@@ -58,11 +58,12 @@
  * component. The exclusion is right; its blast radius is a spurious category, not
  * a blind detector.
  *
- * (Worth recording because the sibling probe does *not* exclude it:
- * `isProviderComponentAvailable` iterates every value of the registry. That is
- * harmless there — the extra keys are the same component types lowercased, and the
- * probe lowercases before matching, so the duplicate matches the same set — but it
- * is harmless by luck, not by design.)
+ * (Worth recording because the sibling probe treats it asymmetrically:
+ * `probeProviderComponent` still MATCHES against it — the extra keys are the same
+ * component types lowercased, and the probe lowercases before matching, so the
+ * duplicate matches the same set — but since #1930 it excludes the map from its
+ * "did this registry register anything at all" floor, where a metadata map alone
+ * would certify a registry that has registered nothing.)
  */
 
 /** Keys of `GET /api/v1/all` that are metadata, not component families. */

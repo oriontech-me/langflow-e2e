@@ -8,7 +8,10 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
+import {
+  probeProviderComponent,
+  undecidedProbeMessage,
+} from "../../../../helpers/provider-setup/probe-component-available";
 
 /**
  * Mistral provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -103,13 +106,15 @@ test.describe("Mistral Provider", () => {
       // `waitForSelector('[data-testid="mistralMistralAI"]')` would hard-fail
       // after 30s. Skip explicitly instead. Runs BEFORE the cloud-API probe: no
       // point checking the key when the component cannot be placed at all.
-      const componentAvailable = await isProviderComponentAvailable(
-        request,
-        "mistral",
-      );
+      // Three states, and only `absent` may claim packaging (#1930): an
+      // unreachable or erroring registry skips too, but says so instead of
+      // naming a distribution it never looked at.
+      const componentProbe = await probeProviderComponent(request, "mistral");
       test.skip(
-        !componentAvailable,
-        "MistralAI component not exposed by this Langflow build — the `lfx-bundles` distribution that ships it is not installed (#1039)",
+        componentProbe.state !== "present",
+        componentProbe.state === "undecided"
+          ? undecidedProbeMessage("mistral", componentProbe)
+          : "MistralAI component not exposed by this Langflow build — the `lfx-bundles` distribution that ships it is not installed (#1039)",
       );
 
       const probe = await probeMistral(request);

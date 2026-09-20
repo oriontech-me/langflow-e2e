@@ -186,7 +186,7 @@ and only it can — a registry hit does not prove the component runs.
 
 | Situation | Decision | Mechanism |
 |---|---|---|
-| The family's distribution is **not installed** in the image we test, and that is upstream's packaging choice (not a bug) | **Gate and skip, with an attributed reason.** Do not delete the spec, do not leave it failing. | `isProviderComponentAvailable()` before the first UI step; `test.skip()` naming the distribution and #1039 |
+| The family's distribution is **not installed** in the image we test, and that is upstream's packaging choice (not a bug) | **Gate and skip, with an attributed reason.** Do not delete the spec, do not leave it failing. | `probeProviderComponent()` before the first UI step; `test.skip()` naming the distribution and #1039 **on `absent` only** (#1930) |
 | Same, **and** the spec carries `@stable` (apply on top of row 1) | **Remove `@stable`** and demote the checklist bullet to `[-]`, stating in the bullet that the component is not on the tested image | A `@stable` spec that skips on every daily is a green that measures nothing (#1039/#570) |
 | The family is installed but the component fails to **build** (missing `langchain-*`) | **Gate on buildability, not presence** | `tests/helpers/provider-setup/probe-component-buildable.ts` (#900) — a registry hit does not prove it runs |
 | The family is core and vanished, or a component was **reparented** | **Fix the spec**, then accept the drift baseline | The pre-flight drift report names it (below) |
@@ -196,11 +196,39 @@ and only it can — a registry hit does not prove the component runs.
 which distribution is missing and why, because the alternative is the failure mode
 this suite keeps re-learning — a green run that tested nothing (#570, #1012).
 
-One known weakness in today's gate, recorded rather than fixed here:
-`isProviderComponentAvailable()` returns `false` when the registry request itself
-fails, so an unreachable backend is reported to the reader as "component not in this
-build". The verdict is right (skip) and the attribution is wrong. Worth a scoped
-follow-up.
+That weakness is **closed** (#1930). The gate used to answer a boolean, so a thrown
+`getAuthToken`, a 401, a 500, a 15 s timeout and a genuinely absent family were one
+value — and the callers stated a packaging fact on the back of it, reporting an
+unreachable backend to the reader as "component not in this build". The verdict was
+right (skip) and the attribution was wrong, which is #1012's rule broken in the one
+sentence a lane-coverage reader parses.
+
+`probeProviderComponent()` now answers three states — `present`, `absent`,
+`undecided` with its reason — and **only `absent` may claim packaging**. Each caller
+decides what an `undecided` costs it:
+
+- `groq`, `mistral`, `composio` skip either way, but an `undecided` skip says so
+  (`undecidedProbeMessage()`, the one spelling) instead of naming a distribution the
+  probe never read.
+- `ollama` **fails** on `undecided` as it does on `absent`, because its family ships
+  in the stock image and its expected outcome is *run* — a probe that could not read
+  the registry must not resolve to a quiet skip (#1010). The message carries the
+  probe's own error verbatim, so a wedged backend reaches
+  `scripts/lib/infra-signature-patterns.json` as transport-level and the daily's
+  unreviewed `@stable` auto-removal exempts it (#1031). The old packaging wording
+  matched no pattern at all and would have stripped the tag.
+
+One floor comes with it, the same one `catalogVerdict` needed: a `200` that registers
+**no components at all** is `undecided`, not a build without this family — otherwise
+such a body makes every gated spec skip with a packaging reason. Two shapes reach it: a
+`200` whose body is not a registry (a gateway or auth JSON error), and a catalog left
+empty by the governance filter, which preserves empty categories. The intuitive third
+one, a registry still building, is **not demonstrated** — `GET /api/v1/all` awaits the
+registry future and answers `500` on any exception, so it does not appear to serve a
+partial `200`.
+`component_display_names` does not satisfy that floor (it is a metadata map, not a
+category) while still counting as a match, where a hit means the type really is in the
+catalog. Pure and covered by `npm run test:units`.
 
 ---
 
@@ -604,7 +632,7 @@ grep -rlE "getByTestId\(\"($V)[A-Z]|data-testid=\"disclosure-bundles-($V)\"" \
   tests/tests-automations/regression --include="*.spec.ts" | sort
 
 # specs gated on an ABSENT family (direction (b)) — grep the gate, not the component
-grep -rln "isProviderComponentAvailable" tests/tests-automations/regression --include="*.spec.ts"
+grep -rln "probeProviderComponent" tests/tests-automations/regression --include="*.spec.ts"
 
 # specs that reach a provider through the resolvers instead of naming a component
 grep -rlE '"@(agents|model-provider)"' tests/tests-automations/regression --include="*.spec.ts" | wc -l

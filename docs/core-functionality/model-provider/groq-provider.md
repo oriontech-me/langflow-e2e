@@ -101,10 +101,15 @@ check the component registry (second-level component-type keys) for a `groq`
 type. The default nightly image does not install the distribution that ships
 the Groq component, so it is absent from the sidebar AND the registry, and the
 later `waitForSelector('[data-testid="groqGroq"]')` would hard-fail after 30s.
-This probe runs **first** and `test.skip`s with an explicit reason ("Groq
-component not exposed by this Langflow build") — turning a packaging decision
-into an honest skip, not a misleading UI timeout. It auto-clears (the test runs
-again) the moment the component returns to the build. Distinct from the
+This probe runs **first** and `test.skip`s with an explicit reason — turning a
+packaging decision into an honest skip, not a misleading UI timeout. It
+auto-clears (the test runs again) the moment the component returns to the build.
+Since #1930 the probe answers three states and the skip reason follows the one
+it reached: **absent** gives "Groq component not exposed by this Langflow build",
+while a probe that could not read the registry at all (a wedged backend, a
+non-2xx, a timeout) is **undecided** and says so, carrying its own error. The
+spec skips either way; what it must never do is claim a packaging fact it did
+not measure (#1012). Distinct from the
 cloud-API probe below, which only validates the key, not Langflow's ability to
 expose the component.
 

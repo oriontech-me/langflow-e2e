@@ -51,13 +51,13 @@ const DISPLAY_NAMES_CATEGORY = "component_display_names";
  *
  * Only the providers `collect-models` validates appear here. Groq and Mistral are
  * deliberately absent: they are not bundled in the image by product decision
- * (#1039) and are gated per-spec by `isProviderComponentAvailable`. Keeping them
+ * (#1039) and are gated per-spec by `probeProviderComponent`. Keeping them
  * out is what makes a declared "expected in this image?" flag unnecessary —
  * every provider listed here is one the image is expected to ship.
  *
  * Keyed to `KeyedProvider`, not `Provider` (#1187): `collect-models` sweeps the keyed
  * providers, so Ollama is out of scope for this axis rather than missing from it. Its
- * component IS gated — `ollama-provider.spec.ts` calls `isProviderComponentAvailable`
+ * component IS gated — `ollama-provider.spec.ts` calls `probeProviderComponent`
  * for exactly the `lfx-ollama` packaging regression that broke the daily on
  * 2026-07-23/24 (#931) — just through the catalog probe, not through this table.
  */

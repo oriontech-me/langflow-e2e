@@ -13,7 +13,10 @@ import {
   addComponentFromSidebar,
   dragComponentFromSidebar,
 } from "../../../../helpers/flows/add-component-from-sidebar";
-import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
+import {
+  probeProviderComponent,
+  undecidedProbeMessage,
+} from "../../../../helpers/provider-setup/probe-component-available";
 import {
   readOllamaCapabilities,
   resolveComponentTestModel,
@@ -259,11 +262,23 @@ test.describe("Ollama Provider", () => {
       // 2026-07-23/24. Unlike Groq/Mistral — absent by design, hence a skip
       // (#1039) — `lfx-ollama` SHIPS in the stock nightly, so its absence is a
       // packaging regression that must stay visible: fail, attributed, in ~1s.
-      const componentAvailable = await isProviderComponentAvailable(request, "ollama");
+      //
+      // UNDECIDED fails here too, and deliberately (#1930): this is the one
+      // call site whose expected outcome is *run*, so a probe that could not
+      // read the registry must not resolve to a quiet skip — that is #1010's
+      // green-that-measured-nothing. What changes is the attribution: the
+      // message now carries the probe's own error verbatim, so a wedged
+      // backend reaches `scripts/lib/infra-signature-patterns.json` as
+      // transport-level and the daily's unreviewed `@stable` auto-removal
+      // exempts it (#1031), where the old packaging wording matched nothing
+      // and would have stripped the tag.
+      const componentProbe = await probeProviderComponent(request, "ollama");
       expect(
-        componentAvailable,
-        "Ollama component not exposed by this Langflow build — the `lfx-ollama` distribution that ships it is not installed (#931)",
-      ).toBe(true);
+        componentProbe.state,
+        componentProbe.state === "undecided"
+          ? undecidedProbeMessage("ollama", componentProbe)
+          : "Ollama component not exposed by this Langflow build — the `lfx-ollama` distribution that ships it is not installed (#931)",
+      ).toBe("present");
 
       const probe = await probeOllama(request);
       test.skip(!probe.usable, probe.reason);

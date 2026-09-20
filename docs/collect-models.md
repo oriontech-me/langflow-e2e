@@ -774,7 +774,7 @@ the default.
   probe and returned empty replies through the Agent).
 - **Does not cover providers outside `providerConfigMap`.** Groq and Mistral are
   deliberately not bundled in the image (product decision, #1039); they are gated
-  per-spec by `isProviderComponentAvailable` instead. Keeping them out of this gate
+  per-spec by `probeProviderComponent` instead. Keeping them out of this gate
   is what makes a *declared per-provider expectation map* unnecessary — every
   provider this spec knows about is one the image is expected to ship, so "component
   missing" is unambiguously a failure here.

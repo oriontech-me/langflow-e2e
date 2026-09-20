@@ -86,11 +86,13 @@ check the component registry (second-level component-type keys) for a `mistral`
 type. The default nightly image does not install the distribution that ships
 the MistralAI component, so it is absent from the sidebar AND the registry, and
 the later `waitForSelector('[data-testid="mistralMistralAI"]')` would hard-fail
-after 30s. This probe runs **first** and `test.skip`s with an explicit reason
-("MistralAI component not exposed by this Langflow build") — a packaging
-decision becomes an honest skip, not a misleading UI timeout, and auto-clears
-when the component returns. Distinct from the cloud-API probe below, which only
-validates the key.
+after 30s. This probe runs **first** and `test.skip`s with an explicit reason —
+a packaging decision becomes an honest skip, not a misleading UI timeout, and
+auto-clears when the component returns. Since #1930 the reason follows the state
+the probe reached: **absent** gives "MistralAI component not exposed by this
+Langflow build", while an unreadable registry is **undecided** and says so with
+its own error rather than naming a distribution nobody looked at (#1012).
+Distinct from the cloud-API probe below, which only validates the key.
 
 **Probe:** `GET https://api.mistral.ai/v1/models` with the key from the env.
 Missing key / non-200 / test model absent from the catalog → `test.skip`
