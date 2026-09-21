@@ -1996,7 +1996,7 @@ auto_remove_stable() {
 # the shape of failure this whole task exists to stop repeating.
 auto_remove_commit() {
   local result="$1"
-  local orig_head removed_count exempt_count msg auth
+  local orig_head removed_count exempt_count msg auth target_sha
   # Checked one by one, because this function is invoked as `auto_remove_commit … ||`
   # and bash disables errexit for the whole body of a command on the left of `||`. An
   # empty `orig_head` would make every restore below a silent no-op, and an empty count
@@ -2078,6 +2078,18 @@ auto_remove_commit() {
     return 1
   fi
 
+  # `FETCH_HEAD` is resolved ONCE, here, and every line below names the sha instead.
+  # It is shared mutable state in this clone, and since #1947 a second process fetches
+  # into the same one on a timer: a fetch landing between this point and the rebase
+  # would replay the removal onto whatever THAT fetch brought — the destination's main,
+  # in the worst case — and push it to the source. The window was two lines wide, which
+  # is small and not zero, and the consequence is a wrong commit on `main`.
+  if ! target_sha="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD)" || [ -z "$target_sha" ]; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "could not resolve what the fetch brought; nothing pushed."
+    return 1
+  fi
+
   # The replay has to carry EXACTLY the commit just made. `git rebase` replays
   # everything from the merge base, so on a clone sitting on any branch the source does
   # not already contain — which is precisely the shape the provoked failure runs in —
@@ -2085,7 +2097,7 @@ auto_remove_commit() {
   # unreviewed, with `[skip ci]` on the tip so nothing would even look at it. The
   # commit's parent is `orig_head`, so requiring the source to already contain it is
   # what bounds the push to one commit.
-  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$orig_head" FETCH_HEAD; then
+  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$orig_head" "$target_sha"; then
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
     err "the clone holds commits ${SOURCE_PUSH_BRANCH} does not (HEAD was ${orig_head}); replaying would push them too, so nothing was pushed."
     return 1
@@ -2096,7 +2108,7 @@ auto_remove_commit() {
   # or, on a machine with none, `unable to auto-detect email address` and a removal that
   # fails closed every morning for a reason nobody would connect to git config.
   if ! git -C "$REPO_DIR" -c user.name="$AUTO_REMOVE_COMMITTER_NAME" \
-       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" rebase -q FETCH_HEAD; then
+       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" rebase -q "$target_sha"; then
     git -C "$REPO_DIR" rebase --abort >/dev/null 2>&1 || true
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
     err "the removal does not replay cleanly onto ${SOURCE_PUSH_BRANCH}; nothing pushed."

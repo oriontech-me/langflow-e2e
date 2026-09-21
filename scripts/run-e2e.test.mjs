@@ -2171,13 +2171,24 @@ test("the removal is pushed to the source, never to the mirror this clone reads"
   // And it is replayed first: the checkout trails the source by up to a mirror cycle,
   // so a bare push — which is right on the Actions lane — is wrong here.
   assert.ok(
-    fn.indexOf("rebase -q FETCH_HEAD") < fn.indexOf("push -q"),
+    fn.indexOf('rebase -q "$target_sha"') < fn.indexOf("push -q"),
     "the removal is pushed without being replayed onto the source's main",
+  );
+  // And the replay names a SHA resolved once, never `FETCH_HEAD` directly: that is
+  // shared mutable state in this clone, and since #1947 a timer fetches into the same
+  // one. A fetch landing in between would replay the removal onto what it brought.
+  // Counted over the CODE, not the file: the comment that explains this rule spells
+  // the name too, and a pin that a correct comment can fail is the #1716 trap.
+  const fnCode = fn.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  assert.equal(
+    (fnCode.match(/FETCH_HEAD/g) || []).length,
+    1,
+    "FETCH_HEAD is read more than once, so a concurrent fetch can change it mid-flight",
   );
   // And the replay is BOUNDED before it happens. Without this, a clone sitting on any
   // branch the source does not contain gets its whole branch lifted onto the target.
   assert.ok(
-    fn.indexOf("merge-base --is-ancestor") < fn.indexOf("rebase -q FETCH_HEAD"),
+    fn.indexOf("merge-base --is-ancestor") < fn.indexOf('rebase -q "$target_sha"'),
     "the replay is not bounded to the commit just made",
   );
   // The credential reaches git through the environment, not the command line: `-c`
