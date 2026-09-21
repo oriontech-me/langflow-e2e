@@ -88,3 +88,23 @@ test("the push-retry recovers onto the branch it is running on, never a hardcode
   assert.match(code, /git reset --hard "origin\/\$BRANCH"/, "recovery resets onto the run's own branch");
   assert.match(code, /BRANCH:\s*\$\{\{[^}]*github\.ref_name[^}]*\}\}/, "BRANCH must be derived from the event");
 });
+
+test("this workflow shares no trigger path with any other lane that commits to main", () => {
+  // The isolation is the point, not an accident. The obvious wiring — refresh on every push that
+  // touches QA-CHECKLIST.md — collides with update-coverage-summary.yml on the same paths, and
+  // both commit back to main: a push race on the ~76-of-90 days the checklist moves, plus an
+  // extra job per merge. Pinned as an ABSENCE because the tempting form is the one that returns.
+  const parsed = code.match(/^on:\n([\s\S]*?)^\w/m)?.[1] ?? "";
+  assert.doesNotMatch(parsed, /^\s{2}push:/m, "no push trigger — it would race update-coverage-summary.yml on main");
+
+  const committers = readdirSync(".github/workflows")
+    .filter(f => /\.ya?ml$/.test(f) && f !== "refresh-coverage-matrix.yml")
+    .map(f => ({ f, text: readFileSync(`.github/workflows/${f}`, "utf8") }))
+    .filter(w => /git push/.test(w.text) && /branches:\s*\[\s*main\s*\]/.test(w.text));
+
+  // Whatever else pushes to main must not be reachable by the same event this one is.
+  for (const w of committers) {
+    const on = w.text.match(/^on:\n([\s\S]*?)^\w/m)?.[1] ?? "";
+    assert.doesNotMatch(on, /workflow_run:/, `${w.f} also commits to main and would share this workflow's event`);
+  }
+});

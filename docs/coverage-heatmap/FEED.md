@@ -145,7 +145,7 @@ The matrix splits in two, and the split is what makes a live dashboard honest.
 
 | Half | Refreshed | By what |
 |---|---|---|
-| **Derivable** — mitigation, bullet states, spec and `@stable` counts, test health, and the residual risk and ranking that follow | **Continuously** | `.github/workflows/refresh-coverage-matrix.yml` |
+| **Derivable** — mitigation, bullet states, spec and `@stable` counts, test health, and the residual risk and ranking that follow | **Once a weekday**, after the daily run | `.github/workflows/refresh-coverage-matrix.yml` |
 | **Judged** — impact, fragility, the bug and churn quintiles, probability, inherent risk, the graph-engine override, `cappedByProduct`, `instrumentCaveat`, `actions[]` | **Per release cycle, by a human** | A full generation |
 
 `data.json` therefore carries two dates: **`generated`** (the last full generation) and
@@ -172,10 +172,22 @@ silently kept or silently dropped.
 
 ### Triggers
 
-- a push to `main` touching `QA-CHECKLIST.md`, any spec, or the matrix inputs — mitigation is the
-  fastest-moving input (see the command above);
-- completion of the **Daily Stable E2E** workflow, which is what moves test health;
+- completion of the **Daily Stable E2E** workflow — the lane that moves test health, and the
+  natural clock for the refresh;
+- a Monday `schedule`, as a fallback for the case this repo has hit twice (a scheduled lane going
+  dormant: `nightly.yml`, `weekly-stable.yml`); without it a disabled daily would freeze the feed
+  with nothing saying so;
 - manual dispatch.
+
+**Deliberately not a push trigger.** Refreshing on every push that touches `QA-CHECKLIST.md` is the
+obvious wiring and the wrong one: it puts this job on the same paths as
+`update-coverage-summary.yml`, and both commit back to `main` — a push race on the ~76-of-90 days
+the checklist moves, plus an extra job per merge. The workflow shares no trigger with any other
+lane, and a test pins that.
+
+**The cost is bounded and stated: mitigation can be up to a day stale.** It is the derivable half of
+a risk ranking, not a gate; nothing blocks on it being current to the minute. `refreshed` on the
+feed says exactly how fresh it is.
 
 ---
 

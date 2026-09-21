@@ -4,9 +4,11 @@ name: Refresh Coverage Matrix
 #
 # Why this exists: mitigation is computed from QA-CHECKLIST.md bullet states, and that file moves
 # on almost every working day, so a matrix regenerated once per release cycle is stale on its most
-# actionable axis within a day of being written. Measured on `main` 2026-09-21 — 681 commits over
-# 76 distinct days in the trailing 90; re-measure with:
+# actionable axis. Measured on `main` 2026-09-21 — 681 commits over 76 distinct days in the
+# trailing 90; re-measure with:
 #   git log --since=90.days --format=%ad --date=short -- QA-CHECKLIST.md | sort -u | wc -l
+#
+# That same figure is why this does NOT trigger on those pushes — see the `on:` block.
 #
 # What this job does NOT do is a generation. Impact, fragility, the bug/churn quintiles and every
 # annotation are judgement or an upstream measurement; `refreshAreas` throws rather than let this
@@ -15,22 +17,27 @@ name: Refresh Coverage Matrix
 # deliberate, human exercise.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "QA-CHECKLIST.md"                       # mitigation, the fastest-moving input
-      - "tests/**/*.spec.ts"                    # spec and @stable counts
-      - "docs/coverage-heatmap/data.json"       # a generation, or a hand-edited judged value
-      - "scripts/lib/coverage-matrix-*.ts"
-      - "scripts/lib/coverage-matrix-*.json"
-      - "scripts/refresh-coverage-matrix.ts"
-      - "scripts/build-coverage-matrix-feed.ts"
-      - ".github/workflows/refresh-coverage-matrix.yml"
+  # DELIBERATELY NOT a `push` trigger. The obvious wiring — refresh whenever QA-CHECKLIST.md
+  # changes — puts this job on the same paths as `update-coverage-summary.yml`, and BOTH commit
+  # back to main. That is a push race on the 76-of-90 days the checklist moves, plus an extra job
+  # on every merge, for a dashboard nobody reads by the minute. This workflow is isolated on
+  # purpose: it shares no trigger with any other lane and runs at most once a weekday.
+  #
+  # The cost is bounded and stated: mitigation can be up to a day stale. It is the derivable half
+  # of a risk ranking, not a gate — nothing blocks on it being current to the minute.
   workflow_run:
     # Test health comes from reports/daily-history.jsonl, which the daily commits at the END of
-    # its run. `workflow_run` fires after that, so the refresh sees the row the daily just wrote.
+    # its run, so this fires once that row exists. It is also the only lane that moves the data
+    # daily, which makes it the natural clock for the refresh.
     workflows: ["Daily Stable E2E"]
     types: [completed]
+
+  schedule:
+    # Fallback only, for the case this repo has hit twice: a scheduled lane going dormant
+    # (nightly.yml, weekly-stable.yml). Without it, a disabled daily would silently freeze the
+    # feed with nothing saying so. Monday, off the :00 mark.
+    - cron: "43 11 * * 1"
+
   workflow_dispatch:
 
 # One at a time. Two concurrent refreshes would race on the same commit-back, and the loser's
@@ -47,7 +54,9 @@ jobs:
     permissions:
       contents: write
 
-    # Skip when this workflow's own auto-commit lands on main.
+    # Kept although there is no `push` trigger any more: `github.event.head_commit` is absent on
+    # workflow_run, schedule and dispatch, `contains(null, …)` is false, so the job still runs.
+    # It costs nothing and it is the guard that would matter if a push trigger is ever restored.
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
 
     steps:

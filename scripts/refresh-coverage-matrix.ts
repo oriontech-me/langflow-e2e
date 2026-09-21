@@ -3,6 +3,10 @@
  * Recomputes the derivable half of the matrix from this repository's own files, rewrites
  * data.json, regenerates the feed, and appends a history line.
  *
+ * Runs once a weekday in CI, after the daily — NOT on every push, because sharing a trigger with
+ * `update-coverage-summary.yml` would race it on the commit back to main. See the workflow's
+ * `on:` block.
+ *
  *   npm run coverage:refresh              # refresh and write
  *   npm run coverage:refresh -- --check   # exit 1 if a refresh WOULD change anything
  *
