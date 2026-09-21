@@ -124,6 +124,13 @@ function pinnedModel() {
  * which is the race of #1949 made deterministic: `list` and `pull` run in the
  * starter's foreground after the launch, so the file is non-empty long before the
  * backgrounded `serve` has reached its first line.
+ * `serverHeld: true` stops the launched `serve` short of recording its arguments for
+ * good, which is the reader's FAILURE path — where a delay would not do, since the
+ * stub `exec`s out of its own command line the moment a delay ends.
+ * `argsTimeoutMs` shortens the reader's own deadline. It exists for ONE test — the one
+ * that drives the reader into its failure path on purpose — because that path is what
+ * `cleanup()`'s second `pkill` is for, and at the default 10s it would cost the file
+ * ten seconds to assert a process-table fact.
  */
 function runScript({
   env = {},
@@ -141,6 +148,8 @@ function runScript({
   discoveryTools = true,
   probeDelayS = 0,
   serverStartDelayS = 0,
+  serverHeld = false,
+  argsTimeoutMs = undefined,
 } = {}) {
   const dir = makeTempDir("start-ollama-source-test-");
   const bin = join(dir, "bin");
@@ -161,8 +170,17 @@ function runScript({
   // The fake ollama. `--version` answers the way the real one does with no server
   // running — a warning line first, the version on the next — because the script's
   // parse has to survive exactly that.
+  // What holds the LAUNCHED `serve` short of recording its arguments. A delay is for
+  // the wait: the line arrives, late. `holdServer` is for the reader's FAILURE path,
+  // where the line must never arrive — a delay cannot serve that, because the stub
+  // `exec`s its sleep as soon as the delay ends and its argv stops carrying `dir`,
+  // which made the reaping assertion below come true on its own, with no kill. Bounded
+  // at 120s so a run that never reaps it does not leave a process spinning for good.
+  const holdServer = `[ "$1" = "serve" ] && while [ ! -f ${JSON.stringify(join(dir, "release-server"))} ] && [ $SECONDS -lt 120 ]; do sleep 0.05; done`;
+  const hold = serverHeld ? holdServer : serverStartDelayS ? `[ "$1" = "serve" ] && sleep ${serverStartDelayS}` : ":";
+
   const fakeBinary = `#!/usr/bin/env bash
-${serverStartDelayS ? `[ "$1" = "serve" ] && sleep ${serverStartDelayS}` : ":"}
+${hold}
 echo "$* host=\${OLLAMA_HOST:-unset}" >> "${join(dir, "server.args")}"
 case "$1" in
   --version)
@@ -308,7 +326,8 @@ exit 0
     // the one this file used to miss: after `exec sleep <marker>` the argv is the
     // sleep, but BEFORE that exec it is `bash <dir>/.../ollama serve`, and the paths
     // this reader can fail on are exactly the ones where the exec has not happened.
-    // One pattern alone orphans a 40-110s sleep on every such run.
+    // One pattern alone orphans that sleep for the marker's own integer
+    // part of seconds — 71 and up — on every such run.
     spawnSync("pkill", ["-f", `sleep ${marker}`]);
     spawnSync("pkill", ["-f", dir]);
     rmSync(dir, { recursive: true, force: true });
@@ -333,6 +352,7 @@ exit 0
         stdout: result.stdout,
         launchAnnouncement: LAUNCH_ANNOUNCEMENT,
         serverLine: SERVER_LINE,
+        ...(argsTimeoutMs === undefined ? {} : { timeoutMs: argsTimeoutMs }),
       });
     } catch (err) {
       cleanup();
@@ -417,6 +437,26 @@ test("a serve that records its arguments late is waited for, not read as absent"
   // matches that sleep — not the hold — so a kill sent too early leaves it running.
   assert.ok(waitFor(() => serverPattern(r.marker).test(processTable())), "the stub server never execed");
   r.cleanup();
+  // The read is memoized, so it still answers after the directory is gone. Without the
+  // memo this second read re-runs the wait against a file that no longer exists and
+  // throws ten seconds later, which is a trap for any test asserting after cleanup.
+  assert.match(r.serverArgs, /^serve host=10\.0\.0\.5:11434$/m);
+});
+
+test("a read that cannot see the stub still reaps it, instead of leaving an orphan", () => {
+  // The one test that drives the reader into its failure path on purpose, because that
+  // path is what `cleanup()`'s second pkill exists for: the fake writes its line
+  // immediately BEFORE `exec sleep <marker>`, and this path is reached precisely
+  // because the line is absent — so the exec cannot have happened and the marker
+  // pattern matches nothing. Delete that pkill and the stub outlives the run.
+  const r = runScript({ serverHeld: true, argsTimeoutMs: 400 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(waitFor(() => processTable().includes(r.dir)), "the stub binary never started");
+  // The precondition the whole fix turns on, asserted rather than assumed.
+  assert.doesNotMatch(processTable(), serverPattern(r.marker), "it had already execed; this measures nothing");
+  assert.throws(() => r.serverArgs, /no line matching/);
+  assert.equal(existsSync(r.dir), false, "the failed read did not clean up after itself");
+  assert.ok(waitFor(() => !processTable().includes(r.dir)), "the stub was orphaned, not reaped");
 });
 
 test("a machine with no private address is refused, naming the refusal", () => {

@@ -205,14 +205,23 @@ test("the DEFAULT deadline is long enough to wait at all", () => {
   }
 });
 
-test("launchAnnounced is the one reading of the announcement, and it tolerates no stdout", () => {
+test("launchAnnounced is the one reading of the announcement, and absent stdout announces nothing", () => {
   // Exported because both harnesses need the same answer eagerly, for `launched`, and
   // a second copy of the regex test is how the two would come to disagree.
   assert.equal(launchAnnounced("Starting go-httpbin 2.18.3 on 10.0.0.5:8080\n", ANNOUNCE), true);
   assert.equal(launchAnnounced("Installed go-httpbin\n", ANNOUNCE), false);
-  // `spawnSync` hands back null rather than "" when a run produces no stdout at all.
+  // Where the null comes from, measured: NOT "the run printed nothing" — with
+  // `encoding: "utf8"` and piped stdio, which is what both harnesses use, that is "".
+  // It is a spawn that FAILED (no such binary) or stdio the parent did not pipe.
+  //
+  // Asserted through a pattern that matches the COERCION, because `RegExp.test` calls
+  // ToString on its argument: without the `?? ""` guard this reads `"null"` and
+  // answers true, i.e. a starter that never ran would report a launch. Asserting it
+  // with a realistic announcement pattern pins nothing — "null" does not match those
+  // either way, which is how the first version of this test passed the mutation.
+  assert.equal(launchAnnounced(null, /null/), false);
+  assert.equal(launchAnnounced(undefined, /undefined/), false);
   assert.equal(launchAnnounced(null, ANNOUNCE), false);
-  assert.equal(launchAnnounced(undefined, ANNOUNCE), false);
   const sticky = /^Starting go-httpbin /gm;
   assert.equal(launchAnnounced("Starting go-httpbin 2\n", sticky), true);
   assert.equal(launchAnnounced("Starting go-httpbin 2\n", sticky), true);
