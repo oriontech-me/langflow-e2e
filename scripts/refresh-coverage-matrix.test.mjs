@@ -47,3 +47,23 @@ test("the commit-back is guarded against recursion and against losing a push rac
   assert.match(yml, /for attempt in 1 2 3 4 5/, "a bare push loses the fast-forward race — retry by recomputing");
   assert.match(yml, /concurrency:/, "two concurrent refreshes would race on the same commit-back");
 });
+
+test("no workflow expression is interpolated into a run: body", () => {
+  // Substitution happens before bash parses the line, so a value containing a quote or a
+  // semicolon breaks out of the string. This repo already had to fix exactly that shape in
+  // nightly.yml's test_grep. Inputs reach a script through `env`, never through `${{ }}` in run:.
+  // Pinned as an ABSENCE because the unsafe idiom returns by copy-paste, not by edit.
+  const lines = yml.split("\n");
+  const offenders = [];
+  let inRun = false, runIndent = 0;
+  for (const [i, line] of lines.entries()) {
+    const run = line.match(/^(\s*)run:\s*\|/);
+    if (run) { inRun = true; runIndent = run[1].length; continue; }
+    if (inRun) {
+      const indent = line.search(/\S/);
+      if (line.trim() && indent <= runIndent) { inRun = false; }
+      else if (/\$\{\{/.test(line)) offenders.push(`${i + 1}: ${line.trim()}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `expressions interpolated into run: — route them through env instead`);
+});

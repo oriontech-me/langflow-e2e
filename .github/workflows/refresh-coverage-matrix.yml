@@ -124,11 +124,16 @@ jobs:
 
       - name: Summary
         if: always()
+        # Through `env`, never interpolated into `run:`. The value here is this job's own
+        # true/false and is not attacker-controlled, but the idiom is what gets copied forward,
+        # and this repo already had to fix a real injection of exactly this shape in nightly.yml.
+        env:
+          COMMITTED: ${{ steps.commit.outputs.changed }}
         run: |
           {
             echo "### Coverage matrix refresh"
             echo
-            echo "- Committed: \`${{ steps.commit.outputs.changed }}\`"
+            echo "- Committed: \`${COMMITTED:-unknown}\`"
             echo "- Generation: \`$(node -p "require('./docs/coverage-heatmap/data.json').generated")\`"
             echo "- Refreshed: \`$(node -p "require('./docs/coverage-heatmap/data.json').refreshed")\`"
             echo
