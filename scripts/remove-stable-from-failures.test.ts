@@ -1404,31 +1404,45 @@ test("a last-attempt exemption reports the RETRY it happened on, not a count", (
   );
 });
 
-test("the workflow writes the corroboration file where the action reads it", () => {
-  // Two independent string literals that must agree, in two steps of the same
-  // job. If either is renamed the widened exemption goes dead and the umbrella
-  // prints "no corroboration file was provided" — which reads as an ordinary
-  // unmeasured day, not as a misconfiguration. The same argument the join key
-  // got, applied to the path.
-  const wf = fs.readFileSync(
-    path.join(__dirname, "..", ".github", "workflows", "daily-stable.yml"),
-    "utf-8",
-  );
-  const written = wf.match(/OUTAGE_ATTEMPTS_OUT:\s*(\S+)/)?.[1];
-  const read = wf.match(/outage_attempts:\s*(\S+)/)?.[1];
-  assert.ok(written, "daily-stable.yml still asks the reporter to write the file");
-  assert.ok(read, "daily-stable.yml still hands the path to the auto-remove action");
-  assert.equal(written, read, "the writer and the reader name the same file");
+test("whoever reads the corroboration file is in the lane that writes it", () => {
+  // Two independent string literals that must agree. If either is renamed the widened
+  // exemption goes dead and the umbrella prints "no corroboration file was provided" —
+  // which reads as an ordinary unmeasured day, not as a misconfiguration.
+  //
+  // Scoped by mechanism rather than by file since #1943: the daily stopped calling the
+  // auto-remove action when the VM took the verdict, so on that lane the reader is now
+  // the history appender (#1763), which asks the same per-attempt question. The
+  // coupling is asserted wherever a reader exists, so a lane that gains one later —
+  // the VM's, once it removes tags — is covered by the same rule.
+  const wfDir = path.join(__dirname, "..", ".github", "workflows");
+  const lanes = ["daily-stable.yml", "weekly-stable.yml"];
+  let readersFound = 0;
 
-  // And in that ORDER. A path agreement says nothing about which step runs
-  // first, and reordering them fails exactly the way a rename does — "no
-  // corroboration file was provided", indistinguishable from an ordinary
-  // unmeasured day (#1012). Both steps are in the merge job, so file position
-  // IS execution order.
-  assert.ok(
-    wf.indexOf("OUTAGE_ATTEMPTS_OUT:") < wf.indexOf("outage_attempts:"),
-    "the reporter writes the corroboration file BEFORE the action reads it",
-  );
+  for (const lane of lanes) {
+    const wf = fs.readFileSync(path.join(wfDir, lane), "utf-8");
+    const written = wf.match(/OUTAGE_ATTEMPTS_OUT:\s*(\S+)/)?.[1];
+    // Every way this file is consumed: the action's input, and the appender's env.
+    for (const [label, re] of [
+      ["the auto-remove action", /outage_attempts:\s*(\S+)/],
+      ["the history appender", /OUTAGE_ATTEMPTS:\s*(\S+)/],
+    ] as const) {
+      const read = wf.match(re)?.[1];
+      if (!read) continue;
+      readersFound += 1;
+      assert.ok(written, `${lane}: ${label} reads a file this lane never writes`);
+      assert.equal(written, read, `${lane}: the writer and ${label} name different files`);
+      // And in that ORDER. A path agreement says nothing about which step runs first,
+      // and reordering fails exactly the way a rename does — indistinguishable from an
+      // ordinary unmeasured day (#1012).
+      assert.ok(
+        wf.indexOf("OUTAGE_ATTEMPTS_OUT:") < wf.search(re),
+        `${lane}: ${label} reads the file before the step that writes it`,
+      );
+    }
+  }
+  // The guard against this test quietly protecting nothing, which is what it would do
+  // if both readers were renamed at once.
+  assert.ok(readersFound > 0, "no lane reads the corroboration file any more");
 });
 
 test("a spec with no `file` of its own inherits the suite's, like the outage reporter does", () => {
