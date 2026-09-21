@@ -2298,7 +2298,10 @@ test("an unmeasured day still produces a state the umbrella can say", () => {
   // status becomes the function's. Measured by reintroducing the idiom: the test
   // passed both ways, which is a test protecting nothing. The `if` form stayed for
   // legibility; the assertion below is what actually has teeth.
-  const dir = makeTempDir("auto-remove-unmeasured");
+  // A clean clone of its own: since the precondition below rejects a dirty tree, using
+  // the real repository here would make this test fail whenever the checkout is mid-work.
+  const lane = lanePair("auto-remove-unmeasured");
+  const dir = lane.dir;
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   writeFileSync(
@@ -2308,12 +2311,13 @@ test("an unmeasured day still produces a state the umbrella can say", () => {
   );
   const r = sourced(
     [
+      `REPO_DIR=${JSON.stringify(lane.work)}`,
       `RUN_DIR=${JSON.stringify(dir)}`,
-      `AUTO_REMOVE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
+      `AUTO_REMOVE=1 CREATE_ISSUE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
       `unset LIVENESS_MEASURED LIVENESS_WEDGED`,
       `auto_remove_stable; echo "EXIT=$? STATUS=$AUTO_REMOVE_STATUS OUTCOME=$AUTO_REMOVE_OUTCOME"`,
     ].join("\n"),
-    { PATH: `${bin}:${process.env.PATH}` },
+    { ...lane.env, PATH: `${bin}:${process.env.PATH}` },
   );
   assert.match(r.stdout, /EXIT=0 STATUS=none OUTCOME=success/, `${r.stdout}\n${r.stderr}`);
   rmSync(dir, { recursive: true, force: true });
@@ -2393,5 +2397,38 @@ test("a remover that dies half-way leaves nothing behind, and the umbrella still
     "",
     "the half-written removal was left on disk for tomorrow's pull to trip over",
   );
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a clone with uncommitted changes refuses before the removal writes anything", () => {
+  // Measured in the field, 2026-09-21: with one tracked file modified the removal ran,
+  // the commit landed, and `git rebase` then refused — "cannot rebase: You have
+  // unstaged changes" — losing the day's removal at the last step, after all the work.
+  // Checking first also keeps the restores honest: `reset --hard` may only discard what
+  // this function created.
+  const lane = lanePair("auto-remove-dirty");
+  const bin = join(lane.dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  // A remover that would leave a trace if it ever ran.
+  writeFileSync(
+    join(bin, "npx"),
+    `#!/bin/sh\ntouch ${JSON.stringify(join(lane.dir, "remover-ran"))}\necho '{"status":"none","removed":[],"exempt":[]}'\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(lane.work, "QA-CHECKLIST.md"), "# someone was editing this\n");
+
+  const r = sourced(
+    [
+      `REPO_DIR=${JSON.stringify(lane.work)}`,
+      `RUN_DIR=${JSON.stringify(lane.dir)}`,
+      `AUTO_REMOVE=1 CREATE_ISSUE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
+      `auto_remove_stable; echo "EXIT=$? STATUS=$AUTO_REMOVE_STATUS OUTCOME=$AUTO_REMOVE_OUTCOME"`,
+    ].join("\n"),
+    { ...lane.env, PATH: `${bin}:${process.env.PATH}` },
+  );
+  assert.match(r.stdout, /EXIT=0 STATUS=error OUTCOME=failure/, `${r.stdout}\n${r.stderr}`);
+  assert.ok(!existsSync(join(lane.dir, "remover-ran")), "the removal ran on a dirty clone");
+  // And the edit is still there: refusing must not be a way to lose someone's work.
+  assert.match(readFileSync(join(lane.work, "QA-CHECKLIST.md"), "utf8"), /someone was editing/);
   rmSync(lane.dir, { recursive: true, force: true });
 });

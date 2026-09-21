@@ -1840,6 +1840,20 @@ auto_remove_stable() {
     warn "AUTO_REMOVE is on with CREATE_ISSUE off: a removal would be reported to nobody."
   fi
 
+  # A clean tree is a PRECONDITION, checked before anything is written. Measured in
+  # the rehearsal of 2026-09-21: with a tracked file modified, the removal ran, the
+  # commit landed and then `git rebase` refused — "cannot rebase: You have unstaged
+  # changes" — so the day's removal was lost at the last step, after doing all the
+  # work. Refusing here is also what makes the restores below safe: `reset --hard`
+  # can only throw away what this function created if nothing else was in flight.
+  if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
+    AUTO_REMOVE_STATUS="error"
+    AUTO_REMOVE_SUMMARY="The \`@stable\` auto-removal did not run: the clone has uncommitted changes, and the removal needs a clean tree to replay its commit onto the source. Nothing was removed."
+    AUTO_REMOVE_OUTCOME="failure"
+    warn "the clone has uncommitted changes; the @stable removal did not run."
+    return 0
+  fi
+
   log "Auto-removing @stable from hard failures"
   local result="$RUN_DIR/auto-remove-result.json"
 
