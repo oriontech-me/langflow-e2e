@@ -251,3 +251,70 @@ test("run as a script from a path that needs escaping, it still speaks", () => {
   assert.equal(r.status, EXIT_UNKNOWN, "silence with exit 0 is what this test exists to catch");
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("a destination that really diverged is reported as diverged, not as behind", () => {
+  // `EXIT_DIVERGED` was unreachable in the deployed shape: the destination's tip is a
+  // local object only while it is an ancestor of the source, so in the one case the
+  // verdict exists for — a commit written straight to the mirror — `rev-list` died
+  // with "bad revision", the catch swallowed it, and the answer became "behind by an
+  // unknown number", the opposite of the truth. Both tips are fetched now.
+  const dir = makeTempDir("mirror-freshness-diverged");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env });
+  const source = join(dir, "source.git");
+  const destination = join(dir, "destination.git");
+  const work = join(dir, "work");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", source], { env });
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", destination], { env });
+  execFileSync("git", ["clone", "-q", source, work], { env });
+  writeFileSync(join(work, "a.txt"), "one\n");
+  git(work, "add", "-A");
+  git(work, "commit", "-qm", "one");
+  git(work, "push", "-q", "origin", "HEAD:main");
+
+  // Someone writes straight to the mirror — the thing the sync guard exists to catch.
+  writeFileSync(join(work, "b.txt"), "written on the mirror\n");
+  git(work, "add", "-A");
+  git(work, "commit", "-qm", "a commit the source has never seen");
+  git(work, "push", "-q", destination, "HEAD:main");
+  git(work, "reset", "-q", "--hard", "HEAD~1");
+  git(work, "remote", "set-url", "origin", destination);
+
+  const code = main({ ...env, SOURCE_REMOTE_URL: source, DESTINATION_REMOTE: "origin" }, work);
+  assert.equal(code, EXIT_DIVERGED, "a mirror written to directly was reported as merely old");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("both sides resolving to the same repository cannot answer 'current'", () => {
+  // A dev clone made straight from the source would compare the source with itself and
+  // answer "current" forever — the one answer this module must never give by accident.
+  const dir = makeTempDir("mirror-freshness-same");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const repo = join(dir, "r.git");
+  const work = join(dir, "w");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", repo], { env });
+  execFileSync("git", ["clone", "-q", repo, work], { env });
+  writeFileSync(join(work, "a.txt"), "one\n");
+  execFileSync("git", ["add", "-A"], { cwd: work, env });
+  execFileSync("git", ["commit", "-qm", "one"], { cwd: work, env });
+  execFileSync("git", ["push", "-q", "origin", "HEAD:main"], { cwd: work, env });
+
+  assert.equal(
+    main({ ...env, SOURCE_REMOTE_URL: repo, DESTINATION_REMOTE: "origin" }, work),
+    EXIT_UNKNOWN,
+    "a clone pointed at one repository twice reported the mirror as current",
+  );
+  rmSync(dir, { recursive: true, force: true });
+});

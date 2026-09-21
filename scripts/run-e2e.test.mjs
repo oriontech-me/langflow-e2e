@@ -2496,6 +2496,15 @@ test("the preflight asks whether the suite is current, and does not die on the a
   const preflight = sh.slice(sh.indexOf("phase_preflight() {"), sh.indexOf("phase_services() {"));
   assert.match(preflight, /check-mirror-freshness\.mjs/, "the preflight never asks the question");
 
+  // And the answer is kept where a triage two days later will look. Asked before the
+  // run directory existed, it went to the console only — the reconstruction this check
+  // exists to prevent, reintroduced by the check itself.
+  assert.ok(
+    preflight.indexOf('mkdir -p "$RUN_DIR"') < preflight.indexOf("check-mirror-freshness.mjs"),
+    "the verdict is produced before there is anywhere to keep it",
+  );
+  assert.match(preflight, /mirror-freshness\.log/, "the verdict never reaches the evidence directory");
+
   // FAIL-SOFT, and this is the half that matters: a stale suite still produces a valid
   // run of that suite — it is the COMPARISON that is compromised. Dying here would
   // trade a day of data for a warning.

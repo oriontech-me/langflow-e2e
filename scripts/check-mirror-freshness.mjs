@@ -124,6 +124,15 @@ export function remoteTip(url, ref = "refs/heads/main", { cwd, env } = {}) {
   }
 }
 
+/** A remote name or URL reduced to the URL git would use, or null when unknown. */
+export function resolveRemote(nameOrUrl, { cwd, env } = {}) {
+  try {
+    return git(["remote", "get-url", nameOrUrl], { cwd, env });
+  } catch {
+    return nameOrUrl || null;
+  }
+}
+
 export function main(env = process.env, cwd = process.cwd()) {
   const sourceUrl = env.SOURCE_REMOTE_URL || "https://github.com/oriontech-me/langflow-e2e";
   const destination = env.DESTINATION_REMOTE || "origin";
@@ -136,14 +145,41 @@ export function main(env = process.env, cwd = process.cwd()) {
     maxLagMinutes = 120;
   }
 
+  // The one answer this must never give by accident is "current", and pointing both
+  // sides at the same repository produces it forever — which is what a dev clone made
+  // straight from the source would do. Compared by resolved URL, so an alias and a URL
+  // for the same remote are caught too.
+  const sourceResolved = resolveRemote(sourceUrl, { cwd, env });
+  const destResolved = resolveRemote(destination, { cwd, env });
+  if (sourceResolved && destResolved && sourceResolved === destResolved) {
+    console.log(
+      `[mirror] UNKNOWN: the source and the destination resolve to the same repository (${sourceResolved}) — ` +
+        `this clone cannot answer the question, and "current" would be an accident.`,
+    );
+    return EXIT_UNKNOWN;
+  }
+
   const sourceSha = remoteTip(sourceUrl, "refs/heads/main", { cwd, env });
   const destSha = remoteTip(destination, "refs/heads/main", { cwd, env });
 
   let oldestMissingAt = null;
   let behindBy = null;
+  let walked = true;
   if (sourceSha && destSha && sourceSha !== destSha) {
     try {
+      // BOTH tips are fetched, and the walk names shas rather than `FETCH_HEAD`.
+      // Two reasons, both measured in review. `FETCH_HEAD` is shared mutable state in
+      // the clone: the daily fetches `origin` in its own preflight, and one landing
+      // between these two lines made the walk compare the destination against itself
+      // — zero commits missing, which this file reads as divergence and would have
+      // announced as "something wrote to the mirror directly" during an ordinary
+      // stall. And the destination's tip is only a local object while it is an
+      // ancestor of the source, so in the ONE case `EXIT_DIVERGED` exists for — a
+      // commit written straight to the mirror — `rev-list` died with "bad revision"
+      // and the catch below turned it into "behind by an unknown number", the exact
+      // opposite of the truth.
       git(["fetch", "--quiet", sourceUrl, "main"], { cwd, env });
+      git(["fetch", "--quiet", destination, "main"], { cwd, env });
       // `--first-parent`, and this is the correction that matters. Without it the walk
       // includes every commit a MERGE brought in, dated when the branch was written
       // rather than when it landed — and this repository merges with merge commits. So
@@ -152,7 +188,7 @@ export function main(env = process.env, cwd = process.cwd()) {
       // than the window. The first-parent line is the history of what reached `main`,
       // and its dates are landing times, which is the question being asked.
       const missing = git(
-        ["rev-list", "--first-parent", "--format=%ct", "--no-commit-header", `${destSha}..FETCH_HEAD`],
+        ["rev-list", "--first-parent", "--format=%ct", "--no-commit-header", `${destSha}..${sourceSha}`],
         { cwd, env },
       )
         .split("\n")
@@ -164,12 +200,19 @@ export function main(env = process.env, cwd = process.cwd()) {
       // minimum anywhere in the list — and taking the tail would understate the stall.
       oldestMissingAt = missing.length ? Math.min(...missing) * 1000 : null;
     } catch {
-      // Left null on purpose: "an unknown number of commits behind" is still a report,
-      // and inventing zero here would turn a stall into a clean bill of health.
+      // A walk that did not happen is not a measurement. Reporting "behind by an
+      // unknown number" here asserted staleness the run had not established, and it
+      // was indistinguishable from the real empty range that means divergence.
+      walked = false;
     }
   }
 
-  const result = verdict({ sourceSha, destSha, oldestMissingAt, now: Date.now(), maxLagMinutes, behindBy });
+  const result = walked
+    ? verdict({ sourceSha, destSha, oldestMissingAt, now: Date.now(), maxLagMinutes, behindBy })
+    : {
+        code: EXIT_UNKNOWN,
+        headline: "the tips differ and the history could not be walked — the difference is UNKNOWN, neither lag nor divergence",
+      };
   const label = {
     [EXIT_CURRENT]: "ok",
     [EXIT_BEHIND]: "BEHIND",

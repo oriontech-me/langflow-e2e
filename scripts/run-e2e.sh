@@ -991,22 +991,6 @@ phase_preflight() {
   [ "$TARGET_IS_LOCAL" = "1" ] || command -v ssh > /dev/null || die "ssh is not on PATH."
   info "node $(node -v), npm $(npm -v)"
 
-  # The suite this lane runs comes from a mirror that is pushed on a schedule, and when
-  # that schedule stops the mirror does not fail — it just stops following, and the run
-  # compares an older suite against a moving one. It happened for two days in September
-  # and was found by someone walking past. Asked here because this is the last moment
-  # before the answer stops being actionable, and answered in the log the evidence
-  # directory keeps, so the day can be read back without reconstructing it.
-  #
-  # FAIL-SOFT, deliberately: a stale suite still produces a valid run of that suite. It
-  # is the COMPARISON that is compromised, and the reader of the comparison is who this
-  # sentence is for. Dying here would trade a day of data for a warning.
-  if [ "$CHECK_MIRROR" = "1" ]; then
-    if ! node scripts/check-mirror-freshness.mjs; then
-      warn "the suite this run will execute may not be what \`main\` holds — see the line above."
-      warn "A comparison drawn from this run is MEASURED but may not be COMPARABLE (#1947)."
-    fi
-  fi
 
   if [ "$TARGET_IS_LOCAL" = "1" ]; then
     info "target: this machine — no ssh, no tunnel"
@@ -1034,6 +1018,33 @@ phase_preflight() {
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
     verify_issue_credential
+  fi
+
+  # The suite this run executes comes from a mirror that is pushed on a schedule, and
+  # when that schedule stops the mirror does not fail — it stops following, and the run
+  # compares an older suite against a moving one. It happened for two days in September
+  # and was found by someone walking past.
+  #
+  # Asked AFTER the run directory exists, and tee'd into it, which is the whole point:
+  # the first version asked earlier and wrote only to the console, so the evidence
+  # directory a triage opens two days later held no verdict — the reconstruction this
+  # check exists to prevent, reintroduced by the check itself.
+  #
+  # FAIL-SOFT, deliberately: a stale suite still produces a valid run of that suite. It
+  # is the COMPARISON that is compromised, and the reader of the comparison is who this
+  # sentence is for. Dying here would trade a day of data for a warning.
+  if [ "$CHECK_MIRROR" = "1" ]; then
+    # Captured and then written, rather than piped into `tee`: through a pipe the
+    # verdict's exit status survives only because `pipefail` happens to be set, and a
+    # check about silences should not hang its own reporting on a shell option set
+    # three hundred lines away.
+    local mirror_out mirror_rc=0
+    mirror_out="$(node scripts/check-mirror-freshness.mjs 2>&1)" || mirror_rc=$?
+    printf '%s\n' "$mirror_out" | tee "$RUN_DIR/logs/mirror-freshness.log"
+    if [ "$mirror_rc" != "0" ]; then
+      warn "the suite this run will execute may not be what \`main\` holds — see $RUN_DIR/logs/mirror-freshness.log."
+      warn "A comparison drawn from this run is MEASURED but may not be COMPARABLE (#1947)."
+    fi
   fi
 
   preflight_ledger

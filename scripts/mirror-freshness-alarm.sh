@@ -54,43 +54,95 @@ fi
 code=$?
 printf '%s\n' "$output"
 
+# UNKNOWN is its own state, and that matters for what gets SAID: "the mirror is not
+# current" is an assertion the check itself refuses to make when it could not tell, and
+# a 60-second DNS blip on an hourly timer would otherwise produce a false stall alarm
+# plus a recovery an hour later — the credibility erosion this file argues against.
 case "$code" in
   0) state="current" ;;
+  2) state="unknown" ;;
   *) state="not-current" ;;
 esac
 
-previous="unknown"
-[ -r "$STATE_FILE" ] && previous="$(cat "$STATE_FILE" 2>/dev/null || echo unknown)"
+# `none`, not `unknown`: UNKNOWN is a real verdict of the check now, and using it for
+# "never looked" would make the first look after an install indistinguishable from a
+# check that could not reach the source.
+# The state file holds TWO things, and one is not enough: what was last OBSERVED, and
+# whether it was ANNOUNCED. Observation alone cannot express "we saw this and could not
+# say it" — the shape a failed POST leaves behind, and the shape the first of two
+# consecutive UNKNOWNs leaves on purpose. Written as `<state>:<yes|no>`.
+previous="none"; announced="no"
+if [ -r "$STATE_FILE" ]; then
+  raw="$(cat "$STATE_FILE" 2>/dev/null || echo "none:no")"
+  previous="${raw%%:*}"
+  case "$raw" in *:*) announced="${raw#*:}" ;; *) announced="yes" ;; esac
+fi
 
 mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
-printf '%s\n' "$state" > "$STATE_FILE" 2>/dev/null \
-  || echo "[alarm] could not write $STATE_FILE — the next run will repeat this message."
+remember() {
+  printf '%s:%s\n' "$1" "$2" > "$STATE_FILE" 2>/dev/null \
+    || echo "[alarm] could not write $STATE_FILE — the next run will repeat this message."
+}
 
-# First observation is not an alarm: a fresh state file on a machine that is FINE would
-# otherwise announce itself, and an alarm that fires on installation is one people
-# learn to dismiss.
-if [ "$previous" = "unknown" ] && [ "$state" = "current" ]; then
-  echo "[alarm] first observation, and the mirror is current — nothing to say."
+# Nothing to say, and that is most runs.
+if [ "$state" = "current" ] && { [ "$previous" = "current" ] || [ "$previous" = "none" ] || [ "$announced" = "no" ]; }; then
+  case "$previous" in
+    none)    echo "[alarm] first observation, and the mirror is current — nothing to say." ;;
+    current) echo "[alarm] unchanged (current) — not repeating it." ;;
+    *)       echo "[alarm] back to current, and the earlier state was never announced — nothing to close." ;;
+  esac
+  remember current yes
   exit 0
 fi
-if [ "$state" = "$previous" ]; then
+
+# A single UNKNOWN is weather. The check could not ask, which says nothing about the
+# mirror, and one 60-second blip on an hourly timer must not produce an alarm plus a
+# recovery an hour later. It is REMEMBERED though — otherwise the second look cannot
+# know it is the second.
+if [ "$state" = "unknown" ] && [ "$previous" != "unknown" ]; then
+  echo "[alarm] could not tell this time — waiting for a second look before saying anything."
+  remember unknown no
+  exit 0
+fi
+
+# Already said, and still true.
+if [ "$state" = "$previous" ] && [ "$announced" = "yes" ]; then
   echo "[alarm] unchanged ($state) — not repeating it."
   exit 0
 fi
 
-if [ "$state" = "current" ]; then
-  text=":white_check_mark: The e2e mirror is following \`main\` again. ${output}"
-else
-  text=":rotating_light: The e2e mirror is not current, so the VM lane may be running an older suite than \`main\`. ${output}"
-fi
+case "$state" in
+  current)  text=":white_check_mark: The e2e mirror is following \`main\` again. ${output}" ;;
+  unknown)  text=":warning: The e2e mirror's freshness could not be determined twice in a row — this says nothing about the mirror, only that the question cannot be asked from the VM. ${output}" ;;
+  *)        text=":rotating_light: The e2e mirror is not current, so the VM lane may be running an older suite than \`main\`. ${output}" ;;
+esac
 
 if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+  # Deliberately left UNANNOUNCED: nothing can deliver from here, so the journal
+  # repeating the line is the only signal there is, and marking it announced would
+  # record as handled a change no one was told about.
   echo "[alarm] state changed to '$state' and there is no SLACK_WEBHOOK_URL — said here only."
+  remember "$state" no
   exit 0
 fi
-if ! printf '%s' "$text" \
+
+# The HTTP status decides, because `curl -sS` exits 0 for a 404 and a 500 alike: a
+# rotated webhook answers `404 no_service`, and without this the failure line never
+# prints and the change is recorded as delivered.
+status="$(printf '%s' "$text" \
   | python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read()}))' \
-  | curl -sS --max-time 15 -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" > /dev/null; then
-  echo "[alarm] the notification failed to send — the state above is still the truth."
-fi
+  | curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+      -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" 2>/dev/null)"
+case "$status" in
+  2??)
+    remember "$state" yes
+    ;;
+  *)
+    # Remembered as SEEN but not announced, so the next run says it again. Writing it as
+    # announced is the defect this replaced: one failed POST consumed the transition and
+    # every later run reported "unchanged".
+    echo "[alarm] the notification was not accepted (HTTP ${status:-none}) — not recording it as said, so the next run repeats it."
+    remember "$state" no
+    ;;
+esac
 exit 0

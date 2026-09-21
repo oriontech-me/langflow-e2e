@@ -16,7 +16,7 @@ import { makeTempDir } from "./lib/tmp-dir.mjs";
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "mirror-freshness-alarm.sh");
 
 /** Runs the alarm with the check stubbed to a fixed verdict, and captures any POST. */
-function runAlarm({ dir, exitCode, message = "stubbed verdict", webhook = true }) {
+function runAlarm({ dir, exitCode, message = "stubbed verdict", webhook = true, httpStatus = "200" }) {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   // Truncated per call: the stub appends, and reading the accumulated file made the
@@ -24,7 +24,13 @@ function runAlarm({ dir, exitCode, message = "stubbed verdict", webhook = true }
   const sent = join(dir, "sent.txt");
   rmSync(sent, { force: true });
   // A curl that records instead of sending. The alarm must not care which it got.
-  writeFileSync(join(bin, "curl"), `#!/bin/sh\ncat >> ${JSON.stringify(sent)}\n`, { mode: 0o755 });
+  // Real curl here writes only the status code to stdout (`-o /dev/null -w`), so the
+  // stub does the same — and the status is what the alarm now decides on.
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/bin/sh\ncat >> ${JSON.stringify(sent)}\nprintf '%s' ${JSON.stringify(httpStatus)}\n`,
+    { mode: 0o755 },
+  );
   // The stub is an executable, not a command string — see CHECK_BIN in the script.
   const check = join(bin, "check-stub");
   writeFileSync(check, `#!/bin/sh\necho ${JSON.stringify(message)}\nexit ${exitCode}\n`, { mode: 0o755 });
@@ -76,14 +82,45 @@ test("recovery is announced too, because a closed alarm has to close", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("UNKNOWN counts as not-current: an unanswerable question is not a clean answer", () => {
-  // Exit 2 is "could not tell". Treating it as healthy would restore exactly the
-  // silence this exists to remove — the check itself refuses to do that, and so does
-  // the thing that reads it.
+test("one UNKNOWN is a blip and says nothing; two in a row is a condition and speaks", () => {
+  // Exit 2 is "could not tell", and that is NOT "the mirror is stale" — saying so would
+  // assert what the check refused to. But it is not nothing either: a question that
+  // cannot be asked twice running is a condition. One 60-second DNS blip on an hourly
+  // timer must not produce an alarm plus a recovery an hour later.
   const dir = makeTempDir("alarm-unknown");
   runAlarm({ dir, exitCode: 0 });
-  const r = runAlarm({ dir, exitCode: 2, message: "UNKNOWN: could not read the source" });
-  assert.match(r.posted, /rotating_light/, "an unanswerable check passed as healthy");
+  const blip = runAlarm({ dir, exitCode: 2, message: "UNKNOWN: could not read the source" });
+  assert.equal(blip.posted, "", "a single blip woke the channel");
+  assert.match(blip.stdout, /waiting for a second look/);
+
+  const again = runAlarm({ dir, exitCode: 2, message: "UNKNOWN: could not read the source" });
+  assert.match(again.posted, /warning/, "a standing inability to ask was never reported");
+  assert.doesNotMatch(again.posted, /is not current/, "it asserted staleness it had not measured");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a notification that did not land does NOT consume the transition", () => {
+  // The defect this file existed to have: the state was written BEFORE the POST, so one
+  // failed delivery marked the change as handled and every later run said "unchanged".
+  // A Friday stall plus one bad minute of network is the weekend-long silence the whole
+  // PR is about.
+  const dir = makeTempDir("alarm-delivery-failed");
+  runAlarm({ dir, exitCode: 0 });
+  const failed = runAlarm({ dir, exitCode: 1, message: "BEHIND: 41 commit(s)", httpStatus: "500" });
+  assert.match(failed.stdout, /not recording it as said/);
+
+  const retry = runAlarm({ dir, exitCode: 1, message: "BEHIND: 41 commit(s)" });
+  assert.match(retry.posted, /rotating_light/, "the alarm was swallowed by the failed delivery");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a webhook that answers 404 is a failure, not a delivery", () => {
+  // `curl -sS` exits 0 for any HTTP response, so a rotated webhook answering
+  // `404 no_service` looked exactly like a sent message.
+  const dir = makeTempDir("alarm-404");
+  runAlarm({ dir, exitCode: 0 });
+  const r = runAlarm({ dir, exitCode: 1, httpStatus: "404" });
+  assert.match(r.stdout, /HTTP 404/, "a rejected webhook was reported as sent");
   rmSync(dir, { recursive: true, force: true });
 });
 
