@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/flow-functionality/general-bugs-shard-3909.spec.ts`
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev16`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev19`)
 
 ---
 
@@ -23,8 +23,10 @@ that clicking the call to action:
    **Basic Prompting** template opened on the canvas with its four components (Chat
    Input, Prompt Template, Language Model, Chat Output) — the inherited test's own end
    state;
-3. leaves that template flow **in the new project**: `GET /api/v1/projects/{id}` lists a
-   flow named `Basic Prompting`.
+3. leaves that template flow **in the new project**: `GET /api/v1/projects/{id}` lists
+   **exactly one** flow, and its name is the template's — `Basic Prompting`, or
+   `Basic Prompting (N)` when the client's uniquifier had to disambiguate (see
+   *The name is the client's, not the contract* below).
 
 The project, not the default one, is the point: a call to action that created the flow
 somewhere else, or created nothing, is the #3909 regression.
@@ -56,7 +58,8 @@ area (the empty-state call to action).
    click `side_nav_options_all-templates`, then the **Basic Prompting** heading.
 6. Assert the canvas shows `button_run_chat input`, `button_run_prompt template`,
    `button_run_language model` and `button_run_chat output`.
-7. Assert `GET /api/v1/projects/{projectId}` lists a flow named `Basic Prompting`.
+7. Assert `GET /api/v1/projects/{projectId}` lists **exactly one** flow whose name is
+   the template's, allowing the client-side uniquifier's ` (N)` suffix.
 
 ---
 
@@ -68,11 +71,45 @@ area (the empty-state call to action).
 | It creates a flow in that project | the `POST /api/v1/flows/` it triggers → 201 with `folder_id` = project id; the project then lists exactly 1 flow |
 | It opens that flow | the page navigates to a `/flow/` URL |
 | The template opens on the canvas | the four `button_run_*` testids visible |
-| The template flow lives in the project | `GET /api/v1/projects/{projectId}` → `flows` contains `Basic Prompting` |
+| The template flow lives in the project | `GET /api/v1/projects/{projectId}` → `flows` is **exactly one** flow whose `name` matches `/^Basic Prompting(?: \(\d+\))?$/` |
 
 The test fails if the call to action does nothing (the original #3909 bug), creates the
 flow outside the project, or does not open the canvas; or if the template picked from
-there does not land in the project.
+there does not land in the project — either because the project ends up with no flow, or
+with a flow that is not the template's, or because the placeholder is left behind
+alongside it.
+
+### The name is the client's, not the contract
+
+The last row deliberately does **not** pin the exact string `Basic Prompting`, and that
+is a *narrowing of the claim to what the product guarantees*, not a loosened assertion.
+Picking a template renames the call to action's placeholder flow **in place** and the
+**frontend** uniquifies the name against the whole flow store minus the examples — not
+against the project:
+
+```js
+// built frontend bundle, read from the container (identical on 1.13.0.dev16 and dev19)
+function iyt(e, t) {
+  const o = t.filter(c => c.id !== e.id).map(c => c.name);
+  let s = e.name, a = 1;
+  for (; o.includes(s); ) s = `${e.name} (${a})`, a++;
+  return s;
+}
+// called as: iyt({...currentFlow, name: template.name}, allFlows.minus(examples))
+```
+
+So **any** user flow named `Basic Prompting` anywhere on the instance — and
+`awaitBootstrapTest` plus ~14 specs create exactly that name — makes this flow land as
+`Basic Prompting (1)`. The backend imposes no such rule: `POST /api/v1/flows/` accepts a
+duplicate name unsuffixed (201). The suffix is therefore correct client behaviour whose
+input this test does not control on a shared instance, while *the template landing in
+this project* is the behaviour #3909 is about.
+
+The rest of the row is **stricter** than what it replaced. `flows` *containing*
+`Basic Prompting` was satisfied by any flow of that name sitting in the project, and said
+nothing about how many flows were there; the project is created by this test, so
+**exactly one** flow whose name is the template's pins both that the template landed and
+that the placeholder did not survive alongside it (the leak #1911 removed).
 
 ---
 
@@ -108,6 +145,20 @@ there does not land in the project.
 
 ## Notes
 
+- **Daily #5 / issue #1955 — verdict `test-defect`, measured, not argued.** The step 7
+  assertion hard-failed 3/3 on the VM lane at `1.13.0.dev19` and on Actions run
+  `35536482026` at `1.13.0.dev18`, both receiving `["Basic Prompting (1)"]`. The issue's
+  prime suspect — a product change between `dev16` and `dev18` — is **refuted** by
+  measurement: one variable, two builds. `1.13.0.dev19` fresh → passed (10.9 s); the same
+  container after seeding **one user flow** named `Basic Prompting` into a *different*
+  project → failed with the CI's exact array. `1.13.0.dev16` → passed (12.4 s); the same
+  instance after the same seed → failed with the same array. The same build produces both
+  outcomes, so the discriminator is instance state, not the build — confirmed by reading
+  the `dev16` bundle, where the instance-wide uniquifier quoted above is already present.
+  Pre-fix baseline on the seeded instance: **5/5 failures, 0 voided**, so this was never a
+  flake. One earlier probe was void and is recorded as such: seeding into the folder that
+  holds `Basic Prompting` on a fresh instance looked cross-project, but that is the hidden
+  **examples** folder, whose ids the uniquifier excludes by construction.
 - **Wave 9 T2 triage, issue #1911 — outcome PROMOTE.** Row in
   `docs/triage/inherited-spec-triage.md`: T2,
   `flow-functionality/general-bugs-shard-3909.spec.ts`, 0/3 green.
