@@ -66,7 +66,7 @@ async function projectFlowNames(
 
 test(
   "user must be able to create a new flow clicking on New Flow button",
-  { tag: ["@stable", "@release", "@regression", "@mainpage", "@ui-ux"] },
+  { tag: ["@release", "@regression", "@mainpage", "@ui-ux"] },
   async ({ page, request }) => {
     const emptyPageButton = page.getByTestId("new_project_btn_empty_page");
 
