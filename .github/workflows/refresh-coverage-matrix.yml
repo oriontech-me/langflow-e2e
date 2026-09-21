@@ -71,6 +71,13 @@ jobs:
 
       - name: Commit and push if changed
         id: commit
+        env:
+          # The branch this run is on. `update-coverage-summary.yml`, which this retry loop is
+          # modelled on, can hardcode `main` because it only triggers on a push to main. This one
+          # also takes a workflow_dispatch, which can target ANY branch — and there the hardcoded
+          # recovery would `git reset --hard origin/main`, DISCARD that branch's commits and push
+          # the result over it. Derived, never assumed.
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         run: |
           if git diff --quiet docs/coverage-heatmap/; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -87,12 +94,12 @@ jobs:
           # deterministic function of source, so re-syncing and recomputing on top is safe.
           for attempt in 1 2 3 4 5; do
             if git push; then echo "Pushed (attempt $attempt)."; exit 0; fi
-            echo "::warning::push rejected (attempt $attempt) — re-syncing onto origin/main and recomputing."
-            git fetch origin main
-            git reset --hard origin/main
+            echo "::warning::push rejected (attempt $attempt) — re-syncing onto origin/$BRANCH and recomputing."
+            git fetch origin "$BRANCH"
+            git reset --hard "origin/$BRANCH"
             npm run coverage:refresh
             if git diff --quiet docs/coverage-heatmap/; then
-              echo "Already current on the new main — nothing to commit."; exit 0; fi
+              echo "Already current on the new $BRANCH — nothing to commit."; exit 0; fi
             git add docs/coverage-heatmap/
             git commit -m "chore(coverage-matrix): refresh derivable axes [skip ci]"
           done

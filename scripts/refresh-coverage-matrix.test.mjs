@@ -67,3 +67,14 @@ test("no workflow expression is interpolated into a run: body", () => {
   }
   assert.deepEqual(offenders, [], `expressions interpolated into run: — route them through env instead`);
 });
+
+test("the push-retry recovers onto the branch it is running on, never a hardcoded main", () => {
+  // This loop was modelled on update-coverage-summary.yml, which can hardcode `main` because it
+  // only triggers on a push to main. This workflow also takes a workflow_dispatch, which can
+  // target any branch — and a hardcoded `git reset --hard origin/main` there DISCARDS that
+  // branch's commits and pushes the result over it. Destructive, and silent until it fires.
+  assert.doesNotMatch(yml, /git reset --hard origin\/main/, "recovery must not hardcode main");
+  assert.doesNotMatch(yml, /git fetch origin main\b/, "fetch must not hardcode main");
+  assert.match(yml, /git reset --hard "origin\/\$BRANCH"/, "recovery resets onto the run's own branch");
+  assert.match(yml, /BRANCH:\s*\$\{\{[^}]*github\.ref_name[^}]*\}\}/, "BRANCH must be derived from the event");
+});
