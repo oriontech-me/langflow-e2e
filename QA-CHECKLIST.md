@@ -1524,7 +1524,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 670 `test()` calls carrying the `@stable` tag, distributed across 266 spec
+> 671 `test()` calls carrying the `@stable` tag, distributed across 267 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2111,6 +2111,7 @@
 - [x] user should not be able to hide connected inputs → `general-bugs-hidden-input-edges.spec.ts`
 - [x] user can run flow with If-Else component multiple times with different branches → `general-bugs-reset-flow-run.spec.ts`
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
+- [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
 - [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
