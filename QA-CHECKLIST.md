@@ -1501,7 +1501,7 @@
 | `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
-| `ui-ux/` — Canvas | 46 | 42 | 0 | 4 | 0 |
+| `ui-ux/` — Canvas | 47 | 43 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 8 | 7 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 24 | 0 | 1 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
@@ -1509,7 +1509,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **689** | **597 (87%)** | **33 (5%)** | **14 (2%)** | **45 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **690** | **598 (87%)** | **33 (5%)** | **14 (2%)** | **45 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1525,7 +1525,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 671 `test()` calls carrying the `@stable` tag, distributed across 267 spec
+> 672 `test()` calls carrying the `@stable` tag, distributed across 268 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2084,6 +2084,7 @@
 - [x] dragging a component moves it on the canvas and persists the new position → `canvas-move-node.spec.ts`
 - [x] a Shift+drag marquee selects every component it encloses → `canvas-multiselect.spec.ts`
 - [x] deleting a box selection clears the selected components → `canvas-multiselect.spec.ts`
+- [x] dragging the empty pane pans the canvas without changing the zoom → `canvas-pan-drag.spec.ts`
 - [x] deleting a sticky note from its options menu removes it everywhere → `canvas-sticky-note-delete.spec.ts`
 - [x] deleting a sticky note with Backspace removes it everywhere → `canvas-sticky-note-delete.spec.ts`
 - [x] deleting one of two sticky notes leaves the other in place → `canvas-sticky-note-delete.spec.ts`
