@@ -1263,3 +1263,34 @@ test("the daily stopped removing the tag, and stopped claiming it did (#1943)", 
   const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
   assert.match(weekly, /actions\/auto-remove-stable/, "the shared action lost its last caller");
 });
+
+test("a lost removal points the reader at a place that exists on ITS lane (#1945)", () => {
+  // Measured on the `qa` on 2026-09-21, rehearsing the refused push: the body told the
+  // reader to open the `Auto-remove @stable from hard failures` step — which does not
+  // exist on this lane. The VM runs the removal inline, so its cause is the `::error::`
+  // in the run log beside the evidence. A body that names a surface the reader cannot
+  // open is the same defect #1822 was about, one level down: the words have to survive
+  // the lane they are rendered on.
+  const summary = formatSummary({
+    status: "removed",
+    threshold: 5,
+    hardFailures: 1,
+    attributableFailures: 1,
+    removed: [
+      { file: "tests/fixtures/locale-gate.spec.ts", title: "the run executes under the resolved locale", soleTag: false },
+    ],
+    skipped: [],
+    exempt: [],
+    disagreements: [],
+  });
+
+  const onVm = renderIssue({ ...VM, arStatus: "removed", arSummary: summary, arUncommitted: true });
+  assert.match(onVm.body, /did NOT reach `main`/);
+  assert.match(onVm.body, /the run log in the evidence directory above/);
+  assert.doesNotMatch(onVm.body, /Auto-remove @stable from hard failures/);
+
+  // And the Actions lane keeps the step, which is where its cause really is.
+  const onActions = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: summary, arUncommitted: true });
+  assert.match(onActions.body, /`Auto-remove @stable from hard failures` step/);
+  assert.doesNotMatch(onActions.body, /the run log in the evidence directory above/);
+});

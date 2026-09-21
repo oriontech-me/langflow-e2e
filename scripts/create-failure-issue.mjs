@@ -120,7 +120,15 @@ export const CC_DEFAULT = "@Victor-w-Madeira @daniellicnerski1 @rafaelgiln";
  * as corrected (#1012); the round-trip test against the real formatter output is
  * what keeps that branch out of a real issue body.
  */
-function autoRemovalLines(arSummary, arUncommitted) {
+function autoRemovalLines(arSummary, arUncommitted, onActions = true) {
+  // Where the cause is legible depends on WHICH lane rendered this, and the sentence
+  // has to name a place the reader can actually open. On the VM there is no step and
+  // no Actions log: the orchestrator runs the removal inline and its `::error::` is in
+  // the run log beside the report. Measured on 2026-09-21, rehearsing the refused push
+  // on the `qa` — the body sent the reader to a step that does not exist there.
+  const cause = onActions
+    ? "the `Auto-remove @stable from hard failures` step"
+    : "the run log in the evidence directory above";
   if (!arUncommitted) return ["### `@stable` auto-removal", "", arSummary];
   const heading = "### ⚠️ `@stable` auto-removal did NOT reach `main`";
   // The action writes `status` to `$GITHUB_OUTPUT` BEFORE it renders the summary,
@@ -133,7 +141,7 @@ function autoRemovalLines(arSummary, arUncommitted) {
       "",
       "**Nothing was pushed**, and the step produced no summary either: it reported a",
       "removal and then stopped before writing one, so which tests it selected is only in",
-      "the `Auto-remove @stable from hard failures` step's log. No tag was removed on",
+      `${cause}'s log. No tag was removed on`,
       "`main` (#1822).",
     ];
   }
@@ -141,10 +149,10 @@ function autoRemovalLines(arSummary, arUncommitted) {
   return [
     heading,
     "",
-    "**Nothing was pushed.** The auto-remove step did not complete, so every test listed below still",
-    "carries `@stable` on `main` and runs again tomorrow — read the",
-    "`Auto-remove @stable from hard failures` step for the cause, and treat the list as",
-    "what this run TRIED to quarantine rather than as what it did (#1822).",
+    "**Nothing was pushed.** The auto-removal did not complete, so every test listed below still",
+    `carries \`@stable\` on \`main\` and runs again tomorrow — read ${cause} for the`,
+    "cause, and treat the list as what this run TRIED to quarantine rather than as what",
+    "it did (#1822).",
     ...(neutralized
       ? []
       : [
@@ -451,7 +459,7 @@ export function renderIssue({
           ...(accountDry && !uncovered && arStatus
             ? [
                 "",
-                ...autoRemovalLines(arSummary, arLost),
+                ...autoRemovalLines(arSummary, arLost, onActions),
                 "",
                 // Scoped to a block that actually lists something: the blank-summary
                 // branch has just said the step produced no list, and "weigh the
@@ -485,7 +493,7 @@ export function renderIssue({
           "short is not evidence about the file it did not run (#1012).",
         ]
       : arStatus
-        ? autoRemovalLines(arSummary, arLost)
+        ? autoRemovalLines(arSummary, arLost, onActions)
         : [
             "### Next steps",
             onActions
