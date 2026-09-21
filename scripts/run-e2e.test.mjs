@@ -2159,7 +2159,11 @@ test("the removal is pushed to the source, never to the mirror this clone reads"
   const sh = readFileSync(SCRIPT, "utf8");
   const fn = sh.slice(sh.indexOf("auto_remove_commit() {"));
   assert.ok(!/github\.ibm\.com/.test(fn), "the removal names the destination host");
-  assert.match(fn, /push -q "\$SOURCE_REMOTE_URL" HEAD:main/, "the push does not name the source remote");
+  assert.match(
+    fn,
+    /push -q "\$SOURCE_REMOTE_URL" "HEAD:\$SOURCE_PUSH_BRANCH"/,
+    "the push does not name the source remote and its branch",
+  );
   assert.ok(
     !/push[^\n]*\borigin\b/.test(fn),
     "the removal pushes to `origin`, which on this machine is the read-only mirror",
@@ -2170,6 +2174,16 @@ test("the removal is pushed to the source, never to the mirror this clone reads"
     fn.indexOf("rebase -q FETCH_HEAD") < fn.indexOf("push -q"),
     "the removal is pushed without being replayed onto the source's main",
   );
+  // And the replay is BOUNDED before it happens. Without this, a clone sitting on any
+  // branch the source does not contain gets its whole branch lifted onto the target.
+  assert.ok(
+    fn.indexOf("merge-base --is-ancestor") < fn.indexOf("rebase -q FETCH_HEAD"),
+    "the replay is not bounded to the commit just made",
+  );
+  // The credential reaches git through the environment, not the command line: `-c`
+  // would leave it in /proc/<pid>/cmdline for any local user while the call lasts.
+  assert.ok(!/-c http\.extraheader/.test(fn), "the credential is passed on the command line");
+  assert.match(fn, /GIT_CONFIG_VALUE_0="\$auth"/, "the credential does not reach git at all");
 });
 
 test("the umbrella is told what the removal did, and the removal happens first", () => {
@@ -2303,4 +2317,81 @@ test("an unmeasured day still produces a state the umbrella can say", () => {
   );
   assert.match(r.stdout, /EXIT=0 STATUS=none OUTCOME=success/, `${r.stdout}\n${r.stderr}`);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("a clone holding commits the source does not refuses, instead of pushing them", () => {
+  // The review's first finding, and the scenario is the one the gate schedules: the
+  // provoked failure runs on a BRANCH. `git rebase FETCH_HEAD` replays everything from
+  // the merge base, so without a bound the push carries that whole branch onto the
+  // target — unreviewed, and with `[skip ci]` on the tip so nothing looks at it.
+  const lane = lanePair("auto-remove-ahead");
+  // A commit the source has never seen, exactly as a working branch would have.
+  writeFileSync(join(lane.work, "tests/unrelated.spec.ts"), "test('mine', () => {});\n");
+  lane.git(lane.work, "add", "tests/unrelated.spec.ts");
+  lane.git(lane.work, "commit", "-qm", "work in progress");
+  const before = lane.git(lane.work, "rev-parse", "HEAD").trim();
+  writeFileSync(join(lane.work, "tests/x.spec.ts"), "test('one thing', () => {});\n");
+
+  const r = commitRemoval(lane);
+  assert.match(r.stdout, /EXIT=1/, "the removal pushed from a clone the source is behind");
+  assert.match(r.stderr, /replaying would push them too/, `unexpected reason:\n${r.stderr}`);
+  assert.equal(lane.git(lane.work, "rev-parse", "HEAD").trim(), before, "a commit was left behind");
+  assert.equal(
+    lane.git(lane.source, "log", "--oneline", "main").trim().split("\n").length,
+    1,
+    "the unrelated commit reached the source",
+  );
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a failed checklist regeneration leaves the clone exactly as it was", () => {
+  // The one exit that did not restore. By this point the remover has already rewritten
+  // the specs, so returning without a reset leaves a dirty tree — and the wrapper's
+  // `git pull --ff-only` refuses the next morning, on a machine nobody is watching.
+  const lane = lanePair("auto-remove-coverage-fails");
+  writeFileSync(
+    join(lane.work, "package.json"),
+    JSON.stringify({ name: "lane", version: "1.0.0", scripts: { "coverage:summary": "exit 3" } }),
+  );
+  lane.git(lane.work, "commit", "-aqm", "a checklist step that fails");
+  lane.git(lane.work, "push", "-q", "origin", "HEAD:main");
+  const before = lane.git(lane.work, "rev-parse", "HEAD").trim();
+  writeFileSync(join(lane.work, "tests/x.spec.ts"), "test('one thing', () => {});\n");
+
+  const r = commitRemoval(lane);
+  assert.match(r.stdout, /EXIT=1/, "a failed regeneration reported success");
+  assert.equal(lane.git(lane.work, "rev-parse", "HEAD").trim(), before, "a commit was left behind");
+  assert.equal(lane.git(lane.work, "status", "--porcelain").trim(), "", "the removal's edits were left on disk");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a remover that dies half-way leaves nothing behind, and the umbrella still hears", () => {
+  // It writes file by file, so a throw on the third spec leaves the first two rewritten.
+  // Two things have to hold: the tree goes back, and the state is SAYABLE — an empty
+  // status reads as "not tracked" downstream (#1822), and on a fail-soft lane that
+  // would make a crashed remover invisible outside the log.
+  const lane = lanePair("auto-remove-crash");
+  const bin = join(lane.dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "npx"),
+    `#!/bin/sh\nprintf 'half a removal\\n' > ${JSON.stringify(join(lane.work, "tests/x.spec.ts"))}\nexit 7\n`,
+    { mode: 0o755 },
+  );
+  const r = sourced(
+    [
+      `REPO_DIR=${JSON.stringify(lane.work)}`,
+      `RUN_DIR=${JSON.stringify(lane.dir)}`,
+      `AUTO_REMOVE=1 CREATE_ISSUE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
+      `auto_remove_stable; echo "EXIT=$? STATUS=$AUTO_REMOVE_STATUS OUTCOME=$AUTO_REMOVE_OUTCOME"`,
+    ].join("\n"),
+    { ...lane.env, PATH: `${bin}:${process.env.PATH}` },
+  );
+  assert.match(r.stdout, /EXIT=0 STATUS=error OUTCOME=failure/, `${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    lane.git(lane.work, "status", "--porcelain").trim(),
+    "",
+    "the half-written removal was left on disk for tomorrow's pull to trip over",
+  );
+  rmSync(lane.dir, { recursive: true, force: true });
 });

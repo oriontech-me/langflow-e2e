@@ -144,6 +144,10 @@ MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
 # and not fixable by loosening the guard. The source is the only place a write sticks,
 # and it arrives back here on the next mirror cycle.
 SOURCE_REMOTE_URL="${SOURCE_REMOTE_URL:-https://github.com/oriontech-me/langflow-e2e}"
+# The branch the removal lands on. Parameterised for ONE reason, and it is the gate in
+# #1945: the provoked failure has to exercise the push, and pushing a rehearsal onto
+# `main` is the opposite of a rehearsal. It points at a scratch branch for that run.
+SOURCE_PUSH_BRANCH="${SOURCE_PUSH_BRANCH:-main}"
 # A lane identity, not a person's: the commit is the lane's act, and `git log` should
 # say which lane. Override if the team would rather it be attributed to an account.
 AUTO_REMOVE_COMMITTER_NAME="${AUTO_REMOVE_COMMITTER_NAME:-langflow-e2e vm daily}"
@@ -1830,6 +1834,12 @@ auto_remove_stable() {
   [ "$EVENT_NAME" = "schedule" ] || return 0
   [ "$TEST_JOB_FAILED" = "1" ] || return 0
 
+  # The removal writes to `main`; the umbrella is how anyone finds out. Turning this on
+  # while CREATE_ISSUE is off leaves the three states with nowhere to go but the log.
+  if [ "$CREATE_ISSUE" != "1" ]; then
+    warn "AUTO_REMOVE is on with CREATE_ISSUE off: a removal would be reported to nobody."
+  fi
+
   log "Auto-removing @stable from hard failures"
   local result="$RUN_DIR/auto-remove-result.json"
 
@@ -1849,6 +1859,16 @@ auto_remove_stable() {
        BACKEND_WEDGED="$wedged" \
        OUTAGE_ATTEMPTS="$RUN_DIR/outage-attempts.json" \
        npx ts-node scripts/remove-stable-from-failures.ts > "$result"; then
+    # The remover writes file by file, so a throw partway through leaves EARLIER specs
+    # already rewritten on disk. Nothing is committed on this path, and a dirty tree is
+    # exactly what makes the wrapper's `git pull --ff-only` refuse tomorrow morning — so
+    # the edits go back before anything else.
+    git -C "$REPO_DIR" reset -q --hard HEAD || warn "could not restore the clone after the failed removal."
+    # A status the umbrella can render. Leaving it empty would be indistinguishable from
+    # "not tracked" (#1822) and a crashed remover would appear NOWHERE: this lane is
+    # fail-soft, so unlike the Actions step it does not take the job down with it.
+    AUTO_REMOVE_STATUS="error"
+    AUTO_REMOVE_SUMMARY="The \`@stable\` auto-removal crashed before deciding anything. No tag was removed, nothing was pushed, and the partial edits were discarded."
     AUTO_REMOVE_OUTCOME="failure"
     warn "the @stable removal failed before deciding anything; no tag was removed."
     return 0
@@ -1880,13 +1900,27 @@ auto_remove_stable() {
 auto_remove_commit() {
   local result="$1"
   local orig_head removed_count exempt_count msg auth
-  orig_head="$(git -C "$REPO_DIR" rev-parse HEAD)"
-  removed_count="$(node -p "require('$result').removed.length")"
-  exempt_count="$(node -p "(require('$result').exempt || []).length")"
+  # Checked one by one, because this function is invoked as `auto_remove_commit … ||`
+  # and bash disables errexit for the whole body of a command on the left of `||`. An
+  # empty `orig_head` would make every restore below a silent no-op, and an empty count
+  # would ship "auto-remove @stable from  hard-failing test(s)" to `main` for good.
+  if ! orig_head="$(git -C "$REPO_DIR" rev-parse HEAD)" || [ -z "$orig_head" ]; then
+    err "could not read the clone's HEAD; nothing was committed."
+    return 1
+  fi
+  if ! removed_count="$(node -p "require('$result').removed.length")" \
+     || ! exempt_count="$(node -p "(require('$result').exempt || []).length")"; then
+    err "the removal report is unreadable; nothing was committed."
+    return 1
+  fi
 
   # Removing @stable changes the generated blocks in QA-CHECKLIST.md — regenerate, or
   # the commit contradicts itself.
   if ! (cd "$REPO_DIR" && npm run coverage:summary >/dev/null); then
+    # The remover has already rewritten the specs, and the regeneration may have
+    # rewritten the checklist before failing. Same reason as every other exit here: a
+    # dirty tree breaks tomorrow's `git pull --ff-only`, quietly.
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
     err "coverage:summary failed; nothing was committed."
     return 1
   fi
@@ -1934,22 +1968,45 @@ auto_remove_commit() {
     err "SOURCE_PUSH_TOKEN is unset, so the removal cannot reach the source; it was not kept locally either."
     return 1
   fi
-  # The credential travels as a header, never inside the URL: git echoes the URL on
-  # failure and would echo the token with it.
+  # The credential travels as a header, and the header is handed over through the
+  # ENVIRONMENT (`GIT_CONFIG_*`), not `-c`: the URL form would be echoed back in git's
+  # own error text, and the `-c` form would sit in `/proc/<pid>/cmdline` for any local
+  # user to read for as long as the network call lasts.
   auth="Authorization: Basic $(printf 'x-access-token:%s' "$SOURCE_PUSH_TOKEN" | base64 | tr -d '\n')"
 
-  if ! git -C "$REPO_DIR" -c http.extraheader="$auth" fetch -q "$SOURCE_REMOTE_URL" main; then
+  if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$auth" \
+       git -C "$REPO_DIR" fetch -q "$SOURCE_REMOTE_URL" "$SOURCE_PUSH_BRANCH"; then
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
-    err "could not read the source's main; nothing pushed."
+    err "could not read ${SOURCE_PUSH_BRANCH} on the source; nothing pushed."
     return 1
   fi
-  if ! git -C "$REPO_DIR" rebase -q FETCH_HEAD; then
+
+  # The replay has to carry EXACTLY the commit just made. `git rebase` replays
+  # everything from the merge base, so on a clone sitting on any branch the source does
+  # not already contain — which is precisely the shape the provoked failure runs in —
+  # it would lift that whole branch onto the target and the push would land all of it,
+  # unreviewed, with `[skip ci]` on the tip so nothing would even look at it. The
+  # commit's parent is `orig_head`, so requiring the source to already contain it is
+  # what bounds the push to one commit.
+  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$orig_head" FETCH_HEAD; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the clone holds commits ${SOURCE_PUSH_BRANCH} does not (HEAD was ${orig_head}); replaying would push them too, so nothing was pushed."
+    return 1
+  fi
+
+  # The identity travels with the rebase too: it RE-CREATES the commit, and without it
+  # the committer on what reaches the source is whatever the machine happens to have —
+  # or, on a machine with none, `unable to auto-detect email address` and a removal that
+  # fails closed every morning for a reason nobody would connect to git config.
+  if ! git -C "$REPO_DIR" -c user.name="$AUTO_REMOVE_COMMITTER_NAME" \
+       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" rebase -q FETCH_HEAD; then
     git -C "$REPO_DIR" rebase --abort >/dev/null 2>&1 || true
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
-    err "the removal does not replay cleanly onto the source's main; nothing pushed."
+    err "the removal does not replay cleanly onto ${SOURCE_PUSH_BRANCH}; nothing pushed."
     return 1
   fi
-  if ! git -C "$REPO_DIR" -c http.extraheader="$auth" push -q "$SOURCE_REMOTE_URL" HEAD:main; then
+  if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$auth" \
+       git -C "$REPO_DIR" push -q "$SOURCE_REMOTE_URL" "HEAD:$SOURCE_PUSH_BRANCH"; then
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
     err "the push to the source was refused; the removal did not land."
     return 1
