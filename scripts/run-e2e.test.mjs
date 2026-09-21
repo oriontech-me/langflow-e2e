@@ -2485,3 +2485,26 @@ test("the credential is only asked about where there is an umbrella to open (#19
   const block = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
   assert.match(block, /\[ "\$CREATE_ISSUE" = "1" \]/, "it would stop a run that opens no issue");
 });
+
+test("the preflight asks whether the suite is current, and does not die on the answer (#1947)", () => {
+  // The silence this removes cost two days recorded as measured and NOT comparable, so
+  // the question is asked ON by default — unlike the publish switches, it changes
+  // nothing about the run.
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^CHECK_MIRROR="\$\{CHECK_MIRROR:-1\}"$/m, "the check is off by default");
+
+  const preflight = sh.slice(sh.indexOf("phase_preflight() {"), sh.indexOf("phase_services() {"));
+  assert.match(preflight, /check-mirror-freshness\.mjs/, "the preflight never asks the question");
+
+  // FAIL-SOFT, and this is the half that matters: a stale suite still produces a valid
+  // run of that suite — it is the COMPARISON that is compromised. Dying here would
+  // trade a day of data for a warning.
+  // The block itself, not a window around the call: the preflight is full of `die`
+  // lines that have nothing to do with this one, and a slice by character count picked
+  // one up — a test that fails for a neighbour's reason is a test nobody trusts.
+  const start = preflight.indexOf('if [ "$CHECK_MIRROR" = "1" ]');
+  assert.ok(start >= 0, "the check is not behind its switch");
+  const call = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
+  assert.ok(!/\bdie\b/.test(call), "a stale mirror aborts the run instead of reporting it");
+  assert.match(call, /warn "/, "the answer reaches nobody");
+});

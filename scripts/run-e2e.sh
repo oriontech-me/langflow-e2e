@@ -141,6 +141,12 @@ POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
 # the provoked failure (task 6) turns the path on deliberately, on a branch, before
 # any morning depends on it. Strict "1": a typo has to leave it OFF, and this is the
 # switch that commits to `main` (#1725).
+# Is the suite this run is about to execute still the one `main` holds? ON by default,
+# unlike the publish switches: it changes nothing about the run, it only refuses to let
+# a stale checkout go unremarked — and the silence it removes has already cost two days
+# recorded as measured and NOT comparable (#1947).
+CHECK_MIRROR="${CHECK_MIRROR:-1}"
+
 AUTO_REMOVE="${AUTO_REMOVE:-0}"
 MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
 # Where a removal is pushed, and it is NOT this clone's `origin`. That remote is the
@@ -984,6 +990,23 @@ phase_preflight() {
   command -v npm  > /dev/null || die "npm is not on PATH."
   [ "$TARGET_IS_LOCAL" = "1" ] || command -v ssh > /dev/null || die "ssh is not on PATH."
   info "node $(node -v), npm $(npm -v)"
+
+  # The suite this lane runs comes from a mirror that is pushed on a schedule, and when
+  # that schedule stops the mirror does not fail — it just stops following, and the run
+  # compares an older suite against a moving one. It happened for two days in September
+  # and was found by someone walking past. Asked here because this is the last moment
+  # before the answer stops being actionable, and answered in the log the evidence
+  # directory keeps, so the day can be read back without reconstructing it.
+  #
+  # FAIL-SOFT, deliberately: a stale suite still produces a valid run of that suite. It
+  # is the COMPARISON that is compromised, and the reader of the comparison is who this
+  # sentence is for. Dying here would trade a day of data for a warning.
+  if [ "$CHECK_MIRROR" = "1" ]; then
+    if ! node scripts/check-mirror-freshness.mjs; then
+      warn "the suite this run will execute may not be what \`main\` holds — see the line above."
+      warn "A comparison drawn from this run is MEASURED but may not be COMPARABLE (#1947)."
+    fi
+  fi
 
   if [ "$TARGET_IS_LOCAL" = "1" ]; then
     info "target: this machine — no ssh, no tunnel"
