@@ -21,6 +21,10 @@
  *
  * USABLE — the API answered for the repository. With a date, the days left travel
  * with it so the warning can start early enough to be acted on in a working week.
+ * Note what this does NOT prove: `GET /repos/…` establishes READ access, and opening
+ * an issue needs write. Proving write would mean opening one, so the remaining gap is
+ * named here rather than papered over — a fine-grained token with metadata-only access
+ * passes this and fails at the end of a red day.
  *
  * REJECTED — 401 or 403. This is the one that is worth stopping for: the lane cannot
  * deliver the consequence it is about to spend sixteen minutes and real model calls
@@ -34,24 +38,42 @@
  *   ISSUE_HOST=github.ibm.com ISSUE_REPO=Langflow/e2e-qa GH_TOKEN=… \
  *     node scripts/check-issue-credential.mjs
  *
- * Exit codes: 0 = usable, 1 = rejected, 2 = could not tell.
+ * Exit codes: 0 = usable, 2 = could not tell, 3 = refused. NOT 1 for refused: node
+ * exits 1 on a syntax error, a missing import or an unhandled rejection, and the
+ * caller treats refusal as fatal — a broken script would have aborted the daily with
+ * a message blaming the token.
  */
 export const EXIT_USABLE = 0;
-export const EXIT_REJECTED = 1;
 export const EXIT_UNKNOWN = 2;
+export const EXIT_REFUSED = 3;
 
 /** The decision, as a pure function of what the API said. */
 export function verdict({ status, expiresAt, now, warnDays }) {
-  if (status === 401 || status === 403) {
+  // 404 belongs here, and it is the likelier of the three: GitHub answers 404, not
+  // 403, for a repository a credential cannot see — which is what a token that lost
+  // access, or was replaced with one scoped elsewhere, looks like from outside. Left
+  // in UNKNOWN it would only warn, and the umbrella would go missing anyway.
+  if (status === 401 || status === 403 || status === 404) {
     return {
-      code: EXIT_REJECTED,
-      headline: `the credential was refused (HTTP ${status}) — this lane cannot open the umbrella it may need, so a red morning would pass in silence`,
+      code: EXIT_REFUSED,
+      headline:
+        `the credential cannot reach the repository (HTTP ${status}) — this lane cannot open the umbrella it may need, ` +
+        `so a red morning would pass in silence`,
     };
   }
   if (typeof status !== "number" || status < 200 || status >= 300) {
     return {
       code: EXIT_UNKNOWN,
       headline: `could not tell whether the credential works (${status == null ? "no answer" : `HTTP ${status}`}) — UNKNOWN, which is not the same as refused`,
+    };
+  }
+  if (expiresAt && expiresAt <= now) {
+    // Reachable through clock skew on the VM or a cached 2xx, and "works but expires
+    // in -3 day(s)" is not a sentence this should ever print.
+    const daysAgo = Math.ceil((now - expiresAt) / 86_400_000);
+    return {
+      code: EXIT_REFUSED,
+      headline: `the credential expired ${daysAgo} day(s) ago, on ${new Date(expiresAt).toISOString().slice(0, 10)} — the umbrella cannot be opened`,
     };
   }
   if (!expiresAt) {
@@ -88,30 +110,47 @@ export function parseExpiry(header) {
 export async function main(env = process.env, fetchImpl = fetch) {
   const host = env.ISSUE_HOST || "github.com";
   const repo = env.ISSUE_REPO || "oriontech-me/langflow-e2e";
-  const token = env.GH_TOKEN || env.GITHUB_TOKEN || "";
+  // The SAME precedence as the consumer (`create-failure-issue.mjs` reads
+  // `GITHUB_TOKEN || GH_TOKEN`). Inverted here, this would validate a credential the
+  // creator never uses and pass while the real one is dead — the exact silent failure
+  // it exists to close.
+  const token = env.GITHUB_TOKEN || env.GH_TOKEN || "";
   const warnDays = Number(env.CREDENTIAL_WARN_DAYS || 21);
 
   if (!token) {
-    console.log("[credential] REJECTED: no GH_TOKEN/GITHUB_TOKEN in the environment, so no issue can be opened.");
-    return EXIT_REJECTED;
+    // UNKNOWN, not refused, and the distinction is load-bearing: `create-failure-issue`
+    // falls back to the `gh` CLI when there is no token, deliberately, for a machine
+    // where a human is logged in. Calling this a refusal would abort a lane that can
+    // still open the issue.
+    console.log(
+      "[credential] UNKNOWN: no GITHUB_TOKEN/GH_TOKEN here — the issue creator would fall back to the `gh` CLI, which this cannot check.",
+    );
+    return EXIT_UNKNOWN;
   }
 
   const base = host === "github.com" ? "https://api.github.com" : `https://${host}/api/v3`;
-  let status = null;
-  let expiresAt = null;
+  // Only the CALL is guarded. Reading the headers inside the same try would let a
+  // throw after the answer arrived downgrade a real 401 into UNKNOWN — the one
+  // conversion this file must never make.
+  let res = null;
   try {
-    const res = await fetchImpl(`${base}/repos/${repo}`, {
+    res = await fetchImpl(`${base}/repos/${repo}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
       signal: AbortSignal.timeout(Number(env.CREDENTIAL_TIMEOUT_MS || 20_000)),
     });
-    status = res.status;
-    expiresAt = parseExpiry(res.headers.get("github-authentication-token-expiration"));
   } catch {
-    status = null;
+    res = null;
+  }
+  const status = res ? res.status : null;
+  let expiresAt = null;
+  try {
+    expiresAt = parseExpiry(res?.headers?.get("github-authentication-token-expiration"));
+  } catch {
+    expiresAt = null;
   }
 
   const result = verdict({ status, expiresAt, now: Date.now(), warnDays: Number.isFinite(warnDays) ? warnDays : 21 });
-  const label = { [EXIT_USABLE]: result.expiring ? "EXPIRING" : "ok", [EXIT_REJECTED]: "REJECTED", [EXIT_UNKNOWN]: "UNKNOWN" }[result.code];
+  const label = { [EXIT_USABLE]: result.expiring ? "EXPIRING" : "ok", [EXIT_REFUSED]: "REFUSED", [EXIT_UNKNOWN]: "UNKNOWN" }[result.code];
   console.log(`[credential] ${label}: ${result.headline}`);
   return result.code;
 }

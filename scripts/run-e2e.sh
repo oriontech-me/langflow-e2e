@@ -927,6 +927,37 @@ phase_hygiene() {
 # PREFLIGHT
 # ---------------------------------------------------------------------------
 
+# The umbrella's credential, as a function so the DECISION can be exercised without a
+# real run: `ISSUE_CREDENTIAL_BIN` points the check at a stub. Refusal is fatal, and
+# everything else warns — see the caller for why the asymmetry.
+verify_issue_credential() {
+  local rc=0 log="$RUN_DIR/logs/issue-credential.log"
+  # No pipe, and that is not style. `node … | tee … || true` was the first version and
+  # the fatal branch was DEAD CODE: `|| true` runs a command, every command resets
+  # `PIPESTATUS`, so the status read afterwards was always 0. Measured, not reasoned.
+  if [ -n "${ISSUE_CREDENTIAL_BIN:-}" ]; then
+    "$ISSUE_CREDENTIAL_BIN" > "$log" 2>&1 || rc=$?
+  else
+    node scripts/check-issue-credential.mjs > "$log" 2>&1 || rc=$?
+  fi
+  cat "$log"
+
+  case "$rc" in
+    0) return 0 ;;
+    3)
+      die "the credential that opens the umbrella was refused — see the line above. A run whose red day cannot be reported is a run that reports nothing (#1950). Fix the token, or set CREATE_ISSUE=0 to run without consequence."
+      ;;
+    *)
+      # Through `warn`, which is how every other preflight concern surfaces: printed on
+      # stdout it was one line among thousands, and the notice whose only job is being
+      # noticed would not be. Exit 1 lands here too — that is node crashing, not the
+      # server refusing, and a broken script must not abort the daily blaming the token.
+      warn "the umbrella credential could not be confirmed (exit $rc) — see $log. If it has lapsed, a red day will pass in silence (#1950)."
+      return 0
+      ;;
+  esac
+}
+
 phase_preflight() {
   log "Preflight"
 
@@ -979,12 +1010,7 @@ phase_preflight() {
   # EXPIRING only warn: a blip must not cost a day of data, and a credential with two
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
-    local cred_rc=0
-    node scripts/check-issue-credential.mjs 2>&1 | tee "$RUN_DIR/logs/issue-credential.log" || true
-    cred_rc="${PIPESTATUS[0]}"
-    if [ "$cred_rc" = "1" ]; then
-      die "the credential that opens the umbrella was refused — see the line above. A run whose red day cannot be reported is a run that reports nothing (#1950). Fix the token, or set CREATE_ISSUE=0 to run without consequence."
-    fi
+    verify_issue_credential
   fi
 
   preflight_ledger

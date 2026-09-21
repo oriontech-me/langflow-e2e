@@ -7,7 +7,7 @@
 // working week — a warning on the morning it dies is a post-mortem.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verdict, parseExpiry, main, EXIT_USABLE, EXIT_REJECTED, EXIT_UNKNOWN } from "./check-issue-credential.mjs";
+import { verdict, parseExpiry, main, EXIT_USABLE, EXIT_UNKNOWN, EXIT_REFUSED } from "./check-issue-credential.mjs";
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 8, 21, 8, 0, 0);
@@ -20,12 +20,29 @@ test("GitHub's header is not ISO-8601, and is parsed anyway", () => {
   assert.equal(parseExpiry("not a date"), null);
 });
 
-test("a refused credential is its own answer, and it is the one worth stopping for", () => {
-  for (const status of [401, 403]) {
+test("refusal is its own answer, and 404 is the likeliest shape of it", () => {
+  // GitHub answers 404, not 403, for a repository a credential cannot see — which is
+  // what a token that lost access looks like from outside. Left in UNKNOWN it would
+  // only warn, and the umbrella would go missing anyway.
+  for (const status of [401, 403, 404]) {
     const r = verdict({ status, now: NOW, warnDays: 21 });
-    assert.equal(r.code, EXIT_REJECTED);
+    assert.equal(r.code, EXIT_REFUSED, `HTTP ${status} was not treated as a refusal`);
     assert.match(r.headline, /a red morning would pass in silence/);
   }
+});
+
+test("refusal does not share an exit code with node crashing", () => {
+  // The caller kills the run on refusal. Node exits 1 on a syntax error, a missing
+  // import or an unhandled rejection — a broken script must not abort the daily with
+  // a message blaming the token.
+  assert.notEqual(EXIT_REFUSED, 1);
+  assert.notEqual(EXIT_UNKNOWN, 1);
+});
+
+test("a credential that already lapsed is refused, not 'works but expires in -3 days'", () => {
+  const r = verdict({ status: 200, expiresAt: NOW - 3 * DAY, now: NOW, warnDays: 21 });
+  assert.equal(r.code, EXIT_REFUSED);
+  assert.match(r.headline, /expired 3 day\(s\) ago/);
 });
 
 test("no answer at all is UNKNOWN, never refused", () => {
@@ -61,7 +78,7 @@ test("a token with no expiry is reported as that, not as unknown", () => {
   assert.match(r.headline, /carries no expiry date/);
 });
 
-test("no token at all is refused, without asking anyone", () => {
+test("no token is UNKNOWN, because the creator can still fall back to `gh`", () => {
   const lines = [];
   const log = console.log;
   console.log = (...a) => lines.push(a.join(" "));
@@ -69,9 +86,11 @@ test("no token at all is refused, without asking anyone", () => {
   const code = main({ ISSUE_HOST: "github.ibm.com", ISSUE_REPO: "x/y" }, async () => { called = true; });
   return code.then((c) => {
     console.log = log;
-    assert.equal(c, EXIT_REJECTED);
+    // Refusing here would abort a lane that can still open the issue: the creator
+    // documents and implements a `gh` fallback for exactly this machine.
+    assert.equal(c, EXIT_UNKNOWN);
     assert.equal(called, false, "it went to the network to learn what it already knew");
-    assert.match(lines.join("\n"), /no GH_TOKEN/);
+    assert.match(lines.join("\n"), /fall back to the `gh` CLI/);
   });
 });
 
@@ -82,15 +101,34 @@ test("end to end against a stubbed API: the header travels into the verdict", as
   // An hour of slack, because the header carries whole seconds and `daysLeft` floors:
   // a stamp built at exactly +5 days loses its milliseconds and reads as 4.
   const soon = new Date(Date.now() + 5 * DAY + 3_600_000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  const seen = {};
   const code = await main(
     { ISSUE_HOST: "github.ibm.com", ISSUE_REPO: "Langflow/e2e-qa", GH_TOKEN: "t" },
+    // Recorded, NOT asserted in here: a throw inside the stub is swallowed by main's
+    // own catch and comes back as "no answer", so the message naming the broken
+    // enterprise URL would never reach the reader.
     async (url, init) => {
-      assert.match(url, /^https:\/\/github\.ibm\.com\/api\/v3\/repos\/Langflow\/e2e-qa$/, "the enterprise API path is wrong");
-      assert.match(init.headers.Authorization, /^Bearer /);
+      seen.url = url;
+      seen.auth = init.headers.Authorization;
       return { status: 200, headers: new Headers({ "github-authentication-token-expiration": soon }) };
     },
   );
   console.log = log;
   assert.equal(code, EXIT_USABLE);
+  assert.match(seen.url, /^https:\/\/github\.ibm\.com\/api\/v3\/repos\/Langflow\/e2e-qa$/, "the enterprise API path is wrong");
+  assert.match(seen.auth, /^Bearer /);
   assert.match(lines.join("\n"), /EXPIRING: the credential works but expires in 5 day\(s\)/);
+});
+
+test("the precedence matches the script that actually opens the issue", async () => {
+  // `create-failure-issue.mjs` reads GITHUB_TOKEN || GH_TOKEN. Inverted here, this
+  // would validate a credential the creator never uses and pass while the real one is
+  // dead — the silent failure it exists to close, wearing its own uniform.
+  let sent = null;
+  const log = console.log;
+  console.log = () => {};
+  await main({ ISSUE_HOST: "github.ibm.com", ISSUE_REPO: "x/y", GITHUB_TOKEN: "the-real-one", GH_TOKEN: "the-other-one" },
+    async (_url, init) => { sent = init.headers.Authorization; return { status: 200, headers: new Headers() }; });
+  console.log = log;
+  assert.equal(sent, "Bearer the-real-one");
 });
