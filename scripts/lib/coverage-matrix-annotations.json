@@ -1,0 +1,32 @@
+{
+  "_comment": "Curation that the risk model does not compute: which areas cannot be bought down by writing specs, which of this cycle's moves are the instrument rather than the product, the QA-platform items that act on an area, and the actionable backlog. Hand-edited per generation. Keys are the STABLE ids from coverage-matrix-keys.json.",
+
+  "cappedByProduct": ["mcp", "a2a"],
+  "cappedByProductReason": "Every remaining empty bullet in these two areas carries a recorded product limitation, so their mitigation cannot rise by writing specs. MCP: no client-side resource surface on 1.11.x (2 bullets), prompts/list returns [] (#829). A2A: two real users impossible under AUTO_LOGIN (#1010), the disabled-server lane cannot coexist with the flag being on (#1195), push-notification delivery needs a receiver with an inspectable inbox (LE-1706), JWS signatures have no URL-observable surface (LE-1718) and driving the rate limits would flake every parallel lane (LE-1701).",
+
+  "instrumentCaveats": {
+    "rest-api": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
+    "auth": "Inherent 10 -> 15 is the REBUILT CLASSIFIER over-matching at ratio 1.36. Its residual still fell (5.4 -> 3.3) on mitigation 0.46 -> 0.78, which is bullet-derived and exact."
+  },
+
+  "platformItems": {
+    "memory-base": [2832],
+    "agents": [2833],
+    "mcp": [2834, 2838],
+    "serving-identity": [2835],
+    "enterprise-authz": [2835],
+    "graph-engine": [2836],
+    "a2a": [2837, 2838]
+  },
+  "platformItemsNote": "friendly_id on the QA platform (api.oriontech.me), checklist 'Coverage risk matrix — Langflow E2E automation (2026-09-21)' (b9272ba6-e940-408b-834a-57f6df7b8b9f). 2835 covers serving AND enterprise as one lane decision; 2838 covers the blocked bullets of MCP AND A2A. This is a SNAPSHOT link, not a sync — the platform has no idempotency key on items.",
+
+  "actions": [
+    { "id": "CRM-01", "areaKey": "memory-base",     "priority": "critical", "platformItemId": 2832, "title": "Close 20.4 Ingestion — 7 bullets, all empty, and three 2026 upstream bugs land on it" },
+    { "id": "CRM-02", "areaKey": "agents",          "priority": "critical", "platformItemId": 2833, "title": "Fix the six chronically red or flaky Agents specs before adding any" },
+    { "id": "CRM-03", "areaKey": "mcp",             "priority": "critical", "platformItemId": 2834, "title": "MCP is rank 1 and its remaining coverage is blocked — work the chronic failure, #963 and LE-2012" },
+    { "id": "CRM-04", "areaKey": "serving-identity","priority": "high",     "platformItemId": 2835, "title": "Decide the lane question for serving and enterprise — 117 bullets watched by nothing" },
+    { "id": "CRM-05", "areaKey": "graph-engine",    "priority": "high",     "platformItemId": 2836, "title": "Land #1896 — assert cycles, partial failure and execution order" },
+    { "id": "CRM-06", "areaKey": "a2a",             "priority": "medium",   "platformItemId": 2837, "title": "A2A rose on inherent risk, not on missing tests — watch the 2026 bug rate" },
+    { "id": "CRM-07", "areaKey": "mcp",             "priority": "high",     "platformItemId": 2838, "title": "Seven bullets automation can never reach — decide whether manual QA covers them" }
+  ]
+}

@@ -1,0 +1,158 @@
+name: Refresh Coverage Matrix
+
+# Keeps the coverage risk matrix's DERIVABLE half current and feeds the QA Platform dashboard.
+#
+# Why this exists: mitigation is computed from QA-CHECKLIST.md bullet states, and that file moves
+# on almost every working day, so a matrix regenerated once per release cycle is stale on its most
+# actionable axis. Measured on `main` 2026-09-21 — 681 commits over 76 distinct days in the
+# trailing 90; re-measure with:
+#   git log --since=90.days --format=%ad --date=short -- QA-CHECKLIST.md | sort -u | wc -l
+#
+# That same figure is why this does NOT trigger on those pushes — see the `on:` block.
+#
+# What this job does NOT do is a generation. Impact, fragility, the bug/churn quintiles and every
+# annotation are judgement or an upstream measurement; `refreshAreas` throws rather than let this
+# job touch them. Re-quintiling daily would also manufacture noise — a quintile is relative to the
+# set, so one issue crossing a boundary flips a whole probability step. A full generation stays a
+# deliberate, human exercise.
+
+on:
+  # DELIBERATELY NOT a `push` trigger. The obvious wiring — refresh whenever QA-CHECKLIST.md
+  # changes — puts this job on the same paths as `update-coverage-summary.yml`, and BOTH commit
+  # back to main. That is a push race on the 76-of-90 days the checklist moves, plus an extra job
+  # on every merge, for a dashboard nobody reads by the minute. This workflow is isolated on
+  # purpose: it shares no trigger with any other lane and runs at most once a weekday.
+  #
+  # The cost is bounded and stated: mitigation can be up to a day stale. It is the derivable half
+  # of a risk ranking, not a gate — nothing blocks on it being current to the minute.
+  workflow_run:
+    # Test health comes from reports/daily-history.jsonl, which the daily commits at the END of
+    # its run, so this fires once that row exists. It is also the only lane that moves the data
+    # daily, which makes it the natural clock for the refresh.
+    workflows: ["Daily Stable E2E"]
+    types: [completed]
+
+  schedule:
+    # Fallback only, for the case this repo has hit twice: a scheduled lane going dormant
+    # (nightly.yml, weekly-stable.yml). Without it, a disabled daily would silently freeze the
+    # feed with nothing saying so. Monday, off the :00 mark.
+    - cron: "43 11 * * 1"
+
+  workflow_dispatch:
+
+# One at a time. Two concurrent refreshes would race on the same commit-back, and the loser's
+# regenerated feed would be silently dropped.
+concurrency:
+  group: refresh-coverage-matrix
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    # Kept although there is no `push` trigger any more: `github.event.head_commit` is absent on
+    # workflow_run, schedule and dispatch, `contains(null, …)` is false, so the job still runs.
+    # It costs nothing and it is the guard that would matter if a push trigger is ever restored.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh the matrix and regenerate the feed
+        run: npm run coverage:refresh
+
+      # The feed is what the dashboard consumes, so a feed that disagrees with data.json is the
+      # one failure that must not pass silently — it would serve numbers nobody can reproduce.
+      - name: Verify the feed matches the data
+        run: npm run coverage:feed -- --check
+
+      - name: Commit and push if changed
+        id: commit
+        env:
+          # The branch this run is on. `update-coverage-summary.yml`, which this retry loop is
+          # modelled on, can hardcode `main` because it only triggers on a push to main. This one
+          # also takes a workflow_dispatch, which can target ANY branch — and there the hardcoded
+          # recovery would `git reset --hard origin/main`, DISCARD that branch's commits and push
+          # the result over it. Derived, never assumed.
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        run: |
+          if git diff --quiet docs/coverage-heatmap/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Matrix already current — nothing to commit."
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/coverage-heatmap/
+          git commit -m "chore(coverage-matrix): refresh derivable axes [skip ci]"
+          # Regenerate-retry, same class as update-coverage-summary.yml: a bare push loses the
+          # fast-forward race when another commit lands on main first, and the refresh is a
+          # deterministic function of source, so re-syncing and recomputing on top is safe.
+          for attempt in 1 2 3 4 5; do
+            if git push; then echo "Pushed (attempt $attempt)."; exit 0; fi
+            echo "::warning::push rejected (attempt $attempt) — re-syncing onto origin/$BRANCH and recomputing."
+            git fetch origin "$BRANCH"
+            git reset --hard "origin/$BRANCH"
+            npm run coverage:refresh
+            if git diff --quiet docs/coverage-heatmap/; then
+              echo "Already current on the new $BRANCH — nothing to commit."; exit 0; fi
+            git add docs/coverage-heatmap/
+            git commit -m "chore(coverage-matrix): refresh derivable axes [skip ci]"
+          done
+          echo "::error::Could not push the refreshed matrix after 5 attempts."
+          exit 1
+
+      # POSTs the feed EXACTLY as documented in docs/coverage-heatmap/FEED.md — the file on disk
+      # is the payload, so the dashboard's contract and the repo's contract cannot drift apart.
+      #
+      # continue-on-error, like every other platform POST in this repo: the platform being down
+      # must never redden a job whose real product (the committed feed) already succeeded.
+      - name: POST the matrix to the QA Platform
+        if: always()
+        continue-on-error: true
+        env:
+          QA_COVERAGE_MATRIX_ENDPOINT: ${{ vars.QA_COVERAGE_MATRIX_ENDPOINT }}
+          QA_E2E_AUTOMATION_TOKEN: ${{ secrets.QA_E2E_AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "$QA_COVERAGE_MATRIX_ENDPOINT" ] || [ -z "$QA_E2E_AUTOMATION_TOKEN" ]; then
+            echo "::warning::QA_COVERAGE_MATRIX_ENDPOINT or the token is not configured — skipping the POST."
+            echo "The committed feed is still current; the dashboard just will not have been told."
+            exit 0
+          fi
+          code=$(curl -s -o /tmp/resp.json -w '%{http_code}' -X POST "$QA_COVERAGE_MATRIX_ENDPOINT" \
+            -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" -H "Content-Type: application/json" \
+            --data @docs/coverage-heatmap/dashboard-feed.json)
+          echo "HTTP $code"; cat /tmp/resp.json || true
+          case "$code" in 200|201) echo "Recorded.";; *) echo "::warning::QA platform POST failed ($code)";; esac
+
+      - name: Summary
+        if: always()
+        # Through `env`, never interpolated into `run:`. The value here is this job's own
+        # true/false and is not attacker-controlled, but the idiom is what gets copied forward,
+        # and this repo already had to fix a real injection of exactly this shape in nightly.yml.
+        env:
+          COMMITTED: ${{ steps.commit.outputs.changed }}
+        run: |
+          {
+            echo "### Coverage matrix refresh"
+            echo
+            echo "- Committed: \`${COMMITTED:-unknown}\`"
+            echo "- Generation: \`$(node -p "require('./docs/coverage-heatmap/data.json').generated")\`"
+            echo "- Refreshed: \`$(node -p "require('./docs/coverage-heatmap/data.json').refreshed")\`"
+            echo
+            echo "Judged axes (impact, fragility, quintiles, overrides, annotations) are untouched by this job."
+            echo "A full generation is a separate, human exercise — see \`docs/coverage-heatmap/FEED.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
