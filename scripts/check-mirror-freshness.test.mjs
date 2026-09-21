@@ -9,12 +9,20 @@
 // stopped pushing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { verdict, remoteTip, main, EXIT_CURRENT, EXIT_BEHIND, EXIT_UNKNOWN } from "./check-mirror-freshness.mjs";
+import {
+  verdict,
+  remoteTip,
+  main,
+  EXIT_CURRENT,
+  EXIT_BEHIND,
+  EXIT_UNKNOWN,
+  EXIT_DIVERGED,
+} from "./check-mirror-freshness.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const MINUTE = 60_000;
@@ -119,7 +127,11 @@ test("end to end against two real repositories: current, then behind", () => {
   git(work, "push", "-q", destination, "HEAD:main");
   git(work, "remote", "set-url", "origin", destination);
 
-  const runIn = () => main({ SOURCE_REMOTE_URL: source, DESTINATION_REMOTE: "origin", MAX_LAG_MINUTES: "120" }, work);
+  // The isolated env goes to the CODE UNDER TEST too, not just to the test's own git
+  // calls: `main` shells out to git, and inheriting the developer's global config lets
+  // an `insteadOf` or a proxy decide what these assertions measure.
+  const runIn = (extra = {}) =>
+    main({ ...env, SOURCE_REMOTE_URL: source, DESTINATION_REMOTE: "origin", MAX_LAG_MINUTES: "120", ...extra }, work);
   assert.equal(runIn(), EXIT_CURRENT, "two identical tips read as behind");
 
   // The source moves and the mirror does not follow — the 43-run shape, with a commit
@@ -133,5 +145,109 @@ test("end to end against two real repositories: current, then behind", () => {
   git(work, "push", "-q", source, "HEAD:main");
   assert.equal(runIn(), EXIT_BEHIND, "a source that moved without the mirror read as current");
 
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an ordinary merge of an old branch is not a stall (#1948 review)", () => {
+  // The finding that mattered, and it is about WHICH dates get read. `rev-list A..B`
+  // includes everything a MERGE brought in, dated when the branch was written rather
+  // than when it landed — and this repository merges with merge commits. Measured on
+  // the last 25 merges of `main`: 12 carried a commit older than the 120 min window, so
+  // half the merges would have declared the day not comparable for an hour, which is
+  // the "everyone learns to ignore this" outcome the code warns about.
+  const dir = makeTempDir("mirror-freshness-merge");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env });
+  const source = join(dir, "source.git");
+  const work = join(dir, "work");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", source], { env });
+  execFileSync("git", ["clone", "-q", source, work], { env });
+  writeFileSync(join(work, "a.txt"), "one\n");
+  git(work, "add", "-A");
+  git(work, "commit", "-qm", "one");
+  git(work, "push", "-q", "origin", "HEAD:main");
+
+  // The destination is a mirror of `main` as it stood BEFORE the merge.
+  const destination = join(dir, "destination.git");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", destination], { env });
+  git(work, "push", "-q", destination, "HEAD:main");
+
+  // A branch written three days ago, merged into `main` just now — the ordinary shape.
+  const old = { ...env, GIT_AUTHOR_DATE: "2026-09-18T09:00:00Z", GIT_COMMITTER_DATE: "2026-09-18T09:00:00Z" };
+  git(work, "checkout", "-q", "-b", "feature");
+  writeFileSync(join(work, "b.txt"), "branch work\n");
+  execFileSync("git", ["add", "-A"], { cwd: work, env: old });
+  execFileSync("git", ["commit", "-qm", "work written three days ago"], { cwd: work, env: old });
+  git(work, "checkout", "-q", "main");
+  git(work, "merge", "-q", "--no-ff", "-m", "Merge pull request #1 from feature", "feature");
+  git(work, "push", "-q", source, "HEAD:main");
+  git(work, "remote", "set-url", "origin", destination);
+
+  const code = main(
+    { ...env, SOURCE_REMOTE_URL: source, DESTINATION_REMOTE: "origin", MAX_LAG_MINUTES: "120" },
+    work,
+  );
+  assert.equal(code, EXIT_CURRENT, "a merge that landed seconds ago was reported as a stall");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a destination that is ahead is diverged, not behind", () => {
+  // Different tips with nothing missing: the mirror holds what the source does not.
+  // Reported as "0 commit(s) behind … of unknown age" before, which was both wrong and
+  // indistinguishable from "could not walk the history".
+  const r = verdict({
+    sourceSha: "a".repeat(40),
+    destSha: "b".repeat(40),
+    oldestMissingAt: null,
+    now: NOW,
+    maxLagMinutes: 120,
+    behindBy: 0,
+  });
+  assert.equal(r.code, EXIT_DIVERGED);
+  assert.match(r.headline, /divergence, not lag/);
+});
+
+test("a window that is not a number falls back, loudly, instead of disabling itself", () => {
+  // `Number("18O")` is NaN and every comparison with it is false, so the young-window
+  // branch becomes unreachable and the output reads "past the NaN min window".
+  const dir = makeTempDir("mirror-freshness-nan");
+  const lines = [];
+  const log = console.log;
+  console.log = (...a) => lines.push(a.join(" "));
+  try {
+    main({ SOURCE_REMOTE_URL: join(dir, "nope"), DESTINATION_REMOTE: join(dir, "nope"), MAX_LAG_MINUTES: "18O" }, dir);
+  } finally {
+    console.log = log;
+  }
+  assert.ok(
+    lines.some((l) => /is not a number of minutes — using 120/.test(l)),
+    `the bad window was accepted silently:\n${lines.join("\n")}`,
+  );
+  assert.ok(!lines.some((l) => /NaN/.test(l)), "NaN reached the output");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("run as a script from a path that needs escaping, it still speaks", () => {
+  // A `file://${argv[1]}` guard stops matching on a percent-encoded path or a symlinked
+  // ancestor, and the failure is SILENT: no output, exit 0 — which reads exactly like
+  // "the mirror is current". The same trap `check-run-integrity.mjs` documents.
+  const dir = makeTempDir("mirror freshness spaced");
+  const copy = join(dir, "check-mirror-freshness.mjs");
+  writeFileSync(copy, readFileSync(join(dirname(fileURLToPath(import.meta.url)), "check-mirror-freshness.mjs")));
+  // `spawnSync`, because a working script EXITS NON-ZERO here — unreadable remotes are
+  // UNKNOWN — and that is the outcome being asserted, not an error.
+  const r = spawnSync(process.execPath, [copy], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, SOURCE_REMOTE_URL: join(dir, "nope"), DESTINATION_REMOTE: join(dir, "nope") },
+  });
+  assert.match(r.stdout, /\[mirror\] UNKNOWN/, `the script said nothing at all:\n${JSON.stringify(r.stdout)}`);
+  assert.equal(r.status, EXIT_UNKNOWN, "silence with exit 0 is what this test exists to catch");
   rmSync(dir, { recursive: true, force: true });
 });

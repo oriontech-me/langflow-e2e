@@ -33,10 +33,22 @@
  * Exit codes: 0 = current, 1 = behind, 2 = could not tell.
  */
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export const EXIT_CURRENT = 0;
 export const EXIT_BEHIND = 1;
 export const EXIT_UNKNOWN = 2;
+// Its own code rather than BEHIND: a destination holding commits the source does not
+// is not an old mirror, it is a diverged one — the state the sync guard exists to
+// stop — and a caller that only knows "not zero" still does the right thing.
+export const EXIT_DIVERGED = 3;
+
+// Every git call here talks to a network remote from an unattended timer. Without these
+// an unknown host key or a credential prompt does not fail — it BLOCKS, on a tty the
+// caller does not have, and a check written to remove a silence becomes the silence.
+const NETWORK_TIMEOUT_MS = 60_000;
+const BATCH_ENV = { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
 
 /**
  * The verdict, as a pure function of the two tips and the clock, so the decision is
@@ -51,6 +63,18 @@ export function verdict({ sourceSha, destSha, oldestMissingAt, now, maxLagMinute
   }
   if (sourceSha === destSha) {
     return { code: EXIT_CURRENT, headline: `the mirror is current at ${destSha.slice(0, 8)}` };
+  }
+  // Different tips and NOTHING missing: the destination already holds the source's tip,
+  // so it is ahead or rewritten, not behind. Reporting that as "0 commit(s) behind, of
+  // unknown age" was both wrong and indistinguishable from "could not walk the history".
+  if (behindBy === 0) {
+    return {
+      code: EXIT_DIVERGED,
+      headline:
+        `the destination holds commits the source does not (${destSha.slice(0, 8)} vs ${sourceSha.slice(0, 8)}). ` +
+        `This is divergence, not lag: the mirror is a function of the source, so something wrote to it directly ` +
+        `or the source was rewritten.`,
+    };
   }
   // Behind, and the age is what decides whether it is a cycle or a stall. The sync runs
   // hourly, so a difference minutes old is the ordinary window between a merge and the
@@ -79,14 +103,20 @@ export function verdict({ sourceSha, destSha, oldestMissingAt, now, maxLagMinute
   };
 }
 
-function git(args, { cwd = process.cwd() } = {}) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+function git(args, { cwd = process.cwd(), env = process.env } = {}) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: NETWORK_TIMEOUT_MS,
+    env: { ...env, ...BATCH_ENV },
+  }).trim();
 }
 
 /** `git ls-remote` reduced to one sha, or null when the remote could not be read. */
-export function remoteTip(url, ref = "refs/heads/main", { cwd } = {}) {
+export function remoteTip(url, ref = "refs/heads/main", { cwd, env } = {}) {
   try {
-    const out = git(["ls-remote", url, ref], { cwd });
+    const out = git(["ls-remote", url, ref], { cwd, env });
     const line = out.split("\n").find((l) => l.endsWith(`\t${ref}`));
     return line ? line.split("\t")[0] : null;
   } catch {
@@ -97,24 +127,42 @@ export function remoteTip(url, ref = "refs/heads/main", { cwd } = {}) {
 export function main(env = process.env, cwd = process.cwd()) {
   const sourceUrl = env.SOURCE_REMOTE_URL || "https://github.com/oriontech-me/langflow-e2e";
   const destination = env.DESTINATION_REMOTE || "origin";
-  const maxLagMinutes = Number(env.MAX_LAG_MINUTES || 120);
+  // A typo here must not disable the window quietly: `Number("18O")` is NaN, every
+  // comparison with it is false, the young branch becomes unreachable and the output
+  // reads "past the NaN min window". Named and replaced instead.
+  let maxLagMinutes = Number(env.MAX_LAG_MINUTES || 120);
+  if (!Number.isFinite(maxLagMinutes) || maxLagMinutes < 0) {
+    console.log(`[mirror] MAX_LAG_MINUTES=${JSON.stringify(env.MAX_LAG_MINUTES)} is not a number of minutes — using 120.`);
+    maxLagMinutes = 120;
+  }
 
-  const sourceSha = remoteTip(sourceUrl, "refs/heads/main", { cwd });
-  const destSha = remoteTip(destination, "refs/heads/main", { cwd });
+  const sourceSha = remoteTip(sourceUrl, "refs/heads/main", { cwd, env });
+  const destSha = remoteTip(destination, "refs/heads/main", { cwd, env });
 
   let oldestMissingAt = null;
   let behindBy = null;
   if (sourceSha && destSha && sourceSha !== destSha) {
     try {
-      git(["fetch", "--quiet", sourceUrl, "main"], { cwd });
-      const missing = git(["rev-list", "--format=%ct", "--no-commit-header", `${destSha}..FETCH_HEAD`], { cwd })
+      git(["fetch", "--quiet", sourceUrl, "main"], { cwd, env });
+      // `--first-parent`, and this is the correction that matters. Without it the walk
+      // includes every commit a MERGE brought in, dated when the branch was written
+      // rather than when it landed — and this repository merges with merge commits. So
+      // an ordinary merge of a day-old branch made the mirror read as a stall the
+      // instant it landed: measured on the last 25 merges, 12 carried a commit older
+      // than the window. The first-parent line is the history of what reached `main`,
+      // and its dates are landing times, which is the question being asked.
+      const missing = git(
+        ["rev-list", "--first-parent", "--format=%ct", "--no-commit-header", `${destSha}..FETCH_HEAD`],
+        { cwd, env },
+      )
         .split("\n")
-        .filter(Boolean);
+        .filter(Boolean)
+        .map(Number);
       behindBy = missing.length;
-      // Oldest last: `rev-list` walks newest first, so the tail is the commit that has
-      // been waiting the longest — the one whose age IS the stall.
-      const oldest = missing[missing.length - 1];
-      oldestMissingAt = oldest ? Number(oldest) * 1000 : null;
+      // `Math.min`, not the tail: rev-list only guarantees parents after children, so a
+      // skewed committer date (a bot, a rebase onto an odd clock) can leave the true
+      // minimum anywhere in the list — and taking the tail would understate the stall.
+      oldestMissingAt = missing.length ? Math.min(...missing) * 1000 : null;
     } catch {
       // Left null on purpose: "an unknown number of commits behind" is still a report,
       // and inventing zero here would turn a stall into a clean bill of health.
@@ -122,7 +170,12 @@ export function main(env = process.env, cwd = process.cwd()) {
   }
 
   const result = verdict({ sourceSha, destSha, oldestMissingAt, now: Date.now(), maxLagMinutes, behindBy });
-  const label = { [EXIT_CURRENT]: "ok", [EXIT_BEHIND]: "BEHIND", [EXIT_UNKNOWN]: "UNKNOWN" }[result.code];
+  const label = {
+    [EXIT_CURRENT]: "ok",
+    [EXIT_BEHIND]: "BEHIND",
+    [EXIT_UNKNOWN]: "UNKNOWN",
+    [EXIT_DIVERGED]: "DIVERGED",
+  }[result.code];
   console.log(`[mirror] ${label}: ${result.headline}`);
   if (result.code !== EXIT_CURRENT) {
     console.log(`[mirror] source ${sourceSha ? sourceSha.slice(0, 8) : "?"} · destination ${destSha ? destSha.slice(0, 8) : "?"}`);
@@ -130,4 +183,18 @@ export function main(env = process.env, cwd = process.cwd()) {
   return result.code;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) process.exitCode = main();
+// The same guard `check-run-integrity.mjs` documents, and for the same reason: a
+// `file://${argv[1]}` template stops matching as soon as the path is percent-encoded
+// (one space does it) or any ancestor is a symlink, because the loader resolves
+// symlinks in `import.meta.url`. Getting it wrong here is SILENT — the script prints
+// nothing and exits 0, which reads exactly like "the mirror is current".
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) process.exitCode = main();
