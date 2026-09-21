@@ -2432,3 +2432,29 @@ test("a clone with uncommitted changes refuses before the removal writes anythin
   assert.match(readFileSync(join(lane.work, "QA-CHECKLIST.md"), "utf8"), /someone was editing/);
   rmSync(lane.dir, { recursive: true, force: true });
 });
+
+test("a refused umbrella credential stops the run; a blip does not (#1950)", () => {
+  // The asymmetry is the design. REFUSED means the server said no and the lane cannot
+  // deliver the consequence it is about to spend sixteen minutes earning, so stopping
+  // costs nothing that was going to arrive. UNKNOWN means a blip, and paying a day of
+  // data for one is the trade this must not make.
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^CHECK_ISSUE_CREDENTIAL="\$\{CHECK_ISSUE_CREDENTIAL:-1\}"$/m);
+
+  const preflight = sh.slice(sh.indexOf("phase_preflight() {"), sh.indexOf("phase_services() {"));
+  const start = preflight.indexOf('if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ]');
+  assert.ok(start >= 0, "the credential is never checked");
+  const block = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
+
+  // Only where there is a consequence to deliver: a lane that opens no issue has no
+  // umbrella to fail to open.
+  assert.match(block, /\[ "\$CREATE_ISSUE" = "1" \]/, "it would stop a run that opens no issue");
+  // Exit 1, and only exit 1, is fatal — the script answers 2 for "could not tell".
+  assert.match(block, /cred_rc" = "1"/, "any non-zero is treated as a refusal, blips included");
+  assert.match(block, /\bdie\b/, "a refused credential does not stop the run");
+  // And the verdict is kept where a triage will look, like every other preflight answer.
+  assert.match(block, /issue-credential\.log/, "the answer never reaches the evidence directory");
+  // `PIPESTATUS`, because through `tee` the exit status is the tee's: reading it from
+  // the pipeline would make every refusal look like a success.
+  assert.match(block, /PIPESTATUS\[0\]/, "the credential's own exit status is not what is read");
+});
