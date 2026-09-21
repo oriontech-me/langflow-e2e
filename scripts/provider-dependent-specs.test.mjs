@@ -625,3 +625,42 @@ test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag
   });
   assert.equal(unreadableSpec.status, 2, "an unreadable spec is undecidable");
 });
+
+// The component-probe gate spec must stay key-free (#1934).
+//
+// It lives in a directory whose name is one of `MODEL_DATA_MARKERS`, and the
+// classifier greps a spec's SOURCE rather than its path — so the file is clean
+// only for as long as nobody writes that directory's name inside it. The first
+// attempt to warn about this in a comment spelled the marker and flipped the
+// verdict, which is #1226 exactly: a comment pins nothing, and the guard has to
+// be an assertion. What it costs when it regresses is not cosmetic — a `true`
+// here FORCES the `Collect models` sweep, a hard gate on the PR lane, so a
+// transport gate that needs no provider would be blocked by provider-key health,
+// the coupling this whole script exists to remove.
+test("the component-probe gate spec does not read as provider-dependent", () => {
+  const file = "tests/helpers/provider-setup/component-probe-gate.spec.ts";
+  const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
+  const verdict = classifySpec(file, source);
+
+  assert.equal(
+    verdict.consumesModelData,
+    false,
+    `${file} classified as consuming model data ` +
+      `(${(verdict.reasons ?? ["no reasons reported"]).join(", ")}). ` +
+      `Something in its SOURCE now matches a model-data marker — most likely the ` +
+      `name of its own parent directory, written in a comment or a path. Remove it: ` +
+      `a true verdict here forces the Collect models sweep on every PR that selects ` +
+      `this spec.`,
+  );
+  assert.equal(verdict.providerDependent, false);
+
+  // `isStable` is deliberately NOT asserted. The daily strips `@stable` from a
+  // hard-failing test by itself and commits it to `main` unreviewed, and since
+  // #1822/#1857 that path reaches the gate specs too — so asserting the tag here
+  // would redden `test:scripts` on `main` and on every open PR until a human
+  // edited this file, landing a daily failure on uninvolved authors. CLAUDE.md
+  // records that inversion as the reason the ownership guard only WARNS for a
+  // spec the PR did not touch (#980). Who owns the tag is
+  // `stable-orphan-reconcile.yml` and `check-stable-ownership`; what this guard
+  // owns is the classification.
+});

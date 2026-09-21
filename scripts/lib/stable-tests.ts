@@ -704,13 +704,15 @@ export interface DeclaredStableSpecs {
  * "`@release`, never `@stable`".
  *
  * Scoped to `tests/`, not to `regression/`. Listed files live outside the
- * regression tree — the four `fixtures/*-gate.spec.ts` behavioural gates today,
- * five until #1822 took `@stable` off `collect-models.spec.ts` — so the narrower
- * scope reports them as phantom losses, four short whatever the total is on the
- * day — measured on the day #1822 shipped, 251 files from `tests/` against 247
- * from `tests/tests-automations/`, the four being the `fixtures/*-gate` specs.
- * (The pair this used to cite, 242 against 247, illustrated the five-file state
- * rather than the rule, and was stale in both figures.)
+ * regression tree — five today: the four `fixtures/*-gate.spec.ts` behavioural
+ * gates plus `helpers/provider-setup/component-probe-gate.spec.ts` (#1934) — so
+ * the narrower scope reports them as phantom losses, five short whatever the
+ * total is on the day. Re-measured 2026-09-20: 272 files from `tests/` against
+ * 267 from `tests/tests-automations/`. The COUNT is not the rule and moves
+ * whenever a gate spec is added or a tag leaves one — it was four between #1822
+ * taking `@stable` off `collect-models.spec.ts` and #1934 — so re-derive it
+ * (`scripts/declared-stable-specs.ts`) rather than quoting it. Two earlier pairs
+ * cited here, 242/247 and 251/247, were both stale within weeks.
  *
  * A test declared under a `test.describe` tagged `@stable` counts, because
  * Playwright's `--grep` honours the inherited tag and the daily therefore really
