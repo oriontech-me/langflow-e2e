@@ -2088,3 +2088,24 @@ test("only one lane opens the umbrella for a red day (#1940)", () => {
     assert.ok(cond.includes(kept), `the guard alarm was dropped with the overlap: ${kept}`);
   }
 });
+
+
+test("the tag follows the verdict: this lane no longer removes @stable (#1942)", () => {
+  // The cut gave the VM the umbrella. The tag decides WHAT the authoritative lane
+  // runs, so leaving the removal here would let a lane whose verdict no longer counts
+  // shrink the VM's selection — a spec red here and green there would lose its tag,
+  // and coverage would leave without the source of truth asking.
+  const wf = readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+  assert.ok(
+    !/^\s*-\s*name:\s*Auto-remove @stable/m.test(wf),
+    "daily-stable still removes @stable, which now belongs to the lane that owns the verdict",
+  );
+  // The step's outputs fed the issue body; a dangling reference would render as empty
+  // and read as "the auto-removal ran and found nothing".
+  assert.ok(!wf.includes("steps.auto_remove"), "a reference to the removed step survived");
+
+  // The mechanism itself is NOT deleted — weekly-stable still calls it, and the VM
+  // lane will call it once task 4 gives it a write path.
+  const weekly = readFileSync(join(REPO_ROOT, ".github/workflows/weekly-stable.yml"), "utf8");
+  assert.match(weekly, /actions\/auto-remove-stable/, "the shared action lost its last caller");
+});

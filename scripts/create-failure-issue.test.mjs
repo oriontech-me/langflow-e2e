@@ -1239,27 +1239,27 @@ test("the weekly drops the section rather than forwarding an unqualified claim",
   }
 });
 
-test("the daily forwards the auto-remove step's own outcome to the umbrella", () => {
-  // Without this the script cannot tell the two apart, and the default is "done".
+test("the daily stopped removing the tag, and stopped claiming it did (#1943)", () => {
+  // #1822 added AUTO_REMOVE_OUTCOME so the umbrella could tell "removed nothing" from
+  // "could not commit" — the default reads as "done". That forwarding lived on the
+  // daily, and the daily stopped being the lane that removes: with the verdict on the
+  // VM, a tag stripped here would shrink the authoritative lane's selection.
+  //
+  // What has to hold now is the other half of #1822: no DANGLING reference. A removed
+  // step's outputs render as empty, and empty is exactly what "the removal ran and
+  // found nothing" looks like.
   const daily = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
-  const stepAt = daily.indexOf("- name: Create issue on failure");
-  // Asserted separately so a RENAMED step does not report itself as a missing env
-  // key — the guard would still fail, at the wrong cause.
-  assert.ok(stepAt > 0, "the daily's umbrella step is gone or renamed");
-  const step = daily.slice(stepAt);
-  const env = step.slice(0, step.indexOf("- name:", 10));
-  const line = env.split("\n").find((l) => l.trim().startsWith("AUTO_REMOVE_OUTCOME:"));
-  assert.ok(line, "AUTO_REMOVE_OUTCOME is not forwarded at all");
-  // Evaluated, like the weekly's: what has to hold is that the step's own outcome
-  // arrives unaltered, not that the line is spelled one particular way.
-  // `cancelled` included: it is the value the relabel was widened for, so a lane
-  // that suppressed precisely that one would defeat it while passing everything else.
-  for (const outcome of ["failure", "cancelled", "success", "skipped"]) {
-    assert.equal(
-      evaluateWorkflowValue(line.slice(line.indexOf(":") + 1).trim(), {
-        "steps.auto_remove.outcome": outcome,
-      }),
-      outcome,
-    );
-  }
+  assert.ok(!daily.includes("steps.auto_remove"), "the daily still references the removed step");
+  assert.ok(
+    !/^\s*-\s*name:\s*Auto-remove @stable/m.test(daily),
+    "the daily still removes @stable",
+  );
+
+  // The mechanism is not deleted, only uncalled here: the weekly still runs it, and
+  // the VM lane will once it has a write path. A last caller disappearing would make
+  // the action dead code, which is a different decision from this one.
+  // (The weekly is now the ONLY lane that removes, and it never forwarded
+  // AUTO_REMOVE_OUTCOME — #1942, pre-existing and tracked there.)
+  const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
+  assert.match(weekly, /actions\/auto-remove-stable/, "the shared action lost its last caller");
 });

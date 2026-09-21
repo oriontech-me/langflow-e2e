@@ -1739,55 +1739,25 @@ jobs:
           echo "::error::Could not push daily history after 5 attempts."
           exit 1
 
-      # Auto-remove @stable from hard-failing tests and commit it back to main
-      # (leadership decision — no human review; restoring the tag is manual). The
-      # mass-failure guard inside the action leaves everything untouched when too
-      # many tests fail at once (infra, not per-test rot). Scheduled runs only —
-      # a manual dispatch must never mutate the test source.
-      # On top of the guard, #1031: a hard failure whose last error is
-      # transport-level (apiRequestContext timeout, ECONNREFUSED, the globalSetup
-      # `is not reachable`) is wedge collateral, not per-test rot, and is exempted
-      # INDEPENDENTLY of the threshold. The guard only ever covered the WIDE
-      # wedge; a wedge costing ≤5 tests used to strip their tags with no review.
-      # Gated on shardguard.complete: an incomplete merge (a dead shard) yields an
-      # under-counted results.json, so never mutate the @stable tag on partial data.
-      # ALSO gated on runguard.empty (#1012): a report with zero tests carries no
-      # per-test evidence at all, so it must never reach the tag-mutation path. On
-      # 2026-07-28 this step ran on an empty report and only found nothing to do
-      # by luck — the abort happened in globalSetup, before any test could be
-      # recorded as failing, so the action's mass-failure guard was never reached.
-      # ALSO gated on runguard.partial (#1058). The same reasoning as `empty`, one
-      # granularity down: on run 30444299314 two of four shards aborted in the
-      # credentials preflight, so the report held 205 results against a ~380
-      # baseline. Mutating @stable on that report would judge tags by a report that
-      # never saw half the suite — and a spec cannot fail in a shard that never ran.
-      - name: Auto-remove @stable from hard failures
-        id: auto_remove
-        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
-        uses: ./.github/actions/auto-remove-stable
-        with:
-          playwright_json: results.json
-          max_auto_remove: "5"
-          run_label: "daily #${{ github.run_id }}"
-          # #1030's verdict, for WORDING only. The infra-signature exemption
-          # inside the action stands on the failure's own error, so it still
-          # applies when this is empty — which is the run where the backend
-          # state is least known and the exemption matters most.
-          #
-          # Gated on `measured`: a run whose shards uploaded NO liveness artifact
-          # also emits `wedged=false`, and forwarding that bare would have the
-          # auto-removal block claim the recorder "measured no outage" over a run
-          # where it measured nothing. That is the exact misreading
-          # report-backend-outages.mjs warns about ("must never be read as no
-          # outage"), so unmeasured has to arrive as "" (unknown), not "false".
-          backend_wedged: ${{ steps.liveness.outputs.measured == 'true' && steps.liveness.outputs.wedged || '' }}
-          # Corroboration for the widened, EARLIER-attempt half of the exemption
-          # (#1589). Unlike `backend_wedged` this one does decide, so it is
-          # deliberately fail-closed inside the script: the step above is
-          # `continue-on-error`, so this file may simply not exist, and when it
-          # does not the exemption falls back to exactly #1031's last-attempt
-          # rule rather than widening on an assumption.
-          outage_attempts: outage-attempts.json
+      # --- Auto-removal of @stable left this lane with the cut (2026-09-20) ------
+      # It used to run here: strip @stable from hard-failing tests and commit that back
+      # to main with no human review (leadership decision; restoring a tag is manual).
+      # The action is untouched at .github/actions/auto-remove-stable and
+      # weekly-stable.yml still calls it — this is a caller that stopped calling, not a
+      # mechanism that was deleted. Restoring it here is re-adding the step.
+      #
+      # Why it had to stop on the day the VM took the verdict: the tag decides WHAT the
+      # authoritative lane runs. With the umbrella already coming from the VM, a spec
+      # that failed HERE and passed THERE would have this lane shrink the VM's selection
+      # — coverage leaving without the source of truth asking for it. The rule was
+      # already written: the tag removal belongs to exactly one lane. The cut made that
+      # lane the VM.
+      #
+      # The cost, accepted and dated: until the VM has a write path, NOTHING removes a
+      # tag automatically. A genuinely broken spec stays in the selection and keeps the
+      # VM red every morning, named by the umbrella, until someone removes the tag in a
+      # PR. That is noise a human sees, instead of coverage that leaves quietly.
+
 
       # Open the umbrella triage issue on failure — scheduled runs ONLY, aligned
       # with the history / auto-remove steps above. A manual dispatch is itself a
@@ -1892,8 +1862,6 @@ jobs:
           # Set by the (schedule-only) auto-remove step above; empty only if that
           # step errored, its mass-failure guard left everything untouched, or a
           # guard skipped the step entirely (incomplete merge / empty report).
-          AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outputs.status }}
-          AUTO_REMOVE_SUMMARY: ${{ steps.auto_remove.outputs.summary_md }}
           # The STEP's own outcome, which the two values above cannot carry (#1822).
           # `summary_md` is produced by the action's first step and reads "auto-removed
           # @stable from N test(s)"; the commit, its staging and its verification are
@@ -1908,7 +1876,6 @@ jobs:
           # an outcome that did not COMPLETE — `failure` or `cancelled`, this step
           # being `always()` and therefore reached on a cancelled run — and, per its
           # own rule, labels nothing on an absent value.
-          AUTO_REMOVE_OUTCOME: ${{ steps.auto_remove.outcome }}
           # From the report-integrity guard (#1012) — a run that executed ZERO
           # tests must announce itself as an infra abort, never as a per-test day.
           RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
