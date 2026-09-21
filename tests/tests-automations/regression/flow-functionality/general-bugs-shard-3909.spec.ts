@@ -51,6 +51,19 @@ test.afterEach(async ({ request }) => {
   }
 });
 
+// The name the template lands under. NOT pinned to the bare string on purpose, and
+// this is a narrowing of the claim to what the product guarantees rather than a
+// loosened assertion (#1955): picking a template renames the call to action's
+// placeholder flow in place, and the FRONTEND uniquifies that name against the whole
+// flow store minus the examples — not against the project — appending ` (N)` on a
+// collision. So any user flow named `Basic Prompting` anywhere on the instance makes
+// this one land as `Basic Prompting (1)`, and `awaitBootstrapTest` plus ~14 specs
+// create exactly that name on the shared instance. The backend imposes no such rule:
+// `POST /api/v1/flows/` accepts the duplicate unsuffixed (201). Measured on
+// 1.13.0.dev19 AND on 1.13.0.dev16 — the build the daily's regression hypothesis
+// blamed — where seeding one such flow turns a green run red 5/5.
+const TEMPLATE_FLOW_NAME = /^Basic Prompting(?: \(\d+\))?$/;
+
 /** Names of the flows `GET /api/v1/projects/{id}` lists for the project. */
 async function projectFlowNames(
   request: APIRequestContext,
@@ -66,7 +79,7 @@ async function projectFlowNames(
 
 test(
   "user must be able to create a new flow clicking on New Flow button",
-  { tag: ["@release", "@regression", "@mainpage", "@ui-ux"] },
+  { tag: ["@stable", "@release", "@regression", "@mainpage", "@ui-ux"] },
   async ({ page, request }) => {
     const emptyPageButton = page.getByTestId("new_project_btn_empty_page");
 
@@ -128,12 +141,19 @@ test(
     });
 
     await test.step("The template flow lives in the new project", async () => {
+      // Exactly one flow, named after the template: the project is created by this
+      // test, so nothing else can put a flow in it, and this pins BOTH that the
+      // template landed here and that the placeholder did not survive alongside it.
+      // Stricter than the `toContain` it replaced, which allowed any number of flows
+      // and was satisfied by a same-named leftover (#1955).
       await expect
         .poll(() => projectFlowNames(request, projectId!), {
           timeout: 15000,
-          message: "the project should list the Basic Prompting flow picked from its call to action",
+          message:
+            "the project should hold exactly the flow the template opened — the ` (N)` " +
+            "the client appends when another flow already holds the name is tolerated",
         })
-        .toContain("Basic Prompting");
+        .toEqual([expect.stringMatching(TEMPLATE_FLOW_NAME)]);
     });
   },
 );
