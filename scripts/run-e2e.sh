@@ -130,6 +130,29 @@ CREATE_ISSUE="${CREATE_ISSUE:-0}"
 NOTIFY_SLACK="${NOTIFY_SLACK:-0}"
 POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
 
+# The write half of the verdict (#1945). This one is a switch rather than absent code
+# — unlike the ledger commit in note 6 above — because the code is complete and what
+# is missing is a CREDENTIAL, days away, not a later etapa's design. It is also how
+# the provoked failure (task 6) turns the path on deliberately, on a branch, before
+# any morning depends on it. Strict "1": a typo has to leave it OFF, and this is the
+# switch that commits to `main` (#1725).
+AUTO_REMOVE="${AUTO_REMOVE:-0}"
+MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
+# Where a removal is pushed, and it is NOT this clone's `origin`. That remote is the
+# read-only destination mirror: a commit written there is content the source does not
+# have, the sync guard records `diverged` and mirroring STOPS — worse than reverting,
+# and not fixable by loosening the guard. The source is the only place a write sticks,
+# and it arrives back here on the next mirror cycle.
+SOURCE_REMOTE_URL="${SOURCE_REMOTE_URL:-https://github.com/oriontech-me/langflow-e2e}"
+# The branch the removal lands on. Parameterised for ONE reason, and it is the gate in
+# #1945: the provoked failure has to exercise the push, and pushing a rehearsal onto
+# `main` is the opposite of a rehearsal. It points at a scratch branch for that run.
+SOURCE_PUSH_BRANCH="${SOURCE_PUSH_BRANCH:-main}"
+# A lane identity, not a person's: the commit is the lane's act, and `git log` should
+# say which lane. Override if the team would rather it be attributed to an account.
+AUTO_REMOVE_COMMITTER_NAME="${AUTO_REMOVE_COMMITTER_NAME:-langflow-e2e vm daily}"
+AUTO_REMOVE_COMMITTER_EMAIL="${AUTO_REMOVE_COMMITTER_EMAIL:-langflow-e2e-vm@users.noreply.github.com}"
+
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUNS_ROOT="${RUNS_ROOT:-$REPO_DIR/runs}"
 RUN_DIR="$RUNS_ROOT/$RUN_ID"
@@ -1780,6 +1803,233 @@ phase_merge() {
 # PUBLISH
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# THE @stable REMOVAL — the write half of the verdict (#1945)
+# ---------------------------------------------------------------------------
+#
+# The tag decides WHAT the authoritative lane runs, and since the cut of 2026-09-20
+# that lane is this one. daily-stable.yml stopped removing on the same day (#1943),
+# so until this path exists NOTHING removes a tag: a genuinely broken spec keeps this
+# lane red every morning, named by the umbrella, until a human takes the tag off in a
+# PR. That is noise a person sees instead of coverage leaving quietly — acceptable as
+# a gap, not as a destination.
+#
+# Reused unchanged, because every safeguard already lives there and none of it is
+# lane-specific: `remove-stable-from-failures.ts` (mass-failure guard, infra-signature
+# exemption #1031, corroborated earlier attempt #1589 — and it pushes nothing),
+# `format-auto-remove-summary.mjs`, and `auto-remove-commit-paths.mjs` for staging and
+# for verifying the commit against its own report.
+#
+# Fail-soft on the run, never silent on the umbrella. The three states are carried by
+# the same env the Actions lane used (#1822), whose consumer is still live:
+#   status=removed            + outcome=success  -> removed and pushed
+#   status=none|guard_tripped + outcome=success  -> nothing removed, and it says so
+#   status=removed            + outcome=failure  -> `arLost`: the umbrella relabels
+# An EMPTY status means "not tracked" and never "failed", which is the distinction
+# #1822 exists to keep.
+auto_remove_stable() {
+  AUTO_REMOVE_STATUS=""; AUTO_REMOVE_SUMMARY=""; AUTO_REMOVE_OUTCOME=""
+
+  [ "$AUTO_REMOVE" = "1" ] || return 0
+  [ "$EVENT_NAME" = "schedule" ] || return 0
+  [ "$TEST_JOB_FAILED" = "1" ] || return 0
+
+  # The removal writes to `main`; the umbrella is how anyone finds out. Turning this on
+  # while CREATE_ISSUE is off leaves the three states with nowhere to go but the log.
+  if [ "$CREATE_ISSUE" != "1" ]; then
+    warn "AUTO_REMOVE is on with CREATE_ISSUE off: a removal would be reported to nobody."
+  fi
+
+  # A clean tree is a PRECONDITION, checked before anything is written. Measured in
+  # the rehearsal of 2026-09-21: with a tracked file modified, the removal ran, the
+  # commit landed and then `git rebase` refused — "cannot rebase: You have unstaged
+  # changes" — so the day's removal was lost at the last step, after doing all the
+  # work. Refusing here is also what makes the restores below safe: `reset --hard`
+  # can only throw away what this function created if nothing else was in flight.
+  if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
+    AUTO_REMOVE_STATUS="error"
+    AUTO_REMOVE_SUMMARY="The \`@stable\` auto-removal did not run: the clone has uncommitted changes, and the removal needs a clean tree to replay its commit onto the source. Nothing was removed."
+    AUTO_REMOVE_OUTCOME="failure"
+    warn "the clone has uncommitted changes; the @stable removal did not run."
+    return 0
+  fi
+
+  log "Auto-removing @stable from hard failures"
+  local result="$RUN_DIR/auto-remove-result.json"
+
+  # Wording only, and gated on `measured` exactly as the action's input documents:
+  # report-backend-outages.mjs also answers "false" when no shard produced probes, so
+  # forwarding it bare would claim a measurement this run never made (#1030).
+  # An `if`, not `[ … ] && wedged=…`: under `set -e` that idiom ABORTS the run when
+  # the test is false, which here is the ordinary unmeasured day.
+  local wedged=""
+  if [ "${LIVENESS_MEASURED:-}" = "true" ]; then wedged="${LIVENESS_WEDGED:-}"; fi
+
+  # The per-attempt corroboration this lane has written since #1763. Absent or
+  # unreadable degrades to #1031's last-attempt rule, which removes MORE, so it is
+  # passed rather than left to the default.
+  if ! PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
+       MAX_AUTO_REMOVE="$MAX_AUTO_REMOVE" \
+       BACKEND_WEDGED="$wedged" \
+       OUTAGE_ATTEMPTS="$RUN_DIR/outage-attempts.json" \
+       npx ts-node scripts/remove-stable-from-failures.ts > "$result"; then
+    # The remover writes file by file, so a throw partway through leaves EARLIER specs
+    # already rewritten on disk. Nothing is committed on this path, and a dirty tree is
+    # exactly what makes the wrapper's `git pull --ff-only` refuse tomorrow morning — so
+    # the edits go back before anything else.
+    git -C "$REPO_DIR" reset -q --hard HEAD || warn "could not restore the clone after the failed removal."
+    # A status the umbrella can render. Leaving it empty would be indistinguishable from
+    # "not tracked" (#1822) and a crashed remover would appear NOWHERE: this lane is
+    # fail-soft, so unlike the Actions step it does not take the job down with it.
+    AUTO_REMOVE_STATUS="error"
+    AUTO_REMOVE_SUMMARY="The \`@stable\` auto-removal crashed before deciding anything. No tag was removed, nothing was pushed, and the partial edits were discarded."
+    AUTO_REMOVE_OUTCOME="failure"
+    warn "the @stable removal failed before deciding anything; no tag was removed."
+    return 0
+  fi
+
+  AUTO_REMOVE_STATUS="$(node -p "require('$result').status" 2>/dev/null || echo "")"
+  AUTO_REMOVE_SUMMARY="$(node scripts/format-auto-remove-summary.mjs "$result" 2>/dev/null || echo "")"
+  AUTO_REMOVE_OUTCOME="success"
+  info "removal status: ${AUTO_REMOVE_STATUS:-<unreadable>}"
+
+  [ "$AUTO_REMOVE_STATUS" = "removed" ] || return 0
+  auto_remove_commit "$result" || AUTO_REMOVE_OUTCOME="failure"
+  return 0
+}
+
+# Everything up to `git commit` is the composite action's, for its reasons. The PUSH
+# is where the two lanes genuinely differ, and the difference is structural.
+#
+# The action pushes bare and says why: its sibling history step has just pushed, so
+# `main` hardly moves inside that window. Here the window is a whole MIRROR CYCLE —
+# this clone reads from the destination, which trails the source by up to an hour — so
+# the commit is replayed onto the source's `main` before it is sent.
+#
+# Fail-closed in both directions, and the local branch is put back exactly where it
+# was on every failure. That last part is not tidiness: the wrapper does
+# `git pull --ff-only` the next morning, and a commit that never reached the source
+# would make it refuse — breaking the daily on a machine nobody is watching, which is
+# the shape of failure this whole task exists to stop repeating.
+auto_remove_commit() {
+  local result="$1"
+  local orig_head removed_count exempt_count msg auth
+  # Checked one by one, because this function is invoked as `auto_remove_commit … ||`
+  # and bash disables errexit for the whole body of a command on the left of `||`. An
+  # empty `orig_head` would make every restore below a silent no-op, and an empty count
+  # would ship "auto-remove @stable from  hard-failing test(s)" to `main` for good.
+  if ! orig_head="$(git -C "$REPO_DIR" rev-parse HEAD)" || [ -z "$orig_head" ]; then
+    err "could not read the clone's HEAD; nothing was committed."
+    return 1
+  fi
+  if ! removed_count="$(node -p "require('$result').removed.length")" \
+     || ! exempt_count="$(node -p "(require('$result').exempt || []).length")"; then
+    err "the removal report is unreadable; nothing was committed."
+    return 1
+  fi
+
+  # Removing @stable changes the generated blocks in QA-CHECKLIST.md — regenerate, or
+  # the commit contradicts itself.
+  if ! (cd "$REPO_DIR" && npm run coverage:summary >/dev/null); then
+    # The remover has already rewritten the specs, and the regeneration may have
+    # rewritten the checklist before failing. Same reason as every other exit here: a
+    # dirty tree breaks tomorrow's `git pull --ff-only`, quietly.
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "coverage:summary failed; nothing was committed."
+    return 1
+  fi
+
+  # Exactly the paths the report names, plus the checklist. Never `git add -A`:
+  # results.json, payload.json and auto-remove-result.json are not git-ignored (#1822).
+  if ! node scripts/auto-remove-commit-paths.mjs paths "$result" \
+       | git -C "$REPO_DIR" add --pathspec-from-file=- --pathspec-file-nul; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "staging the reported removals failed; nothing was committed."
+    return 1
+  fi
+  git -C "$REPO_DIR" add QA-CHECKLIST.md || true
+  if git -C "$REPO_DIR" diff --cached --quiet; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the removal reported ${removed_count} removal(s) and staged nothing; no tag was removed (#1822)."
+    return 1
+  fi
+
+  msg="chore(triage): auto-remove @stable from ${removed_count} hard-failing test(s) (vm daily ${RUN_ID}) [skip ci]"
+  if [ "${exempt_count:-0}" != "0" ]; then
+    # In the commit itself, or auditing it means reopening the run to discover the
+    # wedge collateral (#1031).
+    msg="${msg}"$'\n\n'"${exempt_count} further hard failure(s) kept @stable as non-attributable wedge collateral (#1031)."
+  fi
+  if ! git -C "$REPO_DIR" -c user.name="$AUTO_REMOVE_COMMITTER_NAME" \
+       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" commit -q -m "$msg"; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the removal could not be committed; nothing pushed."
+    return 1
+  fi
+
+  # Verified in both directions (#1822): read the paths the commit actually contains
+  # and fail naming any reported removal missing from it — BEFORE the push, so a
+  # commit that does not match its own report never reaches the source.
+  if ! git -C "$REPO_DIR" diff-tree -r --no-commit-id --name-only -z HEAD \
+       | node scripts/auto-remove-commit-paths.mjs verify "$result"; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the commit does not match its own report; nothing pushed."
+    return 1
+  fi
+
+  if [ -z "${SOURCE_PUSH_TOKEN:-}" ]; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "SOURCE_PUSH_TOKEN is unset, so the removal cannot reach the source; it was not kept locally either."
+    return 1
+  fi
+  # The credential travels as a header, and the header is handed over through the
+  # ENVIRONMENT (`GIT_CONFIG_*`), not `-c`: the URL form would be echoed back in git's
+  # own error text, and the `-c` form would sit in `/proc/<pid>/cmdline` for any local
+  # user to read for as long as the network call lasts.
+  auth="Authorization: Basic $(printf 'x-access-token:%s' "$SOURCE_PUSH_TOKEN" | base64 | tr -d '\n')"
+
+  if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$auth" \
+       git -C "$REPO_DIR" fetch -q "$SOURCE_REMOTE_URL" "$SOURCE_PUSH_BRANCH"; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "could not read ${SOURCE_PUSH_BRANCH} on the source; nothing pushed."
+    return 1
+  fi
+
+  # The replay has to carry EXACTLY the commit just made. `git rebase` replays
+  # everything from the merge base, so on a clone sitting on any branch the source does
+  # not already contain — which is precisely the shape the provoked failure runs in —
+  # it would lift that whole branch onto the target and the push would land all of it,
+  # unreviewed, with `[skip ci]` on the tip so nothing would even look at it. The
+  # commit's parent is `orig_head`, so requiring the source to already contain it is
+  # what bounds the push to one commit.
+  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$orig_head" FETCH_HEAD; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the clone holds commits ${SOURCE_PUSH_BRANCH} does not (HEAD was ${orig_head}); replaying would push them too, so nothing was pushed."
+    return 1
+  fi
+
+  # The identity travels with the rebase too: it RE-CREATES the commit, and without it
+  # the committer on what reaches the source is whatever the machine happens to have —
+  # or, on a machine with none, `unable to auto-detect email address` and a removal that
+  # fails closed every morning for a reason nobody would connect to git config.
+  if ! git -C "$REPO_DIR" -c user.name="$AUTO_REMOVE_COMMITTER_NAME" \
+       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" rebase -q FETCH_HEAD; then
+    git -C "$REPO_DIR" rebase --abort >/dev/null 2>&1 || true
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the removal does not replay cleanly onto ${SOURCE_PUSH_BRANCH}; nothing pushed."
+    return 1
+  fi
+  if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$auth" \
+       git -C "$REPO_DIR" push -q "$SOURCE_REMOTE_URL" "HEAD:$SOURCE_PUSH_BRANCH"; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "the push to the source was refused; the removal did not land."
+    return 1
+  fi
+
+  info "removal pushed to the source; it reaches this clone on the next mirror cycle."
+  return 0
+}
+
 phase_publish() {
   cd "$REPO_DIR"
 
@@ -1937,6 +2187,11 @@ phase_publish() {
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 
+  # Before the issue, deliberately: the umbrella reports what the removal did, so the
+  # removal has to have happened by the time the body is built. The same ordering the
+  # Actions lane had between its step and its issue step.
+  auto_remove_stable
+
   # Off in this etapa, by design: while the VM daily runs beside the Actions one, only
   # the Actions verdict has consequence. Two issues for one day would be worse than
   # none, and the comparison is the product here — not the alert.
@@ -1955,6 +2210,8 @@ phase_publish() {
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
     IMAGE="${IMAGE:-$LANGFLOW_VERSION}" \
+    AUTO_REMOVE_STATUS="$AUTO_REMOVE_STATUS" AUTO_REMOVE_SUMMARY="$AUTO_REMOVE_SUMMARY" \
+    AUTO_REMOVE_OUTCOME="$AUTO_REMOVE_OUTCOME" \
       node scripts/create-failure-issue.mjs || warn "issue creation failed (does not fail the run)."
   fi
 

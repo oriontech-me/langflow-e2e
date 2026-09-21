@@ -293,13 +293,16 @@ test("the publish switches are OFF by default, all three of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0");
 });
 
-test("writing back to the repository is absent, not merely switched off", () => {
-  // The fourth switch used to be COMMIT_HISTORY, and it gated an append that committed
-  // nothing — so the series this lane has to keep was being held back by a decision
-  // that belonged to a later etapa. Now the append happens and the COMMIT is what is
-  // missing. Pinned by absence rather than by a default, because a variable set to
-  // zero reads as "implemented, disabled" and invites someone to flip it on a machine
-  // that has no write credentials and no review.
+test("the only write back to the repository is the @stable removal, behind its guard", () => {
+  // This pin used to read "absent, not merely switched off", and it was right until
+  // the cut of 2026-09-20 (#1943): the fourth switch was COMMIT_HISTORY, gating an
+  // append that committed nothing, so the series this lane has to keep was held back
+  // by a decision belonging to a later etapa. That stays absent. What changed is that
+  // the verdict moved here, and with it the ONE write this lane is supposed to make —
+  // taking `@stable` off a spec it found hard-failing (#1945). So the invariant is no
+  // longer "no writes"; it is "exactly one write path, and every line of it inside
+  // it".
+  //
   // Two kinds of line are dropped before matching, and WHICH two is the whole
   // difficulty here.
   //
@@ -323,18 +326,45 @@ test("writing back to the repository is absent, not merely switched off", () => 
   // then also invokes git (`echo x; git push`) is exempt. Nothing here is shaped that
   // way, and the alternative re-opens the hole above.
   const EMITS_ONLY = /^(warn|info|die|err|echo|printf)\b/;
-  const code = readFileSync(SCRIPT, "utf8")
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("#"))
-    .filter((l) => !EMITS_ONLY.test(l.trim().replace(/^\|\|\s*/, "")))
-    .join("\n");
-  // `git\s+(commit|…)` missed every spelling with a flag in between, and `git -C` is
-  // not exotic here — it is how a script that operates on a clone BY PATH is written,
-  // which is what the later etapa's commit will be. `git -C "$REPO_DIR" add -A` passed
-  // the old pattern untouched.
-  const writes = code.split("\n").filter((l) => /\bgit\b[^\n]*\b(commit|push|add)\b/.test(l));
-  assert.deepEqual(writes, [], "this lane must not write to the repository");
-  assert.doesNotMatch(code, /COMMIT_HISTORY/, "the switch is gone, not renamed");
+  const lines = readFileSync(SCRIPT, "utf8").split("\n");
+
+  // The sanctioned region, found by name rather than by line number so it moves with
+  // the file: everything from the function header to its closing brace in column 0.
+  const open = lines.findIndex((l) => l.startsWith("auto_remove_commit() {"));
+  assert.ok(open >= 0, "the one sanctioned write path is gone; this pin is now vacuous");
+  const close = lines.findIndex((l, i) => i > open && l === "}");
+  assert.ok(close > open, "auto_remove_commit has no closing brace in column 0");
+
+  const offending = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => !line.trim().startsWith("#"))
+    .filter(({ line }) => !EMITS_ONLY.test(line.trim().replace(/^\|\|\s*/, "")))
+    // `git\s+(commit|…)` missed every spelling with a flag in between, and `git -C` is
+    // not exotic here — it is how a script that operates on a clone BY PATH is
+    // written. `git -C "$REPO_DIR" add -A` passed the old pattern untouched.
+    .filter(({ line }) => /\bgit\b[^\n]*\b(commit|push|add)\b/.test(line))
+    .filter(({ index }) => index < open || index > close)
+    .map(({ line }) => line);
+  assert.deepEqual(offending, [], "a write to the repository escaped auto_remove_commit");
+
+  // And the one path is reachable only through the switch and only on a reported
+  // removal — a write that runs on a green day would be the same defect as a second
+  // umbrella, arriving from the other side.
+  const sh = lines.join("\n");
+  const caller = sh.slice(sh.indexOf("auto_remove_stable() {"), sh.indexOf("auto_remove_commit() {"));
+  assert.match(caller, /\[ "\$AUTO_REMOVE" = "1" \] \|\| return 0/, "the write path is not behind the switch");
+  assert.match(caller, /\[ "\$TEST_JOB_FAILED" = "1" \] \|\| return 0/, "a green day can reach the write path");
+  assert.match(caller, /\[ "\$AUTO_REMOVE_STATUS" = "removed" \] \|\| return 0/, "nothing removed still commits");
+  assert.equal(
+    (sh.match(/^\s*auto_remove_commit /gm) || []).length,
+    1,
+    "auto_remove_commit has more than one caller, so the guards above are not the only door",
+  );
+
+  // Against the code, not the file: the header paragraph explaining why the switch
+  // was removed spells it, and that comment is correct — #1716 again.
+  const codeOnly = lines.filter((l) => !l.trim().startsWith("#")).join("\n");
+  assert.doesNotMatch(codeOnly, /COMMIT_HISTORY/, "the switch is gone, not renamed");
 });
 
 // daily-stable.yml's Langflow service environment, read once. The reader strips
@@ -2108,4 +2138,297 @@ test("the tag follows the verdict: this lane no longer removes @stable (#1942)",
   // lane will call it once task 4 gives it a write path.
   const weekly = readFileSync(join(REPO_ROOT, ".github/workflows/weekly-stable.yml"), "utf8");
   assert.match(weekly, /actions\/auto-remove-stable/, "the shared action lost its last caller");
+});
+
+
+// --- The write half of the verdict (#1945) ---------------------------------
+
+test("the @stable removal is off by default, and only a literal 1 turns it on", () => {
+  // It commits to `main`. #1725 measured four switches that fall the UNSAFE way on a
+  // typo; this is the one where that would mean coverage leaving without anyone
+  // asking, so the comparison is against "1" and the default is off.
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^AUTO_REMOVE="\$\{AUTO_REMOVE:-0\}"$/m, "the removal is not off by default");
+  assert.match(sh, /\[ "\$AUTO_REMOVE" = "1" \]/, "the guard is not a literal comparison against 1");
+});
+
+test("the removal is pushed to the source, never to the mirror this clone reads", () => {
+  // A commit written to the destination is content the source does not have: the sync
+  // guard records `diverged` and mirroring STOPS. That is worse than reverting, and it
+  // is why the write goes to the source and comes back on the next cycle.
+  const sh = readFileSync(SCRIPT, "utf8");
+  const fn = sh.slice(sh.indexOf("auto_remove_commit() {"));
+  assert.ok(!/github\.ibm\.com/.test(fn), "the removal names the destination host");
+  assert.match(
+    fn,
+    /push -q "\$SOURCE_REMOTE_URL" "HEAD:\$SOURCE_PUSH_BRANCH"/,
+    "the push does not name the source remote and its branch",
+  );
+  assert.ok(
+    !/push[^\n]*\borigin\b/.test(fn),
+    "the removal pushes to `origin`, which on this machine is the read-only mirror",
+  );
+  // And it is replayed first: the checkout trails the source by up to a mirror cycle,
+  // so a bare push — which is right on the Actions lane — is wrong here.
+  assert.ok(
+    fn.indexOf("rebase -q FETCH_HEAD") < fn.indexOf("push -q"),
+    "the removal is pushed without being replayed onto the source's main",
+  );
+  // And the replay is BOUNDED before it happens. Without this, a clone sitting on any
+  // branch the source does not contain gets its whole branch lifted onto the target.
+  assert.ok(
+    fn.indexOf("merge-base --is-ancestor") < fn.indexOf("rebase -q FETCH_HEAD"),
+    "the replay is not bounded to the commit just made",
+  );
+  // The credential reaches git through the environment, not the command line: `-c`
+  // would leave it in /proc/<pid>/cmdline for any local user while the call lasts.
+  assert.ok(!/-c http\.extraheader/.test(fn), "the credential is passed on the command line");
+  assert.match(fn, /GIT_CONFIG_VALUE_0="\$auth"/, "the credential does not reach git at all");
+});
+
+test("the umbrella is told what the removal did, and the removal happens first", () => {
+  // #1822: the default reads as "done", so the three states have to be distinguishable
+  // — and the body cannot report a removal that has not run yet.
+  const sh = readFileSync(SCRIPT, "utf8");
+  const publish = sh.slice(sh.indexOf("phase_publish() {"));
+  assert.ok(
+    publish.indexOf("\n  auto_remove_stable\n") < publish.indexOf("create-failure-issue.mjs"),
+    "the umbrella is built before the removal it reports on",
+  );
+  for (const key of ["AUTO_REMOVE_STATUS", "AUTO_REMOVE_SUMMARY", "AUTO_REMOVE_OUTCOME"]) {
+    assert.ok(
+      new RegExp(`${key}="\\$${key}"`).test(publish),
+      `${key} never reaches create-failure-issue.mjs, so that state is unsayable`,
+    );
+  }
+});
+
+/** A source (bare) and a clone of it, shaped like the lane's: spec, checklist, script. */
+function lanePair(label) {
+  const dir = makeTempDir(label);
+  const source = join(dir, "source.git");
+  const work = join(dir, "work");
+  // The developer's own ~/.gitconfig is kept out: `commit.gpgsign = true` took four
+  // behavioural tests down in setup once, invisibly in CI (#1822).
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env });
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", source], { env });
+  execFileSync("git", ["clone", "-q", source, work], { env });
+  mkdirSync(join(work, "tests"), { recursive: true });
+  writeFileSync(join(work, "tests/x.spec.ts"), "test('one @stable thing', () => {});\n");
+  writeFileSync(join(work, "QA-CHECKLIST.md"), "# checklist\n");
+  writeFileSync(
+    join(work, "package.json"),
+    JSON.stringify({ name: "lane", version: "1.0.0", scripts: { "coverage:summary": "true" } }),
+  );
+  git(work, "add", "-A");
+  git(work, "commit", "-qm", "init");
+  git(work, "push", "-q", "origin", "HEAD:main");
+  const result = join(dir, "auto-remove-result.json");
+  writeFileSync(
+    result,
+    JSON.stringify({ status: "removed", removed: [{ file: "tests/x.spec.ts", test: "one thing" }], exempt: [] }),
+  );
+  return { dir, source, work, result, git, env };
+}
+
+function commitRemoval({ work, source, result, env }) {
+  return sourced(
+    [
+      `REPO_DIR=${JSON.stringify(work)}`,
+      `SOURCE_REMOTE_URL=${JSON.stringify(source)}`,
+      `SOURCE_PUSH_TOKEN=not-a-real-token`,
+      `RUN_ID=test-run`,
+      `set +e; auto_remove_commit ${JSON.stringify(result)}; echo "EXIT=$?"`,
+    ].join("\n"),
+    env,
+  );
+}
+
+test("a removal that lands reaches the source, replayed onto its main", () => {
+  const lane = lanePair("auto-remove-ok");
+  writeFileSync(join(lane.work, "tests/x.spec.ts"), "test('one thing', () => {});\n");
+
+  const r = commitRemoval(lane);
+  assert.match(r.stdout, /EXIT=0/, `the removal did not land:\n${r.stdout}\n${r.stderr}`);
+
+  const subject = lane.git(lane.source, "log", "-1", "--format=%s", "main").trim();
+  assert.match(subject, /auto-remove @stable from 1 hard-failing test\(s\)/);
+  assert.match(subject, /\[skip ci\]/, "the commit would trigger CI on the source");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a removal that cannot replay leaves the clone exactly as it was", () => {
+  // The property that protects the NEXT morning. The wrapper does `git pull --ff-only`
+  // before the run, so a commit that never reached the source would make it refuse —
+  // and the daily would break on a machine nobody is watching, which is the failure
+  // this task exists to stop repeating.
+  const lane = lanePair("auto-remove-conflict");
+  const other = join(lane.dir, "other");
+  execFileSync("git", ["clone", "-q", lane.source, other], { env: lane.env });
+  writeFileSync(join(other, "tests/x.spec.ts"), "test('someone else edited this line', () => {});\n");
+  lane.git(other, "commit", "-aqm", "conflicting");
+  lane.git(other, "push", "-q", "origin", "HEAD:main");
+
+  const before = lane.git(lane.work, "rev-parse", "HEAD").trim();
+  writeFileSync(join(lane.work, "tests/x.spec.ts"), "test('one thing', () => {});\n");
+
+  const r = commitRemoval(lane);
+  assert.match(r.stdout, /EXIT=1/, "a removal that cannot replay reported success");
+  assert.equal(lane.git(lane.work, "rev-parse", "HEAD").trim(), before, "a commit was left behind");
+  assert.equal(lane.git(lane.work, "status", "--porcelain").trim(), "", "the working tree was left dirty");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("an unmeasured day still produces a state the umbrella can say", () => {
+  // The ordinary day: nothing measured, nothing to remove. It has to come out of the
+  // function as `none`/`success` — a PAIR — because an empty status means "not
+  // tracked" downstream and would be read as "the removal ran and found nothing"
+  // (#1822). Exercised with the remover stubbed, so this covers the wiring rather
+  // than the decision, which has its own tests.
+  //
+  // Written first as a pin on a `set -e` trap that is not one: `[ … ] && wedged=…`
+  // failing MID-function does not abort under errexit — only the last command's
+  // status becomes the function's. Measured by reintroducing the idiom: the test
+  // passed both ways, which is a test protecting nothing. The `if` form stayed for
+  // legibility; the assertion below is what actually has teeth.
+  // A clean clone of its own: since the precondition below rejects a dirty tree, using
+  // the real repository here would make this test fail whenever the checkout is mid-work.
+  const lane = lanePair("auto-remove-unmeasured");
+  const dir = lane.dir;
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "npx"),
+    '#!/bin/sh\necho \'{"status":"none","removed":[],"exempt":[]}\'\n',
+    { mode: 0o755 },
+  );
+  const r = sourced(
+    [
+      `REPO_DIR=${JSON.stringify(lane.work)}`,
+      `RUN_DIR=${JSON.stringify(dir)}`,
+      `AUTO_REMOVE=1 CREATE_ISSUE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
+      `unset LIVENESS_MEASURED LIVENESS_WEDGED`,
+      `auto_remove_stable; echo "EXIT=$? STATUS=$AUTO_REMOVE_STATUS OUTCOME=$AUTO_REMOVE_OUTCOME"`,
+    ].join("\n"),
+    { ...lane.env, PATH: `${bin}:${process.env.PATH}` },
+  );
+  assert.match(r.stdout, /EXIT=0 STATUS=none OUTCOME=success/, `${r.stdout}\n${r.stderr}`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a clone holding commits the source does not refuses, instead of pushing them", () => {
+  // The review's first finding, and the scenario is the one the gate schedules: the
+  // provoked failure runs on a BRANCH. `git rebase FETCH_HEAD` replays everything from
+  // the merge base, so without a bound the push carries that whole branch onto the
+  // target — unreviewed, and with `[skip ci]` on the tip so nothing looks at it.
+  const lane = lanePair("auto-remove-ahead");
+  // A commit the source has never seen, exactly as a working branch would have.
+  writeFileSync(join(lane.work, "tests/unrelated.spec.ts"), "test('mine', () => {});\n");
+  lane.git(lane.work, "add", "tests/unrelated.spec.ts");
+  lane.git(lane.work, "commit", "-qm", "work in progress");
+  const before = lane.git(lane.work, "rev-parse", "HEAD").trim();
+  writeFileSync(join(lane.work, "tests/x.spec.ts"), "test('one thing', () => {});\n");
+
+  const r = commitRemoval(lane);
+  assert.match(r.stdout, /EXIT=1/, "the removal pushed from a clone the source is behind");
+  assert.match(r.stderr, /replaying would push them too/, `unexpected reason:\n${r.stderr}`);
+  assert.equal(lane.git(lane.work, "rev-parse", "HEAD").trim(), before, "a commit was left behind");
+  assert.equal(
+    lane.git(lane.source, "log", "--oneline", "main").trim().split("\n").length,
+    1,
+    "the unrelated commit reached the source",
+  );
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a failed checklist regeneration leaves the clone exactly as it was", () => {
+  // The one exit that did not restore. By this point the remover has already rewritten
+  // the specs, so returning without a reset leaves a dirty tree — and the wrapper's
+  // `git pull --ff-only` refuses the next morning, on a machine nobody is watching.
+  const lane = lanePair("auto-remove-coverage-fails");
+  writeFileSync(
+    join(lane.work, "package.json"),
+    JSON.stringify({ name: "lane", version: "1.0.0", scripts: { "coverage:summary": "exit 3" } }),
+  );
+  lane.git(lane.work, "commit", "-aqm", "a checklist step that fails");
+  lane.git(lane.work, "push", "-q", "origin", "HEAD:main");
+  const before = lane.git(lane.work, "rev-parse", "HEAD").trim();
+  writeFileSync(join(lane.work, "tests/x.spec.ts"), "test('one thing', () => {});\n");
+
+  const r = commitRemoval(lane);
+  assert.match(r.stdout, /EXIT=1/, "a failed regeneration reported success");
+  assert.equal(lane.git(lane.work, "rev-parse", "HEAD").trim(), before, "a commit was left behind");
+  assert.equal(lane.git(lane.work, "status", "--porcelain").trim(), "", "the removal's edits were left on disk");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a remover that dies half-way leaves nothing behind, and the umbrella still hears", () => {
+  // It writes file by file, so a throw on the third spec leaves the first two rewritten.
+  // Two things have to hold: the tree goes back, and the state is SAYABLE — an empty
+  // status reads as "not tracked" downstream (#1822), and on a fail-soft lane that
+  // would make a crashed remover invisible outside the log.
+  const lane = lanePair("auto-remove-crash");
+  const bin = join(lane.dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "npx"),
+    `#!/bin/sh\nprintf 'half a removal\\n' > ${JSON.stringify(join(lane.work, "tests/x.spec.ts"))}\nexit 7\n`,
+    { mode: 0o755 },
+  );
+  const r = sourced(
+    [
+      `REPO_DIR=${JSON.stringify(lane.work)}`,
+      `RUN_DIR=${JSON.stringify(lane.dir)}`,
+      `AUTO_REMOVE=1 CREATE_ISSUE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
+      `auto_remove_stable; echo "EXIT=$? STATUS=$AUTO_REMOVE_STATUS OUTCOME=$AUTO_REMOVE_OUTCOME"`,
+    ].join("\n"),
+    { ...lane.env, PATH: `${bin}:${process.env.PATH}` },
+  );
+  assert.match(r.stdout, /EXIT=0 STATUS=error OUTCOME=failure/, `${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    lane.git(lane.work, "status", "--porcelain").trim(),
+    "",
+    "the half-written removal was left on disk for tomorrow's pull to trip over",
+  );
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a clone with uncommitted changes refuses before the removal writes anything", () => {
+  // Measured in the field, 2026-09-21: with one tracked file modified the removal ran,
+  // the commit landed, and `git rebase` then refused — "cannot rebase: You have
+  // unstaged changes" — losing the day's removal at the last step, after all the work.
+  // Checking first also keeps the restores honest: `reset --hard` may only discard what
+  // this function created.
+  const lane = lanePair("auto-remove-dirty");
+  const bin = join(lane.dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  // A remover that would leave a trace if it ever ran.
+  writeFileSync(
+    join(bin, "npx"),
+    `#!/bin/sh\ntouch ${JSON.stringify(join(lane.dir, "remover-ran"))}\necho '{"status":"none","removed":[],"exempt":[]}'\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(lane.work, "QA-CHECKLIST.md"), "# someone was editing this\n");
+
+  const r = sourced(
+    [
+      `REPO_DIR=${JSON.stringify(lane.work)}`,
+      `RUN_DIR=${JSON.stringify(lane.dir)}`,
+      `AUTO_REMOVE=1 CREATE_ISSUE=1 EVENT_NAME=schedule TEST_JOB_FAILED=1`,
+      `auto_remove_stable; echo "EXIT=$? STATUS=$AUTO_REMOVE_STATUS OUTCOME=$AUTO_REMOVE_OUTCOME"`,
+    ].join("\n"),
+    { ...lane.env, PATH: `${bin}:${process.env.PATH}` },
+  );
+  assert.match(r.stdout, /EXIT=0 STATUS=error OUTCOME=failure/, `${r.stdout}\n${r.stderr}`);
+  assert.ok(!existsSync(join(lane.dir, "remover-ran")), "the removal ran on a dirty clone");
+  // And the edit is still there: refusing must not be a way to lose someone's work.
+  assert.match(readFileSync(join(lane.work, "QA-CHECKLIST.md"), "utf8"), /someone was editing/);
+  rmSync(lane.dir, { recursive: true, force: true });
 });
