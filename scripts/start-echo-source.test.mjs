@@ -35,7 +35,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-import { readServerArgs } from "./lib/server-args.mjs";
+import { launchAnnounced, readServerArgs } from "./lib/server-args.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -226,30 +226,39 @@ exit 0
   });
 
   const cleanup = () => {
-    // Kills this call's stub server before dropping the directory. Without it the
-    // sleeps outlive the run and pile up for the length of the suite.
+    // Two patterns because the stub server has two command lines, and the second is
+    // the one this file used to miss: after `exec sleep <marker>` the argv is the
+    // sleep, but BEFORE that exec it is `bash <dir>/.../go-httpbin -host ...`, and the
+    // paths this reader can fail on are exactly the ones where the exec has not
+    // happened. One pattern alone orphans a 40-110s sleep on every such run.
     spawnSync("pkill", ["-f", `sleep ${marker}`]);
+    spawnSync("pkill", ["-f", dir]);
     rmSync(dir, { recursive: true, force: true });
   };
 
-  // NOT a plain read: the binary is launched backgrounded and the starter's readiness
-  // comes from a stubbed probe, so the script can exit before that process has written
-  // its line (#1949). `curl.log` above IS a plain read — every curl call the starter
-  // makes is in its own foreground, so that file is complete when the script exits.
-  let args;
-  try {
-    args = readServerArgs({
-      file: join(dir, "server.args"),
-      stdout: result.stdout,
-      // Printed immediately before the `&` — the last point at which the launch is
-      // still synchronous, so it is what tells "refused early" from "lost the race".
-      launchAnnouncement: /^Starting go-httpbin /m,
-      serverLine: /^-host /m,
-    });
-  } catch (err) {
-    cleanup();
-    throw err;
-  }
+  // LAZY, and not a plain read either. The binary is launched backgrounded and the
+  // starter's readiness comes from a stubbed probe, so the script can exit before that
+  // process has written its line (#1949) — hence the wait. Behind a getter, because
+  // the wait's premise ("announced, so the line is coming") has a gap the module
+  // header measures, and only a caller that asserts on the arguments should pay for
+  // it. `curl.log` above IS a plain read: every curl call the starter makes is in its
+  // own foreground, so that file is complete when the script exits.
+  let args = null;
+  const readArgs = () => {
+    if (args) return args;
+    try {
+      args = readServerArgs({
+        file: join(dir, "server.args"),
+        stdout: result.stdout,
+        launchAnnouncement: LAUNCH_ANNOUNCEMENT,
+        serverLine: SERVER_LINE,
+      });
+    } catch (err) {
+      cleanup();
+      throw err;
+    }
+    return args;
+  };
 
   return {
     ...result,
@@ -258,11 +267,20 @@ exit 0
     stateRoot,
     marker,
     curl: existsSync(curlLog) ? readFileSync(curlLog, "utf8") : "",
-    launched: args.launched,
-    serverArgs: args.text,
+    // Eager: stdout is complete when the script exits, and this is what tells a
+    // refusal before the launch from a launch whose line was never read.
+    launched: launchAnnounced(result.stdout, LAUNCH_ANNOUNCEMENT),
+    get serverArgs() {
+      return readArgs().text;
+    },
     cleanup,
   };
 }
+
+// Printed immediately before the `&` — the last point at which the launch is still
+// synchronous, so it is what tells "refused early" from "lost the race".
+const LAUNCH_ANNOUNCEMENT = /^Starting go-httpbin /m;
+const SERVER_LINE = /^-host /m;
 
 /** The go-httpbin tag the CI lanes run, read from the workflows themselves. */
 function pinnedVersion() {

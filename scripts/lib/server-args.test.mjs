@@ -11,11 +11,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { writeFileSync, appendFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { makeTempDir } from "./tmp-dir.mjs";
-import { readServerArgs } from "./server-args.mjs";
+import { launchAnnounced, readServerArgs } from "./server-args.mjs";
 
 const ANNOUNCE = /^Starting go-httpbin /m;
 const SERVER = /^-host /m;
@@ -137,17 +137,26 @@ test("a non-empty file without the server line is still a miss", () => {
   );
 });
 
-test("a g-flagged pattern does not carry lastIndex between calls or polls", () => {
-  const file = ctx("global");
-  writeFileSync(file, "-host 10.0.0.5 -port 8080 -max-duration 60s\n");
-  const sticky = /^-host /gm;
-  const stdout = "Starting go-httpbin 2.18.3 on 10.0.0.5:8080\n";
-  const args = { file, stdout, launchAnnouncement: /^Starting go-httpbin /gm, serverLine: sticky, timeoutMs: 400 };
-  assert.equal(readServerArgs(args).launched, true);
-  // Second call: with the flag left on, `lastIndex` sits past the only match and this
-  // one waits out the deadline and throws on a file it has already accepted.
-  assert.equal(readServerArgs(args).launched, true);
-});
+for (const flags of ["gm", "ym"]) {
+  test(`a /${flags}-flagged pattern does not carry lastIndex between calls or polls`, () => {
+    const file = ctx(`sticky-${flags}`);
+    writeFileSync(file, "-host 10.0.0.5 -port 8080 -max-duration 60s\n");
+    // Both flags advance `lastIndex` on `.test()`, and `g` alone reads like the whole
+    // set — `/^-host /my` answers true then false on the same input just as `/gm` does.
+    const stdout = "Starting go-httpbin 2.18.3 on 10.0.0.5:8080\n";
+    const args = {
+      file,
+      stdout,
+      launchAnnouncement: new RegExp("^Starting go-httpbin ", flags),
+      serverLine: new RegExp("^-host ", flags),
+      timeoutMs: 400,
+    };
+    assert.equal(readServerArgs(args).launched, true);
+    // Second call: with the flag left on, `lastIndex` sits past the only match and this
+    // one waits out the deadline and throws on a file it has already accepted.
+    assert.equal(readServerArgs(args).launched, true);
+  });
+}
 
 test("the wait polls rather than sampling once, so a line written mid-flight is seen", () => {
   const file = ctx("midflight");
@@ -174,15 +183,37 @@ test("the wait polls rather than sampling once, so a line written mid-flight is 
   }
 });
 
-test("a file that grows after the match is not re-read: the returned text is the matching read", () => {
-  const file = ctx("stable");
-  writeFileSync(file, "-host 1.2.3.4\n");
-  const r = readServerArgs({
-    file,
-    stdout: "Starting go-httpbin 2.18.3 on 1.2.3.4:8080\n",
-    launchAnnouncement: ANNOUNCE,
-    serverLine: SERVER,
+test("the DEFAULT deadline is long enough to wait at all", () => {
+  // Every other case here passes `timeoutMs` explicitly, which leaves the default
+  // pinned by nothing: `timeoutMs = 0` survives the whole file. It matters, because
+  // the harnesses never pass one — the default IS the wait they get.
+  const file = ctx("default-deadline");
+  writeFileSync(file, "-version\n");
+  const writer = spawn("bash", ["-c", `sleep 0.5; printf -- '-host 1.2.3.4\\n' >> ${JSON.stringify(file)}`], {
+    stdio: "ignore",
   });
-  appendFileSync(file, "-host 5.6.7.8\n");
-  assert.equal(r.text, "-host 1.2.3.4\n");
+  try {
+    const r = readServerArgs({
+      file,
+      stdout: "Starting go-httpbin 2.18.3 on 1.2.3.4:8080\n",
+      launchAnnouncement: ANNOUNCE,
+      serverLine: SERVER,
+    });
+    assert.match(r.text, /^-host 1\.2\.3\.4$/m);
+  } finally {
+    writer.kill();
+  }
+});
+
+test("launchAnnounced is the one reading of the announcement, and it tolerates no stdout", () => {
+  // Exported because both harnesses need the same answer eagerly, for `launched`, and
+  // a second copy of the regex test is how the two would come to disagree.
+  assert.equal(launchAnnounced("Starting go-httpbin 2.18.3 on 10.0.0.5:8080\n", ANNOUNCE), true);
+  assert.equal(launchAnnounced("Installed go-httpbin\n", ANNOUNCE), false);
+  // `spawnSync` hands back null rather than "" when a run produces no stdout at all.
+  assert.equal(launchAnnounced(null, ANNOUNCE), false);
+  assert.equal(launchAnnounced(undefined, ANNOUNCE), false);
+  const sticky = /^Starting go-httpbin /gm;
+  assert.equal(launchAnnounced("Starting go-httpbin 2\n", sticky), true);
+  assert.equal(launchAnnounced("Starting go-httpbin 2\n", sticky), true);
 });

@@ -22,6 +22,19 @@
 // The announcement is the starter's own stdout line, printed immediately before the
 // `&` — the last observable point at which the launch is still synchronous.
 //
+// "Announced" is very nearly "the line is coming", and the gap is why the harnesses
+// read this LAZILY rather than eagerly. `start-ollama-source.sh` can SIGTERM what it
+// launched a few process-spawns later — probe, `list`, and on a missing model straight
+// into `stop_launched_server` — so a fake binary that has not yet been scheduled dies
+// without writing anything, and the line never appears at all. Measured: a faithful
+// replica missed the write 0/200 idle and 0/300 under 24 CPU hogs, and the real tests
+// 0/10 under 12, because the stub `curl` in between is a whole bash process; strip that
+// one spawn from the replica and it loses 107/200. Thin, and on the runner class where
+// #1949 did lose. Waiting eagerly would therefore turn a harmless lost race into a
+// 10-second red in two tests that never look at this file. Behind a getter, only a
+// caller that actually asserts on the arguments pays the wait — and for that caller the
+// premise holds, since every such test is on a path the starter does not kill.
+//
 // The ollama harness is why the wait is for the SERVER line and not for a non-empty
 // file: `ollama list` and `ollama pull` run through the same fake binary AFTER the
 // server is backgrounded (start-ollama-source.sh:410+), so the file is routinely
@@ -55,14 +68,10 @@ export function readServerArgs({
   timeoutMs = 10000,
   pollMs = 20,
 }) {
-  // Stripped rather than rejected: a `g` flag carries `lastIndex` across calls, so the
-  // same pattern would match on one poll and miss on the next — a wait that gives up
-  // on a file it has already seen, which is the failure this module exists to remove.
-  const line = stripGlobal(serverLine);
-  const announced = stripGlobal(launchAnnouncement);
+  const line = stateless(serverLine);
 
   const read = () => (existsSync(file) ? readFileSync(file, "utf8") : "");
-  const launched = announced.test(stdout ?? "");
+  const launched = launchAnnounced(stdout, launchAnnouncement);
   if (!launched) return { launched, text: read() };
 
   const deadline = Date.now() + timeoutMs;
@@ -81,6 +90,18 @@ export function readServerArgs({
   }
 }
 
-function stripGlobal(re) {
-  return re.flags.includes("g") ? new RegExp(re.source, re.flags.replace(/g/g, "")) : re;
+/** Did the starter reach the line it prints immediately before backgrounding? */
+export function launchAnnounced(stdout, launchAnnouncement) {
+  return stateless(launchAnnouncement).test(stdout ?? "");
+}
+
+/**
+ * Drops the two flags that make `.test()` STATEFUL. Both `g` and `y` advance
+ * `lastIndex`, so the same pattern matches on one poll and misses on the next — a wait
+ * that gives up on a file it has already seen, which is the failure this module exists
+ * to remove. `y` is here because it fails identically and `g` alone reads like the
+ * whole set: measured, `/^-host /my` answers true then false on the same input.
+ */
+function stateless(re) {
+  return /[gy]/.test(re.flags) ? new RegExp(re.source, re.flags.replace(/[gy]/g, "")) : re;
 }
