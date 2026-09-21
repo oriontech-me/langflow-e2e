@@ -35,6 +35,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
+import { readServerArgs } from "./lib/server-args.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -91,6 +92,9 @@ function waitFor(predicate, timeoutMs = 5000) {
  * `addresses` is what the stubbed `ip` reports, in order.
  * `corruptDownload: true` makes the stub curl deliver a tarball whose bytes do not
  * match the published checksum.
+ * `serverStartDelayS` holds the LAUNCHED binary before it records its arguments, which
+ * is the race of #1949 made deterministic: the starter reports ready off a stubbed
+ * probe, so it exits before the backgrounded process has reached its first line.
  */
 function runScript({
   env = {},
@@ -103,6 +107,7 @@ function runScript({
   addresses = ["203.0.113.10", "10.0.0.5"],
   corruptDownload = false,
   discoveryTools = true,
+  serverStartDelayS = 0,
 } = {}) {
   const dir = makeTempDir("start-echo-source-test-");
   const bin = join(dir, "bin");
@@ -121,6 +126,7 @@ function runScript({
   // process, because the starter checks that what it launched is still alive before
   // it will call the endpoint ready.
   const fakeBinary = `#!/usr/bin/env bash
+${serverStartDelayS ? `[ "$1" = "-version" ] || sleep ${serverStartDelayS}` : ":"}
 echo "$*" >> "${join(dir, "server.args")}"
 if [ "$1" = "-version" ]; then
   echo "go-httpbin version ${binaryVersion ?? version}"
@@ -219,6 +225,32 @@ exit 0
     },
   });
 
+  const cleanup = () => {
+    // Kills this call's stub server before dropping the directory. Without it the
+    // sleeps outlive the run and pile up for the length of the suite.
+    spawnSync("pkill", ["-f", `sleep ${marker}`]);
+    rmSync(dir, { recursive: true, force: true });
+  };
+
+  // NOT a plain read: the binary is launched backgrounded and the starter's readiness
+  // comes from a stubbed probe, so the script can exit before that process has written
+  // its line (#1949). `curl.log` above IS a plain read — every curl call the starter
+  // makes is in its own foreground, so that file is complete when the script exits.
+  let args;
+  try {
+    args = readServerArgs({
+      file: join(dir, "server.args"),
+      stdout: result.stdout,
+      // Printed immediately before the `&` — the last point at which the launch is
+      // still synchronous, so it is what tells "refused early" from "lost the race".
+      launchAnnouncement: /^Starting go-httpbin /m,
+      serverLine: /^-host /m,
+    });
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
+
   return {
     ...result,
     dir,
@@ -226,13 +258,9 @@ exit 0
     stateRoot,
     marker,
     curl: existsSync(curlLog) ? readFileSync(curlLog, "utf8") : "",
-    serverArgs: existsSync(join(dir, "server.args")) ? readFileSync(join(dir, "server.args"), "utf8") : "",
-    cleanup: () => {
-      // Kills this call's stub server before dropping the directory. Without it the
-      // sleeps outlive the run and pile up for the length of the suite.
-      spawnSync("pkill", ["-f", `sleep ${marker}`]);
-      rmSync(dir, { recursive: true, force: true });
-    },
+    launched: args.launched,
+    serverArgs: args.text,
+    cleanup,
   };
 }
 
@@ -430,6 +458,10 @@ test("-use-real-hostname is never passed, so /hostname leaks no topology", () =>
   // adds without noticing.
   const r = runScript({ env: { ECHO_BIND_HOST: "10.0.0.5" } });
   assert.equal(r.status, 0, r.stderr);
+  // Read against a file that really was written. Without this line an unwritten
+  // server.args satisfies the negative below in silence, which is how the guard
+  // would be turned off by an unrelated change to the harness (#1949).
+  assert.match(r.serverArgs, /^-host /m, "server.args holds no launch; the next line would pass vacuously");
   assert.doesNotMatch(r.serverArgs, /use-real-hostname/);
   r.cleanup();
 });
@@ -441,6 +473,23 @@ test("the max-duration default leaves /delay/5 inside the limit", () => {
   assert.equal(r.status, 0, r.stderr);
   const seconds = Number(r.serverArgs.match(/-max-duration (\d+)s/)?.[1]);
   assert.ok(seconds >= 5, `-max-duration ${seconds}s does not cover the /delay/5 spec`);
+  r.cleanup();
+});
+
+test("a server that records its arguments late is waited for, not read as absent", () => {
+  // #1949, made deterministic. The starter reports ready off a STUBBED probe, so it
+  // exits 0 whether or not the backgrounded binary has reached its first line; holding
+  // that binary for a second is what the runner's load did by itself. Before the wait
+  // this read an empty file — `-max-duration NaNs` on the positive assertion above,
+  // and a silent pass on both negative ones. Delete the wait in runScript and this
+  // fails every time; that is what makes it a pin rather than a second flake.
+  const r = runScript({ env: { ECHO_BIND_HOST: "10.0.0.5" }, serverStartDelayS: 1 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.launched, true);
+  assert.match(r.serverArgs, /^-host 10\.0\.0\.5 -port \d+ -max-duration \d+s$/m);
+  // The stub server `exec`s its sleep one line after writing, and cleanup's pkill
+  // matches that sleep — not the hold — so a kill sent too early leaves it running.
+  assert.ok(waitFor(() => serverPattern(r.marker).test(processTable())), "the stub server never execed");
   r.cleanup();
 });
 
