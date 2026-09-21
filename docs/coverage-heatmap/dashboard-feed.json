@@ -1,0 +1,1567 @@
+{
+ "schema": "coverage-matrix-feed",
+ "version": 1,
+ "generated": "2026-09-21",
+ "refreshed": "2026-09-21",
+ "refreshWindow": {
+  "testHealthSince": "2026-08-07",
+  "days": 45
+ },
+ "previousGeneration": "2026-08-06",
+ "source": {
+  "repository": "oriontech-me/langflow-e2e",
+  "data": "docs/coverage-heatmap/data.json",
+  "rendered": "docs/coverage-heatmap/README.md",
+  "contract": "docs/coverage-heatmap/FEED.md"
+ },
+ "model": {
+  "formula": {
+   "probability": "round((2*bugQuintile + churnQuintile + fragility)/4)",
+   "inherent": "probability * impact",
+   "residual": "inherent * (1 - mitigation)"
+  },
+  "mitigationScale": {
+   "stable": 0.8,
+   "automatedNotValidated": 0.4,
+   "partialOrFlaky": 0.25,
+   "none": 0
+  }
+ },
+ "confidence": {
+  "unclassifiedPct": 26.3,
+  "churnUnmatchedPct": 45.9,
+  "bugAxis": "Spearman rho 0.940 against the recorded per-area weightedBugs, quintile agreement 15/23, every disagreement +/-1. Vendor bundles reproduce at 247 issues / 130.4 weighted against the recorded 227 / 128.0.",
+  "churnAxis": "Spearman rho 0.864, quintile agreement 12/23. Weaker, and it carries weight 1 against the bug axis' weight 2 for exactly that reason.",
+  "errorBar": "Read a one-quintile move as noise unless the per-year counts move with it. Two inherent-risk changes are the instrument, NOT the product, and are marked as such per row: 1 REST API (my classifier under-matches it, ratio 0.31) and 4 Auth (over-matches, 1.36)."
+ },
+ "totals": {
+  "areas": 26,
+  "newThisGeneration": 3,
+  "cappedByProduct": 2,
+  "bullets": 798,
+  "bulletsAutomatedUnwatched": 116,
+  "residualRiskTotal": 107.1
+ },
+ "areas": [
+  {
+   "key": "mcp",
+   "label": "13/14 MCP",
+   "rank": 1,
+   "residualRisk": 8.8,
+   "inherentRisk": 25,
+   "probability": 5,
+   "impact": 5,
+   "mitigation": 0.65,
+   "mitigationBulletDerived": 0.68,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 3,
+    "fragility": 5,
+    "weightedBugs": 56.6,
+    "weightedChurn": 1.36
+   },
+   "bullets": {
+    "total": 30,
+    "validated": 24,
+    "automatedUnwatched": 2,
+    "partial": 1,
+    "flaky": 0,
+    "empty": 3
+   },
+   "specs": {
+    "specs": 12,
+    "stable": 11
+   },
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0.031
+   },
+   "upstreamBugsByYear": {
+    "2025": 51,
+    "2026": 18
+   },
+   "previous": {
+    "rank": 2,
+    "residualRisk": 10.5,
+    "inherentRisk": 25,
+    "mitigation": 0.58
+   },
+   "delta": {
+    "residualRisk": -1.7,
+    "rank": 1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": true,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2834,
+    2838
+   ],
+   "rationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async"
+  },
+  {
+   "key": "memory-base",
+   "label": "20 Memory Base",
+   "rank": 2,
+   "residualRisk": 8.8,
+   "inherentRisk": 16,
+   "probability": 4,
+   "impact": 4,
+   "mitigation": 0.45,
+   "mitigationBulletDerived": 0.45,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
+   },
+   "bullets": {
+    "total": 16,
+    "validated": 9,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 7
+   },
+   "specs": {
+    "specs": 2,
+    "stable": 2
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 2,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 3,
+    "residualRisk": 8,
+    "inherentRisk": 8,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": 0.8,
+    "rank": 1,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2832
+   ],
+   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
+  },
+  {
+   "key": "agents",
+   "label": "6 Agents / LLM execution",
+   "rank": 3,
+   "residualRisk": 8.2,
+   "inherentRisk": 25,
+   "probability": 5,
+   "impact": 5,
+   "mitigation": 0.67,
+   "mitigationBulletDerived": 0.73,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 5,
+    "weightedBugs": 57.6,
+    "weightedChurn": 2.95
+   },
+   "bullets": {
+    "total": 44,
+    "validated": 40,
+    "automatedUnwatched": 0,
+    "partial": 1,
+    "flaky": 0,
+    "empty": 3
+   },
+   "specs": {
+    "specs": 38,
+    "stable": 35
+   },
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 5,
+    "stableSpecs": 35,
+    "penalty": 0.063
+   },
+   "upstreamBugsByYear": {
+    "2024": 29,
+    "2025": 46,
+    "2026": 15
+   },
+   "previous": {
+    "rank": 4,
+    "residualRisk": 7.4,
+    "inherentRisk": 25,
+    "mitigation": 0.7
+   },
+   "delta": {
+    "residualRisk": 0.8,
+    "rank": 1,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2833
+   ],
+   "rationale": "Advertised promise; LLM nondeterminism and tool-calling"
+  },
+  {
+   "key": "serving-identity",
+   "label": "23 Serving / end-user id",
+   "rank": 4,
+   "residualRisk": 6.9,
+   "inherentRisk": 10,
+   "probability": 2,
+   "impact": 5,
+   "mitigation": 0.31,
+   "mitigationBulletDerived": 0.31,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 4,
+    "weightedBugs": 0,
+    "weightedChurn": 0.01
+   },
+   "bullets": {
+    "total": 13,
+    "validated": 0,
+    "automatedUnwatched": 10,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 3
+   },
+   "specs": {
+    "specs": 3,
+    "stable": 0
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {},
+   "previous": null,
+   "delta": null,
+   "isNew": true,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2835
+   ],
+   "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
+  },
+  {
+   "key": "enterprise-authz",
+   "label": "22 Enterprise / authz",
+   "rank": 5,
+   "residualRisk": 6.6,
+   "inherentRisk": 10,
+   "probability": 2,
+   "impact": 5,
+   "mitigation": 0.34,
+   "mitigationBulletDerived": 0.34,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 5,
+    "weightedBugs": 1,
+    "weightedChurn": 0.27
+   },
+   "bullets": {
+    "total": 104,
+    "validated": 0,
+    "automatedUnwatched": 83,
+    "partial": 2,
+    "flaky": 6,
+    "empty": 13
+   },
+   "specs": {
+    "specs": 21,
+    "stable": 0
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2026": 1
+   },
+   "previous": null,
+   "delta": null,
+   "isNew": true,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2835
+   ],
+   "rationale": "A wrong allow in the deny matrix exposes another tenant's flows — maximum blast radius. Fragility: RBAC is a property of the database (bootstrap writes assignments at startup, no way back), and three surfaces already disagree about inherited access (#1532)."
+  },
+  {
+   "key": "graph-engine",
+   "label": "12.6 Build / graph engine",
+   "rank": 6,
+   "residualRisk": 5.6,
+   "inherentRisk": 20,
+   "probability": 4,
+   "impact": 5,
+   "mitigation": 0.72,
+   "mitigationBulletDerived": 0.63,
+   "mitigationOverride": 0.72,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 20.1,
+    "weightedChurn": 1.9
+   },
+   "bullets": {
+    "total": 11,
+    "validated": 8,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 2,
+    "empty": 1
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 10,
+    "2025": 15,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 7,
+    "residualRisk": 6,
+    "inherentRisk": 20,
+    "mitigation": 0.7
+   },
+   "delta": {
+    "residualRisk": -0.4,
+    "rank": 1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2836
+   ],
+   "rationale": "If a run fails nothing else in the product matters; async graph execution"
+  },
+  {
+   "key": "security",
+   "label": "NEW security",
+   "rank": 7,
+   "residualRisk": 5.3,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.65,
+   "mitigationBulletDerived": 0.65,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "bullets": {
+    "total": 30,
+    "validated": 24,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 1,
+    "empty": 5
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 1,
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -9.7,
+    "rank": -6,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "SSRF/secret exposure; not a checklist area at all"
+  },
+  {
+   "key": "canvas-ui",
+   "label": "15 Canvas / UI",
+   "rank": 8,
+   "residualRisk": 5,
+   "inherentRisk": 20,
+   "probability": 4,
+   "impact": 5,
+   "mitigation": 0.75,
+   "mitigationBulletDerived": 0.75,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 4,
+    "churnQuintile": 5,
+    "fragility": 3,
+    "weightedBugs": 24.6,
+    "weightedChurn": 4.22
+   },
+   "bullets": {
+    "total": 54,
+    "validated": 49,
+    "automatedUnwatched": 0,
+    "partial": 5,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 27,
+    "stable": 24
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 24,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 4,
+    "2024": 25,
+    "2025": 22,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 10,
+    "residualRisk": 5.1,
+    "inherentRisk": 20,
+    "mitigation": 0.75
+   },
+   "delta": {
+    "residualRisk": -0.1,
+    "rank": 2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
+  },
+  {
+   "key": "a2a",
+   "label": "16 A2A",
+   "rank": 9,
+   "residualRisk": 4.9,
+   "inherentRisk": 12,
+   "probability": 3,
+   "impact": 4,
+   "mitigation": 0.59,
+   "mitigationBulletDerived": 0.59,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 4,
+    "weightedBugs": 5,
+    "weightedChurn": 0.29
+   },
+   "bullets": {
+    "total": 18,
+    "validated": 13,
+    "automatedUnwatched": 0,
+    "partial": 1,
+    "flaky": 0,
+    "empty": 4
+   },
+   "specs": {
+    "specs": 11,
+    "stable": 10
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 10,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2026": 4
+   },
+   "previous": {
+    "rank": 6,
+    "residualRisk": 6.3,
+    "inherentRisk": 8,
+    "mitigation": 0.21
+   },
+   "delta": {
+    "residualRisk": -1.4,
+    "rank": -3,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": true,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2837,
+    2838
+   ],
+   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
+  },
+  {
+   "key": "playground",
+   "label": "9 Playground / chat",
+   "rank": 10,
+   "residualRisk": 4.4,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "mitigation": 0.78,
+   "mitigationBulletDerived": 0.78,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "bullets": {
+    "total": 66,
+    "validated": 64,
+    "automatedUnwatched": 1,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 1
+   },
+   "specs": {
+    "specs": 23,
+    "stable": 23
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 23,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "previous": {
+    "rank": 12,
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": -0.3,
+    "rank": 2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "The user's main verification loop; SSE streaming"
+  },
+  {
+   "key": "component-config",
+   "label": "2 Component config",
+   "rank": 11,
+   "residualRisk": 4.4,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "mitigation": 0.78,
+   "mitigationBulletDerived": 0.79,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 3,
+    "weightedBugs": 89.3,
+    "weightedChurn": 19.01
+   },
+   "bullets": {
+    "total": 58,
+    "validated": 57,
+    "automatedUnwatched": 1,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 38,
+    "stable": 38
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 1,
+    "stableSpecs": 38,
+    "penalty": 0.01
+   },
+   "upstreamBugsByYear": {
+    "2023": 5,
+    "2024": 82,
+    "2025": 67,
+    "2026": 18
+   },
+   "previous": {
+    "rank": 13,
+    "residualRisk": 4.6,
+    "inherentRisk": 20,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": -0.2,
+    "rank": 2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Every flow is built out of configured components"
+  },
+  {
+   "key": "flow-lifecycle",
+   "label": "12 Flow lifecycle",
+   "rank": 12,
+   "residualRisk": 4,
+   "inherentRisk": 20,
+   "probability": 4,
+   "impact": 5,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 3,
+    "fragility": 2,
+    "weightedBugs": 34.8,
+    "weightedChurn": 0.89
+   },
+   "bullets": {
+    "total": 25,
+    "validated": 25,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 40,
+    "stable": 37
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 37,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 41,
+    "2025": 26,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 11,
+    "residualRisk": 4.8,
+    "inherentRisk": 20,
+    "mitigation": 0.76
+   },
+   "delta": {
+    "residualRisk": -0.8,
+    "rank": -1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Cannot create/save/import a flow = product unusable"
+  },
+  {
+   "key": "model-providers",
+   "label": "7 Model providers",
+   "rank": 13,
+   "residualRisk": 4,
+   "inherentRisk": 16,
+   "probability": 4,
+   "impact": 4,
+   "mitigation": 0.75,
+   "mitigationBulletDerived": 0.75,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 4,
+    "churnQuintile": 4,
+    "fragility": 5,
+    "weightedBugs": 25.8,
+    "weightedChurn": 2.12
+   },
+   "bullets": {
+    "total": 32,
+    "validated": 29,
+    "automatedUnwatched": 2,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 1
+   },
+   "specs": {
+    "specs": 9,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 24,
+    "2025": 22,
+    "2026": 4
+   },
+   "previous": {
+    "rank": 15,
+    "residualRisk": 3.9,
+    "inherentRisk": 16,
+    "mitigation": 0.76
+   },
+   "delta": {
+    "residualRisk": 0.1,
+    "rank": 2,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Core providers only (OpenAI/Anthropic/Gemini) after the bundle exclusion; external APIs and keys"
+  },
+  {
+   "key": "governance-policy",
+   "label": "21 Governance / policy",
+   "rank": 14,
+   "residualRisk": 4,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "mitigation": 0.34,
+   "mitigationBulletDerived": 0.34,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 0,
+    "weightedChurn": 0.21
+   },
+   "bullets": {
+    "total": 14,
+    "validated": 0,
+    "automatedUnwatched": 12,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 2
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 0
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {},
+   "previous": null,
+   "delta": null,
+   "isNew": true,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "OSS operator surface, instance-global: a policy that fails open makes a blocked component placeable. Not an advertised promise, so impact is blast radius only."
+  },
+  {
+   "key": "rest-api",
+   "label": "1 REST API / endpoints",
+   "rank": 15,
+   "residualRisk": 3.6,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.76,
+   "mitigationBulletDerived": 0.76,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 2,
+    "weightedBugs": 9.5,
+    "weightedChurn": 2.61
+   },
+   "bullets": {
+    "total": 101,
+    "validated": 95,
+    "automatedUnwatched": 1,
+    "partial": 2,
+    "flaky": 1,
+    "empty": 2
+   },
+   "specs": {
+    "specs": 35,
+    "stable": 35
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 35,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 10,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 14,
+    "residualRisk": 4.4,
+    "inherentRisk": 20,
+    "mitigation": 0.78
+   },
+   "delta": {
+    "residualRisk": -0.8,
+    "rank": -1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
+   "platformItems": [],
+   "rationale": "'Flow as an API' is the advertised deploy path"
+  },
+  {
+   "key": "templates",
+   "label": "11 Templates / starter",
+   "rank": 16,
+   "residualRisk": 3.3,
+   "inherentRisk": 8,
+   "probability": 2,
+   "impact": 4,
+   "mitigation": 0.59,
+   "mitigationBulletDerived": 0.59,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.9,
+    "weightedChurn": 6.91
+   },
+   "bullets": {
+    "total": 46,
+    "validated": 34,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 12
+   },
+   "specs": {
+    "specs": 3,
+    "stable": 3
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 3,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2025": 5,
+    "2026": 1
+   },
+   "previous": {
+    "rank": 5,
+    "residualRisk": 7.4,
+    "inherentRisk": 8,
+    "mitigation": 0.08
+   },
+   "delta": {
+    "residualRisk": -4.1,
+    "rank": -11,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "'Hundreds of pre-built flows' is advertised; the onboarding path"
+  },
+  {
+   "key": "auth",
+   "label": "4 Auth / users",
+   "rank": 17,
+   "residualRisk": 3.3,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.78,
+   "mitigationBulletDerived": 0.78,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 2,
+    "fragility": 2,
+    "weightedBugs": 11,
+    "weightedChurn": 0.51
+   },
+   "bullets": {
+    "total": 16,
+    "validated": 15,
+    "automatedUnwatched": 1,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 9,
+    "stable": 8
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 8,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 10,
+    "2025": 9,
+    "2026": 2
+   },
+   "previous": {
+    "rank": 9,
+    "residualRisk": 5.4,
+    "inherentRisk": 10,
+    "mitigation": 0.46
+   },
+   "delta": {
+    "residualRisk": -2.1,
+    "rank": -8,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": "Inherent 10 -> 15 is the REBUILT CLASSIFIER over-matching at ratio 1.36. Its residual still fell (5.4 -> 3.3) on mitigation 0.46 -> 0.78, which is bullet-derived and exact.",
+   "platformItems": [],
+   "rationale": "Largest blast radius: broken auth = 100% of the product unreachable"
+  },
+  {
+   "key": "hitl",
+   "label": "3.9 HITL",
+   "rank": 18,
+   "residualRisk": 2.4,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "mitigation": 0.6,
+   "mitigationBulletDerived": 0.6,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 4,
+    "weightedBugs": 2.5,
+    "weightedChurn": 0.12
+   },
+   "bullets": {
+    "total": 4,
+    "validated": 3,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 1
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2026": 2
+   },
+   "previous": {
+    "rank": 16,
+    "residualRisk": 2.8,
+    "inherentRisk": 6,
+    "mitigation": 0.53
+   },
+   "delta": {
+    "residualRisk": -0.4,
+    "rank": -2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "New in 1.11; async wait on human action"
+  },
+  {
+   "key": "observability",
+   "label": "8 Observability",
+   "rank": 19,
+   "residualRisk": 2.4,
+   "inherentRisk": 12,
+   "probability": 4,
+   "impact": 3,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 4,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 34.1,
+    "weightedChurn": 2.02
+   },
+   "bullets": {
+    "total": 24,
+    "validated": 24,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 9,
+    "stable": 9
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 9,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 7,
+    "2025": 20,
+    "2026": 14
+   },
+   "previous": {
+    "rank": 19,
+    "residualRisk": 2.4,
+    "inherentRisk": 12,
+    "mitigation": 0.8
+   },
+   "delta": {
+    "residualRisk": 0,
+    "rank": 0,
+    "direction": "flat"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Diagnostic — does not block building or running"
+  },
+  {
+   "key": "knowledge-files",
+   "label": "5 Knowledge / files",
+   "rank": 20,
+   "residualRisk": 2.4,
+   "inherentRisk": 12,
+   "probability": 4,
+   "impact": 3,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 4,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 27.7,
+    "weightedChurn": 0.72
+   },
+   "bullets": {
+    "total": 8,
+    "validated": 8,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 21,
+    "2025": 25,
+    "2026": 4
+   },
+   "previous": {
+    "rank": 20,
+    "residualRisk": 2.4,
+    "inherentRisk": 12,
+    "mitigation": 0.8
+   },
+   "delta": {
+    "residualRisk": 0,
+    "rank": 0,
+    "direction": "flat"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Core file surface only after the bundle exclusion"
+  },
+  {
+   "key": "loop-control-flow",
+   "label": "3.6 Loop / control flow",
+   "rank": 21,
+   "residualRisk": 2.2,
+   "inherentRisk": 9,
+   "probability": 3,
+   "impact": 3,
+   "mitigation": 0.76,
+   "mitigationBulletDerived": 0.76,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 4,
+    "churnQuintile": 2,
+    "fragility": 3,
+    "weightedBugs": 21.8,
+    "weightedChurn": 0.36
+   },
+   "bullets": {
+    "total": 18,
+    "validated": 17,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 1
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 8,
+    "2025": 19,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 21,
+    "residualRisk": 2.3,
+    "inherentRisk": 9,
+    "mitigation": 0.75
+   },
+   "delta": {
+    "residualRisk": -0.1,
+    "rank": 0,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Control-flow components; affects the flows that use them"
+  },
+  {
+   "key": "api-request-webhook",
+   "label": "3.3 API Request / Webhook",
+   "rank": 22,
+   "residualRisk": 1.8,
+   "inherentRisk": 9,
+   "probability": 3,
+   "impact": 3,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 2,
+    "fragility": 3,
+    "weightedBugs": 8.6,
+    "weightedChurn": 0.45
+   },
+   "bullets": {
+    "total": 31,
+    "validated": 31,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 4,
+    "2025": 9,
+    "2026": 2
+   },
+   "previous": {
+    "rank": 22,
+    "residualRisk": 2,
+    "inherentRisk": 9,
+    "mitigation": 0.77
+   },
+   "delta": {
+    "residualRisk": -0.2,
+    "rank": 0,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Network-dependent component, widely used but replaceable"
+  },
+  {
+   "key": "global-variables",
+   "label": "4.3 Global variables",
+   "rank": 23,
+   "residualRisk": 1.6,
+   "inherentRisk": 8,
+   "probability": 2,
+   "impact": 4,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 2,
+    "weightedBugs": 8.5,
+    "weightedChurn": 0.5
+   },
+   "bullets": {
+    "total": 7,
+    "validated": 7,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 8,
+    "2025": 6,
+    "2026": 2
+   },
+   "previous": {
+    "rank": 17,
+    "residualRisk": 2.7,
+    "inherentRisk": 8,
+    "mitigation": 0.66
+   },
+   "delta": {
+    "residualRisk": -1.1,
+    "rank": -6,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Blocks provider configuration for every flow"
+  },
+  {
+   "key": "i18n",
+   "label": "NEW i18n / localization",
+   "rank": 24,
+   "residualRisk": 1.2,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 1,
+    "fragility": 2,
+    "weightedBugs": 6.4,
+    "weightedChurn": 1.17
+   },
+   "bullets": {
+    "total": 5,
+    "validated": 5,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 2,
+    "stable": 2
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 2,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2025": 1,
+    "2026": 5
+   },
+   "previous": {
+    "rank": 8,
+    "residualRisk": 6,
+    "inherentRisk": 6,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -4.8,
+    "rank": -16,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Black screen by browser locale is total failure, but for a subset of users"
+  },
+  {
+   "key": "model-parameters",
+   "label": "7.7 Model parameters",
+   "rank": 25,
+   "residualRisk": 1.2,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.1,
+    "weightedChurn": 0
+   },
+   "bullets": {
+    "total": 4,
+    "validated": 4,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 23,
+    "residualRisk": 1.2,
+    "inherentRisk": 6,
+    "mitigation": 0.8
+   },
+   "delta": {
+    "residualRisk": 0,
+    "rank": -2,
+    "direction": "flat"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Wrong params silently change model behaviour"
+  },
+  {
+   "key": "projects-folders",
+   "label": "10 Projects / folders",
+   "rank": 26,
+   "residualRisk": 0.8,
+   "inherentRisk": 3,
+   "probability": 1,
+   "impact": 3,
+   "mitigation": 0.74,
+   "mitigationBulletDerived": 0.74,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 1,
+    "weightedBugs": 3.9,
+    "weightedChurn": 0.25
+   },
+   "bullets": {
+    "total": 19,
+    "validated": 16,
+    "automatedUnwatched": 3,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 9,
+    "stable": 9
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 9,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 4,
+    "2025": 2,
+    "2026": 1
+   },
+   "previous": {
+    "rank": 18,
+    "residualRisk": 2.7,
+    "inherentRisk": 6,
+    "mitigation": 0.55
+   },
+   "delta": {
+    "residualRisk": -1.9,
+    "rank": -8,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Organisational; a workaround always exists"
+  }
+ ],
+ "actions": [
+  {
+   "id": "CRM-01",
+   "areaKey": "memory-base",
+   "priority": "critical",
+   "platformItemId": 2832,
+   "title": "Close 20.4 Ingestion — 7 bullets, all empty, and three 2026 upstream bugs land on it"
+  },
+  {
+   "id": "CRM-02",
+   "areaKey": "agents",
+   "priority": "critical",
+   "platformItemId": 2833,
+   "title": "Fix the six chronically red or flaky Agents specs before adding any"
+  },
+  {
+   "id": "CRM-03",
+   "areaKey": "mcp",
+   "priority": "critical",
+   "platformItemId": 2834,
+   "title": "MCP is rank 1 and its remaining coverage is blocked — work the chronic failure, #963 and LE-2012"
+  },
+  {
+   "id": "CRM-04",
+   "areaKey": "serving-identity",
+   "priority": "high",
+   "platformItemId": 2835,
+   "title": "Decide the lane question for serving and enterprise — 117 bullets watched by nothing"
+  },
+  {
+   "id": "CRM-05",
+   "areaKey": "graph-engine",
+   "priority": "high",
+   "platformItemId": 2836,
+   "title": "Land #1896 — assert cycles, partial failure and execution order"
+  },
+  {
+   "id": "CRM-06",
+   "areaKey": "a2a",
+   "priority": "medium",
+   "platformItemId": 2837,
+   "title": "A2A rose on inherent risk, not on missing tests — watch the 2026 bug rate"
+  },
+  {
+   "id": "CRM-07",
+   "areaKey": "mcp",
+   "priority": "high",
+   "platformItemId": 2838,
+   "title": "Seven bullets automation can never reach — decide whether manual QA covers them"
+  }
+ ]
+}

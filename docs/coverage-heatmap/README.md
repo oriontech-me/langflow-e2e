@@ -1,6 +1,12 @@
 # Coverage Heatmap — Risk-Based Strategy
 
-**Generated:** 2026-08-06 · **Method:** [design record](../superpowers/specs/2026-08-06-coverage-heatmap-risk-analysis-design.md) · **Data:** [`data.json`](./data.json)
+>This document is the **generation snapshot** — the human-written analysis, frozen at the date
+>below. The derivable half of the matrix (mitigation, bullets, spec counts, test health, and the
+>residual risk and ranking that follow from them) is **refreshed continuously** and can therefore
+>differ from the tables here. For current values read [`dashboard-feed.json`](./dashboard-feed.json);
+>the contract is [`FEED.md`](./FEED.md).
+
+**Generated:** 2026-09-21 · **Previous:** 2026-08-06 · **Method:** [design record](../superpowers/specs/2026-08-06-coverage-heatmap-risk-analysis-design.md) · **Data:** [`data.json`](./data.json)
 
 Answers one question: **are the tests we build covering the critical points of Langflow?**
 Coverage percentage cannot answer it — coverage is measured against the checklist, and
@@ -11,222 +17,290 @@ from the *product*, never from our own test results.
 
 ## The verdict
 
-**Yes in the bulk — but every hole at the top is an area the checklist did not have.**
+**The August holes were closed, and closing them moved the problem rather than removing it.**
 
-`security` (15.0) and `Memory Base` (8.0) score 0.00 mitigation for the same reason: no
-bullet existed, so they were invisible to every coverage figure including the 76 % headline.
-Between them sits `MCP` at 10.5 — the matrix maximum for inherent risk, and the area whose
-remaining backlog turned out to be blocked or absent rather than merely unvalidated.
+Four of the six actions the previous cycle recommended shipped. Security went from *rank 1
+at mitigation 0.00* — no checklist area at all — to **rank 7 at 0.65**, with a whole
+`security/` module and 30 bullets. i18n went from rank 8 to **rank 24**, the largest single
+drop in the table. A2A and Templates both went from near-zero mitigation to 0.59.
 
-Of the areas at inherent risk ≥ 16 (the product's most critical), **7 of 9 are properly
-defended** at mitigation 0.75–0.80: Canvas, Flow lifecycle, Playground, Component config,
-REST API, Model providers, Observability. The suite *is* where Langflow is critical.
+What did **not** ship is the one the previous cycle put second: *raise MCP and Agents above
+0.80*. They are now **ranks 1 and 3**, and Agents is the only area in the table whose
+residual risk **rose while its bullets improved** — because six of its 35 `@stable` specs
+are chronically red or flaky, so its coverage is worth less than its checklist says.
 
-The misalignment is not absence of testing. It is **allocation**:
+Two things the previous matrix could not see at all:
 
-> The two areas at the matrix maximum (inherent 25) are **MCP** and **Agents** — exactly
-> the two things langflow.org sells as the product ("build and deploy AI agents and MCP
-> servers"). Both sit at mitigation 0.67 and 0.71, *below* Observability and
-> Knowledge/files, which carry half the inherent risk at 0.80.
+> **`20 Memory Base` doubled its inherent risk, 8 → 16, and is now tied for rank 1.** Its
+> bug quintile went 1 → 3 on measurement: **6 of its 10 lifetime upstream bugs are 2026**,
+> three of them landing since the last generation (#14731, #14860, #14994). Its mitigation
+> is 0.45 and section **20.4 Ingestion is 7 bullets, all empty** — the exact surface those
+> three bugs are about.
+
+> **Three checklist areas had no row in the matrix at all** — `21 governance`,
+> `22 enterprise`, `23 serving`. Together they carry **131 bullets** and **105 of the
+> suite's 116 Part II `[-]` marks**, and **0 of their 31 specs carry `@stable`**. Serving
+> and Enterprise enter the ranking at **4 and 5**.
 
 ## Residual-risk ranking
 
 Residual risk = `inherent × (1 − mitigation)` — the danger that still gets through.
+Mitigation is bullet-derived, then reduced by the test-health penalty where an area's
+`@stable` specs are chronically red.
 
-| # | Residual | Area | Inherent | P × I | Mitigation | Bullets | Nature of the hole |
-|---|---|---|---|---|---|---|---|
-| 1 | **15.0** | **NEW security** | 15 | 3×5 | **0.00** | 11 | No checklist area at all |
-| 2 | **10.5** | 13/14 MCP | **25** | 5×5 | 0.58 | 29 | Advertised promise; remaining backlog is blocked or absent |
-| 3 | **8.0** | **20 Memory Base** | 8 | 2×4 | **0.00** | 15 | No checklist area; new 1.12 surface |
-| 4 | **7.4** | 6 Agents / LLM execution | **25** | 5×5 | 0.70 | 43 | Advertised promise, under-defended |
-| 5 | **7.4** | 11 Templates / starter | 8 | 2×4 | 0.08 | 34 | Coverage was phantom — see the correction below |
-| 6 | **6.3** | 16 A2A | 8 | 2×4 | 0.21 | 18 | Almost no coverage; specs exist, unvalidated |
-| 7 | **6.0** | 12.6 Build / graph engine | **20** | 4×5 | 0.70 | 8 | Subtle engine defects unasserted |
-| 8 | **6.0** | **NEW i18n / localization** | 6 | 2×3 | **0.00** | 5 | No checklist area; blocked on the en-US locale pin |
-| 9 | 5.4 | 4 Auth / users | 10 | 2×5 | 0.46 | 14 | Max blast radius, low probability |
-| 10 | 5.1 | 15 Canvas / UI | **20** | 4×5 | 0.75 | 51 | Defended |
-| 11 | 4.8 | 12 Flow lifecycle | **20** | 4×5 | 0.76 | 24 | Defended |
-| 12 | 4.7 | 9 Playground / chat | **20** | 5×4 | 0.77 | 66 | Defended |
-| 13 | 4.6 | 2 Component config | **20** | 5×4 | 0.77 | 52 | Defended |
-| 14 | 4.4 | 1 REST API / endpoints | **20** | 4×5 | 0.78 | 28 | Defended |
-| 15 | 3.9 | 7 Model providers | 16 | 4×4 | 0.76 | 30 | Defended |
-| 16 | 2.8 | 3.9 HITL | 6 | 2×3 | 0.53 | 3 | Low risk |
-| 17 | 2.7 | 10 Projects / folders | 6 | 2×3 | 0.55 | 15 | Correctly deprioritised |
-| 18 | 2.7 | 4.3 Global variables | 8 | 2×4 | 0.66 | 7 | Low risk |
-| 19 | 2.4 | 8 Observability | 12 | 4×3 | 0.80 | 24 | Over-invested relative to risk |
-| 20 | 2.4 | 5 Knowledge / files | 12 | 4×3 | 0.80 | 8 | Over-invested relative to risk |
-| 21 | 2.3 | 3.6 Loop / control flow | 9 | 3×3 | 0.75 | 16 | Defended |
-| 22 | 2.0 | 3.3 API Request / Webhook | 9 | 3×3 | 0.77 | 31 | Defended |
-| 23 | 1.2 | 7.7 Model parameters | 6 | 2×3 | 0.80 | 4 | Defended |
+| # | Residual | Was | | Area | Inherent | P × I | Mitigation | Bullets |
+|---|---|---|---|---|---|---|---|---|
+| 1 | **8.8** | 10.5 | ↓ | 13/14 MCP | 25 | 5×5 | 0.65 (0.58) | 30 |
+| 2 | **8.8** | 8 | ↑ | 20 Memory Base | 16 (8) | 4×4 | 0.45 (0) | 16 |
+| 3 | **8.2** | 7.4 | ↑ | 6 Agents / LLM execution | 25 | 5×5 | 0.67 (0.7) | 44 |
+| 4 | **6.9** | — | new | 23 Serving / end-user id | 10 | 2×5 | 0.31 | 13 |
+| 5 | **6.6** | — | new | 22 Enterprise / authz | 10 | 2×5 | 0.34 | 104 |
+| 6 | **5.6** | 6 | ↓ | 12.6 Build / graph engine | 20 | 4×5 | 0.72 (0.7) | 11 |
+| 7 | **5.3** | 15 | ↓ | NEW security | 15 | 3×5 | 0.65 (0) | 30 |
+| 8 | **5** | 5.1 | ↓ | 15 Canvas / UI | 20 | 4×5 | 0.75 (0.75) | 54 |
+| 9 | **4.9** | 6.3 | ↓ | 16 A2A | 12 (8) | 3×4 | 0.59 (0.21) | 18 |
+| 10 | **4.4** | 4.7 | ↓ | 9 Playground / chat | 20 | 5×4 | 0.78 (0.77) | 66 |
+| 11 | **4.4** | 4.6 | ↓ | 2 Component config | 20 | 5×4 | 0.78 (0.77) | 58 |
+| 12 | **4.2** | 4.8 | ↓ | 12 Flow lifecycle | 20 | 4×5 | 0.79 (0.76) | 25 |
+| 13 | **4** | 3.9 | ↑ | 7 Model providers | 16 | 4×4 | 0.75 (0.76) | 32 |
+| 14 | **4** | — | new | 21 Governance / policy | 6 | 2×3 | 0.34 | 14 |
+| 15 | **3.6** | 4.4 | ↓ | 1 REST API / endpoints | 15 (20) | 3×5 | 0.76 (0.78) | 101 |
+| 16 | **3.3** | 7.4 | ↓ | 11 Templates / starter | 8 | 2×4 | 0.59 (0.08) | 46 |
+| 17 | **3.3** | 5.4 | ↓ | 4 Auth / users | 15 (10) | 3×5 | 0.78 (0.46) | 16 |
+| 18 | **2.4** | 2.8 | ↓ | 3.9 HITL | 6 | 2×3 | 0.6 (0.53) | 4 |
+| 19 | **2.4** | 2.4 | = | 8 Observability | 12 | 4×3 | 0.8 (0.8) | 24 |
+| 20 | **2.4** | 2.4 | = | 5 Knowledge / files | 12 | 4×3 | 0.8 (0.8) | 8 |
+| 21 | **2.2** | 2.3 | ↓ | 3.6 Loop / control flow | 9 | 3×3 | 0.76 (0.75) | 18 |
+| 22 | **1.8** | 2 | ↓ | 3.3 API Request / Webhook | 9 | 3×3 | 0.8 (0.77) | 31 |
+| 23 | **1.6** | 2.7 | ↓ | 4.3 Global variables | 8 | 2×4 | 0.8 (0.66) | 7 |
+| 24 | **1.2** | 6 | ↓ | NEW i18n / localization | 6 | 2×3 | 0.8 (0) | 5 |
+| 25 | **1.2** | 1.2 | = | 7.7 Model parameters | 6 | 2×3 | 0.8 (0.8) | 4 |
+| 26 | **0.8** | 2.7 | ↓ | 10 Projects / folders | 3 (6) | 1×3 | 0.74 (0.55) | 19 |
+*Mitigation and inherent columns carry the previous generation's value in brackets where it
+moved. `NEW security` / `NEW i18n` keep their August names: both now have a real checklist
+module, and renaming them would break the comparison this table exists for.*
 
-## Two holes are taxonomy gaps, not coverage gaps
+## What actually moved, and what only looks like it moved
 
-**Security** and **i18n / localization** have no entry in `QA-CHECKLIST.md`, so they have
-never appeared in any coverage count — including the 76 % headline. They were found only
-because the bug corpus was measured *outside* the checklist.
+**Measured product change** — these are the rows to act on:
 
-- **Security** — 18 issues, 4 in 2026. Includes the SSRF regression in `ensure_url`
-  ignoring `LANGFLOW_SSRF_ALLOWED_HOSTS` for loopback, and a reported vulnerability with
-  no response. Confirmed in scope for this QA team (decision 2026-08-06).
-- **i18n / localization** — churn `4 → 5 → 64 → 459` file touches by year, the steepest
-  2026 growth of any area, plus issues reporting a **black screen** when the browser
-  language is Norwegian Bokmål and on a Chinese locale. A blank product for a whole locale
-  is total failure for those users.
+| Area | Change | Evidence |
+|---|---|---|
+| 20 Memory Base | inherent 8 → **16** | bug quintile 1 → 3; 6 of 10 lifetime issues are 2026, 3 of them since 2026-08-06 |
+| 16 A2A | inherent 8 → **12** | bug quintile 1 → 2; from 1 lifetime issue to 4, all 2026, plus the AG-UI protocol pair (#14668, #14847) |
+| 6 Agents | residual 7.4 → **8.2** | mitigation improved to 0.67 gross, then the test-health penalty took it back |
+| 10 Projects | inherent 6 → **3** | probability fell to 1; the area is quiet upstream and well covered |
 
-Both were surfaced by the **unclassified residue** of the issue classification, not by the
-planned outside-in pass. Reporting the residue instead of forcing it into categories is
-what made them visible — the design's rule earning its place.
+**Instrument, not product** — two inherent-risk moves are the rebuilt classifier disagreeing
+with August's, and must not be read as the product changing:
 
-## Derived churn — a correction to the method
+- **`1 REST API` 20 → 15.** My classifier under-matches this area badly (ratio 0.31 against
+  the recorded August weight). Its 101 bullets and 0.76 mitigation are solid; treat the
+  inherent drop as unproven.
+- **`4 Auth` 10 → 15.** The mirror case, over-matching at 1.36. Its residual still *fell*
+  (5.4 → 3.3) because mitigation went 0.46 → 0.78, which is bullet-derived and exact.
 
-**Team correction, 2026-08-06.** Churn on some surfaces is not independent evidence. Every
-component change forces an update to every starter-template JSON that uses that node, so
-`starter_projects` churn is a *mechanical consequence* of component churn — counting both
-double-counted the same signal. The same shape applies to `locales/`: a new UI string
-forces a translation update.
+The error bar is stated rather than hidden: **read a one-quintile move as noise unless the
+per-year counts move with it.** Memory Base and A2A both clear that bar; these two do not.
 
-Their churn quintile is floored to 1. Bug evidence and impact are untouched.
+## The instrument was rebuilt, and calibrated before it was used
 
-| Area | Before | After | Rank |
+August's classifier and churn path-map were never committed — the design record chose
+per-row provenance over a generator, which is cheap to maintain and impossible to re-run.
+Both were rebuilt this cycle and checked against the recorded figures **before** producing
+anything:
+
+- **The corpus reproduces.** 1915 `bug` issues created before 2026-08-06 against the
+  **1912** recorded; `question`-labelled = **41**, exactly the recorded exclusion; 2024 =
+  842 against the README's 841. Same query, same corpus.
+- **Bug axis: Spearman ρ = 0.940**, quintile agreement 15/23, every disagreement ±1. The
+  largest exclusion reproduces almost exactly — vendor bundles at **247 issues / 130.4
+  weighted** against the recorded **227 / 128.0**.
+- **Churn axis: ρ = 0.864**, quintile agreement 12/23. Weaker, which is why it carries
+  weight 1 against the bug axis' weight 2 — the design's own reasoning, now with a number.
+- **Mitigation was not rebuilt, it was derived.** The area→checklist-section map reproduces
+  **all 23 recorded bullet counts exactly** on the August revision of `QA-CHECKLIST.md`.
+  Mitigation is the one axis here that is measurement rather than estimate.
+
+Watch the corpus totals: **1912 scored then, 1912 scored now**, which reads like a corpus
+that did not grow. It grew by 38 issues; the coincidence is that 41 `question`-labelled
+issues come off a 1953 total. The figure is spelled out in `data.json` for that reason.
+
+## The test-health penalty, applied for the first time
+
+The design specified it and the first generation never applied it: *an `@stable` test that
+fails chronically is not mitigating 0.8 — it drops to ~0.4.* Over the **32 daily runs from
+2026-08-06 to 2026-09-18**, a spec counts as chronic if it failed or flaked on ≥3 distinct
+days.
+
+It is almost entirely one area:
+
+| Area | Chronic | Of `@stable` specs | Penalty |
 |---|---|---|---|
-| 11 Templates / starter | 7.0 | **4.6** | 4 → 8 |
-| NEW i18n / localization | 6.0 | **6.0** | unchanged |
+| **6 Agents** | 1 hard + 5 flaky | 35 | −0.063 |
+| 13/14 MCP | 1 hard | 11 | −0.031 |
+| 2 Component config | 1 flaky | 38 | −0.010 |
+| 12 Flow lifecycle | 1 flaky | 37 | −0.011 |
 
-Two things worth carrying from this:
+The six Agents specs, by days affected: `agent-component-regression` (6 flaky),
+`model-provider-model-toggle` (5), `agent-multi-tool-selection` (4), `agent-max-iterations`
+(4), `agent-multimodal-image-input` (3), `language-model-regression` (3 **hard**).
 
-- **Templates was ranked 4th on a double-counted signal.** Its own bug evidence is weighted
-  **2.7 across 5 issues** (quintile 1) — if templates were genuinely breaking from component
-  drift, users would be reporting it, and they are not. The high churn was the false signal,
-  exactly as the team stated.
+This is why Agents rose while its bullets improved, and it is the finding the penalty exists
+to produce: **the area is not under-tested, it is under-trusted.** Adding bullets there
+buys less than fixing the six.
 
-  The 2.7 is itself a correction. The figure first read 6.1, because **"template" is
-  ambiguous in Langflow**: the *Prompt Template component* is not a *starter template*, and
-  5 of those 10 issues were Prompt Template defects (`Few Shot Prompt Template`,
-  `Prompt template not being saved`, `Text Truncation in Prompt Template Component`, …).
-  The component now matches first; Component config went 90.9 → 94.3, the unclassified
-  residue stayed at 325, so no issue was lost. The ranking did not move — the bug quintile
-  fell 2 → 1 but probability still rounds to 2.
-- **i18n does not move**, which is the useful part: its churn never drove its probability.
-  The black-screen bug evidence did. The finding survives the same critique that demoted
-  Templates — worth knowing, since both were surfaced by the same residue pass.
+## The graph-engine override was re-measured, not carried
 
-Templates remains cheap to act on despite ranking 8th: **the specs already exist** as 39
-`[-]` bullets. Effort-per-point is not in the risk model, and should not be — but it is a
-real input to sequencing.
+`12.6` carries a judged mitigation of **0.72** against a bullet-derived 0.63. The previous
+cycle judged 0.70 against 0.53, and carrying that delta forward would have produced 1.07 —
+nonsense, so the reasoning was re-run instead of the number.
+
+- The half that **improved**: **91 regression specs execute a graph and 83 are `@stable`
+  (91 %)**, against 73/63 (86 %) in August. A total engine break reddens the daily louder
+  than it did.
+- The half that **got worse**: it is no longer a suspicion. **#1896** measured that a
+  regular-port cycle runs as `completed` without building, and that one failing component
+  freezes the canvas at `RUN_ERROR`. Three new upstream bugs land in exactly that class —
+  **#14964** (Loop item injected only into the first outgoing edge), **#14966** (concurrent
+  vertex completion reactivates a branch stopped by `Component.stop()`), **#15034** (Run
+  Flow returns empty content as an Agent tool).
+
+So the override keeps the same position between the derived value and the 0.80 ceiling that
+August used, and the area stays well under that ceiling for a reason that is now evidenced.
+
+## The three areas the matrix could not see
+
+`governance/`, `enterprise/` and `serving/` are checklist sections that post-date the matrix.
+Impact and fragility are judged, with the rationale per row in `data.json`; bug and churn are
+measured by the same instrument as every other area.
+
+| Area | Residual | Inherent | Specs | `@stable` | Bullets | Upstream bugs |
+|---|---|---|---|---|---|---|
+| 23 Serving / end-user id | **6.9** | 10 (2×5) | 3 | **0** | 13 | **0** |
+| 22 Enterprise / authz | **6.6** | 10 (2×5) | 21 | **0** | 104 | 1 |
+| 21 Governance / policy | **4.0** | 6 (2×3) | 7 | **0** | 14 | **0** |
+
+Two things to read carefully here.
+
+**Zero upstream bugs is a young surface, not a safe one.** Both areas at zero are 1.12
+surfaces. Their probability rests on fragility, and the fragility is real: serving's
+`TRUST=0` mode is fail-closed *and* fail-silent — every request becomes `anon::<uuid>` and
+persists nothing, while runs still answer `200`. Enterprise RBAC is a property of the
+database rather than the process, and three surfaces already disagree about inherited access
+(#1532).
+
+**Their impact scores are the highest in the table for a reason.** A wrong allow in the deny
+matrix exposes another tenant's flows; a serving identity leak means one end user reads
+another's chat memory. Both are 5 on blast radius alone.
+
+They rank 4 and 5 on mitigation ~0.3 — which is what **104 + 13 bullets and not one
+`@stable` spec** produces. These specs run in no scheduled lane: not in `daily-stable.yml`
+(no enterprise or serving lane), not in the weekly (disabled). They are reachable only by a
+deliberate `PW_ENTERPRISE=1` / `PW_SERVING_IDENTITY=1` dispatch.
+
+## The `[-]` problem got worse, and moved
+
+Counted the same way on both dates — bullets under Part II, `QA-CHECKLIST.md`:
+
+| | 2026-08-10 | 2026-09-21 |
+|---|---|---|
+| Part II bullets | 531 | **793** |
+| `[x]` validated | 393 | **597** |
+| `[-]` automated, watched by nothing | 37 | **116** |
+
+**105 of those 116 `[-]` sit in the three new areas.** The previous generation's closing
+point — *"they count as coverage in every generated figure and are watched by nothing on a
+schedule"* — is now concentrated rather than diffuse, which makes it a lane decision instead
+of a per-spec one.
+
+The August README reported "89 of 500" for this figure. That does not reproduce under either
+scope on the committed revision (Part II gives 37/531, whole-file 58/1021), so it is recorded
+as unreproducible rather than compared against.
 
 ## Scope exclusions
 
-25 % of Langflow's bug history is not addressable by a Playwright spec against a running
-instance. Calling it a coverage gap would be wrong. Excluded, with counts:
+Unchanged from the previous generation and re-measured with the rebuilt classifier, which is
+what the vendor-bundle agreement above establishes. 25 % of Langflow's bug history is not
+addressable by a Playwright spec against a running instance:
 
-| Excluded surface | Issues | Weighted | Why |
+| Excluded surface | Issues (now) | Weighted | Why |
 |---|---|---|---|
-| **Vendor bundles** | **227** | **128.0** | **Team decision 2026-08-06 — no longer supported by this QA team** |
-| docker / deploy | 115 | 54.8 | Not a UI surface |
-| install / packaging | 94 | 41.2 | Not a UI surface |
-| backend internals | 50 | 24.8 | FastAPI/async/pydantic/Redis internals |
-| desktop / platform | 37 | 23.0 | Desktop app and OS-specific |
-| database / infra | 22 | 9.4 | Postgres/SQLite/migrations |
-| docs / website | 14 | 5.4 | Not the product |
-| third-party tool components | 10 | 5.1 | Vendor integrations |
+| **Vendor bundles** | **247** | **130.4** | Team decision 2026-08-06 — no longer supported by this QA team |
+| docker / deploy | 93 | 47.0 | Not a UI surface |
+| install / packaging | 67 | 28.8 | Not a UI surface |
+| database / infra | 34 | 19.1 | Postgres/SQLite/migrations |
+| desktop / platform | 26 | 16.3 | Desktop app and OS-specific |
+| backend internals | 26 | 15.2 | FastAPI/async/pydantic internals |
+| docs / website | 13 | 5.1 | Not the product |
 
-### Deployments was scored, then dropped
-
-An area for the 1.12 Deployments page was scored and removed on 2026-08-07. Two reasons,
-in order of weight:
-
-1. **Its only implemented destination is watsonx Orchestrate**
-   (`WatsonxOrchestrateDeploymentService`, `watsonx_orchestrate`). There is no
-   vendor-neutral mechanism underneath it, so the page is a single vendor integration —
-   the same class as the excluded bundles, and excluded on the same team decision.
-2. Its apparent bug evidence was a **naming collision**: all 21 issues matching
-   "deployment" are docker / k8s / Render / Railway / GCP infrastructure, already counted
-   under `docker/deploy`. The page itself has zero reported defects.
-
-Recorded rather than deleted, because the first scoring of it used **invented** churn and
-bug figures (8.0 and 0.5). Measurement gave 4.25 and 0.0. That mistake is what prompted
-the rule now applied throughout: every probability input is measured, never estimated —
-see `measuredInputs` in `data.json`.
-
-### The bundle decision is the single largest finding
-
-At **128.0 weighted / 227 issues / 22 of them `jira`**, unsupported vendor bundles are the
-**largest single source of Langflow bugs** — larger than any in-scope area, Component
-config (90.9) included.
-
-Only 41 of those 227 carried the upstream `bundles` label; the other 186 were identified
-by vendor name in the title. Without the team's scope decision they would have counted as
-our risk, and they were inflating two areas materially:
-
-| Area | Before exclusion | After | What was removed |
-|---|---|---|---|
-| 7 Model providers | 75.6 | **34.9** | Bedrock, NVIDIA, OpenRouter, Watsonx, Groq, Mistral, Ollama, Azure |
-| 5 Knowledge / files | 40.2 | **25.1** | Qdrant, Pinecone, Chroma, Milvus, PGVector, Weaviate, Cassandra, Astra |
-
-Core providers (OpenAI / Anthropic / Gemini) stay in scope even when a title names a
-bundle alongside them.
-
-## Trend — where it is getting worse
-
-Per-year issue counts (`2023 / 2024 / 2025 / 2026`) separate a **chronic** area from a
-**one-off spike**:
-
-| Area | By year | Reading |
-|---|---|---|
-| 13/14 MCP | `0 / 0 / 53 / 17` | Did not exist before 2025. **20 `jira` — the highest severity ratio in the corpus (29 %)**, vs 5 % for Component config. Churn agrees: `0 / 0 / 389 / 306`. |
-| 8 Observability | `1 / 7 / 11 / 12` | The only area still rising in 2026, 8 `jira`. Mitigation is already 0.80 — worth checking the tests cover *what changed*. |
-| 6 Agents | `0 / 28 / 48 / 18` | Sustained, 13 `jira`. |
-| 2 Component config | `6 / 95 / 75 / 13` | Falling sharply — the 2024 peak is a retired surface. Decay is what keeps it from dominating. |
-| 11 Templates | churn `433 / 1458 / 2813 / 2232` | Highest matched churn in the product — but **derived**, see the correction above. Its own bug evidence is only 6.1. |
+Core providers (OpenAI / Anthropic / Gemini) stay in scope even when a title names a bundle
+alongside them. The 1.12 Deployments page stays dropped — see `data.json`.
 
 ## Confidence and limits
 
-Stated plainly, because the ranking is only as good as these:
-
-- **17.0 % of the issue corpus is unclassified** (325 of 1912). The ×2-weighted axis rests
-  on 82.3 % of the corpus. Good enough to *order* areas; **not** good enough for fine
-  distinctions between neighbours in the ranking. The residue is concentrated in 2024–2025
-  (314 of 325), which enter at decay 0.3 and 0.6.
-- **Churn left 90.5 weighted unmatched** — more than all matched areas combined (configs,
-  CI, `pyproject`, and the mass `src/lfx/` restructure). It dilutes areas roughly evenly,
-  so relative ranking holds; absolute churn is not interpretable alone.
-- **Churn measures activity, not quality.** A heavily-committed area may be being
-  *improved*. This is why churn carries weight 1 against the issues' weight 2.
+- **26.3 % of the issue corpus is unclassified** (502 of 1912), against 17.0 % under
+  August's classifier. My rules are stricter and leave more residue; the design's rule is to
+  report the residue rather than force it, and a larger residue dilutes areas roughly evenly.
+  Good enough to *order* areas; not good enough for fine distinctions between neighbours.
+- **Churn left 45.9 % of weighted file touches unmatched** (configs, CI, the `src/lfx/`
+  restructure). Relative ranking holds; absolute churn is not interpretable alone.
+- **Churn measures activity, not quality.** A heavily-committed area may be being *improved*.
 - **Fragility and impact are judgement**, one rationale per row in `data.json`. Impact is
-  anchored to langflow.org's advertised promise rather than intuition, but the 1–5 mapping
-  is still a call.
-- **A2A's probability is genuinely low, not artificially low.** Churn was expected to
-  rescue it from a thin bug history and did not: 19 file touches, 2026 only, weighted 0.10.
-  Its risk comes almost entirely from impact.
-- **`12.6 Build / graph engine` mitigation is 0.70, not its bullet-derived 0.53.** Measured:
-  73 specs trigger a flow run and 63 are `@stable`, so a *total* engine break reddens the
-  daily loudly. Subtle defects — cycles, partial failure, execution order — have no
-  dedicated assertion, so it is not 0.80 either.
+  anchored to langflow.org's advertised promise rather than intuition.
+- **Impact and fragility were carried forward** for the 23 existing areas: the advertised
+  promise has not changed, and re-judging them without a reason would manufacture movement.
+  Only the three new areas were judged this cycle.
+- **The churn ref is `origin/main` at 5621dcfd84 (2026-09-15)**, six days behind this
+  generation. Bugs are fetched through 2026-09-21.
+- **The test-health window is 32 runs.** A spec quarantined *before* 2026-08-06 shows as
+  healthy here, because it no longer runs.
 
 ## What this implies for the next wave
 
-Not issues yet — that is a separate decision. In residual-risk order:
+Not issues yet — that is a separate decision. In residual-risk order, with what the previous
+cycle asked for carried through:
 
-1. **Create a security area in the checklist.** It is rank 1 purely because it is
-   unmeasured, and it cannot be triaged while it is invisible to every count.
-2. **Raise MCP and Agents above 0.80.** Both are at the matrix maximum and both are the
-   advertised product. This is a re-allocation, not new ground.
-3. **Close A2A.** Low probability, but 0.21 mitigation on an advertised surface.
-4. **Create an i18n area.** Zero coverage, with a known total-failure mode (black screen by
-   browser locale) evidenced by bugs rather than by churn.
-5. **Assert the graph engine's own contract** — cycles, partial failure, execution order.
-   A total break is caught by 63 `@stable` specs; a subtle one is caught by nothing.
-6. **Convert the 39 `[-]` template bullets.** Ranks 8th, not 4th, after the derived-churn
-   correction — but the specs already exist, so it is the cheapest point on the list.
+1. **Close `20.4 Ingestion` — 7 bullets, all empty.** The area doubled its inherent risk on
+   measurement and three 2026 bugs land on exactly this surface. Cheapest high-rank move on
+   the list.
+2. **Fix the six Agents specs before adding any.** `agent-component-regression`,
+   `model-provider-model-toggle`, `agent-multi-tool-selection`, `agent-max-iterations`,
+   `agent-multimodal-image-input`, `language-model-regression`. Agents is rank 3 *because of
+   these*, not despite them.
+3. **Decide the lane question for serving and enterprise.** 117 bullets and 24 specs that run
+   nowhere on a schedule. Either they get a scheduled lane or their bullets stop counting as
+   coverage — the current state is the `[-]` problem at its largest.
+4. **MCP is rank 1, and its remaining coverage is blocked rather than unwritten.** This
+   corrects the previous cycle's *"raise MCP and Agents above 0.80"* into something
+   actionable: all **3** of its empty bullets are recorded as not implementable on the
+   product (no client resource surface, `prompts/list` returns `[]` — #829), so no amount of
+   spec-writing moves them. The levers that exist are the chronic hard failure
+   (`mcp-client-agent-gemini-tool-regression`, 3 days), **#963**'s owed `@stable` restore on
+   `mcp-client-agent.spec.ts`, the `resources/read` guard waiting on upstream **LE-2012**,
+   and the `[~]` install bullet, which needs a lane that calls `POST /{project_id}/install`
+   from inside the container. Rank 1 here is a *watch*, not a backlog.
+5. **Land #1896.** Already open, already measured, and the graph-engine override is now
+   explicitly propped up by it not having landed.
+6. **A2A rose on inherent risk, not on missing tests — treat it as a watch too.** 4 upstream
+   bugs in 2026 against 1 lifetime before, including the AG-UI protocol pair. But all **4**
+   of its empty bullets carry a recorded reason they are out of reach (two real users under
+   `AUTO_LOGIN` — #1010; a receiver with an inspectable inbox — `LE-1706`; no URL-observable
+   signature surface — `LE-1718`), and its one `[~]` is pending an upstream question on a
+   string with zero call sites (#1244). Its mitigation is close to structurally capped.
 
-### The `[-]` problem underneath all of it
+**Two of the top six are capped, and that is the finding to carry into the wave discussion.**
+MCP and A2A cannot be bought down by writing specs. Memory Base, Agents, and the serving /
+enterprise lane question all can — which is why they are 1, 2 and 3 on this list rather than
+ordered strictly by residual risk.
 
-**89 of 500 checklist bullets are `[-]`** — automated, and running in **no scheduled lane**.
-They count as coverage in every generated figure and are watched by nothing on a schedule.
-39 of them are Templates alone. Separating them from `[x]` is most of what this method did.
+Dropped from the previous cycle's list, because they are done: *create a security area*
+(rank 1 → 7), *create an i18n area* (rank 8 → 24), *convert the 39 `[-]` template bullets*
+(mitigation 0.08 → 0.59).
 
 ---
 
 *Regenerating: `data.json` is the source of truth; this document renders it. The collection
-scripts are not committed — the two derivable axes are recorded with per-row provenance so
-the next cycle is an edit, not a rebuild. Update after each Langflow release cycle.*
+instruments are rebuilt per cycle and calibrated against the previous generation's recorded
+figures before use — the calibration numbers above are what make a rebuild honest, and they
+belong in every future generation. Update after each Langflow release cycle.*

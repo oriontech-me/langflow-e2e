@@ -37,7 +37,9 @@
     "api:baseline": "ts-node scripts/update-api-surface-baseline.ts",
     "templates:baseline": "ts-node scripts/update-registered-templates-baseline.ts",
     "api:coverage": "ts-node scripts/api-coverage-report.ts",
-    "tokens:trend": "node scripts/token-trend.mjs"
+    "tokens:trend": "node scripts/token-trend.mjs",
+    "coverage:feed": "ts-node scripts/build-coverage-matrix-feed.ts",
+    "coverage:refresh": "ts-node scripts/refresh-coverage-matrix.ts && ts-node scripts/build-coverage-matrix-feed.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
