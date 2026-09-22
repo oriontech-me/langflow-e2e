@@ -1475,6 +1475,84 @@
 - [ ] `serving_internal_mcp_hosts` (#14550 phase 4) — the fail-closed outbound allowlist that forwards the identity only to operator-allowlisted internal hosts. Needs an internal MCP host to point at
 - [ ] `serving_trace_end_user` and the end-user span link (#14616) — needs an OTLP collector, which this repo has none of (`otlp|opentelemetry` returns zero matches across `tests/`, `docs/`, `scripts/` and `.github/`)
 
+## integrations/ — Dedicated Integrations (1.13)
+
+> **New area (2026-09-21).** Langflow 1.13 ships **Dedicated Integrations** (upstream
+> epic LE-2398, cards INT-1..14): a `Connection` entity with server-side credentials, a
+> versioned capability manifest, integration policy, and 23 native connector components
+> across three new catalog categories (`google` extended, `microsoft` and `slack` new).
+> Measured on `1.13.0.dev19` — the image the daily runs — the whole surface is already
+> served: ten API routes, twenty capabilities, and the `/settings/connections` page. It
+> is its own area rather than more bullets under `api/flows/` or `ui-ux/` because the
+> subject is one entity crossing both layers, and because `@settings` covers that page
+> as navigation while these bullets are about the connection contract.
+
+> **No lane selector and no OAuth app.** Unlike `serving/` and `enterprise/`, this needs
+> no second container and no environment variable: the `ENABLE_INTEGRATIONS` gate the
+> upstream design declares (surface A9) is wired nowhere in the nightly. The credential
+> harness is `ConnectionCreate`'s own `credentials` object — a planted token reaches
+> `status: ready`, which is what lets the specs assert the secret boundary against a
+> sentinel with no provider account in play. Connections are owner-scoped and the suite
+> shares one superuser, so **no bullet here may be satisfied by a list length**: every
+> read filters on the unique name the test created.
+
+> **What this adds over upstream's own tests.** `design/dedicated-integrations/ga-checklist.json`
+> (INT-14, 2026-09-18) lists fifteen GA items; thirteen read `validated` and twelve of
+> those carry **zero** frontend evidence — all proved by Python unit tests in-process. The
+> two `pending-signoff` items are live tenant consent and the **Connections UI** itself.
+> These bullets are the black-box, user-reachable half, not a second copy of
+> `test_connections.py`. First batch: #1966–#1971.
+
+#### 24.1 Connection lifecycle contract (#1966)
+
+- [ ] `POST /api/v1/connections` answers `201` with the exact `ConnectionRead` key set, and `GET` lists the row matched **by its unique name** — never by index or list length
+- [ ] The `422` shapes, one per cause: missing `provider_key` / `name` / `executing_identity`, a `name` violating `^[a-z0-9]+(?:_[a-z0-9]+)*$`, an extra key (`extra_forbidden`), and `executing_identity` sent as a string instead of a descriptor object
+- [ ] `PATCH` renames and flips `allow_non_interactive`, and a field `ConnectionUpdate` does not declare (`granted_scopes`, `status`) is refused
+- [ ] `DELETE` answers `204`; a repeat `DELETE` and an unknown UUID both answer `404`, with removal **re-read** rather than inferred from the status (#1759/#1777/#1807)
+
+#### 24.2 Secret boundary (#1967)
+
+- [ ] A planted sentinel `access_token` and `refresh_token` appear in the raw **text** of no client-reachable response — the `201`, both reads, `/health`, `/test`, `/revoke` and `/api/v1/integrations`. Asserted on the text, not the parsed object: a token nested under an unexpected key survives a key check
+- [ ] `has_credentials` is `true` while no `access_token` / `refresh_token` / `credentials` key exists in the payload at all, which is the machine-readable half of the page's own promise that tokens stay on the server
+- [ ] `POST /test` with a `required_scopes` the connection does not hold is refused naming the missing scope and without the token — upstream promises the refusal lands *before* the provider call
+- [ ] `status_reason` is `credential-missing` | `credential-undecryptable` and **only** on `status: error`, the distinction that sends a user to re-authorize versus to fix the instance key
+
+#### 24.3 Capability manifest and effective policy (#1968)
+
+- [ ] Every provider and capability row carries its full field set, with the enum-valued fields inside their measured domains (`risk`, `identity`, `substrate`) — asserted as shape per row, never as a count, since the capability set grows with INT-10..12
+- [ ] **Cross-check:** each capability's `ext:<provider>:<component_ref>@official` is present in `GET /api/v1/all`. No upstream test crosses the manifest and the catalog, so a component renamed on one side is a placed node that cannot resolve and nothing sees it
+- [ ] `enabled` and `connection_count` are derived: false/0 with no connections, true/1 after creating one, and back after deleting it
+- [ ] `allowed: true` / `blocked_policy_key: null` on every capability **while** `/policy/effective` reports `unrestricted: true` with an empty `blocked_action_keys` — the two endpoints asserted as agreeing, so a future policy change cannot be silently one-sided
+- [ ] Blocking a provider or an action and proving enforcement at discovery **and** execution — deferred: integration policy is instance-global, so it belongs to the `@governance @destructive` lane
+
+#### 24.4 The `/settings/connections` page (#1969)
+
+- [ ] `sidebar-nav-Connections` reaches the page and the subtitle promise renders verbatim — *"Accounts your flows act through. Tokens stay on the server; only metadata is shown here."* — the user-facing half of § 24.2
+- [ ] The empty state reads *"No connections yet."* and still offers `add-connection`
+- [ ] A row seeded through the API renders its display name, account, status badge, **and both** the scope count and the abbreviated scope list — a count alone passes on an empty list
+- [ ] The `Mine` / `Instance` / `Other users` tabs separate a `user`-owned connection from an `instance`-owned one, the only place the two ownership modes are visible to a user
+- [ ] Search keeps the matching row and drops a second seeded one, asserted as *"the other row is gone"* rather than as a total
+- [ ] The status badge per state, for the states reachable from outside; the spec doc records which, instead of the spec skipping silently
+- [ ] The Add / Reconnect wizard — deferred: it opens but stops at *"No OAuth registration is configured for this provider"*, so walking it needs `/oauth/start` and the callback mocked
+
+#### 24.5 Row actions and the non-interactive opt-in (#1970)
+
+- [ ] `allow_non_interactive` is **off by default**, read both from the API and from the menu item's presentation — a default flipped to on is a silent privilege grant, and this is upstream's own risk #8
+- [ ] Toggling it in the UI produces the direction-specific toast **and** the API agrees; the state is read from the API because the menu item is a plain `role=menuitem` with `aria-checked: null`, so the UI does not expose it programmatically
+- [ ] `PATCH allow_non_interactive` through the API is reflected after a reload — upstream's *"show state set through the API too"*, verbatim
+- [ ] `Rename` updates the row and the API together; `Revoke` moves the badge to `Revoked` and the status agrees; `Delete` removes the row and a follow-up read answers `404`
+- [ ] `Check credential` stamps `health_checked_at` — **not** asserted: that `healthy` proves a working credential, since the endpoint answered `healthy` for a planted fake token with no provider configured
+- [ ] Whether a non-interactive caller actually resolves the connection (webhook, deployment, public flow, MCP-exposed project, A2A, v2 workflow host) — deferred: the executing-identity matrix needs a PERMIT/DENY cell written per entry point before any code
+
+#### 24.6 Saved-flow contract and node surfaces
+
+- [ ] Placing a connector component from the new `google` / `microsoft` / `slack` palette categories and binding a connection through the node-level picker (upstream surface B5), including the "runs as" identity label that tells `slack.user.send` from `slack.bot.post`
+- [ ] Export and import preserving `ext:<provider>:<Class>@official` across a substrate change — the contract that lets MCP ⇄ SDK ⇄ REST swap without the user reopening the flow
+- [ ] Cross-user isolation: one user's connection is invisible and unusable to another. Needs a second user under `auto_login`
+
+---
+
+
 ---
 
 ---
