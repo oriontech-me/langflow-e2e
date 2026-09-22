@@ -65,10 +65,22 @@ const ANSWER_OUTPUT_NODE = "ChatOutput-answer";
 const createdFlowIds: string[] = [];
 const createdKbNames: string[] = [];
 
-// Named flows created via the API race on unique-name suffixing under
-// parallelism; run the file serially (same rationale as the sibling
-// knowledge-ingestion specs).
-test.describe.configure({ mode: "serial" });
+// No `test.describe.configure({ mode: "serial" })` (#1690). This file declares a
+// SINGLE test, so the declaration could only ever cost — a failure skipping a
+// later sibling — and never buy: there is no sibling to order, and no second test
+// to keep in one worker.
+//
+// The rationale it carried does not survive reading either: unique-name suffixing
+// races between FILES, and `mode: "serial"` serialises only within one file (see
+// `helpers/provider-setup/preconfigure-routed-provider.ts`, where that exact
+// limit is measured). This spec does not rely on it regardless — every flow it
+// creates is named `RAG Pipeline <timestamp>_<random>` and every KB
+// `kb_rag_<timestamp>_<random>`, so there is no name for a neighbour to collide
+// with. Teardown stays scoped to the ids and names this test created (#515).
+//
+// If a second test is ever added here, order it with `test.describe.serial` on
+// the describe that needs it — not on the file — so a failure cannot skip a test
+// that shares nothing with it.
 
 // Google backs BOTH the embedding of every chunk and the answer model, so a key
 // that exists but is drained turns each node run into a live call against a dead
