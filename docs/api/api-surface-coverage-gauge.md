@@ -1,6 +1,6 @@
 # API surface coverage gauge — scope, denominator and detection
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev0` and `1.13.0.dev1`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev19`; first measured on `1.13.0.dev0` and `1.13.0.dev1`)
 
 Owning issue: #1692 (Wave 7 — OSS API coverage). This document is the standing
 answer to *"how much of the OSS REST API do we cover?"*, so the denominator stops
@@ -25,20 +25,25 @@ and by unit tests on its pure functions. Three claims:
 
 ## Why `/openapi.json` is not the denominator
 
-Measured on `langflowai/langflow-nightly:latest` — `1.13.0.dev0` (port 7860) and
-`1.13.0.dev1` (port 7880). Both serve an identical schema, so this is the image's
-behaviour and not one container's state.
+Measured on `langflowai/langflow-nightly:latest` — first on `1.13.0.dev0` (port 7860)
+and `1.13.0.dev1` (port 7880), which serve an identical schema, so this is the image's
+behaviour and not one container's state; then again on `1.13.0.dev19` for the
+baseline refresh recorded under [Scope](#scope).
 
-| Source | Operations (method + path) |
-|---|---|
-| `GET /openapi.json` | 86 paths / **120** |
-| The instance's router table | 287 raw → **254** after collapsing duplicate-registration pairs |
-| … present in the schema | 117 |
-| … **hidden** (`include_in_schema=False`) | **137** |
+| Operations (method + path) | `1.13.0.dev0` / `dev1` | `1.13.0.dev19` |
+|---|---|---|
+| `GET /openapi.json` | 86 paths / **120** | 112 paths / **159** |
+| The instance's router table | 287 raw → **254** after collapsing duplicate-registration pairs | 311 raw → **277** |
+| … present in the schema | 117 | 156 |
+| … **hidden** (`include_in_schema=False`) | **137** | **121** |
 
-Routes that are alive and absent from the schema. Unauthenticated `403`/`422`/`401`
-proves the route exists; a path that does **not** exist answers `404` on `GET` (the
-SPA catch-all) and `405` on `POST`, so the two are distinguishable without a token:
+The hidden count fell because 16 `authz/*` operations moved **into** the schema on
+`1.13.0.dev19`, not because a route vanished — that refresh removed nothing.
+
+Routes that are alive and absent from the schema — the same answers on `1.13.0.dev0`
+and `1.13.0.dev19`. Unauthenticated `403`/`422`/`401` proves the route exists; a path
+that does **not** exist answers `404` on `GET` (the SPA catch-all) and `405` on `POST`,
+so the two are distinguishable without a token:
 
 | Route | Unauthenticated answer |
 |---|---|
@@ -87,7 +92,7 @@ slash; without it the request falls through to `/api/v2/files/{file_id}`:
 |---|---|
 | `POST /api/v2/files/batch/` | `200`, `application/x-zip-compressed` |
 | `POST /api/v2/files/batch` | `405 Method Not Allowed` |
-| `DELETE /api/v2/files/batch` | `422` `uuid_parsing`, `loc: ["path","file_id"]`, `input: "batch"` |
+| `DELETE /api/v2/files/batch` | `422` `uuid_parsing`, `loc: ["path","file_id"]` — plus `input: "batch"` on `1.13.0.dev0`, which a `422` stopped echoing from `1.13.0.dev10` (langflow-ai/langflow#15038, #1841) |
 
 So the canonical key keeps the **registered spelling**, and two forms collapse into
 one operation only when the router registered both (which is the common case, e.g.
@@ -104,10 +109,13 @@ on its first real run, and pinned by a unit test that also checks the collapse d
 
 ### The inventory does not over-report — verified, not assumed
 
-All **50** parameter-free in-scope `GET` operations answer `403` (43), `200` (6) or
-`307` (1). **Zero** `404`. The liveness probe is part of the baseline refresh for
-that reason: it is what distinguishes a route the package registers from one the
-build actually serves, and it is cheap.
+All **50** parameter-free in-scope `GET` operations answered `403` (43), `200` (6) or
+`307` (1) on `1.13.0.dev0`. On `1.13.0.dev19` the probe covers **60** — the five
+app-level `GET`s the walk now reaches, plus five from the new `connections`,
+`integrations` and `triggers` families — answering `403` (50), `200` (9) or `307` (1),
+unauthenticated. **Zero** `404` on either build. The liveness probe is part of the
+baseline refresh for that reason: it is what distinguishes a route the package
+registers from one the build actually serves, and it is cheap.
 
 ---
 
@@ -137,8 +145,8 @@ build actually serves, and it is cheap.
 
 ## Scope
 
-**204 operations in scope** — 114 in the schema, 90 hidden. Excluded: 50, each with
-a reason that is not "hard".
+**227 operations in scope** on `1.13.0.dev19` — 137 in the schema, 90 hidden.
+Excluded: 50, each with a reason that is not "hard".
 
 | Excluded | Ops | Why |
 |---|---|---|
@@ -152,6 +160,22 @@ Exclusions live in the inventory script as data with a `reason` per family, so t
 report can print them. A family added to the router with no classification is
 reported, not silently dropped — the rule `--mode=check` already applies to the
 `lfx` subtrees in `scripts/watch-upstream-areas.mjs`.
+
+**Refreshed from `1.13.0.dev0` (204 in scope) to `1.13.0.dev19` (227)** (#1988) — the
+diff is additions only:
+
+- **23 new operations, all in scope and all in the schema:** `connections` (10 — the
+  Dedicated Integrations entity, first driven by
+  `api/connections/api-connections-lifecycle.spec.ts`), `integrations` (2) and
+  `triggers` (11). None of the three families is classified, so all of them count in
+  the denominator, and an operation stays uncovered until a spec declares it — four of
+  the ten `connections` operations already are.
+- **16 `authz/*` operations moved from hidden into the schema.** They were already in
+  the baseline and `authz/*` stays excluded at 24, so the denominator does not move —
+  but they are why the gate's `ADDED` list on `1.13.0.dev19` read **39** lines for 23
+  new operations: it compares the schema-visible half only, so a hidden route that
+  becomes visible reads as an addition.
+- **No removals.**
 
 ---
 
@@ -181,8 +205,8 @@ is read as clean without a verdict.
 
 Coverage is written per test (one file per test id, so workers do not contend) into
 `.api-coverage/`, and aggregated by `npm run api:coverage`, which prints
-`covered / 204` per family **and names the uncovered operations** — a bare
-percentage hides which ones, the lesson `reports/spec-durations.json` paid for
+`covered / in-scope` overall and per family **and names the uncovered operations** —
+a bare percentage hides which ones, the lesson `reports/spec-durations.json` paid for
 (#1326).
 
 **The records live outside `test-results/` on purpose, and it is not a preference.**
