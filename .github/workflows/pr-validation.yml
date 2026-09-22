@@ -458,16 +458,38 @@ jobs:
           # a path to nothing.
           CI_COVERAGE=""
           if [ "$TOTAL" -eq 0 ]; then
-            # Which workflows are turned ON is not in the repository, and a workflow
-            # disabled in Actions answers 422 however good its YAML is — four of ours
-            # are disabled today. Best-effort: if this cannot be fetched, the verdict
-            # falls back to the trigger alone rather than failing the lane (#1609).
-            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows" --paginate \
-              --jq '.workflows[] | .path + "\t" + .state' > /tmp/wf-states.tsv 2>/dev/null \
-              || { echo "::warning::could not read workflow states; a disabled workflow will not be flagged."; rm -f /tmp/wf-states.tsv; }
+            # Two inputs the repository working tree cannot supply, both for the
+            # `dispatch` verdict alone — so both are skipped unless the diff actually
+            # touches a CI surface, and both are best-effort: losing either degrades
+            # the wording, never the lane (#1609).
+            #
+            #  1. Which workflows are turned ON. A workflow disabled in Actions
+            #     answers 422 however good its YAML is, and four of ours are.
+            #  2. The BASE ref's copy of the workflows. GitHub resolves
+            #     `workflow_dispatch` from the DEFAULT branch, so reading this
+            #     branch's copy would tell a PR that ADDS the trigger to dispatch a
+            #     workflow that does not have it yet — #1609, one PR later.
             STATES=""
-            [ -s /tmp/wf-states.tsv ] && STATES="--workflow-states=/tmp/wf-states.tsv"
-            node scripts/ci-change-coverage.mjs --stdin --format=json $STATES < /tmp/changed.txt > /tmp/ci-coverage.json \
+            BASE_CI=""
+            if grep -qE '^(\.github/|scripts/)' /tmp/changed.txt; then
+              if gh api "repos/${GITHUB_REPOSITORY}/actions/workflows" --paginate \
+                   --jq '.workflows[] | .path + "\t" + .state' > /tmp/wf-states.tsv 2>/tmp/wf-states.err; then
+                STATES="--workflow-states=/tmp/wf-states.tsv"
+              else
+                echo "::warning::could not read workflow states ($(head -1 /tmp/wf-states.err)); a disabled workflow will not be flagged."
+              fi
+              # Archive to a FILE, not through a pipe: this shell has no `pipefail`,
+              # so a piped `tar -x` would report its own status and a failed
+              # `git archive` would read as success over an empty stream.
+              mkdir -p /tmp/base-ci
+              if git archive -o /tmp/base-ci.tar "origin/$BASE_REF" .github/workflows 2>/tmp/base-ci.err \
+                 && tar -xf /tmp/base-ci.tar -C /tmp/base-ci 2>>/tmp/base-ci.err; then
+                BASE_CI="--base-root=/tmp/base-ci"
+              else
+                echo "::warning::could not read the base ref's workflows ($(head -1 /tmp/base-ci.err)); trigger answers will come from this branch."
+              fi
+            fi
+            node scripts/ci-change-coverage.mjs --stdin --format=json $STATES $BASE_CI < /tmp/changed.txt > /tmp/ci-coverage.json \
               || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
             CI_COVERAGE=/tmp/ci-coverage.json
             VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
