@@ -435,6 +435,12 @@ test("the lane can confirm a clean day too, and only where it was asked for (#19
   // so a caller cannot announce a verdict the report does not support (#1012).
   const block = sh.slice(start, sh.indexOf("notify-slack.mjs", start));
   assert.match(block, /SLACK_ANNOUNCE_GREEN="\$NOTIFY_SLACK_ALWAYS"/, "the notifier is never told to announce it");
+
+  // And the runner's OWN verdict travels with it. A shard whose subshell dies leaves a
+  // merged report that is neither empty nor partial and lists no failure — it reads
+  // like a green day — while this script exits 1 over the missing blob and opens the
+  // umbrella. Without this the two views contradict each other in the same channel.
+  assert.match(block, /TEST_JOB_FAILED="\$TEST_JOB_FAILED"/, "the notifier cannot tell a clean report from a clean run");
 });
 
 test("the only write back to the repository is the @stable removal, behind its guard", () => {

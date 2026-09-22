@@ -83,6 +83,8 @@
 //   RUN_ID, VM_HOSTNAME
 //   SLACK_DRY_RUN=1     render and print the payload, post nothing
 //   SLACK_ANNOUNCE_GREEN=1  announce a CLEAN day too, as its own shape. Default: off.
+//   TEST_JOB_FAILED     "1" = the RUNNER failed this run, for a reason that may not be
+//                       in the report at all. It can never be announced as green.
 //   SLACK_FORCE=1       post even when the run reported nothing bad (wiring test).
 //                       Implies SLACK_ANNOUNCE_GREEN — it posts the green message, not
 //                       a red one with a zero in it.
@@ -212,11 +214,48 @@ const nothingFailed =
 // would really look like instead of "🔴 Daily @stable failed — 0 test(s)" (#1981).
 const announceGreen = env.SLACK_ANNOUNCE_GREEN === "1" || env.SLACK_FORCE === "1";
 
+// A clean REPORT is not a clean RUN, and the two come apart in ways this file cannot
+// see from `payload.json` alone. Both were live before they were guarded:
+//
+//   - THE RUNNER FAILED THE RUN. A shard whose subshell dies never writes its blob:
+//     the merged report holds the survivors, carries no top-level error, and is
+//     therefore neither empty nor partial — while `phase_merge` sets SHARD_COMPLETE
+//     false and the verdict exits 1. The surviving specs passed, so the payload reads
+//     exactly like a green day. Same for the listing gate and the version gate: they
+//     fail a run over something no test result mentions. On such a day the umbrella
+//     IS opened, so announcing green here does not merely overstate the day — it
+//     contradicts, in the same channel, the issue this message is a second view of.
+//   - NOTHING PASSED. `tests_total` counts skipped, so a run whose specs skip at
+//     RUNTIME — expired provider credentials, an entitlement gate — is not empty, not
+//     partial, and fails nothing. That is the green-all-skip #1010 and #1012 exist to
+//     prevent, and it renders `0 failed · 0 flaky · 0 passed · 735 skipped`.
+//
+// Neither is a reason to say something ELSE: the refusal is a refusal, and the day is
+// still reported by the umbrella and by the missed-run alarm. This restores the
+// silence that preceded the green shape for exactly these two days, and says why on
+// stderr so the log carries the reason.
+const runnerFailed = env.TEST_JOB_FAILED === "1";
+const passedRaw = totals.passed;
+const somethingPassed =
+  passedRaw !== undefined && passedRaw !== null && passedRaw !== "" && Number(passedRaw) > 0;
+
 if (nothingFailed && !announceGreen) {
   console.log(
     "[slack] the run reported no failures and neither the empty nor the partial verdict — nothing to announce. " +
       "(SLACK_ANNOUNCE_GREEN=1 announces the clean day as its own message; SLACK_FORCE=1 posts anyway, " +
       "e.g. to test the webhook wiring.)",
+  );
+  process.exit(0);
+}
+
+if (nothingFailed && (runnerFailed || !somethingPassed)) {
+  const why = [
+    runnerFailed ? "the runner reported this run as FAILED, for a reason the per-test report does not carry" : "",
+    somethingPassed ? "" : `not one test passed (${totals.skipped ?? "?"} skipped)`,
+  ].filter(Boolean).join("; and ");
+  console.error(
+    `[slack] ::warning:: the report lists no failures, but ${why} — refusing to announce a clean day. ` +
+      "Nothing was posted; the run's own verdict and the umbrella stand.",
   );
   process.exit(0);
 }
@@ -389,8 +428,14 @@ const failureList = (budget) => {
 // noise beside the diagnosis; on a clean one it is half of what a reader is checking —
 // a green day that took twice as long as usual is worth a second look, and nothing
 // else in this message would show it.
-const durationMin =
-  Number.isFinite(run.duration_ms) && run.duration_ms > 0 ? Math.round(run.duration_ms / 60000) : null;
+// Rounded to minutes, EXCEPT under one: `Math.round` renders a 40-second run as
+// "0 min", and the one number here whose job is to make an abnormal green day worth a
+// second look would read as a formatting artefact on exactly such a day.
+const durationText = !Number.isFinite(run.duration_ms) || run.duration_ms <= 0
+  ? null
+  : run.duration_ms < 60_000
+    ? `${Math.max(1, Math.round(run.duration_ms / 1000))} s`
+    : `${Math.round(run.duration_ms / 60_000)} min`;
 
 const countsLine = `${bold(`${totals.failed ?? 0} failed`)} · ${totals.flaky ?? 0} flaky · ${totals.passed ?? 0} passed · ${totals.skipped ?? 0} skipped`;
 
@@ -398,7 +443,7 @@ const totalsLine =
   shape === "failures"
     ? countsLine
     : shape === "green"
-      ? [countsLine, durationMin !== null ? `${durationMin} min` : ""].filter(Boolean).join("  ·  ")
+      ? [countsLine, durationText ?? ""].filter(Boolean).join("  ·  ")
       : "";
 
 // Truncate the quoted cause BEFORE it is fenced, not after. The body as a whole is

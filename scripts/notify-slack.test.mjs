@@ -382,6 +382,76 @@ test("the knob widens WHEN the notifier speaks, never WHAT counts as green (#198
   assert.deepEqual(withKnob, without, "the knob changed a message about a red day");
 });
 
+test("a clean REPORT is not a clean RUN: the runner's own failure outranks it (#1981)", () => {
+  // The day this is for: a shard's subshell dies before writing its blob. The merged
+  // report holds the survivors, carries no top-level error — so it is neither empty nor
+  // partial — and the survivors passed, so the payload reads exactly like a green day,
+  // while phase_merge sets SHARD_COMPLETE false and the verdict exits 1. The listing
+  // gate and the version gate fail a run the same way: over something no test result
+  // mentions. On such a day the umbrella IS opened, so a green message would not merely
+  // overstate the day, it would contradict the issue it is a second view of, in the
+  // same channel.
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const r = run({
+    SLACK_WEBHOOK_URL: url,
+    PAYLOAD_JSON: greenPayloadPath,
+    SLACK_ANNOUNCE_GREEN: "1",
+    TEST_JOB_FAILED: "1",
+    SLACK_DRY_RUN: "1",
+  });
+
+  assert.equal(r.status, 0, "the refusal must stay fail-soft");
+  assert.doesNotMatch(r.stdout, /is green/, "a run the runner failed was announced as green");
+  assert.match(r.stderr, /refusing to announce a clean day/);
+  assert.match(r.stderr, /reported this run as FAILED/);
+  // Refusing is refusing: it does not invent a different verdict out of a report that
+  // does not support one either. The day is still carried by the umbrella and by the
+  // missed-run alarm.
+  assert.doesNotMatch(r.stdout, /\{/, "something was rendered for a day this script cannot describe");
+});
+
+test("green requires that something actually PASSED, not merely that nothing failed (#1010)", () => {
+  // `tests_total` counts skipped, so a run whose specs skip at RUNTIME — expired
+  // provider credentials, an entitlement gate — is not empty, not partial and fails
+  // nothing. Before this, the lane's one signal said "✅ Daily @stable is green — 0
+  // passed" over `0 failed · 0 flaky · 0 passed · 735 skipped`.
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const allSkipped = join(dir, "payload-all-skipped.json");
+  writeFileSync(
+    allSkipped,
+    JSON.stringify({ ...GREEN_PAYLOAD, totals: { passed: 0, failed: 0, flaky: 0, skipped: 735 } }),
+    "utf8",
+  );
+  const skipped = run({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: allSkipped, SLACK_ANNOUNCE_GREEN: "1", SLACK_DRY_RUN: "1" });
+  assert.equal(skipped.status, 0);
+  assert.doesNotMatch(skipped.stdout, /is green/, "the green-all-skip day was announced as clean");
+  assert.match(skipped.stderr, /not one test passed \(735 skipped\)/);
+
+  // The same gate from the other side: a totals object carrying `failed` and nothing
+  // else is not a day that passed 0 tests, it is a day nobody counted — and it used to
+  // render "is green — 0 passed".
+  const failedOnly = join(dir, "payload-failed-only.json");
+  writeFileSync(failedOnly, JSON.stringify({ version: 1, date: "2026-08-25", totals: { failed: 0 }, failures: [] }), "utf8");
+  const bare = run({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: failedOnly, SLACK_ANNOUNCE_GREEN: "1", SLACK_DRY_RUN: "1" });
+  assert.doesNotMatch(bare.stdout, /is green/);
+  assert.match(bare.stderr, /not one test passed/);
+});
+
+test("a run under a minute says seconds, not \"0 min\"", () => {
+  // Math.round to minutes renders a 40-second run as "0 min", and the one number here
+  // whose job is to make an abnormal green day worth a second look would read as a
+  // formatting artefact on exactly such a day.
+  const fast = join(dir, "payload-fast.json");
+  writeFileSync(fast, JSON.stringify({ ...GREEN_PAYLOAD, duration_ms: 40_000 }), "utf8");
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    PAYLOAD_JSON: fast,
+    SLACK_ANNOUNCE_GREEN: "1",
+  });
+  assert.match(body.body, /40 s/);
+  assert.doesNotMatch(body.body, /0 min/);
+});
+
 test("a green day that measured an outage reports it, without sending anyone to triage it", () => {
   // The outage note is written for a red day: it tells the reader the specs that failed
   // inside the window are collateral and to read the outage first. On a green day both

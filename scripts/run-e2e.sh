@@ -2387,6 +2387,7 @@ phase_publish() {
     ISSUE_URL="$issue_url" REPORT_URL="$REPORT_URL" RUN_ID="$RUN_ID" \
     LANGFLOW_VERSION="$LANGFLOW_VERSION" \
     SLACK_ANNOUNCE_GREEN="$NOTIFY_SLACK_ALWAYS" \
+    TEST_JOB_FAILED="$TEST_JOB_FAILED" \
       node scripts/notify-slack.mjs || warn "the Slack notification failed (does not fail the run)."
   fi
 }
