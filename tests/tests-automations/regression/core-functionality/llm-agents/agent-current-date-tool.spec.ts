@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import type { Page } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -66,30 +66,41 @@ function acceptedUtcDates(): string[] {
 const createdFlowIds: string[] = [];
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
-  // Collect EVERY flow id this page creates (POST /api/v1/flows 201): the
-  // app can fire more than one flows POST during template load, and only
-  // one of them is the flow that persists — deleting all collected ids is
-  // still id-scoped (only THIS test's creations), and a 404 on an already-
-  // gone transient id is harmless.
-  page.on("response", (resp) => {
+  // Collect EVERY flow id this page creates (POST /api/v1/flows 201): the app can
+  // fire more than one flows POST during template load, and only one of them is
+  // the flow that persists — deleting all collected ids is still id-scoped (only
+  // THIS test's creations), and a 404 on an already-gone transient id is harmless.
+  //
+  // Record the responses synchronously as they arrive and resolve their bodies in
+  // `finally`, rather than a fire-and-forget `.then()` that pushes the id whenever
+  // it happens to resolve. The fire-and-forget shape let the last flow's id land
+  // AFTER `afterEach` had already spliced the array, leaking that flow; awaiting
+  // here guarantees every id is recorded before the test proceeds. The listener is
+  // detached for the same reason it is registered — leaving it attached keeps
+  // pushing ids from later navigations into a test that has stopped cleaning up.
+  // Same shape, and same reasoning, as `agent-system-prompt.spec.ts`.
+  const flowCreations: Response[] = [];
+  const onResponse = (resp: Response) => {
     if (
       resp.url().includes("/api/v1/flows") &&
       resp.request().method() === "POST" &&
       resp.status() === 201
     ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {}); // non-JSON / batch payloads
+      flowCreations.push(resp);
     }
-  });
+  };
+  page.on("response", onResponse);
   try {
     await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
+  } finally {
+    page.off("response", onResponse);
+    for (const resp of flowCreations) {
+      const body = (await resp.json().catch(() => null)) as { id?: string } | null; // non-JSON / batch payloads
+      if (body?.id) createdFlowIds.push(body.id);
+    }
   }
 }
 
