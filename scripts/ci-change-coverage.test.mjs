@@ -273,10 +273,11 @@ test("a workflow with no workflow_dispatch is never told to be dispatched", () =
 });
 
 test("a mixed diff dispatches what it can and is honest about the rest", () => {
-  // Not hypothetical: `scripts/stable-tests.ts` is run by daily-stable and
-  // weekly-stable — both dispatchable — AND by update-coverage-summary, which is
-  // not. Flipping the whole message on the worst member would lose two real
-  // dispatches; leaving it alone loses the correction.
+  // Not hypothetical: `scripts/stable-tests.ts` is run by daily-stable, which is
+  // dispatchable, AND by update-coverage-summary, which has no trigger (and by
+  // weekly-stable, which carries the trigger but is disabled, so it 422s too).
+  // Flipping the whole message on the worst member would withhold the one dispatch
+  // that does work; leaving it alone loses the correction.
   const { annotation } = adviceFor("scripts/partition-shards.mjs", "scripts/coverage-summary.ts");
   assert.match(annotation, /Dispatch \.github\/workflows\/daily-stable\.yml on this branch/);
   assert.match(annotation, /update-coverage-summary\.yml cannot be dispatched on a branch/);
@@ -437,9 +438,8 @@ test("the CLI reads the triggers from the BASE tree, not from this branch", () =
 
 test("a workflow the PR ADDS is reported as absent from the default branch, not dispatched", () => {
   // `gh workflow run` answers 404 for a workflow that is not on the default branch,
-  // and the base tree is how this knows. The base tree here has no such file.
-  const tmp = makeTempDir("cc-base-");
-  fs.mkdirSync(path.join(tmp, ".github/workflows"), { recursive: true });
+  // and the base tree is how this knows. In-memory, because what is under test is
+  // the CLASSIFICATION — the on-disk `--base-root` path has its own CLI test above.
   const refsWithNewLane = buildCiReferences({
     workflows: new Map([
       [PR_LANE, FIXTURE.workflows.get(PR_LANE)],
@@ -448,20 +448,25 @@ test("a workflow the PR ADDS is reported as absent from the default branch, not 
     actions: FIXTURE.actions,
     baseWorkflows: new Map([[PR_LANE, FIXTURE.workflows.get(PR_LANE)]]),
   });
-  try {
-    const r = classifyCiChange({
-      changed: [".github/workflows/new-lane.yml"],
-      refs: refsWithNewLane,
-    });
-    const target = r.dispatchTargets[0];
-    assert.equal(target.onDefaultBranch, false);
-    const { annotation } = dispatchAdvice(r);
-    assert.doesNotMatch(annotation, /Dispatch/);
-    assert.match(annotation, /does not exist on the default branch yet/);
-    assert.match(annotation, /answers 404 until this merges/);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+  const r = classifyCiChange({ changed: [".github/workflows/new-lane.yml"], refs: refsWithNewLane });
+  assert.equal(r.dispatchTargets[0].onDefaultBranch, false);
+  const { annotation } = dispatchAdvice(r);
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /does not exist on the default branch yet/);
+  assert.match(annotation, /answers 404 until this merges/);
+});
+
+test("a flag given no value degrades OUT LOUD, never silently", () => {
+  // `""` is falsy, so a bare `--base-root=` used to switch the whole default-branch
+  // read off without a word — the one direction this script's header forbids.
+  const r = cli(
+    ["--root", REPO_ROOT, "--format=json", "--base-root=", "--workflow-states=", "--stdin"],
+    "scripts/coverage-summary.ts\n",
+  );
+  assert.equal(r.status, 0, "an empty value degrades; it is not a usage error");
+  assert.equal(r.json.verdict, "dispatch");
+  assert.match(r.stderr, /--base-root= was given no value/);
+  assert.match(r.stderr, /--workflow-states= was given no value/);
 });
 
 test("a base tree that cannot be read warns and still produces a verdict", () => {

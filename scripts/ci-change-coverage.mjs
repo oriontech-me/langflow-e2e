@@ -121,15 +121,21 @@
  * that ADDS `workflow_dispatch` to an existing one — which is #1609's own Option B,
  * so the next PR against it would have been handed, verbatim, the warning #1609 was
  * filed about. `--base-root` therefore points at the DEFAULT BRANCH's `.github` tree
- * — the lane passes `github.event.repository.default_branch`, not the PR base, since
- * the two coincide only while every PR targets the default and a stacked PR would
- * otherwise read the triggers off a branch GitHub does not resolve against — and the
- * triggers come from there; the reference graph still comes from the head, because
- * the graph must reflect the wiring the PR proposes.
+ * and the triggers come from there; the reference graph still comes from the head,
+ * because the graph must reflect the wiring the PR proposes.
+ *
+ * The lane passes `github.event.repository.default_branch` rather than the PR base
+ * because that is the semantically right input, NOT because a live hole was closed:
+ * `pr-validation.yml` is `on: pull_request: branches: [main]`, and that filter is on
+ * the base, so this lane can never see a PR whose base is not the default. The two
+ * are the same value by construction here — the switch is against a future edit to
+ * that trigger, and reading it as a fixed bug would overstate it.
  *
  * Without `--base-root` the branch copy is used and any named workflow the PR
- * CHANGED is reported unverified — only those, since for every other workflow the
- * two copies are the same file and the answer is exact.
+ * CHANGED is reported unverified. Only those, because those are the ones the PR can
+ * be held responsible for — a workflow that moved on the default branch since the
+ * fork point is also read stale here and carries no caveat, which is a real though
+ * much smaller gap and the price of not caveating every instruction (#1252).
  *
  * The two sources of "is it on the default branch" — the Actions listing and the
  * base tree — DISAGREE in exactly one case: a workflow this PR adds that has already
@@ -681,6 +687,14 @@ function readCiSources(root = ".") {
   return { workflows, actions };
 }
 
+/** A flag's value, or `null` with the degradation announced rather than silent. */
+function emptyFlag(arg, flag) {
+  const value = arg.slice(flag.length);
+  if (value) return value;
+  process.stderr.write(`::warning::ci-change-coverage: ${flag} was given no value; continuing without it.\n`);
+  return null;
+}
+
 function main(argv) {
   const args = argv.slice(2);
   let format = "text";
@@ -694,8 +708,12 @@ function main(argv) {
       changed.push(...fs.readFileSync(0, "utf8").split("\n").map((l) => l.trim()).filter(Boolean));
     } else if (a.startsWith("--format=")) format = a.slice(9);
     else if (a === "--root") root = args[++i];
-    else if (a.startsWith("--workflow-states=")) statesFile = a.slice("--workflow-states=".length);
-    else if (a.startsWith("--base-root=")) baseRoot = a.slice("--base-root=".length);
+    // An EMPTY value degrades and SAYS SO. `""` is falsy, so a bare `--base-root=`
+    // used to switch the whole default-branch read off without a word — silence,
+    // which is the one direction this file's header forbids. Same shape #1812
+    // records for `declared-stable-specs`, failing the other way.
+    else if (a.startsWith("--workflow-states=")) statesFile = emptyFlag(a, "--workflow-states=");
+    else if (a.startsWith("--base-root=")) baseRoot = emptyFlag(a, "--base-root=");
     else if (!a.startsWith("--")) changed.push(a);
     else {
       process.stderr.write(`::error::ci-change-coverage: unknown argument ${a}\n`);

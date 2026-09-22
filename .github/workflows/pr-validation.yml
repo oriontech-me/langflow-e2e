@@ -472,12 +472,18 @@ jobs:
             #     `workflow_dispatch` from there, so reading this branch's copy would
             #     tell a PR that ADDS the trigger to dispatch a workflow that does
             #     not have it yet — #1609, one PR later. The default branch, NOT
-            #     `$BASE_REF`: they coincide for every PR this repo has, and a PR
-            #     stacked onto a non-default base would otherwise read the triggers
-            #     off a branch GitHub does not resolve against — the same defect
-            #     through a different door.
+            #     `$BASE_REF`: this lane is `on: pull_request: branches: [main]`, a
+            #     filter on the BASE, so the two are the same value by construction
+            #     here. Passing the right one guards a future edit to that trigger;
+            #     it is not a hole being closed today.
             STATES=""
             BASE_CI=""
+            # The first NON-BLANK line of a captured stderr, or a literal when there
+            # is none. Both branches below need it and the fallback is the point: the
+            # case `-s` exists for is a command exiting 0 (or failing) having written
+            # nothing, where a naive `head -1` renders "could not read … ()" — a
+            # warning naming nothing, in the one branch it exists for (#1012).
+            reason() { sed -n '/[^[:space:]]/{p;q;}' "$1" 2>/dev/null | grep . || echo "$2"; }
             if grep -qE '^(\.github/|scripts/)' /tmp/changed.txt; then
               # `-s` as well as the exit status: `gh` can exit 0 having written
               # nothing, and an empty listing is not a weak signal — absence from it
@@ -489,10 +495,7 @@ jobs:
                  && [ -s /tmp/wf-states.tsv ]; then
                 STATES="--workflow-states=/tmp/wf-states.tsv"
               else
-                # The reason, or a literal — the branch `-s` exists for is `gh`
-                # exiting 0 having written nothing, where the .err file is empty too
-                # and the warning would otherwise read "could not read … ()" (#1012).
-                echo "::warning::could not read workflow states ($(head -1 /tmp/wf-states.err || true; [ -s /tmp/wf-states.err ] || echo 'gh wrote an empty listing')); a disabled workflow will not be flagged."
+                echo "::warning::could not read workflow states ($(reason /tmp/wf-states.err 'gh wrote an empty listing')); a disabled workflow will not be flagged."
               fi
               # Archive to a FILE, not through a pipe: this shell has no `pipefail`,
               # so a piped `tar -x` would report its own status and a failed
@@ -503,7 +506,7 @@ jobs:
                  && tar -xf /tmp/base-ci.tar -C /tmp/base-ci 2>>/tmp/base-ci.err; then
                 BASE_CI="--base-root=/tmp/base-ci"
               else
-                echo "::warning::could not read $DEFAULT_BRANCH's workflows ($(head -1 /tmp/base-ci.err)); trigger answers will come from this branch."
+                echo "::warning::could not read $DEFAULT_BRANCH's workflows ($(reason /tmp/base-ci.err 'no error output')); trigger answers will come from this branch."
               fi
             fi
             node scripts/ci-change-coverage.mjs --stdin --format=json $STATES $BASE_CI < /tmp/changed.txt > /tmp/ci-coverage.json \
@@ -522,9 +525,9 @@ jobs:
                 # Composed here, it told the reviewer to dispatch a workflow that has
                 # no `workflow_dispatch` trigger — advice that 422s, i.e. silence
                 # (#1609) — and a YAML-text guard cannot catch that (#1226). The
-                # classifier reads each named workflow's `on:` block on the BASE ref,
-                # takes the Actions state fetched above, and words all six cases
-                # itself: dispatchable, not on the default branch yet (404), disabled
+                # classifier reads each named workflow's `on:` block on the DEFAULT
+                # branch, takes the Actions state fetched above, and words all six
+                # cases itself: dispatchable, not on the default branch yet (404), disabled
                 # in Actions (422), no trigger, triggers unreadable, and triggers
                 # this PR edits — so the branch copy is not the one that decides.
                 echo "::warning::$(jq -r '.advice' /tmp/ci-coverage.json)"
