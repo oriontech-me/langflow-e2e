@@ -176,29 +176,39 @@ const MAX_EXPECTED_SHARDS = 256;
 
 const IGNORED_TAIL = "the sweep reports only the files it found";
 
+/** How long any echoed value may render. `firstLine`'s cap, for the same reason. */
+const MAX_SHOWN = 200;
+
 /**
- * Name the offending value without ever throwing, and without running long.
+ * Name the offending value in a message: short, balanced, and TOTAL.
  *
- * `JSON.stringify` is not total: it rejects a BigInt and a circular object, and it
- * returns `undefined` for a function or a symbol. The first two would throw out of
- * a function whose whole contract is that it cannot (found in review, reachable
- * only through the export — but the `typeof` gate above exists precisely to make
- * that export tolerant, so it must not open a throw of its own).
+ * Total by construction rather than by `try`/`catch`, which is the correction worth
+ * carrying. The first version stringified whatever it was handed and caught the
+ * throw — `JSON.stringify` rejects a BigInt and a circular object — and the second
+ * capped the result. Both were branch-local, and review measured all three leaks:
+ * an object capped AFTER stringifying rendered `{"a":"xxx…` with an odd number of
+ * quotes (the exact defect the cap was added to fix), a 400-digit input rendered as
+ * a complete-looking 200-digit number, and 200 control characters rendered a
+ * 1293-character line because the cap was on the INPUT, not the output.
  *
- * Capped BEFORE the quotes go on: slicing the stringified form instead dropped the
- * closing quote of any long string, and a 400-char argument once rendered a
- * 497-char line where every other diagnostic here stops at 200 (`firstLine`).
+ * So nothing arbitrary is stringified at all. A string is quoted and capped, with
+ * the quoting checked after the fact; anything longer is described by its size; and
+ * a structured value is named by its `typeof`, which is all any caller needs — the
+ * CLI only ever passes an argv string, and a JS caller that passed an object learns
+ * that it did.
  */
 function describeValue(value) {
-  if (typeof value === "string")
-    return JSON.stringify(value.length > 200 ? `${value.slice(0, 200)}…` : value);
-  if (typeof value === "number" || typeof value === "bigint")
-    return String(value).slice(0, 200);
-  try {
-    const text = JSON.stringify(value);
-    if (typeof text === "string") return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-  } catch {
-    // circular, or a value stringify refuses — `typeof` is still an answer.
+  if (typeof value === "string") {
+    const quoted = JSON.stringify(
+      value.length > MAX_SHOWN ? `${value.slice(0, MAX_SHOWN)}…` : value
+    );
+    // Escaping can multiply the length sixfold (`\u0001` per control character), so
+    // the check is on what will actually be PRINTED.
+    return quoted.length <= MAX_SHOWN ? quoted : `a ${value.length}-character string`;
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    const text = String(value);
+    return text.length <= MAX_SHOWN ? text : `a ${text.length}-digit number`;
   }
   return typeof value;
 }
@@ -232,7 +242,8 @@ function normalizeExpected(expectShards) {
       value: null,
       // `describeValue(text)`, not `${n}`: a 400-digit argument passes the digit
       // test and `Number` turns it into `Infinity`, so the message named a value
-      // nobody passed (found in review).
+      // nobody passed (found in review) — and `describeValue` then names it by its
+      // size rather than printing 200 of its digits, which reads just as false.
       reason: `the expected shard count ${describeValue(text)} is above GitHub's ${MAX_EXPECTED_SHARDS}-job matrix cap, so it cannot describe a real run — ${IGNORED_TAIL}`,
     };
   return { value: n, reason: null };

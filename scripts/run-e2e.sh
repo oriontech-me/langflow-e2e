@@ -716,13 +716,20 @@ gh_out() {
 # function's. Reproduced. The previous version of this comment claimed the two
 # filesystem lines were the only unguarded ones; they were the only OBVIOUS ones.
 #
-# The directory normally exists already (phase_preflight makes it, :996); the mkdir
-# is for a caller that has not been through that phase.
+# The directory normally exists already — `phase_preflight` makes it, named rather
+# than cited by line, because the line moved the moment this comment grew (#1504's
+# rule: line numbers drift, titles do not). The mkdir is for a caller that has not
+# been through that phase.
 resolve_served_version() {
   local version_out="$RUN_DIR/logs/served-version.out"
   mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
   : > "$version_out" 2>/dev/null || true
-  GITHUB_OUTPUT="$version_out" \
+  # GITHUB_STEP_SUMMARY is cleared as well as redirected: in Actions it is set for
+  # every step, and the unit lane sources this file — so without it the VM tests
+  # appended nine "### Langflow version … UNRESOLVED" blocks to the PR run summary,
+  # which read as a real daily verdict. It also makes this function's contract true
+  # of every surface, not just stdout and stderr.
+  GITHUB_OUTPUT="$version_out" GITHUB_STEP_SUMMARY="" \
     node scripts/resolve-served-version.mjs \
       --dir "$RUN_DIR/all-tokens" --expect-shards "${SHARD_TOTAL:-}" >&2 || true
   gh_out "$version_out" version || true

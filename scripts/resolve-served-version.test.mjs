@@ -216,8 +216,13 @@ test("a version that is not a single line is REFUSED, not trimmed into shape", (
     expectShards: 1,
   });
   assert.equal(verdict.version, null);
-  assert.equal(outputLines(verdict).filter((l) => l.startsWith("version=")).length, 1);
-  assert.ok(!outputLines(verdict).some((l) => l.startsWith("injected=")));
+  // Re-PARSED, not scanned as an array: `outputLines` returns six fixed elements, so
+  // an injected key would sit INSIDE element 0 and a `startsWith` scan would miss it
+  // — which is how the file that receives these lines actually reads them.
+  const emitted = outputLines(verdict).join("\n").split("\n");
+  const keys = emitted.map((line) => line.slice(0, line.indexOf("=")));
+  assert.ok(!keys.includes("injected"), `a value became a key: ${emitted.join(" | ")}`);
+  assert.equal(keys.filter((k) => k === "version").length, 1);
 });
 
 test("surrounding whitespace in a real body is tolerated", () => {
@@ -314,7 +319,21 @@ test("naming a refused value cannot itself throw", () => {
   // the export, which is the surface the typeof gate was added to make tolerant.
   const circular = {};
   circular.self = circular;
-  for (const hostile of [4n, circular, () => 1, Symbol("s"), "9".repeat(400)]) {
+  // Every element reaches a DIFFERENT branch of `describeValue`, which is what the
+  // first version of this list did not do: `circular` is caught before it renders,
+  // so on its own it proved nothing about the object, number and escaping branches
+  // — all three of which leaked (an odd number of quotes, a 200-digit number nobody
+  // passed, a 1293-character line).
+  for (const hostile of [
+    4n,
+    circular,
+    () => 1,
+    Symbol("s"),
+    "9".repeat(400),
+    { a: "x".repeat(300) },
+    "\u0001".repeat(200),
+    10n ** 400n,
+  ]) {
     const verdict = resolveServedVersion(dirOf({ 1: body("1.13.0.dev16") }), {
       expectShards: hostile,
     });
@@ -323,7 +342,7 @@ test("naming a refused value cannot itself throw", () => {
     // Capped like every other diagnostic here, and a long value keeps its quotes:
     // capping the STRINGIFIED form instead drops the closing one, so the message
     // runs into the sentence after it.
-    assert.ok(verdict.expectedIgnored.length < 400, "the refusal ran long");
+    assert.ok(verdict.expectedIgnored.length < 400, `the refusal ran long: ${verdict.expectedIgnored.length}`);
     const quotes = (verdict.expectedIgnored.match(/"/g) ?? []).length;
     assert.equal(quotes % 2, 0, `unbalanced quotes: ${verdict.expectedIgnored}`);
   }
@@ -331,6 +350,9 @@ test("naming a refused value cannot itself throw", () => {
   // argument was reported as "Infinity" — a value nobody passed.
   const huge = resolveServedVersion(dirOf({ 1: body("v") }), { expectShards: "9".repeat(400) });
   assert.doesNotMatch(huge.expectedIgnored, /Infinity/);
+  // Nor 200 of its digits, which reads just as much like a value somebody passed.
+  assert.doesNotMatch(huge.expectedIgnored, /9{50}/);
+  assert.match(huge.expectedIgnored, /400-character string/);
 });
 
 test("an absent expectation is not a refusal — it is simply no expectation", () => {

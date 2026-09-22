@@ -1110,10 +1110,14 @@ jobs:
       # independently, so a nightly published mid-run really can split them).
       #
       # The TRADE this route makes, stated because the job-output one did not make
-      # it: the value now crosses the job boundary on an artifact, so an artifact
-      # service hiccup on the upload or the download costs the version for every
-      # shard at once. That is a `null` on a day every shard was healthy — visible,
-      # attributed, and worth the determinism; do not read it as a wedge.
+      # it: the value now crosses the job boundary on an artifact. A failed UPLOAD
+      # costs one shard's answer — each shard has its own `tokens-<shard>` artifact
+      # and the sweep takes the lowest one that answered — but the DOWNLOAD below is
+      # a single step, so a failure there costs the version for every shard at once.
+      # That is a `null` on a day every shard was healthy: visible, attributed, and
+      # worth the determinism — but do not read it as a wedge. (An earlier version of
+      # this comment claimed the upload had the all-at-once property too; it does
+      # not, and conflating the two legs overstates the cost of this route.)
       #
       # Report-only and `continue-on-error`: an unresolved version is honest
       # degradation (`compare-lane-verdicts.mjs` reports `version parity
