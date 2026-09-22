@@ -236,7 +236,9 @@ async function expectToolLoopEntered(
 // is exactly why it had to be found by reading the path rather than by a red day.
 //
 // "Never appeared" stays non-fatal on purpose: a run can finish before the button
-// renders, and that is a legitimate fast run, not an error to raise here.
+// renders, and that is a legitimate fast run, not an error to raise here. The price
+// is that such a run now pays the full 10 s probe before the assertions start — the
+// cost of actually waiting, and the reason the probe is not longer.
 async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
   const appeared = await stopButton
@@ -371,18 +373,30 @@ async function readModelCalls(
   bearer: string | undefined,
 ): Promise<number | undefined> {
   if (!graphRunId) return undefined;
-  const spanModelUsage = await loadSpanModelUsage();
+  let spanModelUsage: SpanModelUsageFn;
+  try {
+    spanModelUsage = await loadSpanModelUsage();
+  } catch {
+    return undefined;
+  }
 
+  // Every attempt is guarded on its own: a throw here (a non-JSON body, a transport
+  // error) must cost only the call count, never escape to `explainMissingLimit`'s
+  // catch and take the tools, state and preamble readings down with it.
   for (let attempt = 0; attempt < 6; attempt++) {
-    const res = await request.get(`/api/v1/monitor/traces/${graphRunId}`, {
-      headers: bearer ? { Authorization: bearer } : {},
-    });
-    if (res.ok()) {
-      const detail = await res.json();
-      const models = spanModelUsage(detail?.spans);
-      if (models.length) {
-        return models.reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+    try {
+      const res = await request.get(`/api/v1/monitor/traces/${graphRunId}`, {
+        headers: bearer ? { Authorization: bearer } : {},
+      });
+      if (res.ok()) {
+        const detail = await res.json();
+        const models = spanModelUsage(detail?.spans);
+        if (models.length) {
+          return models.reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+        }
       }
+    } catch {
+      // fall through to the next attempt
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -394,7 +408,9 @@ async function readModelCalls(
 // persisted content blocks — so the diagnosis reads it instead of assuming it.
 //
 // `undefined` when the blocks are not readable: "could not look" must never render
-// as "looked and found none".
+// as "looked and found none". Also `undefined` when the blocks hold no `tool_use` at
+// all — the renderer tells that case apart by `toolNames`, which comes from the same
+// blocks, so it never prints "unreadable" over blocks that were read.
 function textPrecedesFirstToolUse(aiMsg: any): boolean | undefined {
   const contents = (aiMsg?.content_blocks as any[] | undefined)?.flatMap(
     (b: any) => b.contents ?? [],
@@ -517,10 +533,13 @@ for (const { label, options, skipReason } of targets) {
             const rendered = await bubble.innerText().catch(() => "");
             const diagnosis = await explainMissingLimit(request, flowId, rendered);
             // The original failure is KEPT, appended: the diagnosis says which of the
-            // three causes happened, the assertion text says what was compared.
-            throw new Error(
-              `${diagnosis}\n\n${error instanceof Error ? error.message : String(error)}`,
-            );
+            // three causes happened, the assertion text says what was compared. The
+            // same error object is rethrown so Playwright keeps its matcher metadata.
+            if (error instanceof Error) {
+              error.message = `${diagnosis}\n\n${error.message}`;
+              throw error;
+            }
+            throw new Error(`${diagnosis}\n\n${String(error)}`);
           }
           // run limit (1/1) ties the stop to max_iterations=1.
           await expect(bubble).toContainText(/\(\s*1\s*\/\s*1\s*\)/, { timeout: 10000 });
