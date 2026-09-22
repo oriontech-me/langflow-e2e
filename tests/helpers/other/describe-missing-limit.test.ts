@@ -43,6 +43,9 @@ test("names model non-compliance — NOT the cap — when no tool was called", (
   assert.match(out, /#1264/);
   assert.doesNotMatch(out, /cap FIRED/);
   assert.ok(!out.includes("upstream's to surface"), "no upstream pointer when the model declined");
+  // The blocks WERE read — they just hold no tool call — so "unreadable" would be false.
+  assert.match(out, /preamble   : n\/a — no tool call/);
+  assert.doesNotMatch(out, /blocks unreadable/);
 });
 
 test("states NO cause when the tool ran but the run did not stop at one call", () => {

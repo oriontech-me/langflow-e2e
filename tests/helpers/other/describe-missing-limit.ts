@@ -60,6 +60,15 @@ export function capWasEnforced(reading: MissingLimitReading): boolean {
   return reading.toolNames.length > 0 && reading.calls === 1;
 }
 
+// A run with no tool call has no "before the tool call" to look at, and the reader
+// returns `undefined` for it just as for unreadable blocks — so the tool list, read
+// from those same blocks, decides which of the two it was.
+function preambleLine(toolNames: string[], preambled: boolean | undefined): string {
+  if (toolNames.length === 0) return "n/a — no tool call";
+  if (preambled === undefined) return "blocks unreadable";
+  return preambled ? "text before the tool call" : "none";
+}
+
 export function describeMissingLimit(reading: MissingLimitReading): string {
   const { rendered, stored, toolNames, calls, state, preambled, model, usage } = reading;
   const enforced = capWasEnforced(reading);
@@ -113,7 +122,7 @@ export function describeMissingLimit(reading: MissingLimitReading): string {
     `  tools used : ${toolNames.length ? toolNames.join(", ") : "none"}`,
     `  model calls: ${calls ?? "not reported"}`,
     `  state      : ${state ?? "unknown"}`,
-    `  preamble   : ${preambled === undefined ? "blocks unreadable" : preambled ? "text before the tool call" : "none"}`,
+    `  preamble   : ${preambleLine(toolNames, preambled)}`,
     `  model      : ${model ?? "unknown"} · usage ${JSON.stringify(usage ?? {})}`,
   ];
 
