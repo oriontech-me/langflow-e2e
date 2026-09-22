@@ -14,7 +14,8 @@ Type=oneshot
 # produced issue #1715 in the repository. Declared here so `systemctl cat` shows the
 # whole contract, the same way e2e-daily.service does.
 Environment=HOME=/root
-ExecStart=/root/e2e-daily-watchdog.sh
+# Versioned since #1994 and run from the clone. The /root copy is left as the rollback.
+ExecStart=/root/e2e-qa/ops/vm/e2e-daily-watchdog.sh
 # It reads systemd state, one directory and one log, then posts once. If it cannot
 # finish in five minutes something is wrong with the machine itself.
 TimeoutStartSec=5min

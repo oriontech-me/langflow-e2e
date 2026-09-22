@@ -72,14 +72,38 @@ cp -a /etc/systemd/system/e2e-daily.service.bak-<date> /etc/systemd/system/e2e-d
 systemctl daemon-reload
 ```
 
-## What is NOT here yet
+## The wrappers the units call — `ops/vm/`
 
-- **The wrappers** the units call: `/root/run-daily.sh`, `/root/run-daily-dist.sh`,
-  `/root/e2e-daily-watchdog.sh`. They carry the topology — target host, ports, secrets
-  path — so versioning them means parameterizing what is machine-specific instead of
-  committing it. The units only name them; tracked in #1976.
+`e2e-daily.service` (through its drop-in) and `e2e-daily-watchdog.service` run scripts
+from the clone, `/root/e2e-qa/ops/vm/`, the way `e2e-mirror-freshness.service` already
+did. The wrapper pulls the clone and re-executes itself, so what runs is what `main`
+holds — see its header for why the body is one function.
+
+What the repository cannot hold stays on the machine, in two files the wrapper reads:
+
+| File | Holds | Mode |
+|---|---|---|
+| `/root/.e2e-secrets` | provider keys, tokens, the Slack webhook | 600 |
+| `/root/.e2e-lane` | topology, no secrets: `ISSUE_HOST`, `ISSUE_REPO`, `ISSUE_CC`, `BACKUP_DEST` | 600 |
+
+The wrapper **refuses** to run when `.e2e-lane` is missing or leaves a key unset, and
+names the key. `ISSUE_CC` has to be *set*, not non-empty: the empty string is a real
+choice (an issue that pings nobody), while an absent key would fall back to the
+github.com handles in `create-failure-issue.mjs`. So `.e2e-lane` goes in **before** the
+units that point at `ops/vm/` are installed.
+
+**Rollback** for either script is its pre-#1994 copy, left untouched in `/root`:
+`/root/run-daily-dist.sh` for the drop-in's `ExecStart`, `/root/e2e-daily-watchdog.sh`
+for the watchdog's, then `systemctl daemon-reload`. Deleting the drop-in is *not* a
+rollback: it falls through to `/root/run-daily.sh`, the split-lane wrapper.
+
+## What is NOT here
+
+- **`/root/run-daily.sh`**, the split-lane wrapper the base unit still names: a remote
+  target over ssh, the source clone, one shard, tracing forced off. It is no longer a
+  way back to anything that runs, so it is not versioned; removing it is a decision of
+  its own.
 - **`langflow-tunnel.service`**, which names an internal host by ssh alias and is out of
-  the lane since the consolidation served its target locally. It goes with the wrapper
-  pass, or with its deletion.
+  the lane since the consolidation served its target locally. It goes with its deletion.
 - **Scratch under `/root`** (`chk.sh`, `diag.sh`, `e1-*.sh`, …): rehearsal tooling, not
   configuration. Named here so nobody hunts for it in the repository.

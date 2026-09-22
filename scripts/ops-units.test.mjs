@@ -84,7 +84,26 @@ test("the target drop-in RESETS ExecStart before setting its own", () => {
   const execs = directives(conf, "ExecStart");
   assert.equal(execs[0], "", "the reset line is missing, so both wrappers would run");
   assert.equal(execs.length, 2, "expected exactly the reset plus one command");
-  assert.match(execs[1], /^\/root\/run-daily-dist\.sh$/);
+  assert.match(execs[1], /^\/root\/e2e-qa\/ops\/vm\/run-daily\.sh$/);
+});
+
+test("every ExecStart into the clone names a script this repository ships", () => {
+  // Since #1994 the units run wrappers from /root/e2e-qa, the clone of this repository.
+  // A rename here that forgets the unit leaves a daily that fails at 08:00 UTC with
+  // "No such file" -- and the watchdog, pointing at the same clone, fails with it.
+  const units = [
+    ...readdirSync(OPS).filter((f) => f.endsWith(".service")).map((f) => read(f)),
+    ...readdirSync(join(OPS, "e2e-daily.service.d")).map((f) => read("e2e-daily.service.d", f)),
+  ];
+  const targets = units
+    .flatMap((t) => directives(t, "ExecStart"))
+    .filter((cmd) => cmd.startsWith("/root/e2e-qa/"))
+    .map((cmd) => cmd.split(/\s+/)[0].slice("/root/e2e-qa/".length));
+  assert.ok(targets.length >= 3, `expected the daily, the watchdog and the mirror alarm, got ${targets}`);
+  for (const rel of targets) {
+    const mode = statSync(join(OPS, "..", "..", rel)).mode;
+    assert.ok(mode & 0o100, `${rel} is not executable`);
+  }
 });
 
 test("the timers are enablable and the services are not, by design", () => {
@@ -153,7 +172,9 @@ test("nothing in ops/ names an internal host, alias or address", () => {
       return statSync(p).isDirectory() ? walk(p) : [p];
     });
   // This file is scanned too: it is where the names leaked the first time.
-  const files = [...walk(OPS), fileURLToPath(import.meta.url)];
+  // All of ops/, not only the units: the wrappers in ops/vm/ are where topology lived
+  // before #1994, and the likeliest place for it to come back.
+  const files = [...walk(join(OPS, "..")), fileURLToPath(import.meta.url)];
   const offenders = files
     .map((p) => ({ p, hits: offending(readFileSync(p, "utf8")) }))
     .filter((r) => r.hits.length > 0)
