@@ -133,6 +133,18 @@ CREATE_ISSUE="${CREATE_ISSUE:-0}"
 # never appears reads like a morning with nothing to report (#1950).
 CHECK_ISSUE_CREDENTIAL="${CHECK_ISSUE_CREDENTIAL:-1}"
 NOTIFY_SLACK="${NOTIFY_SLACK:-0}"
+# Announce the CLEAN days too, not just the bad ones. Off by default, because it is
+# only worth the noise where a reader has no other way to see that the run happened:
+# the Actions lane has a run list, and the VM lane has systemd and a log file behind a
+# VPN. On 2026-09-22 answering "did the VM run today?" took an ssh session, for a run
+# that had finished green four hours earlier and said nothing (#1981).
+#
+# It widens WHEN the notifier is called; it does not touch WHAT it says on a bad day.
+# The green message is its own shape inside the notifier, and the notifier keeps its
+# own refusal — this knob is passed through as SLACK_ANNOUNCE_GREEN rather than
+# lifting the gate here, so a caller cannot announce a verdict the report does not
+# support (#1012).
+NOTIFY_SLACK_ALWAYS="${NOTIFY_SLACK_ALWAYS:-0}"
 POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
 
 # The write half of the verdict (#1945). This one is a switch rather than absent code
@@ -2353,12 +2365,16 @@ phase_publish() {
       node scripts/create-failure-issue.mjs || warn "issue creation failed (does not fail the run)."
   fi
 
-  # Same condition as the issue, deliberately: the message and the issue are two views
-  # of one verdict and must not disagree — which is why MERGE_OK is passed to both, or
-  # the two views would have disagreed with the verdict and agreed with each other.
+  # The BAD half of this condition is the issue's, deliberately: the message and the
+  # issue are two views of one verdict and must not disagree — which is why MERGE_OK is
+  # passed to both, or the two views would have disagreed with the verdict and agreed
+  # with each other. NOTIFY_SLACK_ALWAYS adds a day the issue does not have — a green
+  # one — and that is not a disagreement: there is no issue to disagree with, and the
+  # notifier renders it as its own shape rather than as a failure with a zero in it.
   # Fail-soft — a notifier is never allowed to be the reason a run reports failure.
   if [ "$NOTIFY_SLACK" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
-    && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
+    && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ] \
+      || [ "$NOTIFY_SLACK_ALWAYS" = "1" ]; }; then
     log "Notifying Slack"
     local issue_url=""
     [ -f "$RUN_DIR/issue-url.txt" ] && issue_url="$(cat "$RUN_DIR/issue-url.txt")" || true
@@ -2370,6 +2386,7 @@ phase_publish() {
     LIVENESS_OUTAGES="$LIVENESS_OUTAGES" LIVENESS_DOWN_SECONDS="$LIVENESS_DOWN_SECONDS" \
     ISSUE_URL="$issue_url" REPORT_URL="$REPORT_URL" RUN_ID="$RUN_ID" \
     LANGFLOW_VERSION="$LANGFLOW_VERSION" \
+    SLACK_ANNOUNCE_GREEN="$NOTIFY_SLACK_ALWAYS" \
       node scripts/notify-slack.mjs || warn "the Slack notification failed (does not fail the run)."
   fi
 }

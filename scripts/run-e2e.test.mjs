@@ -407,6 +407,36 @@ test("the publish switches are OFF by default, all three of them", () => {
   assert.equal(r.stdout.trim(), "0 0 0");
 });
 
+test("the lane can confirm a clean day too, and only where it was asked for (#1981)", () => {
+  // Why it exists: the Actions lane has a run list, and the VM lane has systemd and a
+  // log file behind a VPN. On 2026-09-22 that lane finished green at 04:18 and said
+  // nothing, so "it ran" and "nobody is looking" were the same silence for four hours.
+  //
+  // Why it is OFF by default: everywhere else the silence already means something, and
+  // a daily message nobody needs is how a channel learns to skip this one.
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^NOTIFY_SLACK_ALWAYS="\$\{NOTIFY_SLACK_ALWAYS:-0\}"$/m, "the knob is not off by default");
+  assert.equal(sourced(`echo "$NOTIFY_SLACK_ALWAYS"`).stdout.trim(), "0");
+
+  const start = sh.indexOf('if [ "$NOTIFY_SLACK" = "1" ]', sh.indexOf('log "Notifying Slack"') - 400);
+  assert.ok(start >= 0, "could not find the notification block");
+  const cond = sh.slice(start, sh.indexOf('log "Notifying Slack"', start));
+
+  // NOTIFY_SLACK stays the master switch: the new knob chooses WHICH days speak, never
+  // whether the lane speaks at all. Setting it alone must post nothing, or a lane that
+  // deliberately has no channel gets one by accident.
+  assert.ok(
+    cond.trimStart().startsWith('if [ "$NOTIFY_SLACK" = "1" ] && [ "$EVENT_NAME" = "schedule" ]'),
+    "the always-knob outranks the switch that says this lane talks to Slack at all",
+  );
+  assert.match(cond, /\|\| \[ "\$NOTIFY_SLACK_ALWAYS" = "1" \]/, "a green day still never reaches the notifier");
+
+  // And it is passed on rather than acted on here: the notifier keeps its own refusal,
+  // so a caller cannot announce a verdict the report does not support (#1012).
+  const block = sh.slice(start, sh.indexOf("notify-slack.mjs", start));
+  assert.match(block, /SLACK_ANNOUNCE_GREEN="\$NOTIFY_SLACK_ALWAYS"/, "the notifier is never told to announce it");
+});
+
 test("the only write back to the repository is the @stable removal, behind its guard", () => {
   // This pin used to read "absent, not merely switched off", and it was right until
   // the cut of 2026-09-20 (#1943): the fourth switch was COMMIT_HISTORY, gating an
