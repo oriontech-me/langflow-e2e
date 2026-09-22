@@ -465,10 +465,18 @@ export function importersOf(refs, file) {
   // unmergeable PR whose only diagnostic names the wrong cause. Every node the walk can
   // reach is a key of `scriptFiles` (`buildImporterGraph` resolves targets through it),
   // so that count is a true ceiling and this can only fire on a guard already broken.
-  let budget = refs.scriptNodeCount + 1;
+  // `?? 0` because a `NaN` budget never satisfies `<= 0` — the bound would be silently
+  // off and the loop it exists to stop would run forever. Unreachable while
+  // `buildCiReferences` is the only constructor of `refs`, which is precisely why it
+  // is worth a line: this is the one thing in the file whose whole job is to fail.
+  const ceiling = refs.scriptNodeCount ?? 0;
+  let budget = ceiling + 1;
   while (queue.length > 0) {
     if (budget-- <= 0) {
-      throw new Error(`importersOf walked past ${refs.scriptImporters.size} nodes from ${file} — the cycle guard is broken`);
+      // Names the bound that actually fired. It quoted `scriptImporters.size` — the
+      // superseded number, 71 against a real bound of 183 — which is this commit's own
+      // complaint (a diagnostic naming the wrong cause) surviving inside the fix for it.
+      throw new Error(`importersOf walked past ${ceiling} nodes from ${file} — the cycle guard is broken`);
     }
     const current = queue.shift();
     for (const importer of refs.scriptImporters.get(current) ?? []) {
@@ -597,31 +605,30 @@ export function classifyCiChange({ changed, refs, states = null }) {
     const onPrLane = entryPoints.some((entry) => prScripts.has(entry));
     const users = [...new Set(entryPoints.flatMap((entry) => workflowsReaching(refs, { script: entry })))].sort();
     users.forEach((w) => dispatch.add(w));
-    const route = viaImport.length > 0 ? ` (reached through ${viaImport.sort().join(", ")})` : "";
+    // `also` rather than a bare "reached through": the import route explains SOME of
+    // the list, not necessarily all of it, and this clause is attached to the whole
+    // sentence. `report-backend-outages.mjs` is named outright by daily-stable and
+    // reached by import only from weekly-stable, so anything implying exclusivity is
+    // false for one of the two.
+    const route = viaImport.length > 0 ? ` (also reached through ${viaImport.sort().join(", ")})` : "";
     const alsoDispatch = users.length > 0 ? `, and by ${users.join(", ")}` : "";
     if (onPrLane) {
       canary = true;
-      // `directly` is stated ALONGSIDE the import route, not replaced by it:
-      // `impacted-specs-by-import.mjs` is invoked by name AND imported by two other
-      // named scripts, and naming only the indirection read as if it were not. The
-      // predicate is `prScripts`, not `named`: `named` asks whether ANY workflow
-      // spells the file, and this sentence is about THE PR LANE — with `named` it
-      // claimed the PR lane ran `reconcile-stable-orphans.ts` directly, which
-      // `pr-validation.yml` does not mention at all.
+      // The PR-lane clause survives because it qualifies ONE named thing — the PR
+      // lane — and `prScripts` is exactly the question it asks. It stays hedged
+      // ("or through an action it uses") because `workflowScripts` folds in the
+      // scripts an action names and cannot tell them apart.
       const direct = prScripts.has(file) ? " directly or through an action it uses" : "";
       reasons.push(`${file} is run by the PR lane${direct}${route}${alsoDispatch}`);
     } else {
-      // Symmetrically: a file another lane runs BY NAME and also reaches by import
-      // should not read as though only the indirection got it there. The predicate is
-      // over EVERY workflow in the list, not `named(file)`, which asks whether SOME
-      // workflow spells it and was then attached to all of them — measured live,
-      // `report-backend-outages.mjs` read "is run directly by daily-stable, weekly-
-      // stable" while weekly-stable reaches it only by import. That is the identical
-      // over-claim this file removed from the canary side, reintroduced by the clause
-      // added to balance it.
-      const direct =
-        users.length > 0 && users.every((w) => refs.workflowScripts.get(w)?.has(file)) ? " directly" : "";
-      reasons.push(`${file} is run${direct} by ${users.join(", ")}, not by the PR lane${route}`);
+      // No such clause here, and the two attempts at one are why. `named(file)` asked
+      // whether SOME workflow spells the file and attached the word to ALL of them;
+      // `users.every(…)` fixed that half and left the other — `workflowScripts` is a
+      // raw token scan over the YAML plus the actions it uses, so it cannot
+      // distinguish a `run:` from a `#` comment, and "directly" was false for 8 live
+      // files by those two routes. A per-workflow route belongs in a per-workflow
+      // sentence; this one lists workflows, so it states only what the list is.
+      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane${route}`);
     }
   }
 
@@ -976,7 +983,18 @@ function main(argv) {
     }
   }
 
-  const result = classifyCiChange({ changed, refs, states });
+  // Exit 2, not 1. The header documents 2 as "could not decide", and the one thing
+  // that throws out of here — the importer walk's broken-guard bound — is exactly
+  // that: a classification the script declined to produce, not a classification of
+  // "no CI change". Unwrapped, it left the lane an exit 1 under the code reserved for
+  // a decision it never reached.
+  let result;
+  try {
+    result = classifyCiChange({ changed, refs, states });
+  } catch (error) {
+    process.stderr.write(`::error::ci-change-coverage could not classify the diff (${error.message}).\n`);
+    process.exit(2);
+  }
 
   // A canary that points at a renamed spec would run NOTHING while reporting a
   // verdict — the silent-coverage bug this script exists to remove. Fail loud.

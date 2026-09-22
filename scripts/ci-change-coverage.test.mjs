@@ -472,15 +472,23 @@ test("against the live repo, 'directly' is claimed of the PR LANE alone", () => 
     { input: "scripts/reconcile-stable-orphans.ts\n" },
   );
   const reason = JSON.parse(out).reasons.join(" ");
-  assert.match(reason, /is run by the PR lane \(reached through /);
+  assert.match(reason, /is run by the PR lane \(also reached through /);
   assert.doesNotMatch(reason, /PR lane directly/, "pr-validation.yml does not name this file");
 });
 
-test("against the live repo, 'directly' covers EVERY workflow in the list it qualifies", () => {
-  // `named(file)` asks whether SOME workflow spells the file and the adjective was then
-  // attached to all of them: measured, `report-backend-outages.mjs` read "is run
-  // directly by daily-stable, weekly-stable" while weekly-stable reaches it only by
-  // import. The same over-claim the canary side had, on the branch added to balance it.
+test("against the live repo, no WORKFLOW LIST is ever qualified as 'directly'", () => {
+  // Two attempts at this clause, two over-claims. `named(file)` asked whether SOME
+  // workflow spells the file and attached the word to ALL of them
+  // (`report-backend-outages.mjs`: "run directly by daily-stable, weekly-stable",
+  // where weekly-stable reaches it only by import). `users.every(…)` closed that half
+  // and left the other: `workflowScripts` is a raw token scan over the YAML PLUS the
+  // actions it uses, so "directly" was still false for 8 live files — five reached
+  // only through an action, three whose sole occurrence of the token is a `#` comment.
+  // `served-version.mjs` was one of them, and the assertion certifying the previous
+  // fix pinned that false statement.
+  //
+  // So the clause is gone: this sentence lists WORKFLOWS, and a per-workflow route
+  // needs a per-workflow sentence.
   const reasonFor = (file) =>
     JSON.parse(
       execFileSync(
@@ -489,9 +497,16 @@ test("against the live repo, 'directly' covers EVERY workflow in the list it qua
         { input: `${file}\n` },
       ),
     ).reasons.join(" ");
-  assert.doesNotMatch(reasonFor("scripts/report-backend-outages.mjs"), /run directly by/);
-  // …and a file whose only named user really does spell it keeps the word.
-  assert.match(reasonFor("scripts/lib/served-version.mjs"), /is run directly by \.github\/workflows\/daily-stable\.yml/);
+  for (const file of [
+    "scripts/report-backend-outages.mjs",
+    "scripts/lib/served-version.mjs",
+    "scripts/auto-remove-commit-paths.mjs",
+    "scripts/build-grep-filter.mjs",
+  ]) {
+    assert.doesNotMatch(reasonFor(file), /run directly by/, `over-claims "directly" for ${file}`);
+  }
+  // The route is still named, and as ONE of the ways in rather than the only one.
+  assert.match(reasonFor("scripts/lib/served-version.mjs"), /also reached through scripts\/resolve-served-version\.mjs/);
 });
 
 test("'directly' is claimed of the PR LANE, not of any workflow at all", () => {
@@ -500,7 +515,7 @@ test("'directly' is claimed of the PR LANE, not of any workflow at all", () => {
   // `reconcile-stable-orphans.ts` anywhere, and the reason said it ran it directly.
   const r = classifyWithImports("scripts/lib/spec-path.mjs");
   const reason = r.reasons.join(" ");
-  assert.match(reason, /is run by the PR lane \(reached through /);
+  assert.match(reason, /is run by the PR lane \(also reached through /);
   assert.doesNotMatch(reason, /PR lane directly/, "no workflow spells this path at all");
   // …and a file the PR lane really does invoke by name keeps the clause.
   assert.match(
