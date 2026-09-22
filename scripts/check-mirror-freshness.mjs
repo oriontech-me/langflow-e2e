@@ -178,8 +178,17 @@ export function main(env = process.env, cwd = process.cwd()) {
       // commit written straight to the mirror — `rev-list` died with "bad revision"
       // and the catch below turned it into "behind by an unknown number", the exact
       // opposite of the truth.
-      git(["fetch", "--quiet", sourceUrl, "main"], { cwd, env });
-      git(["fetch", "--quiet", destination, "main"], { cwd, env });
+      // `--no-write-fetch-head`, because this clone is shared and THIS process is the
+      // one that has no use for the file. Nothing here reads `FETCH_HEAD` — both shas
+      // come from `ls-remote` above and the walk names them — while the removal path in
+      // `run-e2e.sh` does read it, one line after its own fetch, in this same clone
+      // (#1972). Writing it from an hourly timer leaves a window where that read names
+      // the destination's tip instead of the source's, and the removal replays onto it.
+      // Removing the writer beats narrowing the window. On git < 2.29 the option is
+      // unknown, the fetch throws, and the catch below answers UNKNOWN — never
+      // "current", which is the direction this file already chose.
+      git(["fetch", "--quiet", "--no-write-fetch-head", sourceUrl, "main"], { cwd, env });
+      git(["fetch", "--quiet", "--no-write-fetch-head", destination, "main"], { cwd, env });
       // `--first-parent`, and this is the correction that matters. Without it the walk
       // includes every commit a MERGE brought in, dated when the branch was written
       // rather than when it landed — and this repository merges with merge commits. So
