@@ -408,9 +408,9 @@
     "penalty": 0
    },
    "mitigation": 0.75,
-   "checklistBullets": 54,
+   "checklistBullets": 55,
    "bulletStates": {
-    "x": 49,
+    "x": 50,
     "~": 5
    },
    "previous": {
@@ -587,7 +587,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 37,
+    "stableSpecs": 38,
     "penalty": 0
    },
    "mitigation": 0.8,
@@ -610,8 +610,8 @@
    },
    "upstreamBugCount": 74,
    "specCounts": {
-    "specs": 40,
-    "stable": 37
+    "specs": 39,
+    "stable": 38
    }
   },
   {
@@ -715,7 +715,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 35,
+    "stableSpecs": 36,
     "penalty": 0
    },
    "mitigation": 0.76,
@@ -741,8 +741,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 35,
-    "stable": 35
+    "specs": 36,
+    "stable": 36
    }
   },
   {
@@ -1218,9 +1218,9 @@
    }
   }
  ],
- "refreshed": "2026-09-21",
+ "refreshed": "2026-09-22",
  "refreshWindow": {
-  "testHealthSince": "2026-08-07",
+  "testHealthSince": "2026-08-08",
   "days": 45
  }
 }
