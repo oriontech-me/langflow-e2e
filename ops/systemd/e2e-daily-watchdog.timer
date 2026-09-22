@@ -1,0 +1,32 @@
+[Unit]
+Description=Schedule for the E2E daily missed-run alarm (VM lane), 09:00 UTC on weekdays
+
+[Timer]
+# 09:00 UTC: the daily fires at 08:00 UTC and, since the wrapper went to SHARDS=4 on
+# 2026-09-13, a healthy run goes end to end in 18.5 min. Sixty minutes is a bit over
+# 3x that, and it is the OFFSET half of a pair -- the alarm point inside the script
+# is 45 min, deliberately below this, so the "still running" branch has slack instead
+# of firing at the instant of the check. Whoever moves one moves the other.
+#
+# It also means every silent-day branch is heard 90 minutes earlier than it was.
+#
+# The UTC suffix carries the same weight as it does in e2e-daily.timer -- this
+# machine's clock is EDT, and Debian's cron has no CRON_TZ, which is why neither
+# schedule is a crontab line.
+OnCalendar=Mon..Fri 09:00 UTC
+# Mon..Fri is the whole weekend rule. Saturday and Sunday are quiet because the
+# calendar says so, not because a branch inside the script decides it -- a branch
+# can be wrong about a date, and this one would be wrong in the direction of crying
+# wolf every weekend until someone muted the channel.
+#
+# Persistent=true, and it is the OPPOSITE of what e2e-daily.timer wants. A daily
+# that catches up produces a verdict for a day it did not observe, so that one must
+# not. An ALARM that catches up is still telling the truth: "the run did not happen"
+# does not expire, and a machine that was down over the check time is exactly the
+# case where somebody needs to hear it late rather than never.
+Persistent=true
+AccuracySec=1min
+Unit=e2e-daily-watchdog.service
+
+[Install]
+WantedBy=timers.target

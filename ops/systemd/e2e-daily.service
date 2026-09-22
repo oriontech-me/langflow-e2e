@@ -1,0 +1,23 @@
+[Unit]
+# Scheduled @stable run on the QA VMs, mirroring .github/workflows/daily-stable.yml.
+# Driven by e2e-daily.timer rather than cron: this machine's clock is EDT and
+# Debian's cron (3.0pl1) has no CRON_TZ, so a cron schedule can only be written in
+# local time and silently moves an hour at the DST change. A timer takes the zone
+# in the calendar expression itself.
+Description=E2E @stable daily run (VM lane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd does not set HOME for a system service, and cron does. scripts/run-e2e.sh
+# runs under `set -u` and builds the uv PATH out of $HOME, so without this the run
+# dies on line 190 before doing anything -- found by running the unit, not by
+# reading it. Declared here rather than only in the wrapper so `systemctl cat`
+# shows the whole contract.
+Environment=HOME=/root
+ExecStart=/root/run-daily.sh
+# The suite takes ~50 minutes on one shard; this is the ceiling before systemd
+# kills it, deliberately well above that so a slow run is not mistaken for a hung
+# one. A run that genuinely hangs is caught by the missed-run alarm instead.
+TimeoutStartSec=4h
