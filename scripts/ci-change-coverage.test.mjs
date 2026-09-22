@@ -19,6 +19,7 @@ import {
   PR_LANE,
   buildCiReferences,
   classifyCiChange,
+  importersOf,
   dispatchAdvice,
   parseWorkflowStates,
   readWorkflowTriggers,
@@ -82,6 +83,25 @@ steps:
 
 const refs = buildCiReferences(FIXTURE);
 const classify = (...changed) => classifyCiChange({ changed, refs });
+
+// A miniature `scripts/` for the importer graph (#1979). Only the shapes that decide
+// a verdict: a lib module two named scripts reach, a module only a TEST imports, a
+// cycle, and a test file the YAML happens to name.
+const SCRIPT_FILES = new Map([
+  [
+    "scripts/partition-shards.mjs",
+    `import { norm } from "./lib/spec-path.mjs";\nimport { b } from "./lib/cycle-b.mjs";`,
+  ],
+  ["scripts/impacted-specs-by-import.mjs", `import { norm } from "./lib/spec-path.mjs";`],
+  ["scripts/lib/spec-path.mjs", "export const norm = (s) => s;"],
+  ["scripts/lib/only-a-test-imports-me.mjs", "export const x = 1;"],
+  ["scripts/orphan-helper.test.mjs", `import { x } from "./lib/only-a-test-imports-me.mjs";`],
+  // A cycle, reached from a named script: an unguarded walk would not terminate.
+  ["scripts/lib/cycle-a.mjs", `import { b } from "./cycle-b.mjs";`],
+  ["scripts/lib/cycle-b.mjs", `import { a } from "./cycle-a.mjs";`],
+]);
+const importRefs = buildCiReferences({ ...FIXTURE, scriptFiles: SCRIPT_FILES });
+const classifyWithImports = (...changed) => classifyCiChange({ changed, refs: importRefs });
 
 // ── Reference graph ─────────────────────────────────────────────────────────
 
@@ -162,6 +182,135 @@ test("a script no workflow runs is not CI surface", () => {
   const r = classify("scripts/wait-for-backend.test.mjs", "scripts/some-local-helper.mjs");
   assert.equal(r.verdict, "none");
   assert.deepEqual(r.ciFiles, []);
+});
+
+// ── A script in a subdirectory (#1979) ──────────────────────────────────────
+
+test("a subdirectory path is captured whole, not truncated at the first slash", () => {
+  // `SCRIPT_REF` excluded `/` from the tail, so `scripts/lib/stable-tests.ts` was
+  // captured as `scripts/lib` — a token no changed path can equal — and the file
+  // matched nothing. Asserted on the GRAPH, since that is where the loss happened.
+  const r = buildCiReferences({
+    workflows: new Map([[PR_LANE, "steps:\n  - run: node scripts/lib/deep/thing.mjs"]]),
+    actions: new Map(),
+  });
+  assert.ok(r.workflowScripts.get(PR_LANE).has("scripts/lib/deep/thing.mjs"));
+  assert.ok(!r.workflowScripts.get(PR_LANE).has("scripts/lib"), "the directory token is not a file");
+});
+
+test("a module reached only by IMPORT is CI surface, and the route is named", () => {
+  // The bigger half of #1979 and the one the regex cannot fix: measured on this repo,
+  // 5 `scripts/lib/**` paths are spelled under `.github/` while 21 more are reached
+  // only through an import.
+  const r = classifyWithImports("scripts/lib/spec-path.mjs");
+  assert.equal(r.verdict, "canary", "the PR lane imports it through impacted-specs-by-import");
+  assert.deepEqual(r.ciFiles, ["scripts/lib/spec-path.mjs"]);
+  assert.match(r.reasons.join(" "), /reached through scripts\/impacted-specs-by-import\.mjs/);
+});
+
+test("the same module without the import graph falls back to silence", () => {
+  // Back-compat, and the measurement that justifies the graph: with `scriptFiles`
+  // absent the verdict is exactly what `main` gives today.
+  assert.equal(classify("scripts/lib/spec-path.mjs").verdict, "none");
+});
+
+test("both routes count — a file named AND imported names every workflow it reaches", () => {
+  // `scripts/lib/stable-tests.ts` is both: named by `update-coverage-summary.yml`'s
+  // `paths:` filter and imported by `scripts/stable-tests.ts`, which two other lanes
+  // run. Preferring the direct route named one workflow and dropped the rest.
+  const files = new Map([
+    ["scripts/partition-shards.mjs", `import { t } from "./lib/shared.ts";`],
+    ["scripts/lib/shared.ts", "export const t = 1;"],
+  ]);
+  const r = classifyCiChange({
+    changed: ["scripts/lib/shared.ts"],
+    refs: buildCiReferences({
+      workflows: new Map([
+        [".github/workflows/daily-stable.yml", "on:\n  workflow_dispatch:\nsteps:\n  - run: node scripts/partition-shards.mjs"],
+        [".github/workflows/other.yml", "on:\n  workflow_dispatch:\nsteps:\n  - run: cat scripts/lib/shared.ts"],
+      ]),
+      actions: new Map(),
+      scriptFiles: files,
+    }),
+  });
+  assert.deepEqual(r.dispatchWorkflows, [".github/workflows/daily-stable.yml", ".github/workflows/other.yml"]);
+});
+
+test("a unit test is never CI wiring, even when a workflow names it", () => {
+  // Two are named under `.github/` today, in prose explaining what pins what, and on
+  // `main` a change to either resolves to `dispatch` — contradicting this script's own
+  // rule. Inert while imports were not followed; not any more, since such a file would
+  // drag its whole import closure in with it.
+  const r = buildCiReferences({
+    workflows: new Map([
+      [".github/workflows/daily-stable.yml", "on:\n  workflow_dispatch:\n# Pinned by scripts/gate.test.mjs"],
+    ]),
+    actions: new Map(),
+    scriptFiles: new Map([
+      ["scripts/gate.test.mjs", `import { x } from "./lib/only-for-the-test.mjs";`],
+      ["scripts/lib/only-for-the-test.mjs", "export const x = 1;"],
+    ]),
+  });
+  assert.equal(classifyCiChange({ changed: ["scripts/gate.test.mjs"], refs: r }).verdict, "none");
+  assert.equal(
+    classifyCiChange({ changed: ["scripts/lib/only-for-the-test.mjs"], refs: r }).verdict,
+    "none",
+    "and it must not drag its imports in either",
+  );
+});
+
+test("a module only a test imports stays silent", () => {
+  assert.equal(classifyWithImports("scripts/lib/only-a-test-imports-me.mjs").verdict, "none");
+  assert.equal(classifyWithImports("scripts/orphan-helper.test.mjs").verdict, "none");
+});
+
+test("a cycle in the importer graph terminates", () => {
+  // Not defensive: `scripts/lib/` really does contain cycles, and an unguarded walk
+  // would hang the step rather than fail it.
+  assert.deepEqual(
+    [...importersOf(importRefs, "scripts/lib/cycle-a.mjs")].sort(),
+    ["scripts/lib/cycle-b.mjs", "scripts/partition-shards.mjs"],
+    "…and must not report the file itself as its own importer",
+  );
+  assert.equal(classifyWithImports("scripts/lib/cycle-a.mjs").verdict, "dispatch");
+});
+
+test("against the live repo, the path #1609's own table names is no longer silence", () => {
+  // The measurement that opened #1979: `verdict: none` — "the diff touches no CI
+  // surface at all" — for a file `update-coverage-summary.yml` lists in its `paths:`.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/lib/stable-tests.ts\n" },
+  );
+  const result = JSON.parse(out);
+  assert.notEqual(result.verdict, "none", "silence is the failure this issue is about");
+  assert.deepEqual(result.ciFiles, ["scripts/lib/stable-tests.ts"]);
+});
+
+test("an unreadable scripts/ degrades OUT LOUD and keeps the direct half working", () => {
+  // Best-effort like the other two optional inputs, and for the same reason: an empty
+  // file map builds an empty graph, which resolves every indirect change to `none` —
+  // the silence this issue is about, reported as a clean verdict (#1012).
+  const tmp = makeTempDir("cc-noscripts-");
+  fs.mkdirSync(path.join(tmp, ".github/workflows"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, ".github/workflows/daily-stable.yml"),
+    "on:\n  workflow_dispatch:\nsteps:\n  - run: node scripts/partition-shards.mjs",
+  );
+  const r = cli(["--root", tmp, "--format=json", "--stdin"], "scripts/partition-shards.mjs\n");
+  assert.equal(r.status, 0);
+  assert.equal(r.json.verdict, "dispatch", "the directly-named half must survive");
+  assert.match(r.stderr, /::warning::.*could not read scripts\/.*resolve to 'none'/);
+});
+
+test("against the live repo, a unit test named in a workflow comment is still silence", () => {
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/daily-matrix-provider-keys.test.mjs\n" },
+  );
+  assert.equal(JSON.parse(out).verdict, "none");
 });
 
 // ── Reading a workflow's triggers (#1609) ───────────────────────────────────

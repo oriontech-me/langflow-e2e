@@ -160,6 +160,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { buildImporterGraph } from "./impacted-specs-by-import.mjs";
+
 /** The lane a pull request actually runs. */
 export const PR_LANE = ".github/workflows/pr-validation.yml";
 
@@ -180,7 +182,22 @@ export const CANARY_SPECS = [
   "tests/tests-automations/regression/ui-ux/settings-theme-toggle.spec.ts",
 ];
 
-const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._-]+)/g;
+// `/` is IN the tail (issue #1979). Without it the match stopped at the first path
+// separator, so `scripts/lib/stable-tests.ts` was captured as `scripts/lib` — a token
+// no changed path can ever equal — and the real file matched nothing, leaving the
+// verdict at `none`: "the diff touches no CI surface at all". Measured over the real
+// `.github/`, widening it takes the token set from 47 to 51: the five `scripts/lib/**`
+// paths appear and the directory token `scripts/lib` goes, which is the right trade
+// because a directory is never a changed FILE. Three inert keys are unchanged and stay
+// inert — two are a real filename followed by a sentence-ending period (the `.` in this
+// class absorbs it), one is the literal `scripts/x` out of this file's own prose. The
+// periods are load-bearing for exactly one of them: `token-sidecar-knobs.test.mjs` is
+// named only in comments, and a live key for it would make a unit-test change boot
+// Langflow, which the "not CI surface" rule below exists to prevent.
+const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._/-]+)/g;
+
+/** A unit test — covered by `npm run test:scripts`, never CI wiring. */
+const UNIT_TEST = /\.test\.(mjs|mts|ts|js)$/;
 const LOCAL_ACTION_REF = /\.\/\.github\/actions\/([A-Za-z0-9._-]+)/g;
 
 const matchAll = (text, re) => [...String(text).matchAll(re)].map((m) => m[1]);
@@ -349,13 +366,16 @@ export function parseWorkflowStates(text) {
  * Build the reference graph from the YAML itself.
  *
  * @param {{workflows: Map<string,string>, actions: Map<string,string>,
- *          baseWorkflows?: Map<string,string>|null}} sources
+ *          baseWorkflows?: Map<string,string>|null,
+ *          scriptFiles?: Map<string,string>|null}} sources
  *   workflows keyed by repo-relative path, actions keyed by ACTION NAME.
  *   `baseWorkflows` is the DEFAULT branch's copy of the same workflows; when given, the
  *   triggers are read from it, because that is the copy GitHub resolves a dispatch
  *   against. The reference graph always comes from `workflows` (the head).
+ *   `scriptFiles` is `scripts/**` keyed by repo-relative path; when given, a changed
+ *   file also counts as CI surface if some NAMED script imports it, transitively.
  */
-export function buildCiReferences({ workflows, actions, baseWorkflows = null }) {
+export function buildCiReferences({ workflows, actions, baseWorkflows = null, scriptFiles = null }) {
   const actionScripts = new Map();
   for (const [name, text] of actions) {
     actionScripts.set(name, new Set(matchAll(text, SCRIPT_REF)));
@@ -386,14 +406,50 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null }) 
     workflowScripts.set(file, scripts);
   }
 
+  // module → every script that imports it, transitively. The regex above only ever
+  // sees what the YAML SPELLS, and a shared module is spelled nowhere: measured on
+  // this repo, 5 `scripts/lib/**` paths are named under `.github/` while 21 more are
+  // reached only through an import, so a fix confined to the regex would have covered
+  // under a fifth of them (#1979). `scripts/lib/spec-path.mjs` is the sharp case —
+  // the one normaliser two lanes must agree on, whose own doc says a near-miss there
+  // "corroborates nothing, exempts nothing and is invisible".
+  //
+  // This is the same indirection `uses:` already gets, one level further in, and it
+  // reuses `impacted-specs-by-import.mjs`'s resolver rather than a second copy: those
+  // three functions take a file map keyed by repo-relative path and are root-agnostic,
+  // so nothing about them was tests-specific.
+  const scriptImporters = scriptFiles ? buildImporterGraph(scriptFiles) : null;
+
   return {
     workflowScripts,
     workflowActions,
     actionScripts,
     workflowDispatch,
+    scriptImporters,
     // Whether `workflowDispatch` reflects the copy GitHub will actually resolve.
     triggersFromBase: Boolean(baseWorkflows),
   };
+}
+
+/**
+ * Every script that reaches `file` by import, transitively, excluding `file` itself.
+ *
+ * Breadth-first over the importer graph with a `seen` set, because the graph really
+ * does contain cycles in this repo and an unguarded walk would not terminate.
+ */
+export function importersOf(refs, file) {
+  const reached = new Set();
+  if (!refs.scriptImporters) return reached;
+  const queue = [file];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const importer of refs.scriptImporters.get(current) ?? []) {
+      if (importer === file || reached.has(importer)) continue;
+      reached.add(importer);
+      queue.push(importer);
+    }
+  }
+  return reached;
 }
 
 /** Workflows (other than the PR lane) that reach a given action or script. */
@@ -464,18 +520,39 @@ export function classifyCiChange({ changed, refs, states = null }) {
       continue;
     }
 
-    // A script is CI surface only if some workflow or action actually runs it.
-    // `scripts/foo.test.mjs` and a helper nothing invokes are not.
-    const referenced = [...refs.workflowScripts.values()].some((s) => s.has(file));
-    if (!referenced) continue;
+    // A script is CI surface only if some workflow or action actually runs it —
+    // directly, or THROUGH a script that does. `scripts/foo.test.mjs` and a helper
+    // nothing invokes are still not: nobody imports a test file, and a module only a
+    // test imports has no named importer, so both keep falling through to `none`.
+    // A unit test is never CI WIRING, whatever a YAML comment happens to spell. Two
+    // of them are named under `.github/` today — `daily-matrix-provider-keys.test.mjs`
+    // and `sync-model-prices.test.mjs`, both in prose explaining what pins what — so
+    // on `main` a change to either already resolves to `dispatch`, contradicting the
+    // rule stated right below. That was inert while imports were not followed; it is
+    // not any more, because such a file would drag its whole import closure in with
+    // it (measured: `lib/tmp-dir.mjs`, imported by nothing else, arrived as
+    // `dispatch` through exactly that route). These files are covered by
+    // `npm run test:scripts`, which the PR lane runs as its own gate, so booting
+    // Langflow for one proves nothing it does not already know.
+    const named = (f) => !UNIT_TEST.test(f) && [...refs.workflowScripts.values()].some((s) => s.has(f));
+    // The entry points a change to `file` reaches — the UNION of the two routes, not
+    // the first one that answers. `scripts/lib/stable-tests.ts` is both: named by
+    // `update-coverage-summary.yml`'s `paths:` filter AND imported by
+    // `scripts/stable-tests.ts`, which two other lanes run. Preferring the direct
+    // route named one workflow and dropped the others, which is the under-report this
+    // issue is about wearing a smaller hat.
+    const viaImport = [...importersOf(refs, file)].filter(named);
+    const entryPoints = [...new Set([...(named(file) ? [file] : []), ...viaImport])].sort();
+    if (entryPoints.length === 0) continue;
     ciFiles.push(file);
-    if (prScripts.has(file)) {
+    const through = viaImport.length > 0 ? ` (reached through ${viaImport.sort().join(", ")})` : "";
+    if (entryPoints.some((entry) => prScripts.has(entry))) {
       canary = true;
-      reasons.push(`${file} is run by the PR lane (directly or through an action it uses)`);
+      reasons.push(`${file} is run by the PR lane${through || " (directly or through an action it uses)"}`);
     } else {
-      const users = workflowsReaching(refs, { script: file });
+      const users = [...new Set(entryPoints.flatMap((entry) => workflowsReaching(refs, { script: entry })))].sort();
       users.forEach((w) => dispatch.add(w));
-      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane`);
+      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane${through}`);
     }
   }
 
@@ -684,7 +761,37 @@ function readCiSources(root = ".") {
       if (fs.existsSync(file)) actions.set(entry.name, fs.readFileSync(file, "utf8"));
     }
   }
-  return { workflows, actions };
+  return { workflows, actions, scriptFiles: readScriptFiles(root) };
+}
+
+/**
+ * `scripts/**` as a path → source map, for the importer graph (#1979).
+ *
+ * Absent or unreadable is `null`, not an empty Map, and the difference matters: an
+ * empty Map builds an empty graph, which resolves every indirect change to `none` —
+ * the silence this exists to remove, reported as a clean verdict. The CLI turns a
+ * failure here into a warning and keeps the direct half working.
+ */
+function readScriptFiles(root = ".") {
+  const files = new Map();
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(mjs|mts|ts|js)$/.test(entry.name)) {
+        files.set(path.relative(root, full).split(path.sep).join("/"), fs.readFileSync(full, "utf8"));
+      }
+    }
+  };
+  try {
+    walk(path.join(root, "scripts"));
+  } catch (error) {
+    process.stderr.write(
+      `::warning::ci-change-coverage could not read scripts/ (${error.message}); a change reached only by import will resolve to 'none'.\n`,
+    );
+    return null;
+  }
+  return files.size > 0 ? files : null;
 }
 
 /** A flag's value, or `null` with the degradation announced rather than silent. */
