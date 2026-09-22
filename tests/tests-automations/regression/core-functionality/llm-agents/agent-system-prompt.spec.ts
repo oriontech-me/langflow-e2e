@@ -201,10 +201,49 @@ async function askAndGetReply(page: Page, message: string): Promise<string> {
 // opposite of the trade this repo makes elsewhere (#980).
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
-// File-level serial mode prevents parallel provider blocks from wiping each
-// other's flows.
-test.describe.configure({ mode: "serial" });
+// NO serial mode here, at file or at describe level (#1690), and the premise the
+// file-level declaration rested on was false: `SimpleAgentTemplatePage.load()`
+// does NOT delete flows. The cross-worker wipe was removed from
+// `loadTemplateByName` in #553 ("Deliberately NO pre-cleanup of existing flows"),
+// and cleanup here has been id-scoped ever since — so no provider block could
+// wipe another's flows, and nothing was being protected.
+//
+// What the declaration did cost is what #1690 measures: in serial mode a failure
+// SKIPS every later test in the file, and the later test here is the negative
+// control — the test that proves a sentinel match in the positive test is caused
+// by the instruction rather than by coincidence. A model that missed the sentinel
+// (this spec's known ~60 % adherence story, above) therefore also removed the
+// evidence that the assertion means anything, and the skip arrived with an EMPTY
+// reason, indistinguishable in triage from a reporter that lost one.
+//
+// The two tests are independent: each loads its own flow, the positive test's
+// sentinel carries a per-run `Date.now()`-plus-random suffix so no other run can
+// satisfy or break its poll, and the negative control asserts only on the reply
+// its own run produced. Scoping serial to the describe would have kept the
+// coupling — both tests are inside the same `Agent System Prompt [label]`
+// describe — so removal is the change that frees the control.
+//
+// What the two tests DO share is worth naming, because it is the cost side of
+// this change: the template NAME both pass to `loadTemplateByName`, and the
+// account-wide Model Providers panel `SimpleAgentTemplatePage.load()` drives
+// through `providerSetupMap`. Both are now reachable within this file on a
+// `fullyParallel` lane (`playwright.config.ts`), and file-level serial did remove
+// that one pairing — so this is a real cost, not a non-issue.
+//
+// It is a small one, and the reason is that neither hazard was ever confined to
+// one file. `preconfigure-routed-provider.ts` measured exactly these two
+// collisions — `400 Variable name already exists` and `IntegrityError: UNIQUE
+// constraint failed: flow.user_id, flow.name` — happening BETWEEN spec files,
+// which file-level serial cannot address, and every other agent spec loading the
+// same template already pairs with these two. The same-name creation race is
+// retried in `loadTemplateByName` (#1002), and the panel's check-then-act window
+// only opens when the key is not already a Langflow variable — and in CI
+// `globalSetup`'s `checkProviderCredentials` records such a provider unusable
+// (#1058), so its tests skip before `load()` and that branch is not taken there.
+//
+// `llm-agents/CLAUDE.md` §3 and §6 are updated with the same rule (#1690): serial
+// belongs on a describe whose tests genuinely depend on each other, `--workers=1`
+// is the run-level rule, and neither substitutes for the other.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);

@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import type { Page } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -66,30 +66,41 @@ function acceptedUtcDates(): string[] {
 const createdFlowIds: string[] = [];
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
-  // Collect EVERY flow id this page creates (POST /api/v1/flows 201): the
-  // app can fire more than one flows POST during template load, and only
-  // one of them is the flow that persists — deleting all collected ids is
-  // still id-scoped (only THIS test's creations), and a 404 on an already-
-  // gone transient id is harmless.
-  page.on("response", (resp) => {
+  // Collect EVERY flow id this page creates (POST /api/v1/flows 201): the app can
+  // fire more than one flows POST during template load, and only one of them is
+  // the flow that persists — deleting all collected ids is still id-scoped (only
+  // THIS test's creations), and a 404 on an already-gone transient id is harmless.
+  //
+  // Record the responses synchronously as they arrive and resolve their bodies in
+  // `finally`, rather than a fire-and-forget `.then()` that pushes the id whenever
+  // it happens to resolve. The fire-and-forget shape let the last flow's id land
+  // AFTER `afterEach` had already spliced the array, leaking that flow; awaiting
+  // here guarantees every id is recorded before the test proceeds. The listener is
+  // detached for the same reason it is registered — leaving it attached keeps
+  // pushing ids from later navigations into a test that has stopped cleaning up.
+  // Same shape, and same reasoning, as `agent-system-prompt.spec.ts`.
+  const flowCreations: Response[] = [];
+  const onResponse = (resp: Response) => {
     if (
       resp.url().includes("/api/v1/flows") &&
       resp.request().method() === "POST" &&
       resp.status() === 201
     ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {}); // non-JSON / batch payloads
+      flowCreations.push(resp);
     }
-  });
+  };
+  page.on("response", onResponse);
   try {
     await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
+  } finally {
+    page.off("response", onResponse);
+    for (const resp of flowCreations) {
+      const body = (await resp.json().catch(() => null)) as { id?: string } | null; // non-JSON / batch payloads
+      if (body?.id) createdFlowIds.push(body.id);
+    }
   }
 }
 
@@ -248,10 +259,52 @@ async function expectNoDateToolBlocks(
 
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
-// Serial mode + --workers=1 keeps the shared instance state deterministic
-// (area rule for agent specs). Cleanup is id-scoped in afterEach — nothing
-// here wipes flows, so parallel neighbors are never victims.
-test.describe.configure({ mode: "serial" });
+// NO serial mode here, at file or at describe level (#1690).
+//
+// What the file-level declaration cost, measured: on daily #1665 (run
+// 33511210195) the toggle-OFF test was recorded as a 3-attempt hard failure
+// having spent ONE — `a1` and `a2` came back `worker=-1`, never dispatched,
+// because the toggle-ON sibling had already failed. `reports/daily-history.jsonl`
+// records `attempts: 3` either way, so the retry budget was being spent on paper.
+//
+// Scoping serial to the describe — the shape #1693 gave the context-id specs —
+// would NOT have helped: both tests live inside the same
+// `Agent Current Date Tool [label]` describe, so the coupling that skipped the
+// sibling is exactly the one describe-level serial keeps. Dropping it is what
+// makes the retry budget real here.
+//
+// What the two tests share, stated as a list rather than as "they are
+// independent", because the second half of it is a COST of this change:
+//
+//  - NOT their flows, and not their messages. Each loads its own Simple Agent
+//    flow, tags its run with its own nonce and asserts only on the session that
+//    nonce resolves to; `afterEach` deletes exactly the ids that test created,
+//    and `loadTemplateByName` wipes nothing (post-#553 contract). The nonce
+//    carries a RANDOM suffix because of this change: while the file was serial
+//    the two tests could not compute `Date.now()` in the same millisecond, and
+//    `getSessionToolBlocks` resolves the session by substring over the global
+//    message list — so a collision would have the toggle-OFF test asserting on
+//    the toggle-ON test's session and failing with `unexpected get_current_date
+//    block(s)`, a false negative on the very assertion this change un-skips.
+//  - The template NAME, and the account-wide Model Providers panel that
+//    `SimpleAgentTemplatePage.load()` drives through `providerSetupMap`. Both are
+//    now reachable WITHIN this file on a `fullyParallel` lane, and file-level
+//    serial did remove that one pairing, so this is a real cost and not a
+//    non-issue. It is a small one, and the reason is that neither hazard was ever
+//    confined to one file: `preconfigure-routed-provider.ts` measured exactly
+//    these two collisions (`400 Variable name already exists`, `IntegrityError:
+//    UNIQUE constraint failed: flow.user_id, flow.name`) happening BETWEEN spec
+//    files, which file-level serial cannot address, and every other agent spec
+//    loading the same template already pairs with these two. The same-name
+//    creation race is retried in `loadTemplateByName` (#1002, "no run has failed
+//    on it"), and the panel's check-then-act window only opens when the key is
+//    not already a Langflow variable — and in CI `globalSetup`'s
+//    `checkProviderCredentials` records such a provider unusable (#1058), so its
+//    tests skip before `load()` and the branch is not taken there.
+//
+// `llm-agents/CLAUDE.md` §3 and §6 are updated with the same rule (#1690): serial
+// belongs on a describe whose tests genuinely depend on each other, `--workers=1`
+// is the run-level rule, and neither substitutes for the other.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
@@ -267,7 +320,7 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        const nonce = `probe-${Date.now()}`;
+        const nonce = `probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const task = `What is the current date? (${nonce})`;
 
         await loadAgent(page, options);
@@ -298,7 +351,7 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        const nonce = `probe-${Date.now()}`;
+        const nonce = `probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const task = `What is the current date? (${nonce})`;
 
         await loadAgent(page, options);

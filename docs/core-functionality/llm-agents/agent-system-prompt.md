@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts`
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev19`)
 
 ---
 
@@ -45,7 +45,7 @@ negative control). Validated against collected provider data (see the area
 ## Step by step
 
 Both tests share the target resolution and helpers (`setAgentInstructions`,
-`askAndGetReply`); the file is serial (see Model strategy).
+`askAndGetReply`); the file declares no serial mode (see Model strategy).
 
 Target resolution (both): resolve targets from `models.json` (one model per
 active provider by default; `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` / `ALL_MODELS`
@@ -127,9 +127,37 @@ reliable signal (fail — invalidates the positive assertion).
 - Requires `collect-models.spec.ts` to have run and at least one provider API key
   in `.env`. Without keys/data, every target skips with a reason (no false pass).
 - Run with `--workers=1` (agent specs create named flows that collide in parallel).
-- File-level `test.describe.configure({ mode: "serial" })` — `load()` deletes all
-  flows before loading the template, so parallel provider blocks would wipe each
-  other.
+- **No serial mode**, at file or describe level (#1690). The file-level
+  declaration this spec used to carry rested on a false premise —
+  `SimpleAgentTemplatePage.load()` does **not** delete flows; the cross-worker
+  wipe was removed from `loadTemplateByName` in #553 and cleanup has been
+  id-scoped since — so no provider block could wipe another's, and nothing was
+  protected. What it did cost is the #1690 shape: in serial mode a failure skips
+  every later test in the file, and the later test here is the **negative
+  control**, so a missed sentinel also removed the evidence that a sentinel match
+  means anything, with an empty skip reason. Both tests live in the same
+  describe, so scoping serial to the describe would have kept that coupling.
+- Measured on `1.13.0.dev19` (manual lane, `retries=0`, `provider=openai`): the
+  first test of each spec was forced to fail on a throwaway branch and the pair
+  run twice, once from `main` and once from this change.
+
+  Counted over the **four tests common to both runs** — the two agent specs, two
+  tests each:
+
+  | | failed | ran | skipped |
+  |---|---|---|---|
+  | file-level serial (`main`) | 2 | 0 | **2** — `worker=-1`, 0 ms, empty reason |
+  | no serial (this change) | 2 | 2 | **0** |
+
+  With serial, the sibling of each forced failure was never dispatched: the
+  `worker=-1`, zero-duration, reasonless row #1690 calls a phantom skip. Without
+  it both siblings ran on their own workers (31.3 s and 17.2 s) and reported
+  their own verdicts.
+
+  The branch's run collected **5** tests and the baseline's **4**: the branch run
+  also carried `rag-pipeline.spec.ts`'s single test (passed, 16.2 s), which the
+  baseline's `--grep` left out because that file is unchanged on `main`. It is
+  excluded from the table above so the two rows count the same tests.
 
 ---
 

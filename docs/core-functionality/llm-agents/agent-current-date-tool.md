@@ -1,6 +1,6 @@
 # Agent current-date tool — add_current_date_tool toggle
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev19`)
 
 ---
 
@@ -67,13 +67,45 @@ guards the toggle→toolkit wiring; `@agents` — agent tool configuration;
   Each test captures its flow id from the template-instantiation
   `POST /api/v1/flows/` response and deletes exactly that id in `afterEach`
   (`loadTemplateByName` does no cleanup — post-#553 contract).
+- The spec declares **no serial mode**, at file or describe level (#1690). The
+  two tests are independent — own flow, own `probe-<ts>-<rand>` nonce (the random
+  half was added with this change: while the file was serial the two tests could
+  not compute `Date.now()` in the same millisecond, and the session is resolved by
+  substring over the global message list), id-scoped teardown — and the file-level declaration this spec used to carry was measured
+  costing a retry budget: on daily #1665 the toggle-OFF test was recorded as a
+  3-attempt failure having spent one, its other two attempts never dispatched
+  (`worker=-1`) because the toggle-ON sibling had failed first. Both tests sit in
+  the same describe, so scoping serial to the describe would have kept exactly
+  that coupling.
+- Measured on `1.13.0.dev19` (manual lane, `retries=0`, `provider=openai`): the
+  first test of each spec was forced to fail on a throwaway branch and the pair
+  run twice, once from `main` and once from this change.
+
+  Counted over the **four tests common to both runs** — the two agent specs, two
+  tests each:
+
+  | | failed | ran | skipped |
+  |---|---|---|---|
+  | file-level serial (`main`) | 2 | 0 | **2** — `worker=-1`, 0 ms, empty reason |
+  | no serial (this change) | 2 | 2 | **0** |
+
+  With serial, the sibling of each forced failure was never dispatched: the
+  `worker=-1`, zero-duration, reasonless row #1690 calls a phantom skip. Without
+  it both siblings ran on their own workers (31.3 s and 17.2 s) and reported
+  their own verdicts.
+
+  The branch's run collected **5** tests and the baseline's **4**: the branch run
+  also carried `rag-pipeline.spec.ts`'s single test (passed, 16.2 s), which the
+  baseline's `--grep` left out because that file is unchanged on `main`. It is
+  excluded from the table above so the two rows count the same tests.
 
 ---
 
 ## Step by step *(required)*
 
 The spec generates tests per active model via the `resolveTestTargets()`
-machinery (family standard). Per model, a serial describe with two tests:
+machinery (family standard). Per model, a describe with two independent tests
+(no serial mode — see Preconditions):
 
 **Test 1 — toggle ON (default): the date tool exists and returns today (§6.5)**
 
