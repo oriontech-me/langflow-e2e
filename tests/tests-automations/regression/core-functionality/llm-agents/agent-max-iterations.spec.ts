@@ -7,6 +7,7 @@ import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { describeMissingUuid } from "../../../../helpers/other/describe-missing-uuid";
+import { describeMissingLimit } from "../../../../helpers/other/describe-missing-limit";
 import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import {
   hasProviderEnvKeys,
@@ -336,6 +337,100 @@ async function explainMissingUuid(
   }
 }
 
+// `spanModelUsage` is pure, dependency-free ESM under scripts/lib. Same CJS→ESM
+// interop path, and the same reasons, as `loadBuildProbe` in
+// `helpers/flows/token-attribution.ts` — see the note there.
+type SpanModelUsageFn = (spans: unknown) => Array<{ model: string; calls: number }>;
+
+async function loadSpanModelUsage(): Promise<SpanModelUsageFn> {
+  // @ts-expect-error -- dynamic import of a dependency-free ESM .mjs module; no .d.ts to resolve
+  const mod = await import("../../../../../scripts/lib/token-spans.mjs");
+  return mod.spanModelUsage as SpanModelUsageFn;
+}
+
+// How many model calls did THIS flow's run make? The number is the whole
+// discrimination behind the diagnosis below, and it is not on the persisted
+// message: `properties.usage` reports tokens, never a call count. It lives in the
+// trace spans, which is where the token sidecar reads it from too.
+//
+// Returns undefined rather than 0 on any failure. A diagnosis that reports "0 calls"
+// for a trace it could not read would state the opposite of what happened.
+async function readModelCalls(
+  request: APIRequestContext,
+  flowId: string,
+  bearer: string | undefined,
+): Promise<number | undefined> {
+  const listRes = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, {
+    headers: bearer ? { Authorization: bearer } : {},
+  });
+  if (!listRes.ok()) return undefined;
+  const traces = await listRes.json();
+  if (!Array.isArray(traces) || traces.length === 0) return undefined;
+
+  // The run this test drove is the flow's only one — the flow is created per test
+  // and deleted in `afterEach` — but take the newest rather than assume it.
+  const newest = [...traces].sort((a: any, b: any) =>
+    String(b?.startTime ?? "").localeCompare(String(a?.startTime ?? "")),
+  )[0];
+  if (!newest?.id) return undefined;
+
+  const detailRes = await request.get(`/api/v1/monitor/traces/${newest.id}`, {
+    headers: bearer ? { Authorization: bearer } : {},
+  });
+  if (!detailRes.ok()) return undefined;
+  const detail = await detailRes.json();
+
+  const spanModelUsage = await loadSpanModelUsage();
+  const models = spanModelUsage(detail?.spans);
+  if (!models.length) return undefined;
+  return models.reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+}
+
+// A missing limit message has three causes that read identically from the pattern
+// alone, and the difference decides whether anyone should look at the product:
+// the cap fired and was never surfaced, the model declined to call a tool so the cap
+// was never reachable, or the run did neither. Measured on 1.13.0.dev19 (#1991): the
+// first one, with `state: complete`, `error: false` and the word `limit` absent from
+// the entire persisted payload — a cap-terminated run indistinguishable from a
+// successful one.
+//
+// Attached to the assertion instead of asserted on: a run with no limit message still
+// fails the test, because the spec's premise is that a capped agent SAYS it stopped.
+// What changes is that the failure names the cause, instead of costing the triage pass
+// it cost on #1264 and again here.
+//
+// Rendering lives in `describeMissingLimit`, pure and unit-tested — this half only
+// reads. Nothing here may throw: see the catch.
+async function explainMissingLimit(
+  request: APIRequestContext,
+  flowId: string,
+  rendered: string,
+): Promise<string> {
+  try {
+    const bearer = await getAuthToken(request);
+    const { problem, aiMsg, toolUses } = await readAgentMessage(request, flowId, bearer);
+    if (problem) return `could not read the persisted message: ${problem}`;
+
+    return describeMissingLimit({
+      rendered,
+      stored: String(aiMsg.text ?? ""),
+      toolNames: (toolUses ?? []).map((c: any) => c.name as string),
+      calls: await readModelCalls(request, flowId, bearer),
+      state: aiMsg.properties?.state,
+      errored: aiMsg.error,
+      model: aiMsg.properties?.source?.source,
+      usage: aiMsg.properties?.usage,
+    });
+  } catch (error) {
+    // EVERY branch reports — the same contract as `explainMissingUuid`, and for the
+    // same reason: this runs while an assertion failure is already in hand, and an
+    // escaping throw would replace it with a bare transport error.
+    const first = String(error instanceof Error ? error.message : error).split("\n")[0];
+    return `no limit message was surfaced and the diagnosis could not be read (${first}) — ` +
+      `the assertion failure below is all the evidence this run carries`;
+  }
+}
+
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // Serial mode + --workers=1 keeps the shared instance state deterministic. Note
@@ -385,7 +480,23 @@ for (const { label, options, skipReason } of targets) {
           // disguised as "the cap is broken" (#1264).
           await expectToolLoopEntered(request, flowId);
           // Limit enforced: the agent stopped at the configured cap of 1.
-          await expect(bubble).toContainText(LIMIT_MESSAGE, { timeout: 30000 });
+          //
+          // try/catch rather than the `expect(value, message)` form the UUID half
+          // uses: there the value is already in hand, so the diagnosis can be built
+          // as an argument. Here the assertion is the thing doing the waiting, and
+          // building the diagnosis eagerly would both run its reads on every PASS and
+          // read the message before the 30 s poll had a chance to see it arrive.
+          try {
+            await expect(bubble).toContainText(LIMIT_MESSAGE, { timeout: 30000 });
+          } catch (error) {
+            const rendered = await bubble.innerText().catch(() => "");
+            const diagnosis = await explainMissingLimit(request, flowId, rendered);
+            // The original failure is KEPT, appended: the diagnosis says which of the
+            // three causes happened, the assertion text says what was compared.
+            throw new Error(
+              `${diagnosis}\n\n${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
           // run limit (1/1) ties the stop to max_iterations=1.
           await expect(bubble).toContainText(/\(\s*1\s*\/\s*1\s*\)/, { timeout: 10000 });
         });
