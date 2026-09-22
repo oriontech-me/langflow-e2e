@@ -290,8 +290,14 @@ saved flow. Nothing distinguishes them but timing.
 | `__default_language_model__` deleted (control) | still fires, 2 of 6 — the fill falls back to `options[0]`, so the user default is an amplifier, not the cause |
 | Send delayed 4 s (CI is slower than a dev box) | **3 of 3** runs sent `gpt-6-astra` / OpenAI in the run request — **and the test passed**, because OpenAI answered and echoed the sentinel |
 | `repro-run --runs 10` on the unmodified spec | **0 failures** — the pre-#1678 spec is blind to the defect, which is the whole point of the new gate |
+| The gate's own PR lane (`pr-validation.yml`, run 35674259991) | fired on **2 of 3 attempts**, and the substitute there was **`claude-fable-5-1` / Anthropic** — byte-identical to the model in the daily #1676 failure this issue was opened for. The job still reported green: Playwright retries twice in CI, the third attempt passed, and the run summary reads `1 flaky` |
 
-That third row is the #1169 silent-substitution class demonstrated end to end: a green
+That CI row is worth reading twice. It is the original symptom, reproduced by the new
+gate, named in one line instead of surfacing 90 s later as *"AI reply for the session not
+persisted yet"* — and it is invisible in a green check, because a retry hides it. A lane
+that runs this spec with `--retries=0` is the only one that reports it.
+
+The third row is the #1169 silent-substitution class demonstrated end to end: a green
 run against a model nobody selected, on a provider nobody configured for that node. It is
 also why the gate is a **hard assert and not a log** — an advisory line would leave the
 suite exactly as blind as the 0/10 baseline.
