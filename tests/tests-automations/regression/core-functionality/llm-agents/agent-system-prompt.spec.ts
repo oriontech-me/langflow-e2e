@@ -201,10 +201,32 @@ async function askAndGetReply(page: Page, message: string): Promise<string> {
 // opposite of the trade this repo makes elsewhere (#980).
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
-// File-level serial mode prevents parallel provider blocks from wiping each
-// other's flows.
-test.describe.configure({ mode: "serial" });
+// NO serial mode here, at file or at describe level (#1690), and the premise the
+// file-level declaration rested on was false: `SimpleAgentTemplatePage.load()`
+// does NOT delete flows. The cross-worker wipe was removed from
+// `loadTemplateByName` in #553 ("Deliberately NO pre-cleanup of existing flows"),
+// and cleanup here has been id-scoped ever since — so no provider block could
+// wipe another's flows, and nothing was being protected.
+//
+// What the declaration did cost is what #1690 measures: in serial mode a failure
+// SKIPS every later test in the file, and the later test here is the negative
+// control — the test that proves a sentinel match in the positive test is caused
+// by the instruction rather than by coincidence. A model that missed the sentinel
+// (this spec's known ~60 % adherence story, above) therefore also removed the
+// evidence that the assertion means anything, and the skip arrived with an EMPTY
+// reason, indistinguishable in triage from a reporter that lost one.
+//
+// The two tests are independent: each loads its own flow, the positive test's
+// sentinel carries a per-run `Date.now()`-plus-random suffix so no other run can
+// satisfy or break its poll, and the negative control asserts only on the reply
+// its own run produced. Scoping serial to the describe would have kept the
+// coupling — both tests are inside the same `Agent System Prompt [label]`
+// describe — so removal is the change that frees the control.
+//
+// The area rule (`llm-agents/CLAUDE.md`) is about the RUN (`--workers=1`); the
+// one real cross-worker hazard, two workers instantiating the same template name,
+// is retried in `loadTemplateByName` (#1002) and is cross-FILE anyway, which
+// file-level serial cannot address.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);

@@ -45,7 +45,7 @@ negative control). Validated against collected provider data (see the area
 ## Step by step
 
 Both tests share the target resolution and helpers (`setAgentInstructions`,
-`askAndGetReply`); the file is serial (see Model strategy).
+`askAndGetReply`); the file declares no serial mode (see Model strategy).
 
 Target resolution (both): resolve targets from `models.json` (one model per
 active provider by default; `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` / `ALL_MODELS`
@@ -127,9 +127,16 @@ reliable signal (fail — invalidates the positive assertion).
 - Requires `collect-models.spec.ts` to have run and at least one provider API key
   in `.env`. Without keys/data, every target skips with a reason (no false pass).
 - Run with `--workers=1` (agent specs create named flows that collide in parallel).
-- File-level `test.describe.configure({ mode: "serial" })` — `load()` deletes all
-  flows before loading the template, so parallel provider blocks would wipe each
-  other.
+- **No serial mode**, at file or describe level (#1690). The file-level
+  declaration this spec used to carry rested on a false premise —
+  `SimpleAgentTemplatePage.load()` does **not** delete flows; the cross-worker
+  wipe was removed from `loadTemplateByName` in #553 and cleanup has been
+  id-scoped since — so no provider block could wipe another's, and nothing was
+  protected. What it did cost is the #1690 shape: in serial mode a failure skips
+  every later test in the file, and the later test here is the **negative
+  control**, so a missed sentinel also removed the evidence that a sentinel match
+  means anything, with an empty skip reason. Both tests live in the same
+  describe, so scoping serial to the describe would have kept that coupling.
 
 ---
 
