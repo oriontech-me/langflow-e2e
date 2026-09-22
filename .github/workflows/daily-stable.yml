@@ -191,12 +191,23 @@ jobs:
         include: ${{ fromJSON(needs.prep.outputs.matrix) }}
 
     # No `outputs:` here, deliberately (#1731). `langflow_version` used to be one,
-    # and a matrix job's outputs overwrite each other: the run kept whichever shard
-    # wrote last, so a shard whose backend was wedged erased the value three healthy
-    # shards had resolved — on the wedge days the two-lane comparison exists to
-    # study. Each shard now writes its own answer onto the artifact that already
-    # crosses into `merge`, and the merge job sweeps them (see the resolver step
-    # there). A per-shard fact carried on the token artifact is the same route
+    # and GitHub guarantees exactly one thing about a matrix job's outputs:
+    # "Actions does not guarantee the order that matrix jobs will run in. Ensure
+    # that the output name is unique, otherwise the last matrix job that runs will
+    # override the output value." So the row carried whichever shard finished last,
+    # with nothing recording that the four might not have agreed — and a `null`
+    # meant "every shard failed" while naming none of them.
+    #
+    # #1731's headline harm — a wedged shard's EMPTY value erasing three healthy
+    # answers — is REFUTED and is not the reason this moved: the runner skips an
+    # empty matrix-leg output, and 8 of the 11 history rows carrying a version are
+    # `backend.wedged` days, none of them null. What is true is that the guarantee
+    # rests on runner behaviour GitHub documents nowhere, for the one field that
+    # gates the two-lane comparison.
+    #
+    # Each shard now writes its own answer onto the artifact that already crosses
+    # into `merge`, and the merge job sweeps them (see the resolver step there). A
+    # per-shard fact carried on the token artifact is the same route
     # `providers-<shard>.json` takes (#1800).
 
     # Run inside the official Playwright image: Chromium + all OS deps are
@@ -1089,10 +1100,17 @@ jobs:
           merge-multiple: true
 
       # The Langflow version that ACTUALLY SERVED this run (#1731). Swept from
-      # every shard's captured answer on the token artifacts above, so a shard
-      # whose backend was wedged costs its own answer and nothing else — it used
-      # to be a matrix job output, where the last shard to finish overwrote the
-      # other three and an empty value erased them.
+      # every shard's captured answer on the token artifacts above, so the value is
+      # the same on every run of the same evidence — it used to be a matrix job
+      # output, i.e. whichever shard happened to finish last, with no record that
+      # the four might have served two different products (they pull `:latest`
+      # independently, so a nightly published mid-run really can split them).
+      #
+      # The TRADE this route makes, stated because the job-output one did not make
+      # it: the value now crosses the job boundary on an artifact, so an artifact
+      # service hiccup on the upload or the download costs the version for every
+      # shard at once. That is a `null` on a day every shard was healthy — visible,
+      # attributed, and worth the determinism; do not read it as a wedge.
       #
       # Report-only and `continue-on-error`: an unresolved version is honest
       # degradation (`compare-lane-verdicts.mjs` reports `version parity

@@ -694,11 +694,10 @@ gh_out() {
 #
 # The sweep itself lives in scripts/resolve-served-version.mjs so the Actions lane
 # can run the SAME one (#1731): its `langflow_version` came from a matrix job
-# output, where the last shard to finish overwrote the other three and a wedged
-# shard's empty value erased them — on the wedge days the two-lane comparison
-# exists to study. Two lanes writing one field into one series must not have
-# different odds of writing it at all, and two implementations of "sweep the
-# shards" is how that difference comes back.
+# output, which GitHub defines as "the last matrix job that runs will override the
+# output value" over an order it does not guarantee. Two lanes writing one field
+# into one series must not have different odds of writing it at all, and two
+# implementations of "sweep the shards" is how that difference comes back.
 #
 # STDOUT is the version and nothing else, because the caller reads it through a
 # command substitution; the reader's own report (which shard answered, why the
@@ -706,6 +705,7 @@ gh_out() {
 # run log keeps it.
 resolve_served_version() {
   local version_out="$RUN_DIR/logs/served-version.out"
+  mkdir -p "$RUN_DIR/logs"
   : > "$version_out"
   GITHUB_OUTPUT="$version_out" \
     node scripts/resolve-served-version.mjs \

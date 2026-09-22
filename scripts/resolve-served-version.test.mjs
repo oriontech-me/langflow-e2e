@@ -1,13 +1,19 @@
-// Unit tests for scripts/lib/served-version.mjs and its CLI.
+// Unit tests for scripts/resolve-served-version.mjs and the module it is the CLI
+// for, scripts/lib/served-version.mjs — one file for both, the way
+// check-vm-env-parity.test.mjs covers scripts/lib/vm-env-parity.mjs.
 // Run with: npm run test:scripts
 //
 // WHAT THESE PROTECT. `langflow_version` is the premise of the two-lane
 // comparison — `compare-lane-verdicts.mjs` blocks when the two rows disagree
-// about it — and on the Actions side it used to be a matrix job output, so the
-// run kept whichever shard finished last and a wedged shard's empty value erased
-// three good ones (#1731). The defect is LATENT: it costs nothing on a healthy
-// day and everything on a wedge day, which is the only day anybody reads the
-// comparison. Nothing in a run can show it, so the tests below are the evidence.
+// about it — and on the Actions side it used to be a matrix job output, where
+// GitHub guarantees only that *"the last matrix job that runs will override the
+// output value"* (#1731). So the row named whichever shard finished last, with no
+// record that the shards might not have agreed, and a `null` could not say why.
+// (#1731's stronger claim — a wedged shard's EMPTY value erasing three good ones
+// — is refuted: the runner skips an empty matrix-leg output, and 8 of the 11 rows
+// carrying a version are wedge days, none null. The sweep is justified by the
+// non-determinism and the attribution, not by that.) Nothing in a run can show
+// any of it, so the tests below are the evidence.
 //
 // The failures they are written against:
 //   - one shard's silence erasing another shard's answer (the whole issue)
@@ -72,9 +78,9 @@ function runCli(args, env = {}) {
 // ── The issue itself ────────────────────────────────────────────────────────
 
 test("a wedged shard costs its own answer and nothing else", () => {
-  // The motivating run: shard 1's backend answered nothing, the other three
-  // resolved correctly. Under the matrix output, shard 1 finishing last erased
-  // all of it.
+  // Shard 1's backend answered nothing; the other three resolved. What the sweep
+  // adds over the matrix output is that the surviving answer is the SAME one on
+  // every run, and that shard 1's silence is on the record rather than inferred.
   const verdict = resolveServedVersion(
     dirOf({ 1: "", 2: body("1.13.0.dev16"), 3: body("1.13.0.dev16"), 4: body("1.13.0.dev16") }),
     { expectShards: 4 },
@@ -86,6 +92,20 @@ test("a wedged shard costs its own answer and nothing else", () => {
     verdict.unanswered.map((u) => u.shard),
     [1],
   );
+});
+
+test("the pick is the lowest shard on disk, whatever order the directory lists them in", () => {
+  // The determinism guarantee, pinned where it can actually fail: with no
+  // `--expect-shards` the iteration order is the DIRECTORY's, and `readdirSync`
+  // returns hash order on ext4 — the runner's filesystem. Measured in review:
+  // both sorts could be deleted with the whole suite green, because every other
+  // case seeds the shard set from an ascending expected range.
+  const read = readVersionDir("d", {
+    readdir: () => [versionFileName(3), versionFileName(1), versionFileName(2)],
+    readFile: (path) => body(path.endsWith(versionFileName(1)) ? "first" : "other"),
+  });
+  assert.equal(resolveServedVersion(read).version, "first");
+  assert.equal(resolveServedVersion(read).source, 1);
 });
 
 test("the pick is the lowest shard that answered, so the same run resolves the same way twice", () => {
@@ -192,6 +212,20 @@ test("surrounding whitespace in a real body is tolerated", () => {
   assert.equal(parseVersionBody(`\n ${body("1.13.0.dev16")} \n`).version, "1.13.0.dev16");
 });
 
+test("only a 1-based shard index without leading zeros is an answer", () => {
+  // Both lanes number from 1 (`matrix.shard`, `$idx`). `version-0.json` would be
+  // pickable and `version-01.json` would silently collide with shard 1 in the map.
+  const read = readVersionDir("d", {
+    readdir: () => ["version-0.json", "version-01.json", "version-1.json", "versions.json"],
+    readFile: (path) => body(path.endsWith("/version-1.json") ? "real" : "impostor"),
+  });
+  assert.deepEqual(
+    read.files.map((f) => f.shard),
+    [1],
+  );
+  assert.equal(resolveServedVersion(read).version, "real");
+});
+
 // ── The expectation must not delete evidence ────────────────────────────────
 
 test("a shard outside the expected range still answers, and the disagreement is said out loud", () => {
@@ -202,6 +236,33 @@ test("a shard outside the expected range still answers, and the disagreement is 
   assert.equal(verdict.version, "1.13.0.dev16");
   assert.deepEqual(verdict.unexpected, [3]);
   assert.match(renderReport(verdict), /expected 2/);
+});
+
+test("an expectation that cannot describe a run is REFUSED and said out loud", () => {
+  // `--expect-shards 1e9` used to materialise one Set entry per expected shard and
+  // throw `RangeError: Set maximum size exceeded` out of a CLI whose header
+  // promises that only a usage error exits non-zero (measured in review).
+  for (const absurd of [1e9, 257, 0, -3, "abc"]) {
+    const verdict = resolveServedVersion(dirOf({ 1: body("1.13.0.dev16") }), {
+      expectShards: absurd,
+    });
+    assert.equal(verdict.expected, null, `expected ${absurd} to be refused`);
+    assert.equal(verdict.version, "1.13.0.dev16", "the files found still answer");
+    assert.ok(verdict.expectedIgnored, `${absurd} was dropped without a word`);
+  }
+  // A refusal changes what every count means, so it reaches both surfaces.
+  const verdict = resolveServedVersion(dirOf({ 1: body("v") }), { expectShards: 1e9 });
+  assert.match(renderReport(verdict), /IGNORED/);
+  assert.match(stepSummaryMarkdown(verdict), /matrix cap/);
+});
+
+test("an absent expectation is not a refusal — it is simply no expectation", () => {
+  for (const none of [null, undefined, ""]) {
+    const verdict = resolveServedVersion(dirOf({ 1: body("v") }), { expectShards: none });
+    assert.equal(verdict.expected, null);
+    assert.equal(verdict.expectedIgnored, null, `${JSON.stringify(none)} reported a refusal`);
+    assert.equal(stepSummaryMarkdown(verdict), null);
+  }
 });
 
 test("with no expectation at all, only the files present are reported", () => {
@@ -305,6 +366,20 @@ test("--quiet prints the line and speaks for nothing else", () => {
   assert.equal(fs.existsSync(sum), false);
   assert.equal(res.stderr, "");
   assert.match(res.stdout, /UNRESOLVED/);
+});
+
+test("an unwritable output file costs one surface, never the step", () => {
+  // The report is already on stdout when the append runs, so throwing here would
+  // cost the step AND the `version=` line the consumer reads. Reachable on the VM
+  // lane whenever "$RUN_DIR/logs" is missing.
+  const dir = tmpDirWith({ 1: body("1.13.0.dev16") });
+  const res = runCli(["--dir", dir, "--expect-shards", "1"], {
+    GITHUB_OUTPUT: join(dir, "no-such-dir", "out.txt"),
+    GITHUB_STEP_SUMMARY: join(dir, "no-such-dir", "sum.md"),
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /1\.13\.0\.dev16/);
+  assert.match(res.stderr, /::warning::.*could not be written/);
 });
 
 test("an absent directory is a state, not a crash", () => {
