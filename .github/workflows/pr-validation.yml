@@ -361,6 +361,13 @@ jobs:
     name: Detect changed specs
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # Read-only, for the `dispatch` verdict alone: a workflow disabled in the
+      # Actions tab answers 422 on dispatch however good its YAML is, and that
+      # state lives nowhere in the repository (#1609). The lookup is best-effort —
+      # without this scope it warns and the verdict falls back to the trigger.
+      actions: read
     outputs:
       specs: ${{ steps.diff.outputs.specs }}
       has_specs: ${{ steps.diff.outputs.has_specs }}
@@ -391,6 +398,8 @@ jobs:
           # silently: the dropped set is printed and summarised (#1012's
           # silent-cap rule). The E2E job's own budget is 60 min.
           IMPACTED_SPEC_CAP: "20"
+          # `gh api` needs a token; the job's `actions: read` scope bounds it.
+          GH_TOKEN: ${{ github.token }}
         run: |
           git fetch origin "$BASE_REF" --quiet
           # Selection is by IMPORT GRAPH, not by changed-spec glob (#1054).
@@ -449,7 +458,16 @@ jobs:
           # a path to nothing.
           CI_COVERAGE=""
           if [ "$TOTAL" -eq 0 ]; then
-            node scripts/ci-change-coverage.mjs --stdin --format=json < /tmp/changed.txt > /tmp/ci-coverage.json \
+            # Which workflows are turned ON is not in the repository, and a workflow
+            # disabled in Actions answers 422 however good its YAML is — four of ours
+            # are disabled today. Best-effort: if this cannot be fetched, the verdict
+            # falls back to the trigger alone rather than failing the lane (#1609).
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows" --paginate \
+              --jq '.workflows[] | .path + "\t" + .state' > /tmp/wf-states.tsv 2>/dev/null \
+              || { echo "::warning::could not read workflow states; a disabled workflow will not be flagged."; rm -f /tmp/wf-states.tsv; }
+            STATES=""
+            [ -s /tmp/wf-states.tsv ] && STATES="--workflow-states=/tmp/wf-states.tsv"
+            node scripts/ci-change-coverage.mjs --stdin --format=json $STATES < /tmp/changed.txt > /tmp/ci-coverage.json \
               || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
             CI_COVERAGE=/tmp/ci-coverage.json
             VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
@@ -461,7 +479,14 @@ jobs:
                 echo "::warning::CI-only change to a surface THIS lane runs ($(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json)). No spec imports it, so the lane runs the canary instead of skipping (#1159)."
                 ;;
               dispatch)
-                echo "::warning::CI-only change to $(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json), which THIS lane does not run — nothing here proves it works. Dispatch $(jq -r '.dispatchWorkflows | join(", ")' /tmp/ci-coverage.json) on this branch before merging (#1159)."
+                # The sentence is RENDERED by the classifier, not composed here.
+                # Composed here, it told the reviewer to dispatch a workflow that has
+                # no `workflow_dispatch` trigger — advice that 422s, i.e. silence
+                # (#1609) — and a YAML-text guard cannot catch that (#1226). The
+                # classifier reads each named workflow's `on:` block, takes the
+                # Actions state fetched above, and words all four cases itself
+                # (dispatchable / disabled / no trigger / unreadable).
+                echo "::warning::$(jq -r '.advice' /tmp/ci-coverage.json)"
                 ;;
             esac
           fi
