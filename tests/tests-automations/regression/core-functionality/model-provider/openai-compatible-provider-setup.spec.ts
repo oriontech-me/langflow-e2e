@@ -9,6 +9,7 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { createFlowFromStarter } from "../../../../helpers/flows/create-flow-from-starter";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { armRunModelBinding } from "../../../../helpers/flows/watch-run-model-binding";
 import { flowIdFrom, isFlowCreateUrl } from "../../../../helpers/flows/track-created-flows";
 import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
 
@@ -1034,7 +1035,27 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
           .getByTestId("input-chat-playground")
           .last()
           .fill(`Repeat this token exactly and nothing else: ${token}`);
+
+        // Gate on the RUN REQUEST, which is the only observable that predicts the
+        // executed model. `POST /api/v2/workflows` carries `data` — a live-canvas
+        // override that "takes priority over the saved flow data" — so the read above
+        // is attribution about the wrong object, by construction (#1372). Measured on
+        // 1.13.0.dev19 (#1678): a stale `custom_component/update` response blanks the
+        // canvas field after the pick, the frontend refills it from the user default or
+        // `options[0]`, and the run sends THAT. With the send delayed 4 s — CI is slower
+        // than a dev box — 3/3 runs carried `gpt-6-astra` / OpenAI here while this spec
+        // reported a PASS, because OpenAI answered and echoed the sentinel. Armed before
+        // the click so the capture cannot race the request it reads.
+        const runBinding = armRunModelBinding(page);
         await page.getByTestId("button-send").last().click();
+        const sent = await runBinding.read();
+        expect(
+          { models: sent.models, providers: sent.providers },
+          `the run must build this provider's model — ${sent.summary}. The flow is ` +
+            `configured for ${TEST_MODEL} / ${PROVIDER_NAME}; a different model here means ` +
+            `the run did not build what the user selected (#1678), and the reply below ` +
+            `would be another provider's answer.`,
+        ).toMatchObject({ models: [TEST_MODEL], providers: [PROVIDER_NAME] });
 
         // Deterministic completion signal (never a "did Stop appear?" probe).
         await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 180000 });
