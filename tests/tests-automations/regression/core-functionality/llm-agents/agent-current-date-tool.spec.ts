@@ -248,12 +248,7 @@ async function expectNoDateToolBlocks(
 
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
-// NO serial mode here, at file or at describe level (#1690). The two tests are
-// independent by construction: each loads its OWN Simple Agent flow, tags its run
-// with its own `probe-<ts>` nonce and asserts only on the session that nonce
-// resolves to, and `afterEach` deletes exactly the ids that test created —
-// `loadTemplateByName` wipes nothing (post-#553 contract). Neither test can read
-// or destroy the other's state, in either order.
+// NO serial mode here, at file or at describe level (#1690).
 //
 // What the file-level declaration cost, measured: on daily #1665 (run
 // 33511210195) the toggle-OFF test was recorded as a 3-attempt hard failure
@@ -267,11 +262,37 @@ const targets = resolveTestTargets({ tier: "tool-calling" });
 // sibling is exactly the one describe-level serial keeps. Dropping it is what
 // makes the retry budget real here.
 //
-// The agent-area rule (`llm-agents/CLAUDE.md`) is about the RUN (`--workers=1`),
-// and file-level serial never substituted for it: it serialises only within one
-// file, so it never covered the one cross-test hazard this spec has — two workers
-// instantiating the same template name, which `loadTemplateByName` already
-// retries (#1002).
+// What the two tests share, stated as a list rather than as "they are
+// independent", because the second half of it is a COST of this change:
+//
+//  - NOT their flows, and not their messages. Each loads its own Simple Agent
+//    flow, tags its run with its own nonce and asserts only on the session that
+//    nonce resolves to; `afterEach` deletes exactly the ids that test created,
+//    and `loadTemplateByName` wipes nothing (post-#553 contract). The nonce
+//    carries a RANDOM suffix because of this change: while the file was serial
+//    the two tests could not compute `Date.now()` in the same millisecond, and
+//    `getSessionToolBlocks` resolves the session by substring over the global
+//    message list — so a collision would have the toggle-OFF test asserting on
+//    the toggle-ON test's session and failing with `unexpected get_current_date
+//    block(s)`, a false negative on the very assertion this change un-skips.
+//  - The template NAME, and the account-wide Model Providers panel that
+//    `SimpleAgentTemplatePage.load()` drives through `providerSetupMap`. Both are
+//    now reachable WITHIN this file on a `fullyParallel` lane, and file-level
+//    serial did remove that one pairing, so this is a real cost and not a
+//    non-issue. It is a small one, and the reason is that neither hazard was ever
+//    confined to one file: `preconfigure-routed-provider.ts` measured exactly
+//    these two collisions (`400 Variable name already exists`, `IntegrityError:
+//    UNIQUE constraint failed: flow.user_id, flow.name`) happening BETWEEN spec
+//    files, which file-level serial cannot address, and every other agent spec
+//    loading the same template already pairs with these two. The same-name
+//    creation race is retried in `loadTemplateByName` (#1002, "no run has failed
+//    on it"), and the panel's check-then-act window only opens when the key is
+//    not already a Langflow variable — `globalSetup`'s `checkProviderCredentials`
+//    fails the CI lanes when it is not, so the branch is not taken there.
+//
+// `llm-agents/CLAUDE.md` §3 and §6 are updated with the same rule (#1690): serial
+// belongs on a describe whose tests genuinely depend on each other, `--workers=1`
+// is the run-level rule, and neither substitutes for the other.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
@@ -287,7 +308,7 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        const nonce = `probe-${Date.now()}`;
+        const nonce = `probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const task = `What is the current date? (${nonce})`;
 
         await loadAgent(page, options);
@@ -318,7 +339,7 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        const nonce = `probe-${Date.now()}`;
+        const nonce = `probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const task = `What is the current date? (${nonce})`;
 
         await loadAgent(page, options);

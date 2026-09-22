@@ -47,7 +47,9 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
 // Add `requires: "vision" | "chat"` when the assertion needs a specific capability
 // within the provider — see agent-multimodal-image-input / agent-markdown-output.
 for (const { label, options, skipReason } of resolveTestTargets({ tier: "tool-calling" })) {
-  test.describe.serial(`My Test [${label}]`, () => {
+  // `test.describe`, not `test.describe.serial`, unless the tests inside this
+  // describe genuinely depend on each other in order — see below.
+  test.describe(`My Test [${label}]`, () => {
     test("should ...", async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
       // ...
@@ -57,6 +59,12 @@ for (const { label, options, skipReason } of resolveTestTargets({ tier: "tool-ca
 ```
 
 This automatically creates one describe per model — the test runs for each model in `models.json`, respecting the `MODEL_TEST_ID` and `MODEL_TEST_PROVIDER` variables from `.env` (by priority). The full pattern, including the strategy filter, is in `CONTRIBUTING.md` → **Model parameterization pattern**.
+
+**Serial mode is a dependency declaration, not a default (#1690).** In serial mode a failure **skips every later test in the group**, with `worker=-1`, zero duration and an empty reason — a row triage cannot tell from a lost one, and one that silently swallows the retry budget (`reports/daily-history.jsonl` still records `attempts: 3`). On daily #1665 that removed the parametrized half of one spec's causal pair and the negative control of another. So:
+
+- declare `test.describe.serial` only when a test in that describe **needs the previous one to have run**, and say in a comment what the dependency is;
+- never declare `test.describe.configure({ mode: "serial" })` at file level to buy isolation. It serialises only **within** one file, so it cannot protect against the two collisions that actually bite here — `400 Variable name already exists` on the provider panel and `IntegrityError: UNIQUE constraint failed: flow.user_id, flow.name` on the template load — both of which `helpers/provider-setup/preconfigure-routed-provider.ts` measured happening **between** spec files;
+- if two tests in one describe may now start together, give every per-run token a random component, not just `Date.now()` (`agent-current-date-tool.spec.ts`, `agent-system-prompt.spec.ts`).
 
 ### 4. Handle MODEL_NOT_AVAILABLE
 
@@ -264,6 +272,8 @@ npx playwright test tests/tests-automations/regression/core-functionality/llm-ag
 ```
 
 Required — agent tests create flows in Langflow and conflict if run in parallel.
+
+This is a **run-level** rule and it is not interchangeable with a serial declaration in the spec: `--workers=1` bounds the whole run, a serial describe only orders one group, and neither substitutes for the other (#1690). A spec that declares serial mode to stand in for `--workers=1` gets the skip cost described in §3 and none of the isolation.
 
 ---
 

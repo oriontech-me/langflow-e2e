@@ -223,10 +223,27 @@ const targets = resolveTestTargets({ tier: "tool-calling" });
 // coupling — both tests are inside the same `Agent System Prompt [label]`
 // describe — so removal is the change that frees the control.
 //
-// The area rule (`llm-agents/CLAUDE.md`) is about the RUN (`--workers=1`); the
-// one real cross-worker hazard, two workers instantiating the same template name,
-// is retried in `loadTemplateByName` (#1002) and is cross-FILE anyway, which
-// file-level serial cannot address.
+// What the two tests DO share is worth naming, because it is the cost side of
+// this change: the template NAME both pass to `loadTemplateByName`, and the
+// account-wide Model Providers panel `SimpleAgentTemplatePage.load()` drives
+// through `providerSetupMap`. Both are now reachable within this file on a
+// `fullyParallel` lane (`playwright.config.ts`), and file-level serial did remove
+// that one pairing — so this is a real cost, not a non-issue.
+//
+// It is a small one, and the reason is that neither hazard was ever confined to
+// one file. `preconfigure-routed-provider.ts` measured exactly these two
+// collisions — `400 Variable name already exists` and `IntegrityError: UNIQUE
+// constraint failed: flow.user_id, flow.name` — happening BETWEEN spec files,
+// which file-level serial cannot address, and every other agent spec loading the
+// same template already pairs with these two. The same-name creation race is
+// retried in `loadTemplateByName` (#1002), and the panel's check-then-act window
+// only opens when the key is not already a Langflow variable — `globalSetup`'s
+// `checkProviderCredentials` fails the CI lanes when it is not, so that branch is
+// not taken there.
+//
+// `llm-agents/CLAUDE.md` §3 and §6 are updated with the same rule (#1690): serial
+// belongs on a describe whose tests genuinely depend on each other, `--workers=1`
+// is the run-level rule, and neither substitutes for the other.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);

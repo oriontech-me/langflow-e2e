@@ -141,15 +141,23 @@ reliable signal (fail — invalidates the positive assertion).
   first test of each spec was forced to fail on a throwaway branch and the pair
   run twice, once from `main` and once from this change.
 
-  | | tests | failed | ran | skipped |
-  |---|---|---|---|---|
-  | file-level serial (`main`) | 4 | 2 | 0 | **2** — `worker=-1`, 0 ms, empty reason |
-  | no serial (this change) | 5 | 2 | 3 | **0** |
+  Counted over the **four tests common to both runs** — the two agent specs, two
+  tests each:
+
+  | | failed | ran | skipped |
+  |---|---|---|---|
+  | file-level serial (`main`) | 2 | 0 | **2** — `worker=-1`, 0 ms, empty reason |
+  | no serial (this change) | 2 | 2 | **0** |
 
   With serial, the sibling of each forced failure was never dispatched: the
   `worker=-1`, zero-duration, reasonless row #1690 calls a phantom skip. Without
   it both siblings ran on their own workers (31.3 s and 17.2 s) and reported
   their own verdicts.
+
+  The branch's run collected **5** tests and the baseline's **4**: the branch run
+  also carried `rag-pipeline.spec.ts`'s single test (passed, 16.2 s), which the
+  baseline's `--grep` left out because that file is unchanged on `main`. It is
+  excluded from the table above so the two rows count the same tests.
 
 ---
 
