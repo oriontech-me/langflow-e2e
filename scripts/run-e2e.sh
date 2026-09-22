@@ -718,6 +718,10 @@ gh_out() {
 # rather than four lines in phase_merge: the caller reads it through a command
 # substitution, so under `set -e` any non-zero status becomes the assignment's and
 # aborts phase_merge — losing the run's verdict and its publish for a diagnostic.
+# The guarantee is the FUNCTION's, and #1964 proved that is not the same as the
+# path's: three `gh_out` reads added beside the call site reproduced the abort
+# exactly. Anything reading this file from phase_merge carries `|| true` too, and
+# a test drives phase_merge over an unreadable one.
 #
 # The last one took two review rounds to find, and it is the instructive one: the
 # read is `gh_out`, whose own guard is `[ -f "$file" ] || return 0` — EXISTENCE
@@ -1833,11 +1837,19 @@ phase_merge() {
   # (#1964). Both lanes write the triple, or the comparator sits permanently on "one
   # lane does not measure this" — the reachability trap `langflow_version` itself
   # documents.
+  # `|| true` on each read, for the reason `resolve_served_version` carries its own:
+  # `gh_out` guards the file's EXISTENCE and then reads it unguarded, so a file that
+  # exists and cannot be read (a root-owned leftover under a reused RUN_ID) throws
+  # EACCES — and under `set -e` a command substitution's status becomes the
+  # assignment's, which takes phase_merge, its metadata, the history row and the
+  # publish with it. Measured on the first version of this block: `exit=1`, no
+  # run-metadata.json, nothing after phase_merge ran. The function was written to
+  # keep that from happening and then three of its lines were lifted OUT of it.
   local sweep_out="$RUN_DIR/logs/served-version.out"
   LANGFLOW_VERSION="$(resolve_served_version "$sweep_out")"
-  LANGFLOW_VERSION_EXPECTED="$(gh_out "$sweep_out" expected)"
-  LANGFLOW_VERSION_ANSWERED="$(gh_out "$sweep_out" answered)"
-  LANGFLOW_VERSIONS="$(gh_out "$sweep_out" versions)"
+  LANGFLOW_VERSION_EXPECTED="$(gh_out "$sweep_out" expected || true)"
+  LANGFLOW_VERSION_ANSWERED="$(gh_out "$sweep_out" answered || true)"
+  LANGFLOW_VERSIONS="$(gh_out "$sweep_out" versions || true)"
 
   # The comparison this step exists for. A mismatch is now FATAL by default: the run
   # placed the clone itself a few phases ago, so the two sides disagreeing means

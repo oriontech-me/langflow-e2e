@@ -516,24 +516,6 @@ const collectionGateKeys =
 // produced, and a spec generated at COLLECTION time can vanish between them with no
 // failure, skip or error to show for it (#1764).
 //
-// Keyed on `LISTING_VERIFIED` ALONE, not on "either field has content", because the
-// informative state here is the opposite of the gate's: `missing: []` with
-// `verified: true` is the answer worth recording every day, and an "either is
-// non-empty" rule would drop exactly that row. A lane that does not measure sends
-// nothing and gets no block — absent, never a clean measurement it did not make.
-const listingVerifiedRaw = process.env.LISTING_VERIFIED;
-/**
- * The missing list as both lanes publish it: a JSON array of spec paths.
- *
- * Whitespace splitting is kept as the fallback rather than as the format, so a
- * hand-run passing bare paths still records them — and so does anything else that is
- * not a JSON array, verbatim. That is deliberate: both producers emit
- * `JSON.stringify(array)`, so a value of another shape is a wiring break, and
- * recording it as garbage keeps it visible where an empty list would read as "nothing
- * was missing" (#1012). Parsed defensively for the reason every optional input here
- * is: this appender runs at the END of a day whose verdict is already decided, so a
- * throw costs the row for everything else it carries.
- */
 // `langflow_version_sweep` (optional, additive to schema v1, #1964).
 //
 // `langflow_version` is ONE version — the lowest-index shard that answered
@@ -578,6 +560,24 @@ const versionSweep = (() => {
   };
 })();
 
+// Keyed on `LISTING_VERIFIED` ALONE, not on "either field has content", because the
+// informative state here is the opposite of the gate's: `missing: []` with
+// `verified: true` is the answer worth recording every day, and an "either is
+// non-empty" rule would drop exactly that row. A lane that does not measure sends
+// nothing and gets no block — absent, never a clean measurement it did not make.
+const listingVerifiedRaw = process.env.LISTING_VERIFIED;
+/**
+ * The missing list as both lanes publish it: a JSON array of spec paths.
+ *
+ * Whitespace splitting is kept as the fallback rather than as the format, so a
+ * hand-run passing bare paths still records them — and so does anything else that is
+ * not a JSON array, verbatim. That is deliberate: both producers emit
+ * `JSON.stringify(array)`, so a value of another shape is a wiring break, and
+ * recording it as garbage keeps it visible where an empty list would read as "nothing
+ * was missing" (#1012). Parsed defensively for the reason every optional input here
+ * is: this appender runs at the END of a day whose verdict is already decided, so a
+ * throw costs the row for everything else it carries.
+ */
 const listingMissing = (raw) => {
   if (!raw) return [];
   try {

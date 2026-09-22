@@ -447,6 +447,14 @@ const sweepOf = (row) => {
   if (!Array.isArray(versions) || versions.some((v) => typeof v !== "string" || !v)) return null;
   if (versions.length > answered) return null;
   if ((answered > 0) !== versions.length > 0) return null;
+  // DISTINCT, because `straddled` keys on the count: `["dev3", "dev3"]` rendered
+  // "SERVED 2 VERSIONS: 1.13.0.dev3, 1.13.0.dev3" and warned that the lane did not
+  // test one product, off a row that says it did. The shipped reader dedupes
+  // (`[...new Set(...)]` in served-version.mjs) and the appender copies the list
+  // verbatim, so distinctness lives three processes upstream — exactly the
+  // foreign- or hand-edited-row case this guard exists for, failing in the worse
+  // direction: a wrong verdict rather than UNREADABLE (found in review).
+  if (new Set(versions).size !== versions.length) return null;
   return { expected: expected ?? null, answered, versions };
 };
 
@@ -569,14 +577,27 @@ export function compareRuns({
   // A shard that never reported is not a shard that agreed. Reported separately and
   // more softly than a straddle, because this is an ABSENCE: the version on the row
   // did serve, it just was not shown to be the only one.
-  const silent = [
-    unaccounted(ciSweep) ? `Actions ${unaccounted(ciSweep)} of ${ciSweep.expected}` : null,
-    unaccounted(vmSweep) ? `the VM ${unaccounted(vmSweep)} of ${vmSweep.expected}` : null,
-  ].filter(Boolean);
-  if (silent.length && !straddledLanes.length) {
+  // PER LANE, not once for the pair: the first version suppressed this whenever
+  // EITHER lane straddled, so Actions serving two versions hid "2 of the VM's 4 shards
+  // reported nothing" from the warnings and from `--json` entirely. Within one lane the
+  // suppression is right — both sentences say "the row's one version is not the whole
+  // run" — and across two it drops a finding about the other lane, which is the mistake
+  // `listing_completeness` records having made 20 lines above.
+  const silentOf = (label, sweep) =>
+    unaccounted(sweep) && !straddled(sweep) ? `${label} ${unaccounted(sweep)} of ${sweep.expected}` : null;
+  const silent = [silentOf("Actions", ciSweep), silentOf("the VM", vmSweep)].filter(Boolean);
+  if (silent.length) {
+    // `answered === 0` needs its own sentence: the clause about "the version on that
+    // row" asserted that one served, on a run where NOTHING did and `langflow_version`
+    // is null — the report said both at once (found in review). That state is what a
+    // wedged run produces, which is the state the field is most often read for.
+    const noneAtAll = [ciSweep, vmSweep].some((sw) => sw && sw.answered === 0 && unaccounted(sw));
     warnings.push(
-      `version parity PARTIAL: shards reported no served version (${silent.join("; ")}), so the version on that ` +
-        `row is one that served rather than the only one that did. The run's own summary names which shards went silent.`,
+      `version parity PARTIAL: shards reported no served version (${silent.join("; ")}), so ` +
+        (noneAtAll
+          ? `a lane's row cannot name the Langflow it ran at all - no shard answered.`
+          : `the version on that row is one that served rather than the only one that did.`) +
+        ` The run's own summary names which shards went silent.`,
     );
   }
 

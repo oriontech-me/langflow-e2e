@@ -347,11 +347,18 @@ export function renderReport(verdict) {
  * spelled in a workflow's `run:` — a `node -e` in the YAML is where a mutation
  * survives the whole unit suite (#1812's own finding, in the code written for it).
  *
- * Only `version` has a consumer today; the other five are diagnostic, for a human
- * reading a step's outputs. Two consequences, both deliberate: `expected=` is empty
- * both when no expectation was given and when one was refused — a distinction the
- * report and the run-summary block DO draw, and nothing machine-readable needs yet
- * — and `disagreement=` is emitted but unread, which is #1964.
+ * Four of the six now have a consumer. `version` rides the history row alone, and
+ * `expected`, `answered` and `versions` ride it together as `langflow_version_sweep`
+ * (#1964), which is what lets `compare-lane-verdicts.mjs` stop reading two equal
+ * single versions as proof the lanes tested the same product. `source` and
+ * `disagreement` remain diagnostic, for a human reading a step's outputs — the
+ * comparator derives the straddle from `versions` itself rather than trusting a
+ * boolean it cannot recompute.
+ *
+ * One consequence is now CARRIED into that series rather than merely printed here:
+ * `expected=` is empty both when no expectation was given and when one was refused,
+ * a distinction the report and the run-summary block draw and the row does not.
+ * `reports/README.md` discloses it on the field.
  */
 export function outputLines(verdict) {
   return [

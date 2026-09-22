@@ -1718,6 +1718,41 @@ function metadataFrom(env, after = "") {
   return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr };
 }
 
+test("phase_merge survives a served-version output file it cannot read", (t) => {
+  // #1964 lifted three `gh_out` reads out of `resolve_served_version` and beside its
+  // call site, where they were unguarded — and `gh_out` guards a file's EXISTENCE and
+  // then reads it. Measured on that version: `exit=1`, NO run-metadata.json, and
+  // nothing after phase_merge ran, so the history row, the QA POST and the verdict all
+  // went with it. The function's own test cannot see this; only the phase can.
+  if (skipIfRoot(t)) return;
+  const { meta } = metadataFrom(
+    { ...BLANKED },
+    'touch "$RUN_DIR/logs/served-version.out"; chmod 000 "$RUN_DIR/logs/served-version.out"',
+  );
+  // The metadata exists at all, which is the assertion; and the sweep reads honestly
+  // came back empty rather than aborting the phase that carries them.
+  assert.equal(meta.langflow_version_expected_shards, "");
+  assert.equal(meta.langflow_version_answered_shards, "");
+  assert.equal(meta.langflow_versions, "");
+});
+
+test("the metadata carries the sweep beside the version it qualifies", () => {
+  // Three spellings for one fact (row, env, metadata) and nothing pinned the third.
+  const { meta } = metadataFrom(
+    { ...BLANKED },
+    [
+      'mkdir -p "$RUN_DIR/all-tokens"',
+      `printf '%s' '{"version":"1.13.0.dev3"}' > "$RUN_DIR/all-tokens/version-1.json"`,
+      `printf '%s' '{"version":"1.13.0.dev4"}' > "$RUN_DIR/all-tokens/version-2.json"`,
+      "SHARD_TOTAL=2",
+    ].join("\n"),
+  );
+  assert.equal(meta.langflow_version, "1.13.0.dev3", "the picked version still rides alone");
+  assert.equal(meta.langflow_version_expected_shards, "2");
+  assert.equal(meta.langflow_version_answered_shards, "2");
+  assert.equal(meta.langflow_versions, "1.13.0.dev3,1.13.0.dev4");
+});
+
 test("the metadata names the command that served the target, so two artifacts are not one run", () => {
   // Without this field a run against the published distribution is byte-identical to
   // one against the clone: same version string, same suite sha, same mirrored env. It
