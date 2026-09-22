@@ -298,8 +298,9 @@ const targets = resolveTestTargets({ tier: "tool-calling" });
 //    loading the same template already pairs with these two. The same-name
 //    creation race is retried in `loadTemplateByName` (#1002, "no run has failed
 //    on it"), and the panel's check-then-act window only opens when the key is
-//    not already a Langflow variable — `globalSetup`'s `checkProviderCredentials`
-//    fails the CI lanes when it is not, so the branch is not taken there.
+//    not already a Langflow variable — and in CI `globalSetup`'s
+//    `checkProviderCredentials` records such a provider unusable (#1058), so its
+//    tests skip before `load()` and the branch is not taken there.
 //
 // `llm-agents/CLAUDE.md` §3 and §6 are updated with the same rule (#1690): serial
 // belongs on a describe whose tests genuinely depend on each other, `--workers=1`
