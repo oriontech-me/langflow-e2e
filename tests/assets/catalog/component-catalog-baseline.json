@@ -1,5 +1,5 @@
 {
-  "version": "1.12.0.dev16",
+  "version": "1.13.0.dev19",
   "categories": {
     "agentics": [
       "AMapComponent",
@@ -103,7 +103,12 @@
     "google": [
       "ext:google:BigQueryExecutorComponent@official",
       "ext:google:GmailLoaderComponent@official",
+      "ext:google:GmailSendComponent@official",
+      "ext:google:GoogleCalendarCreateComponent@official",
+      "ext:google:GoogleCalendarListComponent@official",
       "ext:google:GoogleDriveComponent@official",
+      "ext:google:GoogleDriveFetchComponent@official",
+      "ext:google:GoogleDriveListComponent@official",
       "ext:google:GoogleDriveSearchComponent@official",
       "ext:google:GoogleGenerativeAIComponent@official",
       "ext:google:GoogleGenerativeAIEmbeddingsComponent@official",
@@ -114,6 +119,8 @@
     "ibm": [
       "ext:ibm:DB2VectorStoreComponent@official",
       "ext:ibm:WatsonxAIComponent@official",
+      "ext:ibm:WatsonxDataMCPComponent@official",
+      "ext:ibm:WatsonxDataPrestoComponent@official",
       "ext:ibm:WatsonxEmbeddingsComponent@official"
     ],
     "input_output": [
@@ -153,10 +160,21 @@
     "llm_operations": [
       "BatchRunComponent",
       "GuardrailValidator",
+      "GuardrailValidatorV2",
       "LLMSelectorComponent",
       "Smart Transform",
       "SmartRouter",
       "StructuredOutput"
+    ],
+    "microsoft": [
+      "ext:microsoft:OutlookCalendarCreateComponent@official",
+      "ext:microsoft:OutlookCalendarListComponent@official",
+      "ext:microsoft:OutlookSearchComponent@official",
+      "ext:microsoft:OutlookSendComponent@official",
+      "ext:microsoft:SharePointFetchComponent@official",
+      "ext:microsoft:SharePointListComponent@official",
+      "ext:microsoft:TeamsChannelPostComponent@official",
+      "ext:microsoft:TeamsChatPostComponent@official"
     ],
     "models_and_agents": [
       "A2AAgent",
@@ -213,6 +231,15 @@
     "prototypes": [
       "PythonFunction"
     ],
+    "slack": [
+      "ext:slack:SlackAddReactionComponent@official",
+      "ext:slack:SlackCanvasComponent@official",
+      "ext:slack:SlackListChannelMembersComponent@official",
+      "ext:slack:SlackPostAsAppComponent@official",
+      "ext:slack:SlackReadThreadComponent@official",
+      "ext:slack:SlackSearchComponent@official",
+      "ext:slack:SlackSendAsUserComponent@official"
+    ],
     "toolguard": [
       "ext:toolguard:PoliciesComponent@official"
     ],
@@ -227,6 +254,9 @@
       "WikidataAPI",
       "WikipediaAPI",
       "YahooFinanceTool"
+    ],
+    "triggers": [
+      "ScheduleTrigger"
     ],
     "utilities": [
       "CalculatorComponent",

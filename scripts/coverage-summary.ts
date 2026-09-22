@@ -74,6 +74,7 @@ const MODULES: ModuleConfig[] = [
   { label: "`enterprise/` — Enterprise-only Surfaces",       sectionStart: "## enterprise/",
     excludeFromTotal: true },
   { label: "`serving/` — Serving-Plane End-User Identity",   sectionStart: "## serving/" },
+  { label: "`integrations/` — Dedicated Integrations",         sectionStart: "## integrations/" },
 ];
 
 const PART_II_HEADER = "# PART II — TEST AUTOMATION COVERAGE";
