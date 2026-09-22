@@ -127,6 +127,11 @@ WITH_OLLAMA="${WITH_OLLAMA:-1}"
 # Off while the VM daily has no consequence. Each turns on with the step that gives
 # it something to talk to: 08 (webhook), 09 (secrets and cron).
 CREATE_ISSUE="${CREATE_ISSUE:-0}"
+# Can this run still open the umbrella it may need? Asked only when CREATE_ISSUE=1, and
+# a REFUSED credential stops the run: the lane would otherwise spend sixteen minutes and
+# real model calls earning a verdict it cannot deliver, and a red morning whose umbrella
+# never appears reads like a morning with nothing to report (#1950).
+CHECK_ISSUE_CREDENTIAL="${CHECK_ISSUE_CREDENTIAL:-1}"
 NOTIFY_SLACK="${NOTIFY_SLACK:-0}"
 POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
 
@@ -922,6 +927,37 @@ phase_hygiene() {
 # PREFLIGHT
 # ---------------------------------------------------------------------------
 
+# The umbrella's credential, as a function so the DECISION can be exercised without a
+# real run: `ISSUE_CREDENTIAL_BIN` points the check at a stub. Refusal is fatal, and
+# everything else warns — see the caller for why the asymmetry.
+verify_issue_credential() {
+  local rc=0 log="$RUN_DIR/logs/issue-credential.log"
+  # No pipe, and that is not style. `node … | tee … || true` was the first version and
+  # the fatal branch was DEAD CODE: `|| true` runs a command, every command resets
+  # `PIPESTATUS`, so the status read afterwards was always 0. Measured, not reasoned.
+  if [ -n "${ISSUE_CREDENTIAL_BIN:-}" ]; then
+    "$ISSUE_CREDENTIAL_BIN" > "$log" 2>&1 || rc=$?
+  else
+    node scripts/check-issue-credential.mjs > "$log" 2>&1 || rc=$?
+  fi
+  cat "$log"
+
+  case "$rc" in
+    0) return 0 ;;
+    3)
+      die "the credential that opens the umbrella was refused — see the line above. A run whose red day cannot be reported is a run that reports nothing (#1950). Fix the token, or set CREATE_ISSUE=0 to run without consequence."
+      ;;
+    *)
+      # Through `warn`, which is how every other preflight concern surfaces: printed on
+      # stdout it was one line among thousands, and the notice whose only job is being
+      # noticed would not be. Exit 1 lands here too — that is node crashing, not the
+      # server refusing, and a broken script must not abort the daily blaming the token.
+      warn "the umbrella credential could not be confirmed (exit $rc) — see $log. If it has lapsed, a red day will pass in silence (#1950)."
+      return 0
+      ;;
+  esac
+}
+
 phase_preflight() {
   log "Preflight"
 
@@ -963,6 +999,19 @@ phase_preflight() {
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
   info "run dir: $RUN_DIR"
+
+  # The credential the umbrella needs, asked before the run spends anything. Expiry is
+  # the rare silent failure that comes with a DATE, so it can be caught rather than
+  # diagnosed: GitHub answers with `github-authentication-token-expiration`, and the
+  # destination's token dies on 2026-12-19.
+  #
+  # The asymmetry is deliberate. REFUSED is fatal — the server said no, the lane cannot
+  # report, and stopping now costs nothing that was going to be delivered. UNKNOWN and
+  # EXPIRING only warn: a blip must not cost a day of data, and a credential with two
+  # weeks left still works today.
+  if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
+    verify_issue_credential
+  fi
 
   preflight_ledger
 

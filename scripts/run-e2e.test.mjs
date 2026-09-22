@@ -2432,3 +2432,56 @@ test("a clone with uncommitted changes refuses before the removal writes anythin
   assert.match(readFileSync(join(lane.work, "QA-CHECKLIST.md"), "utf8"), /someone was editing/);
   rmSync(lane.dir, { recursive: true, force: true });
 });
+
+test("a refused umbrella credential stops the run; a blip and a crash do not (#1950)", () => {
+  // Behavioural, because the first version of this was a grep for the literal
+  // `PIPESTATUS[0]` — and the code it approved was dead: `node … | tee … || true`
+  // resets PIPESTATUS with the `true`, so the status read afterwards was always 0 and
+  // the fatal branch could never fire. A test that reads the source cannot see that.
+  const dir = makeTempDir("issue-credential");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  const stub = join(dir, "stub");
+
+  const run = (exitCode, message = "stubbed") => {
+    writeFileSync(stub, `#!/bin/sh\necho ${JSON.stringify(message)}\nexit ${exitCode}\n`, { mode: 0o755 });
+    return sourced(
+      [
+        `RUN_DIR=${JSON.stringify(dir)}`,
+        `ISSUE_CREDENTIAL_BIN=${JSON.stringify(stub)}`,
+        `set +e; verify_issue_credential; echo "EXIT=$?"`,
+      ].join("\n"),
+    );
+  };
+
+  const ok = run(0, "ok: expires in 89 day(s)");
+  assert.match(ok.stdout, /EXIT=0/);
+  assert.match(ok.stdout, /expires in 89/, "the verdict never reached the run log");
+
+  // 3, and only 3, is the refusal — the run stops.
+  const refused = run(3, "REFUSED: the credential cannot reach the repository");
+  assert.doesNotMatch(refused.stdout, /EXIT=0/, "a refused credential let the run continue");
+  assert.match(refused.stderr, /was refused/);
+
+  // 2 is "could not tell" and 1 is node crashing. Neither may cost a day of data, and
+  // both have to be audible — through `warn`, which is how every other preflight
+  // concern surfaces.
+  for (const code of [2, 1]) {
+    const soft = run(code, "UNKNOWN: no answer");
+    assert.match(soft.stdout, /EXIT=0/, `exit ${code} stopped the run`);
+    assert.match(soft.stderr, /::warning::.*could not be confirmed/, `exit ${code} was not warned about`);
+  }
+
+  // And the answer is kept where a triage looks.
+  assert.match(readFileSync(join(dir, "logs", "issue-credential.log"), "utf8"), /UNKNOWN|ok:/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the credential is only asked about where there is an umbrella to open (#1950)", () => {
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^CHECK_ISSUE_CREDENTIAL="\$\{CHECK_ISSUE_CREDENTIAL:-1\}"$/m);
+  const preflight = sh.slice(sh.indexOf("phase_preflight() {"), sh.indexOf("phase_services() {"));
+  const start = preflight.indexOf('if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ]');
+  assert.ok(start >= 0, "the credential is never checked");
+  const block = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
+  assert.match(block, /\[ "\$CREATE_ISSUE" = "1" \]/, "it would stop a run that opens no issue");
+});
