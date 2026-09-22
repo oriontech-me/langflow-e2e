@@ -225,10 +225,24 @@ async function expectToolLoopEntered(
     .toBe("tool-loop-entered");
 }
 
+// The wait that did not wait (#1991). `locator.isVisible()` returns immediately and
+// Playwright documents the `timeout` option on it as `@deprecated This option is
+// ignored`, so the old probe sampled the single instant after the send click: any run
+// whose Stop button had not rendered by then skipped the wait entirely and both tests
+// went on to assert against a run still in flight.
+//
+// It was NOT implicated in #1991's own failure — that run finished in 1.29 s — which
+// is exactly why it had to be found by reading the path rather than by a red day.
+//
+// "Never appeared" stays non-fatal on purpose: a run can finish before the button
+// renders, and that is a legitimate fast run, not an error to raise here.
 async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
+  const appeared = await stopButton
+    .waitFor({ state: "visible", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
     await expect(stopButton).toBeHidden({ timeout: 120000 });
   }
 }
