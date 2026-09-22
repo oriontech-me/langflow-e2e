@@ -1505,10 +1505,10 @@
 
 #### 24.1 Connection lifecycle contract (#1966)
 
-- [ ] `POST /api/v1/connections` answers `201` with the exact `ConnectionRead` key set, and `GET` lists the row matched **by its unique name** — never by index or list length
-- [ ] The `422` shapes, one per cause: missing `provider_key` / `name` / `executing_identity`, a `name` violating `^[a-z0-9]+(?:_[a-z0-9]+)*$`, an extra key (`extra_forbidden`), and `executing_identity` sent as a string instead of a descriptor object
-- [ ] `PATCH` renames and flips `allow_non_interactive`, and a field `ConnectionUpdate` does not declare (`granted_scopes`, `status`) is refused
-- [ ] `DELETE` answers `204`; a repeat `DELETE` and an unknown UUID both answer `404`, with removal **re-read** rather than inferred from the status (#1759/#1777/#1807)
+- [x] `POST /api/v1/connections` answers `201` with the exact `ConnectionRead` key set, and `GET` lists the row matched **by its unique name** — never by index or list length → api/connections/api-connections-lifecycle.spec.ts
+- [x] The `422` shapes, one per cause: missing `provider_key` / `name` / `executing_identity`, a `name` violating `^[a-z0-9]+(?:_[a-z0-9]+)*$`, an extra key (`extra_forbidden`), and `executing_identity` sent as a string instead of a descriptor object → api/connections/api-connections-lifecycle.spec.ts
+- [x] `PATCH` renames and flips `allow_non_interactive`, and a field `ConnectionUpdate` does not declare (`granted_scopes`, `status`) is refused → api/connections/api-connections-lifecycle.spec.ts
+- [x] `DELETE` answers `204`; a repeat `DELETE` and an unknown UUID both answer `404`, with removal **re-read** rather than inferred from the status (#1759/#1777/#1807) → api/connections/api-connections-lifecycle.spec.ts
 
 #### 24.2 Secret boundary (#1967)
 
