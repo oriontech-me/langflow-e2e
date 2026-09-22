@@ -1587,8 +1587,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| `integrations/` — Dedicated Integrations | 29 | 0 | 0 | 0 | 29 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **719** | **598 (83%)** | **33 (5%)** | **14 (2%)** | **74 (10%)** |
+| `integrations/` — Dedicated Integrations | 29 | 4 | 0 | 0 | 25 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **719** | **602 (84%)** | **33 (5%)** | **14 (2%)** | **70 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1604,7 +1604,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 672 `test()` calls carrying the `@stable` tag, distributed across 268 spec
+> 680 `test()` calls carrying the `@stable` tag, distributed across 269 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1614,6 +1614,16 @@
 - [x] the session probe answers anonymous and authenticated alike, and says which → `api-session-auth-lifecycle.spec.ts`
 - [x] login takes a form body and refuses an empty one → `api-session-auth-lifecycle.spec.ts`
 - [x] logout leaves the access token working, and refresh is cookie-driven → `api-session-auth-lifecycle.spec.ts`
+
+#### api/connections/
+- [x] a connection is created with its full body, listed by its unique name and deleted by id → `api-connections-lifecycle.spec.ts`
+- [x] PATCH renames and grants the non-interactive opt-in, and refuses a field it does not declare → `api-connections-lifecycle.spec.ts`
+- [x] a create body with no provider_key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a create body with no name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a create body with no executing_identity is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
