@@ -1591,8 +1591,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| `integrations/` — Dedicated Integrations | 29 | 9 | 0 | 0 | 20 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **723** | **611 (85%)** | **33 (5%)** | **14 (2%)** | **65 (9%)** |
+| `integrations/` — Dedicated Integrations | 29 | 15 | 0 | 0 | 14 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **723** | **617 (85%)** | **33 (5%)** | **14 (2%)** | **59 (8%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1608,7 +1608,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 686 `test()` calls carrying the `@stable` tag, distributed across 271 spec
+> 689 `test()` calls carrying the `@stable` tag, distributed across 272 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1943,6 +1943,9 @@
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/integrations/
+- [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
+- [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
+- [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
 
