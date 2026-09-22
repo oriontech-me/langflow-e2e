@@ -51,7 +51,8 @@ const PAYLOAD = {
 
 const GREEN_PAYLOAD = {
   ...PAYLOAD,
-  totals: { passed: 331, failed: 0, flaky: 0, skipped: 20 },
+  totals: { passed: 331, failed: 0, flaky: 2, skipped: 20 },
+  duration_ms: 18 * 60 * 1000,
   failures: [],
 };
 
@@ -319,9 +320,178 @@ test("a green run is not announced as a red one", () => {
   assert.doesNotMatch(stdout, /Daily @stable failed/, "a clean run must not be announced as a failure");
   assert.match(stdout, /nothing to announce/);
 
-  // SLACK_FORCE is the wiring test, and it must still reach a rendered payload.
+  // SLACK_FORCE is the wiring test, and it must still reach a rendered payload — but
+  // what it renders is the GREEN message now. It used to post
+  // "🔴 Daily @stable failed — 0 test(s)", which made the one tool for proving the
+  // webhook works the one tool that lies in the channel while doing it (#1981).
   const forced = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: greenPayloadPath, SLACK_FORCE: "1" });
-  assert.match(forced.body.headline, /Daily @stable failed/);
+  assert.match(forced.body.headline, /is green/);
+  assert.doesNotMatch(forced.body.headline, /Daily @stable failed/);
+});
+
+test("with SLACK_ANNOUNCE_GREEN the clean day is announced, as its own shape (#1981)", () => {
+  // The lane this is for has no run list: its only positive evidence lives in systemd
+  // and a log file behind a VPN, so "it ran and passed" and "nobody is looking" are
+  // the same silence. This message is what tells them apart, which is why it has to
+  // carry enough to be worth reading at a glance — and none of the warning vocabulary
+  // of the five shapes above.
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const { body } = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: greenPayloadPath, SLACK_ANNOUNCE_GREEN: "1" });
+
+  assert.match(body.headline, /^✅ Daily @stable is green — 331 passed — 2026-08-25$/);
+  assert.doesNotMatch(body.headline, /failed|⚠️|🔴/, "a green headline must not read like a bad one");
+
+  // What a reader is actually checking: which product, which run, and the numbers.
+  assert.match(body.body, /1\.11\.0\.dev25/, "the served version is missing");
+  assert.match(body.body, /20260825T084100Z/, "the run id is missing");
+  assert.match(body.body, /0 failed · 2 flaky · 331 passed · 20 skipped/);
+  // A green day that took twice as long as usual is worth a second look, and nothing
+  // else in this message would show it.
+  assert.match(body.body, /18 min/, "the duration is missing");
+  assert.match(body.body, /Nothing to triage/);
+});
+
+test("the knob widens WHEN the notifier speaks, never WHAT counts as green (#1981)", () => {
+  // The whole risk of announcing clean days is that "clean" starts meaning "I could
+  // not tell". The evidence stays exactly as narrow as it was: read totals, an exact
+  // zero, an empty failure list, and neither guard raised. Everything else keeps the
+  // shape it had, knob or no knob.
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const green = { SLACK_WEBHOOK_URL: url, SLACK_ANNOUNCE_GREEN: "1" };
+
+  const noPayload = render({ ...green, PAYLOAD_JSON: join(dir, "does-not-exist.json") });
+  assert.match(noPayload.body.headline, /verdict UNKNOWN/, "an unread run announced as a clean one");
+  assert.doesNotMatch(noPayload.body.headline, /is green/);
+
+  const noTotals = join(dir, "payload-no-totals-green.json");
+  writeFileSync(noTotals, JSON.stringify({ version: 1, date: "2026-08-25", failures: [] }), "utf8");
+  assert.match(render({ ...green, PAYLOAD_JSON: noTotals }).body.headline, /verdict UNKNOWN/);
+
+  // Nothing failed BECAUSE nothing ran is the whole point of these two shapes, and a
+  // knob that says "announce clean days" must not be the thing that swallows them.
+  assert.match(render({ ...green, PAYLOAD_JSON: greenPayloadPath, RUN_EMPTY: "true" }).body.headline, /ZERO tests/);
+  assert.match(render({ ...green, PAYLOAD_JSON: greenPayloadPath, RUN_PARTIAL: "true" }).body.headline, /PARTIAL/);
+  assert.match(
+    render({ ...green, PAYLOAD_JSON: greenPayloadPath, MERGE_OK: "false" }).body.headline,
+    /could not MERGE/,
+  );
+
+  // And the bad day is rendered to the byte as it was before the knob existed.
+  const withKnob = render({ SLACK_WEBHOOK_URL: url, SLACK_ANNOUNCE_GREEN: "1" });
+  const without = render({ SLACK_WEBHOOK_URL: url });
+  assert.deepEqual(withKnob, without, "the knob changed a message about a red day");
+});
+
+test("a clean REPORT is not a clean RUN: the runner's own failure outranks it (#1981)", () => {
+  // The day this is for: a shard's subshell dies before writing its blob. The merged
+  // report holds the survivors, carries no top-level error — so it is neither empty nor
+  // partial — and the survivors passed, so the payload reads exactly like a green day,
+  // while phase_merge sets SHARD_COMPLETE false and the verdict exits 1. The listing
+  // gate and the version gate fail a run the same way: over something no test result
+  // mentions. On such a day the umbrella IS opened, so a green message would not merely
+  // overstate the day, it would contradict the issue it is a second view of, in the
+  // same channel.
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const r = run({
+    SLACK_WEBHOOK_URL: url,
+    PAYLOAD_JSON: greenPayloadPath,
+    SLACK_ANNOUNCE_GREEN: "1",
+    TEST_JOB_FAILED: "1",
+    SLACK_DRY_RUN: "1",
+  });
+
+  assert.equal(r.status, 0, "the refusal must stay fail-soft");
+  assert.doesNotMatch(r.stdout, /is green/, "a run the runner failed was announced as green");
+  assert.match(r.stderr, /refusing to announce a clean day/);
+  assert.match(r.stderr, /reported this run as FAILED/);
+  // Refusing is refusing: it does not invent a different verdict out of a report that
+  // does not support one either. The day is still carried by the umbrella and by the
+  // missed-run alarm.
+  assert.doesNotMatch(r.stdout, /\{/, "something was rendered for a day this script cannot describe");
+});
+
+test("green requires that something actually PASSED, not merely that nothing failed (#1010)", () => {
+  // `tests_total` counts skipped, so a run whose specs skip at RUNTIME — expired
+  // provider credentials, an entitlement gate — is not empty, not partial and fails
+  // nothing. Before this, the lane's one signal said "✅ Daily @stable is green — 0
+  // passed" over `0 failed · 0 flaky · 0 passed · 735 skipped`.
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const allSkipped = join(dir, "payload-all-skipped.json");
+  writeFileSync(
+    allSkipped,
+    JSON.stringify({ ...GREEN_PAYLOAD, totals: { passed: 0, failed: 0, flaky: 0, skipped: 735 } }),
+    "utf8",
+  );
+  const skipped = run({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: allSkipped, SLACK_ANNOUNCE_GREEN: "1", SLACK_DRY_RUN: "1" });
+  assert.equal(skipped.status, 0);
+  assert.doesNotMatch(skipped.stdout, /is green/, "the green-all-skip day was announced as clean");
+  assert.match(skipped.stderr, /not one test passed \(735 skipped\)/);
+
+  // The same gate from the other side: a totals object carrying `failed` and nothing
+  // else is not a day that passed 0 tests, it is a day nobody counted — and it used to
+  // render "is green — 0 passed".
+  const failedOnly = join(dir, "payload-failed-only.json");
+  writeFileSync(failedOnly, JSON.stringify({ version: 1, date: "2026-08-25", totals: { failed: 0 }, failures: [] }), "utf8");
+  const bare = run({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: failedOnly, SLACK_ANNOUNCE_GREEN: "1", SLACK_DRY_RUN: "1" });
+  assert.doesNotMatch(bare.stdout, /is green/);
+  assert.match(bare.stderr, /not one test passed/);
+});
+
+test("a run under a minute says seconds, not \"0 min\"", () => {
+  // Math.round to minutes renders a 40-second run as "0 min", and the one number here
+  // whose job is to make an abnormal green day worth a second look would read as a
+  // formatting artefact on exactly such a day.
+  const fast = join(dir, "payload-fast.json");
+  writeFileSync(fast, JSON.stringify({ ...GREEN_PAYLOAD, duration_ms: 40_000 }), "utf8");
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    PAYLOAD_JSON: fast,
+    SLACK_ANNOUNCE_GREEN: "1",
+  });
+  assert.match(body.body, /40 s/);
+  assert.doesNotMatch(body.body, /0 min/);
+});
+
+test("a green day that measured an outage reports it, without sending anyone to triage it", () => {
+  // The outage note is written for a red day: it tells the reader the specs that failed
+  // inside the window are collateral and to read the outage first. On a green day both
+  // halves are wrong — there are no failing specs, and there is nothing to read first —
+  // but the measurement itself still matters, because the mid-run wedge (#1030) is a
+  // trend. A real green run measured one on 2026-09-22: 1 outage, 8s, zero failures.
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    PAYLOAD_JSON: greenPayloadPath,
+    SLACK_ANNOUNCE_GREEN: "1",
+    LIVENESS_MEASURED: "true",
+    LIVENESS_WEDGED: "true",
+    LIVENESS_OUTAGES: "1",
+    LIVENESS_DOWN_SECONDS: "8",
+  });
+
+  assert.match(body.headline, /is green/, "an outage is not a verdict");
+  assert.match(body.body, /1 outage\(s\), 8s unreachable/, "the measurement was dropped");
+  assert.match(body.body, /nothing failed around it/);
+  assert.doesNotMatch(body.body, /collateral|Read the outage first/, "green triage instructions for a day with no triage");
+  // The verdict leads and the measurement follows it, which is the opposite of the red
+  // ordering and the same rule: what the reader must act on comes first.
+  assert.ok(
+    body.body.indexOf("Nothing to triage") < body.body.indexOf("went down mid-run"),
+    "the footnote is leading the verdict",
+  );
+});
+
+test("a first error quoted on a green day is dropped, not printed under \"nothing to triage\"", () => {
+  // RUN_FIRST_ERROR is the caller's to pass and a green run should leave it empty, but
+  // a fenced cause under "Nothing to triage" is a contradiction the reader resolves by
+  // believing the scarier half. The message refuses it regardless of what it is handed.
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    PAYLOAD_JSON: greenPayloadPath,
+    SLACK_ANNOUNCE_GREEN: "1",
+    RUN_FIRST_ERROR: "Error: a stale cause from somewhere else",
+  });
+  assert.match(body.headline, /is green/);
+  assert.doesNotMatch(body.body, /a stale cause from somewhere else/);
 });
 
 test("the gate is narrow: an UNKNOWN verdict is still announced, and named as unknown", () => {
