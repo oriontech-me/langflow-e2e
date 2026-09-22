@@ -1587,7 +1587,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **690** | **598 (87%)** | **33 (5%)** | **14 (2%)** | **45 (7%)** |
+| `integrations/` — Dedicated Integrations | 29 | 0 | 0 | 0 | 29 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **719** | **598 (83%)** | **33 (5%)** | **14 (2%)** | **74 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
