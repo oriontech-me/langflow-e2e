@@ -266,6 +266,37 @@ test("a unit test is never CI wiring, even when a workflow names it", () => {
   );
 });
 
+test("the walk's budget is a NODE count — one shared module with many leaves is not a cycle", () => {
+  // The shape that broke the first bound, and the commonest thing a consolidation
+  // refactor produces: one module, N importers that nothing imports. `buildImporterGraph`
+  // returns module → importers, so its `.size` counts only modules that ARE imported
+  // (1 here) while the queue holds importers (2) — neither population bounds the other,
+  // and on this repo they are 71 against 115. Bounded on `.size`, this healthy ACYCLIC
+  // graph threw "the cycle guard is broken", which in the lane is a red, unmergeable PR
+  // whose only diagnostic names the wrong cause.
+  const files = new Map([
+    ["scripts/lib/shared.mjs", "export const shared = 1;"],
+    ["scripts/leaf-one.mjs", `import { shared } from "./lib/shared.mjs";`],
+    ["scripts/leaf-two.mjs", `import { shared } from "./lib/shared.mjs";`],
+  ]);
+  const r = buildCiReferences({
+    workflows: new Map([
+      [PR_LANE, "on:\n  pull_request:\nsteps:\n  - run: node scripts/leaf-one.mjs"],
+    ]),
+    actions: new Map(),
+    scriptFiles: files,
+  });
+  assert.ok(
+    r.scriptImporters.size < files.size,
+    "the premise: fewer imported MODULES than files, which is what made `.size` unsound",
+  );
+  assert.deepEqual(
+    [...importersOf(r, "scripts/lib/shared.mjs")].sort(),
+    ["scripts/leaf-one.mjs", "scripts/leaf-two.mjs"],
+  );
+  assert.equal(classifyCiChange({ changed: ["scripts/lib/shared.mjs"], refs: r }).verdict, "canary");
+});
+
 test("a module only a test imports stays silent — and the graph DID see the importer", () => {
   // Asserting the two verdicts alone pins nothing: both are `none` before this change
   // and after, so the test passed under every mutation including deleting the
@@ -375,12 +406,20 @@ test("against the live repo, a module reached ONLY by import is not silence", ()
   // The premise, asserted over EVERY workflow rather than the one the verdict happens
   // to name first: the result names daily-stable AND weekly-stable, so checking one of
   // them established a fraction of the claim it was written to establish.
-  const wfDir = path.join(REPO_ROOT, ".github/workflows");
-  const spellsIt = fs
-    .readdirSync(wfDir)
-    .filter((f) => /\.ya?ml$/.test(f))
-    .filter((f) => fs.readFileSync(path.join(wfDir, f), "utf8").includes("lib/spec-path"));
-  assert.deepEqual(spellsIt, [], "the premise: no workflow spells this path, so only the import graph can reach it");
+  // Actions too, not just workflows: `workflowScripts` folds an action's own `scripts/`
+  // references into every workflow that `uses:` it, so a path spelled only in an action
+  // is still "named" and the premise would be false by a route this never looked down.
+  const ciText = [];
+  const collect = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) collect(p);
+      else if (/\.ya?ml$/.test(e.name)) ciText.push([path.relative(REPO_ROOT, p), fs.readFileSync(p, "utf8")]);
+    }
+  };
+  collect(path.join(REPO_ROOT, ".github"));
+  const spellsIt = ciText.filter(([, text]) => text.includes("lib/spec-path")).map(([f]) => f);
+  assert.deepEqual(spellsIt, [], "the premise: nothing under .github/ spells this path — only the import graph reaches it");
 });
 
 test("a canary RENDERS its dispatch targets, and does not claim the run proved them", () => {
@@ -419,6 +458,40 @@ test("a shared ACTION names every other lane that uses it", () => {
   assert.equal(r.verdict, "canary");
   assert.deepEqual(r.dispatchWorkflows, [".github/workflows/daily-stable.yml"]);
   assert.match(r.reasons.join(" "), /used by the PR lane, and by \.github\/workflows\/daily-stable\.yml/);
+});
+
+test("against the live repo, 'directly' is claimed of the PR LANE alone", () => {
+  // The DISCRIMINATING input, which the synthetic cases are not: a file another lane
+  // names by hand and the PR lane reaches only by import. `pr-validation.yml` never
+  // mentions `reconcile-stable-orphans.ts`; `stable-orphan-reconcile.yml` runs it.
+  // With the predicate as `named(file)` — "does SOME workflow spell it" — the reason
+  // claimed the PR lane ran it directly, and the whole file stayed green.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/reconcile-stable-orphans.ts\n" },
+  );
+  const reason = JSON.parse(out).reasons.join(" ");
+  assert.match(reason, /is run by the PR lane \(reached through /);
+  assert.doesNotMatch(reason, /PR lane directly/, "pr-validation.yml does not name this file");
+});
+
+test("against the live repo, 'directly' covers EVERY workflow in the list it qualifies", () => {
+  // `named(file)` asks whether SOME workflow spells the file and the adjective was then
+  // attached to all of them: measured, `report-backend-outages.mjs` read "is run
+  // directly by daily-stable, weekly-stable" while weekly-stable reaches it only by
+  // import. The same over-claim the canary side had, on the branch added to balance it.
+  const reasonFor = (file) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+        { input: `${file}\n` },
+      ),
+    ).reasons.join(" ");
+  assert.doesNotMatch(reasonFor("scripts/report-backend-outages.mjs"), /run directly by/);
+  // …and a file whose only named user really does spell it keeps the word.
+  assert.match(reasonFor("scripts/lib/served-version.mjs"), /is run directly by \.github\/workflows\/daily-stable\.yml/);
 });
 
 test("'directly' is claimed of the PR LANE, not of any workflow at all", () => {
@@ -635,12 +708,18 @@ test("a verdict that predates the check degrades to unknown rather than to the o
   assert.match(annotation, /Could not read the triggers/);
 });
 
-test("no advice at all on the verdicts that are not `dispatch`", () => {
+test("no advice where there is nothing to dispatch — but a canary WITH targets speaks", () => {
+  // The title used to read "no advice at all on the verdicts that are not `dispatch`",
+  // which passed only because its one canary case has zero dispatch targets — and
+  // stated as the pinned contract exactly the behaviour this branch reversed.
   for (const r of [classify(PR_LANE), classify("docs/foo.md"), null]) {
     const { annotation, summaryLines } = dispatchAdvice(r);
     assert.equal(annotation, null);
     assert.deepEqual(summaryLines, []);
   }
+  const canaryWithTargets = classify(".github/actions/wait-for-backend/action.yml");
+  assert.equal(canaryWithTargets.verdict, "canary");
+  assert.match(dispatchAdvice(canaryWithTargets).annotation, /Dispatch \.github\/workflows\/daily-stable\.yml/);
 });
 
 // ── The other way to 422: disabled in Actions (#1609) ───────────────────────

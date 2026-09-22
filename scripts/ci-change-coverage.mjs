@@ -190,7 +190,8 @@ export const CANARY_SPECS = [
 // paths appear and the directory token `scripts/lib` goes, which is the right trade
 // because a directory is never a changed FILE. Three inert keys are unchanged and stay
 // inert — two are a real filename followed by a sentence-ending period (the `.` in this
-// class absorbs it), one is the literal `scripts/x` out of this file's own prose. Those
+// class absorbs it), one is the literal `scripts/x` out of `pr-validation.yml`'s own
+// explanatory comment, the token scan reading only `.github/`. Those
 // periods are NOT what keeps a unit test out: `UNIT_TEST` below does that, as its live
 // sibling `daily-matrix-provider-keys.test.mjs` shows — a real token, resolving to
 // `none`. Belt and braces, not a single point of failure.
@@ -426,6 +427,8 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null, sc
     actionScripts,
     workflowDispatch,
     scriptImporters,
+    // A true ceiling for the importer walk: every node it can reach is a key here.
+    scriptNodeCount: scriptFiles ? scriptFiles.size : 0,
     // Whether `workflowDispatch` reflects the copy GitHub will actually resolve.
     triggersFromBase: Boolean(baseWorkflows),
   };
@@ -452,9 +455,17 @@ export function importersOf(refs, file) {
   // burns its whole budget and reports nothing, and in the unit lane a file that hangs
   // at `0 pass / 0 fail`. A synchronous loop is not interruptible, so `node:test`'s own
   // `timeout` cannot turn that into a red test either: measured, it does not fire.
-  // Every node can enter the queue at most once, so the graph's size is a true ceiling
-  // and this can only ever fire on a guard that is already broken.
-  let budget = refs.scriptImporters.size + 1;
+  //
+  // The ceiling is the NODE count, not `scriptImporters.size`. That map is
+  // module → importers, so its `.size` counts only modules that are imported — 71 keys
+  // against 115 distinct importers on this repo — and the queue holds importers. The
+  // two populations bound neither each other nor the walk, so a healthy ACYCLIC graph
+  // could exceed it: reproduced end to end on a three-file tree, where the CLI exited
+  // 1 blaming a cycle guard that was working perfectly, which in the lane is a red,
+  // unmergeable PR whose only diagnostic names the wrong cause. Every node the walk can
+  // reach is a key of `scriptFiles` (`buildImporterGraph` resolves targets through it),
+  // so that count is a true ceiling and this can only fire on a guard already broken.
+  let budget = refs.scriptNodeCount + 1;
   while (queue.length > 0) {
     if (budget-- <= 0) {
       throw new Error(`importersOf walked past ${refs.scriptImporters.size} nodes from ${file} — the cycle guard is broken`);
@@ -601,8 +612,15 @@ export function classifyCiChange({ changed, refs, states = null }) {
       reasons.push(`${file} is run by the PR lane${direct}${route}${alsoDispatch}`);
     } else {
       // Symmetrically: a file another lane runs BY NAME and also reaches by import
-      // should not read as though only the indirection got it there.
-      const direct = named(file) ? " directly" : "";
+      // should not read as though only the indirection got it there. The predicate is
+      // over EVERY workflow in the list, not `named(file)`, which asks whether SOME
+      // workflow spells it and was then attached to all of them — measured live,
+      // `report-backend-outages.mjs` read "is run directly by daily-stable, weekly-
+      // stable" while weekly-stable reaches it only by import. That is the identical
+      // over-claim this file removed from the canary side, reintroduced by the clause
+      // added to balance it.
+      const direct =
+        users.length > 0 && users.every((w) => refs.workflowScripts.get(w)?.has(file)) ? " directly" : "";
       reasons.push(`${file} is run${direct} by ${users.join(", ")}, not by the PR lane${route}`);
     }
   }
@@ -973,8 +991,9 @@ function main(argv) {
   }
 
   // The annotation ships IN the verdict so the workflow prints it rather than
-  // composing it (#1226): `echo "::warning::$(jq -r '.advice' …)"`. Null on every
-  // verdict but `dispatch`, which is what keeps the canary branch unchanged.
+  // composing it (#1226). Non-null on `dispatch` AND on a `canary` that carries
+  // dispatch targets — 25 rows on this repo today — which is why the lane gates its
+  // `::warning::` on the field being non-empty rather than on the verdict.
   const advice = { ...result, advice: dispatchAdvice(result).annotation };
 
   if (format === "json") {
