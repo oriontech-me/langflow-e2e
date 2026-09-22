@@ -54,6 +54,8 @@
 
 import * as fs from "node:fs";
 
+import { dispatchAdvice } from "./ci-change-coverage.mjs";
+
 /** Raised for anything that leaves the summary unrenderable. */
 export class UnrenderableError extends Error {}
 
@@ -128,10 +130,12 @@ export function renderSummary({
       "  This proves the lane RUNS, not that the changed behaviour is correct.",
     );
   } else if (ciCoverage?.verdict === "dispatch") {
-    lines.push(
-      "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
-      ...(ciCoverage.dispatchWorkflows ?? []).map((wf) => `  - \`${wf}\``),
-    );
+    // Worded by the classifier, which is the only thing that read the named
+    // workflows' `on:` blocks. Telling a reviewer to dispatch
+    // `update-coverage-summary.yml` — `on: push: [main]`, no `workflow_dispatch` —
+    // is an instruction that 422s, and an instruction nobody can carry out is
+    // indistinguishable from saying nothing (#1609).
+    lines.push(...dispatchAdvice(ciCoverage).summaryLines);
   }
 
   if (impacted.fullSuite === true) {

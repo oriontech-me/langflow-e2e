@@ -361,6 +361,13 @@ jobs:
     name: Detect changed specs
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # Read-only, for the `dispatch` verdict alone: a workflow disabled in the
+      # Actions tab answers 422 on dispatch however good its YAML is, and that
+      # state lives nowhere in the repository (#1609). The lookup is best-effort —
+      # without this scope it warns and the verdict falls back to the trigger.
+      actions: read
     outputs:
       specs: ${{ steps.diff.outputs.specs }}
       has_specs: ${{ steps.diff.outputs.has_specs }}
@@ -391,6 +398,11 @@ jobs:
           # silently: the dropped set is printed and summarised (#1012's
           # silent-cap rule). The E2E job's own budget is 60 min.
           IMPACTED_SPEC_CAP: "20"
+          # `gh api` needs a token; the job's `actions: read` scope bounds it.
+          GH_TOKEN: ${{ github.token }}
+          # The branch GitHub resolves `workflow_dispatch` against — not `BASE_REF`,
+          # which is only the same thing while every PR targets the default (#1609).
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git fetch origin "$BASE_REF" --quiet
           # Selection is by IMPORT GRAPH, not by changed-spec glob (#1054).
@@ -449,7 +461,55 @@ jobs:
           # a path to nothing.
           CI_COVERAGE=""
           if [ "$TOTAL" -eq 0 ]; then
-            node scripts/ci-change-coverage.mjs --stdin --format=json < /tmp/changed.txt > /tmp/ci-coverage.json \
+            # Two inputs the repository working tree cannot supply, both for the
+            # `dispatch` verdict alone — so both are skipped unless the diff actually
+            # touches a CI surface, and both are best-effort: losing either degrades
+            # the wording, never the lane (#1609).
+            #
+            #  1. Which workflows are turned ON. A workflow disabled in Actions
+            #     answers 422 however good its YAML is, and four of ours are.
+            #  2. The DEFAULT branch's copy of the workflows. GitHub resolves
+            #     `workflow_dispatch` from there, so reading this branch's copy would
+            #     tell a PR that ADDS the trigger to dispatch a workflow that does
+            #     not have it yet — #1609, one PR later. The default branch, NOT
+            #     `$BASE_REF`: this lane is `on: pull_request: branches: [main]`, a
+            #     filter on the BASE, so the two are the same value by construction
+            #     here. Passing the right one guards a future edit to that trigger;
+            #     it is not a hole being closed today.
+            STATES=""
+            BASE_CI=""
+            # The first NON-BLANK line of a captured stderr, or a literal when there
+            # is none. Both branches below need it and the fallback is the point: the
+            # case `-s` exists for is a command exiting 0 (or failing) having written
+            # nothing, where a naive `head -1` renders "could not read … ()" — a
+            # warning naming nothing, in the one branch it exists for (#1012).
+            reason() { sed -n '/[^[:space:]]/{p;q;}' "$1" 2>/dev/null | grep . || echo "$2"; }
+            if grep -qE '^(\.github/|scripts/)' /tmp/changed.txt; then
+              # `-s` as well as the exit status: `gh` can exit 0 having written
+              # nothing, and an empty listing is not a weak signal — absence from it
+              # is read as "not on the default branch", so it would claim a 404 for
+              # every workflow at once. The classifier has the same floor; this is
+              # the cheap half of it.
+              if gh api "repos/${GITHUB_REPOSITORY}/actions/workflows" --paginate \
+                   --jq '.workflows[] | .path + "\t" + .state' > /tmp/wf-states.tsv 2>/tmp/wf-states.err \
+                 && [ -s /tmp/wf-states.tsv ]; then
+                STATES="--workflow-states=/tmp/wf-states.tsv"
+              else
+                echo "::warning::could not read workflow states ($(reason /tmp/wf-states.err 'gh wrote an empty listing')); a disabled workflow will not be flagged."
+              fi
+              # Archive to a FILE, not through a pipe: this shell has no `pipefail`,
+              # so a piped `tar -x` would report its own status and a failed
+              # `git archive` would read as success over an empty stream.
+              mkdir -p /tmp/base-ci
+              git fetch --quiet origin "$DEFAULT_BRANCH" 2>/tmp/base-ci.err || true
+              if git archive -o /tmp/base-ci.tar "origin/$DEFAULT_BRANCH" .github/workflows 2>/tmp/base-ci.err \
+                 && tar -xf /tmp/base-ci.tar -C /tmp/base-ci 2>>/tmp/base-ci.err; then
+                BASE_CI="--base-root=/tmp/base-ci"
+              else
+                echo "::warning::could not read $DEFAULT_BRANCH's workflows ($(reason /tmp/base-ci.err 'no error output')); trigger answers will come from this branch."
+              fi
+            fi
+            node scripts/ci-change-coverage.mjs --stdin --format=json $STATES $BASE_CI < /tmp/changed.txt > /tmp/ci-coverage.json \
               || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
             CI_COVERAGE=/tmp/ci-coverage.json
             VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
@@ -461,7 +521,16 @@ jobs:
                 echo "::warning::CI-only change to a surface THIS lane runs ($(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json)). No spec imports it, so the lane runs the canary instead of skipping (#1159)."
                 ;;
               dispatch)
-                echo "::warning::CI-only change to $(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json), which THIS lane does not run — nothing here proves it works. Dispatch $(jq -r '.dispatchWorkflows | join(", ")' /tmp/ci-coverage.json) on this branch before merging (#1159)."
+                # The sentence is RENDERED by the classifier, not composed here.
+                # Composed here, it told the reviewer to dispatch a workflow that has
+                # no `workflow_dispatch` trigger — advice that 422s, i.e. silence
+                # (#1609) — and a YAML-text guard cannot catch that (#1226). The
+                # classifier reads each named workflow's `on:` block on the DEFAULT
+                # branch, takes the Actions state fetched above, and words all six
+                # cases itself: dispatchable, not on the default branch yet (404), disabled
+                # in Actions (422), no trigger, triggers unreadable, and triggers
+                # this PR edits — so the branch copy is not the one that decides.
+                echo "::warning::$(jq -r '.advice' /tmp/ci-coverage.json)"
                 ;;
             esac
           fi

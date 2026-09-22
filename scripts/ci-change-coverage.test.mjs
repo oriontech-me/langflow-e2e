@@ -10,33 +10,67 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 import {
   CANARY_SPECS,
   PR_LANE,
   buildCiReferences,
   classifyCiChange,
+  dispatchAdvice,
+  parseWorkflowStates,
+  readWorkflowTriggers,
+  workflowDispatchability,
 } from "./ci-change-coverage.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
 // A miniature .github: the PR lane uses one action, another lane uses a second.
+// Each workflow carries a real `on:` block, because since #1609 the verdict's
+// wording depends on it — a fixture without one would exercise only the
+// "triggers unreadable" branch and pin none of the advice.
 const FIXTURE = {
   workflows: new Map([
     [
       PR_LANE,
-      `steps:
+      `on:
+  pull_request:
+    branches: [main]
+
+steps:
   - uses: ./.github/actions/setup-playwright
   - uses: ./.github/actions/wait-for-backend
   - run: node scripts/impacted-specs-by-import.mjs --stdin`,
     ],
     [
       ".github/workflows/daily-stable.yml",
-      `steps:
+      `on:
+  schedule:
+    - cron: "0 8 * * 1-5"
+  workflow_dispatch:
+
+steps:
   - uses: ./.github/actions/auto-remove-stable
   - run: node scripts/partition-shards.mjs matrix
   - uses: ./.github/actions/wait-for-backend`,
+    ],
+    // The #1609 case: a lane that runs a script, and that no branch can dispatch.
+    [
+      ".github/workflows/update-coverage-summary.yml",
+      `on:
+  push:
+    branches: [main]
+
+steps:
+  - run: npx ts-node scripts/coverage-summary.ts`,
+    ],
+    // A workflow whose triggers this cannot read at all.
+    [
+      ".github/workflows/opaque.yml",
+      `steps:
+  - run: node scripts/opaque-only.mjs`,
     ],
   ]),
   actions: new Map([
@@ -130,6 +164,462 @@ test("a script no workflow runs is not CI surface", () => {
   assert.deepEqual(r.ciFiles, []);
 });
 
+// ── Reading a workflow's triggers (#1609) ───────────────────────────────────
+
+const triggers = (text) => readWorkflowTriggers(text).events;
+
+test("the block form yields the event keys, not their detail", () => {
+  assert.deepEqual(
+    triggers(`name: x
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+  workflow_dispatch:
+    inputs:
+      ref:
+        required: false
+
+jobs:
+  build:
+    steps:
+      - run: echo on:`),
+    ["push", "workflow_dispatch"],
+    "`branches:`/`inputs:` are detail, and `jobs:` is out of the block entirely",
+  );
+});
+
+test("the flow-list and scalar forms are read too", () => {
+  assert.deepEqual(triggers("on: [push, workflow_dispatch]"), ["push", "workflow_dispatch"]);
+  assert.deepEqual(triggers("on: workflow_dispatch"), ["workflow_dispatch"]);
+  assert.deepEqual(triggers('"on": [push]'), ["push"]);
+  assert.deepEqual(triggers("on:\n  - push\n  - workflow_dispatch"), ["push", "workflow_dispatch"]);
+  assert.deepEqual(triggers("on: [\n  push,\n  workflow_dispatch,\n]"), ["push", "workflow_dispatch"]);
+  // A block's items may sit at the PARENT's indentation, so this is the same shape
+  // at column 0 — legal YAML, and rejected by the first draft, which stopped at the
+  // first width-0 line as if it were the next top-level key.
+  assert.deepEqual(triggers("on:\n- push\n- workflow_dispatch\n\njobs:\n  x: {}"), ["push", "workflow_dispatch"]);
+  // Quoted event names in a block, which Actions accepts and a strict key regex
+  // reported as unreadable.
+  assert.deepEqual(triggers('on:\n  "workflow_dispatch":\n  push:'), ["workflow_dispatch", "push"]);
+  // A sequence at its KEY's own indentation is that key's value, not a sibling
+  // event — the colon is what tells the two `-` shapes apart.
+  assert.deepEqual(triggers('on:\n  schedule:\n  - cron: "0 5 * * *"\n  workflow_dispatch:'), [
+    "schedule",
+    "workflow_dispatch",
+  ]);
+});
+
+test("a commented-out trigger is not a trigger, and a comment naming one is not either", () => {
+  // Both shapes are live in this repo, and a grep for the token gets both wrong in
+  // opposite directions: `nightly.yml` has its `schedule:` commented out, and
+  // `issue-contract-guard.yml`'s `on:` block explains `workflow_dispatch` in prose
+  // eleven lines before declaring it.
+  assert.deepEqual(
+    triggers(`on:
+  # schedule:
+  #   - cron: "0 3 * * *"
+  workflow_dispatch:`),
+    ["workflow_dispatch"],
+  );
+  assert.deepEqual(
+    triggers(`on:
+  # NOTE: a workflow_dispatch workflow must exist on the default branch first.
+  push:
+    branches: [main]`),
+    ["push"],
+    "a comment mentioning the token must not read as a declared trigger",
+  );
+});
+
+test("triggers that cannot be read are UNKNOWN, with the reason attached", () => {
+  for (const text of ["jobs:\n  build:\n    steps: []", "on:\n", "on: [unterminated"]) {
+    const read = readWorkflowTriggers(text);
+    assert.equal(read.events, null);
+    assert.ok(read.note && read.note.length > 0, `no reason recorded for: ${JSON.stringify(text)}`);
+  }
+});
+
+test("dispatchability has three states, and the unreadable one is not 'probably yes'", () => {
+  assert.equal(workflowDispatchability("on: [push, workflow_dispatch]").dispatchable, true);
+  assert.equal(workflowDispatchability("on:\n  push:\n    branches: [main]").dispatchable, false);
+  assert.equal(workflowDispatchability("jobs: {}").dispatchable, null);
+  // The triggers travel with the verdict: the honest message names what it DOES run on.
+  assert.deepEqual(workflowDispatchability("on:\n  push:\n    branches: [main]").triggers, ["push"]);
+});
+
+// ── The advice a reviewer reads (#1609) ─────────────────────────────────────
+
+const adviceFor = (...changed) => dispatchAdvice(classify(...changed));
+
+test("a dispatchable workflow still gets the imperative it always got", () => {
+  const { annotation, summaryLines } = adviceFor("scripts/partition-shards.mjs");
+  assert.match(annotation, /Dispatch \.github\/workflows\/daily-stable\.yml on this branch before merging/);
+  assert.match(summaryLines.join("\n"), /Dispatch before merging:/);
+});
+
+test("a workflow with no workflow_dispatch is never told to be dispatched", () => {
+  // The issue's own acceptance criterion, asserted on the OUTPUT rather than on a
+  // grep of the YAML (#1226): PR #1608 was told to dispatch a workflow that is
+  // `on: push: [main]`, and following that instruction returns HTTP 422.
+  const { annotation, summaryLines } = adviceFor("scripts/coverage-summary.ts");
+  assert.doesNotMatch(annotation, /Dispatch/, `still prescribes a dispatch: ${annotation}`);
+  assert.doesNotMatch(summaryLines.join("\n"), /Dispatch before merging/);
+  assert.match(annotation, /cannot be dispatched on a branch/);
+  assert.match(annotation, /no workflow_dispatch trigger \(runs on: push\)/);
+  // …and it must say what IS true, not merely withhold the false instruction.
+  assert.match(annotation, /Nothing in CI can prove this change before merge/);
+});
+
+test("a mixed diff dispatches what it can and is honest about the rest", () => {
+  // Not hypothetical: `scripts/stable-tests.ts` is run by daily-stable, which is
+  // dispatchable, AND by update-coverage-summary, which has no trigger (and by
+  // weekly-stable, which carries the trigger but is disabled, so it 422s too).
+  // Flipping the whole message on the worst member would withhold the one dispatch
+  // that does work; leaving it alone loses the correction.
+  const { annotation } = adviceFor("scripts/partition-shards.mjs", "scripts/coverage-summary.ts");
+  assert.match(annotation, /Dispatch \.github\/workflows\/daily-stable\.yml on this branch/);
+  assert.match(annotation, /update-coverage-summary\.yml cannot be dispatched on a branch/);
+  // Asserted on the IMPERATIVE SENTENCE, not with a regex spanning the whole
+  // annotation. A first draft used `/Dispatch [^.]*update-coverage-summary/`, which
+  // can never match anything this renders — every workflow name starts with `.`, so
+  // `[^.]*` cannot reach one — and a mutation emitting a `Dispatch` sentence per
+  // target, undispatchable ones included, passed it.
+  const imperative = annotation.split(". ").filter((s) => s.startsWith("Dispatch "));
+  assert.equal(imperative.length, 1, `expected exactly one imperative, got: ${annotation}`);
+  assert.doesNotMatch(imperative[0], /update-coverage-summary/);
+});
+
+test("a workflow whose triggers are unreadable is reported as unknown, not as either answer", () => {
+  const { annotation, summaryLines } = adviceFor("scripts/opaque-only.mjs");
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.doesNotMatch(annotation, /cannot be dispatched/);
+  assert.match(annotation, /Could not read the triggers of \.github\/workflows\/opaque\.yml/);
+  assert.match(annotation, /no top-level `on:` key/, "the reason must travel with the verdict");
+  assert.match(summaryLines.join("\n"), /trigger list unreadable/);
+  // A doubt must not be folded into the undispatchable answer's CONCLUSION either.
+  // "Nothing in CI can prove this" is a claim the unknown bucket has not earned, and
+  // the header promises exactly that it is never folded into either answer (#1012).
+  assert.doesNotMatch(annotation, /Nothing in CI can prove this change before merge/);
+});
+
+test("a verdict that predates the check degrades to unknown rather than to the old imperative", () => {
+  // `render-impacted-summary.mjs` is handed the classifier's JSON from a file. A
+  // payload without `dispatchTargets` is a payload nothing confirmed, so it must
+  // not resurrect the instruction this issue removed.
+  const { annotation } = dispatchAdvice({
+    verdict: "dispatch",
+    ciFiles: ["scripts/x.mjs"],
+    dispatchWorkflows: [".github/workflows/daily-stable.yml"],
+  });
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /Could not read the triggers/);
+});
+
+test("no advice at all on the verdicts that are not `dispatch`", () => {
+  for (const r of [classify(PR_LANE), classify("docs/foo.md"), null]) {
+    const { annotation, summaryLines } = dispatchAdvice(r);
+    assert.equal(annotation, null);
+    assert.deepEqual(summaryLines, []);
+  }
+});
+
+// ── The other way to 422: disabled in Actions (#1609) ───────────────────────
+
+test("workflow states are read from the Actions API's own TSV, junk rows ignored", () => {
+  const states = parseWorkflowStates(
+    [
+      ".github/workflows/daily-stable.yml\tactive",
+      ".github/workflows/weekly-stable.yml\tdisabled_manually",
+      ".github/workflows/x.yml\tdisabled_inactivity",
+      // The API also returns app-provided entries, which are not workflow paths.
+      "dynamic/agents/copilot-pull-request-reviewer\tactive",
+      "",
+      "no-tab-here",
+    ].join("\n"),
+  );
+  assert.equal(states.get(".github/workflows/daily-stable.yml"), true);
+  assert.equal(states.get(".github/workflows/weekly-stable.yml"), false);
+  assert.equal(states.get(".github/workflows/x.yml"), false, "only `active` can be dispatched");
+  assert.equal(states.get("no-tab-here"), undefined);
+});
+
+test("a workflow disabled in Actions is not told to be dispatched, however good its YAML", () => {
+  // `weekly-stable.yml` really is `disabled_manually` and really is named by this
+  // verdict (it runs `scripts/stable-tests.ts`), so a YAML-only answer would have
+  // closed #1609 while still prescribing a 422 by the other route.
+  const states = new Map([[".github/workflows/daily-stable.yml", false]]);
+  const r = classifyCiChange({ changed: ["scripts/partition-shards.mjs"], refs, states });
+  const { annotation, summaryLines } = dispatchAdvice(r);
+  assert.equal(r.dispatchTargets[0].dispatchable, true, "the trigger is there…");
+  assert.equal(r.dispatchTargets[0].enabled, false, "…and the workflow is off");
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /is DISABLED in Actions, so dispatching it answers 422/);
+  assert.match(annotation, /Nothing in CI can prove this change before merge/);
+  assert.match(summaryLines.join("\n"), /is disabled in Actions/);
+});
+
+test("an unfetched state list falls back to the trigger rather than caveating everything", () => {
+  // The one place this deliberately fails OPEN: a workflow carrying the trigger is
+  // dispatchable unless someone disabled it, and caveating every instruction over a
+  // lookup that usually succeeds is the noise that gets warnings ignored (#1252).
+  const r = classifyCiChange({ changed: ["scripts/partition-shards.mjs"], refs, states: null });
+  assert.equal(r.dispatchTargets[0].enabled, null, "unknown, not assumed on");
+  assert.match(dispatchAdvice(r).annotation, /Dispatch \.github\/workflows\/daily-stable\.yml/);
+});
+
+const cli = (args, input) => {
+  const r = spawnSync(process.execPath, [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), ...args], {
+    input,
+    encoding: "utf8",
+  });
+  return { ...r, json: r.stdout ? JSON.parse(r.stdout) : null };
+};
+
+test("the CLI actually applies a state file — the flag is not decoration", () => {
+  // The whole "disabled in Actions" half reaches the reader through this one
+  // argument, and nothing exercised it end to end: `states: null` in the classify
+  // call, and an off-by-one in the flag's `slice`, both survived the entire suite.
+  const tmp = makeTempDir("cc-states-");
+  const file = path.join(tmp, "wf-states.tsv");
+  fs.writeFileSync(file, ".github/workflows/daily-stable.yml\tdisabled_manually\n");
+  try {
+    const { json } = cli(["--root", REPO_ROOT, "--format=json", `--workflow-states=${file}`, "--stdin"], "scripts/partition-shards.mjs\n");
+    assert.equal(json.verdict, "dispatch");
+    assert.match(json.advice, /daily-stable\.yml is DISABLED in Actions/);
+    assert.doesNotMatch(json.advice, /Dispatch \.github\/workflows\/daily-stable/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a state file that cannot be read warns and still produces a verdict", () => {
+  // Best-effort: losing the state lookup must not fail the lane, and must not be
+  // silent either (#1012) — the warning is asserted, because deleting it left every
+  // test green.
+  const r = cli(
+    ["--root", REPO_ROOT, "--format=json", "--workflow-states=/nonexistent/wf-states.tsv", "--stdin"],
+    "scripts/partition-shards.mjs\n",
+  );
+  assert.equal(r.status, 0);
+  assert.equal(r.json.verdict, "dispatch");
+  assert.match(r.stderr, /::warning::.*could not read \/nonexistent\/wf-states\.tsv/);
+});
+
+test("the CLI reads the triggers from the BASE tree, not from this branch", () => {
+  // GitHub resolves `workflow_dispatch` from the default branch, so a PR that ADDS
+  // the trigger — #1609's own Option B — must not be told to dispatch a workflow it
+  // is only now making dispatchable.
+  //
+  // The fixture is deliberately the MIRROR of the real tree: `main`'s
+  // `update-coverage-summary.yml` has no `workflow_dispatch`, so a base copy that
+  // HAS one can only produce `dispatchable: true` by being the copy that was read.
+  // A base fixture matching the head would agree with the bug and pin nothing —
+  // measured: with both copies triggerless, deleting the base preference left this
+  // green.
+  const tmp = makeTempDir("cc-base-");
+  const dir = path.join(tmp, ".github/workflows");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "update-coverage-summary.yml"),
+    "on:\n  workflow_dispatch:\n  push:\n    branches: [main]\njobs: {}\n",
+  );
+  const { json } = cli(
+    ["--root", REPO_ROOT, "--format=json", `--base-root=${tmp}`, "--stdin"],
+    "scripts/coverage-summary.ts\n",
+  );
+  assert.equal(json.verdict, "dispatch");
+  const target = json.dispatchTargets.find((t) => t.workflow.endsWith("update-coverage-summary.yml"));
+  assert.equal(target.dispatchable, true, "the head copy, which has no trigger, must not be the one read");
+  assert.deepEqual(target.triggers, ["workflow_dispatch", "push"]);
+  assert.equal(target.onDefaultBranch, true);
+});
+
+test("a workflow the PR ADDS is reported as absent from the default branch, not dispatched", () => {
+  // `gh workflow run` answers 404 for a workflow that is not on the default branch,
+  // and the base tree is how this knows. In-memory, because what is under test is
+  // the CLASSIFICATION — the on-disk `--base-root` path has its own CLI test above.
+  const refsWithNewLane = buildCiReferences({
+    workflows: new Map([
+      [PR_LANE, FIXTURE.workflows.get(PR_LANE)],
+      [".github/workflows/new-lane.yml", "on:\n  workflow_dispatch:\n\nsteps:\n  - run: node scripts/partition-shards.mjs"],
+    ]),
+    actions: FIXTURE.actions,
+    baseWorkflows: new Map([[PR_LANE, FIXTURE.workflows.get(PR_LANE)]]),
+  });
+  const r = classifyCiChange({ changed: [".github/workflows/new-lane.yml"], refs: refsWithNewLane });
+  assert.equal(r.dispatchTargets[0].onDefaultBranch, false);
+  const { annotation } = dispatchAdvice(r);
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /does not exist on the default branch yet/);
+  assert.match(annotation, /answers 404 until this merges/);
+});
+
+test("a flag given no value degrades OUT LOUD, never silently", () => {
+  // `""` is falsy, so a bare `--base-root=` used to switch the whole default-branch
+  // read off without a word — the one direction this script's header forbids.
+  const r = cli(
+    ["--root", REPO_ROOT, "--format=json", "--base-root=", "--workflow-states=", "--stdin"],
+    "scripts/coverage-summary.ts\n",
+  );
+  assert.equal(r.status, 0, "an empty value degrades; it is not a usage error");
+  assert.equal(r.json.verdict, "dispatch");
+  assert.match(r.stderr, /--base-root= was given no value/);
+  assert.match(r.stderr, /--workflow-states= was given no value/);
+});
+
+test("a base tree that cannot be read warns and still produces a verdict", () => {
+  // The sibling of the `--workflow-states` warning, and it shipped unpinned: wrapping
+  // this `stderr.write` in `if (0)` left the whole suite green. Best-effort must not
+  // mean silent (#1012).
+  const r = cli(["--root", REPO_ROOT, "--format=json", "--base-root=/nonexistent/base", "--stdin"], "scripts/partition-shards.mjs\n");
+  assert.equal(r.status, 0);
+  assert.equal(r.json.verdict, "dispatch");
+  assert.match(r.stderr, /::warning::.*could not read the base \.github at \/nonexistent\/base/);
+});
+
+test("an EMPTY listing is no listing — it must not claim every workflow is missing", () => {
+  // Absence from the states listing is read as "not on the default branch", so an
+  // empty map is not a weak signal: measured before the floor, a zero-byte file
+  // produced three `answers 404 until this merges` sentences about three workflows
+  // that are all on `main`. `gh` can exit 0 having written nothing.
+  assert.equal(parseWorkflowStates(""), null);
+  assert.equal(parseWorkflowStates("no-tab-rows-only\n\n"), null);
+  const tmp = makeTempDir("cc-empty-");
+  const file = path.join(tmp, "wf-states.tsv");
+  fs.writeFileSync(file, "");
+  const r = cli(["--root", REPO_ROOT, "--format=json", `--workflow-states=${file}`, "--stdin"], "scripts/stable-tests.ts\n");
+  assert.match(r.stderr, /::warning::.*lists no workflows/);
+  assert.doesNotMatch(r.json.advice, /does not exist on the default branch/);
+  assert.match(r.json.advice, /Dispatch/, "falling back to the trigger is the whole point of the floor");
+});
+
+test("an empty base tree is refused for the same reason", () => {
+  const tmp = makeTempDir("cc-emptybase-");
+  fs.mkdirSync(path.join(tmp, ".github/workflows"), { recursive: true });
+  const r = cli(["--root", REPO_ROOT, "--format=json", `--base-root=${tmp}`, "--stdin"], "scripts/stable-tests.ts\n");
+  assert.match(r.stderr, /::warning::.*contains no workflows/);
+  assert.doesNotMatch(r.json.advice, /does not exist on the default branch/);
+});
+
+test("a PR that REMOVES the trigger is a doubt, not a definitive 'no'", () => {
+  // The mirror of the added-trigger case, and the ladder got it wrong first: `no` was
+  // tested before `unverified`, so a head copy with the trigger deleted was reported
+  // as established fact — from the copy GitHub does not resolve — and `no` licenses
+  // the closing conclusion where a doubt must not.
+  const headWithoutTrigger = new Map(FIXTURE.workflows);
+  headWithoutTrigger.set(
+    ".github/workflows/daily-stable.yml",
+    "on:\n  schedule:\n    - cron: \"0 8 * * 1-5\"\n\nsteps:\n  - run: node scripts/partition-shards.mjs matrix",
+  );
+  const headRefs = buildCiReferences({ workflows: headWithoutTrigger, actions: FIXTURE.actions });
+  const r = classifyCiChange({ changed: [".github/workflows/daily-stable.yml"], refs: headRefs });
+  const { annotation } = dispatchAdvice(r);
+  assert.equal(r.dispatchTargets[0].dispatchable, false, "the branch copy really has no trigger");
+  assert.doesNotMatch(annotation, /cannot be dispatched on a branch/, "…but that is not what GitHub reads");
+  assert.match(annotation, /the copy on this branch is not the one that decides/);
+  assert.doesNotMatch(annotation, /Nothing in CI can prove this change before merge/);
+});
+
+test("a doubt never licenses the closing conclusion — both doubts, alone or mixed", () => {
+  // `unknown` is pinned above; `unverified` was not, and adding it to `blocked`
+  // survived the suite. The header states the rule for both.
+  for (const r of [classify("scripts/opaque-only.mjs"), classifyCiChange({ changed: [".github/workflows/daily-stable.yml"], refs })]) {
+    assert.doesNotMatch(dispatchAdvice(r).annotation, /Nothing in CI can prove this change before merge/);
+  }
+  // Excluding the doubts from `blocked` was only HALF the rule, and feeding this
+  // pure-doubt sets could not see the other half: one `no` beside one `unknown`
+  // leaves `blocked` non-empty and `yes` empty, and the sentence fired — asserted
+  // over the whole change while a named workflow may well have been dispatchable.
+  // Every per-target line scopes itself ("nothing in CI proves THIS PART"); this one
+  // cannot, so anything unresolved must silence it.
+  const mixed = classify("scripts/coverage-summary.ts", "scripts/opaque-only.mjs");
+  const { annotation } = dispatchAdvice(mixed);
+  assert.match(annotation, /cannot be dispatched on a branch/, "the `no` target is still named");
+  assert.match(annotation, /Could not read the triggers/, "and so is the doubt");
+  assert.doesNotMatch(annotation, /Nothing in CI can prove this change before merge/);
+});
+
+test("the ACTIONS LISTING can establish absence on its own", () => {
+  // With no base tree — the `git archive` failure path — the listing is the only
+  // source of `absent`, and that direction was pinned by nothing: deleting the
+  // listing from `evidence`, or replacing it with a constant `true`, both left the
+  // suite at 48 green. The sibling test below covers the base-tree direction; its
+  // name promised both.
+  const r = classifyCiChange({
+    changed: [".github/workflows/daily-stable.yml"],
+    refs,
+    states: new Map([[".github/workflows/update-coverage-summary.yml", true]]),
+  });
+  assert.equal(r.dispatchTargets[0].onDefaultBranch, false, "the listing does not name it");
+  const { annotation } = dispatchAdvice(r);
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /does not exist on the default branch yet/);
+});
+
+test("the empty-listing floor counts WORKFLOW rows, not rows", () => {
+  // The API also returns `dynamic/…` entries for app-provided workflows — 4 of the
+  // 22 rows in this repo's listing. They can never match a key, so a listing holding
+  // only those would clear a `size > 0` floor and then report every real workflow as
+  // absent: the same false 404, one notch up.
+  assert.equal(parseWorkflowStates("dynamic/agents/copilot-pull-request-reviewer\tactive"), null);
+  assert.ok(parseWorkflowStates(".github/workflows/x.yml\tactive\ndynamic/y\tactive"));
+});
+
+test("a workflow known to be OFF is reported as off even when its triggers are unreadable", () => {
+  // The certainty ordering the buckets exist for: the Actions state is about the
+  // default branch by construction, so it holds whatever the trigger read said.
+  // Measured unpinned: moving `unknown` above `off` left the suite green.
+  const states = new Map([[".github/workflows/opaque.yml", false]]);
+  const r = classifyCiChange({ changed: ["scripts/opaque-only.mjs"], refs, states });
+  assert.equal(r.dispatchTargets[0].dispatchable, null, "the triggers really are unreadable");
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /opaque\.yml is DISABLED in Actions/);
+  assert.doesNotMatch(annotation, /Could not read the triggers/);
+});
+
+test("absence from EITHER source wins over presence in the other", () => {
+  // They disagree exactly when a workflow this PR adds has already registered itself
+  // with Actions — its own `pull_request` run does that — and reading that as
+  // presence is a `Dispatch` for a 404.
+  const head = new Map(FIXTURE.workflows);
+  head.set(".github/workflows/new-lane.yml", "on:\n  workflow_dispatch:\n\nsteps:\n  - run: node scripts/partition-shards.mjs");
+  const r = classifyCiChange({
+    changed: [".github/workflows/new-lane.yml"],
+    refs: buildCiReferences({ workflows: head, actions: FIXTURE.actions, baseWorkflows: FIXTURE.workflows }),
+    states: new Map([[".github/workflows/new-lane.yml", true]]),
+  });
+  assert.equal(r.dispatchTargets[0].onDefaultBranch, false, "the base tree's absence is definitive");
+  assert.match(dispatchAdvice(r).annotation, /does not exist on the default branch yet/);
+});
+
+test("with no base tree, a workflow the PR edits is unverified rather than promised", () => {
+  // The degraded path: without the base copy the trigger answer came from the
+  // branch, and for a file this PR changes that is not what GitHub will resolve.
+  // ONLY those — every other workflow is the same file on both sides.
+  const r = classifyCiChange({ changed: [".github/workflows/daily-stable.yml"], refs });
+  assert.equal(r.dispatchTargets[0].triggersUnverified, true);
+  const { annotation, summaryLines } = dispatchAdvice(r);
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /GitHub resolves workflow_dispatch from the default branch rather than from this one/);
+  assert.match(summaryLines.join("\n"), /this PR edits it/);
+  // …and a workflow the PR did NOT touch keeps its plain imperative.
+  assert.match(dispatchAdvice(classify("scripts/partition-shards.mjs")).annotation, /Dispatch/);
+});
+
+test("dispatchability rides on the verdict, per named workflow", () => {
+  const r = classify("scripts/coverage-summary.ts", "scripts/partition-shards.mjs");
+  assert.deepEqual(
+    r.dispatchTargets.map((t) => [t.workflow, t.dispatchable]),
+    [
+      [".github/workflows/daily-stable.yml", true],
+      [".github/workflows/update-coverage-summary.yml", false],
+    ],
+  );
+  assert.deepEqual(r.dispatchWorkflows, r.dispatchTargets.map((t) => t.workflow), "the two lists must agree");
+});
+
 // ── The real repo ───────────────────────────────────────────────────────────
 
 test("every canary spec exists, is @stable, and needs no provider model", () => {
@@ -181,6 +671,35 @@ test("against the live .github, a daily-only diff asks for a dispatch", () => {
   assert.ok(result.dispatchWorkflows.includes(".github/workflows/daily-stable.yml"));
 });
 
+test("against the live .github, PR #1608's diff no longer prescribes a 422", () => {
+  // The measurement that opened #1609, replayed: `scripts/coverage-summary.ts` is
+  // run only by `update-coverage-summary.yml`, which is `on: push: [main]`.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/coverage-summary.ts\n" },
+  );
+  const result = JSON.parse(out);
+  assert.equal(result.verdict, "dispatch");
+  assert.ok(result.dispatchWorkflows.includes(".github/workflows/update-coverage-summary.yml"));
+  assert.doesNotMatch(result.advice, /Dispatch/, `still prescribes a dispatch: ${result.advice}`);
+  assert.match(result.advice, /cannot be dispatched on a branch/);
+});
+
+test("every workflow in this repo has a DECIDABLE trigger list", () => {
+  // The parser is text over YAML, so a new `on:` spelling would degrade the advice
+  // to "could not read the triggers" — honest, and useless. Measured when #1609
+  // shipped: 18 workflows, 18 decided, 0 unknown. This is what notices the 19th.
+  const dir = path.join(REPO_ROOT, ".github/workflows");
+  const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f));
+  assert.ok(files.length > 0, "no workflows found — the guard would pass vacuously");
+  const unreadable = files
+    .map((f) => [f, workflowDispatchability(fs.readFileSync(path.join(dir, f), "utf8"))])
+    .filter(([, d]) => d.dispatchable === null)
+    .map(([f, d]) => `${f}: ${d.note}`);
+  assert.deepEqual(unreadable, [], `readWorkflowTriggers cannot read:\n  ${unreadable.join("\n  ")}`);
+});
+
 test("an unknown flag exits 2 — undecidable must not read as 'no CI change'", () => {
   assert.throws(
     () =>
@@ -203,9 +722,48 @@ test("pr-validation.yml runs the classifier and substitutes the canary specs", (
   // Both verdicts have to reach the reader; a silent canary is the same bug in a
   // new costume (#1012's no-silent-caps rule).
   assert.match(text, /::warning::CI-only change to a surface THIS lane runs/);
-  assert.match(text, /Dispatch \$\(jq -r '\.dispatchWorkflows/);
+  // The dispatch sentence is RENDERED by the classifier and printed verbatim. It
+  // was composed here with `jq` until #1609, and what it composed was an
+  // instruction that 422s — a defect no regex over this file could have caught,
+  // which is #1226's whole finding. What this still has to pin is the WIRING.
+  assert.match(text, /::warning::\$\(jq -r '\.advice' \/tmp\/ci-coverage\.json\)/);
+  assert.doesNotMatch(
+    text,
+    /Dispatch \$\(jq -r '\.dispatchWorkflows/,
+    "the workflow must not compose the dispatch advice again — it cannot see the triggers",
+  );
   // A classifier that cannot decide must fail the step, not degrade to "skip".
   assert.match(text, /CI-change classification failed/);
+});
+
+test("the lane supplies both facts the repository cannot, and has the scope to read them", () => {
+  // Two things the working tree cannot answer (#1609): which workflows are turned ON
+  // in Actions, and what the DEFAULT branch's copy of a workflow declares. Producing
+  // them and then not passing them is the shape that matters — measured, dropping
+  // both flags from the invocation left every other assertion here green.
+  const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
+  assert.match(text, /actions\/workflows" --paginate/, "the Actions state is never fetched");
+  assert.match(text, /STATES="--workflow-states=\/tmp\/wf-states\.tsv"/);
+  // The DEFAULT branch, not `$BASE_REF`: GitHub resolves `workflow_dispatch` there,
+  // and the two coincide only while every PR targets the default.
+  assert.match(text, /DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(text, /git archive -o \/tmp\/base-ci\.tar "origin\/\$DEFAULT_BRANCH" \.github\/workflows/);
+  assert.match(text, /BASE_CI="--base-root=\/tmp\/base-ci"/);
+  // `[\s\S]`, not `[^\n]`, and the distinction is not cosmetic: the sibling
+  // `$CANARY_FLAG` assertion below spans line continuations, and a `[^\n]` version of
+  // this one would fail the day someone wraps this invocation — reporting "invoked
+  // without the two inputs" for a reformat. What must hold is that both reach THIS
+  // script's command line.
+  assert.match(
+    text,
+    /ci-change-coverage\.mjs[\s\S]{0,200}?\$STATES[\s\S]{0,60}?\$BASE_CI/,
+    "the classifier is invoked without the two inputs the step just produced",
+  );
+  assert.match(text, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+  const detectSpecs = text.slice(text.indexOf("\n  detect-specs:"), text.indexOf("\n      - id: diff"));
+  assert.ok(detectSpecs.length > 0 && detectSpecs.length < text.length, "the job slice is degenerate");
+  assert.match(detectSpecs, /permissions:[\s\S]*actions: read/, "detect-specs cannot read the workflow states");
+  assert.match(detectSpecs, /permissions:[\s\S]*contents: read/, "an explicit block must keep checkout working");
 });
 
 test("a canary run performs the sweep, so the health gate is actually exercised", () => {

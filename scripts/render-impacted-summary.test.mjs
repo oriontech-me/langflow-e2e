@@ -248,15 +248,57 @@ test("a changed spec is labelled as such in the forced-by list", () => {
   assert.match(text, /\(changed by this PR\)/);
 });
 
+const summaryForDispatch = (dispatchTargets) =>
+  renderSummary({
+    specs: "",
+    impacted: { specs: [], direct: [], dropped: [] },
+    provider: { run: [], stableRun: 0, excluded: [] },
+    ciCoverage: {
+      verdict: "dispatch",
+      ciFiles: ["scripts/x.ts"],
+      dispatchWorkflows: dispatchTargets.map((t) => t.workflow),
+      dispatchTargets,
+    },
+  }).join("\n");
+
 test("the dispatch verdict names the workflows instead of implying coverage", () => {
+  const text = summaryForDispatch([
+    { workflow: "daily-stable.yml", dispatchable: true, triggers: ["schedule", "workflow_dispatch"] },
+  ]);
+  assert.match(text, /no runtime coverage here/);
+  assert.match(text, /daily-stable\.yml/);
+});
+
+test("a workflow that cannot be dispatched is not listed under 'Dispatch before merging'", () => {
+  // #1609: the summary prescribed a dispatch for `update-coverage-summary.yml`,
+  // which is `on: push: [main]` — `gh workflow run` answers HTTP 422. An
+  // instruction nobody can carry out is indistinguishable from silence.
+  const text = summaryForDispatch([
+    { workflow: "update-coverage-summary.yml", dispatchable: false, triggers: ["push"] },
+  ]);
+  assert.doesNotMatch(text, /Dispatch before merging/);
+  assert.match(text, /cannot be dispatched on a branch/);
+  assert.match(text, /watch the post-merge run/);
+});
+
+test("a mixed dispatch verdict keeps the dispatchable half actionable", () => {
+  const text = summaryForDispatch([
+    { workflow: "daily-stable.yml", dispatchable: true, triggers: ["schedule", "workflow_dispatch"] },
+    { workflow: "update-coverage-summary.yml", dispatchable: false, triggers: ["push"] },
+  ]);
+  assert.match(text, /Dispatch before merging:\n {2}- `daily-stable\.yml`/);
+  assert.match(text, /`update-coverage-summary\.yml` cannot be dispatched on a branch/);
+});
+
+test("a ciCoverage payload with no dispatchability is reported as unknown, not as dispatchable", () => {
   const text = renderSummary({
     specs: "",
     impacted: { specs: [], direct: [], dropped: [] },
     provider: { run: [], stableRun: 0, excluded: [] },
     ciCoverage: { verdict: "dispatch", dispatchWorkflows: ["daily-stable.yml"] },
   }).join("\n");
-  assert.match(text, /no runtime coverage here/);
-  assert.match(text, /daily-stable\.yml/);
+  assert.doesNotMatch(text, /Dispatch before merging/);
+  assert.match(text, /trigger list unreadable/);
 });
 
 // ---------- the failure path (the regression buffering introduced) ----------
