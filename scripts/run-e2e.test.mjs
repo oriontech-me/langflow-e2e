@@ -2171,13 +2171,24 @@ test("the removal is pushed to the source, never to the mirror this clone reads"
   // And it is replayed first: the checkout trails the source by up to a mirror cycle,
   // so a bare push — which is right on the Actions lane — is wrong here.
   assert.ok(
-    fn.indexOf("rebase -q FETCH_HEAD") < fn.indexOf("push -q"),
+    fn.indexOf('rebase -q "$target_sha"') < fn.indexOf("push -q"),
     "the removal is pushed without being replayed onto the source's main",
+  );
+  // And the replay names a SHA resolved once, never `FETCH_HEAD` directly: that is
+  // shared mutable state in this clone, and since #1947 a timer fetches into the same
+  // one. A fetch landing in between would replay the removal onto what it brought.
+  // Counted over the CODE, not the file: the comment that explains this rule spells
+  // the name too, and a pin that a correct comment can fail is the #1716 trap.
+  const fnCode = fn.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  assert.equal(
+    (fnCode.match(/FETCH_HEAD/g) || []).length,
+    1,
+    "FETCH_HEAD is read more than once, so a concurrent fetch can change it mid-flight",
   );
   // And the replay is BOUNDED before it happens. Without this, a clone sitting on any
   // branch the source does not contain gets its whole branch lifted onto the target.
   assert.ok(
-    fn.indexOf("merge-base --is-ancestor") < fn.indexOf("rebase -q FETCH_HEAD"),
+    fn.indexOf("merge-base --is-ancestor") < fn.indexOf('rebase -q "$target_sha"'),
     "the replay is not bounded to the commit just made",
   );
   // The credential reaches git through the environment, not the command line: `-c`
@@ -2484,4 +2495,36 @@ test("the credential is only asked about where there is an umbrella to open (#19
   assert.ok(start >= 0, "the credential is never checked");
   const block = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
   assert.match(block, /\[ "\$CREATE_ISSUE" = "1" \]/, "it would stop a run that opens no issue");
+});
+
+test("the preflight asks whether the suite is current, and does not die on the answer (#1947)", () => {
+  // The silence this removes cost two days recorded as measured and NOT comparable, so
+  // the question is asked ON by default — unlike the publish switches, it changes
+  // nothing about the run.
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^CHECK_MIRROR="\$\{CHECK_MIRROR:-1\}"$/m, "the check is off by default");
+
+  const preflight = sh.slice(sh.indexOf("phase_preflight() {"), sh.indexOf("phase_services() {"));
+  assert.match(preflight, /check-mirror-freshness\.mjs/, "the preflight never asks the question");
+
+  // And the answer is kept where a triage two days later will look. Asked before the
+  // run directory existed, it went to the console only — the reconstruction this check
+  // exists to prevent, reintroduced by the check itself.
+  assert.ok(
+    preflight.indexOf('mkdir -p "$RUN_DIR"') < preflight.indexOf("check-mirror-freshness.mjs"),
+    "the verdict is produced before there is anywhere to keep it",
+  );
+  assert.match(preflight, /mirror-freshness\.log/, "the verdict never reaches the evidence directory");
+
+  // FAIL-SOFT, and this is the half that matters: a stale suite still produces a valid
+  // run of that suite — it is the COMPARISON that is compromised. Dying here would
+  // trade a day of data for a warning.
+  // The block itself, not a window around the call: the preflight is full of `die`
+  // lines that have nothing to do with this one, and a slice by character count picked
+  // one up — a test that fails for a neighbour's reason is a test nobody trusts.
+  const start = preflight.indexOf('if [ "$CHECK_MIRROR" = "1" ]');
+  assert.ok(start >= 0, "the check is not behind its switch");
+  const call = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
+  assert.ok(!/\bdie\b/.test(call), "a stale mirror aborts the run instead of reporting it");
+  assert.match(call, /warn "/, "the answer reaches nobody");
 });

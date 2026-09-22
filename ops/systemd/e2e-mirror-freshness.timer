@@ -1,0 +1,15 @@
+# Hourly, matching the sync it watches: checking more often than the thing can change
+# only buys noise. `Persistent=true` so a machine that was asleep or rebooted asks the
+# question once on the way back rather than waiting for the next whole hour — the gap
+# after a reboot is exactly when a stall goes unnoticed.
+[Unit]
+Description=Hourly check that the e2e mirror still follows main
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+Unit=e2e-mirror-freshness.service
+
+[Install]
+WantedBy=timers.target

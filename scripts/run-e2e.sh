@@ -141,6 +141,12 @@ POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
 # the provoked failure (task 6) turns the path on deliberately, on a branch, before
 # any morning depends on it. Strict "1": a typo has to leave it OFF, and this is the
 # switch that commits to `main` (#1725).
+# Is the suite this run is about to execute still the one `main` holds? ON by default,
+# unlike the publish switches: it changes nothing about the run, it only refuses to let
+# a stale checkout go unremarked — and the silence it removes has already cost two days
+# recorded as measured and NOT comparable (#1947).
+CHECK_MIRROR="${CHECK_MIRROR:-1}"
+
 AUTO_REMOVE="${AUTO_REMOVE:-0}"
 MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
 # Where a removal is pushed, and it is NOT this clone's `origin`. That remote is the
@@ -985,6 +991,7 @@ phase_preflight() {
   [ "$TARGET_IS_LOCAL" = "1" ] || command -v ssh > /dev/null || die "ssh is not on PATH."
   info "node $(node -v), npm $(npm -v)"
 
+
   if [ "$TARGET_IS_LOCAL" = "1" ]; then
     info "target: this machine — no ssh, no tunnel"
   else
@@ -1011,6 +1018,33 @@ phase_preflight() {
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
     verify_issue_credential
+  fi
+
+  # The suite this run executes comes from a mirror that is pushed on a schedule, and
+  # when that schedule stops the mirror does not fail — it stops following, and the run
+  # compares an older suite against a moving one. It happened for two days in September
+  # and was found by someone walking past.
+  #
+  # Asked AFTER the run directory exists, and tee'd into it, which is the whole point:
+  # the first version asked earlier and wrote only to the console, so the evidence
+  # directory a triage opens two days later held no verdict — the reconstruction this
+  # check exists to prevent, reintroduced by the check itself.
+  #
+  # FAIL-SOFT, deliberately: a stale suite still produces a valid run of that suite. It
+  # is the COMPARISON that is compromised, and the reader of the comparison is who this
+  # sentence is for. Dying here would trade a day of data for a warning.
+  if [ "$CHECK_MIRROR" = "1" ]; then
+    # Captured and then written, rather than piped into `tee`: through a pipe the
+    # verdict's exit status survives only because `pipefail` happens to be set, and a
+    # check about silences should not hang its own reporting on a shell option set
+    # three hundred lines away.
+    local mirror_out mirror_rc=0
+    mirror_out="$(node scripts/check-mirror-freshness.mjs 2>&1)" || mirror_rc=$?
+    printf '%s\n' "$mirror_out" | tee "$RUN_DIR/logs/mirror-freshness.log"
+    if [ "$mirror_rc" != "0" ]; then
+      warn "the suite this run will execute may not be what \`main\` holds — see $RUN_DIR/logs/mirror-freshness.log."
+      warn "A comparison drawn from this run is MEASURED but may not be COMPARABLE (#1947)."
+    fi
   fi
 
   preflight_ledger
@@ -1962,7 +1996,7 @@ auto_remove_stable() {
 # the shape of failure this whole task exists to stop repeating.
 auto_remove_commit() {
   local result="$1"
-  local orig_head removed_count exempt_count msg auth
+  local orig_head removed_count exempt_count msg auth target_sha
   # Checked one by one, because this function is invoked as `auto_remove_commit … ||`
   # and bash disables errexit for the whole body of a command on the left of `||`. An
   # empty `orig_head` would make every restore below a silent no-op, and an empty count
@@ -2044,6 +2078,18 @@ auto_remove_commit() {
     return 1
   fi
 
+  # `FETCH_HEAD` is resolved ONCE, here, and every line below names the sha instead.
+  # It is shared mutable state in this clone, and since #1947 a second process fetches
+  # into the same one on a timer: a fetch landing between this point and the rebase
+  # would replay the removal onto whatever THAT fetch brought — the destination's main,
+  # in the worst case — and push it to the source. The window was two lines wide, which
+  # is small and not zero, and the consequence is a wrong commit on `main`.
+  if ! target_sha="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD)" || [ -z "$target_sha" ]; then
+    git -C "$REPO_DIR" reset -q --hard "$orig_head"
+    err "could not resolve what the fetch brought; nothing pushed."
+    return 1
+  fi
+
   # The replay has to carry EXACTLY the commit just made. `git rebase` replays
   # everything from the merge base, so on a clone sitting on any branch the source does
   # not already contain — which is precisely the shape the provoked failure runs in —
@@ -2051,7 +2097,7 @@ auto_remove_commit() {
   # unreviewed, with `[skip ci]` on the tip so nothing would even look at it. The
   # commit's parent is `orig_head`, so requiring the source to already contain it is
   # what bounds the push to one commit.
-  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$orig_head" FETCH_HEAD; then
+  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$orig_head" "$target_sha"; then
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
     err "the clone holds commits ${SOURCE_PUSH_BRANCH} does not (HEAD was ${orig_head}); replaying would push them too, so nothing was pushed."
     return 1
@@ -2062,7 +2108,7 @@ auto_remove_commit() {
   # or, on a machine with none, `unable to auto-detect email address` and a removal that
   # fails closed every morning for a reason nobody would connect to git config.
   if ! git -C "$REPO_DIR" -c user.name="$AUTO_REMOVE_COMMITTER_NAME" \
-       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" rebase -q FETCH_HEAD; then
+       -c user.email="$AUTO_REMOVE_COMMITTER_EMAIL" rebase -q "$target_sha"; then
     git -C "$REPO_DIR" rebase --abort >/dev/null 2>&1 || true
     git -C "$REPO_DIR" reset -q --hard "$orig_head"
     err "the removal does not replay cleanly onto ${SOURCE_PUSH_BRANCH}; nothing pushed."
