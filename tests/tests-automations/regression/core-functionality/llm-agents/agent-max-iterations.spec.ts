@@ -389,6 +389,24 @@ async function readModelCalls(
   return undefined;
 }
 
+// Did the model emit text BEFORE its first tool call? That ordering is the shape
+// that takes the message away from the cap (#1991), and it is visible in the
+// persisted content blocks — so the diagnosis reads it instead of assuming it.
+//
+// `undefined` when the blocks are not readable: "could not look" must never render
+// as "looked and found none".
+function textPrecedesFirstToolUse(aiMsg: any): boolean | undefined {
+  const contents = (aiMsg?.content_blocks as any[] | undefined)?.flatMap(
+    (b: any) => b.contents ?? [],
+  );
+  if (!Array.isArray(contents) || contents.length === 0) return undefined;
+  const firstTool = contents.findIndex((c: any) => c?.type === "tool_use");
+  if (firstTool < 0) return undefined;
+  return contents
+    .slice(0, firstTool)
+    .some((c: any) => c?.type === "text" && String(c.text ?? "").trim().length > 0);
+}
+
 // A missing limit message has three causes that read identically from the pattern
 // alone, and the difference decides whether anyone should look at the product:
 // the cap fired and was never surfaced, the model declined to call a tool so the cap
@@ -424,6 +442,7 @@ async function explainMissingLimit(
       // a field that can never be populated prints "unknown" forever and is noise.
       calls: await readModelCalls(request, aiMsg.session_metadata?.graph_run_id, bearer),
       state: aiMsg.properties?.state,
+      preambled: textPrecedesFirstToolUse(aiMsg),
       model: aiMsg.properties?.source?.source,
       usage: aiMsg.properties?.usage,
     });

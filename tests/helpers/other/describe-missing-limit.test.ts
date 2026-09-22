@@ -25,9 +25,10 @@ const ENFORCED = {
 };
 
 test("names the fired-but-silent cap when the tool ran and the run stopped at one call", () => {
-  const out = describeMissingLimit(ENFORCED);
+  const out = describeMissingLimit({ ...ENFORCED, preambled: true });
 
-  assert.match(out, /the cap FIRED and said nothing/);
+  assert.match(out, /the cap FIRED and the run says nothing about it/);
+  assert.match(out, /text BEFORE the tool call/);
   assert.match(out, /NOT a broken cap and NOT a declined tool call/);
   assert.match(out, /fetch_content/);
   assert.ok(out.includes("upstream's to surface"), "the enforced branch keeps the upstream pointer");
@@ -74,4 +75,24 @@ test("says the cut is upstream of the UI when rendered and persisted agree", () 
   const out = describeMissingLimit(ENFORCED);
 
   assert.match(out, /not a render artifact/);
+});
+
+test("does NOT blame the preamble when the blocks show none", () => {
+  // The force-fail probe on run 35755303028 printed "the model emitted text alongside
+  // its tool call" over a message that WAS the limit message. Naming a mechanism the
+  // reading does not carry is the failure this diagnosis exists to remove.
+  const out = describeMissingLimit({ ...ENFORCED, preambled: false });
+
+  assert.match(out, /the cap FIRED and the run says nothing about it/);
+  assert.match(out, /does not explain this one/);
+  assert.match(out, /cause is undetermined/);
+  assert.doesNotMatch(out, /that text is what landed in it/);
+});
+
+test("claims nothing about why when the content blocks could not be read", () => {
+  const out = describeMissingLimit(ENFORCED);
+
+  assert.match(out, /could not be read, so nothing is claimed/);
+  assert.match(out, /preamble   : blocks unreadable/);
+  assert.doesNotMatch(out, /text BEFORE the tool call/);
 });
