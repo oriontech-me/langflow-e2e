@@ -318,3 +318,65 @@ test("both sides resolving to the same repository cannot answer 'current'", () =
   );
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("the walk fetches without writing FETCH_HEAD, because the removal path reads it (#1972)", () => {
+  // Behavioural, and it has to be: the flag is one word inside a string, so a spelling
+  // guard over the source would pass on a `--no-write-fetch-head` that git never
+  // received. This runs the real fetches and asks the file itself.
+  //
+  // What it protects is not in this script. `run-e2e.sh` resolves `FETCH_HEAD` one line
+  // after its own fetch, in the clone this check runs in hourly from a timer — so a
+  // write from here lands where a removal is about to be replayed, and the last thing
+  // this walk fetches is the DESTINATION. Nothing here needs the file: both shas come
+  // from `ls-remote` and the walk names them.
+  const dir = makeTempDir("mirror-freshness-fetch-head");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env });
+  const source = join(dir, "source.git");
+  const destination = join(dir, "destination.git");
+  const work = join(dir, "work");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", source], { env });
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", destination], { env });
+  execFileSync("git", ["clone", "-q", source, work], { env });
+  writeFileSync(join(work, "a.txt"), "one\n");
+  git(work, "add", "-A");
+  git(work, "commit", "-qm", "one");
+  git(work, "push", "-q", "origin", "HEAD:main");
+  git(work, "push", "-q", destination, "HEAD:main");
+  git(work, "remote", "set-url", "origin", destination);
+
+  // The source moves and the mirror does not, which is the only state that fetches.
+  writeFileSync(join(work, "a.txt"), "two\n");
+  git(work, "add", "-A");
+  execFileSync("git", ["commit", "-qm", "two"], {
+    cwd: work,
+    env: { ...env, GIT_AUTHOR_DATE: "2026-09-16T09:49:00Z", GIT_COMMITTER_DATE: "2026-09-16T09:49:00Z" },
+  });
+  git(work, "push", "-q", source, "HEAD:main");
+
+  // A sentinel the way the removal path would leave one: a sha this walk must not
+  // replace. Written, not read from git, so the assertion cannot pass by accident on a
+  // clone that never had the file.
+  const fetchHead = join(work, ".git", "FETCH_HEAD");
+  const sentinel = "0000000000000000000000000000000000000000\t\tbranch 'main' of the source\n";
+  writeFileSync(fetchHead, sentinel);
+
+  assert.equal(
+    main({ ...env, SOURCE_REMOTE_URL: source, DESTINATION_REMOTE: "origin", MAX_LAG_MINUTES: "120" }, work),
+    EXIT_BEHIND,
+    "the state that fetches was not reached, so this test proves nothing about the fetch",
+  );
+  assert.equal(
+    readFileSync(fetchHead, "utf8"),
+    sentinel,
+    "the freshness check overwrote FETCH_HEAD in a clone whose removal path reads it (#1972)",
+  );
+
+  rmSync(dir, { recursive: true, force: true });
+});
