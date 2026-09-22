@@ -517,12 +517,49 @@ test("a PR that REMOVES the trigger is a doubt, not a definitive 'no'", () => {
   assert.doesNotMatch(annotation, /Nothing in CI can prove this change before merge/);
 });
 
-test("a doubt never licenses the closing conclusion — both doubts", () => {
+test("a doubt never licenses the closing conclusion — both doubts, alone or mixed", () => {
   // `unknown` is pinned above; `unverified` was not, and adding it to `blocked`
   // survived the suite. The header states the rule for both.
   for (const r of [classify("scripts/opaque-only.mjs"), classifyCiChange({ changed: [".github/workflows/daily-stable.yml"], refs })]) {
     assert.doesNotMatch(dispatchAdvice(r).annotation, /Nothing in CI can prove this change before merge/);
   }
+  // Excluding the doubts from `blocked` was only HALF the rule, and feeding this
+  // pure-doubt sets could not see the other half: one `no` beside one `unknown`
+  // leaves `blocked` non-empty and `yes` empty, and the sentence fired — asserted
+  // over the whole change while a named workflow may well have been dispatchable.
+  // Every per-target line scopes itself ("nothing in CI proves THIS PART"); this one
+  // cannot, so anything unresolved must silence it.
+  const mixed = classify("scripts/coverage-summary.ts", "scripts/opaque-only.mjs");
+  const { annotation } = dispatchAdvice(mixed);
+  assert.match(annotation, /cannot be dispatched on a branch/, "the `no` target is still named");
+  assert.match(annotation, /Could not read the triggers/, "and so is the doubt");
+  assert.doesNotMatch(annotation, /Nothing in CI can prove this change before merge/);
+});
+
+test("the ACTIONS LISTING can establish absence on its own", () => {
+  // With no base tree — the `git archive` failure path — the listing is the only
+  // source of `absent`, and that direction was pinned by nothing: deleting the
+  // listing from `evidence`, or replacing it with a constant `true`, both left the
+  // suite at 48 green. The sibling test below covers the base-tree direction; its
+  // name promised both.
+  const r = classifyCiChange({
+    changed: [".github/workflows/daily-stable.yml"],
+    refs,
+    states: new Map([[".github/workflows/update-coverage-summary.yml", true]]),
+  });
+  assert.equal(r.dispatchTargets[0].onDefaultBranch, false, "the listing does not name it");
+  const { annotation } = dispatchAdvice(r);
+  assert.doesNotMatch(annotation, /Dispatch/);
+  assert.match(annotation, /does not exist on the default branch yet/);
+});
+
+test("the empty-listing floor counts WORKFLOW rows, not rows", () => {
+  // The API also returns `dynamic/…` entries for app-provided workflows — 4 of the
+  // 22 rows in this repo's listing. They can never match a key, so a listing holding
+  // only those would clear a `size > 0` floor and then report every real workflow as
+  // absent: the same false 404, one notch up.
+  assert.equal(parseWorkflowStates("dynamic/agents/copilot-pull-request-reviewer\tactive"), null);
+  assert.ok(parseWorkflowStates(".github/workflows/x.yml\tactive\ndynamic/y\tactive"));
 });
 
 test("a workflow known to be OFF is reported as off even when its triggers are unreadable", () => {
@@ -702,7 +739,10 @@ test("the lane supplies both facts the repository cannot, and has the scope to r
   const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
   assert.match(text, /actions\/workflows" --paginate/, "the Actions state is never fetched");
   assert.match(text, /STATES="--workflow-states=\/tmp\/wf-states\.tsv"/);
-  assert.match(text, /git archive -o \/tmp\/base-ci\.tar "origin\/\$BASE_REF" \.github\/workflows/);
+  // The DEFAULT branch, not `$BASE_REF`: GitHub resolves `workflow_dispatch` there,
+  // and the two coincide only while every PR targets the default.
+  assert.match(text, /DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(text, /git archive -o \/tmp\/base-ci\.tar "origin\/\$DEFAULT_BRANCH" \.github\/workflows/);
   assert.match(text, /BASE_CI="--base-root=\/tmp\/base-ci"/);
   // `[\s\S]`, not `[^\n]`, and the distinction is not cosmetic: the sibling
   // `$CANARY_FLAG` assertion below spans line continuations, and a `[^\n]` version of

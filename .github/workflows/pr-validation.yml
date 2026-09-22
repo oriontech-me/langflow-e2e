@@ -400,6 +400,9 @@ jobs:
           IMPACTED_SPEC_CAP: "20"
           # `gh api` needs a token; the job's `actions: read` scope bounds it.
           GH_TOKEN: ${{ github.token }}
+          # The branch GitHub resolves `workflow_dispatch` against — not `BASE_REF`,
+          # which is only the same thing while every PR targets the default (#1609).
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git fetch origin "$BASE_REF" --quiet
           # Selection is by IMPORT GRAPH, not by changed-spec glob (#1054).
@@ -465,10 +468,14 @@ jobs:
             #
             #  1. Which workflows are turned ON. A workflow disabled in Actions
             #     answers 422 however good its YAML is, and four of ours are.
-            #  2. The BASE ref's copy of the workflows. GitHub resolves
-            #     `workflow_dispatch` from the DEFAULT branch, so reading this
-            #     branch's copy would tell a PR that ADDS the trigger to dispatch a
-            #     workflow that does not have it yet — #1609, one PR later.
+            #  2. The DEFAULT branch's copy of the workflows. GitHub resolves
+            #     `workflow_dispatch` from there, so reading this branch's copy would
+            #     tell a PR that ADDS the trigger to dispatch a workflow that does
+            #     not have it yet — #1609, one PR later. The default branch, NOT
+            #     `$BASE_REF`: they coincide for every PR this repo has, and a PR
+            #     stacked onto a non-default base would otherwise read the triggers
+            #     off a branch GitHub does not resolve against — the same defect
+            #     through a different door.
             STATES=""
             BASE_CI=""
             if grep -qE '^(\.github/|scripts/)' /tmp/changed.txt; then
@@ -482,17 +489,21 @@ jobs:
                  && [ -s /tmp/wf-states.tsv ]; then
                 STATES="--workflow-states=/tmp/wf-states.tsv"
               else
-                echo "::warning::could not read workflow states ($(head -1 /tmp/wf-states.err)); a disabled workflow will not be flagged."
+                # The reason, or a literal — the branch `-s` exists for is `gh`
+                # exiting 0 having written nothing, where the .err file is empty too
+                # and the warning would otherwise read "could not read … ()" (#1012).
+                echo "::warning::could not read workflow states ($(head -1 /tmp/wf-states.err || true; [ -s /tmp/wf-states.err ] || echo 'gh wrote an empty listing')); a disabled workflow will not be flagged."
               fi
               # Archive to a FILE, not through a pipe: this shell has no `pipefail`,
               # so a piped `tar -x` would report its own status and a failed
               # `git archive` would read as success over an empty stream.
               mkdir -p /tmp/base-ci
-              if git archive -o /tmp/base-ci.tar "origin/$BASE_REF" .github/workflows 2>/tmp/base-ci.err \
+              git fetch --quiet origin "$DEFAULT_BRANCH" 2>/tmp/base-ci.err || true
+              if git archive -o /tmp/base-ci.tar "origin/$DEFAULT_BRANCH" .github/workflows 2>/tmp/base-ci.err \
                  && tar -xf /tmp/base-ci.tar -C /tmp/base-ci 2>>/tmp/base-ci.err; then
                 BASE_CI="--base-root=/tmp/base-ci"
               else
-                echo "::warning::could not read the base ref's workflows ($(head -1 /tmp/base-ci.err)); trigger answers will come from this branch."
+                echo "::warning::could not read $DEFAULT_BRANCH's workflows ($(head -1 /tmp/base-ci.err)); trigger answers will come from this branch."
               fi
             fi
             node scripts/ci-change-coverage.mjs --stdin --format=json $STATES $BASE_CI < /tmp/changed.txt > /tmp/ci-coverage.json \

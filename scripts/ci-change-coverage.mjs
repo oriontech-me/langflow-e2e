@@ -40,9 +40,9 @@
  * NAMING A WORKFLOW IS NOT THE SAME AS NAMING A REMEDY (issue #1609)
  *
  * The `dispatch` verdict's whole job is to convert an unprovable skip into an
- * ACTIONABLE instruction, and for its first year it told the reviewer to dispatch
- * a workflow without ever checking that the workflow CAN be dispatched. Measured
- * on PR #1608, a change to `scripts/coverage-summary.ts`:
+ * ACTIONABLE instruction, and from the day it shipped (2026-07-30, #1159) it told
+ * the reviewer to dispatch a workflow without ever checking that the workflow CAN be
+ * dispatched. Measured on PR #1608, a change to `scripts/coverage-summary.ts`:
  *
  *   ::warning::… Dispatch .github/workflows/update-coverage-summary.yml on this
  *   branch before merging (#1159).
@@ -60,7 +60,7 @@
  * worded separately because ONE diff mixes them — a change to
  * `scripts/stable-tests.ts` names daily-stable (dispatchable), weekly-stable
  * (disabled) and update-coverage-summary (no trigger) at once, so flipping the whole
- * message on its worst member would cost two real dispatches:
+ * message on its worst member would withhold the one dispatch that does work:
  *
  *   yes         → dispatch it, as before;
  *   absent      → not on the default branch yet, so a dispatch answers 404;
@@ -71,9 +71,10 @@
  *                 GitHub resolves against.
  *
  * `bucket()` tests them in that order, which is by CERTAINTY rather than by severity.
- * `absent` and `off` come from the Actions listing, which is about the default branch
- * by construction, so they hold whatever the trigger read said — a workflow known to
- * be off is reported as off even when its `on:` block was unreadable. Everything
+ * `absent` and `off` are answers about the DEFAULT BRANCH — `off` from the Actions
+ * listing, `absent` from the listing or the base tree, neither of them from the copy
+ * on this branch — so they hold whatever the trigger read said, and a workflow known
+ * to be off is reported as off even when its `on:` block was unreadable. Everything
  * below them is DERIVED from the trigger read, so `unverified` outranks all of it:
  * when the read did not come from the deciding copy, "it has no trigger" is as
  * unfounded as "it has one".
@@ -119,9 +120,12 @@
  * most likely to hit it: a PR that ADDS a workflow (dispatch answers 404) and a PR
  * that ADDS `workflow_dispatch` to an existing one — which is #1609's own Option B,
  * so the next PR against it would have been handed, verbatim, the warning #1609 was
- * filed about. `--base-root` therefore points at the BASE ref's `.github` tree, and
- * the triggers come from there; the reference graph still comes from the head,
- * because the graph must reflect the wiring the PR proposes.
+ * filed about. `--base-root` therefore points at the DEFAULT BRANCH's `.github` tree
+ * — the lane passes `github.event.repository.default_branch`, not the PR base, since
+ * the two coincide only while every PR targets the default and a stacked PR would
+ * otherwise read the triggers off a branch GitHub does not resolve against — and the
+ * triggers come from there; the reference graph still comes from the head, because
+ * the graph must reflect the wiring the PR proposes.
  *
  * Without `--base-root` the branch copy is used and any named workflow the PR
  * CHANGED is reported unverified — only those, since for every other workflow the
@@ -137,7 +141,7 @@
  *   git diff --name-only … | node scripts/ci-change-coverage.mjs --stdin --format=json
  *   node scripts/ci-change-coverage.mjs .github/actions/wait-for-backend/action.yml
  *   … --workflow-states=/tmp/wf-states.tsv   # `path<TAB>state`, from the Actions API
- *   … --base-root=/tmp/base-ci               # the BASE ref's `.github` tree
+ *   … --base-root=/tmp/base-ci               # the DEFAULT branch's `.github` tree
  *
  * Exit codes: 0 = a verdict was produced; 2 = the script could not decide (bad
  * flag, unreadable .github, a canary spec that no longer exists). A guard that
@@ -327,7 +331,12 @@ export function parseWorkflowStates(text) {
     if (!file || !state) continue;
     states.set(file.trim(), state.trim() === "active");
   }
-  return states.size > 0 ? states : null;
+  // The floor counts WORKFLOW rows, not rows. The API's `dynamic/…` entries (4 of
+  // the 22 this repo's listing returns) can never match a key, so a listing holding
+  // only those would clear a `size > 0` floor and then report every real workflow as
+  // absent — the same false 404, one notch up.
+  const workflows = [...states.keys()].filter((f) => f.startsWith(".github/workflows/"));
+  return workflows.length > 0 ? states : null;
 }
 
 /**
@@ -336,7 +345,7 @@ export function parseWorkflowStates(text) {
  * @param {{workflows: Map<string,string>, actions: Map<string,string>,
  *          baseWorkflows?: Map<string,string>|null}} sources
  *   workflows keyed by repo-relative path, actions keyed by ACTION NAME.
- *   `baseWorkflows` is the BASE ref's copy of the same workflows; when given, the
+ *   `baseWorkflows` is the DEFAULT branch's copy of the same workflows; when given, the
  *   triggers are read from it, because that is the copy GitHub resolves a dispatch
  *   against. The reference graph always comes from `workflows` (the head).
  */
@@ -541,9 +550,10 @@ export function dispatchAdvice(result) {
   // is, so a workflow known to be off is reported as off even when its triggers were
   // unreadable, rather than losing the one fact that WAS established.
   const bucket = (t) => {
-    // `absent` and `off` come from the Actions listing, which is about the default
-    // branch by construction — so they hold whatever the trigger read said, and they
-    // go first. Everything below is DERIVED from the trigger read, so `unverified`
+    // `absent` and `off` are answers about the DEFAULT BRANCH — `off` from the
+    // Actions listing, `absent` from the listing or the base tree, neither of them
+    // from the copy on this branch — so they hold whatever the trigger read said,
+    // and they go first. Everything below is DERIVED from that read, so `unverified`
     // outranks all of it: when the read did not come from the copy GitHub resolves,
     // "it has no trigger" is as unfounded as "it has one". A first draft tested `no`
     // ahead of `unverified` and therefore reported a PR that REMOVES the trigger as
@@ -600,7 +610,14 @@ export function dispatchAdvice(result) {
       `This PR edits ${t.workflow}, and GitHub resolves ${DISPATCH_TRIGGER} from the default branch rather than from this one — confirm there whether it is dispatchable; the copy on this branch is not the one that decides.`,
     );
   }
-  if (yes.length === 0 && blocked.length > 0) {
+  // The closing claim is about the WHOLE change, so every named workflow has to be
+  // established — not merely every ESTABLISHED one. Excluding the doubts from
+  // `blocked` was only half the rule: with one `no` beside one `unknown`, `blocked`
+  // is non-empty and `yes` is empty, and the sentence fired while a named workflow
+  // may well have been dispatchable. Each per-target line is careful to scope itself
+  // ("nothing in CI proves THIS PART"); this one cannot be, so it needs silence
+  // whenever anything is unresolved.
+  if (yes.length === 0 && blocked.length > 0 && unknown.length === 0 && unverified.length === 0) {
     sentences.push(
       "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
     );
@@ -686,7 +703,7 @@ function main(argv) {
     }
   }
 
-  // The BASE ref's copy of the workflows — the one GitHub resolves a dispatch
+  // The DEFAULT branch's copy of the workflows — the one GitHub resolves a dispatch
   // against. Best-effort like the states file: absent, the triggers come from the
   // branch and any named workflow the PR edits is reported unverified rather than
   // promised. Failing the lane over it would be the wrong trade for a caveat.
