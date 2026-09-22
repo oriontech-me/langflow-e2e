@@ -703,14 +703,21 @@ gh_out() {
 # command substitution; the reader's own report (which shard answered, why the
 # others did not, whether they served the same product) goes to stderr, where the
 # run log keeps it.
-# `|| true` on BOTH filesystem lines, and that is the whole reason this is a
-# function rather than four lines in phase_merge: the caller reads it through a
-# command substitution, so under `set -e` a failing `mkdir` or truncate would make
-# the assignment non-zero and abort phase_merge — losing the run's verdict and its
-# publish for a diagnostic that is guarded everywhere else in the path (`|| true`
-# on node, `[ -f … ] || return 0` in gh_out, appendOrReport in the CLI). The
-# directory normally exists already (phase_preflight makes it); the mkdir is for
-# the caller that has not been through that phase.
+# EVERY command in here is guarded, and that is the whole reason this is a function
+# rather than four lines in phase_merge: the caller reads it through a command
+# substitution, so under `set -e` any non-zero status becomes the assignment's and
+# aborts phase_merge — losing the run's verdict and its publish for a diagnostic.
+#
+# The last one took two review rounds to find, and it is the instructive one: the
+# read is `gh_out`, whose own guard is `[ -f "$file" ] || return 0` — EXISTENCE
+# only. Its `node -e` then reads the file unguarded, so an output file that exists
+# and cannot be read (`chmod 000`, a root-owned leftover under a reused RUN_ID)
+# throws EACCES, and because `gh_out` is the LAST command its status is the
+# function's. Reproduced. The previous version of this comment claimed the two
+# filesystem lines were the only unguarded ones; they were the only OBVIOUS ones.
+#
+# The directory normally exists already (phase_preflight makes it, :996); the mkdir
+# is for a caller that has not been through that phase.
 resolve_served_version() {
   local version_out="$RUN_DIR/logs/served-version.out"
   mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
@@ -718,7 +725,7 @@ resolve_served_version() {
   GITHUB_OUTPUT="$version_out" \
     node scripts/resolve-served-version.mjs \
       --dir "$RUN_DIR/all-tokens" --expect-shards "${SHARD_TOTAL:-}" >&2 || true
-  gh_out "$version_out" version
+  gh_out "$version_out" version || true
 }
 
 # --- The ledger ------------------------------------------------------------------

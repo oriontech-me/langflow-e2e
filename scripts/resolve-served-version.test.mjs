@@ -9,11 +9,13 @@
 // GitHub guarantees only that *"the last matrix job that runs will override the
 // output value"* (#1731). So the row named whichever shard finished last, with no
 // record that the shards might not have agreed, and a `null` could not say why.
-// (#1731's stronger claim — a wedged shard's EMPTY value erasing three good ones
-// — is refuted: the runner skips an empty matrix-leg output, and 8 of the 11 rows
-// carrying a version are wedge days, none null. The sweep is justified by the
-// non-determinism and the attribution, not by that.) Nothing in a run can show
-// any of it, so the tests below are the evidence.
+// (#1731's stronger claim — a wedged shard's EMPTY value erasing three good ones —
+// is NOT DEMONSTRATED, in either direction: see the module header, which is the one
+// place that argument lives. Two earlier versions of THIS header got it wrong in
+// both directions, first asserting the erasure and then asserting that the runner
+// skips an empty output; the sweep is justified by the non-determinism and the
+// attribution, and needs neither.) Nothing in a run can show any of it, so the
+// tests below are the evidence.
 //
 // The failures they are written against:
 //   - one shard's silence erasing another shard's answer (the whole issue)
@@ -289,7 +291,8 @@ test("an expectation that cannot describe a run is REFUSED and said out loud", (
   // promises that only a usage error exits non-zero (measured in review).
   // `0x10` and `4.0` are in the list because `Number` alone honoured them as 16
   // and 4 — an input nobody meant, accepted without a word. `[]` is there because
-  // it stringifies to "", which is how "no expectation given" is spelled.
+  // it stringifies to "", which is how "no expectation given" is spelled. `04` is
+  // deliberately NOT here: `\d+` accepts a leading zero and 4 is what it means.
   for (const absurd of [1e9, 257, 0, -3, "abc", "0x10", "4.0", "+4", [], {}]) {
     const verdict = resolveServedVersion(dirOf({ 1: body("1.13.0.dev16") }), {
       expectShards: absurd,
@@ -302,6 +305,32 @@ test("an expectation that cannot describe a run is REFUSED and said out loud", (
   const verdict = resolveServedVersion(dirOf({ 1: body("v") }), { expectShards: 1e9 });
   assert.match(renderReport(verdict), /IGNORED/);
   assert.match(stepSummaryMarkdown(verdict), /matrix cap/);
+});
+
+test("naming a refused value cannot itself throw", () => {
+  // `JSON.stringify` is not total — it REJECTS a BigInt and a circular object, and
+  // returns undefined for a function or a symbol — and it ran outside any try, in a
+  // function whose entire contract is that it cannot throw. Reachable only through
+  // the export, which is the surface the typeof gate was added to make tolerant.
+  const circular = {};
+  circular.self = circular;
+  for (const hostile of [4n, circular, () => 1, Symbol("s"), "9".repeat(400)]) {
+    const verdict = resolveServedVersion(dirOf({ 1: body("1.13.0.dev16") }), {
+      expectShards: hostile,
+    });
+    assert.equal(verdict.version, "1.13.0.dev16");
+    assert.ok(verdict.expectedIgnored, `${String(hostile)} was dropped without a word`);
+    // Capped like every other diagnostic here, and a long value keeps its quotes:
+    // capping the STRINGIFIED form instead drops the closing one, so the message
+    // runs into the sentence after it.
+    assert.ok(verdict.expectedIgnored.length < 400, "the refusal ran long");
+    const quotes = (verdict.expectedIgnored.match(/"/g) ?? []).length;
+    assert.equal(quotes % 2, 0, `unbalanced quotes: ${verdict.expectedIgnored}`);
+  }
+  // The above-cap branch built its own message from `Number(text)`, so a 400-digit
+  // argument was reported as "Infinity" — a value nobody passed.
+  const huge = resolveServedVersion(dirOf({ 1: body("v") }), { expectShards: "9".repeat(400) });
+  assert.doesNotMatch(huge.expectedIgnored, /Infinity/);
 });
 
 test("an absent expectation is not a refusal — it is simply no expectation", () => {
@@ -493,9 +522,15 @@ const WORKFLOW = fs.readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable
 const ORCHESTRATOR = fs.readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8");
 
 test("the shard matrix declares NO langflow_version output", () => {
-  // The mechanism #1731 indicts: matrix job outputs overwrite each other, so the
-  // run kept whichever shard wrote last and an empty value erased the rest.
-  const testJob = WORKFLOW.slice(WORKFLOW.indexOf("\n  test:"), WORKFLOW.indexOf("\n  stable-ownership:"));
+  // The mechanism #1731 indicts: GitHub keeps whichever matrix job writes last, over
+  // an order it does not guarantee.
+  const from = WORKFLOW.indexOf("\n  test:");
+  const to = WORKFLOW.indexOf("\n  stable-ownership:");
+  // Both anchors asserted, and their ORDER: reorder those two jobs and the slice
+  // silently becomes "", at which point the assertion below passes about nothing.
+  assert.ok(from >= 0, "the `test` job anchor is gone — this guard scopes nothing");
+  assert.ok(to > from, "the job anchors moved; the slice no longer holds the test job");
+  const testJob = WORKFLOW.slice(from, to);
   assert.ok(!/langflow_version:\s*\$\{\{\s*steps\./.test(testJob), "the matrix output is back");
   assert.ok(!/needs\.test\.outputs\.langflow_version/.test(WORKFLOW));
 });

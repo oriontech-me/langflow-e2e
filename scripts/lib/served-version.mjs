@@ -161,22 +161,51 @@ export function parseVersionBody(raw) {
 // workflow run." An expectation above it cannot describe a real run, and honouring
 // it materialises one entry per expected shard — `--expect-shards 1e9` threw
 // `RangeError: Set maximum size exceeded` out of a CLI whose header promises the
-// only non-zero exit is a usage error (measured). No caller can reach that today:
-// the daily's `shards` input is unbounded, but `prep` prints `shard_total` only
-// AFTER `partition-shards.mjs matrix` has serialized an N-entry include array, so
-// the step dies long before the value crosses to `merge`. The cap is here because
-// it is cheaper than that argument staying true — and it REPORTS rather than
-// silently dropping, since an expectation the sweep ignored changes what its
-// counts mean.
+// only non-zero exit is a usage error (measured, on a value above ~2^24).
+//
+// The cap is REACHABLE, and an earlier version of this comment argued the opposite
+// from a mechanism that does not hold: `prep` will happily print `shard_total=300`
+// — `buildShards` partitions today's files into 300 bins in milliseconds — and
+// `merge` reads it whatever the `test` job did, being `needs: [prep, test]` with
+// `if: always()`. What refuses a 300-job matrix is GitHub, at the `test` job, not
+// anything here. So a dispatch with `shards: 300` really does hand this reader an
+// expectation that cannot describe a run, and the cap turns it into a reported
+// refusal instead of a count that lies. It REPORTS rather than silently dropping,
+// since an expectation the sweep ignored changes what every count means.
 const MAX_EXPECTED_SHARDS = 256;
 
 const IGNORED_TAIL = "the sweep reports only the files it found";
 
-// Capped like every other diagnostic here (`firstLine`): the value is echoed onto
-// stdout and into the run summary, and a 400-char argument made a 497-char line.
+/**
+ * Name the offending value without ever throwing, and without running long.
+ *
+ * `JSON.stringify` is not total: it rejects a BigInt and a circular object, and it
+ * returns `undefined` for a function or a symbol. The first two would throw out of
+ * a function whose whole contract is that it cannot (found in review, reachable
+ * only through the export — but the `typeof` gate above exists precisely to make
+ * that export tolerant, so it must not open a throw of its own).
+ *
+ * Capped BEFORE the quotes go on: slicing the stringified form instead dropped the
+ * closing quote of any long string, and a 400-char argument once rendered a
+ * 497-char line where every other diagnostic here stops at 200 (`firstLine`).
+ */
+function describeValue(value) {
+  if (typeof value === "string")
+    return JSON.stringify(value.length > 200 ? `${value.slice(0, 200)}…` : value);
+  if (typeof value === "number" || typeof value === "bigint")
+    return String(value).slice(0, 200);
+  try {
+    const text = JSON.stringify(value);
+    if (typeof text === "string") return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+  } catch {
+    // circular, or a value stringify refuses — `typeof` is still an answer.
+  }
+  return typeof value;
+}
+
 const refuse = (shown) => ({
   value: null,
-  reason: `the expected shard count ${String(shown).slice(0, 200)} cannot describe a run — ${IGNORED_TAIL}`,
+  reason: `the expected shard count ${describeValue(shown)} cannot describe a run — ${IGNORED_TAIL}`,
 });
 
 function normalizeExpected(expectShards) {
@@ -186,20 +215,25 @@ function normalizeExpected(expectShards) {
   if (typeof expectShards !== "string" && typeof expectShards !== "number")
     return expectShards === null || expectShards === undefined
       ? { value: null, reason: null }
-      : refuse(JSON.stringify(expectShards) ?? typeof expectShards);
+      : refuse(expectShards);
   const text = `${expectShards}`.trim();
   if (text === "") return { value: null, reason: null };
   // DECIMAL DIGITS ONLY, which is exactly what both lanes produce (`matrix.shard`
   // from partition-shards' `i + 1`, `$idx` from `seq 1 "$SHARD_TOTAL"`). `Number`
-  // alone silently reinterpreted `0x10` as 16 and `4.0`/`+4`/`04` as 4 — an input
-  // nobody meant, honoured without a word.
-  if (!/^\d+$/.test(text)) return refuse(JSON.stringify(text));
+  // alone silently reinterpreted `0x10` as 16 and `4.0`/`+4` as 4 — an input nobody
+  // meant, honoured without a word. Leading zeros still pass (`04` is 4), because
+  // `\d+` accepts them and they are unambiguous; an earlier version of this comment
+  // listed `04` among the refusals, which the regex never did.
+  if (!/^\d+$/.test(text)) return refuse(text);
   const n = Number(text);
-  if (n < 1) return refuse(JSON.stringify(text));
+  if (n < 1) return refuse(text);
   if (n > MAX_EXPECTED_SHARDS)
     return {
       value: null,
-      reason: `the expected shard count ${n} is above GitHub's ${MAX_EXPECTED_SHARDS}-job matrix cap, so it cannot describe a real run — ${IGNORED_TAIL}`,
+      // `describeValue(text)`, not `${n}`: a 400-digit argument passes the digit
+      // test and `Number` turns it into `Infinity`, so the message named a value
+      // nobody passed (found in review).
+      reason: `the expected shard count ${describeValue(text)} is above GitHub's ${MAX_EXPECTED_SHARDS}-job matrix cap, so it cannot describe a real run — ${IGNORED_TAIL}`,
     };
   return { value: n, reason: null };
 }
@@ -301,6 +335,12 @@ export function renderReport(verdict) {
  * `$GITHUB_OUTPUT` lines. Emitted from HERE and asserted on this output, never
  * spelled in a workflow's `run:` — a `node -e` in the YAML is where a mutation
  * survives the whole unit suite (#1812's own finding, in the code written for it).
+ *
+ * Only `version` has a consumer today; the other five are diagnostic, for a human
+ * reading a step's outputs. Two consequences, both deliberate: `expected=` is empty
+ * both when no expectation was given and when one was refused — a distinction the
+ * report and the run-summary block DO draw, and nothing machine-readable needs yet
+ * — and `disagreement=` is emitted but unread, which is #1964.
  */
 export function outputLines(verdict) {
   return [

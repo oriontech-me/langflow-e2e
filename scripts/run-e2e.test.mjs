@@ -304,13 +304,21 @@ test("resolve_served_version survives a wedged shard, and prints ONLY the versio
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("resolve_served_version cannot abort phase_merge, whatever the filesystem does", () => {
+// Both filesystem-hostile cases below are decided by permission bits, which ROOT
+// bypasses (CAP_DAC_OVERRIDE) — the test would then pass with the guards removed
+// and go quiet about it. The PR lane's unit job runs as `runner`, not in a
+// container, so this is live there; skipped rather than silently vacuous elsewhere.
+const skipIfRoot = (t) =>
+  process.getuid?.() === 0 ? (t.skip("root bypasses the permission bits this relies on"), true) : false;
+
+test("resolve_served_version cannot abort its caller when the run dir is unwritable", (t) => {
   // The caller reads it through a command substitution, so under `set -e` a failing
   // `mkdir` or truncate would make the assignment non-zero and take phase_merge with
-  // it — the run's verdict and publish lost for a diagnostic that is guarded
-  // everywhere else in this path. Called DIRECTLY here, not through `$(…)`: bash 3.2
-  // drops errexit inside a command substitution, so only the direct call reproduces
-  // what the VM's bash 5 does.
+  // it — the run's verdict and publish lost for a diagnostic. Called DIRECTLY here,
+  // not through `$(…)`: bash 3.2 neither inherits errexit into a command
+  // substitution nor propagates its status, so only the direct call reproduces what
+  // the VM's bash 5 does.
+  if (skipIfRoot(t)) return;
   const dir = makeTempDir("run-e2e-version-");
   const readOnly = join(dir, "ro");
   mkdirSync(readOnly, { recursive: true });
@@ -320,6 +328,28 @@ test("resolve_served_version cannot abort phase_merge, whatever the filesystem d
   );
   assert.match(r.stdout, /REACHED=0/, "an unwritable run dir aborted the caller");
   chmodSync(readOnly, 0o700);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version cannot abort its caller when the output file cannot be READ", (t) => {
+  // The residual the first fix missed, and the reason the guard is now on every
+  // command: `gh_out`'s own guard is `[ -f … ] || return 0`, i.e. existence only,
+  // and its `node -e` then reads the file. An output file that exists and cannot be
+  // read throws EACCES — and `gh_out` is the function's LAST command, so that
+  // becomes the function's status and the caller's.
+  if (skipIfRoot(t)) return;
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(join(dir, "all-tokens/version-1.json"), JSON.stringify({ version: "1.13.0.dev16" }));
+  const out = join(dir, "logs", "served-version.out");
+  writeFileSync(out, "");
+  chmodSync(out, 0o000);
+  const r = sourced(
+    `set -e; RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1; resolve_served_version; echo "REACHED=$?"`,
+  );
+  assert.match(r.stdout, /REACHED=0/, "an unreadable output file aborted the caller");
+  chmodSync(out, 0o600);
   rmSync(dir, { recursive: true, force: true });
 });
 
