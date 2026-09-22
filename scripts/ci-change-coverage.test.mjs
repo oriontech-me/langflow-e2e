@@ -96,9 +96,16 @@ const SCRIPT_FILES = new Map([
   ["scripts/lib/spec-path.mjs", "export const norm = (s) => s;"],
   ["scripts/lib/only-a-test-imports-me.mjs", "export const x = 1;"],
   ["scripts/orphan-helper.test.mjs", `import { x } from "./lib/only-a-test-imports-me.mjs";`],
-  // A cycle, reached from a named script: an unguarded walk would not terminate.
-  ["scripts/lib/cycle-a.mjs", `import { b } from "./cycle-b.mjs";`],
-  ["scripts/lib/cycle-b.mjs", `import { a } from "./cycle-a.mjs";`],
+  // A cycle AMONG THE IMPORTERS of the start file, which is the only shape that
+  // actually loops: `leaf` is imported by `ring-a`, and `ring-a` ↔ `ring-b` import
+  // each other, so neither the cycle nor the walk passes back through `leaf` and the
+  // `importer === file` skip cannot break it. A first draft put the start file inside
+  // the cycle, where that skip terminates the walk on its own — so the test passed
+  // with the `seen` set deleted, pinning the guard it was named for not at all.
+  ["scripts/lib/leaf.mjs", "export const leaf = 1;"],
+  ["scripts/lib/ring-a.mjs", `import { leaf } from "./leaf.mjs";\nimport { b } from "./ring-b.mjs";`],
+  ["scripts/lib/ring-b.mjs", `import { a } from "./ring-a.mjs";`],
+  ["scripts/partition-shards-ring.mjs", `import { a } from "./lib/ring-a.mjs";`],
 ]);
 const importRefs = buildCiReferences({ ...FIXTURE, scriptFiles: SCRIPT_FILES });
 const classifyWithImports = (...changed) => classifyCiChange({ changed, refs: importRefs });
@@ -259,20 +266,35 @@ test("a unit test is never CI wiring, even when a workflow names it", () => {
   );
 });
 
-test("a module only a test imports stays silent", () => {
+test("a module only a test imports stays silent — and the graph DID see the importer", () => {
+  // Asserting the two verdicts alone pins nothing: both are `none` before this change
+  // and after, so the test passed under every mutation including deleting the
+  // `.filter(named)` it exists for. What makes it a test is the premise — the importer
+  // graph found the test file and the `named` predicate is what rejected it.
+  assert.deepEqual(
+    [...importersOf(importRefs, "scripts/lib/only-a-test-imports-me.mjs")],
+    ["scripts/orphan-helper.test.mjs"],
+    "the graph must SEE the importer; the verdict then turns on it not being wiring",
+  );
   assert.equal(classifyWithImports("scripts/lib/only-a-test-imports-me.mjs").verdict, "none");
   assert.equal(classifyWithImports("scripts/orphan-helper.test.mjs").verdict, "none");
 });
 
-test("a cycle in the importer graph terminates", () => {
-  // Not defensive: `scripts/lib/` really does contain cycles, and an unguarded walk
-  // would hang the step rather than fail it.
+test("a cycle AMONG THE IMPORTERS terminates, and the file is not its own importer", () => {
+  // Defensive rather than observed: the real `scripts/` graph has no cycle today
+  // (measured over all 182 source files — an unguarded walk terminates for every
+  // one), so this pins a guard against a shape the repo does not currently have.
+  // Which makes the fixture the whole test: the cycle must NOT pass through the start
+  // file, because there `importer === file` already breaks the walk and the `seen`
+  // set is never exercised.
   assert.deepEqual(
-    [...importersOf(importRefs, "scripts/lib/cycle-a.mjs")].sort(),
-    ["scripts/lib/cycle-b.mjs", "scripts/partition-shards.mjs"],
-    "…and must not report the file itself as its own importer",
+    [...importersOf(importRefs, "scripts/lib/leaf.mjs")].sort(),
+    ["scripts/lib/ring-a.mjs", "scripts/lib/ring-b.mjs", "scripts/partition-shards-ring.mjs"],
   );
-  assert.equal(classifyWithImports("scripts/lib/cycle-a.mjs").verdict, "dispatch");
+  assert.ok(
+    !importersOf(importRefs, "scripts/lib/ring-a.mjs").has("scripts/lib/ring-a.mjs"),
+    "a file must not be reported as its own importer",
+  );
 });
 
 test("against the live repo, the path #1609's own table names is no longer silence", () => {
@@ -286,6 +308,26 @@ test("against the live repo, the path #1609's own table names is no longer silen
   const result = JSON.parse(out);
   assert.notEqual(result.verdict, "none", "silence is the failure this issue is about");
   assert.deepEqual(result.ciFiles, ["scripts/lib/stable-tests.ts"]);
+});
+
+test("the base tree is not searched for scripts/, so no PR gets a false warning", () => {
+  // The lane builds the default-branch tree with `git archive … .github/workflows`, so
+  // it has no `scripts/` by construction. Reading it there printed
+  // "could not read scripts/ … will resolve to 'none'" on EVERY run whose diff touches
+  // `.github/` or `scripts/` — which is every run this classifier exists for — and the
+  // verdict printed immediately after was routinely reached through the import graph,
+  // so the annotation stated the opposite of what happened. Only `.workflows` is taken
+  // from that read at all.
+  const base = makeTempDir("cc-basetree-");
+  fs.mkdirSync(path.join(base, ".github/workflows"), { recursive: true });
+  fs.writeFileSync(path.join(base, ".github/workflows/daily-stable.yml"), "on:\n  workflow_dispatch:\njobs: {}\n");
+  const r = cli(
+    ["--root", REPO_ROOT, "--format=json", `--base-root=${base}`, "--stdin"],
+    "scripts/lib/spec-path.mjs\n",
+  );
+  assert.equal(r.status, 0);
+  assert.notEqual(r.json.verdict, "none", "the import graph still answers");
+  assert.doesNotMatch(r.stderr, /could not read scripts\//, `false warning: ${r.stderr}`);
 });
 
 test("an unreadable scripts/ degrades OUT LOUD and keeps the direct half working", () => {
@@ -302,6 +344,53 @@ test("an unreadable scripts/ degrades OUT LOUD and keeps the direct half working
   assert.equal(r.status, 0);
   assert.equal(r.json.verdict, "dispatch", "the directly-named half must survive");
   assert.match(r.stderr, /::warning::.*could not read scripts\/.*resolve to 'none'/);
+});
+
+test("against the live repo, a module reached ONLY by import is not silence", () => {
+  // The assertion #1979 asked for by name, and the one the synthetic tests cannot
+  // give: "the failure here is precisely that a synthetic fixture would have used
+  // whatever spelling the test author had in mind (#1226)". Measured — making
+  // `readScriptFiles`' walk non-recursive reverts all 19 import-only lib modules to
+  // `none`, i.e. undoes the headline fix, and every synthetic test stays green.
+  //
+  // `spec-path.mjs` is the case worth naming: it is the one normaliser
+  // `report-backend-outages.mjs` and `remove-stable-from-failures.ts` must agree on,
+  // and its own entry says a near-miss there "corroborates nothing, exempts nothing
+  // and is invisible". It is spelled in no workflow at all.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/lib/spec-path.mjs\n" },
+  );
+  const result = JSON.parse(out);
+  assert.notEqual(result.verdict, "none");
+  assert.deepEqual(result.ciFiles, ["scripts/lib/spec-path.mjs"]);
+  assert.match(result.reasons.join(" "), /reached through /, "the indirection must be named, not implied");
+  assert.ok(
+    !fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8").includes("lib/spec-path"),
+    "the premise: no workflow spells this path, so only the import graph can reach it",
+  );
+});
+
+test("against the live repo, the canary does not swallow the dispatch advice", () => {
+  // A file can be both, and `scripts/reconcile-stable-orphans.ts` is: the PR lane
+  // reaches it through `check-stable-ownership.ts`, and `stable-orphan-reconcile.yml`
+  // runs it by name. Preferring the canary dropped that instruction entirely —
+  // `advice: null`, `dispatchWorkflows: []` — which is the top-level rule this file
+  // already states ("canary wins over dispatch, and the dispatch advice SURVIVES")
+  // not being applied one level in.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/reconcile-stable-orphans.ts\n" },
+  );
+  const result = JSON.parse(out);
+  assert.equal(result.verdict, "canary");
+  assert.ok(
+    result.dispatchWorkflows.includes(".github/workflows/stable-orphan-reconcile.yml"),
+    `the dispatch advice vanished: ${JSON.stringify(result.dispatchWorkflows)}`,
+  );
+  assert.ok(!result.dispatchWorkflows.includes(PR_LANE), "the PR lane is not a workflow to dispatch — it just ran");
 });
 
 test("against the live repo, a unit test named in a workflow comment is still silence", () => {

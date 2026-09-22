@@ -190,10 +190,10 @@ export const CANARY_SPECS = [
 // paths appear and the directory token `scripts/lib` goes, which is the right trade
 // because a directory is never a changed FILE. Three inert keys are unchanged and stay
 // inert — two are a real filename followed by a sentence-ending period (the `.` in this
-// class absorbs it), one is the literal `scripts/x` out of this file's own prose. The
-// periods are load-bearing for exactly one of them: `token-sidecar-knobs.test.mjs` is
-// named only in comments, and a live key for it would make a unit-test change boot
-// Langflow, which the "not CI surface" rule below exists to prevent.
+// class absorbs it), one is the literal `scripts/x` out of this file's own prose. Those
+// periods are NOT what keeps a unit test out: `UNIT_TEST` below does that, as its live
+// sibling `daily-matrix-provider-keys.test.mjs` shows — a real token, resolving to
+// `none`. Belt and braces, not a single point of failure.
 const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._/-]+)/g;
 
 /** A unit test — covered by `npm run test:scripts`, never CI wiring. */
@@ -407,12 +407,12 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null, sc
   }
 
   // module → every script that imports it, transitively. The regex above only ever
-  // sees what the YAML SPELLS, and a shared module is spelled nowhere: measured on
-  // this repo, 5 `scripts/lib/**` paths are named under `.github/` while 21 more are
-  // reached only through an import, so a fix confined to the regex would have covered
-  // under a fifth of them (#1979). `scripts/lib/spec-path.mjs` is the sharp case —
-  // the one normaliser two lanes must agree on, whose own doc says a near-miss there
-  // "corroborates nothing, exempts nothing and is invisible".
+  // sees what the YAML SPELLS, and a shared module is spelled nowhere: of the 24
+  // `scripts/lib/**` files this now reaches, **5 are named** under `.github/` and the
+  // other **19 only by import** (#1979), so a fix confined to the regex would have
+  // covered a fifth of them. `scripts/lib/spec-path.mjs` is the sharp case — the one
+  // normaliser two lanes must agree on, whose own doc says a near-miss there
+  // "corroborates nothing, exempts nothing and is invisible" — and it is one of the 19.
   //
   // This is the same indirection `uses:` already gets, one level further in, and it
   // reuses `impacted-specs-by-import.mjs`'s resolver rather than a second copy: those
@@ -434,8 +434,13 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null, sc
 /**
  * Every script that reaches `file` by import, transitively, excluding `file` itself.
  *
- * Breadth-first over the importer graph with a `seen` set, because the graph really
- * does contain cycles in this repo and an unguarded walk would not terminate.
+ * Breadth-first with a `seen` set. Defensive rather than observed: measured over all
+ * 182 source files under `scripts/`, the real importer graph has NO cycle today and
+ * an unguarded walk terminates for every one of them. It is kept because the shape
+ * that loops is cheap to introduce and expensive to diagnose — a cycle among a file's
+ * importers that does not pass back through the file itself, where the
+ * `importer === file` skip cannot break it, and where a walk does not fail the step,
+ * it hangs it.
  */
 export function importersOf(refs, file) {
   const reached = new Set();
@@ -452,14 +457,22 @@ export function importersOf(refs, file) {
   return reached;
 }
 
-/** Workflows (other than the PR lane) that reach a given action or script. */
+/**
+ * Workflows OTHER THAN THE PR LANE that reach a given action or script.
+ *
+ * The exclusion was the doc comment's claim and not the code's behaviour, which was
+ * inert while this was only ever called for a surface the PR lane does not reach. It
+ * stopped being inert when a file became able to be canary AND dispatch at once: the
+ * PR lane turned up in the list of workflows to dispatch before merging, which is a
+ * lane that has already run.
+ */
 function workflowsReaching(refs, { action, script }) {
   const hits = [];
   for (const [file, used] of refs.workflowActions) {
-    if (action && used.has(action)) hits.push(file);
+    if (file !== PR_LANE && action && used.has(action)) hits.push(file);
   }
   for (const [file, scripts] of refs.workflowScripts) {
-    if (script && scripts.has(script) && !hits.includes(file)) hits.push(file);
+    if (file !== PR_LANE && script && scripts.has(script) && !hits.includes(file)) hits.push(file);
   }
   return hits.sort();
 }
@@ -545,14 +558,26 @@ export function classifyCiChange({ changed, refs, states = null }) {
     const entryPoints = [...new Set([...(named(file) ? [file] : []), ...viaImport])].sort();
     if (entryPoints.length === 0) continue;
     ciFiles.push(file);
-    const through = viaImport.length > 0 ? ` (reached through ${viaImport.sort().join(", ")})` : "";
-    if (entryPoints.some((entry) => prScripts.has(entry))) {
+    // Both halves, always — the top-level rule this file already states for workflows
+    // and actions ("canary wins over dispatch, and the dispatch advice SURVIVES") was
+    // not being applied here. Measured: `scripts/reconcile-stable-orphans.ts` went
+    // `dispatch` → `canary` and lost "Dispatch stable-orphan-reconcile.yml" entirely,
+    // and `scripts/lib/stable-tests.ts` reached the canary while naming ZERO of the
+    // four workflows it affects — the under-report this issue is about, one level in.
+    const onPrLane = entryPoints.some((entry) => prScripts.has(entry));
+    const users = [...new Set(entryPoints.flatMap((entry) => workflowsReaching(refs, { script: entry })))].sort();
+    users.forEach((w) => dispatch.add(w));
+    const route = viaImport.length > 0 ? ` (reached through ${viaImport.sort().join(", ")})` : "";
+    const alsoDispatch = users.length > 0 ? `, and by ${users.join(", ")}` : "";
+    if (onPrLane) {
       canary = true;
-      reasons.push(`${file} is run by the PR lane${through || " (directly or through an action it uses)"}`);
+      // `directly` is stated ALONGSIDE the import route, not replaced by it:
+      // `impacted-specs-by-import.mjs` is invoked by name AND imported by two other
+      // named scripts, and naming only the indirection read as if it were not.
+      const direct = named(file) ? " directly or through an action it uses" : "";
+      reasons.push(`${file} is run by the PR lane${direct}${route}${alsoDispatch}`);
     } else {
-      const users = [...new Set(entryPoints.flatMap((entry) => workflowsReaching(refs, { script: entry })))].sort();
-      users.forEach((w) => dispatch.add(w));
-      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane${through}`);
+      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane${route}`);
     }
   }
 
@@ -744,7 +769,14 @@ export function dispatchAdvice(result) {
 
 // ---------- CLI ----------
 
-function readCiSources(root = ".") {
+/**
+ * @param withScripts read `scripts/**` too. False for the DEFAULT-branch tree, which
+ *   the lane materialises with `git archive … .github/workflows` and therefore has no
+ *   `scripts/` at all — reading it there printed a `could not read scripts/` warning
+ *   on every run, stating the opposite of the verdict beside it, over a map only
+ *   `.workflows` is taken from anyway.
+ */
+function readCiSources(root = ".", { withScripts = true } = {}) {
   const workflows = new Map();
   const wfDir = path.join(root, ".github/workflows");
   for (const entry of fs.readdirSync(wfDir)) {
@@ -761,37 +793,46 @@ function readCiSources(root = ".") {
       if (fs.existsSync(file)) actions.set(entry.name, fs.readFileSync(file, "utf8"));
     }
   }
-  return { workflows, actions, scriptFiles: readScriptFiles(root) };
+  return { workflows, actions, scriptFiles: withScripts ? readScriptFiles(root) : null };
 }
 
 /**
  * `scripts/**` as a path → source map, for the importer graph (#1979).
  *
- * Absent or unreadable is `null`, not an empty Map, and the difference matters: an
- * empty Map builds an empty graph, which resolves every indirect change to `none` —
- * the silence this exists to remove, reported as a clean verdict. The CLI turns a
- * failure here into a warning and keeps the direct half working.
+ * Unreadable OR EMPTY both warn and return `null`. The warning is the whole point:
+ * `null` and an empty Map are behaviourally identical downstream — both build no
+ * graph, so every import-only change resolves to `none` — so a floor that only
+ * changed the return value would have been a no-op wearing the language of a guard.
+ * What has to differ is that the reader is TOLD, because `none` on this path reads as
+ * "there is no CI surface here" rather than "this could not be worked out" (#1012).
  */
 function readScriptFiles(root = ".") {
   const files = new Map();
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
+      // Same skips as `readSuiteFiles`, its sibling in `impacted-specs-by-import.mjs`:
+      // a vendored dependency is not this repo's CI surface, and walking one is slow
+      // enough to matter in a step budgeted at five minutes.
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
       if (entry.isDirectory()) walk(full);
       else if (/\.(mjs|mts|ts|js)$/.test(entry.name)) {
         files.set(path.relative(root, full).split(path.sep).join("/"), fs.readFileSync(full, "utf8"));
       }
     }
   };
+  let reason = null;
   try {
     walk(path.join(root, "scripts"));
+    if (files.size === 0) reason = "it holds no source files";
   } catch (error) {
-    process.stderr.write(
-      `::warning::ci-change-coverage could not read scripts/ (${error.message}); a change reached only by import will resolve to 'none'.\n`,
-    );
-    return null;
+    reason = error.message;
   }
-  return files.size > 0 ? files : null;
+  if (reason === null) return files;
+  process.stderr.write(
+    `::warning::ci-change-coverage could not read scripts/ (${reason}); a change reached only by import will resolve to 'none'.\n`,
+  );
+  return null;
 }
 
 /** A flag's value, or `null` with the degradation announced rather than silent. */
@@ -835,7 +876,7 @@ function main(argv) {
   let baseWorkflows = null;
   if (baseRoot) {
     try {
-      const read = readCiSources(baseRoot).workflows;
+      const read = readCiSources(baseRoot, { withScripts: false }).workflows;
       // Same floor as the states listing, for the same reason: an empty base tree
       // would read as "the default branch has no workflows at all", i.e. a 404
       // claim about every one of them.
