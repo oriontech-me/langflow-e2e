@@ -1369,17 +1369,23 @@ test("an unreadable block is named as unreadable, not as one that predates the f
   // Absent and malformed are different diagnoses: one is history, the other is a bug
   // somebody can fix. Telling a reader the row "was written before that field existed"
   // about a corrupt block sends triage to the wrong place.
-  const w = compare(
+  // SCOPED to the listing warning, not to the whole blob. `langflow_version_sweep`
+  // (#1964) adds a sibling warning with the same "the Actions row carries no … block"
+  // wording, so a blob-wide `doesNotMatch` started failing on a sentence about another
+  // field — the assertion was never about that field, and a guard that reddens when an
+  // unrelated one is added is pinning a spelling rather than a behaviour (#1226).
+  const listingWarning = compare(
     row("daily-stable", { listing_completeness: { verified: true, missing: [] } }),
     row("vm-daily", { listing_completeness: { verified: true, missing: "a/lost.spec.ts" } }),
-  ).warnings.join("\n");
-  assert.match(w, /the VM row carries an UNREADABLE listing_completeness block/);
-  assert.doesNotMatch(w, /the VM row carries no listing_completeness block/);
+  ).warnings.find((x) => x.includes("listing-completeness parity UNVERIFIED"));
+  assert.ok(listingWarning, "the listing parity warning is gone");
+  assert.match(listingWarning, /the VM row carries an UNREADABLE listing_completeness block/);
+  assert.doesNotMatch(listingWarning, /the VM row carries no listing_completeness block/);
   // And the lane whose block IS readable must not be named at all. Without this the
   // guard that decides "did this side parse" is unpinned: dropping it makes a valid
   // block report as absent — the same false cause, in the other direction (measured,
   // the whole suite stayed green).
-  assert.doesNotMatch(w, /the Actions row carries/);
+  assert.doesNotMatch(listingWarning, /the Actions row carries/);
 });
 
 test("a lane with an ABSENT block is not also reported as UNVERIFIED", () => {
@@ -1402,4 +1408,131 @@ test("an UNVERIFIED lane is named even when the other lane has no block at all",
     .warnings.join("\n");
   assert.match(w, /listing-completeness UNVERIFIED on Actions/);
   assert.match(w, /parity UNVERIFIED/);
+});
+
+// ---------------------------------------------------------------------------
+// Did either lane test ONE product? (#1964)
+// ---------------------------------------------------------------------------
+//
+// `langflow_version` is one version — the lowest-index shard that answered — and the
+// four shards pull `:latest` into their own containers independently. So the version
+// comparison above can pass on shard 1's answer while three shards of a lane ran
+// another build, and every product difference between the two then lands in the
+// divergence list wearing an environment's clothes. These pin the case that passes.
+
+const sweep = (over = {}) => ({
+  langflow_version_sweep: { expected: 4, answered: 4, versions: ["1.13.0.dev3"], ...over },
+});
+const sweepWarning = (result) =>
+  result.warnings.filter((w) => /parity (UNVERIFIED|PARTIAL)/.test(w) && /product|version/.test(w));
+
+test("a lane that served TWO versions is not version-verified, even when the two rows agree", () => {
+  // The motivating case, and the reason this cannot be folded into the check above:
+  // both rows carry the SAME langflow_version, so that comparison is satisfied.
+  const result = compare(
+    row("daily-stable", {
+      langflow_version: "1.13.0.dev3",
+      ...sweep({ versions: ["1.13.0.dev3", "1.13.0.dev4"] }),
+    }),
+    row("vm-daily", { langflow_version: "1.13.0.dev3", ...sweep({ expected: 1, answered: 1 }) }),
+  );
+  assert.equal(result.versionMismatch, null, "the single values do agree — that is the point");
+  assert.deepEqual(result.versionStraddle, { ci: ["1.13.0.dev3", "1.13.0.dev4"], vm: ["1.13.0.dev3"] });
+  const w = result.warnings.find((x) => x.includes("did NOT test one product"));
+  assert.ok(w, `no straddle warning: ${result.warnings.join(" | ")}`);
+  assert.match(w, /Actions served 1\.13\.0\.dev3, 1\.13\.0\.dev4/);
+  assert.doesNotMatch(w, /the VM served/, "the unanimous lane was named as straddled");
+  // A warning, never a blocker: the run still produced every verdict it produced.
+  assert.equal(result.comparable, true);
+  assert.deepEqual(result.blockers, []);
+  // And it rides at the head, under the lane's own counts, not only in the warning list.
+  assert.match(renderReport(result), /SERVED 2 VERSIONS: 1\.13\.0\.dev3, 1\.13\.0\.dev4/);
+});
+
+test("two clean sweeps say nothing at all", () => {
+  // #1252: a block printed every day is a block nobody reads on the day it matters.
+  const result = compare(
+    row("daily-stable", sweep()),
+    row("vm-daily", sweep({ expected: 1, answered: 1 })),
+  );
+  assert.deepEqual(sweepWarning(result), []);
+  assert.equal(result.versionStraddle, null);
+  assert.match(renderReport(result), /one version across 4 shard\(s\)/);
+});
+
+test("a shard that reported nothing is PARTIAL — an absence, reported more softly", () => {
+  const result = compare(
+    row("daily-stable", sweep({ answered: 3 })),
+    row("vm-daily", sweep({ expected: 1, answered: 1 })),
+  );
+  const w = result.warnings.find((x) => x.includes("parity PARTIAL"));
+  assert.ok(w, `no partial warning: ${result.warnings.join(" | ")}`);
+  assert.match(w, /Actions 1 of 4/);
+  assert.doesNotMatch(w, /the VM/);
+  assert.equal(result.comparable, true);
+});
+
+test("a straddle SUPPRESSES the partial line, because it is the bigger statement", () => {
+  // Both are true of the same lane and both say "the row's one version is not the
+  // whole run"; printing two sentences for it is how a reader stops reading either.
+  const result = compare(
+    row("daily-stable", sweep({ answered: 3, versions: ["1.13.0.dev3", "1.13.0.dev4"] })),
+    row("vm-daily", sweep({ expected: 1, answered: 1 })),
+  );
+  assert.ok(result.warnings.some((x) => x.includes("did NOT test one product")));
+  assert.ok(!result.warnings.some((x) => x.includes("parity PARTIAL")));
+});
+
+test("no shard answering renders as that, not as one version", () => {
+  const result = compare(
+    row("daily-stable", { langflow_version: null, ...sweep({ answered: 0, versions: [] }) }),
+    row("vm-daily", sweep({ expected: 1, answered: 1 })),
+  );
+  assert.match(renderReport(result), /no shard reported a served version/);
+});
+
+test("an absent sweep block is UNVERIFIED and names only the side that lacks it", () => {
+  const result = compare(row("daily-stable", sweep()), row("vm-daily"));
+  const w = result.warnings.find((x) => x.includes("one-product parity UNVERIFIED"));
+  assert.ok(w);
+  assert.match(w, /the VM row carries no langflow_version_sweep block/);
+  assert.doesNotMatch(w, /the Actions row/);
+});
+
+test("a malformed sweep block is UNREADABLE, never a measurement", () => {
+  // Every field, and the CONSISTENCY between them: a block claiming versions no shard
+  // answered, or more distinct versions than shards that spoke, is half-written. The
+  // shipped producers cannot emit one, so this is the foreign- or hand-edited row —
+  // the same case that once rendered a corrupt listing block as "listing complete".
+  const broken = [
+    { expected: 4, answered: "4", versions: ["a"] },
+    { expected: "4", answered: 4, versions: ["a"] },
+    { expected: 4, answered: 4, versions: "a" },
+    { expected: 4, answered: 4, versions: [""] },
+    { expected: 4, answered: 1, versions: ["a", "b"] },
+    { expected: 4, answered: 0, versions: ["a"] },
+    { expected: 4, answered: 2, versions: [] },
+    { expected: -1, answered: 4, versions: ["a"] },
+  ];
+  for (const block of broken) {
+    const result = compare(
+      row("daily-stable", sweep()),
+      row("vm-daily", { langflow_version_sweep: block }),
+    );
+    const w = result.warnings.find((x) => x.includes("one-product parity UNVERIFIED"));
+    assert.ok(w, `${JSON.stringify(block)} was accepted as a measurement`);
+    assert.match(w, /the VM row carries an UNREADABLE langflow_version_sweep block/);
+    assert.doesNotMatch(w, /the VM row carries no langflow_version_sweep/);
+    assert.doesNotMatch(renderReport(result), /VM[\s\S]*one version across/);
+  }
+});
+
+test("an unknown expected count is not a partial sweep", () => {
+  // `expected: null` is what a lane with no shard count emits. Reading it as 0 made
+  // every answered shard look unaccounted for.
+  const result = compare(
+    row("daily-stable", sweep({ expected: null, answered: 2 })),
+    row("vm-daily", sweep({ expected: null, answered: 1 })),
+  );
+  assert.deepEqual(sweepWarning(result), []);
 });

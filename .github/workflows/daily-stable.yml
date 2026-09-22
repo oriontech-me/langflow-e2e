@@ -1703,6 +1703,18 @@ jobs:
           # (step 14 of the VM migration). The tag alone cannot tell them apart:
           # `:latest` on two different days is two different products.
           LANGFLOW_VERSION: ${{ steps.lfver.outputs.version }}
+          # The rest of what the sweep saw (#1964). `LANGFLOW_VERSION` is ONE version
+          # — the lowest-index shard that answered — and the four shards pull `:latest`
+          # into their own containers independently, so a nightly published mid-run
+          # leaves two of them on two builds. Without these three the row could not say
+          # which happened, and `compare-lane-verdicts.mjs` compared two single values
+          # for equality: its version gate PASSED while up to three shards of a lane
+          # tested another product. All three come from the reader's own outputs, which
+          # is also what gives them a consumer — before this they were emitted and read
+          # by nobody.
+          LANGFLOW_VERSION_EXPECTED: ${{ steps.lfver.outputs.expected }}
+          LANGFLOW_VERSION_ANSWERED: ${{ steps.lfver.outputs.answered }}
+          LANGFLOW_VERSIONS: ${{ steps.lfver.outputs.versions }}
           # In-run backend liveness, persisted on the history line (#1077). The
           # same directory the outage reporter above reads, so the row and the
           # umbrella section describe the run with the same numbers. The wedge is

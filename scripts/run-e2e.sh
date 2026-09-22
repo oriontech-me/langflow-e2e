@@ -731,8 +731,12 @@ gh_out() {
 # than cited by line, because the line moved the moment this comment grew (#1504's
 # rule: line numbers drift, titles do not). The mkdir is for a caller that has not
 # been through that phase.
+# $1: where to leave the reader's `$GITHUB_OUTPUT` file, so the caller can read the
+# REST of the sweep out of it (#1964) — stdout is the version and only the version,
+# which is a pinned contract, and this function runs in a command substitution, so a
+# global it sets would not survive to the caller.
 resolve_served_version() {
-  local version_out="$RUN_DIR/logs/served-version.out"
+  local version_out="${1:-$RUN_DIR/logs/served-version.out}"
   mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
   : > "$version_out" 2>/dev/null || true
   # GITHUB_STEP_SUMMARY is cleared as well as redirected: in Actions it is set for
@@ -1822,7 +1826,18 @@ phase_merge() {
 
   # The version that actually served. Sweeping every shard avoids ending up without
   # one just because shard 1 was the one that died.
-  LANGFLOW_VERSION="$(resolve_served_version)"
+  # The version, and then the rest of what the sweep saw. One version is what the row
+  # used to carry, and on a sharded run it need not describe the whole run: the shards
+  # pull `:latest` independently, so a nightly published mid-run leaves two of them on
+  # two builds and `compare-lane-verdicts.mjs` compared two single values for equality
+  # (#1964). Both lanes write the triple, or the comparator sits permanently on "one
+  # lane does not measure this" — the reachability trap `langflow_version` itself
+  # documents.
+  local sweep_out="$RUN_DIR/logs/served-version.out"
+  LANGFLOW_VERSION="$(resolve_served_version "$sweep_out")"
+  LANGFLOW_VERSION_EXPECTED="$(gh_out "$sweep_out" expected)"
+  LANGFLOW_VERSION_ANSWERED="$(gh_out "$sweep_out" answered)"
+  LANGFLOW_VERSIONS="$(gh_out "$sweep_out" versions)"
 
   # The comparison this step exists for. A mismatch is now FATAL by default: the run
   # placed the clone itself a few phases ago, so the two sides disagreeing means
@@ -1907,6 +1922,9 @@ phase_merge() {
     langflow_expected_sha "${TARGET_EXPECTED_SHA:-}" \
     langflow_version_resolution "${TARGET_RESOLUTION:-}" \
     langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
+    langflow_version_expected_shards "${LANGFLOW_VERSION_EXPECTED:-}" \
+    langflow_version_answered_shards "${LANGFLOW_VERSION_ANSWERED:-}" \
+    langflow_versions "${LANGFLOW_VERSIONS:-}" \
     langflow_prepared_sha "${TARGET_PREPARED_SHA:-}" \
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
@@ -2315,6 +2333,9 @@ phase_publish() {
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
+    LANGFLOW_VERSION_EXPECTED="${LANGFLOW_VERSION_EXPECTED:-}" \
+    LANGFLOW_VERSION_ANSWERED="${LANGFLOW_VERSION_ANSWERED:-}" \
+    LANGFLOW_VERSIONS="${LANGFLOW_VERSIONS:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
     OUTAGE_ATTEMPTS="$RUN_DIR/outage-attempts.json" \
