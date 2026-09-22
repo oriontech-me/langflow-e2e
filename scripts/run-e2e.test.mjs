@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 
 import { fileURLToPath } from "node:url";
@@ -282,6 +282,120 @@ test("gh_out reads plain and heredoc values, which the outage report needs", () 
   const r = sourced(`gh_out ${JSON.stringify(file)} empty; echo; gh_out ${JSON.stringify(file)} summary_md; echo; gh_out ${JSON.stringify(file)} partial`);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, "false\n| shard | down |\n| 1 | 4s |\npartial=true".replace("partial=true", "true"));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version survives a wedged shard, and prints ONLY the version", () => {
+  // #1731: the Actions lane resolved this per shard into a matrix job output, where
+  // GitHub guarantees only that the last matrix job to run overrides the value, over
+  // an order it does not guarantee — so the row named whichever shard finished last.
+  // (Its stronger claim, that a wedged shard's EMPTY answer erased three good ones,
+  // is not demonstrated; scripts/lib/served-version.mjs is where that argument
+  // lives, and this is the FIFTH copy of the sentence to be corrected, each time by
+  // a fix that edited the copies its author remembered.) Both lanes now sweep,
+  // through one reader. Here: shard 1 answered nothing.
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(join(dir, "all-tokens/version-1.json"), "");
+  writeFileSync(join(dir, "all-tokens/version-2.json"), JSON.stringify({ version: "1.13.0.dev16" }));
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=2; resolve_served_version`);
+  assert.equal(r.status, 0, r.stderr);
+  // Read through a command substitution, so anything else on stdout becomes part of
+  // the version: the reader's report belongs on stderr.
+  assert.equal(r.stdout.trim(), "1.13.0.dev16");
+  assert.match(r.stderr, /shard 1: .*empty/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Both filesystem-hostile cases below are decided by permission bits, which ROOT
+// bypasses (CAP_DAC_OVERRIDE) — the test would then pass with the guards removed
+// and go quiet about it. The PR lane's unit job runs as `runner`, not in a
+// container, so this is live there; skipped rather than silently vacuous elsewhere.
+const skipIfRoot = (t) =>
+  process.getuid?.() === 0 ? (t.skip("root bypasses the permission bits this relies on"), true) : false;
+
+test("resolve_served_version writes to no surface but the ones it owns", () => {
+  // The unit lane SOURCES this file, and in Actions $GITHUB_STEP_SUMMARY is set for
+  // every step — so without clearing it these tests appended nine "### Langflow
+  // version … UNRESOLVED" blocks to the PR's own run summary, reading as a real
+  // daily verdict. The reader's summary surface belongs to the merge job, not here.
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  const summary = join(dir, "step-summary.md");
+  writeFileSync(summary, "");
+  const r = sourced(
+    `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=2; resolve_served_version`,
+    { GITHUB_STEP_SUMMARY: summary },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(summary, "utf8"), "", "the VM path wrote to a run summary");
+  // And the report still reached the log, so nothing was suppressed to achieve it.
+  assert.match(r.stderr, /UNRESOLVED/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version cannot abort its caller when the run dir is unwritable", (t) => {
+  // The caller reads it through a command substitution, so under `set -e` a failing
+  // `mkdir` or truncate would make the assignment non-zero and take phase_merge with
+  // it — the run's verdict and publish lost for a diagnostic. Called DIRECTLY here,
+  // because bash 3.2 does not inherit errexit INTO a command substitution, so a
+  // failure in the middle of the function is invisible through `$(…)` on this
+  // machine while the VM's bash 5 acts on it. (It does propagate the substitution's
+  // final STATUS — measured, `set -e; V="$(f)"` with `f` returning 3 exits 3 — so
+  // the sibling test's `gh_out` case would reproduce either way. The rationale was
+  // carried onto that test from here, where it is the true one.)
+  if (skipIfRoot(t)) return;
+  const dir = makeTempDir("run-e2e-version-");
+  const readOnly = join(dir, "ro");
+  mkdirSync(readOnly, { recursive: true });
+  chmodSync(readOnly, 0o500);
+  const r = sourced(
+    `set -e; RUN_DIR=${JSON.stringify(readOnly)}; resolve_served_version; echo "REACHED=$?"`,
+  );
+  assert.match(r.stdout, /REACHED=0/, "an unwritable run dir aborted the caller");
+  chmodSync(readOnly, 0o700);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version cannot abort its caller when the output file cannot be READ", (t) => {
+  // Reproduces through `$(…)` too, unlike its sibling above: `gh_out` is the LAST
+  // command, so its status is the substitution's final status, which bash 3.2 does
+  // propagate. Called directly anyway, to assert the function's own contract.
+  // The residual the first fix missed, and the reason the guard is now on every
+  // command: `gh_out`'s own guard is `[ -f … ] || return 0`, i.e. existence only,
+  // and its `node -e` then reads the file. An output file that exists and cannot be
+  // read throws EACCES — and `gh_out` is the function's LAST command, so that
+  // becomes the function's status and the caller's.
+  if (skipIfRoot(t)) return;
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(join(dir, "all-tokens/version-1.json"), JSON.stringify({ version: "1.13.0.dev16" }));
+  const out = join(dir, "logs", "served-version.out");
+  writeFileSync(out, "");
+  chmodSync(out, 0o000);
+  const r = sourced(
+    `set -e; RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1; resolve_served_version; echo "REACHED=$?"`,
+  );
+  assert.match(r.stdout, /REACHED=0/, "an unreadable output file aborted the caller");
+  chmodSync(out, 0o600);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version returns EMPTY when no shard answered, and says which", () => {
+  // The row then carries null, which compare-lane-verdicts.mjs reports as
+  // `version parity UNVERIFIED` — honest degradation. What must never happen is a
+  // null nobody can attribute (#1012), so the reason is on the run log.
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=2; resolve_served_version`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "");
+  assert.match(r.stderr, /UNRESOLVED/);
+  assert.match(r.stderr, /shard 2: no file/);
   rmSync(dir, { recursive: true, force: true });
 });
 

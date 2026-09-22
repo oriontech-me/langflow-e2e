@@ -700,6 +700,52 @@ gh_out() {
   ' "$file" "$key"
 }
 
+# The Langflow version that actually SERVED this run, swept from every shard's
+# captured answer in "$RUN_DIR/all-tokens".
+#
+# The sweep itself lives in scripts/resolve-served-version.mjs so the Actions lane
+# can run the SAME one (#1731): its `langflow_version` came from a matrix job
+# output, which GitHub defines as "the last matrix job that runs will override the
+# output value" over an order it does not guarantee. Two lanes writing one field
+# into one series must not have different odds of writing it at all, and two
+# implementations of "sweep the shards" is how that difference comes back.
+#
+# STDOUT is the version and nothing else, because the caller reads it through a
+# command substitution; the reader's own report (which shard answered, why the
+# others did not, whether they served the same product) goes to stderr, where the
+# run log keeps it.
+# EVERY command in here is guarded, and that is the whole reason this is a function
+# rather than four lines in phase_merge: the caller reads it through a command
+# substitution, so under `set -e` any non-zero status becomes the assignment's and
+# aborts phase_merge — losing the run's verdict and its publish for a diagnostic.
+#
+# The last one took two review rounds to find, and it is the instructive one: the
+# read is `gh_out`, whose own guard is `[ -f "$file" ] || return 0` — EXISTENCE
+# only. Its `node -e` then reads the file unguarded, so an output file that exists
+# and cannot be read (`chmod 000`, a root-owned leftover under a reused RUN_ID)
+# throws EACCES, and because `gh_out` is the LAST command its status is the
+# function's. Reproduced. The previous version of this comment claimed the two
+# filesystem lines were the only unguarded ones; they were the only OBVIOUS ones.
+#
+# The directory normally exists already — `phase_preflight` makes it, named rather
+# than cited by line, because the line moved the moment this comment grew (#1504's
+# rule: line numbers drift, titles do not). The mkdir is for a caller that has not
+# been through that phase.
+resolve_served_version() {
+  local version_out="$RUN_DIR/logs/served-version.out"
+  mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
+  : > "$version_out" 2>/dev/null || true
+  # GITHUB_STEP_SUMMARY is cleared as well as redirected: in Actions it is set for
+  # every step, and the unit lane sources this file — so without it the VM tests
+  # appended nine "### Langflow version … UNRESOLVED" blocks to the PR run summary,
+  # which read as a real daily verdict. It also makes this function's contract true
+  # of every surface, not just stdout and stderr.
+  GITHUB_OUTPUT="$version_out" GITHUB_STEP_SUMMARY="" \
+    node scripts/resolve-served-version.mjs \
+      --dir "$RUN_DIR/all-tokens" --expect-shards "${SHARD_TOTAL:-}" >&2 || true
+  gh_out "$version_out" version || true
+}
+
 # --- The ledger ------------------------------------------------------------------
 
 # Does THIS run keep the three series? Asked in three places, answered once.
@@ -1643,8 +1689,11 @@ run_shard() {
   cp "$wd/token-attrib-${idx}.jsonl" "$RUN_DIR/all-tokens/" 2>/dev/null || true
   printf '%s' "${MODEL_TEST_PROVIDER:-}" > "$RUN_DIR/all-tokens/token-provider-${idx}.txt"
 
+  # The version this shard's instance actually served, captured as the RAW body and
+  # named the way the Actions lane names it, in the directory the Actions lane
+  # collects the same per-shard facts into. One reader parses both (#1731).
   curl -sf --connect-timeout 5 --max-time 15 "http://${host}:${port}/api/v1/version" \
-    > "$RUN_DIR/logs/shard-$idx-version.json" 2>/dev/null || true
+    > "$RUN_DIR/all-tokens/version-$idx.json" 2>/dev/null || true
 
   # Blobs renamed per shard: without --shard Playwright names them all alike, and the
   # merge reads the whole directory regardless of file name.
@@ -1773,13 +1822,7 @@ phase_merge() {
 
   # The version that actually served. Sweeping every shard avoids ending up without
   # one just because shard 1 was the one that died.
-  LANGFLOW_VERSION=""
-  local vfile
-  for vfile in "$RUN_DIR"/logs/shard-*-version.json; do
-    [ -s "$vfile" ] || continue
-    LANGFLOW_VERSION="$(node -p "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).version||''}catch{''}" "$vfile" 2>/dev/null || echo "")"
-    [ -n "$LANGFLOW_VERSION" ] && break
-  done
+  LANGFLOW_VERSION="$(resolve_served_version)"
 
   # The comparison this step exists for. A mismatch is now FATAL by default: the run
   # placed the clone itself a few phases ago, so the two sides disagreeing means
