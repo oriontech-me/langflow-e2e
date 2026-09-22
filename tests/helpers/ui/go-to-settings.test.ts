@@ -292,8 +292,9 @@ test("a header on the page hop 3 is LEAVING does not count as the target's", () 
     pathname: "/settings/general",
     targetHref: "/settings/mcp-client",
     headerPresent: true,
+    headerText: "General",
   };
-  assert.equal(trackTargetHeader(false, leaving), false);
+  assert.equal(trackTargetHeader(false, leaving, "Langflow MCP Client"), false);
 });
 
 test("a header on the page hop 3 ARRIVED at counts, and stays counted", () => {
@@ -301,12 +302,13 @@ test("a header on the page hop 3 ARRIVED at counts, and stays counted", () => {
     pathname: "/settings/model-providers",
     targetHref: "/settings/model-providers",
     headerPresent: true,
+    headerText: "Model Providers",
   };
-  assert.equal(trackTargetHeader(false, arrived), true);
+  assert.equal(trackTargetHeader(false, arrived, "Model Providers"), true);
   // Sticky: a header that mounted and is mid-swap must not un-count and let the
   // headerless branch accept a page whose content is still moving.
   assert.equal(
-    trackTargetHeader(true, { ...arrived, headerPresent: false }),
+    trackTargetHeader(true, { ...arrived, headerPresent: false, headerText: "" }, "Model Providers"),
     true,
   );
 });
@@ -314,12 +316,66 @@ test("a header on the page hop 3 ARRIVED at counts, and stays counted", () => {
 test("no header present never flips the flag, whatever the pathname", () => {
   for (const pathname of ["/settings/general", "/settings/mcp-client"]) {
     assert.equal(
-      trackTargetHeader(false, {
-        pathname,
-        targetHref: "/settings/mcp-client",
-        headerPresent: false,
-      }),
+      trackTargetHeader(
+        false,
+        {
+          pathname,
+          targetHref: "/settings/mcp-client",
+          headerPresent: false,
+          headerText: "",
+        },
+        "Langflow MCP Client",
+      ),
       false,
     );
   }
+});
+
+test("the header of the page hop 3 LEFT, still mounted one frame under the target's pathname, does not count", () => {
+  // The URL commits before the previous section unmounts. Measured on
+  // 1.13.0.dev19, recording every animation frame of a click on
+  // sidebar-nav-Connections from /settings/general: in 10 navigations out of 10,
+  // one frame (~10 ms) carried pathname "/settings/connections" AND General's
+  // `settings_menu_header`. A 200 ms poll lands in that frame now and then —
+  // 1 of 3 runs of connections-page.spec.ts — and counting that header latched
+  // the flag, so Connections, which renders no header, failed as
+  // SETTINGS_SECTION_UNCONFIRMED after the full 20 s. A header that does not name
+  // the target is the page being left, whatever the pathname says.
+  const lingering = {
+    pathname: "/settings/connections",
+    targetHref: "/settings/connections",
+    headerPresent: true,
+    headerText: "General",
+  };
+  assert.equal(trackTargetHeader(false, lingering, "Connections"), false);
+});
+
+test("the measured frames of a click into a headerless section settle on the URL", () => {
+  // The same recording, replayed through both decisions in the order the hop
+  // polls them: the last frame General leaves behind, then the headerless
+  // Connections page once the grace elapsed. Latching on the first frame is what
+  // left the hop pending for its whole budget.
+  const frames = [
+    { pathname: "/settings/connections", headerPresent: true, headerText: "General", graceElapsed: false },
+    { pathname: "/settings/connections", headerPresent: false, headerText: "", graceElapsed: false },
+    { pathname: "/settings/connections", headerPresent: false, headerText: "", graceElapsed: true },
+  ];
+  let everPresent = false;
+  let state = "pending";
+  for (const frame of frames) {
+    const snapshot = {
+      ...SETTINGS_SHELL,
+      navEntries: [...SETTINGS_SHELL.navEntries, "Connections"],
+      targetHref: "/settings/connections",
+      pathname: frame.pathname,
+      headerPresent: frame.headerPresent,
+      headerText: frame.headerText,
+    };
+    everPresent = trackTargetHeader(everPresent, snapshot, "Connections");
+    state = sectionHopState(
+      { ...snapshot, headerEverPresent: everPresent, headerGraceElapsed: frame.graceElapsed },
+      "Connections",
+    );
+  }
+  assert.equal(state, "settled-headerless");
 });

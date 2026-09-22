@@ -179,7 +179,13 @@ export function sectionHopState(
  * swaps — and `sectionHopState` can then never reach `settled-headerless`.
  * `sidebar-nav-Langflow MCP Client` renders no header at all, so it failed as
  * `SETTINGS_SECTION_UNCONFIRMED` after the full 20 s. Only a header seen while
- * the pathname already matches the anchor's href belongs to the target page.
+ * the pathname already matches the anchor's href belongs to the target page —
+ * and only if it NAMES the target, the same test `sectionHopState` settles on.
+ * The pathname alone is not enough, because the URL commits before the page
+ * being left unmounts: measured on `1.13.0.dev19`, every click from
+ * `/settings/general` into `/settings/connections` leaves one frame (~10 ms)
+ * carrying the new pathname and General's header, and a poll landing there
+ * latched this flag for Connections, which renders no header (#1969).
  *
  * Sticky once set: a header that mounted and is mid-swap must not un-count and
  * let the headerless branch accept a page whose content is still moving.
@@ -188,11 +194,16 @@ export function trackTargetHeader(
   seenSoFar: boolean,
   snapshot: Pick<
     SettingsNavSnapshot,
-    "pathname" | "targetHref" | "headerPresent"
+    "pathname" | "targetHref" | "headerPresent" | "headerText"
   >,
+  wanted: string,
 ): boolean {
   if (seenSoFar) return true;
-  return snapshot.headerPresent && snapshot.pathname === snapshot.targetHref;
+  return (
+    snapshot.headerPresent &&
+    snapshot.pathname === snapshot.targetHref &&
+    snapshot.headerText.includes(wanted)
+  );
 }
 
 /**
@@ -466,10 +477,11 @@ async function openSection(
 
     while (Date.now() < slice) {
       const raw = await readSettingsNavState(page);
-      headerEverPresent = trackTargetHeader(headerEverPresent, {
-        ...raw,
-        targetHref,
-      });
+      headerEverPresent = trackTargetHeader(
+        headerEverPresent,
+        { ...raw, targetHref },
+        section,
+      );
       const snapshot: SettingsNavSnapshot = {
         ...raw,
         targetHref,
