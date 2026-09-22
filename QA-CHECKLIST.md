@@ -1531,12 +1531,12 @@
 
 #### 24.4 The `/settings/connections` page (#1969)
 
-- [ ] `sidebar-nav-Connections` reaches the page and the subtitle promise renders verbatim — *"Accounts your flows act through. Tokens stay on the server; only metadata is shown here."* — the user-facing half of § 24.2
-- [ ] The empty state reads *"No connections yet."* and still offers `add-connection`
-- [ ] A row seeded through the API renders its display name, account, status badge, **and both** the scope count and the abbreviated scope list — a count alone passes on an empty list
-- [ ] The `Mine` / `Instance` / `Other users` tabs separate a `user`-owned connection from an `instance`-owned one, the only place the two ownership modes are visible to a user
-- [ ] Search keeps the matching row and drops a second seeded one, asserted as *"the other row is gone"* rather than as a total
-- [ ] The status badge per state, for the states reachable from outside; the spec doc records which, instead of the spec skipping silently
+- [x] `sidebar-nav-Connections` reaches the page through the account menu and Settings, marked active, and the subtitle promise renders verbatim — *"Accounts your flows act through. Tokens stay on the server; only metadata is shown here."* — the user-facing half of § 24.2 → core-functionality/integrations/connections-page.spec.ts
+- [x] The empty state reads *"No connections yet."* and still offers `add-connection` — reached through a search nothing matches: the page has ONE empty state for any empty view, and a shared superuser is never guaranteed an empty list → core-functionality/integrations/connections-page.spec.ts
+- [x] A row seeded through the API renders its display name, handle, owner, account, status badge, **and both** the scope count and the abbreviated scope list (screen-reader text) — a count alone passes on an empty list → core-functionality/integrations/connections-page.spec.ts
+- [x] The `Mine` / `Instance` / `Other users` tabs each hold only their own ownership kind — a `user`-owned connection, an `instance`-owned one, and another user's private one, which must stay out of a superuser's `Mine` (the defect langflow#15182 fixed) → core-functionality/integrations/connections-page.spec.ts
+- [x] Search keeps the row its name, handle or account matches and drops a second seeded one, asserted as *"the other row is gone"* rather than as a total → core-functionality/integrations/connections-page.spec.ts
+- [x] The status badge per state reachable from outside — `Ready`, `Pending` with *Authorize*, `Expired` and `Revoked` with *Reconnect*; `error` has no route from outside and the spec doc records why, instead of the spec skipping silently → core-functionality/integrations/connections-page.spec.ts
 - [ ] The Add / Reconnect wizard — deferred: it opens but stops at *"No OAuth registration is configured for this provider"*, so walking it needs `/oauth/start` and the callback mocked
 
 #### 24.5 Row actions and the non-interactive opt-in (#1970)
