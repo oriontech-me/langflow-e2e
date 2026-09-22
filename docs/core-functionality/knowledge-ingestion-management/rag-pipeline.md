@@ -331,7 +331,10 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
   `RAG Pipeline <timestamp>_<random>` and every KB as
   `kb_rag_<timestamp>_<random>`, so no name is available to collide with. A
   second test added here should take `test.describe.serial` on the describe that
-  needs it, never on the file.
+  needs it, never on the file. The removal is inert at run time — a single test
+  has no sibling to skip — so it carries no measurement of its own; the spec was
+  re-run green on `1.13.0.dev19` (16.2 s) to confirm nothing else depended on
+  it.
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts`
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev19`)
 
 ---
 
@@ -137,6 +137,19 @@ reliable signal (fail — invalidates the positive assertion).
   control**, so a missed sentinel also removed the evidence that a sentinel match
   means anything, with an empty skip reason. Both tests live in the same
   describe, so scoping serial to the describe would have kept that coupling.
+- Measured on `1.13.0.dev19` (manual lane, `retries=0`, `provider=openai`): the
+  first test of each spec was forced to fail on a throwaway branch and the pair
+  run twice, once from `main` and once from this change.
+
+  | | tests | failed | ran | skipped |
+  |---|---|---|---|---|
+  | file-level serial (`main`) | 4 | 2 | 0 | **2** — `worker=-1`, 0 ms, empty reason |
+  | no serial (this change) | 5 | 2 | 3 | **0** |
+
+  With serial, the sibling of each forced failure was never dispatched: the
+  `worker=-1`, zero-duration, reasonless row #1690 calls a phantom skip. Without
+  it both siblings ran on their own workers (31.3 s and 17.2 s) and reported
+  their own verdicts.
 
 ---
 
