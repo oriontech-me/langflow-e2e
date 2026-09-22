@@ -1587,8 +1587,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| `integrations/` — Dedicated Integrations | 29 | 4 | 0 | 0 | 25 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **719** | **602 (84%)** | **33 (5%)** | **14 (2%)** | **70 (10%)** |
+| `integrations/` — Dedicated Integrations | 29 | 9 | 0 | 0 | 20 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **719** | **607 (84%)** | **33 (5%)** | **14 (2%)** | **65 (9%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1604,7 +1604,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 680 `test()` calls carrying the `@stable` tag, distributed across 269 spec
+> 682 `test()` calls carrying the `@stable` tag, distributed across 270 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1937,6 +1937,10 @@
 - [x] API request with no token returns 401 or 403 → `session-expired.spec.ts`
 - [x] UI shows login page when auto_login is unavailable (session cannot be established) → `session-expired.spec.ts`
 - [x] valid token grants access to protected resources → `session-expired.spec.ts`
+
+#### core-functionality/integrations/
+- [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
+- [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
