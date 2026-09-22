@@ -27,6 +27,14 @@
 // hands it, while this one READS the run's numbers off disk and can therefore fail
 // to. That is `unknown` — announced, never rendered as zero.
 //
+// A SIXTH has no counterpart either, for a different reason: `green` is a day the
+// issue does not exist on. It is OFF by default and off for everyone who does not ask
+// (`SLACK_ANNOUNCE_GREEN=1`), because announcing a clean day is only worth the noise
+// where the reader has no other way to see the run happened — the Actions lane has a
+// run list, the VM lane has systemd and a log file behind a VPN (#1981). It is still a
+// DECISION and not a template: a clean day and an unread one must not read alike, so
+// green is held to the same evidence as the rest — see the gate below.
+//
 // ## Why it reads payload.json and not results.json
 //
 // `build-run-payload.mjs` already parses the merged report into totals + failures.
@@ -74,7 +82,10 @@
 //   REPORT_URL          where the Playwright report lives
 //   RUN_ID, VM_HOSTNAME
 //   SLACK_DRY_RUN=1     render and print the payload, post nothing
-//   SLACK_FORCE=1       post even when the run reported nothing bad (wiring test)
+//   SLACK_ANNOUNCE_GREEN=1  announce a CLEAN day too, as its own shape. Default: off.
+//   SLACK_FORCE=1       post even when the run reported nothing bad (wiring test).
+//                       Implies SLACK_ANNOUNCE_GREEN — it posts the green message, not
+//                       a red one with a zero in it.
 //
 // Run: node scripts/notify-slack.mjs
 
@@ -160,7 +171,7 @@ const verdictUnknown = !countKnown && failures.length === 0;
 // report, so the integrity guard reports the run empty and unreadable and this
 // message would have headlined "executed ZERO tests" on a day when every shard
 // finished — pointing triage at the backend instead of at the merge step (#1726).
-const shape = mergeFailed
+let shape = mergeFailed
   ? "merge_failed"
   : empty
     ? "empty"
@@ -191,13 +202,28 @@ const nothingFailed =
   (failedCount === 0 || failedCount === "0") &&
   failures.length === 0;
 
-if (nothingFailed && env.SLACK_FORCE !== "1") {
+// Whether a clean day is ANNOUNCED or passed over is the CALLER's call, because it
+// turns on what else the reader can see — and it is the only thing the caller gets to
+// decide here. The evidence above is not relaxed by it: `nothingFailed` is still the
+// same narrow conjunction, so an unread payload takes the `unknown` shape before this
+// line and can never be announced as a clean one. The knob chooses between saying the
+// green sentence and saying nothing; it cannot make a green sentence out of a day that
+// was not green. SLACK_FORCE implies it, so the wiring test posts what a green day
+// would really look like instead of "🔴 Daily @stable failed — 0 test(s)" (#1981).
+const announceGreen = env.SLACK_ANNOUNCE_GREEN === "1" || env.SLACK_FORCE === "1";
+
+if (nothingFailed && !announceGreen) {
   console.log(
     "[slack] the run reported no failures and neither the empty nor the partial verdict — nothing to announce. " +
-      "(SLACK_FORCE=1 posts anyway, e.g. to test the webhook wiring.)",
+      "(SLACK_ANNOUNCE_GREEN=1 announces the clean day as its own message; SLACK_FORCE=1 posts anyway, " +
+      "e.g. to test the webhook wiring.)",
   );
   process.exit(0);
 }
+
+// From here the day is green AND the caller asked for it. Its own shape, not
+// `failures` with a zero in it — every sentence below keys off this.
+if (nothingFailed) shape = "green";
 
 // Keyed on the PATH segment, not on the host. `/triggers/` vs `/services/` is what
 // actually distinguishes the two, and requiring `hooks.slack.com` as well makes the
@@ -254,6 +280,10 @@ const headline = {
   // announcing failures on an empty report, pointed the other way (#1012).
   unknown: `⚠️ Daily @stable — verdict UNKNOWN, the run's report could not be read — ${date}`,
   failures: `🔴 Daily @stable failed — ${totals.failed ?? failures.length} test(s) — ${date}`,
+  // No warning glyph and no number that could be misread as a loss: this one is read
+  // at a glance, every weekday, and its whole job is to be distinguishable from the
+  // five above without being read word by word.
+  green: `✅ Daily @stable is green — ${totals.passed ?? 0} passed — ${date}`,
 }[shape];
 
 const diagnosis = {
@@ -282,6 +312,10 @@ const diagnosis = {
     `${bold("Start from the run directory and the merge step")}: find out why the payload is not there, then re-read the verdict from the report itself.`,
   ].join("\n"),
   failures: null,
+  green: [
+    `${bold("Nothing to triage.")} Every spec that ran passed, and the guards reported neither the empty nor the partial verdict — the totals above were read from the run's own payload, not defaulted.`,
+    `${italic("Sent on a clean day on purpose: this lane has no run list to open, so silence would mean both \u201cgreen\u201d and \u201cnobody is looking\u201d.")}`,
+  ].join("\n\n"),
 }[shape];
 
 // ---------------------------------------------------------------------------
@@ -293,11 +327,20 @@ const wedged = env.LIVENESS_MEASURED === "true" && env.LIVENESS_WEDGED === "true
 // The backend-outage verdict LEADS the per-test material when it fired: the cause
 // has to be read before the collateral, or triage starts from the wrong specs
 // (#1030). Gated on `measured` — `wedged` is also "false" when nothing was probed.
-const outageNote = wedged
-  ? `⚡ ${bold("The backend went down mid-run")} — ${env.LIVENESS_OUTAGES || "?"} outage(s), ` +
-    `${env.LIVENESS_DOWN_SECONDS || "?"}s unreachable in total.\n` +
-    `Specs that failed inside those windows are ${bold("collateral, not per-test failures")}. Read the outage first.`
-  : "";
+// On a GREEN day the same measurement is true and the instruction is not: there are no
+// failing specs to read as collateral, and telling a reader to "read the outage first"
+// sends them hunting for a triage that does not exist. The number still goes out —
+// the wedge (#1030) is a trend, and a green day that measured one is a data point the
+// channel should have — but as a note, not as a lead.
+const outageNote = !wedged
+  ? ""
+  : shape === "green"
+    ? `⚡ ${bold("The backend went down mid-run")} — ${env.LIVENESS_OUTAGES || "?"} outage(s), ` +
+      `${env.LIVENESS_DOWN_SECONDS || "?"}s unreachable in total — and ${bold("nothing failed around it")}.\n` +
+      `Recorded because the mid-run wedge (#1030) is a trend, not because this day needs triage.`
+    : `⚡ ${bold("The backend went down mid-run")} — ${env.LIVENESS_OUTAGES || "?"} outage(s), ` +
+      `${env.LIVENESS_DOWN_SECONDS || "?"}s unreachable in total.\n` +
+      `Specs that failed inside those windows are ${bold("collateral, not per-test failures")}. Read the outage first.`;
 
 const elisionNotice = (n) => `\n${italic(`… and ${n} more not listed here — see the report.`)}`;
 
@@ -342,10 +385,21 @@ const failureList = (budget) => {
   return (left > 0 ? [...kept, elisionNotice(left)] : kept).join("\n");
 };
 
+// How long the run took, which only the green message carries. On a bad day it is
+// noise beside the diagnosis; on a clean one it is half of what a reader is checking —
+// a green day that took twice as long as usual is worth a second look, and nothing
+// else in this message would show it.
+const durationMin =
+  Number.isFinite(run.duration_ms) && run.duration_ms > 0 ? Math.round(run.duration_ms / 60000) : null;
+
+const countsLine = `${bold(`${totals.failed ?? 0} failed`)} · ${totals.flaky ?? 0} flaky · ${totals.passed ?? 0} passed · ${totals.skipped ?? 0} skipped`;
+
 const totalsLine =
   shape === "failures"
-    ? `${bold(`${totals.failed ?? 0} failed`)} · ${totals.flaky ?? 0} flaky · ${totals.passed ?? 0} passed · ${totals.skipped ?? 0} skipped`
-    : "";
+    ? countsLine
+    : shape === "green"
+      ? [countsLine, durationMin !== null ? `${durationMin} min` : ""].filter(Boolean).join("  ·  ")
+      : "";
 
 // Truncate the quoted cause BEFORE it is fenced, not after. The body as a whole is
 // capped at SECTION_MAX, and a cut that lands inside the fence leaves it unclosed
@@ -358,12 +412,20 @@ const errorBlock = firstError ? fence(truncate(firstError, ERROR_MAX)) : "";
 
 // Everything that cannot be dropped, in order. The failure list is the only part
 // that gets to shrink, so it is the only part that has to know what is left.
+//
+// The outage note LEADS on a bad day and TRAILS on a green one, and that is the same
+// rule stated twice rather than two rules: whatever the reader has to act on comes
+// first. On a red day that is the cause; on a green day there is nothing to act on, so
+// the verdict leads and the measurement is a footnote to it.
 const fixedText = [
   `${bold("Langflow")} ${code(truncate(version || image, 200))}  ·  ${bold("Run")} ${code(truncate(runId, 200))} on ${host}`,
   totalsLine,
-  outageNote,
+  shape === "green" ? "" : outageNote,
   diagnosis || "",
-  diagnosis ? errorBlock : "",
+  shape === "green" ? outageNote : "",
+  // Not on a green day, whatever the caller passed: a quoted cause under "nothing to
+  // triage" is a contradiction, and the two would be read in the wrong order.
+  diagnosis && shape !== "green" ? errorBlock : "",
 ]
   .filter(Boolean)
   .join("\n\n");
