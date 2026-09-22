@@ -472,8 +472,14 @@ jobs:
             STATES=""
             BASE_CI=""
             if grep -qE '^(\.github/|scripts/)' /tmp/changed.txt; then
+              # `-s` as well as the exit status: `gh` can exit 0 having written
+              # nothing, and an empty listing is not a weak signal — absence from it
+              # is read as "not on the default branch", so it would claim a 404 for
+              # every workflow at once. The classifier has the same floor; this is
+              # the cheap half of it.
               if gh api "repos/${GITHUB_REPOSITORY}/actions/workflows" --paginate \
-                   --jq '.workflows[] | .path + "\t" + .state' > /tmp/wf-states.tsv 2>/tmp/wf-states.err; then
+                   --jq '.workflows[] | .path + "\t" + .state' > /tmp/wf-states.tsv 2>/tmp/wf-states.err \
+                 && [ -s /tmp/wf-states.tsv ]; then
                 STATES="--workflow-states=/tmp/wf-states.tsv"
               else
                 echo "::warning::could not read workflow states ($(head -1 /tmp/wf-states.err)); a disabled workflow will not be flagged."
@@ -505,9 +511,11 @@ jobs:
                 # Composed here, it told the reviewer to dispatch a workflow that has
                 # no `workflow_dispatch` trigger — advice that 422s, i.e. silence
                 # (#1609) — and a YAML-text guard cannot catch that (#1226). The
-                # classifier reads each named workflow's `on:` block, takes the
-                # Actions state fetched above, and words all four cases itself
-                # (dispatchable / disabled / no trigger / unreadable).
+                # classifier reads each named workflow's `on:` block on the BASE ref,
+                # takes the Actions state fetched above, and words all six cases
+                # itself: dispatchable, not on the default branch yet (404), disabled
+                # in Actions (422), no trigger, triggers unreadable, and triggers
+                # this PR edits — so the branch copy is not the one that decides.
                 echo "::warning::$(jq -r '.advice' /tmp/ci-coverage.json)"
                 ;;
             esac

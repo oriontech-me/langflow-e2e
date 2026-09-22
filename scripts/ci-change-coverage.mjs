@@ -55,20 +55,34 @@
  * nobody can act on is indistinguishable from silence (#1092's lesson, one costume
  * over).
  *
- * So the triggers are read from the same YAML the reference graph already comes
- * from, and the advice is rendered HERE rather than composed in the workflow. The
- * trigger read has three answers, and they are worded separately because a single
- * diff mixes them — a change to `scripts/stable-tests.ts` names daily-stable and
- * weekly-stable, which carry the trigger, alongside update-coverage-summary, which
- * does not:
+ * So the triggers are read from the YAML the reference graph already comes from, and
+ * the advice is rendered HERE rather than composed in the workflow. Six answers,
+ * worded separately because ONE diff mixes them — a change to
+ * `scripts/stable-tests.ts` names daily-stable (dispatchable), weekly-stable
+ * (disabled) and update-coverage-summary (no trigger) at once, so flipping the whole
+ * message on its worst member would cost two real dispatches:
  *
- *   dispatchable   → dispatch it, as before;
- *   undispatchable → say what is true instead, and say that nothing in CI proves
- *                    this before merge;
- *   unknown        → the `on:` block could not be read. Reported as unknown, never
- *                    folded into either answer (#1012) — a workflow this cannot
- *                    classify must not be silently promised as dispatchable, and
- *                    must not lose a dispatch that would have worked.
+ *   yes         → dispatch it, as before;
+ *   absent      → not on the default branch yet, so a dispatch answers 404;
+ *   off         → disabled in the Actions tab, so a dispatch answers 422;
+ *   no          → no `workflow_dispatch` trigger at all;
+ *   unknown     → the `on:` block could not be read;
+ *   unverified  → this PR edits that very file, and the copy read is not the one
+ *                 GitHub resolves against.
+ *
+ * `bucket()` tests them in that order, which is by CERTAINTY rather than by severity.
+ * `absent` and `off` come from the Actions listing, which is about the default branch
+ * by construction, so they hold whatever the trigger read said — a workflow known to
+ * be off is reported as off even when its `on:` block was unreadable. Everything
+ * below them is DERIVED from the trigger read, so `unverified` outranks all of it:
+ * when the read did not come from the deciding copy, "it has no trigger" is as
+ * unfounded as "it has one".
+ *
+ * The last two are DOUBTS, and the distinction is load-bearing. Only the established
+ * answers license the closing "nothing in CI can prove this change before merge";
+ * folding a doubt into it is exactly what #1012 forbids, and both directions have
+ * been live here — `unknown` asserting the conclusion, and `no` claiming a PR that
+ * REMOVES the trigger had definitively broken dispatch.
  *
  * THE TRIGGER IS NOT THE ONLY WAY TO 422
  *
@@ -86,6 +100,12 @@
  * unless someone disabled it, so caveating every instruction over a lookup that
  * usually succeeds is the noise that gets warnings ignored (#1252). Only a state
  * positively read as non-active changes the wording.
+ *
+ * "Absent" is the load-bearing word, and it is why the listing has a FLOOR: absence
+ * from it is read as "not on the default branch", so an EMPTY listing is not a weak
+ * signal but a confident 404 claim about every workflow at once — measured, a
+ * zero-byte file produced three of them about three workflows that are all on `main`.
+ * `gh` can exit 0 having written nothing, so exit status is not the guard.
  *
  * AND THE TRIGGER THAT COUNTS IS THE ONE ON THE DEFAULT BRANCH
  *
@@ -106,6 +126,12 @@
  * Without `--base-root` the branch copy is used and any named workflow the PR
  * CHANGED is reported unverified — only those, since for every other workflow the
  * two copies are the same file and the answer is exact.
+ *
+ * The two sources of "is it on the default branch" — the Actions listing and the
+ * base tree — DISAGREE in exactly one case: a workflow this PR adds that has already
+ * registered itself with Actions, which its own `pull_request` run does. So ABSENCE
+ * from either wins over presence in the other; reading that presence as an answer is
+ * a `Dispatch` for a 404.
  *
  * Run:
  *   git diff --name-only … | node scripts/ci-change-coverage.mjs --stdin --format=json
@@ -181,8 +207,10 @@ function stripComment(line) {
  * Text, not a parser, because this repo's scripts are dependency-free by rule and
  * no YAML library is installed. That bounds what it can promise, so it promises
  * exactly that: the four shapes Actions accepts — an `on:` block, an `on: [a, b]`
- * flow list, an `on: a` scalar, and a `- a` sequence — with the `on:` key and each
- * event name optionally quoted; anything else is `null`, with the reason attached.
+ * flow list, an `on: a` scalar, and a `- a` sequence (indented OR at column 0, which
+ * YAML allows for a block's items and which a first draft rejected) — with the `on:`
+ * key and each event name optionally quoted; anything else is `null`, with the
+ * reason attached.
  * Every failure mode found so far degrades to `null` rather than to a wrong boolean,
  * which is the direction that matters: a wrong `true` is #1609 again. Measured
  * against all 18 workflows in this repo: 18 decided, 0 unknown, pinned below.
@@ -226,7 +254,11 @@ export function readWorkflowTriggers(text) {
     const line = stripComment(lines[i]);
     if (!line.trim()) continue;
     const width = line.length - line.trimStart().length;
-    if (width === 0) break; // the next top-level key
+    // A block's items may sit at the PARENT's indentation, so a sequence under a
+    // column-0 `on:` is legal at column 0 too. That is the only shape that survives
+    // a width of zero; anything else there is the next top-level key.
+    const seqItem = /^-\s/.test(line);
+    if (width === 0 && !(seqItem && (indent === null || indent === 0))) break;
     if (indent === null) indent = width;
     if (width > indent) continue;
     if (width < indent) break;
@@ -278,7 +310,15 @@ export function workflowDispatchability(text) {
  * `disabled_fork` all 422. Rows that are not workflow paths (the API also returns
  * `dynamic/...` entries for app-provided workflows) simply never match a key.
  *
- * @returns {Map<string, boolean>} path → enabled
+ * An EMPTY listing is `null`, not an empty map, and the floor is load-bearing rather
+ * than tidy: absence from this listing is read as "not on the default branch", so an
+ * empty map is not a weak signal, it is a confident claim that EVERY workflow is
+ * missing — measured, a zero-byte file produced three `answers 404 until this merges`
+ * sentences about three workflows that are all on `main`. `gh` can exit 0 having
+ * written nothing, so exit status is not the guard. Same rule as `snapshotCatalog`'s
+ * `--min-categories`: a wrong baseline is permanent and silent.
+ *
+ * @returns {Map<string, boolean>|null} path → enabled, or null for no listing at all
  */
 export function parseWorkflowStates(text) {
   const states = new Map();
@@ -287,7 +327,7 @@ export function parseWorkflowStates(text) {
     if (!file || !state) continue;
     states.set(file.trim(), state.trim() === "active");
   }
-  return states;
+  return states.size > 0 ? states : null;
 }
 
 /**
@@ -439,15 +479,17 @@ export function classifyCiChange({ changed, refs, states = null }) {
     // to `.github` it cannot read at all.
     dispatchTargets: dispatchWorkflows.map((workflow) => {
       const read = refs.workflowDispatch?.get(workflow);
-      // Two independent ways to establish that the default branch does not have
-      // this workflow — the Actions listing does not name it, or the base tree does
-      // not contain it. Either is definitive; neither being available is `null`.
-      const onDefaultBranch =
-        states?.has(workflow) || (refs.triggersFromBase && read)
-          ? true
-          : states || refs.triggersFromBase
-            ? false
-            : null;
+      // Two independent sources can answer "is this on the default branch" — the
+      // Actions listing, and the base tree. ABSENCE from either is definitive, so
+      // absence WINS: the two disagree exactly when a workflow this PR adds has
+      // already registered itself with Actions (its own `pull_request` run does
+      // that), and reading that as presence is a `Dispatch` for a 404. `true` needs
+      // every available source to have found it; neither available is `null`.
+      const evidence = [
+        states ? states.has(workflow) : null,
+        refs.triggersFromBase ? Boolean(read) : null,
+      ].filter((e) => e !== null);
+      const onDefaultBranch = evidence.length === 0 ? null : evidence.every(Boolean);
       return {
         workflow,
         ...(read ?? {
@@ -499,11 +541,19 @@ export function dispatchAdvice(result) {
   // is, so a workflow known to be off is reported as off even when its triggers were
   // unreadable, rather than losing the one fact that WAS established.
   const bucket = (t) => {
+    // `absent` and `off` come from the Actions listing, which is about the default
+    // branch by construction — so they hold whatever the trigger read said, and they
+    // go first. Everything below is DERIVED from the trigger read, so `unverified`
+    // outranks all of it: when the read did not come from the copy GitHub resolves,
+    // "it has no trigger" is as unfounded as "it has one". A first draft tested `no`
+    // ahead of `unverified` and therefore reported a PR that REMOVES the trigger as
+    // definitively undispatchable — the same inversion in the other direction, and
+    // `no` licenses the closing conclusion where a doubt must not.
     if (t.onDefaultBranch === false) return "absent";
     if (t.enabled === false) return "off";
+    if (t.triggersUnverified) return "unverified";
     if (t.dispatchable === false) return "no";
     if (t.dispatchable !== true) return "unknown";
-    if (t.triggersUnverified) return "unverified";
     return "yes";
   };
   const of = (name) => targets.filter((t) => bucket(t) === name);
@@ -543,8 +593,11 @@ export function dispatchAdvice(result) {
     );
   }
   for (const t of unverified) {
+    // Worded over the DOUBT, not over what the branch copy happens to say: this
+    // bucket holds a PR that adds the trigger and a PR that removes it alike, and
+    // naming either reading would be the thing that is not known.
     sentences.push(
-      `${t.workflow} carries ${DISPATCH_TRIGGER} on this branch, but this PR edits that file and GitHub resolves the trigger from the default branch — confirm it is dispatchable there before relying on this.`,
+      `This PR edits ${t.workflow}, and GitHub resolves ${DISPATCH_TRIGGER} from the default branch rather than from this one — confirm there whether it is dispatchable; the copy on this branch is not the one that decides.`,
     );
   }
   if (yes.length === 0 && blocked.length > 0) {
@@ -582,7 +635,7 @@ export function dispatchAdvice(result) {
   }
   for (const t of unverified) {
     summaryLines.push(
-      `- ❔ **\`${t.workflow}\` — this PR edits it**, and GitHub resolves \`${DISPATCH_TRIGGER}\` from the default branch, not from this one. Confirm it is dispatchable there before relying on the advice above (#1609).`,
+      `- ❔ **\`${t.workflow}\` — this PR edits it**, and GitHub resolves \`${DISPATCH_TRIGGER}\` from the default branch, not from this one. The copy on this branch does not decide; confirm there before relying on the advice above (#1609).`,
     );
   }
 
@@ -640,7 +693,12 @@ function main(argv) {
   let baseWorkflows = null;
   if (baseRoot) {
     try {
-      baseWorkflows = readCiSources(baseRoot).workflows;
+      const read = readCiSources(baseRoot).workflows;
+      // Same floor as the states listing, for the same reason: an empty base tree
+      // would read as "the default branch has no workflows at all", i.e. a 404
+      // claim about every one of them.
+      if (read.size === 0) throw new Error("it contains no workflows");
+      baseWorkflows = read;
     } catch (error) {
       process.stderr.write(
         `::warning::ci-change-coverage could not read the base .github at ${baseRoot} (${error.message}); trigger answers will come from this branch instead.\n`,
@@ -664,10 +722,12 @@ function main(argv) {
   if (statesFile) {
     try {
       states = parseWorkflowStates(fs.readFileSync(statesFile, "utf8"));
+      if (!states) throw new Error("it lists no workflows");
     } catch (error) {
       process.stderr.write(
         `::warning::ci-change-coverage could not read ${statesFile} (${error.message}); a workflow disabled in Actions will not be flagged.\n`,
       );
+      states = null;
     }
   }
 
