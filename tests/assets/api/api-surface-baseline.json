@@ -1,5 +1,5 @@
 {
-  "version": "1.13.0.dev0",
+  "version": "1.13.0.dev19",
   "exclusions": [
     {
       "prefix": "/api/v1/authz/",
@@ -52,12 +52,12 @@
     {
       "method": "DELETE",
       "path": "/api/v1/authz/role-assignments/{assignment_id}",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "DELETE",
       "path": "/api/v1/authz/roles/{role_id}",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "DELETE",
@@ -67,12 +67,17 @@
     {
       "method": "DELETE",
       "path": "/api/v1/authz/teams/{team_id}",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "DELETE",
       "path": "/api/v1/authz/teams/{team_id}/members/{user_id}",
-      "inSchema": false
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/connections/{connection_id}",
+      "inSchema": true
     },
     {
       "method": "DELETE",
@@ -171,6 +176,11 @@
     },
     {
       "method": "DELETE",
+      "path": "/api/v1/triggers/{trigger_id}",
+      "inSchema": true
+    },
+    {
+      "method": "DELETE",
       "path": "/api/v1/users/{user_id}",
       "inSchema": true
     },
@@ -247,17 +257,17 @@
     {
       "method": "GET",
       "path": "/api/v1/authz/role-assignments",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "GET",
       "path": "/api/v1/authz/roles",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "GET",
       "path": "/api/v1/authz/roles/{role_id}",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "GET",
@@ -272,17 +282,17 @@
     {
       "method": "GET",
       "path": "/api/v1/authz/teams",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "GET",
       "path": "/api/v1/authz/teams/{team_id}",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "GET",
       "path": "/api/v1/authz/teams/{team_id}/members",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "GET",
@@ -327,6 +337,21 @@
     {
       "method": "GET",
       "path": "/api/v1/config",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/connections",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/connections/oauth/registrations",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/connections/oauth/{provider}/callback",
       "inSchema": true
     },
     {
@@ -413,6 +438,16 @@
       "method": "GET",
       "path": "/api/v1/folders/{folder_id}",
       "inSchema": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/policy/effective",
+      "inSchema": true
     },
     {
       "method": "GET",
@@ -676,6 +711,21 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/triggers",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/triggers/{trigger_id}",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/triggers/{trigger_id}/events",
+      "inSchema": true
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/users/",
       "inSchema": true
     },
@@ -777,7 +827,7 @@
     {
       "method": "PATCH",
       "path": "/api/v1/authz/roles/{role_id}",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "PATCH",
@@ -787,7 +837,12 @@
     {
       "method": "PATCH",
       "path": "/api/v1/authz/teams/{team_id}",
-      "inSchema": false
+      "inSchema": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/connections/{connection_id}",
+      "inSchema": true
     },
     {
       "method": "PATCH",
@@ -828,6 +883,11 @@
       "method": "PATCH",
       "path": "/api/v1/store/components/{component_id}",
       "inSchema": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/triggers/{trigger_id}",
+      "inSchema": true
     },
     {
       "method": "PATCH",
@@ -902,12 +962,12 @@
     {
       "method": "POST",
       "path": "/api/v1/authz/role-assignments",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "POST",
       "path": "/api/v1/authz/roles",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "POST",
@@ -917,12 +977,12 @@
     {
       "method": "POST",
       "path": "/api/v1/authz/teams",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "POST",
       "path": "/api/v1/authz/teams/{team_id}/members",
-      "inSchema": false
+      "inSchema": true
     },
     {
       "method": "POST",
@@ -952,6 +1012,31 @@
     {
       "method": "POST",
       "path": "/api/v1/build_public_tmp/{job_id}/cancel",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/connections",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/connections/{connection_id}/health",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/connections/{connection_id}/oauth/start",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/connections/{connection_id}/revoke",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/connections/{connection_id}/test",
       "inSchema": true
     },
     {
@@ -1191,6 +1276,36 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/triggers",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/{trigger_id}/disable",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/{trigger_id}/enable",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/{trigger_id}/pin",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/{trigger_id}/replay",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/triggers/{trigger_id}/test",
+      "inSchema": true
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/upload/{flow_id}",
       "inSchema": false
     },
@@ -1311,7 +1426,7 @@
     }
   ],
   "liveness": {
-    "probed": 55,
+    "probed": 60,
     "dead": []
   }
 }
