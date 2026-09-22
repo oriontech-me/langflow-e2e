@@ -1537,11 +1537,11 @@
 
 #### 24.5 Row actions and the non-interactive opt-in (#1970)
 
-- [ ] `allow_non_interactive` is **off by default**, read both from the API and from the menu item's presentation — a default flipped to on is a silent privilege grant, and this is upstream's own risk #8
-- [ ] Toggling it in the UI produces the direction-specific toast **and** the API agrees; the state is read from the API because the menu item is a plain `role=menuitem` with `aria-checked: null`, so the UI does not expose it programmatically
-- [ ] `PATCH allow_non_interactive` through the API is reflected after a reload — upstream's *"show state set through the API too"*, verbatim
-- [ ] `Rename` updates the row and the API together; `Revoke` moves the badge to `Revoked` and the status agrees; `Delete` removes the row and a follow-up read answers `404`
-- [ ] `Check credential` stamps `health_checked_at` — **not** asserted: that `healthy` proves a working credential, since the endpoint answered `healthy` for a planted fake token with no provider configured
+- [x] `allow_non_interactive` is **off by default**, read from the API and from the opt-in's switch (`aria-checked`) — a default flipped to on is a silent privilege grant, and this is upstream's own risk #8 → core-functionality/integrations/connections-row-actions.spec.ts
+- [x] Toggling it in the UI produces the direction-specific toast, flips the switch **and** the API agrees. The menu item itself is a plain `role=menuitem` with no state, but it contains a `role=switch` (`unattended-<name>`) whose `aria-checked` IS the state — the "not programmatically readable" premise measured the wrapper, not the switch → core-functionality/integrations/connections-row-actions.spec.ts
+- [x] `PATCH allow_non_interactive` through the API is reflected on the switch after a reload — upstream's *"show state set through the API too"*, verbatim → core-functionality/integrations/connections-row-actions.spec.ts
+- [x] `Rename` (a native `window.prompt` prefilled with the current name) updates the row and the API together; `Delete` stays locked until `Revoke` removes the credential; `Revoke` moves the badge to `Revoked` and the status agrees; `Delete` removes the row and the id is gone from a re-read of the list — not from a follow-up `GET` on the item path, which answers `404` for a live connection too → core-functionality/integrations/connections-row-actions.spec.ts
+- [x] `Check credential` (`POST /test`) stamps `health_checked_at` and moves *Last check* off `Never` — **not** asserted: that `healthy` proves a working credential, since the endpoint answered `healthy` for a planted fake token with no provider configured → core-functionality/integrations/connections-row-actions.spec.ts
 - [ ] Whether a non-interactive caller actually resolves the connection (webhook, deployment, public flow, MCP-exposed project, A2A, v2 workflow host) — deferred: the executing-identity matrix needs a PERMIT/DENY cell written per entry point before any code
 
 #### 24.6 Saved-flow contract and node surfaces
