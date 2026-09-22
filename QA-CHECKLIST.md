@@ -443,6 +443,7 @@
 - [x] Create global variable of type "Generic" → `ui-ux/global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `ui-ux/global-variables-crud.spec.ts`
 - [x] Create global variable from Settings page → `ui-ux/global-variable-edit.spec.ts`
+- [x] Rename a global variable twice from the Update Variable modal — each `PATCH` keeps the variable's id and the grid drops the old name; the create saves the Apply To Fields choice (`default_fields`) and the grid shows it; deleting that row sends only its own `DELETE`. Promoted in the T2 triage (#1909) after the inherited version, which deleted every variable of the account and asserted it held none, was root-caused as a test defect → `ui-ux/userSettings.spec.ts`
 
 ---
 
@@ -983,6 +984,9 @@
 - [~] All documented shortcuts work — all 27 `defaultShortcuts` rows are listed with a non-empty key binding in Settings → Shortcuts (`ui-ux/settings-navigation.spec.ts`), and 8 of them are exercised on canvas — 7 in `ui-ux/langflowShortcuts.spec.ts` and Output Inspection in `core-functionality/llm-agents/chatInputOutputUser-shard-1.spec.ts` — plus 1 rebound end-to-end (`ui-ux/settings-shortcuts-edit.spec.ts`); the remaining 19 (API, Docs, Download, Play, Group, Minimize, Freeze, Save, Code, Update, Controls, sidebar search, …) are not exercised yet
 - [x] Edit a keyboard shortcut (Duplicate → `Ctrl/Cmd+Alt+U`) persists to the table and the new combination triggers the action on canvas → `ui-ux/settings-shortcuts-edit.spec.ts`
 - [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
+- [x] Create a Langflow API key from Settings → Langflow API Keys — the key shown is the key the create returned, Copy puts it on the clipboard verbatim, and the key is listed by name (#1909) → `ui-ux/userSettings.spec.ts`
+- [x] Settings → Shortcuts lists every documented shortcut by name — the 27 of the 1.13 catalog, as a superset, so a shortcut added upstream does not fail it and one removed or renamed does (#1909) → `ui-ux/userSettings.spec.ts`
+- [x] The Settings back button returns to the flow the user came from — Settings sub-navigation replaces the history entry, so `navigate(-1)` leaves Settings instead of stepping to the previous section (#1909) → `ui-ux/userSettings.spec.ts`
 
 ---
 

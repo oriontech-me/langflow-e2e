@@ -1,407 +1,503 @@
+import type {
+  APIRequestContext,
+  Page,
+  Request,
+  Response,
+} from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
+import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-for-cleanup";
+import { waitForPageEntry } from "../../../helpers/other/page-entry-barrier";
 
-test.beforeAll(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 10000));
+/**
+ * Settings journeys no other `@stable` spec covers end to end: renaming a global
+ * variable, creating a Langflow API key from the UI, the shortcut catalog by name,
+ * and leaving Settings back to the flow the user came from. Spec doc:
+ * `docs/ui-ux/userSettings.md`.
+ *
+ * Wave 9 T2 triage (#1909). The inherited file had two defects that shape this one:
+ *
+ *  - Its global-variables test ticked the grid's HEADER checkbox and deleted, then
+ *    asserted "No data available": it deleted every variable of the shared account
+ *    — other workers' variables and the provider credentials `collect-models` saves
+ *    — and asserted the account held none. Langflow falsifies that on every login:
+ *    `/api/v1/auto_login` re-creates FLOW_ID, COMPONENT_ID, FIELD_NAME and
+ *    ASTRA_TOKEN, and every other test's page load is a login. 2/3 in the
+ *    measurement; 5/5 red on demand under concurrent logins. Everything here is
+ *    scoped to the ids a test created.
+ *  - It created flows (awaitBootstrapTest's empty-project branch, the back-navigation
+ *    template) and one API key per run, and deleted none of them.
+ */
+
+// Everything a test creates, by id, so the teardown deletes exactly that — never a
+// sweep or a select-all, which is how the inherited file wiped other workers' state.
+const created = {
+  variableIds: [] as string[],
+  apiKeyIds: [] as string[],
+  flowIds: [] as string[],
+};
+
+test.afterEach(async ({ page, request }) => {
+  const variableIds = created.variableIds.splice(0);
+  const apiKeyIds = created.apiKeyIds.splice(0);
+  const flowIds = created.flowIds.splice(0);
+  if (variableIds.length + apiKeyIds.length + flowIds.length === 0) return;
+
+  // Leave the editor before deleting the flow it shows: a mounted editor keeps
+  // polling that flow and 404s once it is gone, which the fixture logs as a
+  // backend error (#1288).
+  if (flowIds.length > 0) await unmountEditorForCleanup(page);
+
+  // Explicit bearer: under AUTO_LOGIN a bare request context is unauthenticated,
+  // so an unheadered DELETE 401s and silently leaks.
+  const headers = { Authorization: await getAuthToken(request) };
+  for (const id of variableIds) {
+    await deleteCreated(request, `/api/v1/variables/${id}`, headers);
+  }
+  for (const id of apiKeyIds) {
+    await deleteCreated(request, `/api/v1/api_key/${id}`, headers);
+  }
+  for (const id of flowIds) {
+    await deleteFlow(request, id, { headers });
+  }
 });
 
-test.afterEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 10000));
-});
+/**
+ * DELETE one resource this file created. A 404 is success — the global-variables
+ * test deletes its own variable through the UI, so the teardown usually finds it
+ * gone. Any other failure is a leak, and is reported rather than swallowed.
+ */
+async function deleteCreated(
+  request: APIRequestContext,
+  path: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  const response = await request.delete(path, { headers });
+  if (!response.ok() && response.status() !== 404) {
+    console.warn(
+      `⚠️  cleanup: DELETE ${path} answered ${response.status()} — the resource leaked`,
+    );
+  }
+}
 
-test(
-  "should see general profile gradient",
-  { tag: ["@release", "@components", "@settings"] },
+/** Letters and digits only, so a name is also safe inside a RegExp. */
+function uniqueName(): string {
+  return `us${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
 
-  async ({ page }) => {
-    await awaitBootstrapTest(page, {
-      skipModal: true,
-    });
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 30000,
-    });
+/** Match the response to one exact REST call, by method and pathname. */
+function isCall(method: string, pathname: string) {
+  return (response: Response) =>
+    response.request().method() === method &&
+    new URL(response.url()).pathname === pathname;
+}
 
-    await page.waitForSelector('[id="new-project-btn"]', {
-      timeout: 30000,
-    });
-    await page.getByTestId("user-profile-settings").click();
+/** Open Settings from the profile menu and wait for a section header. */
+async function openSettingsFromMenu(page: Page): Promise<void> {
+  await page.getByTestId("user-profile-settings").click();
+  await page.getByTestId("menu_settings_button").click();
+  await expect(page.getByTestId("settings_menu_header")).toBeVisible({
+    timeout: 15000,
+  });
+}
 
-    await page.getByText("Settings").click();
+/**
+ * Enter a Settings section the way a user does — home page, profile menu, the
+ * section's sidebar link — and wait for the section's own header.
+ *
+ * Deliberately not `awaitBootstrapTest`: on an empty project it creates two flows
+ * (`New Flow`, `Basic Prompting`) that a journey needing no flow would then have to
+ * find and delete. Its attributed page-entry barrier is kept.
+ */
+async function openSettingsSection(page: Page, section: string): Promise<void> {
+  await page.goto("/");
+  await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
+  await openSettingsFromMenu(page);
+  await page.getByRole("link", { name: section, exact: true }).click();
+  await expect(page.getByTestId("settings_menu_header")).toContainText(section, {
+    timeout: 15000,
+  });
+}
 
-    // Wait for settings page to fully load
-    await page
-      .waitForLoadState("networkidle", { timeout: 10000 })
-      .catch(() => {});
-    await page.waitForTimeout(1000);
+/** A variables-grid name cell holding exactly `name`, relative to `.ag-row`. */
+function nameCellSelector(page: Page, name: string) {
+  return page
+    .locator('[col-id="name"]')
+    .filter({ hasText: new RegExp(`^\\s*${name}\\s*$`) });
+}
 
-    await expect(page.getByText("General").nth(2)).toBeVisible({
-      timeout: 10000,
-    });
-    await expect(page.getByText("Profile Picture").first()).toBeVisible();
-  },
-);
+/** The name cell of a variables-grid row, matched on the whole cell text. */
+function variableNameCell(page: Page, name: string) {
+  return page.locator(".ag-row").locator(nameCellSelector(page, name));
+}
 
-const FALLBACK_FIELDS = [
-  "AgentQL API Key",
-  "AI/ML API Key",
-  "Anthropic API Key",
-  "API Key",
-  "Apify Token",
-  "Assembly API Key",
-  "Astra DB Application Token",
-  "AWS Access Key ID",
+/** The variables-grid row holding `name`. */
+function variableRow(page: Page, name: string) {
+  return page.locator(".ag-row").filter({ has: nameCellSelector(page, name) });
+}
+
+/**
+ * Scroll the variables grid until `name`'s row is rendered, and return its name
+ * cell. ag-grid keeps only the rows in its window in the DOM and appends a new
+ * variable last, so on an account holding more variables than fit (18 at 1280×720)
+ * the row exists in the grid's data but not in the page (#1303).
+ */
+async function revealVariableRow(page: Page, name: string) {
+  const cell = variableNameCell(page, name);
+  await expect
+    .poll(
+      async () => {
+        await page
+          .locator(".ag-body-viewport")
+          .evaluate((el) => {
+            el.scrollTop = el.scrollHeight;
+          })
+          .catch(() => {
+            /* the grid is not rendered yet — reported by the poll */
+          });
+        return cell.isVisible();
+      },
+      {
+        timeout: 15000,
+        message: `"${name}" never rendered in the variables grid`,
+      },
+    )
+    .toBe(true);
+  return cell;
+}
+
+// Apply To Fields candidates: fields of components no spec in this suite places
+// (DataStax HCD, Oracle, IBM Db2, Amazon Bedrock). While this test's variable exists,
+// Langflow applies it to that field on any newly placed component, so a common field
+// — the inherited list reached `Anthropic API Key` on the 1.13 nightly, which no
+// longer offers the three fields it listed first — would reach into another
+// worker's flow. Four vendor distributions, so one packaging change cannot empty
+// the list; if one ever does, the failure names what IS offered.
+const APPLY_TO_FIELD_CANDIDATES = [
+  "HCD Password",
+  "Wallet Password",
+  "SSL Certificate Password",
+  "AWS Session Token",
 ];
+
+/**
+ * Pick the first offered candidate in the open variable modal's Apply To Fields.
+ *
+ * The options arrive asynchronously: until the component catalog
+ * (`GET /api/v1/all`) has loaded, the modal offers a placeholder list
+ * (`System`, `System Message`, `System Prompt`) and swaps in the real fields when it
+ * lands. So the choice is polled, and a failure names what was last offered —
+ * which separates "the catalog never loaded" from "these components left the image".
+ */
+async function chooseApplyToField(page: Page): Promise<string> {
+  await page.getByTestId("popover-anchor-apply-to-fields").click();
+  const options = page.locator("[cmdk-item]");
+  const offered = async () =>
+    (await options.allTextContents()).map((text) => text.trim());
+  // ANY candidate, not all: `arrayContaining` with a single `stringMatching` holds
+  // when at least one offered field matches — and a failure prints the whole list
+  // that WAS offered.
+  await expect
+    .poll(offered, {
+      timeout: 30000,
+      message:
+        "Apply To Fields must offer one of the candidate fields. A placeholder list " +
+        "(System, System Message, System Prompt) means the component catalog never " +
+        "loaded; a real list without them means their components left the image — " +
+        "pick another field whose component no spec places",
+    })
+    .toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^(${APPLY_TO_FIELD_CANDIDATES.join("|")})$`)),
+      ]),
+    );
+  const offeredNow = await offered();
+  const field = APPLY_TO_FIELD_CANDIDATES.find((candidate) =>
+    offeredNow.includes(candidate),
+  ) as string; // the poll above only resolves once one is offered
+  await options.filter({ hasText: new RegExp(`^\\s*${field}\\s*$`) }).click();
+  // Closes the options popover only; the variable modal stays open.
+  await page.keyboard.press("Escape");
+  return field;
+}
+
+/**
+ * Rename a variable from its Update Variable modal and assert the rename is a
+ * rename: a PATCH of the same id carrying the new name, the new name in the grid
+ * and the old one gone.
+ */
+async function renameVariable(
+  page: Page,
+  id: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await (await revealVariableRow(page, from)).locator(".ag-cell-value").click();
+  await expect(page.getByRole("heading", { name: "Update Variable" })).toBeVisible({
+    timeout: 10000,
+  });
+  await page.getByPlaceholder("Enter a name for the variable...").fill(to);
+
+  const patched = page.waitForResponse(isCall("PATCH", `/api/v1/variables/${id}`));
+  await page.getByTestId("save-variable-btn").click();
+  const response = await patched;
+  expect(response.status(), `renaming "${from}" to "${to}" must return 200`).toBe(
+    200,
+  );
+  expect(
+    await response.json(),
+    "a rename must update the same variable, never create another one",
+  ).toMatchObject({ id, name: to });
+
+  await expect(await revealVariableRow(page, to)).toBeVisible();
+  await expect(
+    variableNameCell(page, from),
+    `"${from}" must be gone from the grid after the rename`,
+  ).toHaveCount(0);
+}
+
+/** Record the pathname of every DELETE the page sends to the variables API. */
+function recordVariableDeletes(page: Page) {
+  const paths: string[] = [];
+  const onRequest = (request: Request) => {
+    const { pathname } = new URL(request.url());
+    if (request.method() === "DELETE" && pathname.startsWith("/api/v1/variables/")) {
+      paths.push(pathname);
+    }
+  };
+  page.on("request", onRequest);
+  return { paths, stop: () => page.off("request", onRequest) };
+}
+
+/** The documented shortcut catalog, as Settings → Shortcuts names it on 1.13 (27). */
+const DOCUMENTED_SHORTCUTS = [
+  "Parameters",
+  "Search Components on Sidebar",
+  "Minimize",
+  "Code",
+  "Copy",
+  "Duplicate",
+  "Docs",
+  "Changes Save",
+  "Save Component",
+  "Delete",
+  "Open Playground",
+  "Undo",
+  "Redo",
+  "Redo (alternative)",
+  "Group",
+  "Cut",
+  "Paste",
+  "API",
+  "Download",
+  "Update",
+  "Freeze",
+  "Flow Share",
+  "Play",
+  "Output Inspection",
+  "Tool Mode",
+  "Toggle Sidebar",
+  "AI Assistant",
+];
+
+/** The expected names absent from `listed` (cell texts, whitespace-trimmed). */
+function missingFrom(expected: readonly string[], listed: string[]): string[] {
+  const present = new Set(listed.map((text) => text.trim()));
+  return expected.filter((name) => !present.has(name));
+}
 
 test(
   "should interact with global variables",
-  { tag: ["@release", "@workspace", "@api", "@settings"] },
-
+  { tag: ["@stable", "@release", "@workspace", "@api", "@settings"] },
   async ({ page }) => {
-    const randomName = Math.random().toString(36).substring(2);
-    const randomName2 = Math.random().toString(36).substring(2);
-    const randomName3 = Math.random().toString(36).substring(2);
+    const name = uniqueName();
+    const renamed = uniqueName();
+    const renamedAgain = uniqueName();
+    let variableId = "";
+    let field = "";
 
-    async function trySelectAvailableField(): Promise<boolean> {
-      for (const fieldName of FALLBACK_FIELDS) {
-        await page.getByPlaceholder("Fields").clear();
-        await page.getByPlaceholder("Fields").fill(fieldName);
-        await page.waitForTimeout(300);
-        try {
-          // [cmdk-item] targets dropdown options, not the search input
-          const optionItem = page.locator(
-            `[cmdk-item]:has-text("${fieldName}")`,
-          );
-          await optionItem.waitFor({ state: "visible", timeout: 2000 });
-          await optionItem.click();
-          return true;
-        } catch {
-          continue;
-        }
-      }
-      return false;
-    }
-
-    await awaitBootstrapTest(page, {
-      skipModal: true,
-    });
-    await page.getByTestId("user-profile-settings").click();
-    await page.getByText("Settings").click();
-    await page.getByText("Global Variables").click();
-    await expect(
-      page.getByText("Global Variables", { exact: true }).nth(1),
-    ).toBeVisible({ timeout: 10000 });
-    await page.getByText("Add New").click();
-    await page
-      .getByPlaceholder("Enter a name for the variable...")
-      .fill(randomName);
-    await expect(page.getByText("Generic", { exact: true }).last()).toBeVisible(
-      { timeout: 10000 },
-    );
-    await page.getByText("Generic", { exact: true }).last().click();
-
-    await page
-      .getByPlaceholder("Enter a value for the variable...")
-      .fill("testtesttesttesttesttesttesttest");
-    await page.getByTestId("popover-anchor-apply-to-fields").click();
-
-    const fieldsCount = await page.getByPlaceholder("Fields").count();
-
-    await page.getByPlaceholder("Fields").first().waitFor({
-      state: "visible",
-      timeout: 30000,
+    await test.step("open Settings → Global Variables", async () => {
+      await openSettingsSection(page, "Global Variables");
     });
 
-    const fieldSelected = await trySelectAvailableField();
-    expect(fieldSelected).toBe(true);
+    await test.step("create a Generic variable with an Apply To Fields choice", async () => {
+      await page.getByTestId("api-key-button-store").click();
+      await page.getByTestId("generic-tab").click();
+      await page.getByPlaceholder("Enter a name for the variable...").fill(name);
+      await page
+        .getByPlaceholder("Enter a value for the variable...")
+        .fill("user-settings-generic-value");
+      field = await chooseApplyToField(page);
 
-    await page.keyboard.press("Escape");
-
-    await page
-      .getByText("Save Variable", { exact: true })
-      .dispatchEvent("click");
-
-    await page.waitForTimeout(500);
-
-    await expect(page.getByText(randomName).last()).toBeVisible({
-      timeout: 10000,
+      const createdResponse = page.waitForResponse(isCall("POST", "/api/v1/variables/"));
+      await page.getByTestId("save-variable-btn").click();
+      const response = await createdResponse;
+      expect(response.status(), `creating "${name}" must return 201`).toBe(201);
+      const body = await response.json();
+      expect(typeof body.id, `creating "${name}" returned no id`).toBe("string");
+      variableId = body.id;
+      created.variableIds.push(variableId);
+      expect(
+        body,
+        "the create must save the name and the Apply To Fields choice",
+      ).toMatchObject({ name, default_fields: [field] });
     });
 
-    await page.locator(`.ag-cell:has-text("${randomName}")`).first().click();
-
-    await page.getByPlaceholder("Enter a name for the variable...").waitFor({
-      state: "visible",
-      timeout: 30000,
+    await test.step("the grid lists it with the chosen field", async () => {
+      await expect(await revealVariableRow(page, name)).toBeVisible();
+      await expect(
+        variableRow(page, name).locator('[col-id="default_fields"]'),
+      ).toHaveText(field);
     });
 
-    await page
-      .getByPlaceholder("Enter a name for the variable...")
-      .fill(randomName2);
-
-    await page
-      .getByText("Update Variable", { exact: true })
-      .last()
-      .dispatchEvent("click");
-    await page.waitForTimeout(500);
-
-    await expect(page.getByText(randomName2).last()).toBeVisible({
-      timeout: 10000,
+    await test.step("rename it twice from the Update Variable modal", async () => {
+      await renameVariable(page, variableId, name, renamed);
+      await renameVariable(page, variableId, renamed, renamedAgain);
     });
 
-    await page.waitForTimeout(500);
+    await test.step("delete its row — and only its row", async () => {
+      const deletes = recordVariableDeletes(page);
+      // The row's own checkbox, never the header's: the header selects EVERY
+      // variable of the account, which is the inherited test's defect.
+      await variableRow(page, renamedAgain).locator(".ag-selection-checkbox").click();
+      await expect(page.getByTestId("delete-row-button")).toBeEnabled({
+        timeout: 5000,
+      });
 
-    await page.locator(`.ag-cell:has-text("${randomName2}")`).first().click();
-
-    await page.getByPlaceholder("Enter a name for the variable...").waitFor({
-      state: "visible",
-      timeout: 30000,
-    });
-
-    await page
-      .getByPlaceholder("Enter a name for the variable...")
-      .fill(randomName3);
-
-    await page
-      .getByText("Update Variable", { exact: true })
-      .last()
-      .dispatchEvent("click");
-    await page.waitForTimeout(500);
-
-    await expect(page.getByText(randomName3).last()).toBeVisible({
-      timeout: 10000,
-    });
-
-    await page.waitForTimeout(3000);
-    await page.locator(".ag-input-field-input").first().click();
-    await page.getByTestId("icon-Trash2").click();
-    await expect(page.getByText("No data available")).toBeVisible({
-      timeout: 10000,
+      const deleted = page.waitForResponse(
+        isCall("DELETE", `/api/v1/variables/${variableId}`),
+      );
+      await page.getByTestId("delete-row-button").click();
+      expect((await deleted).ok(), "deleting the row must succeed").toBe(true);
+      await expect(variableNameCell(page, renamedAgain)).toHaveCount(0, {
+        timeout: 15000,
+      });
+      deletes.stop();
+      expect(
+        deletes.paths,
+        "deleting one row must send exactly that row's DELETE",
+      ).toEqual([`/api/v1/variables/${variableId}`]);
     });
   },
 );
 
-test("should see shortcuts", { tag: ["@release", "@settings"] }, async ({ page }) => {
-  await awaitBootstrapTest(page, {
-    skipModal: true,
-  });
-  await page.waitForSelector('[data-testid="mainpage_title"]', {
-    timeout: 30000,
-  });
+test(
+  "should see shortcuts",
+  { tag: ["@stable", "@release", "@settings"] },
+  async ({ page }) => {
+    await test.step("open Settings → Shortcuts", async () => {
+      await openSettingsSection(page, "Shortcuts");
+    });
 
-  await page.waitForSelector('[id="new-project-btn"]', {
-    timeout: 30000,
-  });
-  await page.getByTestId("user-profile-settings").click();
-
-  await page.getByText("Settings").click();
-
-  // Wait for settings page to fully load
-  await page
-    .waitForLoadState("networkidle", { timeout: 10000 })
-    .catch(() => {});
-  await page.waitForTimeout(1000);
-
-  await expect(page.getByText("General").nth(2)).toBeVisible({
-    timeout: 10000,
-  });
-  await page.getByText("Shortcuts").nth(0).click();
-
-  // Wait for shortcuts section to load
-  await page.waitForTimeout(1000);
-
-  await expect(page.getByText("Shortcuts", { exact: true }).nth(1)).toBeVisible(
-    { timeout: 10000 },
-  );
-  //TODO Do not seem to be in the list, is it a product change?
-  // await expect(page.getByText("Controls", { exact: true })).toBeVisible({
-  //   timeout: 10000,
-  // });
-
-  await expect(
-    page.getByText("Search Components on Sidebar", { exact: true }),
-  ).toBeVisible({ timeout: 10000 });
-
-  await expect(page.getByText("Minimize", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Code", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Copy", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Duplicate", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Docs", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Changes Save", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Delete", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Open Playground", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(page.getByText("Undo", { exact: true })).toBeVisible({
-    timeout: 10000,
-  });
-
-  await page.mouse.wheel(0, 10000);
-
-  await expect(page.getByText("Redo", { exact: true }).last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(
-    page.getByText("Redo (alternative)", { exact: true }).last(),
-  ).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Group").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Cut").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Paste").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("API").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Download").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Update").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Freeze").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Flow Share").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Play").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Output Inspection").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Tool Mode").last()).toBeVisible({
-    timeout: 10000,
-  });
-
-  await expect(page.getByText("Toggle Sidebar").last()).toBeVisible({
-    timeout: 10000,
-  });
-});
+    await test.step("every documented shortcut is listed by name", async () => {
+      // `.ag-row` keeps the column header ("Functionality") out of the list.
+      const names = page.locator('.ag-row [col-id="display_name"]');
+      await expect(names.first()).toBeVisible({ timeout: 10000 });
+      await expect
+        .poll(
+          async () => missingFrom(DOCUMENTED_SHORTCUTS, await names.allTextContents()),
+          {
+            timeout: 10000,
+            message: "documented shortcuts missing from Settings → Shortcuts",
+          },
+        )
+        .toEqual([]);
+    });
+  },
+);
 
 test(
   "should interact with API Keys",
-  { tag: ["@release", "@api", "@settings"] },
+  { tag: ["@stable", "@release", "@api", "@settings"] },
   async ({ page }) => {
-    await awaitBootstrapTest(page, {
-      skipModal: true,
-    });
-    await page.getByTestId("user-profile-settings").click();
-    await page.getByText("Settings").click();
+    const keyName = uniqueName();
+    let apiKey = "";
 
-    // Wait for settings page to fully load
-    await page
-      .waitForLoadState("networkidle", { timeout: 10000 })
-      .catch(() => {});
-    await page.waitForTimeout(1000);
-
-    await page.getByText("Langflow API").first().click();
-
-    // Wait for API section to load
-    await page.waitForTimeout(1000);
-
-    await expect(
-      page.getByText("Langflow API Keys", { exact: true }).nth(1),
-    ).toBeVisible({ timeout: 10000 });
-    await page.getByText("Add New").click();
-    await expect(page.getByPlaceholder("My API Key")).toBeVisible({
-      timeout: 10000,
+    await test.step("open Settings → Langflow API Keys", async () => {
+      await openSettingsSection(page, "Langflow API Keys");
     });
 
-    const randomName = Math.random().toString(36).substring(2);
+    await test.step("generate a key", async () => {
+      await page.getByTestId("api-key-button-store").click();
+      await page.getByPlaceholder("My API Key").fill(keyName);
 
-    await page.getByPlaceholder("My API Key").fill(randomName);
-    await page.getByText("Generate API Key", { exact: true }).click();
-
-    // Wait for api key creation to complete
-    await page.waitForSelector("text=Please save", { timeout: 30000 });
-    await page.waitForSelector('[data-testid="btn-copy-api-key"]', {
-      timeout: 3000,
-      state: "visible",
+      const createdResponse = page.waitForResponse(isCall("POST", "/api/v1/api_key/"));
+      await page.getByTestId("secret_key_modal_submit_button").click(); // "Generate API Key"
+      const response = await createdResponse;
+      expect(response.status(), "creating the API key must return 200").toBe(200);
+      const body = await response.json();
+      expect(typeof body.id, "the key create returned no id").toBe("string");
+      created.apiKeyIds.push(body.id);
+      expect(body.name).toBe(keyName);
+      expect(typeof body.api_key, "the key create returned no secret").toBe("string");
+      apiKey = body.api_key;
     });
 
-    await page.getByTestId("btn-copy-api-key").click();
+    await test.step("the key shown is the key created, and copy copies it verbatim", async () => {
+      // Assertion AND readiness gate: the modal switches to this view before the
+      // create answers, and copying is a silent no-op while the field is empty —
+      // the race the inherited test lost (it clicked as soon as the button showed).
+      await expect(page.getByTestId("api-key-input")).toHaveValue(apiKey);
+      await page.getByTestId("btn-copy-api-key").click();
+      await expect(page.getByText("API Key copied!", { exact: true })).toBeVisible({
+        timeout: 10000,
+      });
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()), {
+          message: "the clipboard must hold the generated key",
+        })
+        .toBe(apiKey);
+    });
 
-    await page.waitForSelector("text=Api Key Copied!", { timeout: 30000 });
-
-    await page.getByTestId("secret_key_modal_submit_button").click();
-
-    await page.mouse.wheel(0, 10000);
-
-    await expect(page.getByText(randomName)).toBeVisible({ timeout: 10000 });
+    await test.step("the key is listed under its name", async () => {
+      await page.getByTestId("secret_key_modal_submit_button").click(); // "Done"
+      await expect(
+        page.locator('.ag-row [col-id="name"]').filter({ hasText: keyName }),
+      ).toBeVisible({ timeout: 10000 });
+    });
   },
 );
 
 test(
   "should navigate back to flow from global variables",
-  { tag: ["@release", "@workspace", "@settings"] },
+  { tag: ["@stable", "@release", "@workspace", "@settings"] },
   async ({ page }) => {
-    await awaitBootstrapTest(page);
+    let flowId = "";
 
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 100000,
+    await test.step("open a flow of this test's own", async () => {
+      // Over the API and by id, not through the templates modal: the modal path
+      // creates a placeholder flow first and left the template flow behind on
+      // every run of the inherited file.
+      flowId = await createFlowFromStarter(
+        page.request,
+        "Basic Prompting",
+        `user-settings-back ${uniqueName()}`,
+      );
+      created.flowIds.push(flowId);
+      await openFlowById(page, flowId);
     });
 
-    // Now navigate to user settings
-    await page.getByTestId("user-profile-settings").click();
-    await page.getByTestId("menu_settings_button").click();
-
-    // Verify we're on the settings page
-    await expect(page.getByText("General").nth(2)).toBeVisible({
-      timeout: 4000,
+    await test.step("go to Settings → Global Variables from the flow", async () => {
+      await openSettingsFromMenu(page);
+      await page.getByRole("link", { name: "Global Variables", exact: true }).click();
+      await expect(page.getByTestId("settings_menu_header")).toContainText(
+        "Global Variables",
+        { timeout: 15000 },
+      );
     });
 
-    // Navigate to Global Variables
-    await page.getByText("Global Variables").click();
-    await expect(
-      page.getByText("Global Variables", { exact: true }).nth(1),
-    ).toBeVisible({ timeout: 10000 });
-
-    // Click the back button - this should take us back to the flow, not to the main settings page
-    await page.getByTestId("back_page_button").click();
-
-    // Verify we're back on the flow page, not the settings main page
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 5000,
+    await test.step("the back button returns to that same flow", async () => {
+      await page.getByTestId("back_page_button").click();
+      await expect(
+        page,
+        "back must land on the flow the user left, not on another Settings section",
+      ).toHaveURL(new RegExp(`/flow/${flowId}(?:[?#].*)?$`));
+      await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+        timeout: 30000,
+      });
     });
-
-    // Additional verification that we're on the flow page
-    expect(page.url()).toMatch(/\/flow\//);
-
-    // Verify we can see flow-specific elements
-    await expect(page.getByTestId("sidebar-search-input")).toBeVisible();
   },
 );
