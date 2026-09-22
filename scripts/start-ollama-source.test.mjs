@@ -38,6 +38,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
+import { launchAnnounced, readServerArgs } from "./lib/server-args.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..");
@@ -119,6 +120,17 @@ function pinnedModel() {
  * `addresses` is what the stubbed `ip` reports, in order.
  * `corruptDownload: true` makes the stub curl deliver bytes that do not match the
  * published checksum.
+ * `serverStartDelayS` holds the LAUNCHED `serve` before it records its arguments,
+ * which is the race of #1949 made deterministic: `list` and `pull` run in the
+ * starter's foreground after the launch, so the file is non-empty long before the
+ * backgrounded `serve` has reached its first line.
+ * `serverHeld: true` stops the launched `serve` short of recording its arguments for
+ * good, which is the reader's FAILURE path — where a delay would not do, since the
+ * stub `exec`s out of its own command line the moment a delay ends.
+ * `argsTimeoutMs` shortens the reader's own deadline. It exists for ONE test — the one
+ * that drives the reader into its failure path on purpose — because that path is what
+ * `cleanup()`'s second `pkill` is for, and at the default 10s it would cost the file
+ * ten seconds to assert a process-table fact.
  */
 function runScript({
   env = {},
@@ -135,6 +147,9 @@ function runScript({
   corruptDownload = false,
   discoveryTools = true,
   probeDelayS = 0,
+  serverStartDelayS = 0,
+  serverHeld = false,
+  argsTimeoutMs = undefined,
 } = {}) {
   const dir = makeTempDir("start-ollama-source-test-");
   const bin = join(dir, "bin");
@@ -155,7 +170,17 @@ function runScript({
   // The fake ollama. `--version` answers the way the real one does with no server
   // running — a warning line first, the version on the next — because the script's
   // parse has to survive exactly that.
+  // What holds the LAUNCHED `serve` short of recording its arguments. A delay is for
+  // the wait: the line arrives, late. `holdServer` is for the reader's FAILURE path,
+  // where the line must never arrive — a delay cannot serve that, because the stub
+  // `exec`s its sleep as soon as the delay ends and its argv stops carrying `dir`,
+  // which made the reaping assertion below come true on its own, with no kill. Bounded
+  // at 120s so a run that never reaps it does not leave a process spinning for good.
+  const holdServer = `[ "$1" = "serve" ] && while [ ! -f ${JSON.stringify(join(dir, "release-server"))} ] && [ $SECONDS -lt 120 ]; do sleep 0.05; done`;
+  const hold = serverHeld ? holdServer : serverStartDelayS ? `[ "$1" = "serve" ] && sleep ${serverStartDelayS}` : ":";
+
   const fakeBinary = `#!/usr/bin/env bash
+${hold}
 echo "$* host=\${OLLAMA_HOST:-unset}" >> "${join(dir, "server.args")}"
 case "$1" in
   --version)
@@ -296,6 +321,46 @@ exit 0
     },
   });
 
+  const cleanup = () => {
+    // Two patterns because the stub server has two command lines, and the second is
+    // the one this file used to miss: after `exec sleep <marker>` the argv is the
+    // sleep, but BEFORE that exec it is `bash <dir>/.../ollama serve`, and the paths
+    // this reader can fail on are exactly the ones where the exec has not happened.
+    // One pattern alone orphans that sleep for the marker's own integer
+    // part of seconds — 71 and up — on every such run.
+    spawnSync("pkill", ["-f", `sleep ${marker}`]);
+    spawnSync("pkill", ["-f", dir]);
+    rmSync(dir, { recursive: true, force: true });
+  };
+
+  // LAZY, and not a plain read either. `serve` is launched backgrounded and the
+  // starter's readiness comes from a stubbed probe, so the script can exit before that
+  // process has written its line (#1949) — hence the wait. Behind a getter, because
+  // THIS starter is the one that breaks the wait's premise: on a missing model it goes
+  // probe -> `list` -> `stop_launched_server`, so a `serve` that has not been scheduled
+  // yet is killed and its line never appears. The two tests on that path never assert
+  // on the arguments, and behind a getter they never pay for the wait either.
+  // `curl.log` and `pull.log` above ARE plain reads — every curl and every `ollama
+  // pull` the starter runs is in its own foreground, so those files are complete when
+  // the script exits, and this file is the only one that can be partial.
+  let args = null;
+  const readArgs = () => {
+    if (args) return args;
+    try {
+      args = readServerArgs({
+        file: join(dir, "server.args"),
+        stdout: result.stdout,
+        launchAnnouncement: LAUNCH_ANNOUNCEMENT,
+        serverLine: SERVER_LINE,
+        ...(argsTimeoutMs === undefined ? {} : { timeoutMs: argsTimeoutMs }),
+      });
+    } catch (err) {
+      cleanup();
+      throw err;
+    }
+    return args;
+  };
+
   return {
     ...result,
     dir,
@@ -304,13 +369,22 @@ exit 0
     marker,
     curl: existsSync(curlLog) ? readFileSync(curlLog, "utf8") : "",
     pulls: existsSync(pullLog) ? readFileSync(pullLog, "utf8") : "",
-    serverArgs: existsSync(join(dir, "server.args")) ? readFileSync(join(dir, "server.args"), "utf8") : "",
-    cleanup: () => {
-      spawnSync("pkill", ["-f", `sleep ${marker}`]);
-      rmSync(dir, { recursive: true, force: true });
+    // Eager: stdout is complete when the script exits, and this is what tells a
+    // refusal before the launch from a launch whose line was never read.
+    launched: launchAnnounced(result.stdout, LAUNCH_ANNOUNCEMENT),
+    get serverArgs() {
+      return readArgs().text;
     },
+    cleanup,
   };
 }
+
+// Printed immediately before the `&` — the last point at which the launch is still
+// synchronous, so it is what tells "refused early" from "lost the race".
+const LAUNCH_ANNOUNCEMENT = /^Starting Ollama /m;
+// NOT "the file is non-empty": `list` and `pull` go through the same stub in the
+// starter's foreground AFTER the launch, so content proves nothing here.
+const SERVER_LINE = /^serve /m;
 
 test("the version default IS the tag the CI image is built from", () => {
   // Read from the Dockerfile rather than compared to a copy, so bumping the image
@@ -347,6 +421,42 @@ test("the server is told to listen on that address, not on loopback", () => {
   // Langflow call is refused by the SSRF layer.
   assert.match(r.serverArgs, /serve host=10\.0\.0\.5:11434/);
   r.cleanup();
+});
+
+test("a serve that records its arguments late is waited for, not read as absent", () => {
+  // #1949, made deterministic. The starter reports ready off a STUBBED probe and then
+  // runs `list` in its own foreground, so the file is non-empty and still missing the
+  // only line that matters; holding the backgrounded `serve` for a second is what the
+  // runner's load did by itself. Delete the wait in runScript and this fails every
+  // time — including the two `serverArgs === ""` assertions it would turn vacuous.
+  const r = runScript({ serverStartDelayS: 1 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.launched, true);
+  assert.match(r.serverArgs, /^serve host=10\.0\.0\.5:11434$/m);
+  // The stub server `exec`s its sleep one line after writing, and cleanup's pkill
+  // matches that sleep — not the hold — so a kill sent too early leaves it running.
+  assert.ok(waitFor(() => serverPattern(r.marker).test(processTable())), "the stub server never execed");
+  r.cleanup();
+  // The read is memoized, so it still answers after the directory is gone. Without the
+  // memo this second read re-runs the wait against a file that no longer exists and
+  // throws ten seconds later, which is a trap for any test asserting after cleanup.
+  assert.match(r.serverArgs, /^serve host=10\.0\.0\.5:11434$/m);
+});
+
+test("a read that cannot see the stub still reaps it, instead of leaving an orphan", () => {
+  // The one test that drives the reader into its failure path on purpose, because that
+  // path is what `cleanup()`'s second pkill exists for: the fake writes its line
+  // immediately BEFORE `exec sleep <marker>`, and this path is reached precisely
+  // because the line is absent — so the exec cannot have happened and the marker
+  // pattern matches nothing. Delete that pkill and the stub outlives the run.
+  const r = runScript({ serverHeld: true, argsTimeoutMs: 400 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(waitFor(() => processTable().includes(r.dir)), "the stub binary never started");
+  // The precondition the whole fix turns on, asserted rather than assumed.
+  assert.doesNotMatch(processTable(), serverPattern(r.marker), "it had already execed; this measures nothing");
+  assert.throws(() => r.serverArgs, /no line matching/);
+  assert.equal(existsSync(r.dir), false, "the failed read did not clean up after itself");
+  assert.ok(waitFor(() => !processTable().includes(r.dir)), "the stub was orphaned, not reaped");
 });
 
 test("a machine with no private address is refused, naming the refusal", () => {
@@ -528,6 +638,9 @@ test("a stop timeout that is not an integer is refused before anything is launch
   const r = runScript({ env: { OLLAMA_STOP_TIMEOUT_S: "30s" } });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /OLLAMA_STOP_TIMEOUT_S must be a positive integer/);
+  // "" is the assertion here, and an unread file is also "". This says which one it
+  // is: the starter never announced a launch, so there was nothing to write (#1949).
+  assert.equal(r.launched, false, "the starter announced a launch; an empty server.args would be a lost race");
   assert.equal(r.serverArgs, "");
   r.cleanup();
 });
@@ -553,6 +666,9 @@ test("a non-numeric deadline is refused before anything is launched", () => {
   const r = runScript({ env: { OLLAMA_START_TIMEOUT_S: "abc" } });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /OLLAMA_START_TIMEOUT_S must be a positive integer/);
+  // "" is the assertion here, and an unread file is also "". This says which one it
+  // is: the starter never announced a launch, so there was nothing to write (#1949).
+  assert.equal(r.launched, false, "the starter announced a launch; an empty server.args would be a lost race");
   assert.equal(r.serverArgs, "");
   r.cleanup();
 });
