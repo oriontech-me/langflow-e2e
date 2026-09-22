@@ -689,6 +689,30 @@ gh_out() {
   ' "$file" "$key"
 }
 
+# The Langflow version that actually SERVED this run, swept from every shard's
+# captured answer in "$RUN_DIR/all-tokens".
+#
+# The sweep itself lives in scripts/resolve-served-version.mjs so the Actions lane
+# can run the SAME one (#1731): its `langflow_version` came from a matrix job
+# output, where the last shard to finish overwrote the other three and a wedged
+# shard's empty value erased them — on the wedge days the two-lane comparison
+# exists to study. Two lanes writing one field into one series must not have
+# different odds of writing it at all, and two implementations of "sweep the
+# shards" is how that difference comes back.
+#
+# STDOUT is the version and nothing else, because the caller reads it through a
+# command substitution; the reader's own report (which shard answered, why the
+# others did not, whether they served the same product) goes to stderr, where the
+# run log keeps it.
+resolve_served_version() {
+  local version_out="$RUN_DIR/logs/served-version.out"
+  : > "$version_out"
+  GITHUB_OUTPUT="$version_out" \
+    node scripts/resolve-served-version.mjs \
+      --dir "$RUN_DIR/all-tokens" --expect-shards "${SHARD_TOTAL:-}" >&2 || true
+  gh_out "$version_out" version
+}
+
 # --- The ledger ------------------------------------------------------------------
 
 # Does THIS run keep the three series? Asked in three places, answered once.
@@ -1560,8 +1584,11 @@ run_shard() {
   cp "$wd/token-attrib-${idx}.jsonl" "$RUN_DIR/all-tokens/" 2>/dev/null || true
   printf '%s' "${MODEL_TEST_PROVIDER:-}" > "$RUN_DIR/all-tokens/token-provider-${idx}.txt"
 
+  # The version this shard's instance actually served, captured as the RAW body and
+  # named the way the Actions lane names it, in the directory the Actions lane
+  # collects the same per-shard facts into. One reader parses both (#1731).
   curl -sf --connect-timeout 5 --max-time 15 "http://${host}:${port}/api/v1/version" \
-    > "$RUN_DIR/logs/shard-$idx-version.json" 2>/dev/null || true
+    > "$RUN_DIR/all-tokens/version-$idx.json" 2>/dev/null || true
 
   # Blobs renamed per shard: without --shard Playwright names them all alike, and the
   # merge reads the whole directory regardless of file name.
@@ -1690,13 +1717,7 @@ phase_merge() {
 
   # The version that actually served. Sweeping every shard avoids ending up without
   # one just because shard 1 was the one that died.
-  LANGFLOW_VERSION=""
-  local vfile
-  for vfile in "$RUN_DIR"/logs/shard-*-version.json; do
-    [ -s "$vfile" ] || continue
-    LANGFLOW_VERSION="$(node -p "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).version||''}catch{''}" "$vfile" 2>/dev/null || echo "")"
-    [ -n "$LANGFLOW_VERSION" ] && break
-  done
+  LANGFLOW_VERSION="$(resolve_served_version)"
 
   # The comparison this step exists for. A mismatch is now FATAL by default: the run
   # placed the clone itself a few phases ago, so the two sides disagreeing means

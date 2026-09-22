@@ -189,8 +189,15 @@ jobs:
       # 1-based index; `matrix.files` is the space-separated spec-file list (#936).
       matrix:
         include: ${{ fromJSON(needs.prep.outputs.matrix) }}
-    outputs:
-      langflow_version: ${{ steps.lfver.outputs.version }}
+
+    # No `outputs:` here, deliberately (#1731). `langflow_version` used to be one,
+    # and a matrix job's outputs overwrite each other: the run kept whichever shard
+    # wrote last, so a shard whose backend was wedged erased the value three healthy
+    # shards had resolved — on the wedge days the two-lane comparison exists to
+    # study. Each shard now writes its own answer onto the artifact that already
+    # crosses into `merge`, and the merge job sweeps them (see the resolver step
+    # there). A per-shard fact carried on the token artifact is the same route
+    # `providers-<shard>.json` takes (#1800).
 
     # Run inside the official Playwright image: Chromium + all OS deps are
     # pre-installed and pulled from mcr.microsoft.com (reachable from the
@@ -759,6 +766,40 @@ jobs:
           # a healthy backend.
           if-no-files-found: warn
 
+      # Capture the ACTUAL Langflow version this shard's service container served.
+      # The image tag is just `:latest` (or an RC/stable tag), so it never carries
+      # the concrete nightly build (e.g. 1.13.0.dev16). Ask the running service via
+      # its public /api/v1/version endpoint (AUTO_LOGIN is on, so it needs no auth).
+      #
+      # The RAW body is stored, unparsed: `scripts/lib/served-version.mjs` in the
+      # merge job is the one parser, and it is the same one `scripts/run-e2e.sh`
+      # uses over its own run dir — #1731's asymmetry was two lanes resolving one
+      # field two ways, and two parsers is how that comes back.
+      #
+      # It goes into `tokens/` so it rides the artifact that already crosses into
+      # the merge job, next to `providers-<shard>.json` (#1800) for the same reason.
+      # Hence its placement HERE, before the collection step that uploads it.
+      # Best-effort: a wedged backend leaves an empty file, which the merge job
+      # reports as an unanswered shard rather than as the run's version.
+      - name: Capture served Langflow version (shard ${{ matrix.shard }})
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p tokens
+          # --connect-timeout/--max-time so a slow or hung service cannot stall the
+          # job; `-f` so a non-2xx leaves the file empty instead of storing an error
+          # page as if it were a version.
+          curl -sf --connect-timeout 5 --max-time 15 http://localhost:7860/api/v1/version \
+            > "tokens/version-${{ matrix.shard }}.json" || true
+          # The same reader the merge job runs, over this one file: the shard log
+          # then names its own answer (or says why it has none) at the moment it was
+          # captured, where the container is still around to be looked at.
+          # `--quiet`: this call reads ONE file, so it prints its line and nothing
+          # else — the run-level verdict (and its annotation) belongs to the merge
+          # job, which is the only place that has seen every shard.
+          node scripts/resolve-served-version.mjs --dir tokens --quiet || true
+
       # Renamed (#1197 review, minor fix) from a name that claimed this step
       # summarizes token consumption — it does not; it only stops the recorder
       # and copies its files. The actual pricing/summarizing happens once, in
@@ -810,26 +851,6 @@ jobs:
           name: tokens-${{ matrix.shard }}
           path: tokens/
           if-no-files-found: ignore
-
-      # Resolve the ACTUAL Langflow version running in the service container.
-      # The image tag is just `:latest` (or an RC/stable tag), so it never
-      # carries the concrete nightly build (e.g. 1.11.0.dev25). Ask the running
-      # service via its public /api/v1/version endpoint (AUTO_LOGIN is on, so it
-      # needs no auth) and feed it into the payload so the QA Platform's Run
-      # Summary can show the exact version tested. Best-effort: never fail the run.
-      - name: Resolve Langflow version
-        if: always()
-        id: lfver
-        continue-on-error: true
-        run: |
-          # --connect-timeout/--max-time so a slow/hung service can't stall the
-          # job; tr strips any CR/LF so the value stays a single line and never
-          # corrupts the key=value $GITHUB_OUTPUT format.
-          V="$(curl -sf --connect-timeout 5 --max-time 15 http://localhost:7860/api/v1/version \
-            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).version||"").toString())}catch{process.stdout.write("")}})' \
-            | tr -d '\r\n')"
-          echo "Resolved Langflow version: '${V:-<none>}'"
-          echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - name: Upload blob report (shard ${{ matrix.shard }})
         uses: actions/upload-artifact@v7
@@ -1066,6 +1087,26 @@ jobs:
           pattern: tokens-*
           path: all-tokens
           merge-multiple: true
+
+      # The Langflow version that ACTUALLY SERVED this run (#1731). Swept from
+      # every shard's captured answer on the token artifacts above, so a shard
+      # whose backend was wedged costs its own answer and nothing else — it used
+      # to be a matrix job output, where the last shard to finish overwrote the
+      # other three and an empty value erased them.
+      #
+      # Report-only and `continue-on-error`: an unresolved version is honest
+      # degradation (`compare-lane-verdicts.mjs` reports `version parity
+      # UNVERIFIED` and blocks nothing), and a diagnostic must not redden a run
+      # (#980). `--expect-shards` is what lets a shard that uploaded NOTHING read
+      # as an unanswered shard instead of disappearing from the count (#1012).
+      - name: Resolve served Langflow version
+        id: lfver
+        if: always()
+        continue-on-error: true
+        run: |
+          node scripts/resolve-served-version.mjs \
+            --dir all-tokens \
+            --expect-shards "${{ needs.prep.outputs.shard_total }}"
 
       - name: Guard — every expected shard produced a blob
         id: shardguard
@@ -1311,7 +1352,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
-          LANGFLOW_VERSION: ${{ needs.test.outputs.langflow_version }}
+          LANGFLOW_VERSION: ${{ steps.lfver.outputs.version }}
           STABLE_COUNT: ${{ steps.cov.outputs.stable }}
           TOTAL_COUNT:  ${{ steps.cov.outputs.total }}
           # Point the QA Platform at the lightweight index (one-click, small
@@ -1636,7 +1677,7 @@ jobs:
           # Langflows would file the product's changelog as an environment difference
           # (step 14 of the VM migration). The tag alone cannot tell them apart:
           # `:latest` on two different days is two different products.
-          LANGFLOW_VERSION: ${{ needs.test.outputs.langflow_version }}
+          LANGFLOW_VERSION: ${{ steps.lfver.outputs.version }}
           # In-run backend liveness, persisted on the history line (#1077). The
           # same directory the outage reporter above reads, so the row and the
           # umbrella section describe the run with the same numbers. The wedge is

@@ -285,6 +285,40 @@ test("gh_out reads plain and heredoc values, which the outage report needs", () 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("resolve_served_version survives a wedged shard, and prints ONLY the version", () => {
+  // #1731: the Actions lane resolved this per shard into a matrix job output, where
+  // the last shard to finish overwrote the rest — so a wedged shard's empty answer
+  // erased three good ones, on the days the two-lane comparison exists to study.
+  // Both lanes now sweep, through one reader. Here: shard 1 answered nothing.
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(join(dir, "all-tokens/version-1.json"), "");
+  writeFileSync(join(dir, "all-tokens/version-2.json"), JSON.stringify({ version: "1.13.0.dev16" }));
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=2; resolve_served_version`);
+  assert.equal(r.status, 0, r.stderr);
+  // Read through a command substitution, so anything else on stdout becomes part of
+  // the version: the reader's report belongs on stderr.
+  assert.equal(r.stdout.trim(), "1.13.0.dev16");
+  assert.match(r.stderr, /shard 1: .*empty/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version returns EMPTY when no shard answered, and says which", () => {
+  // The row then carries null, which compare-lane-verdicts.mjs reports as
+  // `version parity UNVERIFIED` — honest degradation. What must never happen is a
+  // null nobody can attribute (#1012), so the reason is on the run log.
+  const dir = makeTempDir("run-e2e-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=2; resolve_served_version`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "");
+  assert.match(r.stderr, /UNRESOLVED/);
+  assert.match(r.stderr, /shard 2: no file/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("the publish switches are OFF by default, all three of them", () => {
   // Not a preference: while both dailies run, only the Actions one has consequence.
   // A second issue or a second Slack message for one day's verdict is worse than

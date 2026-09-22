@@ -336,3 +336,53 @@ test("--json prints the whole verdict", () => {
   assert.equal(parsed.version, "1.13.0.dev16");
   assert.equal(parsed.source, 1);
 });
+// ── Wiring: the class no behaviour test can reach ───────────────────────────
+//
+// These pin an ABSENCE and two references. They cannot show that a lane resolves
+// correctly — the cases above do that — but the defect reached production as a
+// single line of workflow plumbing, and plumbing is not reachable from a unit
+// test any other way. Each spelling is DERIVED from the module rather than
+// restated, so a rename breaks the guard instead of passing it (#1226).
+
+const WORKFLOW = fs.readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+const ORCHESTRATOR = fs.readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8");
+
+test("the shard matrix declares NO langflow_version output", () => {
+  // The mechanism #1731 indicts: matrix job outputs overwrite each other, so the
+  // run kept whichever shard wrote last and an empty value erased the rest.
+  const testJob = WORKFLOW.slice(WORKFLOW.indexOf("\n  test:"), WORKFLOW.indexOf("\n  stable-ownership:"));
+  assert.ok(!/langflow_version:\s*\$\{\{\s*steps\./.test(testJob), "the matrix output is back");
+  assert.ok(!/needs\.test\.outputs\.langflow_version/.test(WORKFLOW));
+});
+
+test("every consumer of LANGFLOW_VERSION reads the merge job's swept value", () => {
+  const consumers = [...WORKFLOW.matchAll(/^\s*LANGFLOW_VERSION:\s*(.+)$/gm)].map((m) => m[1].trim());
+  assert.ok(consumers.length >= 2, `expected the payload and the history row, found ${consumers.length}`);
+  for (const value of consumers) {
+    assert.equal(value, "${{ steps.lfver.outputs.version }}", `a consumer reads ${value}`);
+  }
+});
+
+test("the shard captures its version BEFORE the artifact that carries it is uploaded", () => {
+  // After the upload the file exists on a runner nobody ever reads again: the
+  // ordering IS the mechanism, and it is invisible in any single step's text.
+  const capture = WORKFLOW.indexOf(`> "tokens/${versionFileName("${{ matrix.shard }}")}"`);
+  const upload = WORKFLOW.indexOf("- name: Upload token consumption");
+  assert.ok(capture > 0, "the shard no longer writes the per-shard version file");
+  assert.ok(upload > capture, "the version file is written after the artifact upload");
+});
+
+test("the merge job sweeps every shard, with the expected count", () => {
+  const step = WORKFLOW.slice(WORKFLOW.indexOf("- name: Resolve served Langflow version"));
+  assert.match(step.slice(0, 600), /scripts\/resolve-served-version\.mjs/);
+  assert.match(step.slice(0, 600), /--dir all-tokens/);
+  assert.match(step.slice(0, 600), /--expect-shards "\$\{\{ needs\.prep\.outputs\.shard_total \}\}"/);
+});
+
+test("the VM lane writes the same file name and runs the same reader", () => {
+  // #1731's own argument: two lanes writing one field to one series must not have
+  // different odds of writing it, and two implementations is how that returns.
+  assert.match(ORCHESTRATOR, new RegExp(`all-tokens/${versionFileName("\\$idx")}`));
+  assert.match(ORCHESTRATOR, /scripts\/resolve-served-version\.mjs/);
+  assert.match(ORCHESTRATOR, /--expect-shards "\$\{SHARD_TOTAL:-\}"/);
+});
