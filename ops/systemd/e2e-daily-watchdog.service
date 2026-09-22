@@ -1,0 +1,20 @@
+[Unit]
+# The other half of e2e-daily.service. That unit produces a verdict; this one
+# reports when no verdict was produced at all -- which on this lane is not merely an
+# operational gap. The stage's product is a comparison between two dailies, so a run
+# that did not happen looks exactly like a run with no divergence, and the
+# divergence list closes at zero for lack of data.
+Description=Alarm when the E2E daily (VM lane) did not run or could not report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service and cron does -- the difference that
+# produced issue #1715 in the repository. Declared here so `systemctl cat` shows the
+# whole contract, the same way e2e-daily.service does.
+Environment=HOME=/root
+ExecStart=/root/e2e-daily-watchdog.sh
+# It reads systemd state, one directory and one log, then posts once. If it cannot
+# finish in five minutes something is wrong with the machine itself.
+TimeoutStartSec=5min

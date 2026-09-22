@@ -1,0 +1,17 @@
+[Unit]
+Description=Schedule for the E2E @stable daily (VM lane), 08:00 UTC on weekdays
+
+[Timer]
+# The UTC suffix is the whole point: daily-stable.yml's own schedule is expressed
+# in UTC, and this is the only way to say the same thing on a machine whose clock
+# is not.
+OnCalendar=Mon..Fri 08:00 UTC
+# No catch-up run after a reboot or a machine that was down: a daily that fires
+# late produces a verdict for a day it did not observe, and the missed-run alarm
+# is what should speak then. Absence has to stay visible.
+Persistent=false
+AccuracySec=1min
+Unit=e2e-daily.service
+
+[Install]
+WantedBy=timers.target
