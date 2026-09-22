@@ -20,7 +20,6 @@ const ENFORCED = {
   toolNames: ["fetch_content"],
   calls: 1,
   state: "complete",
-  errored: false,
   model: "claude-haiku-4-5",
   usage: { input_tokens: 956, output_tokens: 82, total_tokens: 1038 },
 };

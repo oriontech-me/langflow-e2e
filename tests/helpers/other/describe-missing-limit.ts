@@ -34,8 +34,6 @@ export interface MissingLimitReading {
   calls?: number;
   /** The message's `state`, printed as received. */
   state?: string;
-  /** Whether the persisted message is flagged as an error. */
-  errored?: boolean;
   /** The model recorded on the persisted message. */
   model?: string;
   /** The message's usage block, printed as received. */
@@ -56,7 +54,7 @@ export function capWasEnforced(reading: MissingLimitReading): boolean {
 }
 
 export function describeMissingLimit(reading: MissingLimitReading): string {
-  const { rendered, stored, toolNames, calls, state, errored, model, usage } = reading;
+  const { rendered, stored, toolNames, calls, state, model, usage } = reading;
   const enforced = capWasEnforced(reading);
 
   // Three heads, and only the first one names a product defect. The other two are
@@ -91,7 +89,7 @@ export function describeMissingLimit(reading: MissingLimitReading): string {
     `  persisted  : ${provenance}`,
     `  tools used : ${toolNames.length ? toolNames.join(", ") : "none"}`,
     `  model calls: ${calls ?? "not reported"}`,
-    `  state      : ${state ?? "unknown"} · error ${errored ?? "unknown"}`,
+    `  state      : ${state ?? "unknown"}`,
     `  model      : ${model ?? "unknown"} · usage ${JSON.stringify(usage ?? {})}`,
   ];
 

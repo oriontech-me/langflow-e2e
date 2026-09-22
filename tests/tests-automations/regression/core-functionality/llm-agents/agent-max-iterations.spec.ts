@@ -349,41 +349,44 @@ async function loadSpanModelUsage(): Promise<SpanModelUsageFn> {
 }
 
 // How many model calls did THIS flow's run make? The number is the whole
-// discrimination behind the diagnosis below, and it is not on the persisted
-// message: `properties.usage` reports tokens, never a call count. It lives in the
-// trace spans, which is where the token sidecar reads it from too.
+// discrimination behind the diagnosis below, and it is not on the persisted message:
+// `properties.usage` reports tokens, never a call count. It lives in the trace spans,
+// which is where the token sidecar reads it from too.
 //
-// Returns undefined rather than 0 on any failure. A diagnosis that reports "0 calls"
-// for a trace it could not read would state the opposite of what happened.
+// The trace is addressed DIRECTLY, by the `graph_run_id` the message carries. The
+// first version listed `/monitor/traces?flow_id=` and took the newest, and in the
+// field it came back with nothing to take — the diagnosis rendered `calls: not
+// reported` and fell to the head that chooses nothing, losing exactly the fact it
+// exists to establish (#1991, force-fail probe on run 35754140187).
+//
+// Polled, because the trace is written asynchronously and this runs moments after the
+// run ends. Budget is small on purpose: this is a diagnosis on a test that has already
+// failed, and a slow one delays the artifact everyone is waiting to read.
+//
+// Returns undefined rather than 0 on any failure. A diagnosis reporting "0 calls" for
+// a trace it could not read would state the opposite of what happened.
 async function readModelCalls(
   request: APIRequestContext,
-  flowId: string,
+  graphRunId: string | undefined,
   bearer: string | undefined,
 ): Promise<number | undefined> {
-  const listRes = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, {
-    headers: bearer ? { Authorization: bearer } : {},
-  });
-  if (!listRes.ok()) return undefined;
-  const traces = await listRes.json();
-  if (!Array.isArray(traces) || traces.length === 0) return undefined;
-
-  // The run this test drove is the flow's only one — the flow is created per test
-  // and deleted in `afterEach` — but take the newest rather than assume it.
-  const newest = [...traces].sort((a: any, b: any) =>
-    String(b?.startTime ?? "").localeCompare(String(a?.startTime ?? "")),
-  )[0];
-  if (!newest?.id) return undefined;
-
-  const detailRes = await request.get(`/api/v1/monitor/traces/${newest.id}`, {
-    headers: bearer ? { Authorization: bearer } : {},
-  });
-  if (!detailRes.ok()) return undefined;
-  const detail = await detailRes.json();
-
+  if (!graphRunId) return undefined;
   const spanModelUsage = await loadSpanModelUsage();
-  const models = spanModelUsage(detail?.spans);
-  if (!models.length) return undefined;
-  return models.reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const res = await request.get(`/api/v1/monitor/traces/${graphRunId}`, {
+      headers: bearer ? { Authorization: bearer } : {},
+    });
+    if (res.ok()) {
+      const detail = await res.json();
+      const models = spanModelUsage(detail?.spans);
+      if (models.length) {
+        return models.reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return undefined;
 }
 
 // A missing limit message has three causes that read identically from the pattern
@@ -415,9 +418,12 @@ async function explainMissingLimit(
       rendered,
       stored: String(aiMsg.text ?? ""),
       toolNames: (toolUses ?? []).map((c: any) => c.name as string),
-      calls: await readModelCalls(request, flowId, bearer),
+      // `session_metadata.graph_run_id` IS the trace id — verified against the
+      // captured monitor payload on #1991. The message has no `error` field on this
+      // route at all (only the build/SSE shape carries one), so none is reported:
+      // a field that can never be populated prints "unknown" forever and is noise.
+      calls: await readModelCalls(request, aiMsg.session_metadata?.graph_run_id, bearer),
       state: aiMsg.properties?.state,
-      errored: aiMsg.error,
       model: aiMsg.properties?.source?.source,
       usage: aiMsg.properties?.usage,
     });
