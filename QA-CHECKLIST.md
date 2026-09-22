@@ -1571,7 +1571,7 @@
 | `api/flows/` — REST API | 101 | 95 | 1 | 3 | 2 |
 | `core-components/` — Component Config | 33 | 32 | 1 | 0 | 0 |
 | `core-components/` — Core Components | 94 | 93 | 0 | 0 | 1 |
-| `core-functionality/auth/` | 23 | 22 | 1 | 0 | 0 |
+| `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 36 | 0 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 33 | 2 | 0 | 1 |
@@ -1584,7 +1584,7 @@
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 47 | 43 | 0 | 4 | 0 |
-| `ui-ux/` — Settings | 8 | 7 | 0 | 1 | 0 |
+| `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 24 | 0 | 1 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
@@ -1592,7 +1592,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 29 | 9 | 0 | 0 | 20 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **719** | **607 (84%)** | **33 (5%)** | **14 (2%)** | **65 (9%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **723** | **611 (85%)** | **33 (5%)** | **14 (2%)** | **65 (9%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1608,7 +1608,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 682 `test()` calls carrying the `@stable` tag, distributed across 270 spec
+> 686 `test()` calls carrying the `@stable` tag, distributed across 271 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2347,6 +2347,10 @@
 - [x] resizing a sticky note grows it and persists the new size → `sticky-notes.spec.ts`
 - [x] bind a Credential global variable to a component secret field → `use-global-variable-in-component.spec.ts`
 - [x] component secret-field global-variable binding persists across reload → `use-global-variable-in-component.spec.ts`
+- [x] should interact with global variables → `userSettings.spec.ts`
+- [x] should see shortcuts → `userSettings.spec.ts`
+- [x] should interact with API Keys → `userSettings.spec.ts`
+- [x] should navigate back to flow from global variables → `userSettings.spec.ts`
 
 ---
 
