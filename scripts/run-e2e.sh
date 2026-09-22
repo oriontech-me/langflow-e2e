@@ -723,6 +723,12 @@ gh_out() {
 # exactly. Anything reading this file from phase_merge carries `|| true` too, and
 # a test drives phase_merge over an unreadable one.
 #
+# SCOPE, because the fix is easy to over-read: this covers the reads of THIS file. The
+# eleven `gh_out "$outputs"` reads earlier in phase_merge, and the unguarded
+# `: > "$outputs"` above them, abort the phase on the identical unreadable-file state —
+# measured, and identical on `main`, so it is not this change's doing and not its fix
+# either. Tracked separately.
+#
 # The last one took two review rounds to find, and it is the instructive one: the
 # read is `gh_out`, whose own guard is `[ -f "$file" ] || return 0` — EXISTENCE
 # only. Its `node -e` then reads the file unguarded, so an output file that exists
@@ -739,8 +745,14 @@ gh_out() {
 # REST of the sweep out of it (#1964) — stdout is the version and only the version,
 # which is a pinned contract, and this function runs in a command substitution, so a
 # global it sets would not survive to the caller.
+# Where `resolve_served_version` leaves the reader's `$GITHUB_OUTPUT`. ONE spelling,
+# because the function defaults to it and phase_merge reads the rest of the sweep out
+# of it: two copies meant changing one silently pointed the function's own tests at a
+# different file than production uses (#1964 review).
+served_version_out() { printf '%s' "$RUN_DIR/logs/served-version.out"; }
+
 resolve_served_version() {
-  local version_out="${1:-$RUN_DIR/logs/served-version.out}"
+  local version_out="${1:-$(served_version_out)}"
   mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
   : > "$version_out" 2>/dev/null || true
   # GITHUB_STEP_SUMMARY is cleared as well as redirected: in Actions it is set for
@@ -1845,7 +1857,8 @@ phase_merge() {
   # publish with it. Measured on the first version of this block: `exit=1`, no
   # run-metadata.json, nothing after phase_merge ran. The function was written to
   # keep that from happening and then three of its lines were lifted OUT of it.
-  local sweep_out="$RUN_DIR/logs/served-version.out"
+  local sweep_out
+  sweep_out="$(served_version_out)"
   LANGFLOW_VERSION="$(resolve_served_version "$sweep_out")"
   LANGFLOW_VERSION_EXPECTED="$(gh_out "$sweep_out" expected || true)"
   LANGFLOW_VERSION_ANSWERED="$(gh_out "$sweep_out" answered || true)"

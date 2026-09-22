@@ -154,6 +154,14 @@ export function parseVersionBody(raw) {
   const version = value.trim();
   if (/[\r\n]/.test(version))
     return { version: null, reason: "the `version` field is not a single line" };
+  // A COMMA is refused for the same reason and one layer further out: the distinct
+  // versions travel to the history row as `versions=a,b` and the appender re-splits on
+  // the comma (#1964), so a version containing one arrives as two — which `sweepOf`
+  // then reads as a duplicate and reports UNREADABLE instead of naming the straddle it
+  // is looking at. No `/api/v1/version` body has ever carried one; refusing it here is
+  // what keeps that a fact about the carrier rather than a hope.
+  if (version.includes(","))
+    return { version: null, reason: "the `version` field carries a comma, which is the list separator" };
   return { version, reason: null };
 }
 

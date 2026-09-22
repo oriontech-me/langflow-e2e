@@ -582,22 +582,32 @@ export function compareRuns({
   // reported nothing" from the warnings and from `--json` entirely. Within one lane the
   // suppression is right — both sentences say "the row's one version is not the whole
   // run" — and across two it drops a finding about the other lane, which is the mistake
-  // `listing_completeness` records having made 20 lines above.
-  const silentOf = (label, sweep) =>
-    unaccounted(sweep) && !straddled(sweep) ? `${label} ${unaccounted(sweep)} of ${sweep.expected}` : null;
+  // the listing-completeness comparison records having made ("A KNOWN LOSS IS REPORTED
+  // ON ITS OWN, never gated on the other lane also having a block"). Named rather than
+  // cited by distance: the first version of this said "20 lines above" and it is ~112
+  // lines BELOW, which is #1504's rule — line pointers drift, headings do not — broken
+  // in the same branch that quotes it.
+  //
+  // COMPOSED PER LANE, sentence included. The first fix made the suppression per lane
+  // and left the sentence computed across both, which reproduced the same defect one
+  // line further on: Actions with 2 of 4 silent (its row DOES name a served version)
+  // beside a VM with 0 of 4 printed one warning saying "a lane's row cannot name the
+  // Langflow it ran at all", true of the VM, false of Actions — and the sentence that
+  // was true of Actions was dropped. `answered === 0` is what a wedged run produces,
+  // so it is the state this field is most often read for, and it needs its own clause
+  // attached to the lane it is about.
+  const silentOf = (label, sweep) => {
+    if (!unaccounted(sweep) || straddled(sweep)) return null;
+    const scope = `${label} ${unaccounted(sweep)} of ${sweep.expected}`;
+    return sweep.answered === 0
+      ? `${scope} - no shard answered, so its row cannot name the Langflow it ran at all`
+      : `${scope} - so the version on its row is one that served rather than the only one that did`;
+  };
   const silent = [silentOf("Actions", ciSweep), silentOf("the VM", vmSweep)].filter(Boolean);
   if (silent.length) {
-    // `answered === 0` needs its own sentence: the clause about "the version on that
-    // row" asserted that one served, on a run where NOTHING did and `langflow_version`
-    // is null — the report said both at once (found in review). That state is what a
-    // wedged run produces, which is the state the field is most often read for.
-    const noneAtAll = [ciSweep, vmSweep].some((sw) => sw && sw.answered === 0 && unaccounted(sw));
     warnings.push(
-      `version parity PARTIAL: shards reported no served version (${silent.join("; ")}), so ` +
-        (noneAtAll
-          ? `a lane's row cannot name the Langflow it ran at all - no shard answered.`
-          : `the version on that row is one that served rather than the only one that did.`) +
-        ` The run's own summary names which shards went silent.`,
+      `version parity PARTIAL: shards reported no served version - ${silent.join("; ")}. ` +
+        `The run's own summary names which shards went silent.`,
     );
   }
 

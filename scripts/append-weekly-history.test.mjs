@@ -313,7 +313,11 @@ test("a sweep that resolved nothing is recorded as that, not as no sweep", () =>
 test("an unknown expected count is null, and does not take the block down with it", () => {
   // `--expect-shards` is optional and can be refused, so the reader emits `expected=`
   // empty. Reading that as 0 would make every answered shard look unaccounted for.
-  for (const expected of ["", "abc", "-1", "4.5"]) {
+  // `0x10` and `1e3` are the load-bearing entries: `Number` reads them as 16 and 1000,
+  // an input nobody meant, honoured without a word. `"abc"` pins nothing here — NaN
+  // serialises to `null` through the row's JSON round trip, which is the same answer
+  // the digit test gives — and it stays only as documentation of the shape.
+  for (const expected of ["", "abc", "-1", "4.5", "0x10", "1e3"]) {
     const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
       LANGFLOW_VERSION_EXPECTED: expected,
       LANGFLOW_VERSION_ANSWERED: "2",

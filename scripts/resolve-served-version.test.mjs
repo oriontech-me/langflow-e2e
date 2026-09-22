@@ -225,6 +225,18 @@ test("a version that is not a single line is REFUSED, not trimmed into shape", (
   assert.equal(keys.filter((k) => k === "version").length, 1);
 });
 
+test("a version carrying the list separator is REFUSED, not split downstream", () => {
+  // The distinct versions reach the history row as `versions=a,b` and the appender
+  // re-splits on the comma (#1964). A version containing one arrives as two, which the
+  // comparator reads as a duplicate and reports UNREADABLE — a real straddle described
+  // as a corrupt row. Refused here, where the value is still one string.
+  assert.equal(parseVersionBody('{"version":"1.13.0,dev16"}').version, null);
+  assert.match(parseVersionBody('{"version":"1.13.0,dev16"}').reason, /list separator/);
+  const verdict = resolveServedVersion(dirOf({ 1: '{"version":"1.13.0,dev16"}' }), { expectShards: 1 });
+  assert.equal(verdict.version, null);
+  assert.ok(!outputLines(verdict).some((l) => l.startsWith("versions=1")));
+});
+
 test("surrounding whitespace in a real body is tolerated", () => {
   assert.equal(parseVersionBody(`\n ${body("1.13.0.dev16")} \n`).version, "1.13.0.dev16");
 });

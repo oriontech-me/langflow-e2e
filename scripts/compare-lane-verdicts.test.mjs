@@ -1319,6 +1319,27 @@ test("a row written before the field existed reports parity as UNVERIFIED", () =
   }
 });
 
+test("every result carries versionStraddle, including the paths that return early", () => {
+  // Same class as the sibling below, and the same measurement: removing the key from
+  // either early return survived the whole suite. A consumer reading it off one of
+  // those exits gets `undefined` rather than `null`, which is a third state nothing
+  // documents.
+  for (const [label, args] of [
+    ["no VM row", { ci: row("daily-stable"), vm: null, date: "2026-09-07" }],
+    [
+      "a run error blocks the comparison",
+      {
+        ci: row("daily-stable", { run_errors: ["globalSetup failed"] }),
+        vm: row("vm-daily"),
+        date: "2026-09-07",
+      },
+    ],
+  ]) {
+    const result = compareRuns(args);
+    assert.ok("versionStraddle" in result, `${label}: versionStraddle is absent, not null`);
+  }
+});
+
 test("every result carries listingMismatch, including the paths that return early", () => {
   // Three exits build the result object. A consumer reading `result.listingMismatch`
   // gets `undefined` from the two early ones unless they carry it, and `undefined` is
@@ -1504,6 +1525,21 @@ test("two clean sweeps say nothing at all", () => {
   assert.match(renderReport(result), /one version across 4 shard\(s\)/);
 });
 
+test("the render distinguishes a full sweep from one with silent shards", () => {
+  // The suffix was deletable with the whole suite green: the nearest assertion is a
+  // PREFIX match on "one version across N shard(s)", which passes on both renderings,
+  // so a lane with 2 of 4 shards silent read identically to a fully-answered one in the
+  // head block — against the "same glance" argument its placement rests on.
+  const partial = renderReport(
+    compare(row("daily-stable", sweep({ answered: 2 })), row("vm-daily", sweep({ expected: 1, answered: 1 }))),
+  );
+  assert.match(partial, /one version across 2 shard\(s\); 2 reported none/);
+  const full = renderReport(
+    compare(row("daily-stable", sweep()), row("vm-daily", sweep({ expected: 1, answered: 1 }))),
+  );
+  assert.doesNotMatch(full, /reported none/);
+});
+
 test("a shard that reported nothing is PARTIAL — an absence, reported more softly", () => {
   const result = compare(
     row("daily-stable", sweep({ answered: 3 })),
@@ -1612,6 +1648,21 @@ test("when NOTHING served, the partial line does not claim a version did", () =>
   assert.ok(w, `no partial warning: ${result.warnings.join(" | ")}`);
   assert.match(w, /cannot name the Langflow it ran at all/);
   assert.doesNotMatch(w, /is one that served/);
+});
+
+test("the partial sentence belongs to the lane it is about, not to the pair", () => {
+  // The first fix made the SUPPRESSION per lane and left the SENTENCE computed across
+  // both, which reproduced the same defect one line on: a lane whose row does name a
+  // served version was described as unable to name one, and the clause that was true of
+  // it was dropped. Found in the second review round.
+  const result = compare(
+    row("daily-stable", sweep({ expected: 4, answered: 2 })),
+    row("vm-daily", { langflow_version: null, ...sweep({ expected: 4, answered: 0, versions: [] }) }),
+  );
+  const w = result.warnings.find((x) => x.includes("version parity PARTIAL"));
+  assert.ok(w, `no partial warning: ${result.warnings.join(" | ")}`);
+  assert.match(w, /Actions 2 of 4 - so the version on its row is one that served/);
+  assert.match(w, /the VM 4 of 4 - no shard answered, so its row cannot name the Langflow/);
 });
 
 test("one lane's straddle does not suppress the OTHER lane's silent shards", () => {
