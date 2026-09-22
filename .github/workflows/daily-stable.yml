@@ -199,11 +199,14 @@ jobs:
     # meant "every shard failed" while naming none of them.
     #
     # #1731's headline harm — a wedged shard's EMPTY value erasing three healthy
-    # answers — is REFUTED and is not the reason this moved: the runner skips an
-    # empty matrix-leg output, and 8 of the 11 history rows carrying a version are
-    # `backend.wedged` days, none of them null. What is true is that the guarantee
-    # rests on runner behaviour GitHub documents nowhere, for the one field that
-    # gates the two-lane comparison.
+    # answers — is NOT DEMONSTRATED and is not the reason this moved. Read the
+    # module header before quoting either direction: GitHub documents nothing about
+    # an empty output, the only evidence that it is skipped is a forum post, and
+    # this repo's own rows (8 of the 11 carrying a version are `backend.wedged`
+    # days, none null) cannot tell that apart from "no shard's curl ever failed",
+    # because no per-shard curl outcome was ever recorded. What IS true is that the
+    # old guarantee rested on runner behaviour GitHub documents nowhere, for the one
+    # field the two-lane comparison blocks on.
     #
     # Each shard now writes its own answer onto the artifact that already crosses
     # into `merge`, and the merge job sweeps them (see the resolver step there). A

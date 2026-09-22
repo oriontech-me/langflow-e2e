@@ -15,12 +15,19 @@
 // whichever shard finished last — by documentation, non-deterministic.
 //
 // The issue's headline harm — a WEDGED shard writing an empty value and erasing
-// what three healthy shards resolved — is NOT documented, in either direction,
-// and the evidence says it does not happen: the runner appears to skip an empty
-// output from a matrix leg (community discussion #38088, the behaviour the
-// conditional-matrix-output idiom depends on), and of the 11 rows in
-// `reports/daily-history.jsonl` carrying a version, EIGHT are `backend.wedged`
-// days and not one is null. Treat the erasure as refuted, not as the motive.
+// what three healthy shards resolved — is NOT DEMONSTRATED, and is not the
+// motive. GitHub documents nothing about an empty output, in either direction.
+// The only evidence for the mechanism is a forum post (community discussion
+// #38088: *"Empty job outputs of matrix legs are skipped"*, the behaviour the
+// conditional-matrix-output idiom depends on). And this repo's own series cannot
+// settle it either way, which a first correction of this comment got wrong by
+// treating it as refutation: of the 11 rows in `reports/daily-history.jsonl`
+// carrying a version, EIGHT are `backend.wedged` days and not one is null — but
+// nothing ever recorded a per-shard curl OUTCOME, so those rows are equally
+// consistent with "no shard's curl ever failed". On 4 of those 8 days the whole
+// run's measured downtime was 6-32 s and the curl ran at the END of the shard.
+// The honest reading is that the erasure has never been observed here and the
+// fix does not rest on it.
 //
 // What is left is motive enough, and all of it is observable:
 //   - the pick was non-deterministic exactly where it matters — four shards pull
@@ -154,18 +161,46 @@ export function parseVersionBody(raw) {
 // workflow run." An expectation above it cannot describe a real run, and honouring
 // it materialises one entry per expected shard — `--expect-shards 1e9` threw
 // `RangeError: Set maximum size exceeded` out of a CLI whose header promises the
-// only non-zero exit is a usage error (measured). Refused and REPORTED, never
-// silently dropped: an expectation the sweep ignored changes what its counts mean.
+// only non-zero exit is a usage error (measured). No caller can reach that today:
+// the daily's `shards` input is unbounded, but `prep` prints `shard_total` only
+// AFTER `partition-shards.mjs matrix` has serialized an N-entry include array, so
+// the step dies long before the value crosses to `merge`. The cap is here because
+// it is cheaper than that argument staying true — and it REPORTS rather than
+// silently dropping, since an expectation the sweep ignored changes what its
+// counts mean.
 const MAX_EXPECTED_SHARDS = 256;
 
+const IGNORED_TAIL = "the sweep reports only the files it found";
+
+// Capped like every other diagnostic here (`firstLine`): the value is echoed onto
+// stdout and into the run summary, and a 400-char argument made a 497-char line.
+const refuse = (shown) => ({
+  value: null,
+  reason: `the expected shard count ${String(shown).slice(0, 200)} cannot describe a run — ${IGNORED_TAIL}`,
+});
+
 function normalizeExpected(expectShards) {
-  if (expectShards === null || expectShards === undefined || `${expectShards}`.trim() === "")
-    return { value: null, reason: null };
-  const n = Number(expectShards);
-  if (!Number.isInteger(n) || n < 1)
-    return { value: null, reason: `the expected shard count ${JSON.stringify(String(expectShards))} is not a positive integer — the sweep reports only the files it found` };
+  // Only a string or a number is an expectation at all. Without this, `[]`
+  // stringifies to "" and reads as "no expectation was given", which is the one
+  // state this pair exists to keep apart from "an expectation was refused".
+  if (typeof expectShards !== "string" && typeof expectShards !== "number")
+    return expectShards === null || expectShards === undefined
+      ? { value: null, reason: null }
+      : refuse(JSON.stringify(expectShards) ?? typeof expectShards);
+  const text = `${expectShards}`.trim();
+  if (text === "") return { value: null, reason: null };
+  // DECIMAL DIGITS ONLY, which is exactly what both lanes produce (`matrix.shard`
+  // from partition-shards' `i + 1`, `$idx` from `seq 1 "$SHARD_TOTAL"`). `Number`
+  // alone silently reinterpreted `0x10` as 16 and `4.0`/`+4`/`04` as 4 — an input
+  // nobody meant, honoured without a word.
+  if (!/^\d+$/.test(text)) return refuse(JSON.stringify(text));
+  const n = Number(text);
+  if (n < 1) return refuse(JSON.stringify(text));
   if (n > MAX_EXPECTED_SHARDS)
-    return { value: null, reason: `the expected shard count ${n} is above GitHub's ${MAX_EXPECTED_SHARDS}-job matrix cap, so it cannot describe a real run — the sweep reports only the files it found` };
+    return {
+      value: null,
+      reason: `the expected shard count ${n} is above GitHub's ${MAX_EXPECTED_SHARDS}-job matrix cap, so it cannot describe a real run — ${IGNORED_TAIL}`,
+    };
   return { value: n, reason: null };
 }
 
@@ -286,11 +321,16 @@ export function outputLines(verdict) {
  * nobody reads by the time it matters (`mode=count`, #1252).
  */
 export function stepSummaryMarkdown(verdict) {
+  // Every anomaly the verdict can carry has to be on this list, or it reaches
+  // stdout only — and the run log is not a surface anybody comes back to. An
+  // out-of-range shard file means `prep`'s count and the matrix disagree, which
+  // is exactly the kind of thing that must not be stdout-only (#1012).
   if (
     verdict.version &&
     !verdict.disagreement &&
     verdict.unanswered.length === 0 &&
-    !verdict.expectedIgnored
+    !verdict.expectedIgnored &&
+    verdict.unexpected.length === 0
   )
     return null;
   const lines = ["### Langflow version", "", summaryLine(verdict), ""];
@@ -307,6 +347,11 @@ export function stepSummaryMarkdown(verdict) {
       ""
     );
   if (verdict.expectedIgnored) lines.push(`- ${verdict.expectedIgnored}`);
+  if (verdict.unexpected.length)
+    lines.push(
+      `- shard ${verdict.unexpected.join(", ")} reported although the run expected ` +
+        `${verdict.expected} — counted anyway, but the expectation and the matrix disagree.`
+    );
   if (verdict.directoryReason) lines.push(`- directory: ${verdict.directoryReason}`);
   for (const { shard, reason } of verdict.unanswered) lines.push(`- shard ${shard}: ${reason}`);
   for (const { shard, version } of verdict.answered) lines.push(`- shard ${shard}: \`${version}\``);

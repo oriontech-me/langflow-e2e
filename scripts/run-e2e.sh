@@ -703,10 +703,18 @@ gh_out() {
 # command substitution; the reader's own report (which shard answered, why the
 # others did not, whether they served the same product) goes to stderr, where the
 # run log keeps it.
+# `|| true` on BOTH filesystem lines, and that is the whole reason this is a
+# function rather than four lines in phase_merge: the caller reads it through a
+# command substitution, so under `set -e` a failing `mkdir` or truncate would make
+# the assignment non-zero and abort phase_merge — losing the run's verdict and its
+# publish for a diagnostic that is guarded everywhere else in the path (`|| true`
+# on node, `[ -f … ] || return 0` in gh_out, appendOrReport in the CLI). The
+# directory normally exists already (phase_preflight makes it); the mkdir is for
+# the caller that has not been through that phase.
 resolve_served_version() {
   local version_out="$RUN_DIR/logs/served-version.out"
-  mkdir -p "$RUN_DIR/logs"
-  : > "$version_out"
+  mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
+  : > "$version_out" 2>/dev/null || true
   GITHUB_OUTPUT="$version_out" \
     node scripts/resolve-served-version.mjs \
       --dir "$RUN_DIR/all-tokens" --expect-shards "${SHARD_TOTAL:-}" >&2 || true

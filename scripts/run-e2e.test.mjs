@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 
 import { fileURLToPath } from "node:url";
@@ -301,6 +301,25 @@ test("resolve_served_version survives a wedged shard, and prints ONLY the versio
   // the version: the reader's report belongs on stderr.
   assert.equal(r.stdout.trim(), "1.13.0.dev16");
   assert.match(r.stderr, /shard 1: .*empty/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolve_served_version cannot abort phase_merge, whatever the filesystem does", () => {
+  // The caller reads it through a command substitution, so under `set -e` a failing
+  // `mkdir` or truncate would make the assignment non-zero and take phase_merge with
+  // it — the run's verdict and publish lost for a diagnostic that is guarded
+  // everywhere else in this path. Called DIRECTLY here, not through `$(…)`: bash 3.2
+  // drops errexit inside a command substitution, so only the direct call reproduces
+  // what the VM's bash 5 does.
+  const dir = makeTempDir("run-e2e-version-");
+  const readOnly = join(dir, "ro");
+  mkdirSync(readOnly, { recursive: true });
+  chmodSync(readOnly, 0o500);
+  const r = sourced(
+    `set -e; RUN_DIR=${JSON.stringify(readOnly)}; resolve_served_version; echo "REACHED=$?"`,
+  );
+  assert.match(r.stdout, /REACHED=0/, "an unwritable run dir aborted the caller");
+  chmodSync(readOnly, 0o700);
   rmSync(dir, { recursive: true, force: true });
 });
 

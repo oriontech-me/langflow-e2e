@@ -30,6 +30,7 @@
 // are both reported rather than thrown (both were exit 1 with a stack trace in
 // the first version; found in review).
 import fs from "node:fs";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -49,9 +50,12 @@ export function parseArgs(argv) {
     switch (arg) {
       case "--dir":
       case "--expect-shards": {
-        // A flag with no following argument is a usage error; a flag given an
-        // EMPTY value degrades (an unset workflow variable expands to one, and
-        // that must not abort the step that carries it — #1812).
+        // A flag with no following argument is a usage error. An EMPTY value is
+        // where the two flags deliberately DIFFER: `--expect-shards ""` degrades
+        // (an unset workflow variable expands to one, and that must not abort the
+        // step carrying the value — #1812), while `--dir ""` is a usage error,
+        // because there is no directory to fall back to and sweeping the process's
+        // cwd would answer about the wrong thing.
         if (i + 1 >= argv.length) return { error: `${arg} needs a value` };
         const value = argv[++i];
         if (arg === "--dir") args.dir = value;
@@ -144,11 +148,26 @@ function main(argv) {
 // `process.exitCode`, never `process.exit()`: a piped stdout is truncated at 8192
 // bytes by an immediate exit, because pipe writes are async and what has not
 // flushed is discarded (measured, #1812).
-// `pathToFileURL`, not a `file://` template: a repo path carrying a space or a
-// non-ASCII character is percent-encoded in `import.meta.url` and not in
-// `process.argv[1]`, so the naive comparison fails and the CLI exits 0 having
-// printed nothing — a null with no diagnostic, which is what this module exists
-// to prevent. Eight scripts here already spell it this way.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// BOTH normalisations, the way `check-run-integrity.mjs` argues for them: a repo
+// path carrying a space or a non-ASCII character is percent-encoded in
+// `import.meta.url` and not in `process.argv[1]`, and a SYMLINKED path differs
+// from the resolved `import.meta.url` outright. Either mismatch makes this guard
+// false, and then the CLI exits 0 having printed nothing — a null with no
+// diagnostic, which is the one shape this module exists to prevent. Half the
+// idiom was measurably not enough: with `pathToFileURL` alone, invoking it
+// through a symlinked absolute path printed nothing and exited 0. Neither lane
+// invokes it that way today (both pass a relative path), so this is a guard
+// against a silent mode rather than a live bug — which is exactly the class the
+// rest of this module is about.
+const invokedDirectly = (() => {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+  for (const path of [argv1, (() => { try { return realpathSync(argv1); } catch { return null; } })()]) {
+    if (path && import.meta.url === pathToFileURL(path).href) return true;
+  }
+  return false;
+})();
+
+if (invokedDirectly) {
   process.exitCode = main(process.argv.slice(2));
 }

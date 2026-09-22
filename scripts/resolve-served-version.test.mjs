@@ -159,6 +159,16 @@ test("a directory that cannot be read carries its reason onto every expected sha
   assert.match(renderReport(verdict), /directory:/);
 });
 
+test("readVersionDir with no directory is a reported state, not a throw", () => {
+  // Unreachable from the CLI — `--dir ""` is a usage error, by the asymmetry argued
+  // there — but `readVersionDir` is exported and this is its answer for a caller
+  // that has no directory to offer.
+  const read = readVersionDir("");
+  assert.equal(read.available, false);
+  assert.match(read.reason, /no directory was given/);
+  assert.equal(resolveServedVersion(read, { expectShards: 1 }).version, null);
+});
+
 test("a file that exists but cannot be read is unanswered WITH its reason, never silently absent", () => {
   const read = readVersionDir("dir", {
     readdir: () => [versionFileName(1)],
@@ -228,6 +238,41 @@ test("only a 1-based shard index without leading zeros is an answer", () => {
 
 // ── The expectation must not delete evidence ────────────────────────────────
 
+test("the ratio counts what the sweep reasoned about, and is omitted when it knows of no run", () => {
+  // Both halves of this shipped unpinned and reverted silently in review. The first
+  // printed "3/2 shard(s) answered" for a file outside the expected range; the
+  // second printed a run-level ratio for the per-shard `--quiet` call, which reads
+  // ONE file — the overstatement `--quiet` exists to prevent.
+  // Two answers, three shards reasoned about (1 and 2 expected, 3 present). The
+  // old denominator was `expected` alone, so this read "2/2" — hiding both shard
+  // 2's silence and shard 3's existence — and with all three answering it read the
+  // impossible "3/2".
+  const strayFile = resolveServedVersion(dirOf({ 1: body("v"), 3: body("v") }), {
+    expectShards: 2,
+  });
+  assert.match(summaryLine(strayFile), /2\/3 shard\(s\) answered/);
+  const allThree = resolveServedVersion(
+    dirOf({ 1: body("v"), 2: body("v"), 3: body("v") }),
+    { expectShards: 2 },
+  );
+  assert.match(summaryLine(allThree), /3\/3 shard\(s\) answered/);
+  const oneShard = resolveServedVersion(dirOf({ 3: body("v") }));
+  assert.match(summaryLine(oneShard), /1 answer\(s\) found/);
+  assert.doesNotMatch(summaryLine(oneShard), /\d+\/\d+/, "a ratio the sweep cannot know");
+  const partial = resolveServedVersion(dirOf({ 1: "", 2: body("v") }), { expectShards: 4 });
+  assert.match(summaryLine(partial), /1\/4 shard\(s\) answered/);
+});
+
+test("an out-of-range shard file reaches the run summary, not only stdout", () => {
+  // It means `prep`'s shard count and the matrix disagree. The clean-check has to
+  // list every anomaly the verdict can carry, or the anomaly is stdout-only (#1012).
+  const verdict = resolveServedVersion(dirOf({ 1: body("v"), 2: body("v"), 3: body("v") }), {
+    expectShards: 2,
+  });
+  assert.deepEqual(verdict.unexpected, [3]);
+  assert.match(stepSummaryMarkdown(verdict) ?? "", /expectation and the matrix disagree/);
+});
+
 test("a shard outside the expected range still answers, and the disagreement is said out loud", () => {
   // `--expect-shards` being wrong (prep and the matrix out of step) must not drop
   // the one file that did arrive: an expectation is a claim about the run, not a
@@ -242,7 +287,10 @@ test("an expectation that cannot describe a run is REFUSED and said out loud", (
   // `--expect-shards 1e9` used to materialise one Set entry per expected shard and
   // throw `RangeError: Set maximum size exceeded` out of a CLI whose header
   // promises that only a usage error exits non-zero (measured in review).
-  for (const absurd of [1e9, 257, 0, -3, "abc"]) {
+  // `0x10` and `4.0` are in the list because `Number` alone honoured them as 16
+  // and 4 — an input nobody meant, accepted without a word. `[]` is there because
+  // it stringifies to "", which is how "no expectation given" is spelled.
+  for (const absurd of [1e9, 257, 0, -3, "abc", "0x10", "4.0", "+4", [], {}]) {
     const verdict = resolveServedVersion(dirOf({ 1: body("1.13.0.dev16") }), {
       expectShards: absurd,
     });
@@ -404,6 +452,25 @@ test("a usage error is an exit 2, never a silent empty answer", () => {
   assert.equal(runCli(["--help"]).status, 0);
 });
 
+test("invoked through a symlinked absolute path, the CLI still runs", () => {
+  // The main guard compares `import.meta.url` to argv[1]. A `file://` template
+  // fails on a percent-encoded path, and `pathToFileURL` alone fails on a
+  // symlinked one: either way the process exits 0 having printed NOTHING, which is
+  // a null with no diagnostic — the one shape this module exists to prevent, and
+  // the reason the promise "the only non-zero exit is a usage error" is not enough
+  // on its own.
+  const dir = tmpDirWith({ 1: body("1.13.0.dev16") });
+  const link = join(dir, "repo-link");
+  fs.symlinkSync(REPO_ROOT, link);
+  const res = spawnSync(process.execPath, [join(link, "scripts", "resolve-served-version.mjs"), "--dir", dir], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_OUTPUT: "", GITHUB_STEP_SUMMARY: "" },
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /1\.13\.0\.dev16/, "the CLI printed nothing at all");
+});
+
 test("--json prints the whole verdict", () => {
   const dir = tmpDirWith({ 1: body("1.13.0.dev16") });
   const res = runCli(["--dir", dir, "--json", "--expect-shards", "1"]);
@@ -416,8 +483,11 @@ test("--json prints the whole verdict", () => {
 // These pin an ABSENCE and two references. They cannot show that a lane resolves
 // correctly — the cases above do that — but the defect reached production as a
 // single line of workflow plumbing, and plumbing is not reachable from a unit
-// test any other way. Each spelling is DERIVED from the module rather than
-// restated, so a rename breaks the guard instead of passing it (#1226).
+// test any other way. The FILE NAME is derived from the module (`versionFileName`),
+// so renaming it breaks these guards rather than passing them; the script path, the
+// flags and the step-output expression are restated literals — a rename there fails
+// them too, but only because the literal stops matching, not because anything
+// derived it (#1226's own lesson about what a spelling guard is worth).
 
 const WORKFLOW = fs.readFileSync(join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
 const ORCHESTRATOR = fs.readFileSync(join(REPO_ROOT, "scripts/run-e2e.sh"), "utf8");
