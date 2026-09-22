@@ -1,9 +1,9 @@
 # OpenAI Compatible — unified provider setup (base URL + optional key, live-only catalog)
 
-**Last validated:** Langflow 1.13.x (1.13.0.dev12, #1849)
+**Last validated:** Langflow 1.13.x (1.13.0.dev19, #1678)
 **Spec file:** `tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
-**Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below)
-**Upstream:** langflow-ai/langflow#13940, #14199, #14311
+**Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below); #1678 (test 5 gates on the run request — the finding below)
+**Upstream:** langflow-ai/langflow#13940, #14199, #14311; [LE-2710](https://datastax.jira.com/browse/LE-2710) (the run executes a model the flow does not name — #1678)
 
 ---
 
@@ -257,6 +257,79 @@ request. Two things follow for anyone editing this spec: the pre-send read stays
 attribution line and must not grow into a gate that pretends to prevent this, and a future
 guard that genuinely covers it belongs on the run request, not on the flow row.
 
+### The run request IS the gate now — and the substitution survived #14465 (#1678, LE-2710)
+
+The guard the paragraph above asks for is installed: test 5 captures the body of
+`POST /api/v2/workflows` and fails unless its Language Model node carries
+`{name: <model>, provider: "OpenAI Compatible"}`. The reason it had to be installed is
+that the substitution is **still live**, measured on `1.13.0.dev19` — two releases past
+the `#14465` fix, which closed one branch of it and not the one that fires here.
+
+**The mechanism, measured rather than inferred.** The editor issues
+`POST /api/v1/custom_component/update` with `field="model"` and `field_value=""`; the
+backend answers `model.value: []` — correctly, via the `explicit_model_clear` branch
+`#14465` added (`lfx/base/models/unified_models/build_config.py`). When that response is
+applied **after** the user's pick, it blanks the field on the canvas; the frontend then
+refills the now-empty field with the user's `__default_language_model__` or, absent one,
+`options[0]`, and autosaves it with a `PATCH /api/v1/flows/{id}`. So the substituted
+value is never *sent* by the backend as a model — it is produced client-side from an
+emptied field, which is why grepping the update responses for a wrong model finds
+nothing.
+
+**Why #1678's two readings are one mechanism.** The same write explains both shapes the
+daily recorded. Land the `PATCH` before the pre-send poll and the *row* reads Anthropic
+(#1678 attempt 0). Land it after the poll and before the send and the row stays correct
+while the run executes the substitute (#1678 attempts 1-2), because `data` overrides the
+saved flow. Nothing distinguishes them but timing.
+
+**Measured on `1.13.0.dev19`** (33 runs of test 5, `--workers=1 --retries=0`):
+
+| Condition | Result |
+|---|---|
+| Unmodified spec | ~9 of 33 runs (~27 %) autosave a model the test never picked (`gpt-6-astra` / **OpenAI**) over `gpt-4o-mini` / OpenAI Compatible |
+| `__default_language_model__` deleted (control) | still fires, 2 of 6 — the fill falls back to `options[0]`, so the user default is an amplifier, not the cause |
+| Send delayed 4 s (CI is slower than a dev box) | **3 of 3** runs sent `gpt-6-astra` / OpenAI in the run request — **and the test passed**, because OpenAI answered and echoed the sentinel |
+| `repro-run --runs 10` on the unmodified spec | **0 failures** — the pre-#1678 spec is blind to the defect, which is the whole point of the new gate |
+| The gate's own PR lane (`pr-validation.yml`, run 35674259991) | fired on **2 of 3 attempts**, and the substitute there was **`claude-fable-5-1` / Anthropic** — byte-identical to the model in the daily #1676 failure this issue was opened for. The job still reported green: Playwright retries twice in CI, the third attempt passed, and the run summary reads `1 flaky` |
+
+That CI row is worth reading twice. It is the original symptom, reproduced by the new
+gate, named in one line instead of surfacing 90 s later as *"AI reply for the session not
+persisted yet"* — and it is invisible in a green check, because a retry hides it. A lane
+that runs this spec with `--retries=0` is the only one that reports it.
+
+The third row is the #1169 silent-substitution class demonstrated end to end: a green
+run against a model nobody selected, on a provider nobody configured for that node. It is
+also why the gate is a **hard assert and not a log** — an advisory line would leave the
+suite exactly as blind as the 0/10 baseline.
+
+**What this means for the spec's colour.** While the product defect is open, test 5 goes
+red on the runs where the race fires, naming the model that was actually sent. That is a
+true positive, not a flake, and it is why `@stable` stays off this test until the fix
+ships in the nightly (#1678). Do not "stabilise" it by waiting longer before sending, by
+re-selecting the model, or by softening the assert — each of those hides the defect the
+gate exists to surface.
+
+**Filed as [LE-2710](https://datastax.jira.com/browse/LE-2710), and it is a class, not a
+one-off.** The same ordering defect was fixed twice for other fields —
+[LE-2272](https://datastax.jira.com/browse/LE-2272) (Tool Mode actions, langflow#14741)
+and [LE-2278](https://datastax.jira.com/browse/LE-2278) (Human Input actions) — both of
+them "a stale `custom_component/update` response applied over a newer local edit, which
+the autosave then persists". The model field is the instance those fixes did not cover,
+and it is the one where the loss also changes **what runs**. Two consequences worth
+carrying: LE-2156's own report states it *could not establish what empties the field*,
+which is the half measured here; and
+[LE-2399](https://datastax.jira.com/browse/LE-2399) (*stop autosaving a flow that nobody
+edited*, langflow#14903 — still open, not in 1.13.0.dev19) would remove only the
+**persistence** half, leaving the run executing the substitute while
+`GET /api/v1/flows/{id}` reads correctly. If that lands first, the row-based read gets
+*less* informative, not more — one more reason the gate lives on the run request.
+
+**Verified end to end on 1.13.0.dev19**, three observables on one run: the request
+carried `gpt-6-astra` / OpenAI; the persisted reply recorded
+`properties.source.source = "gpt-6-astra"`, so the substitute answered; and
+`GET /api/v1/flows/{id}` afterwards read `gpt-6-astra` / OpenAI — the user's selection is
+gone from the database too.
+
 ---
 
 ## Tags *(required)*
@@ -454,7 +527,14 @@ both OpenAI and OpenAI Compatible is unambiguous); playground
    `OpenAI Compatible`. The substitution is therefore **not** a persistence reversion
    and re-selecting cannot fix it — the `POST /api/v2/workflows` run did not build what
    the database holds. Tracked separately; see *What this test does not cover*.
-6. **A drained account skips, it does not red.** After the run completes, read the
+6. **Gate on the run request — the only observable that predicts the executed model.**
+   Arm a `page.on("request")` capture for `POST /api/v2/workflows` before opening the
+   Playground, and after the send assert that the captured body's Language Model node
+   carries `[{name: <model>, provider: "OpenAI Compatible"}]`. The run builds the `data`
+   payload (live-canvas override), not the row, so this is the *object* the row cannot
+   stand in for — see the #1678 finding above. The failure names the model actually
+   sent, which turns a 90 s "AI reply not persisted" symptom into a one-line verdict.
+7. **A drained account skips, it does not red.** After the run completes, read the
    provider's own message off the page: `You have no credits remaining` /
    `exceeded your current quota` / `insufficient_quota` / `billing_not_active` skips with
    that text. This is invisible to `probeEndpoint` — `GET /v1/models` answers `200` for a
@@ -462,14 +542,14 @@ both OpenAI and OpenAI Compatible is unambiguous); playground
    *"AI reply for the session not persisted yet"*, which reads like a product failure;
    that is exactly how it presented on a 2.2 min red. Deliberately narrow: a `429`
    saying `rate_limit_exceeded` still **fails**, because that one the suite should see.
-7. Playground: send a sentinel (`OC-<runId>`) with an instruction to echo it
+8. Playground: send a sentinel (`OC-<runId>`) with an instruction to echo it
    verbatim; assert `button-stop` hides, then assert the **persisted** reply from
    `GET /api/v1/monitor/messages` for the same `session_id` contains the sentinel
    (the live bubble renders an empty placeholder mid-stream — #634). The
    provider-qualified option testid is what proves the run went through
    **OpenAI Compatible** and not through the OpenAI provider that may serve the
    same id.
-8. Delete the flow by id, disable the model again, and delete both variables.
+9. Delete the flow by id, disable the model again, and delete both variables.
 
 **Test 6 — Settings Save persists BOTH variables** *(the #1193 core; was `test.fixme` against LE-2124, lifted on 1.12.0.dev19 — see the finding)*
 1. Fill base URL + a working key; arm waiters for `validate-provider` **and** for
@@ -524,6 +604,12 @@ stored:
   **this** provider's key: dropping only `OPENAI_COMPATIBLE_API_KEY` while a valid
   `OPENAI_API_KEY` stays configured turns the same run into
   `401 - Incorrect API key provided: EMPTY` (#1334).
+
+- the **run request** that the Playground sends — `POST /api/v2/workflows` — carries that
+  same `[{name: <id>, provider: "OpenAI Compatible"}]` in its `data` payload. This is the
+  criterion that decides whether the flow the user configured is the flow that ran: the
+  persisted row cannot answer it, because `data` overrides the saved flow. A body naming
+  any other model fails the test and prints the model that was sent (#1678).
 
 - saving both variables from the Settings UI leaves **both** stored, the provider item
   shows a `/\d+ models/` suffix and `provider-disconnect-button` renders. This was
@@ -618,12 +704,12 @@ healthy they run.
   serves that shape.
 - The provider's **component-level** fields (`openai_compatible_base_url` on the
   node, advanced) — this spec covers the unified Settings surface, as §7.8 asks.
-- **Why a run can execute a model the persisted flow does not name.** Measured twice in
-  12 runs on 1.12.0.dev19 (see step 5): the database and the widget both read
-  `gpt-4o-mini` / `OpenAI Compatible` at send time, and the run still failed with
-  `404 … This is not a chat model`, which only the provider's first default-enabled id
-  produces. The spec attributes the state but does not diagnose it — it is a separate
-  question from #1334's binding axis, filed on its own.
+- **Fixing the substitution itself.** Since #1678 the spec *detects* a run that executes a
+  model the flow does not name — step 6 asserts the run request — and it names the model
+  that was sent. It cannot prevent it: the cause is upstream (a stale build-config
+  response blanks the canvas field, the frontend refills it from the default /
+  `options[0]`), it is still open on 1.13.0.dev19, and no test-side wait or re-selection
+  closes it without hiding it. Tracked in #1678.
 
 ---
 
