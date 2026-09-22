@@ -239,6 +239,43 @@ test("each caveat survives the move out of the workflow", () => {
   assert.match(text, /provider sweep forced/);
 });
 
+test("a canary summary also names the lanes the canary cannot exercise", () => {
+  // The run summary is the surface a reviewer actually reads, and it dropped the
+  // dispatch block whenever the verdict happened to be `canary` — which one shared
+  // action or module makes routine. Deleting the line that fixes it left the ENTIRE
+  // `npm run test:scripts` lane green (1915 pass), in the file #1226's "assert on
+  // OUTPUT" rule was written for.
+  const text = renderSummary({
+    specs: "a.spec.ts",
+    impacted: { specs: [], direct: [], dropped: [] },
+    provider: { run: [], stableRun: 0, excluded: [] },
+    canary: true,
+    ciCoverage: {
+      verdict: "canary",
+      canarySpecs: ["a.spec.ts"],
+      ciFiles: [".github/actions/wait-for-backend/action.yml"],
+      dispatchWorkflows: ["daily-stable.yml"],
+      dispatchTargets: [
+        { workflow: "daily-stable.yml", dispatchable: true, triggers: ["workflow_dispatch"], enabled: true },
+      ],
+    },
+  }).join("\n");
+  assert.match(text, /the diff also reaches a lane the canary cannot exercise/);
+  assert.match(text, /- `daily-stable\.yml`/);
+  assert.match(text, /This proves the lane RUNS/, "the canary block itself must survive");
+});
+
+test("a canary with nothing else to dispatch adds no block", () => {
+  const text = renderSummary({
+    specs: "a.spec.ts",
+    impacted: { specs: [], direct: [], dropped: [] },
+    provider: { run: [], stableRun: 0, excluded: [] },
+    canary: true,
+    ciCoverage: { verdict: "canary", canarySpecs: ["a.spec.ts"], dispatchWorkflows: [], dispatchTargets: [] },
+  }).join("\n");
+  assert.doesNotMatch(text, /cannot exercise|Dispatch before merging/);
+});
+
 test("a changed spec is labelled as such in the forced-by list", () => {
   const text = renderSummary({
     specs: AGENT,

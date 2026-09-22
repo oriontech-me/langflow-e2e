@@ -19,6 +19,7 @@ import {
   PR_LANE,
   buildCiReferences,
   classifyCiChange,
+  importersOf,
   dispatchAdvice,
   parseWorkflowStates,
   readWorkflowTriggers,
@@ -82,6 +83,32 @@ steps:
 
 const refs = buildCiReferences(FIXTURE);
 const classify = (...changed) => classifyCiChange({ changed, refs });
+
+// A miniature `scripts/` for the importer graph (#1979). Only the shapes that decide
+// a verdict: a lib module two named scripts reach, a module only a TEST imports, a
+// cycle, and a test file the YAML happens to name.
+const SCRIPT_FILES = new Map([
+  [
+    "scripts/partition-shards.mjs",
+    `import { norm } from "./lib/spec-path.mjs";\nimport { b } from "./lib/cycle-b.mjs";`,
+  ],
+  ["scripts/impacted-specs-by-import.mjs", `import { norm } from "./lib/spec-path.mjs";`],
+  ["scripts/lib/spec-path.mjs", "export const norm = (s) => s;"],
+  ["scripts/lib/only-a-test-imports-me.mjs", "export const x = 1;"],
+  ["scripts/orphan-helper.test.mjs", `import { x } from "./lib/only-a-test-imports-me.mjs";`],
+  // A cycle AMONG THE IMPORTERS of the start file, which is the only shape that
+  // actually loops: `leaf` is imported by `ring-a`, and `ring-a` ↔ `ring-b` import
+  // each other, so neither the cycle nor the walk passes back through `leaf` and the
+  // `importer === file` skip cannot break it. A first draft put the start file inside
+  // the cycle, where that skip terminates the walk on its own — so the test passed
+  // with the `seen` set deleted, pinning the guard it was named for not at all.
+  ["scripts/lib/leaf.mjs", "export const leaf = 1;"],
+  ["scripts/lib/ring-a.mjs", `import { leaf } from "./leaf.mjs";\nimport { b } from "./ring-b.mjs";`],
+  ["scripts/lib/ring-b.mjs", `import { a } from "./ring-a.mjs";`],
+  ["scripts/partition-shards-ring.mjs", `import { a } from "./lib/ring-a.mjs";`],
+]);
+const importRefs = buildCiReferences({ ...FIXTURE, scriptFiles: SCRIPT_FILES });
+const classifyWithImports = (...changed) => classifyCiChange({ changed, refs: importRefs });
 
 // ── Reference graph ─────────────────────────────────────────────────────────
 
@@ -162,6 +189,385 @@ test("a script no workflow runs is not CI surface", () => {
   const r = classify("scripts/wait-for-backend.test.mjs", "scripts/some-local-helper.mjs");
   assert.equal(r.verdict, "none");
   assert.deepEqual(r.ciFiles, []);
+});
+
+// ── A script in a subdirectory (#1979) ──────────────────────────────────────
+
+test("a subdirectory path is captured whole, not truncated at the first slash", () => {
+  // `SCRIPT_REF` excluded `/` from the tail, so `scripts/lib/stable-tests.ts` was
+  // captured as `scripts/lib` — a token no changed path can equal — and the file
+  // matched nothing. Asserted on the GRAPH, since that is where the loss happened.
+  const r = buildCiReferences({
+    workflows: new Map([[PR_LANE, "steps:\n  - run: node scripts/lib/deep/thing.mjs"]]),
+    actions: new Map(),
+  });
+  assert.ok(r.workflowScripts.get(PR_LANE).has("scripts/lib/deep/thing.mjs"));
+  assert.ok(!r.workflowScripts.get(PR_LANE).has("scripts/lib"), "the directory token is not a file");
+});
+
+test("a module reached only by IMPORT is CI surface, and the route is named", () => {
+  // The bigger half of #1979 and the one the regex cannot fix: measured on this repo,
+  // of the 24 `scripts/lib/**` files it reaches, 5 are spelled under `.github/` and
+  // the other 19 only through an import.
+  const r = classifyWithImports("scripts/lib/spec-path.mjs");
+  assert.equal(r.verdict, "canary", "the PR lane imports it through impacted-specs-by-import");
+  assert.deepEqual(r.ciFiles, ["scripts/lib/spec-path.mjs"]);
+  assert.match(r.reasons.join(" "), /reached through scripts\/impacted-specs-by-import\.mjs/);
+});
+
+test("the same module without the import graph falls back to silence", () => {
+  // Back-compat, and the measurement that justifies the graph: with `scriptFiles`
+  // absent the verdict is exactly what `main` gives today.
+  assert.equal(classify("scripts/lib/spec-path.mjs").verdict, "none");
+});
+
+test("both routes count — a file named AND imported names every workflow it reaches", () => {
+  // `scripts/lib/stable-tests.ts` is both: named by `update-coverage-summary.yml`'s
+  // `paths:` filter and imported by `scripts/stable-tests.ts`, which two other lanes
+  // run. Preferring the direct route named one workflow and dropped the rest.
+  const files = new Map([
+    ["scripts/partition-shards.mjs", `import { t } from "./lib/shared.ts";`],
+    ["scripts/lib/shared.ts", "export const t = 1;"],
+  ]);
+  const r = classifyCiChange({
+    changed: ["scripts/lib/shared.ts"],
+    refs: buildCiReferences({
+      workflows: new Map([
+        [".github/workflows/daily-stable.yml", "on:\n  workflow_dispatch:\nsteps:\n  - run: node scripts/partition-shards.mjs"],
+        [".github/workflows/other.yml", "on:\n  workflow_dispatch:\nsteps:\n  - run: cat scripts/lib/shared.ts"],
+      ]),
+      actions: new Map(),
+      scriptFiles: files,
+    }),
+  });
+  assert.deepEqual(r.dispatchWorkflows, [".github/workflows/daily-stable.yml", ".github/workflows/other.yml"]);
+});
+
+test("a unit test is never CI wiring, even when a workflow names it", () => {
+  // Two are named under `.github/` today, in prose explaining what pins what, and on
+  // `main` a change to either resolves to `dispatch` — contradicting this script's own
+  // rule. Inert while imports were not followed; not any more, since such a file would
+  // drag its whole import closure in with it.
+  const r = buildCiReferences({
+    workflows: new Map([
+      [".github/workflows/daily-stable.yml", "on:\n  workflow_dispatch:\n# Pinned by scripts/gate.test.mjs"],
+    ]),
+    actions: new Map(),
+    scriptFiles: new Map([
+      ["scripts/gate.test.mjs", `import { x } from "./lib/only-for-the-test.mjs";`],
+      ["scripts/lib/only-for-the-test.mjs", "export const x = 1;"],
+    ]),
+  });
+  assert.equal(classifyCiChange({ changed: ["scripts/gate.test.mjs"], refs: r }).verdict, "none");
+  assert.equal(
+    classifyCiChange({ changed: ["scripts/lib/only-for-the-test.mjs"], refs: r }).verdict,
+    "none",
+    "and it must not drag its imports in either",
+  );
+});
+
+test("the walk's budget is a NODE count — one shared module with many leaves is not a cycle", () => {
+  // The shape that broke the first bound, and the commonest thing a consolidation
+  // refactor produces: one module, N importers that nothing imports. `buildImporterGraph`
+  // returns module → importers, so its `.size` counts only modules that ARE imported
+  // (1 here) while the queue holds importers (2) — neither population bounds the other,
+  // and on this repo they are 71 against 115. Bounded on `.size`, this healthy ACYCLIC
+  // graph threw "the cycle guard is broken", which in the lane is a red, unmergeable PR
+  // whose only diagnostic names the wrong cause.
+  const files = new Map([
+    ["scripts/lib/shared.mjs", "export const shared = 1;"],
+    ["scripts/leaf-one.mjs", `import { shared } from "./lib/shared.mjs";`],
+    ["scripts/leaf-two.mjs", `import { shared } from "./lib/shared.mjs";`],
+  ]);
+  const r = buildCiReferences({
+    workflows: new Map([
+      [PR_LANE, "on:\n  pull_request:\nsteps:\n  - run: node scripts/leaf-one.mjs"],
+    ]),
+    actions: new Map(),
+    scriptFiles: files,
+  });
+  assert.ok(
+    r.scriptImporters.size < files.size,
+    "the premise: fewer imported MODULES than files, which is what made `.size` unsound",
+  );
+  assert.deepEqual(
+    [...importersOf(r, "scripts/lib/shared.mjs")].sort(),
+    ["scripts/leaf-one.mjs", "scripts/leaf-two.mjs"],
+  );
+  assert.equal(classifyCiChange({ changed: ["scripts/lib/shared.mjs"], refs: r }).verdict, "canary");
+});
+
+test("a module only a test imports stays silent — and the graph DID see the importer", () => {
+  // Asserting the two verdicts alone pins nothing: both are `none` before this change
+  // and after, so the test passed under every mutation including deleting the
+  // `.filter(named)` it exists for. What makes it a test is the premise — the importer
+  // graph found the test file and the `named` predicate is what rejected it.
+  assert.deepEqual(
+    [...importersOf(importRefs, "scripts/lib/only-a-test-imports-me.mjs")],
+    ["scripts/orphan-helper.test.mjs"],
+    "the graph must SEE the importer; the verdict then turns on it not being wiring",
+  );
+  assert.equal(classifyWithImports("scripts/lib/only-a-test-imports-me.mjs").verdict, "none");
+  assert.equal(classifyWithImports("scripts/orphan-helper.test.mjs").verdict, "none");
+});
+
+test("a cycle AMONG THE IMPORTERS terminates, and the file is not its own importer", () => {
+  // Defensive rather than observed: the real `scripts/` graph has no cycle today
+  // (measured over all 182 source files — an unguarded walk terminates for every
+  // one), so this pins a guard against a shape the repo does not currently have.
+  // Which makes the fixture the whole test: the cycle must NOT pass through the start
+  // file, because there `importer === file` already breaks the walk and the `seen`
+  // set is never exercised.
+  //
+  // Deleting the guard used to WEDGE this file rather than redden it — the lane passes
+  // no `--test-timeout`, so it reported `0 pass / 0 fail` and burned the step's budget,
+  // and `node:test`'s own `timeout` option cannot preempt a synchronous loop (measured:
+  // it does not fire). Hence the hard bound inside `importersOf`, which turns the same
+  // deletion into a thrown error here and a failed step in CI.
+  assert.deepEqual(
+    [...importersOf(importRefs, "scripts/lib/leaf.mjs")].sort(),
+    ["scripts/lib/ring-a.mjs", "scripts/lib/ring-b.mjs", "scripts/partition-shards-ring.mjs"],
+  );
+  assert.ok(
+    !importersOf(importRefs, "scripts/lib/ring-a.mjs").has("scripts/lib/ring-a.mjs"),
+    "a file must not be reported as its own importer",
+  );
+});
+
+test("against the live repo, the path #1609's own table names is no longer silence", () => {
+  // The measurement that opened #1979: `verdict: none` — "the diff touches no CI
+  // surface at all" — for a file `update-coverage-summary.yml` lists in its `paths:`.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/lib/stable-tests.ts\n" },
+  );
+  const result = JSON.parse(out);
+  assert.notEqual(result.verdict, "none", "silence is the failure this issue is about");
+  assert.deepEqual(result.ciFiles, ["scripts/lib/stable-tests.ts"]);
+});
+
+test("the base tree is not searched for scripts/, so no PR gets a false warning", () => {
+  // The lane builds the default-branch tree with `git archive … .github/workflows`, so
+  // it has no `scripts/` by construction. Reading it there printed
+  // "could not read scripts/ … will resolve to 'none'" on EVERY run whose diff touches
+  // `.github/` or `scripts/` — which is every run this classifier exists for — and the
+  // verdict printed immediately after was routinely reached through the import graph,
+  // so the annotation stated the opposite of what happened. Only `.workflows` is taken
+  // from that read at all.
+  const base = makeTempDir("cc-basetree-");
+  fs.mkdirSync(path.join(base, ".github/workflows"), { recursive: true });
+  fs.writeFileSync(path.join(base, ".github/workflows/daily-stable.yml"), "on:\n  workflow_dispatch:\njobs: {}\n");
+  const r = cli(
+    ["--root", REPO_ROOT, "--format=json", `--base-root=${base}`, "--stdin"],
+    "scripts/lib/spec-path.mjs\n",
+  );
+  assert.equal(r.status, 0);
+  assert.notEqual(r.json.verdict, "none", "the import graph still answers");
+  assert.doesNotMatch(r.stderr, /could not read scripts\//, `false warning: ${r.stderr}`);
+});
+
+test("an unreadable scripts/ degrades OUT LOUD and keeps the direct half working", () => {
+  // Best-effort like the other two optional inputs, and for the same reason: an empty
+  // file map builds an empty graph, which resolves every indirect change to `none` —
+  // the silence this issue is about, reported as a clean verdict (#1012).
+  const tmp = makeTempDir("cc-noscripts-");
+  fs.mkdirSync(path.join(tmp, ".github/workflows"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, ".github/workflows/daily-stable.yml"),
+    "on:\n  workflow_dispatch:\nsteps:\n  - run: node scripts/partition-shards.mjs",
+  );
+  const r = cli(["--root", tmp, "--format=json", "--stdin"], "scripts/partition-shards.mjs\n");
+  assert.equal(r.status, 0);
+  assert.equal(r.json.verdict, "dispatch", "the directly-named half must survive");
+  assert.match(r.stderr, /::warning::.*could not read scripts\/.*resolve to 'none'/);
+});
+
+test("against the live repo, a module reached ONLY by import is not silence", () => {
+  // The assertion #1979 asked for by name, and the one the synthetic tests cannot
+  // give: "the failure here is precisely that a synthetic fixture would have used
+  // whatever spelling the test author had in mind (#1226)". Measured — making
+  // `readScriptFiles`' walk non-recursive reverts all 19 import-only lib modules to
+  // `none`, i.e. undoes the headline fix, and every synthetic test stays green.
+  //
+  // `spec-path.mjs` is the case worth naming: it is the one normaliser
+  // `report-backend-outages.mjs` and `remove-stable-from-failures.ts` must agree on,
+  // and its own entry says a near-miss there "corroborates nothing, exempts nothing
+  // and is invisible". It is spelled in no workflow at all.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/lib/spec-path.mjs\n" },
+  );
+  const result = JSON.parse(out);
+  assert.notEqual(result.verdict, "none");
+  assert.deepEqual(result.ciFiles, ["scripts/lib/spec-path.mjs"]);
+  assert.match(result.reasons.join(" "), /reached through /, "the indirection must be named, not implied");
+  // The premise, asserted over EVERY workflow rather than the one the verdict happens
+  // to name first: the result names daily-stable AND weekly-stable, so checking one of
+  // them established a fraction of the claim it was written to establish.
+  // Actions too, not just workflows: `workflowScripts` folds an action's own `scripts/`
+  // references into every workflow that `uses:` it, so a path spelled only in an action
+  // is still "named" and the premise would be false by a route this never looked down.
+  const ciText = [];
+  const collect = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) collect(p);
+      else if (/\.ya?ml$/.test(e.name)) ciText.push([path.relative(REPO_ROOT, p), fs.readFileSync(p, "utf8")]);
+    }
+  };
+  collect(path.join(REPO_ROOT, ".github"));
+  const spellsIt = ciText.filter(([, text]) => text.includes("lib/spec-path")).map(([f]) => f);
+  assert.deepEqual(spellsIt, [], "the premise: nothing under .github/ spells this path — only the import graph reaches it");
+});
+
+test("a canary RENDERS its dispatch targets, and does not claim the run proved them", () => {
+  // Fixing the verdict's data was only half of it: `dispatchAdvice` early-returned on
+  // anything but `dispatch`, and the lane printed `.advice` only in the `dispatch`
+  // case — so `scripts/reconcile-stable-orphans.ts`, which used to produce "Dispatch
+  // stable-orphan-reconcile.yml", produced `advice: null` once it became
+  // canary-reachable. A strict loss against the behaviour before any of this.
+  const r = classifyWithImports("scripts/wait-for-backend.mjs", "scripts/partition-shards.mjs");
+  assert.equal(r.verdict, "canary");
+  const { annotation, summaryLines } = dispatchAdvice(r);
+  assert.match(annotation, /Dispatch \.github\/workflows\/daily-stable\.yml on this branch/);
+  assert.match(annotation, /The canary proves THIS lane boots/);
+  assert.doesNotMatch(
+    annotation,
+    /nothing here proves it works|Nothing in CI can prove/,
+    "something in CI demonstrably ran — only the OTHER lanes went unexercised",
+  );
+  assert.match(summaryLines.join("\n"), /the diff also reaches a lane the canary cannot exercise/);
+});
+
+test("a canary with no other lane involved says nothing extra", () => {
+  const r = classify(PR_LANE);
+  assert.equal(r.verdict, "canary");
+  assert.deepEqual(r.dispatchWorkflows, []);
+  assert.equal(dispatchAdvice(r).annotation, null);
+});
+
+test("a shared ACTION names every other lane that uses it", () => {
+  // The #1045 diff, which is what this whole classifier was built for: one action,
+  // four lanes. The canary branch dropped all of them, so the verdict for the very
+  // change it exists to cover named none of the lanes it changed — while the commit
+  // that fixed the script branch justified itself as "the rule this file already
+  // states for workflows AND actions".
+  const r = classify(".github/actions/wait-for-backend/action.yml");
+  assert.equal(r.verdict, "canary");
+  assert.deepEqual(r.dispatchWorkflows, [".github/workflows/daily-stable.yml"]);
+  assert.match(r.reasons.join(" "), /used by the PR lane, and by \.github\/workflows\/daily-stable\.yml/);
+});
+
+test("against the live repo, 'directly' is claimed of the PR LANE alone", () => {
+  // The DISCRIMINATING input, which the synthetic cases are not: a file another lane
+  // names by hand and the PR lane reaches only by import. `pr-validation.yml` never
+  // mentions `reconcile-stable-orphans.ts`; `stable-orphan-reconcile.yml` runs it.
+  // With the predicate as `named(file)` — "does SOME workflow spell it" — the reason
+  // claimed the PR lane ran it directly, and the whole file stayed green.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/reconcile-stable-orphans.ts\n" },
+  );
+  const reason = JSON.parse(out).reasons.join(" ");
+  assert.match(reason, /is run by the PR lane \(also reached through /);
+  assert.doesNotMatch(reason, /PR lane directly/, "pr-validation.yml does not name this file");
+});
+
+test("against the live repo, no WORKFLOW LIST is ever qualified as 'directly'", () => {
+  // Two attempts at this clause, two over-claims. `named(file)` asked whether SOME
+  // workflow spells the file and attached the word to ALL of them
+  // (`report-backend-outages.mjs`: "run directly by daily-stable, weekly-stable",
+  // where weekly-stable reaches it only by import). `users.every(…)` closed that half
+  // and left the other: `workflowScripts` is a raw token scan over the YAML PLUS the
+  // actions it uses, so "directly" was still false for 8 live files — five reached
+  // only through an action, three whose sole occurrence of the token is a `#` comment.
+  // `served-version.mjs` was one of them, and the assertion certifying the previous
+  // fix pinned that false statement.
+  //
+  // So the clause is gone: this sentence lists WORKFLOWS, and a per-workflow route
+  // needs a per-workflow sentence.
+  const reasonFor = (file) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+        { input: `${file}\n` },
+      ),
+    ).reasons.join(" ");
+  for (const file of [
+    "scripts/report-backend-outages.mjs",
+    "scripts/lib/served-version.mjs",
+    "scripts/auto-remove-commit-paths.mjs",
+    "scripts/build-grep-filter.mjs",
+  ]) {
+    assert.doesNotMatch(reasonFor(file), /run directly by/, `over-claims "directly" for ${file}`);
+  }
+  // The route is still named, and as ONE of the ways in rather than the only one.
+  assert.match(reasonFor("scripts/lib/served-version.mjs"), /also reached through scripts\/resolve-served-version\.mjs/);
+});
+
+test("'directly' is claimed of the PR LANE, not of any workflow at all", () => {
+  // The predicate was `named(file)` — "does ANY workflow spell it" — under a sentence
+  // about the PR lane. Live case: `pr-validation.yml` does not mention
+  // `reconcile-stable-orphans.ts` anywhere, and the reason said it ran it directly.
+  const r = classifyWithImports("scripts/lib/spec-path.mjs");
+  const reason = r.reasons.join(" ");
+  assert.match(reason, /is run by the PR lane \(also reached through /);
+  assert.doesNotMatch(reason, /PR lane directly/, "no workflow spells this path at all");
+  // …and a file the PR lane really does invoke by name keeps the clause.
+  assert.match(
+    classifyWithImports("scripts/impacted-specs-by-import.mjs").reasons.join(" "),
+    /is run by the PR lane directly or through an action it uses/,
+  );
+});
+
+test("an EMPTY scripts/ warns as loudly as an unreadable one", () => {
+  // The floor returned `null` and said nothing, which is indistinguishable downstream
+  // from having no graph — so the reader saw `none` and no reason for it.
+  const tmp = makeTempDir("cc-emptyscripts-");
+  fs.mkdirSync(path.join(tmp, ".github/workflows"), { recursive: true });
+  fs.mkdirSync(path.join(tmp, "scripts/lib"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, "scripts/lib/data.json"), "{}");
+  fs.writeFileSync(
+    path.join(tmp, ".github/workflows/daily-stable.yml"),
+    "on:\n  workflow_dispatch:\nsteps:\n  - run: node scripts/lib/data.json",
+  );
+  const r = cli(["--root", tmp, "--format=json", "--stdin"], "scripts/lib/data.json\n");
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /could not read scripts\/ \(it holds no source files\)/);
+});
+
+test("against the live repo, the canary does not swallow the dispatch advice", () => {
+  // A file can be both, and `scripts/reconcile-stable-orphans.ts` is: the PR lane
+  // reaches it through `check-stable-ownership.ts`, and `stable-orphan-reconcile.yml`
+  // runs it by name. Preferring the canary dropped that instruction entirely —
+  // `advice: null`, `dispatchWorkflows: []` — which is the top-level rule this file
+  // already states ("canary wins over dispatch, and the dispatch advice SURVIVES")
+  // not being applied one level in.
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/reconcile-stable-orphans.ts\n" },
+  );
+  const result = JSON.parse(out);
+  assert.equal(result.verdict, "canary");
+  assert.ok(
+    result.dispatchWorkflows.includes(".github/workflows/stable-orphan-reconcile.yml"),
+    `the dispatch advice vanished: ${JSON.stringify(result.dispatchWorkflows)}`,
+  );
+  assert.ok(!result.dispatchWorkflows.includes(PR_LANE), "the PR lane is not a workflow to dispatch — it just ran");
+});
+
+test("against the live repo, a unit test named in a workflow comment is still silence", () => {
+  const out = execFileSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-change-coverage.mjs"), "--root", REPO_ROOT, "--format=json", "--stdin"],
+    { input: "scripts/daily-matrix-provider-keys.test.mjs\n" },
+  );
+  assert.equal(JSON.parse(out).verdict, "none");
 });
 
 // ── Reading a workflow's triggers (#1609) ───────────────────────────────────
@@ -317,12 +723,18 @@ test("a verdict that predates the check degrades to unknown rather than to the o
   assert.match(annotation, /Could not read the triggers/);
 });
 
-test("no advice at all on the verdicts that are not `dispatch`", () => {
+test("no advice where there is nothing to dispatch — but a canary WITH targets speaks", () => {
+  // The title used to read "no advice at all on the verdicts that are not `dispatch`",
+  // which passed only because its one canary case has zero dispatch targets — and
+  // stated as the pinned contract exactly the behaviour this branch reversed.
   for (const r of [classify(PR_LANE), classify("docs/foo.md"), null]) {
     const { annotation, summaryLines } = dispatchAdvice(r);
     assert.equal(annotation, null);
     assert.deepEqual(summaryLines, []);
   }
+  const canaryWithTargets = classify(".github/actions/wait-for-backend/action.yml");
+  assert.equal(canaryWithTargets.verdict, "canary");
+  assert.match(dispatchAdvice(canaryWithTargets).annotation, /Dispatch \.github\/workflows\/daily-stable\.yml/);
 });
 
 // ── The other way to 422: disabled in Actions (#1609) ───────────────────────
@@ -726,7 +1138,15 @@ test("pr-validation.yml runs the classifier and substitutes the canary specs", (
   // was composed here with `jq` until #1609, and what it composed was an
   // instruction that 422s — a defect no regex over this file could have caught,
   // which is #1226's whole finding. What this still has to pin is the WIRING.
-  assert.match(text, /::warning::\$\(jq -r '\.advice' \/tmp\/ci-coverage\.json\)/);
+  // Printed on BOTH verdicts, gated on `.advice` being non-null rather than on the
+  // verdict, so a canary carrying dispatch targets does not silently drop them.
+  assert.match(text, /ADVICE=\$\(jq -r '\.advice \/\/ empty' \/tmp\/ci-coverage\.json\)/);
+  assert.match(text, /if \[ -n "\$ADVICE" \]; then echo "::warning::\$ADVICE"; fi/);
+  assert.doesNotMatch(
+    text.slice(text.indexOf("case \"$VERDICT\" in"), text.indexOf("esac")),
+    /\.advice/,
+    "the advice must not be printed from inside the verdict case — that is what dropped it on a canary",
+  );
   assert.doesNotMatch(
     text,
     /Dispatch \$\(jq -r '\.dispatchWorkflows/,

@@ -160,6 +160,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { buildImporterGraph } from "./impacted-specs-by-import.mjs";
+
 /** The lane a pull request actually runs. */
 export const PR_LANE = ".github/workflows/pr-validation.yml";
 
@@ -180,7 +182,23 @@ export const CANARY_SPECS = [
   "tests/tests-automations/regression/ui-ux/settings-theme-toggle.spec.ts",
 ];
 
-const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._-]+)/g;
+// `/` is IN the tail (issue #1979). Without it the match stopped at the first path
+// separator, so `scripts/lib/stable-tests.ts` was captured as `scripts/lib` — a token
+// no changed path can ever equal — and the real file matched nothing, leaving the
+// verdict at `none`: "the diff touches no CI surface at all". Measured over the real
+// `.github/`, widening it takes the token set from 47 to 51: the five `scripts/lib/**`
+// paths appear and the directory token `scripts/lib` goes, which is the right trade
+// because a directory is never a changed FILE. Three inert keys are unchanged and stay
+// inert — two are a real filename followed by a sentence-ending period (the `.` in this
+// class absorbs it), one is the literal `scripts/x` out of `pr-validation.yml`'s own
+// explanatory comment, the token scan reading only `.github/`. Those
+// periods are NOT what keeps a unit test out: `UNIT_TEST` below does that, as its live
+// sibling `daily-matrix-provider-keys.test.mjs` shows — a real token, resolving to
+// `none`. Belt and braces, not a single point of failure.
+const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._/-]+)/g;
+
+/** A unit test — covered by `npm run test:scripts`, never CI wiring. */
+const UNIT_TEST = /\.test\.(mjs|mts|ts|js)$/;
 const LOCAL_ACTION_REF = /\.\/\.github\/actions\/([A-Za-z0-9._-]+)/g;
 
 const matchAll = (text, re) => [...String(text).matchAll(re)].map((m) => m[1]);
@@ -349,13 +367,16 @@ export function parseWorkflowStates(text) {
  * Build the reference graph from the YAML itself.
  *
  * @param {{workflows: Map<string,string>, actions: Map<string,string>,
- *          baseWorkflows?: Map<string,string>|null}} sources
+ *          baseWorkflows?: Map<string,string>|null,
+ *          scriptFiles?: Map<string,string>|null}} sources
  *   workflows keyed by repo-relative path, actions keyed by ACTION NAME.
  *   `baseWorkflows` is the DEFAULT branch's copy of the same workflows; when given, the
  *   triggers are read from it, because that is the copy GitHub resolves a dispatch
  *   against. The reference graph always comes from `workflows` (the head).
+ *   `scriptFiles` is `scripts/**` keyed by repo-relative path; when given, a changed
+ *   file also counts as CI surface if some NAMED script imports it, transitively.
  */
-export function buildCiReferences({ workflows, actions, baseWorkflows = null }) {
+export function buildCiReferences({ workflows, actions, baseWorkflows = null, scriptFiles = null }) {
   const actionScripts = new Map();
   for (const [name, text] of actions) {
     actionScripts.set(name, new Set(matchAll(text, SCRIPT_REF)));
@@ -386,24 +407,103 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null }) 
     workflowScripts.set(file, scripts);
   }
 
+  // module → every script that imports it, transitively. The regex above only ever
+  // sees what the YAML SPELLS, and a shared module is spelled nowhere: of the 24
+  // `scripts/lib/**` files this now reaches, **5 are named** under `.github/` and the
+  // other **19 only by import** (#1979), so a fix confined to the regex would have
+  // covered a fifth of them. `scripts/lib/spec-path.mjs` is the sharp case — the one
+  // normaliser two lanes must agree on, whose own doc says a near-miss there
+  // "corroborates nothing, exempts nothing and is invisible" — and it is one of the 19.
+  //
+  // This is the same indirection `uses:` already gets, one level further in, and it
+  // reuses `impacted-specs-by-import.mjs`'s resolver rather than a second copy: those
+  // three functions take a file map keyed by repo-relative path and are root-agnostic,
+  // so nothing about them was tests-specific.
+  const scriptImporters = scriptFiles ? buildImporterGraph(scriptFiles) : null;
+
   return {
     workflowScripts,
     workflowActions,
     actionScripts,
     workflowDispatch,
+    scriptImporters,
+    // A true ceiling for the importer walk: every node it can reach is a key here.
+    scriptNodeCount: scriptFiles ? scriptFiles.size : 0,
     // Whether `workflowDispatch` reflects the copy GitHub will actually resolve.
     triggersFromBase: Boolean(baseWorkflows),
   };
 }
 
-/** Workflows (other than the PR lane) that reach a given action or script. */
+/**
+ * Every script that reaches `file` by import, transitively, excluding `file` itself.
+ *
+ * Breadth-first with a `seen` set. Defensive rather than observed: measured over all
+ * 182 source files under `scripts/`, the real importer graph has NO cycle today and
+ * an unguarded walk terminates for every one of them. It is kept because the shape
+ * that loops is cheap to introduce and expensive to diagnose — a cycle among a file's
+ * importers that does not pass back through the file itself, where the
+ * `importer === file` skip cannot break it, and where a walk does not fail the step,
+ * it hangs it.
+ */
+export function importersOf(refs, file) {
+  const reached = new Set();
+  if (!refs.scriptImporters) return reached;
+  const queue = [file];
+  // A hard bound as well as the `seen` set, because the two failure modes are not the
+  // same thing to live with. The `seen` set makes the walk terminate; the bound makes
+  // a walk that DOESN'T terminate fail LOUDLY instead of spinning — in CI a step that
+  // burns its whole budget and reports nothing, and in the unit lane a file that hangs
+  // at `0 pass / 0 fail`. A synchronous loop is not interruptible, so `node:test`'s own
+  // `timeout` cannot turn that into a red test either: measured, it does not fire.
+  //
+  // The ceiling is the NODE count, not `scriptImporters.size`. That map is
+  // module → importers, so its `.size` counts only modules that are imported — 71 keys
+  // against 115 distinct importers on this repo — and the queue holds importers. The
+  // two populations bound neither each other nor the walk, so a healthy ACYCLIC graph
+  // could exceed it: reproduced end to end on a three-file tree, where the CLI exited
+  // 1 blaming a cycle guard that was working perfectly, which in the lane is a red,
+  // unmergeable PR whose only diagnostic names the wrong cause. Every node the walk can
+  // reach is a key of `scriptFiles` (`buildImporterGraph` resolves targets through it),
+  // so that count is a true ceiling and this can only fire on a guard already broken.
+  // `?? 0` because a `NaN` budget never satisfies `<= 0` — the bound would be silently
+  // off and the loop it exists to stop would run forever. Unreachable while
+  // `buildCiReferences` is the only constructor of `refs`, which is precisely why it
+  // is worth a line: this is the one thing in the file whose whole job is to fail.
+  const ceiling = refs.scriptNodeCount ?? 0;
+  let budget = ceiling + 1;
+  while (queue.length > 0) {
+    if (budget-- <= 0) {
+      // Names the bound that actually fired. It quoted `scriptImporters.size` — the
+      // superseded number, 71 against a real bound of 183 — which is this commit's own
+      // complaint (a diagnostic naming the wrong cause) surviving inside the fix for it.
+      throw new Error(`importersOf walked past ${ceiling} nodes from ${file} — the cycle guard is broken`);
+    }
+    const current = queue.shift();
+    for (const importer of refs.scriptImporters.get(current) ?? []) {
+      if (importer === file || reached.has(importer)) continue;
+      reached.add(importer);
+      queue.push(importer);
+    }
+  }
+  return reached;
+}
+
+/**
+ * Workflows OTHER THAN THE PR LANE that reach a given action or script.
+ *
+ * The exclusion was the doc comment's claim and not the code's behaviour, which was
+ * inert while this was only ever called for a surface the PR lane does not reach. It
+ * stopped being inert when a file became able to be canary AND dispatch at once: the
+ * PR lane turned up in the list of workflows to dispatch before merging, which is a
+ * lane that has already run.
+ */
 function workflowsReaching(refs, { action, script }) {
   const hits = [];
   for (const [file, used] of refs.workflowActions) {
-    if (action && used.has(action)) hits.push(file);
+    if (file !== PR_LANE && action && used.has(action)) hits.push(file);
   }
   for (const [file, scripts] of refs.workflowScripts) {
-    if (script && scripts.has(script) && !hits.includes(file)) hits.push(file);
+    if (file !== PR_LANE && script && scripts.has(script) && !hits.includes(file)) hits.push(file);
   }
   return hits.sort();
 }
@@ -449,12 +549,19 @@ export function classifyCiChange({ changed, refs, states = null }) {
 
     if (actionName) {
       ciFiles.push(file);
+      // Both halves here too. A shared action is the commonest thing in this repo to
+      // be used by the PR lane AND by three other lanes — `wait-for-backend` is used
+      // by four — and the canary branch dropped every one of them, so the diff that
+      // MOTIVATED this whole classifier (#1045 rewired four workflows onto one action)
+      // named none of the lanes it changed. This is the rule the file states at the
+      // verdict line, applied where it was claimed to already hold.
+      const users = workflowsReaching(refs, { action: actionName });
+      users.forEach((w) => dispatch.add(w));
       if (prActions.has(actionName)) {
         canary = true;
-        reasons.push(`.github/actions/${actionName} is used by the PR lane`);
+        const also = users.length ? `, and by ${users.join(", ")}` : "";
+        reasons.push(`.github/actions/${actionName} is used by the PR lane${also}`);
       } else {
-        const users = workflowsReaching(refs, { action: actionName });
-        users.forEach((w) => dispatch.add(w));
         reasons.push(
           users.length
             ? `.github/actions/${actionName} is used by ${users.join(", ")}, not by the PR lane`
@@ -464,18 +571,64 @@ export function classifyCiChange({ changed, refs, states = null }) {
       continue;
     }
 
-    // A script is CI surface only if some workflow or action actually runs it.
-    // `scripts/foo.test.mjs` and a helper nothing invokes are not.
-    const referenced = [...refs.workflowScripts.values()].some((s) => s.has(file));
-    if (!referenced) continue;
+    // A script is CI surface only if some workflow or action actually runs it —
+    // directly, or THROUGH a script that does. `scripts/foo.test.mjs` and a helper
+    // nothing invokes are still not: nobody imports a test file, and a module only a
+    // test imports has no named importer, so both keep falling through to `none`.
+    // A unit test is never CI WIRING, whatever a YAML comment happens to spell. Two
+    // of them are named under `.github/` today — `daily-matrix-provider-keys.test.mjs`
+    // and `sync-model-prices.test.mjs`, both in prose explaining what pins what — so
+    // on `main` a change to either already resolves to `dispatch`, contradicting the
+    // rule stated right below. That was inert while imports were not followed; it is
+    // not any more, because such a file would drag its whole import closure in with
+    // it (measured: `lib/tmp-dir.mjs`, imported by nothing else, arrived as
+    // `dispatch` through exactly that route). These files are covered by
+    // `npm run test:scripts`, which the PR lane runs as its own gate, so booting
+    // Langflow for one proves nothing it does not already know.
+    const named = (f) => !UNIT_TEST.test(f) && [...refs.workflowScripts.values()].some((s) => s.has(f));
+    // The entry points a change to `file` reaches — the UNION of the two routes, not
+    // the first one that answers. `scripts/lib/stable-tests.ts` is both: named by
+    // `update-coverage-summary.yml`'s `paths:` filter AND imported by
+    // `scripts/stable-tests.ts`, which two other lanes run. Preferring the direct
+    // route named one workflow and dropped the others, which is the under-report this
+    // issue is about wearing a smaller hat.
+    const viaImport = [...importersOf(refs, file)].filter(named);
+    const entryPoints = [...new Set([...(named(file) ? [file] : []), ...viaImport])].sort();
+    if (entryPoints.length === 0) continue;
     ciFiles.push(file);
-    if (prScripts.has(file)) {
+    // Both halves, always — the top-level rule this file already states for workflows
+    // and actions ("canary wins over dispatch, and the dispatch advice SURVIVES") was
+    // not being applied here. Measured: `scripts/reconcile-stable-orphans.ts` went
+    // `dispatch` → `canary` and lost "Dispatch stable-orphan-reconcile.yml" entirely,
+    // and `scripts/lib/stable-tests.ts` reached the canary while naming ZERO of the
+    // four workflows it affects — the under-report this issue is about, one level in.
+    const onPrLane = entryPoints.some((entry) => prScripts.has(entry));
+    const users = [...new Set(entryPoints.flatMap((entry) => workflowsReaching(refs, { script: entry })))].sort();
+    users.forEach((w) => dispatch.add(w));
+    // `also` rather than a bare "reached through": the import route explains SOME of
+    // the list, not necessarily all of it, and this clause is attached to the whole
+    // sentence. `report-backend-outages.mjs` is named outright by daily-stable and
+    // reached by import only from weekly-stable, so anything implying exclusivity is
+    // false for one of the two.
+    const route = viaImport.length > 0 ? ` (also reached through ${viaImport.sort().join(", ")})` : "";
+    const alsoDispatch = users.length > 0 ? `, and by ${users.join(", ")}` : "";
+    if (onPrLane) {
       canary = true;
-      reasons.push(`${file} is run by the PR lane (directly or through an action it uses)`);
+      // The PR-lane clause survives because it qualifies ONE named thing — the PR
+      // lane — and `prScripts` is exactly the question it asks. It stays hedged
+      // ("or through an action it uses") because `workflowScripts` folds in the
+      // scripts an action names and cannot tell them apart.
+      const direct = prScripts.has(file) ? " directly or through an action it uses" : "";
+      reasons.push(`${file} is run by the PR lane${direct}${route}${alsoDispatch}`);
     } else {
-      const users = workflowsReaching(refs, { script: file });
-      users.forEach((w) => dispatch.add(w));
-      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane`);
+      // No such clause here, and the two attempts at one are why. `named(file)` asked
+      // whether SOME workflow spells the file and attached the word to ALL of them;
+      // `users.every(…)` fixed that half and left the other — `workflowScripts` is a
+      // raw token scan over the YAML plus the actions it uses, so it cannot
+      // distinguish a `run:` from a `#` comment, and "directly" was false for 8 live
+      // files by those two routes. A per-workflow route belongs in a per-workflow
+      // sentence; this one lists workflows, so it states only what the list is.
+      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane${route}`);
     }
   }
 
@@ -542,7 +695,19 @@ const list = (items) => items.join(", ");
  * @returns {{annotation: string|null, summaryLines: string[]}}
  */
 export function dispatchAdvice(result) {
-  if (!result || result.verdict !== "dispatch") return { annotation: null, summaryLines: [] };
+  // A CANARY can carry dispatch targets too, and withholding them was the other half
+  // of the swallow: `scripts/reconcile-stable-orphans.ts` used to produce
+  // "Dispatch stable-orphan-reconcile.yml on this branch before merging" and, once it
+  // became canary-reachable, produced `advice: null` — a strict LOSS against the
+  // behaviour before any of this. The canary proves this lane boots; it says nothing
+  // about the other lanes the same diff reaches, so their instruction still has to be
+  // printed. `none` has nothing to say by definition.
+  if (!result || (result.verdict !== "dispatch" && result.verdict !== "canary")) {
+    return { annotation: null, summaryLines: [] };
+  }
+  if (result.verdict === "canary" && (result.dispatchTargets ?? result.dispatchWorkflows ?? []).length === 0) {
+    return { annotation: null, summaryLines: [] };
+  }
 
   const targets =
     result.dispatchTargets ??
@@ -584,8 +749,11 @@ export function dispatchAdvice(result) {
   // and folding a doubt into a conclusion is exactly what the header forbids (#1012).
   const blocked = [...absent, ...off, ...no];
 
+  const onCanary = result.verdict === "canary";
   const sentences = [
-    `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
+    onCanary
+      ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
+      : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
   ];
   if (yes.length > 0) sentences.push(`Dispatch ${list(yes)} on this branch before merging (#1159).`);
   for (const t of absent) {
@@ -623,7 +791,8 @@ export function dispatchAdvice(result) {
   // may well have been dispatchable. Each per-target line is careful to scope itself
   // ("nothing in CI proves THIS PART"); this one cannot be, so it needs silence
   // whenever anything is unresolved.
-  if (yes.length === 0 && blocked.length > 0 && unknown.length === 0 && unverified.length === 0) {
+  // …and never on a canary, where something in CI demonstrably did run.
+  if (!onCanary && yes.length === 0 && blocked.length > 0 && unknown.length === 0 && unverified.length === 0) {
     sentences.push(
       "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
     );
@@ -632,7 +801,9 @@ export function dispatchAdvice(result) {
   const summaryLines = [];
   if (yes.length > 0) {
     summaryLines.push(
-      "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
+      onCanary
+        ? "- ⚠️ **the diff also reaches a lane the canary cannot exercise.** Dispatch before merging:"
+        : "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
       ...yes.map((wf) => `  - \`${wf}\``),
     );
   }
@@ -667,7 +838,14 @@ export function dispatchAdvice(result) {
 
 // ---------- CLI ----------
 
-function readCiSources(root = ".") {
+/**
+ * @param withScripts read `scripts/**` too. False for the DEFAULT-branch tree, which
+ *   the lane materialises with `git archive … .github/workflows` and therefore has no
+ *   `scripts/` at all — reading it there printed a `could not read scripts/` warning
+ *   on every run, stating the opposite of the verdict beside it, over a map only
+ *   `.workflows` is taken from anyway.
+ */
+function readCiSources(root = ".", { withScripts = true } = {}) {
   const workflows = new Map();
   const wfDir = path.join(root, ".github/workflows");
   for (const entry of fs.readdirSync(wfDir)) {
@@ -684,7 +862,46 @@ function readCiSources(root = ".") {
       if (fs.existsSync(file)) actions.set(entry.name, fs.readFileSync(file, "utf8"));
     }
   }
-  return { workflows, actions };
+  return { workflows, actions, scriptFiles: withScripts ? readScriptFiles(root) : null };
+}
+
+/**
+ * `scripts/**` as a path → source map, for the importer graph (#1979).
+ *
+ * Unreadable OR EMPTY both warn and return `null`. The warning is the whole point:
+ * `null` and an empty Map are behaviourally identical downstream — both build no
+ * graph, so every import-only change resolves to `none` — so a floor that only
+ * changed the return value would have been a no-op wearing the language of a guard.
+ * What has to differ is that the reader is TOLD, because `none` on this path reads as
+ * "there is no CI surface here" rather than "this could not be worked out" (#1012).
+ */
+function readScriptFiles(root = ".") {
+  const files = new Map();
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      // Same skips as `readSuiteFiles`, its sibling in `impacted-specs-by-import.mjs`:
+      // a vendored dependency is not this repo's CI surface, and walking one is slow
+      // enough to matter in a step budgeted at five minutes.
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(mjs|mts|ts|js)$/.test(entry.name)) {
+        files.set(path.relative(root, full).split(path.sep).join("/"), fs.readFileSync(full, "utf8"));
+      }
+    }
+  };
+  let reason = null;
+  try {
+    walk(path.join(root, "scripts"));
+    if (files.size === 0) reason = "it holds no source files";
+  } catch (error) {
+    reason = error.message;
+  }
+  if (reason === null) return files;
+  process.stderr.write(
+    `::warning::ci-change-coverage could not read scripts/ (${reason}); a change reached only by import will resolve to 'none'.\n`,
+  );
+  return null;
 }
 
 /** A flag's value, or `null` with the degradation announced rather than silent. */
@@ -728,7 +945,7 @@ function main(argv) {
   let baseWorkflows = null;
   if (baseRoot) {
     try {
-      const read = readCiSources(baseRoot).workflows;
+      const read = readCiSources(baseRoot, { withScripts: false }).workflows;
       // Same floor as the states listing, for the same reason: an empty base tree
       // would read as "the default branch has no workflows at all", i.e. a 404
       // claim about every one of them.
@@ -766,7 +983,18 @@ function main(argv) {
     }
   }
 
-  const result = classifyCiChange({ changed, refs, states });
+  // Exit 2, not 1. The header documents 2 as "could not decide", and the one thing
+  // that throws out of here — the importer walk's broken-guard bound — is exactly
+  // that: a classification the script declined to produce, not a classification of
+  // "no CI change". Unwrapped, it left the lane an exit 1 under the code reserved for
+  // a decision it never reached.
+  let result;
+  try {
+    result = classifyCiChange({ changed, refs, states });
+  } catch (error) {
+    process.stderr.write(`::error::ci-change-coverage could not classify the diff (${error.message}).\n`);
+    process.exit(2);
+  }
 
   // A canary that points at a renamed spec would run NOTHING while reporting a
   // verdict — the silent-coverage bug this script exists to remove. Fail loud.
@@ -781,8 +1009,9 @@ function main(argv) {
   }
 
   // The annotation ships IN the verdict so the workflow prints it rather than
-  // composing it (#1226): `echo "::warning::$(jq -r '.advice' …)"`. Null on every
-  // verdict but `dispatch`, which is what keeps the canary branch unchanged.
+  // composing it (#1226). Non-null on `dispatch` AND on a `canary` that carries
+  // dispatch targets — 25 rows on this repo today — which is why the lane gates its
+  // `::warning::` on the field being non-empty rather than on the verdict.
   const advice = { ...result, advice: dispatchAdvice(result).annotation };
 
   if (format === "json") {
