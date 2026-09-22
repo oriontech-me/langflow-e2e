@@ -446,7 +446,19 @@ export function importersOf(refs, file) {
   const reached = new Set();
   if (!refs.scriptImporters) return reached;
   const queue = [file];
+  // A hard bound as well as the `seen` set, because the two failure modes are not the
+  // same thing to live with. The `seen` set makes the walk terminate; the bound makes
+  // a walk that DOESN'T terminate fail LOUDLY instead of spinning — in CI a step that
+  // burns its whole budget and reports nothing, and in the unit lane a file that hangs
+  // at `0 pass / 0 fail`. A synchronous loop is not interruptible, so `node:test`'s own
+  // `timeout` cannot turn that into a red test either: measured, it does not fire.
+  // Every node can enter the queue at most once, so the graph's size is a true ceiling
+  // and this can only ever fire on a guard that is already broken.
+  let budget = refs.scriptImporters.size + 1;
   while (queue.length > 0) {
+    if (budget-- <= 0) {
+      throw new Error(`importersOf walked past ${refs.scriptImporters.size} nodes from ${file} — the cycle guard is broken`);
+    }
     const current = queue.shift();
     for (const importer of refs.scriptImporters.get(current) ?? []) {
       if (importer === file || reached.has(importer)) continue;
@@ -518,12 +530,19 @@ export function classifyCiChange({ changed, refs, states = null }) {
 
     if (actionName) {
       ciFiles.push(file);
+      // Both halves here too. A shared action is the commonest thing in this repo to
+      // be used by the PR lane AND by three other lanes — `wait-for-backend` is used
+      // by four — and the canary branch dropped every one of them, so the diff that
+      // MOTIVATED this whole classifier (#1045 rewired four workflows onto one action)
+      // named none of the lanes it changed. This is the rule the file states at the
+      // verdict line, applied where it was claimed to already hold.
+      const users = workflowsReaching(refs, { action: actionName });
+      users.forEach((w) => dispatch.add(w));
       if (prActions.has(actionName)) {
         canary = true;
-        reasons.push(`.github/actions/${actionName} is used by the PR lane`);
+        const also = users.length ? `, and by ${users.join(", ")}` : "";
+        reasons.push(`.github/actions/${actionName} is used by the PR lane${also}`);
       } else {
-        const users = workflowsReaching(refs, { action: actionName });
-        users.forEach((w) => dispatch.add(w));
         reasons.push(
           users.length
             ? `.github/actions/${actionName} is used by ${users.join(", ")}, not by the PR lane`
@@ -573,11 +592,18 @@ export function classifyCiChange({ changed, refs, states = null }) {
       canary = true;
       // `directly` is stated ALONGSIDE the import route, not replaced by it:
       // `impacted-specs-by-import.mjs` is invoked by name AND imported by two other
-      // named scripts, and naming only the indirection read as if it were not.
-      const direct = named(file) ? " directly or through an action it uses" : "";
+      // named scripts, and naming only the indirection read as if it were not. The
+      // predicate is `prScripts`, not `named`: `named` asks whether ANY workflow
+      // spells the file, and this sentence is about THE PR LANE — with `named` it
+      // claimed the PR lane ran `reconcile-stable-orphans.ts` directly, which
+      // `pr-validation.yml` does not mention at all.
+      const direct = prScripts.has(file) ? " directly or through an action it uses" : "";
       reasons.push(`${file} is run by the PR lane${direct}${route}${alsoDispatch}`);
     } else {
-      reasons.push(`${file} is run by ${users.join(", ")}, not by the PR lane${route}`);
+      // Symmetrically: a file another lane runs BY NAME and also reaches by import
+      // should not read as though only the indirection got it there.
+      const direct = named(file) ? " directly" : "";
+      reasons.push(`${file} is run${direct} by ${users.join(", ")}, not by the PR lane${route}`);
     }
   }
 
@@ -644,7 +670,19 @@ const list = (items) => items.join(", ");
  * @returns {{annotation: string|null, summaryLines: string[]}}
  */
 export function dispatchAdvice(result) {
-  if (!result || result.verdict !== "dispatch") return { annotation: null, summaryLines: [] };
+  // A CANARY can carry dispatch targets too, and withholding them was the other half
+  // of the swallow: `scripts/reconcile-stable-orphans.ts` used to produce
+  // "Dispatch stable-orphan-reconcile.yml on this branch before merging" and, once it
+  // became canary-reachable, produced `advice: null` — a strict LOSS against the
+  // behaviour before any of this. The canary proves this lane boots; it says nothing
+  // about the other lanes the same diff reaches, so their instruction still has to be
+  // printed. `none` has nothing to say by definition.
+  if (!result || (result.verdict !== "dispatch" && result.verdict !== "canary")) {
+    return { annotation: null, summaryLines: [] };
+  }
+  if (result.verdict === "canary" && (result.dispatchTargets ?? result.dispatchWorkflows ?? []).length === 0) {
+    return { annotation: null, summaryLines: [] };
+  }
 
   const targets =
     result.dispatchTargets ??
@@ -686,8 +724,11 @@ export function dispatchAdvice(result) {
   // and folding a doubt into a conclusion is exactly what the header forbids (#1012).
   const blocked = [...absent, ...off, ...no];
 
+  const onCanary = result.verdict === "canary";
   const sentences = [
-    `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
+    onCanary
+      ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
+      : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
   ];
   if (yes.length > 0) sentences.push(`Dispatch ${list(yes)} on this branch before merging (#1159).`);
   for (const t of absent) {
@@ -725,7 +766,8 @@ export function dispatchAdvice(result) {
   // may well have been dispatchable. Each per-target line is careful to scope itself
   // ("nothing in CI proves THIS PART"); this one cannot be, so it needs silence
   // whenever anything is unresolved.
-  if (yes.length === 0 && blocked.length > 0 && unknown.length === 0 && unverified.length === 0) {
+  // …and never on a canary, where something in CI demonstrably did run.
+  if (!onCanary && yes.length === 0 && blocked.length > 0 && unknown.length === 0 && unverified.length === 0) {
     sentences.push(
       "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
     );
@@ -734,7 +776,9 @@ export function dispatchAdvice(result) {
   const summaryLines = [];
   if (yes.length > 0) {
     summaryLines.push(
-      "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
+      onCanary
+        ? "- ⚠️ **the diff also reaches a lane the canary cannot exercise.** Dispatch before merging:"
+        : "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
       ...yes.map((wf) => `  - \`${wf}\``),
     );
   }

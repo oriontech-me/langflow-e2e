@@ -128,6 +128,11 @@ export function renderSummary({
       "- 🐤 **CI-only change** — no spec imports it, so the lane runs the canary to prove the wiring boots:",
       ...canarySpecs.map((file) => `  - \`${file}\``),
       "  This proves the lane RUNS, not that the changed behaviour is correct.",
+      // …and it proves nothing about the OTHER lanes the same diff reaches. A shared
+      // action or module is routinely run by this lane and by three others; dropping
+      // their instruction because one of them happened to be this one is the swallow
+      // #1979 removed from the verdict, and it lived here too.
+      ...dispatchAdvice(ciCoverage).summaryLines,
     );
   } else if (ciCoverage?.verdict === "dispatch") {
     // Worded by the classifier, which is the only thing that read the named

@@ -520,19 +520,24 @@ jobs:
                 SPECS=$(jq -r '.canarySpecs | join(" ")' /tmp/ci-coverage.json)
                 echo "::warning::CI-only change to a surface THIS lane runs ($(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json)). No spec imports it, so the lane runs the canary instead of skipping (#1159)."
                 ;;
-              dispatch)
-                # The sentence is RENDERED by the classifier, not composed here.
-                # Composed here, it told the reviewer to dispatch a workflow that has
-                # no `workflow_dispatch` trigger — advice that 422s, i.e. silence
-                # (#1609) — and a YAML-text guard cannot catch that (#1226). The
-                # classifier reads each named workflow's `on:` block on the DEFAULT
-                # branch, takes the Actions state fetched above, and words all six
-                # cases itself: dispatchable, not on the default branch yet (404), disabled
-                # in Actions (422), no trigger, triggers unreadable, and triggers
-                # this PR edits — so the branch copy is not the one that decides.
-                echo "::warning::$(jq -r '.advice' /tmp/ci-coverage.json)"
-                ;;
             esac
+            # Printed on BOTH verdicts, because a canary can carry dispatch targets
+            # too — one diff commonly changes a shared action or module that the PR
+            # lane runs AND three other lanes do. Gated on `.advice` being non-null
+            # rather than on the verdict, so the decision stays in the classifier
+            # (#1226) and the canary case does not silently drop an instruction the
+            # reviewer used to get (#1979).
+            #
+            # The sentence is RENDERED there, never composed here: composed here, it
+            # told the reviewer to dispatch a workflow with no `workflow_dispatch`
+            # trigger — advice that 422s, i.e. silence (#1609) — and no YAML-text
+            # guard can catch that. The classifier reads each named workflow's `on:`
+            # block on the DEFAULT branch, takes the Actions state fetched above, and
+            # words all six cases itself: dispatchable, not on the default branch yet
+            # (404), disabled in Actions (422), no trigger, triggers unreadable, and
+            # triggers this PR edits — so the branch copy is not the one that decides.
+            ADVICE=$(jq -r '.advice // empty' /tmp/ci-coverage.json)
+            if [ -n "$ADVICE" ]; then echo "::warning::$ADVICE"; fi
           fi
 
           echo "Running: ${SPECS:-<none>}"
