@@ -146,7 +146,8 @@ async function assertBackendHealthy(ctx: APIRequestContext): Promise<void> {
 
 /**
  * For every provider key present in the environment, verify it is configured as
- * a Langflow global variable. Hard fail in CI, warn locally.
+ * a Langflow global variable. In CI a missing one degrades its provider to
+ * unusable, so its specs skip with the reason (#1058); locally it warns.
  */
 async function checkProviderCredentials(ctx: APIRequestContext): Promise<void> {
   const envKeys = PROVIDER_KEYS.filter((k) => truthy(process.env[k]));
