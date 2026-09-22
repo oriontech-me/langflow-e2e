@@ -67,13 +67,22 @@ guards the toggle→toolkit wiring; `@agents` — agent tool configuration;
   Each test captures its flow id from the template-instantiation
   `POST /api/v1/flows/` response and deletes exactly that id in `afterEach`
   (`loadTemplateByName` does no cleanup — post-#553 contract).
+- The spec declares **no serial mode**, at file or describe level (#1690). The
+  two tests are independent — own flow, own `probe-<ts>` nonce, id-scoped
+  teardown — and the file-level declaration this spec used to carry was measured
+  costing a retry budget: on daily #1665 the toggle-OFF test was recorded as a
+  3-attempt failure having spent one, its other two attempts never dispatched
+  (`worker=-1`) because the toggle-ON sibling had failed first. Both tests sit in
+  the same describe, so scoping serial to the describe would have kept exactly
+  that coupling.
 
 ---
 
 ## Step by step *(required)*
 
 The spec generates tests per active model via the `resolveTestTargets()`
-machinery (family standard). Per model, a serial describe with two tests:
+machinery (family standard). Per model, a describe with two independent tests
+(no serial mode — see Preconditions):
 
 **Test 1 — toggle ON (default): the date tool exists and returns today (§6.5)**
 

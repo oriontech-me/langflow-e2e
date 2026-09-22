@@ -248,10 +248,30 @@ async function expectNoDateToolBlocks(
 
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
-// Serial mode + --workers=1 keeps the shared instance state deterministic
-// (area rule for agent specs). Cleanup is id-scoped in afterEach — nothing
-// here wipes flows, so parallel neighbors are never victims.
-test.describe.configure({ mode: "serial" });
+// NO serial mode here, at file or at describe level (#1690). The two tests are
+// independent by construction: each loads its OWN Simple Agent flow, tags its run
+// with its own `probe-<ts>` nonce and asserts only on the session that nonce
+// resolves to, and `afterEach` deletes exactly the ids that test created —
+// `loadTemplateByName` wipes nothing (post-#553 contract). Neither test can read
+// or destroy the other's state, in either order.
+//
+// What the file-level declaration cost, measured: on daily #1665 (run
+// 33511210195) the toggle-OFF test was recorded as a 3-attempt hard failure
+// having spent ONE — `a1` and `a2` came back `worker=-1`, never dispatched,
+// because the toggle-ON sibling had already failed. `reports/daily-history.jsonl`
+// records `attempts: 3` either way, so the retry budget was being spent on paper.
+//
+// Scoping serial to the describe — the shape #1693 gave the context-id specs —
+// would NOT have helped: both tests live inside the same
+// `Agent Current Date Tool [label]` describe, so the coupling that skipped the
+// sibling is exactly the one describe-level serial keeps. Dropping it is what
+// makes the retry budget real here.
+//
+// The agent-area rule (`llm-agents/CLAUDE.md`) is about the RUN (`--workers=1`),
+// and file-level serial never substituted for it: it serialises only within one
+// file, so it never covered the one cross-test hazard this spec has — two workers
+// instantiating the same template name, which `loadTemplateByName` already
+// retries (#1002).
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
