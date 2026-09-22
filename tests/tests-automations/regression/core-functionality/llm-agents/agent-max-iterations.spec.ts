@@ -7,6 +7,7 @@ import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { describeMissingUuid } from "../../../../helpers/other/describe-missing-uuid";
+import { describeMissingLimit } from "../../../../helpers/other/describe-missing-limit";
 import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import {
   hasProviderEnvKeys,
@@ -225,10 +226,26 @@ async function expectToolLoopEntered(
     .toBe("tool-loop-entered");
 }
 
+// The wait that did not wait (#1991). `locator.isVisible()` returns immediately and
+// Playwright documents the `timeout` option on it as `@deprecated This option is
+// ignored`, so the old probe sampled the single instant after the send click: any run
+// whose Stop button had not rendered by then skipped the wait entirely and both tests
+// went on to assert against a run still in flight.
+//
+// It was NOT implicated in #1991's own failure — that run finished in 1.29 s — which
+// is exactly why it had to be found by reading the path rather than by a red day.
+//
+// "Never appeared" stays non-fatal on purpose: a run can finish before the button
+// renders, and that is a legitimate fast run, not an error to raise here. The price
+// is that such a run now pays the full 10 s probe before the assertions start — the
+// cost of actually waiting, and the reason the probe is not longer.
 async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
+  const appeared = await stopButton
+    .waitFor({ state: "visible", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
     await expect(stopButton).toBeHidden({ timeout: 120000 });
   }
 }
@@ -322,6 +339,139 @@ async function explainMissingUuid(
   }
 }
 
+// `spanModelUsage` is pure, dependency-free ESM under scripts/lib. Same CJS→ESM
+// interop path, and the same reasons, as `loadBuildProbe` in
+// `helpers/flows/token-attribution.ts` — see the note there.
+type SpanModelUsageFn = (spans: unknown) => Array<{ model: string; calls: number }>;
+
+async function loadSpanModelUsage(): Promise<SpanModelUsageFn> {
+  // @ts-expect-error -- dynamic import of a dependency-free ESM .mjs module; no .d.ts to resolve
+  const mod = await import("../../../../../scripts/lib/token-spans.mjs");
+  return mod.spanModelUsage as SpanModelUsageFn;
+}
+
+// How many model calls did THIS flow's run make? The number is the whole
+// discrimination behind the diagnosis below, and it is not on the persisted message:
+// `properties.usage` reports tokens, never a call count. It lives in the trace spans,
+// which is where the token sidecar reads it from too.
+//
+// The trace is addressed DIRECTLY, by the `graph_run_id` the message carries. The
+// first version listed `/monitor/traces?flow_id=` and took the newest, and in the
+// field it came back with nothing to take — the diagnosis rendered `calls: not
+// reported` and fell to the head that chooses nothing, losing exactly the fact it
+// exists to establish (#1991, force-fail probe on run 35754140187).
+//
+// Polled, because the trace is written asynchronously and this runs moments after the
+// run ends. Budget is small on purpose: this is a diagnosis on a test that has already
+// failed, and a slow one delays the artifact everyone is waiting to read.
+//
+// Returns undefined rather than 0 on any failure. A diagnosis reporting "0 calls" for
+// a trace it could not read would state the opposite of what happened.
+async function readModelCalls(
+  request: APIRequestContext,
+  graphRunId: string | undefined,
+  bearer: string | undefined,
+): Promise<number | undefined> {
+  if (!graphRunId) return undefined;
+  let spanModelUsage: SpanModelUsageFn;
+  try {
+    spanModelUsage = await loadSpanModelUsage();
+  } catch {
+    return undefined;
+  }
+
+  // Every attempt is guarded on its own: a throw here (a non-JSON body, a transport
+  // error) must cost only the call count, never escape to `explainMissingLimit`'s
+  // catch and take the tools, state and preamble readings down with it.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const res = await request.get(`/api/v1/monitor/traces/${graphRunId}`, {
+        headers: bearer ? { Authorization: bearer } : {},
+      });
+      if (res.ok()) {
+        const detail = await res.json();
+        const models = spanModelUsage(detail?.spans);
+        if (models.length) {
+          return models.reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+        }
+      }
+    } catch {
+      // fall through to the next attempt
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return undefined;
+}
+
+// Did the model emit text BEFORE its first tool call? That ordering is the shape
+// that takes the message away from the cap (#1991), and it is visible in the
+// persisted content blocks — so the diagnosis reads it instead of assuming it.
+//
+// `undefined` when the blocks are not readable: "could not look" must never render
+// as "looked and found none". Also `undefined` when the blocks hold no `tool_use` at
+// all — the renderer tells that case apart by `toolNames`, which comes from the same
+// blocks, so it never prints "unreadable" over blocks that were read.
+function textPrecedesFirstToolUse(aiMsg: any): boolean | undefined {
+  const contents = (aiMsg?.content_blocks as any[] | undefined)?.flatMap(
+    (b: any) => b.contents ?? [],
+  );
+  if (!Array.isArray(contents) || contents.length === 0) return undefined;
+  const firstTool = contents.findIndex((c: any) => c?.type === "tool_use");
+  if (firstTool < 0) return undefined;
+  return contents
+    .slice(0, firstTool)
+    .some((c: any) => c?.type === "text" && String(c.text ?? "").trim().length > 0);
+}
+
+// A missing limit message has three causes that read identically from the pattern
+// alone, and the difference decides whether anyone should look at the product:
+// the cap fired and was never surfaced, the model declined to call a tool so the cap
+// was never reachable, or the run did neither. Measured on 1.13.0.dev19 (#1991): the
+// first one, with `state: complete`, `error: false` and the word `limit` absent from
+// the entire persisted payload — a cap-terminated run indistinguishable from a
+// successful one.
+//
+// Attached to the assertion instead of asserted on: a run with no limit message still
+// fails the test, because the spec's premise is that a capped agent SAYS it stopped.
+// What changes is that the failure names the cause, instead of costing the triage pass
+// it cost on #1264 and again here.
+//
+// Rendering lives in `describeMissingLimit`, pure and unit-tested — this half only
+// reads. Nothing here may throw: see the catch.
+async function explainMissingLimit(
+  request: APIRequestContext,
+  flowId: string,
+  rendered: string,
+): Promise<string> {
+  try {
+    const bearer = await getAuthToken(request);
+    const { problem, aiMsg, toolUses } = await readAgentMessage(request, flowId, bearer);
+    if (problem) return `could not read the persisted message: ${problem}`;
+
+    return describeMissingLimit({
+      rendered,
+      stored: String(aiMsg.text ?? ""),
+      toolNames: (toolUses ?? []).map((c: any) => c.name as string),
+      // `session_metadata.graph_run_id` IS the trace id — verified against the
+      // captured monitor payload on #1991. The message has no `error` field on this
+      // route at all (only the build/SSE shape carries one), so none is reported:
+      // a field that can never be populated prints "unknown" forever and is noise.
+      calls: await readModelCalls(request, aiMsg.session_metadata?.graph_run_id, bearer),
+      state: aiMsg.properties?.state,
+      preambled: textPrecedesFirstToolUse(aiMsg),
+      model: aiMsg.properties?.source?.source,
+      usage: aiMsg.properties?.usage,
+    });
+  } catch (error) {
+    // EVERY branch reports — the same contract as `explainMissingUuid`, and for the
+    // same reason: this runs while an assertion failure is already in hand, and an
+    // escaping throw would replace it with a bare transport error.
+    const first = String(error instanceof Error ? error.message : error).split("\n")[0];
+    return `no limit message was surfaced and the diagnosis could not be read (${first}) — ` +
+      `the assertion failure below is all the evidence this run carries`;
+  }
+}
+
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // Serial mode + --workers=1 keeps the shared instance state deterministic. Note
@@ -371,7 +521,26 @@ for (const { label, options, skipReason } of targets) {
           // disguised as "the cap is broken" (#1264).
           await expectToolLoopEntered(request, flowId);
           // Limit enforced: the agent stopped at the configured cap of 1.
-          await expect(bubble).toContainText(LIMIT_MESSAGE, { timeout: 30000 });
+          //
+          // try/catch rather than the `expect(value, message)` form the UUID half
+          // uses: there the value is already in hand, so the diagnosis can be built
+          // as an argument. Here the assertion is the thing doing the waiting, and
+          // building the diagnosis eagerly would both run its reads on every PASS and
+          // read the message before the 30 s poll had a chance to see it arrive.
+          try {
+            await expect(bubble).toContainText(LIMIT_MESSAGE, { timeout: 30000 });
+          } catch (error) {
+            const rendered = await bubble.innerText().catch(() => "");
+            const diagnosis = await explainMissingLimit(request, flowId, rendered);
+            // The original failure is KEPT, appended: the diagnosis says which of the
+            // three causes happened, the assertion text says what was compared. The
+            // same error object is rethrown so Playwright keeps its matcher metadata.
+            if (error instanceof Error) {
+              error.message = `${diagnosis}\n\n${error.message}`;
+              throw error;
+            }
+            throw new Error(`${diagnosis}\n\n${String(error)}`);
+          }
           // run limit (1/1) ties the stop to max_iterations=1.
           await expect(bubble).toContainText(/\(\s*1\s*\/\s*1\s*\)/, { timeout: 10000 });
         });
