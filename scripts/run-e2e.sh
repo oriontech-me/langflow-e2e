@@ -2336,17 +2336,58 @@ phase_publish() {
       warn "the coverage counts are incomplete (stable='${stable_count}', total='${total_count}') — the payload's coverage band is dropped or half-filled. The parser's own error is above this line."
     fi
 
+    # `langflow_image` is REQUIRED by the platform — validatePayload rejects a
+    # non-string or an empty one — and this lane has no image to name: it installs a
+    # published distribution into a venv (PREPARE_TARGET=0, LANGFLOW_SRC_RUN_CMD).
+    # Left unset, build-run-payload.mjs emits `langflow_image: null`, the endpoint
+    # answers 400, and the POST is fail-soft: the run stays green and records nothing.
+    # That is #1012's shape, and it is why the field is derived here rather than left
+    # to the caller.
+    #
+    # The derivation says what actually ran instead of borrowing the image the version
+    # was resolved FROM: naming `langflowai/langflow-nightly:<tag>` would read as an
+    # image this lane never pulled, and a day where the venv and the image diverge
+    # would be invisible in exactly the field a reader consults to explain a
+    # divergence. The platform renders this as text (`MetaCell … mono`), so the
+    # `pypi:` form costs no UI change.
+    #
+    # `${LANGFLOW_IMAGE:-…}` and not a plain assignment: the Actions lane passes its
+    # own value through the step `env:`, and it must keep winning, so the two lanes
+    # share one code path rather than branching on which one is running.
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
     RUN_URL="$REPORT_URL" \
     LANGFLOW_VERSION="$LANGFLOW_VERSION" \
+    LANGFLOW_IMAGE="${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}" \
     STABLE_COUNT="$stable_count" \
     TOTAL_COUNT="$total_count" \
     EVIDENCE_URL="$REPORT_URL" \
       node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
     PAYLOAD_BUILT=true
     info "payload: $RUN_DIR/payload.json"
+  fi
+
+  # The evidence, BEFORE the record that links to it. The order is the only thing that
+  # keeps the link honest: the platform stores `evidence_artifact_url` as given and
+  # never fetches it, so a record written first would advertise a report that may never
+  # arrive. Uploading first means a failure here is visible in this log while the
+  # record still carries a URL that resolves for whatever did upload.
+  #
+  # Gated on the same switch as the POST: with no record to attach it to, a report in
+  # the bucket is 31 MB nothing references.
+  if [ "$POST_QA_PLATFORM" = "1" ] && [ -n "${EVIDENCE_UPLOAD_BASE:-}" ]; then
+    if [ -d "$RUN_DIR/playwright-report" ]; then
+      log "Uploading the evidence"
+      node scripts/upload-evidence.mjs \
+        --dir "$RUN_DIR/playwright-report" \
+        --base "$EVIDENCE_UPLOAD_BASE" \
+        --run-id "$RUN_ID" \
+        --prefix "${EVIDENCE_PREFIX:-vm}" \
+        || warn "the evidence upload did not complete — the run record's report link may be broken. This does not fail the run."
+    else
+      warn "no playwright-report/ to upload — the run record's report link will not resolve."
+    fi
   fi
 
   if [ "$POST_QA_PLATFORM" = "1" ]; then

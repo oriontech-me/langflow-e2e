@@ -2779,3 +2779,77 @@ test("the probe asks the resolver the backend uses, not getent", () => {
   assert.match(r.stdout, /^python3 -c .*socket\.getaddrinfo/);
   assert.doesNotMatch(r.stdout, /getent/);
 });
+
+// ---------------------------------------------------------------------------
+// The QA Platform record (#2013)
+// ---------------------------------------------------------------------------
+
+test("phase_publish names langflow_image, which the platform requires", () => {
+  // validatePayload rejects a non-string or empty `langflow_image`, and
+  // build-run-payload.mjs reads it from the environment only. Before this the VM lane
+  // passed everything BUT that field, so its payload arrived null and came back 400 —
+  // silently, the POST being fail-soft. The absence is the defect, so the assertion is
+  // on presence rather than on the value.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  assert.match(publish, /LANGFLOW_IMAGE="\$\{LANGFLOW_IMAGE:-/,
+    "phase_publish must pass LANGFLOW_IMAGE, and with a default the Actions lane can override");
+});
+
+test("the langflow_image default describes the venv, and the caller still wins", () => {
+  // Both halves in one place because they are one decision: the VM has no image to
+  // name, and the Actions lane has one it must keep. A plain assignment would satisfy
+  // the first and break the second.
+  const expr = 'printf "%s" "${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}"';
+
+  const derived = spawnSync(BASH, ["-c", expr], {
+    encoding: "utf8",
+    env: { ...process.env, LANGFLOW_VERSION: "1.13.0.dev21", LANGFLOW_IMAGE: "" },
+  });
+  assert.equal(derived.stdout, "pypi:langflow==1.13.0.dev21");
+
+  const passed = spawnSync(BASH, ["-c", expr], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      LANGFLOW_VERSION: "1.13.0.dev21",
+      LANGFLOW_IMAGE: "langflowai/langflow-nightly:latest",
+    },
+  });
+  assert.equal(passed.stdout, "langflowai/langflow-nightly:latest",
+    "the Actions lane passes its own image through the step env and must keep winning");
+});
+
+test("the evidence is uploaded BEFORE the record that links to it", () => {
+  // The platform stores evidence_artifact_url as given and never fetches it, so a
+  // record written first advertises a report that may never arrive. Order is the only
+  // thing keeping that link honest.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const upload = publish.indexOf("upload-evidence.mjs");
+  const post = publish.indexOf('-X POST "$QA_PLATFORM_ENDPOINT"');
+  assert.ok(upload > 0, "the evidence upload is missing from phase_publish");
+  assert.ok(post > 0, "could not find the QA Platform POST");
+  assert.ok(upload < post, "the upload must precede the POST that links to it");
+});
+
+test("the evidence upload cannot fail the run", () => {
+  // #980's trade: evidence is an attachment to a verdict, and a storage outage must
+  // not cost the day its verdict. phase_publish runs under `set -e`, so a bare
+  // invocation would abort it and take the notifiers and the verdict with it.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const block = publish.slice(publish.indexOf("upload-evidence.mjs"));
+  assert.match(block.slice(0, 400), /\|\|\s*warn/,
+    "the upload must be `|| warn`, never bare, or a storage outage aborts the phase");
+});
+
+test("the evidence upload is gated on the same switch as the POST", () => {
+  // A report in the bucket with no record pointing at it is 31 MB nothing references.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const upload = publish.indexOf("upload-evidence.mjs");
+  const guard = publish.lastIndexOf('if [ "$POST_QA_PLATFORM" = "1" ]', upload);
+  assert.ok(guard > 0 && guard < upload,
+    "the upload must sit inside a POST_QA_PLATFORM guard");
+});
