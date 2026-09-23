@@ -2983,3 +2983,12 @@ test("a READABLE zero-test run is still the abort it always was, and POSTs no to
   assert.match(readFileSync(join(r.dir, "logs", "token-summary.log"), "utf8"), /zero tests/);
   assert.match(r.out, /post-token-payload: outcome=block_missing/);
 });
+
+test("a platform that does not answer cannot abort publish — neither POST fails the run", async () => {
+  // Port 9 on loopback: nothing listens, so both requests are refused. Before this the
+  // run POST's curl exited 7 under `set -e` and phase_publish died on the spot.
+  const r = await publishTokens({ endpoint: "http://127.0.0.1:9/runs" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(r.out, /the QA Platform POST failed \(HTTP 000\)/);
+  assert.match(r.out, /post-token-payload: outcome=http_failed/);
+});

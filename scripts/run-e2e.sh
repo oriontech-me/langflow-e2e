@@ -2396,12 +2396,17 @@ phase_publish() {
     elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
+      # `|| code=000` because curl exits non-zero when nothing answers (DNS, refused,
+      # timeout), and under `set -e` that assignment aborted phase_publish — taking the
+      # token POST, the history, the removal, the issue, Slack and the verdict with it,
+      # under a comment promising the POST "does not fail the run". --max-time for the
+      # same reason: a platform that accepts and never answers held the run for hours.
       local code
-      code="$(curl -s -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
+      code="$(curl -s --max-time 60 -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
         -X POST "$QA_PLATFORM_ENDPOINT" \
         -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" \
         -H "Content-Type: application/json" \
-        --data @"$RUN_DIR/payload.json")"
+        --data @"$RUN_DIR/payload.json")" || code="000"
       case "$code" in
         200 | 201) info "QA Platform: recorded (HTTP $code)" ;;
         *) warn "the QA Platform POST failed (HTTP $code) — this does not fail the run." ;;
