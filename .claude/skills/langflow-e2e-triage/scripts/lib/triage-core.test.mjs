@@ -972,3 +972,37 @@ test('computeRecurrence is not answered by a parameterized sibling with another 
   assert.deepEqual(r.dates, ['2026-09-01', '2026-09-02']);
   assert.equal(r.same_signature, true);
 });
+
+test('computeRecurrence takes the outage state from the item\'s own variant (#1626)', () => {
+  const key = { head: 'h', locator: null, file: 'f', source: 's' };
+  const entry = (param, state, head = 'h') => ({
+    test: 't', param, error_signature: head,
+    recurrence_keys: [{ ...key, head }], recurrence_key_version: 1,
+    outage_overlap: { state },
+  });
+  const item = entry('google / g', 'clear');
+  const rows = [
+    { date: '2026-09-01', flaky: [entry('openai / o', 'overlapped'), entry('google / g', 'clear')] },
+    { date: '2026-09-02', flaky: [entry('openai / o', 'overlapped'), item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.outage_by_date, { '2026-09-01': 'clear', '2026-09-02': 'clear' });
+});
+
+test('computeRecurrence does not let a sibling match when the item\'s variant failed otherwise (#1626)', () => {
+  const entry = (param, head) => ({
+    test: 't', param, error_signature: head,
+    recurrence_keys: [{ head, locator: null, file: 'f', source: 's' }], recurrence_key_version: 1,
+  });
+  const item = entry('google / g', 'h');
+  const rows = [
+    { date: '2026-09-01', flaky: [entry('openai / o', 'h'), entry('google / g', 'other')] },
+    { date: '2026-09-02', flaky: [item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.dates, ['2026-09-02']);
+  assert.equal(r.same_signature, false);
+  // A row with no entry of the item's variant still answers title-only.
+  const legacy = [{ date: '2026-09-01', flaky: [entry(undefined, 'h')] }, { date: '2026-09-02', flaky: [item] }];
+  assert.deepEqual(computeRecurrence(item, legacy).dates, ['2026-09-01', '2026-09-02']);
+});

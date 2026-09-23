@@ -131,14 +131,15 @@ export function computeRecurrence(item, rowsInWindow) {
     // The item's own row answers with the item itself: a legacy row compared
     // with itself is only `unverified` on the head. Every other row may carry the
     // title more than once — a parameterized spec emits one entry per provider —
-    // so taking the first one let a sibling with a different cause answer for the
-    // item and read a real recurrence as `none`. Same-`param` entries are asked
-    // first, and the best verdict among them wins.
+    // so taking the first one let a sibling answer for the item, both for the
+    // verdict and for the outage state recorded below. Only the item's own
+    // variant answers when the row has one; see `bestHit`.
     const titled = entries.filter((e) => e.test === item.test);
     if (!titled.length) continue;
     allDates.push(row.date);
-    const verdict = titled.includes(item) ? 'match' : bestVerdict(item, titled);
-    const hit = titled.find((e) => compareRecurrence(item, e) === verdict) || titled[0];
+    const { verdict, hit } = titled.includes(item)
+      ? { verdict: 'match', hit: item }
+      : bestHit(item, titled);
     if (verdict === 'unverified') unverifiedDates.push(row.date);
     if (verdict !== 'none') {
       sameDates.push(row.date);
@@ -161,18 +162,25 @@ export function computeRecurrence(item, rowsInWindow) {
 
 const VERDICT_RANK = { match: 2, unverified: 1, none: 0 };
 
-/** The strongest verdict any of `candidates` gives, same-`param` entries first. */
-function bestVerdict(item, candidates) {
+/**
+ * The entry of a row that answers for `item`, and its verdict.
+ *
+ * When the row carries the item's own variant (same `param`), only those entries
+ * answer: another provider failing the same way is that provider's recurrence,
+ * and letting it answer would also hand the item that variant's outage state.
+ * Every same-title entry answers only when none shares the param — a row written
+ * before `param` was recorded, or a spec that stopped parameterizing — which is
+ * what the title-only rule always did.
+ */
+function bestHit(item, candidates) {
   const sameParam = candidates.filter((e) => (e.param ?? null) === (item.param ?? null));
-  for (const pool of [sameParam, candidates]) {
-    let best = 'none';
-    for (const e of pool) {
-      const v = compareRecurrence(item, e);
-      if (VERDICT_RANK[v] > VERDICT_RANK[best]) best = v;
-    }
-    if (best !== 'none') return best;
+  const pool = sameParam.length ? sameParam : candidates;
+  let best = { verdict: 'none', hit: pool[0] };
+  for (const e of pool) {
+    const v = compareRecurrence(item, e);
+    if (VERDICT_RANK[v] > VERDICT_RANK[best.verdict]) best = { verdict: v, hit: e };
   }
-  return 'none';
+  return best;
 }
 
 /** True when the run had more hard failures than the auto-remove guard allows. */
