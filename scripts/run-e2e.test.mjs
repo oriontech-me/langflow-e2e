@@ -2853,3 +2853,46 @@ test("the evidence upload is gated on the same switch as the POST", () => {
   assert.ok(guard > 0 && guard < upload,
     "the upload must sit inside a POST_QA_PLATFORM guard");
 });
+
+test("phase_publish posts the token consumption after the run itself", () => {
+  // The number does not exist when the run's POST goes out — it is known only once
+  // every shard has finished and its artifacts have been gathered (#2017). Before this
+  // the lane captured token data per shard and read it nowhere.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const runPost = publish.indexOf('-X POST "$QA_PLATFORM_ENDPOINT"');
+  const tokenPost = publish.indexOf("post-token-payload.mjs");
+  assert.ok(tokenPost > 0, "the token POST is missing from phase_publish");
+  assert.ok(runPost > 0 && runPost < tokenPost, "the token POST must follow the run's own");
+});
+
+test("the token POST is gated on the switch and on a built payload", () => {
+  // With no payload there is nothing to attach a tokens block TO, and merge-token-payload
+  // would report payload_missing on a run whose report was simply never readable.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const guard = publish.slice(0, publish.indexOf("post-token-payload.mjs")).lastIndexOf('if [ "$POST_QA_PLATFORM" = "1" ]');
+  const line = publish.slice(guard, publish.indexOf("post-token-payload.mjs"));
+  assert.match(line, /PAYLOAD_BUILT.*=.*"true"/, "the token POST must also require a built payload");
+});
+
+test("the token POST reads the run's own directory, not a bare filename", () => {
+  // merge-token-payload defaults every path to the working directory, which is the
+  // repo root here — writing payload-with-tokens.json into the clone would leave the
+  // tree dirty and the wrapper's next `git pull --ff-only` would refuse.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const block = publish.slice(publish.indexOf("Posting the token consumption"), publish.indexOf("post-token-payload.mjs"));
+  for (const name of ["TOKENS_DIR", "TOKENS_SUMMARY_OUT", "PAYLOAD_IN", "PAYLOAD_OUT"]) {
+    const m = block.match(new RegExp(`${name}="([^"]*)"`));
+    assert.ok(m, `${name} is not set for the token POST`);
+    assert.match(m[1], /^\$RUN_DIR\//, `${name} must live under $RUN_DIR, got ${m[1]}`);
+  }
+});
+
+test("the token POST cannot abort the phase", () => {
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const after = publish.slice(publish.indexOf("post-token-payload.mjs"));
+  assert.match(after.slice(0, 120), /\|\|\s*true/, "phase_publish runs under set -e — the token POST needs a guard");
+});

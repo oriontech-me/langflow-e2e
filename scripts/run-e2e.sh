@@ -2409,6 +2409,34 @@ phase_publish() {
     fi
   fi
 
+  # The token consumption, as a SECOND POST (#2017). The total does not exist when the
+  # run's own POST goes out: it is only known once every shard has finished and its
+  # artifacts have been gathered, and delaying the verdict for a diagnostic would be the
+  # wrong trade. The platform's ingest is idempotent on the run row, so this re-POSTs the
+  # same payload with a `tokens` block added and only the token rows land.
+  #
+  # Until this line the lane CAPTURED and never sent: all-tokens/ holds a token-attrib
+  # and a token-probes file per shard, and nothing read them. Invisible while the Actions
+  # lane still posts, and a silent stop the day it is retired.
+  #
+  # The reporting lives in the script rather than here because there are eight outcomes
+  # that must stay distinguishable — four from the merge, four from the ingest, HTTP 200
+  # being no verdict at all — and #1226 is the standing lesson about composing that kind
+  # of message where nothing can assert on it.
+  #
+  # Never fatal, and no `|| warn` needed: every path in it returns 0 by design, because
+  # telemetry is an attachment to a verdict. The `|| true` is belt and braces against a
+  # crash in the interpreter itself, which under `set -e` would take the phase down.
+  if [ "$POST_QA_PLATFORM" = "1" ] && [ "$PAYLOAD_BUILT" = "true" ]; then
+    log "Posting the token consumption"
+    TOKENS_DIR="$RUN_DIR/all-tokens" \
+    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    PAYLOAD_IN="$RUN_DIR/payload.json" \
+    PAYLOAD_OUT="$RUN_DIR/payload-with-tokens.json" \
+    TOKENS_SHARD_TOTAL="${SHARDS:-}" \
+      node scripts/post-token-payload.mjs || true
+  fi
+
   # The durations series. Empty and partial are excluded for the workflow's own reason:
   # `extract` merges onto what it is given, and a sweep that ran a fraction of the
   # specs would rewrite the balance of the whole matrix from a fraction of the evidence.
