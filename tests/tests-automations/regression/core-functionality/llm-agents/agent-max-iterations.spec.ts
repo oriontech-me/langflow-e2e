@@ -30,7 +30,8 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  *
  * Issue #481 flagged a backend bug (parameter ignored) and asked to gate this
  * expected-fail. Reproduction on 1.11.0.dev33 shows the parameter is RESPECTED
- * (1 → run limit (1/1); high → finishes), so this is a normal passing @stable test.
+ * (1 → run limit (1/1); high → finishes), so this was, at the time, a normal passing
+ * @stable test.
  *
  * #1264 read as "the cap is no longer enforced" and quarantined Test 1. Its FIRST
  * pass blamed this spec's fetch target (an SSRF-blocked URL putting every run on
@@ -51,7 +52,9 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * Hence the two changes here: the Agent Instructions state an ordering rule the
  * old wording left satisfiable by an announcement, and Test 1 asserts the tool
  * step SEPARATELY so model non-compliance cannot masquerade as a broken cap.
- * The product itself is correct — measured on 1.12.0.dev39, see the spec doc.
+ * The cap itself is enforced — measured on 1.12.0.dev39, see the spec doc. Losing the
+ * limit message when the model writes text alongside its tool call is a separate
+ * product regression, LE-2728 (#1991), and Test 1 is quarantined for it below.
  */
 
 if (!process.env.CI) {
