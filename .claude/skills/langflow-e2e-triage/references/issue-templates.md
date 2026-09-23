@@ -96,17 +96,18 @@ Include:
 - The `error_signature` **copied verbatim** from the run's row in
   `reports/daily-history.jsonl`
 
-**The signature is copied, never written.** It is the key the same-signature
-recurrence rule matches on (`CONTRIBUTING.md` → *Monitoring rules driven by run
-history*), and `normalizeSignature()` only strips ANSI, collapses whitespace and
-lowercases — it does not understand paraphrase. So:
+**The signature is copied, never written.** It is the key the dedup against open
+issues matches on (see *Enrich vs Create Rule* below) — the recurrence rule itself compares
+the history rows' `recurrence_keys` since #1626, never this body — and
+`normalizeSignature()` only strips ANSI, collapses whitespace and lowercases — it
+does not understand paraphrase. So:
 
 - Copy the value out of the history row unedited. Do not shorten it, do not
   reword it, do not merge two tests' signatures into one description.
 - If the run recorded `"unknown"` — which happens when the failure carried no
   error message — write `unknown`. Substituting a description of what you think
-  happened makes the next run's occurrence unmatchable, and the flake rule then
-  reads a recurrence as a first occurrence.
+  happened makes the next run's occurrence unmatchable against this issue, and
+  the dedup then files the recurrence as a new one.
 - ANSI codes are stripped by the renderer; a literal `|` is escaped so it cannot
   break the table. Both are safe to leave in the value you copy.
 
