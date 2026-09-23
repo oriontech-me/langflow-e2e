@@ -47,6 +47,8 @@
  *
  * Telemetry never fails the run: the CLI always exits 0, and the last line it
  * prints (`post-token-payload: outcome=<…>`) is the machine-readable contract.
+ * TOKEN_POST_TIMEOUT_MS bounds the request (default 60 s — generous for one JSON
+ * POST, not measured); TOKEN_POST_RESPONSE_OUT keeps the response body as evidence.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -233,9 +235,11 @@ export async function postTokenPayload({
     status = response.status;
     body = await response.text();
   } catch (error) {
-    log(`post-token-payload: the request did not complete: ${error?.message || error}`);
+    log(`post-token-payload: the POST did not complete (payload unreadable, refused or timed out): ${error?.message || error}`);
   }
-  if (env.TOKEN_POST_RESPONSE_OUT) {
+  // Only when something answered: an empty file would read as "the platform answered
+  // with an empty body", which is a different fact from no answer at all.
+  if (env.TOKEN_POST_RESPONSE_OUT && status) {
     try {
       io.writeFile(env.TOKEN_POST_RESPONSE_OUT, body);
     } catch {

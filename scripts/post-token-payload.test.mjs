@@ -270,3 +270,29 @@ test("the CLI exits 0 on a failure outcome too — telemetry never fails the run
   assert.equal(r.code, 0);
   assert.match(r.stdout.trim().split("\n").at(-1), /^post-token-payload: outcome=http_failed$/);
 });
+
+test("a platform that accepts and never answers is bounded, and leaves no evidence file", async () => {
+  const server = createServer(() => {
+    // Never respond.
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const { env, dir } = runDir();
+    const out = path.join(dir, "resp.json");
+    const { port } = server.address();
+    const started = Date.now();
+    const r = await runCli({
+      ...env,
+      QA_PLATFORM_ENDPOINT: `http://127.0.0.1:${port}/runs`,
+      TOKEN_POST_TIMEOUT_MS: "500",
+      TOKEN_POST_RESPONSE_OUT: out,
+    });
+    assert.equal(r.code, 0);
+    assert.ok(Date.now() - started < 10_000, "the timeout must bound the request");
+    assert.equal(r.stdout.trim().split("\n").at(-1), "post-token-payload: outcome=http_failed");
+    assert.equal(existsSync(out), false, "no answer must not be recorded as an empty answer");
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});
