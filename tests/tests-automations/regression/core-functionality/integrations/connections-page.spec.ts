@@ -207,7 +207,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
 
   test(
     "a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle",
-    { tag: ["@stable", "@integrations", "@settings", "@ui-ux"] },
+    { tag: ["@integrations", "@settings", "@ui-ux"] },
     async ({ page, request, playwright }) => {
       const headers = { Authorization: await getAuthToken(request) };
       const accountDisplay = `Scout ${uniqueConnectionName("acct")}`;

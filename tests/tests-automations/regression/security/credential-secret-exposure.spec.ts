@@ -457,7 +457,7 @@ test.describe("Credential secret exposure", () => {
 
   test(
     "the exported flow carries the credential binding, never the secret",
-    { tag: ["@stable", "@api", "@regression"] },
+    { tag: ["@api", "@regression"] },
     async ({ request }) => {
       // DECLARED FAILING (#1546, LE-2649), and the declaration is the alarm in
       // both directions.
