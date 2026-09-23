@@ -23,7 +23,8 @@
 // for: no machines, no ssh, no real run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 
@@ -2852,4 +2853,113 @@ test("the evidence upload is gated on the same switch as the POST", () => {
   const guard = publish.lastIndexOf('if [ "$POST_QA_PLATFORM" = "1" ]', upload);
   assert.ok(guard > 0 && guard < upload,
     "the upload must sit inside a POST_QA_PLATFORM guard");
+});
+
+// ---------------------------------------------------------------------------
+// The token rows (#2017)
+// ---------------------------------------------------------------------------
+
+/** phase_publish, run for real, against a local platform that records what it got. */
+async function publishTokens({ post = "1", probes = true } = {}) {
+  const dir = makeTempDir("publish-tokens-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  writeFileSync(join(dir, "results.json"), JSON.stringify({ stats: { expected: 1 }, suites: [] }));
+  if (probes) {
+    writeFileSync(
+      join(dir, "all-tokens", "token-probes-1.jsonl"),
+      JSON.stringify({
+        trace_id: "t1",
+        flow_id: "f1",
+        start_time: "2026-09-23T07:00:00Z",
+        status: "ok",
+        total_tokens: 88,
+        models: [{ model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
+      }) + "\n",
+    );
+  }
+  // The coverage counts come from ts-node; stubbed so the test does not pay for it.
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "npx"), "#!/usr/bin/env bash\necho 7\n", { mode: 0o755 });
+
+  const received = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const json = JSON.parse(body);
+      received.push(json);
+      res.writeHead(json.tokens ? 200 : 201, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify(
+          json.tokens
+            ? { status: "exists", tokens_status: "ingested", tokens_dropped: 0, tokens_received: json.tokens.rows.length }
+            : { status: "created" },
+        ),
+      );
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address();
+  try {
+    const r = await new Promise((resolveRun) => {
+      const child = spawn(
+        BASH,
+        ["-c", `source ${JSON.stringify(SCRIPT)}\nRUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0 RUN_TESTS=1 LANGFLOW_VERSION=1.13.0.dev21\nphase_publish\necho REACHED_AFTER_PUBLISH`],
+        {
+          cwd: REPO_ROOT,
+          env: {
+            ...process.env,
+            TARGET_SSH: "unused-in-sourced-tests",
+            PATH: `${bin}:${process.env.PATH}`,
+            KEEP_LEDGER: "0",
+            CREATE_ISSUE: "0",
+            NOTIFY_SLACK: "0",
+            AUTO_REMOVE: "0",
+            POST_QA_PLATFORM: post,
+            QA_PLATFORM_ENDPOINT: `http://127.0.0.1:${port}/runs`,
+            QA_E2E_AUTOMATION_TOKEN: "tok",
+          },
+        },
+      );
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => resolveRun({ code, out }));
+    });
+    return { ...r, dir, received };
+  } finally {
+    server.close();
+  }
+}
+
+test("phase_publish sends the token rows as a second POST of the same run", async () => {
+  // The defect had two halves and this drives both: the summary wrote no block (no
+  // TOKENS_SUMMARY_OUT), and nothing merged or POSTed one. Read from what the platform
+  // RECEIVED, so neither half can be satisfied by the script's text alone (#1226).
+  const r = await publishTokens();
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 2, `expected the run POST and the token POST:\n${r.out}`);
+  const [run, tokens] = r.received;
+  assert.equal(run.tokens, undefined, "the run's own POST must not wait for, or carry, the tokens");
+  assert.equal(tokens.run_id, run.run_id, "the token POST re-sends the SAME run, so only the token rows land");
+  assert.equal(tokens.tokens.total_tokens, 88);
+  assert.match(r.out, /post-token-payload: outcome=delivered/);
+  assert.match(readFileSync(join(r.dir, "logs", "token-post.log"), "utf8"), /outcome=delivered/);
+  assert.ok(existsSync(join(r.dir, "tokens-block.json")), "the block is kept in the run dir as evidence");
+});
+
+test("the token POST is behind POST_QA_PLATFORM, like the run POST", async () => {
+  const r = await publishTokens({ post: "0" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 0);
+  assert.doesNotMatch(r.out, /post-token-payload/);
+});
+
+test("a run that captured no tokens POSTs the run only, and says why", async () => {
+  const r = await publishTokens({ probes: false });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 1, "no token block means no token POST — never a zeroed one");
+  assert.match(r.out, /post-token-payload: outcome=block_missing/);
 });

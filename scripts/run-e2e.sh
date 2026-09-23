@@ -2441,9 +2441,35 @@ phase_publish() {
   fi
   local tokens_env=() kv
   while IFS= read -r kv; do tokens_env+=("$kv"); done < <(tokens_history_env)
+  # TOKENS_SUMMARY_OUT is what makes the spend leave the machine at all (#2017): without
+  # it the summarizer writes the history line and the step summary and no block, so
+  # there is nothing for the POST below to attach. LANGFLOW_IMAGE and TESTS_TOTAL are
+  # the workflow's own two: the image labels the row, and TESTS_TOTAL is how a zero-test
+  # abort is told from a run that spent nothing (empty means UNKNOWN, never zero).
   env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    LANGFLOW_IMAGE="${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}" \
+    TESTS_TOTAL="${RUN_TESTS:-}" \
     node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
+
+  # The token rows, as a SECOND POST of the same payload (#2017) — the Actions lane's
+  # `POST token consumption to QA Platform`. After the summary because the block does
+  # not exist before it; after the run POST because that one must never wait behind
+  # telemetry. The outcomes, and why none may collapse into another, live in the script
+  # so they can be tested on output rather than on this text (#1226). Always exits 0;
+  # the `|| warn` is for a node that could not start at all.
+  if [ "$POST_QA_PLATFORM" = "1" ]; then
+    log "Posting the token consumption"
+    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    TOKENS_DIR="$RUN_DIR/all-tokens" \
+    TOKENS_SHARD_TOTAL="${SHARD_TOTAL:-}" \
+    PAYLOAD_IN="$RUN_DIR/payload.json" \
+    PAYLOAD_OUT="$RUN_DIR/payload-with-tokens.json" \
+    TOKEN_POST_RESPONSE_OUT="$RUN_DIR/logs/qa-platform-token-response.json" \
+      node scripts/post-token-payload.mjs 2>&1 | tee "$RUN_DIR/logs/token-post.log" \
+      || warn "the token POST could not run — this run's token spend is UNKNOWN, not zero (not blocking)."
+  fi
 
   # The run series — one line per scheduled sweep, and the switch that used to gate it
   # was named for something this script does not do. COMMIT_HISTORY implied a commit;
