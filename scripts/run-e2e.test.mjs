@@ -2860,10 +2860,11 @@ test("the evidence upload is gated on the same switch as the POST", () => {
 // ---------------------------------------------------------------------------
 
 /** phase_publish, run for real, against a local platform that records what it got. */
-async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1", endpoint } = {}) {
+async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1", endpoint, ledger = false } = {}) {
   const dir = makeTempDir("publish-tokens-");
   mkdirSync(join(dir, "logs"), { recursive: true });
   mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  if (ledger) mkdirSync(join(dir, "ledger"), { recursive: true });
   writeFileSync(join(dir, "results.json"), JSON.stringify({ stats: { expected: 1 }, suites: [] }));
   if (probes) {
     writeFileSync(
@@ -2920,6 +2921,9 @@ async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1",
             POST_QA_PLATFORM: post,
             QA_PLATFORM_ENDPOINT: endpoint ?? `http://127.0.0.1:${port}/runs`,
             QA_E2E_AUTOMATION_TOKEN: "tok",
+            ...(ledger
+              ? { KEEP_LEDGER: "1", EVENT_NAME: "schedule", LEDGER_DIR: join(dir, "ledger") }
+              : {}),
           },
         },
       );
@@ -2943,7 +2947,8 @@ test("phase_publish sends the token rows as a second POST of the same run", asyn
   assert.equal(r.received.length, 2, `expected the run POST and the token POST:\n${r.out}`);
   const [run, tokens] = r.received;
   assert.equal(run.tokens, undefined, "the run's own POST must not wait for, or carry, the tokens");
-  assert.equal(tokens.run_id, run.run_id, "the token POST re-sends the SAME run, so only the token rows land");
+  const { tokens: _block, ...rest } = tokens;
+  assert.deepEqual(rest, run, "the token POST re-sends the SAME run payload, so only the token rows land");
   assert.equal(tokens.tokens.total_tokens, 88);
   assert.match(r.out, /post-token-payload: outcome=delivered/);
   assert.match(readFileSync(join(r.dir, "logs", "token-post.log"), "utf8"), /outcome=delivered/);
@@ -2991,4 +2996,16 @@ test("a platform that does not answer cannot abort publish — neither POST fail
   assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
   assert.match(r.out, /the QA Platform POST failed \(HTTP 000\)/);
   assert.match(r.out, /post-token-payload: outcome=http_failed/);
+  assert.match(r.out, /::warning:: the token POST did not deliver \(outcome=http_failed\)/,
+    "a failed token POST is raised as the lane's own warning, not left as a plain log line");
+});
+
+test("the ledger's spend line names what ran, and the delivered POST raises no warning", async () => {
+  // LANGFLOW_IMAGE labels the row; without it the line reads langflow_image: null.
+  const r = await publishTokens({ ledger: true, state: "RUN_TESTS=1 RUN_EMPTY=false RUN_PARTIAL=false" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  const line = JSON.parse(readFileSync(join(r.dir, "ledger", "token-history.jsonl"), "utf8").trim().split("\n").at(-1));
+  assert.equal(line.langflow_image, "pypi:langflow==1.13.0.dev21");
+  assert.equal(line.workflow, "daily-stable-vm");
+  assert.doesNotMatch(r.out, /the token POST did not deliver/);
 });

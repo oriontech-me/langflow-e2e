@@ -39,8 +39,8 @@
  *   platform's side too and never fails the request, so a rejected or dropped
  *   block arrives inside a 200 (contract: quality-platform
  *   e2e-automation-runs-create/index.ts, `tokenFields`):
- *     http_failed          no response, or a non-2xx one
- *     status_absent        a 2xx whose body carries no tokens_status (or no body)
+ *     http_failed          no response, or anything but 200/201
+ *     status_absent        a 200/201 whose body carries no tokens_status (or no body)
  *     not_ingested         tokens_status is skipped | rejected | failed
  *     dropped              ingested, but tokens_dropped != 0
  *     delivered            ingested with nothing dropped — the ONLY success
@@ -111,7 +111,9 @@ export function describeMerge(code) {
  * plausible-looking zero.
  */
 export function classifyIngest(status, body) {
-  if (!(status >= 200 && status < 300)) {
+  // 200 and 201 only, as the workflow reads it: the endpoint answers one of those two,
+  // and anything else is a response this contract does not describe.
+  if (status !== 200 && status !== 201) {
     return {
       outcome: "http_failed",
       level: "warn",

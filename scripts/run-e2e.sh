@@ -2485,6 +2485,14 @@ phase_publish() {
     TOKEN_POST_RESPONSE_OUT="$RUN_DIR/logs/qa-platform-token-response.json" \
       node scripts/post-token-payload.mjs 2>&1 | tee "$RUN_DIR/logs/token-post.log" \
       || warn "the token POST could not run — this run's token spend is UNKNOWN, not zero (not blocking)."
+    # Raised as the lane's own ::warning::, so a lost block is not a plain line in the
+    # log. delivered and block_missing are the two outcomes that are not a problem.
+    local token_outcome
+    token_outcome="$(sed -n 's/^post-token-payload: outcome=//p' "$RUN_DIR/logs/token-post.log" 2>/dev/null | tail -n 1)" || true
+    case "$token_outcome" in
+      delivered | block_missing) ;;
+      *) warn "the token POST did not deliver (outcome=${token_outcome:-none}) — see logs/token-post.log (not blocking)." ;;
+    esac
   fi
 
   # The run series — one line per scheduled sweep, and the switch that used to gate it

@@ -183,6 +183,7 @@ test("a request that never completes is http_failed, not a crash", async () => {
 test("HTTP 200 is not the verdict: each body shape is its own outcome", () => {
   const cases = [
     [500, { tokens_status: "ingested", tokens_dropped: 0 }, "http_failed"],
+    [202, { tokens_status: "ingested", tokens_dropped: 0 }, "http_failed"],
     [0, "", "http_failed"],
     [200, "", "status_absent"],
     [200, "<html>", "status_absent"],
