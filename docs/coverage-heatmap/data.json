@@ -177,7 +177,7 @@
   },
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 8.2,
+   "residualRisk": 8.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -188,19 +188,20 @@
     "weightedBugs": 57.6,
     "weightedChurn": 2.95
    },
-   "mitigationBulletDerived": 0.73,
+   "mitigationBulletDerived": 0.71,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 1,
     "chronicFlaky": 5,
     "stableSpecs": 35,
-    "penalty": 0.063
+    "penalty": 0.061
    },
-   "mitigation": 0.67,
+   "mitigation": 0.65,
    "checklistBullets": 44,
    "bulletStates": {
-    "x": 40,
+    "x": 38,
     " ": 3,
+    "-": 2,
     "~": 1
    },
    "previous": {
@@ -298,6 +299,52 @@
    }
   },
   {
+   "area": "NEW security",
+   "residualRisk": 6,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "mitigationBulletDerived": 0.65,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0.046
+   },
+   "mitigation": 0.6,
+   "checklistBullets": 30,
+   "bulletStates": {
+    "x": 24,
+    "!": 1,
+    " ": 5
+   },
+   "previous": {
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0,
+    "checklistBullets": 11
+   },
+   "judgementRationale": "SSRF/secret exposure; not a checklist area at all",
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "upstreamBugCount": 10,
+   "specCounts": {
+    "specs": 7,
+    "stable": 7
+   }
+  },
+  {
    "area": "12.6 Build / graph engine",
    "residualRisk": 5.6,
    "inherentRisk": 20,
@@ -341,52 +388,6 @@
    "specCounts": null
   },
   {
-   "area": "NEW security",
-   "residualRisk": 5.3,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
-   },
-   "mitigationBulletDerived": 0.65,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 7,
-    "penalty": 0
-   },
-   "mitigation": 0.65,
-   "checklistBullets": 30,
-   "bulletStates": {
-    "x": 24,
-    "!": 1,
-    " ": 5
-   },
-   "previous": {
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0,
-    "checklistBullets": 11
-   },
-   "judgementRationale": "SSRF/secret exposure; not a checklist area at all",
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
-   },
-   "upstreamBugCount": 10,
-   "specCounts": {
-    "specs": 7,
-    "stable": 7
-   }
-  },
-  {
    "area": "15 Canvas / UI",
    "residualRisk": 5,
    "inherentRisk": 20,
@@ -404,13 +405,13 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 24,
+    "stableSpecs": 25,
     "penalty": 0
    },
    "mitigation": 0.75,
-   "checklistBullets": 55,
+   "checklistBullets": 58,
    "bulletStates": {
-    "x": 50,
+    "x": 53,
     "~": 5
    },
    "previous": {
@@ -429,7 +430,7 @@
    "upstreamBugCount": 54,
    "specCounts": {
     "specs": 27,
-    "stable": 24
+    "stable": 25
    }
   },
   {
@@ -715,7 +716,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 36,
+    "stableSpecs": 37,
     "penalty": 0
    },
    "mitigation": 0.76,
@@ -741,8 +742,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 36,
-    "stable": 36
+    "specs": 37,
+    "stable": 37
    }
   },
   {
@@ -1049,6 +1050,47 @@
    "specCounts": null
   },
   {
+   "area": "7.7 Model parameters",
+   "residualRisk": 1.8,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "inputs": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.1,
+    "weightedChurn": 0
+   },
+   "mitigationBulletDerived": 0.7,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "mitigation": 0.7,
+   "checklistBullets": 4,
+   "bulletStates": {
+    "x": 3,
+    "-": 1
+   },
+   "previous": {
+    "residualRisk": 1.2,
+    "inherentRisk": 6,
+    "mitigation": 0.8,
+    "checklistBullets": 4
+   },
+   "judgementRationale": "Wrong params silently change model behaviour",
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2026": 3
+   },
+   "upstreamBugCount": 4,
+   "specCounts": null
+  },
+  {
    "area": "4.3 Global variables",
    "residualRisk": 1.6,
    "inherentRisk": 8,
@@ -1070,9 +1112,9 @@
     "penalty": 0
    },
    "mitigation": 0.8,
-   "checklistBullets": 7,
+   "checklistBullets": 8,
    "bulletStates": {
-    "x": 7
+    "x": 8
    },
    "previous": {
     "residualRisk": 2.7,
@@ -1133,46 +1175,6 @@
    }
   },
   {
-   "area": "7.7 Model parameters",
-   "residualRisk": 1.2,
-   "inherentRisk": 6,
-   "probability": 2,
-   "impact": 3,
-   "inputs": {
-    "bugQuintile": 1,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.1,
-    "weightedChurn": 0
-   },
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 0,
-    "penalty": 0
-   },
-   "mitigation": 0.8,
-   "checklistBullets": 4,
-   "bulletStates": {
-    "x": 4
-   },
-   "previous": {
-    "residualRisk": 1.2,
-    "inherentRisk": 6,
-    "mitigation": 0.8,
-    "checklistBullets": 4
-   },
-   "judgementRationale": "Wrong params silently change model behaviour",
-   "upstreamBugsByYear": {
-    "2023": 1,
-    "2026": 3
-   },
-   "upstreamBugCount": 4,
-   "specCounts": null
-  },
-  {
    "area": "10 Projects / folders",
    "residualRisk": 0.8,
    "inherentRisk": 3,
@@ -1218,9 +1220,9 @@
    }
   }
  ],
- "refreshed": "2026-09-22",
+ "refreshed": "2026-09-23",
  "refreshWindow": {
-  "testHealthSince": "2026-08-08",
+  "testHealthSince": "2026-08-09",
   "days": 45
  }
 }

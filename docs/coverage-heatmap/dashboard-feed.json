@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-09-22",
+ "refreshed": "2026-09-23",
  "refreshWindow": {
-  "testHealthSince": "2026-08-08",
+  "testHealthSince": "2026-08-09",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 799,
-  "bulletsAutomatedUnwatched": 116,
-  "residualRiskTotal": 107.1
+  "bullets": 803,
+  "bulletsAutomatedUnwatched": 119,
+  "residualRiskTotal": 109
  },
  "areas": [
   {
@@ -167,12 +167,12 @@
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 3,
-   "residualRisk": 8.2,
+   "residualRisk": 8.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.67,
-   "mitigationBulletDerived": 0.73,
+   "mitigation": 0.65,
+   "mitigationBulletDerived": 0.71,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
@@ -183,8 +183,8 @@
    },
    "bullets": {
     "total": 44,
-    "validated": 40,
-    "automatedUnwatched": 0,
+    "validated": 38,
+    "automatedUnwatched": 2,
     "partial": 1,
     "flaky": 0,
     "empty": 3
@@ -197,7 +197,7 @@
     "chronicHardFailures": 1,
     "chronicFlaky": 5,
     "stableSpecs": 35,
-    "penalty": 0.063
+    "penalty": 0.061
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -211,7 +211,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": 0.8,
+    "residualRisk": 1.4,
     "rank": 1,
     "direction": "worsened"
    },
@@ -320,9 +320,67 @@
    "rationale": "A wrong allow in the deny matrix exposes another tenant's flows — maximum blast radius. Fragility: RBAC is a property of the database (bootstrap writes assignments at startup, no way back), and three surfaces already disagree about inherited access (#1532)."
   },
   {
+   "key": "security",
+   "label": "NEW security",
+   "rank": 6,
+   "residualRisk": 6,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.6,
+   "mitigationBulletDerived": 0.65,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "bullets": {
+    "total": 30,
+    "validated": 24,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 1,
+    "empty": 5
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0.046
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 1,
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -9,
+    "rank": -5,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "SSRF/secret exposure; not a checklist area at all"
+  },
+  {
    "key": "graph-engine",
    "label": "12.6 Build / graph engine",
-   "rank": 6,
+   "rank": 7,
    "residualRisk": 5.6,
    "inherentRisk": 20,
    "probability": 4,
@@ -365,7 +423,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 1,
+    "rank": 0,
     "direction": "improved"
    },
    "isNew": false,
@@ -375,64 +433,6 @@
     2836
    ],
    "rationale": "If a run fails nothing else in the product matters; async graph execution"
-  },
-  {
-   "key": "security",
-   "label": "NEW security",
-   "rank": 7,
-   "residualRisk": 5.3,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.65,
-   "mitigationBulletDerived": 0.65,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
-   },
-   "bullets": {
-    "total": 30,
-    "validated": 24,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 1,
-    "empty": 5
-   },
-   "specs": {
-    "specs": 7,
-    "stable": 7
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 7,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 1,
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0
-   },
-   "delta": {
-    "residualRisk": -9.7,
-    "rank": -6,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "SSRF/secret exposure; not a checklist area at all"
   },
   {
    "key": "canvas-ui",
@@ -453,8 +453,8 @@
     "weightedChurn": 4.22
    },
    "bullets": {
-    "total": 55,
-    "validated": 50,
+    "total": 58,
+    "validated": 53,
     "automatedUnwatched": 0,
     "partial": 5,
     "flaky": 0,
@@ -462,12 +462,12 @@
    },
    "specs": {
     "specs": 27,
-    "stable": 24
+    "stable": 25
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 24,
+    "stableSpecs": 25,
     "penalty": 0
    },
    "upstreamBugsByYear": {
@@ -860,13 +860,13 @@
     "empty": 2
    },
    "specs": {
-    "specs": 36,
-    "stable": 36
+    "specs": 37,
+    "stable": 37
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 36,
+    "stableSpecs": 37,
     "penalty": 0
    },
    "upstreamBugsByYear": {
@@ -1289,9 +1289,63 @@
    "rationale": "Network-dependent component, widely used but replaceable"
   },
   {
+   "key": "model-parameters",
+   "label": "7.7 Model parameters",
+   "rank": 23,
+   "residualRisk": 1.8,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "mitigation": 0.7,
+   "mitigationBulletDerived": 0.7,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.1,
+    "weightedChurn": 0
+   },
+   "bullets": {
+    "total": 4,
+    "validated": 3,
+    "automatedUnwatched": 1,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 23,
+    "residualRisk": 1.2,
+    "inherentRisk": 6,
+    "mitigation": 0.8
+   },
+   "delta": {
+    "residualRisk": 0.6,
+    "rank": 0,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Wrong params silently change model behaviour"
+  },
+  {
    "key": "global-variables",
    "label": "4.3 Global variables",
-   "rank": 23,
+   "rank": 24,
    "residualRisk": 1.6,
    "inherentRisk": 8,
    "probability": 2,
@@ -1307,8 +1361,8 @@
     "weightedChurn": 0.5
    },
    "bullets": {
-    "total": 7,
-    "validated": 7,
+    "total": 8,
+    "validated": 8,
     "automatedUnwatched": 0,
     "partial": 0,
     "flaky": 0,
@@ -1334,7 +1388,7 @@
    },
    "delta": {
     "residualRisk": -1.1,
-    "rank": -6,
+    "rank": -7,
     "direction": "improved"
    },
    "isNew": false,
@@ -1346,7 +1400,7 @@
   {
    "key": "i18n",
    "label": "NEW i18n / localization",
-   "rank": 24,
+   "rank": 25,
    "residualRisk": 1.2,
    "inherentRisk": 6,
    "probability": 2,
@@ -1391,7 +1445,7 @@
    },
    "delta": {
     "residualRisk": -4.8,
-    "rank": -16,
+    "rank": -17,
     "direction": "improved"
    },
    "isNew": false,
@@ -1399,60 +1453,6 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "Black screen by browser locale is total failure, but for a subset of users"
-  },
-  {
-   "key": "model-parameters",
-   "label": "7.7 Model parameters",
-   "rank": 25,
-   "residualRisk": 1.2,
-   "inherentRisk": 6,
-   "probability": 2,
-   "impact": 3,
-   "mitigation": 0.8,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 1,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.1,
-    "weightedChurn": 0
-   },
-   "bullets": {
-    "total": 4,
-    "validated": 4,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 0,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2023": 1,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 23,
-    "residualRisk": 1.2,
-    "inherentRisk": 6,
-    "mitigation": 0.8
-   },
-   "delta": {
-    "residualRisk": 0,
-    "rank": -2,
-    "direction": "flat"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "Wrong params silently change model behaviour"
   },
   {
    "key": "projects-folders",
