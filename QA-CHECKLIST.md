@@ -1588,7 +1588,7 @@
 | `core-functionality/templates/` | 46 | 34 | 0 | 0 | 12 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
-| `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
+| `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 47 | 43 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
@@ -1599,7 +1599,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **728** | **626 (86%)** | **36 (5%)** | **14 (2%)** | **52 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **730** | **628 (86%)** | **36 (5%)** | **14 (2%)** | **52 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1615,7 +1615,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 697 `test()` calls carrying the `@stable` tag, distributed across 274 spec
+> 699 `test()` calls carrying the `@stable` tag, distributed across 274 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2264,6 +2264,8 @@
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 - [x] registering an already-existing MCP server returns 409 Conflict → `mcp-server-registration-status-codes.spec.ts`
 - [x] deleting a non-existent MCP server returns 404 Not Found → `mcp-server-registration-status-codes.spec.ts`
+- [x] reading a non-existent MCP server returns 404 Not Found → `mcp-server-registration-status-codes.spec.ts`
+- [x] patching a non-existent MCP server returns 404 and creates nothing → `mcp-server-registration-status-codes.spec.ts`
 
 #### mcp/server/
 - [x] the URL the UI copies is rooted at the user's own origin, agrees with the API, and resolves → `mcp-server-install.spec.ts`
