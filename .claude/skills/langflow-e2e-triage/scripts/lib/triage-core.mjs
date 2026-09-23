@@ -1,6 +1,10 @@
 // Pure, I/O-free triage helpers. Everything here is unit-tested with fixtures;
 // all filesystem / gh access lives in build-triage-dataset.mjs.
 
+// Imported, not injected like the infra classifier: this module is pure too, and
+// it is the SAME comparison the appender's keys were derived for (#1626).
+import { compareRecurrence } from '../../../../../scripts/lib/recurrence-key.mjs';
+
 /** Parse JSONL history text into an array of run rows (chronological order). */
 export function parseHistory(text) {
   return text
@@ -94,16 +98,25 @@ export function outageCorroborated(overlap, threshold = OUTAGE_COVERAGE_THRESHOL
  *  rowsInWindow must already include the latest run.
  *
  *  Recurrence is about the *same cause*, so `count`/`dates` report only the
- *  occurrences whose normalized error signature matches the item's — this is
- *  what the proposal should cite. A test can recur under the same title for
- *  different causes (different signatures); those inflate a raw title tally
- *  without being same-cause recurrence, so they are excluded from count/dates
- *  and surfaced separately as `total_count`/`total_dates` for context only.
- *  `same_signature` (>= 2 same-signature hits) is unchanged and still drives
- *  the actionable decision. */
+ *  occurrences whose recurrence key matches the item's — this is what the
+ *  proposal should cite. A test can recur under the same title for different
+ *  causes; those inflate a raw title tally without being same-cause recurrence,
+ *  so they are excluded from count/dates and surfaced separately as
+ *  `total_count`/`total_dates` for context only. `same_signature` (>= 2
+ *  same-cause hits) still drives the actionable decision.
+ *
+ *  "Same cause" is `compareRecurrence()` (`scripts/lib/recurrence-key.mjs`,
+ *  #1626), no longer equality of `error_signature`: that string named neither the
+ *  element nor the call site, so one spec collided with itself, and it carried the
+ *  model and counters a marker assertion interpolates, so one cause never matched
+ *  itself. A date whose row predates the keys can only be compared on the
+ *  failure's head — the collision that issue was raised about — so it is counted
+ *  (a legacy row read as "no recurrence" would reset every window the day the
+ *  keys shipped) and ALSO listed in `unverified_dates`, which the proposal must
+ *  check against that run's call log before citing the figure. */
 export function computeRecurrence(item, rowsInWindow) {
-  const target = normalizeSignature(item.error_signature);
   const allDates = [];
+  const unverifiedDates = [];
   const sameDates = [];
   // What the backend was doing on each of the earlier occurrences (#1763). The
   // `liveness-*` artifacts expire after 7 days and this window is 30, so the
@@ -115,22 +128,29 @@ export function computeRecurrence(item, rowsInWindow) {
   const outageByDate = {};
   for (const row of rowsInWindow) {
     const entries = [...(row.failures || []), ...(row.flaky || [])];
-    const hit = entries.find((e) => e.test === item.test);
+    // The item's own row answers with the item itself: a legacy row compared
+    // with itself is only `unverified` on the head, and a parameterized spec can
+    // carry the same title twice in one row, so `find` could return the sibling.
+    const hit = entries.includes(item) ? item : entries.find((e) => e.test === item.test);
     if (!hit) continue;
     allDates.push(row.date);
-    if (normalizeSignature(hit.error_signature) === target) {
+    const verdict = hit === item ? 'match' : compareRecurrence(item, hit);
+    if (verdict === 'unverified') unverifiedDates.push(row.date);
+    if (verdict !== 'none') {
       sameDates.push(row.date);
       outageByDate[row.date] = hit.outage_overlap?.state || 'unrecorded';
     }
   }
   allDates.sort();
   sameDates.sort();
+  unverifiedDates.sort();
   return {
     count: sameDates.length,
     dates: sameDates,
     same_signature: sameDates.length >= 2,
     total_count: allDates.length,
     total_dates: allDates,
+    unverified_dates: unverifiedDates,
     outage_by_date: outageByDate,
   };
 }

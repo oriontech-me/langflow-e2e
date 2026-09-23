@@ -116,6 +116,21 @@ test('computeRecurrence count/dates cover only same-signature occurrences (mixed
   assert.deepEqual(r.total_dates, ['2026-07-02', '2026-07-09', '2026-07-15', '2026-07-17']);
 });
 
+test('computeRecurrence reads the item\'s own row as a match, never as unverified (#1626)', () => {
+  // A legacy row compared with itself agrees only on the head, and a
+  // parameterized spec carries its title twice in one row — so the sibling
+  // variant, not the item, would be found first and judged instead.
+  const sibling = { test: 'vs query', line: 5, param: 'openai / a', error_signature: 'Error: other' };
+  const item = { test: 'vs query', line: 5, param: 'google / b', error_signature: 'Error: toBe' };
+  const rows = [
+    { date: '2026-09-17', flaky: [{ test: 'vs query', error_signature: 'Error: toBe' }] },
+    { date: '2026-09-23', flaky: [sibling, item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.dates, ['2026-09-17', '2026-09-23']);
+  assert.deepEqual(r.unverified_dates, ['2026-09-17']);
+});
+
 test('detectGuard trips above the threshold', () => {
   assert.equal(detectGuard({ totals: { failed: 6 } }, 5), true);
   assert.equal(detectGuard({ totals: { failed: 5 } }, 5), false);
