@@ -192,11 +192,13 @@ import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../.
 import { hasProviderEnvKeys, type Provider } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
-// No `dotenv.config()` here: `playwright.config.ts` loads the repo-root `.env`
-// before any spec is collected, in the runner and in every worker. A spec-level
-// call is redundant at best, and the copy this template used to carry resolved
-// `../../../../.env` to `tests/.env` — one level short — so 40 specs loaded
-// nothing without anyone noticing (#2014).
+// No `dotenv.config()` here: `playwright.config.ts` calls it with no path before
+// any spec is collected, in the runner and in every worker, so it loads the `.env`
+// of the working directory — the repo root, which is where every lane, script and
+// `npm run` target invokes Playwright from. A spec-level call is redundant at
+// best, and the copy this template used to carry resolved `../../../../.env` to
+// `tests/.env` — one level short — so 40 specs loaded nothing without anyone
+// noticing (#2014).
 
 // One shared resolver — NEVER inline a copy of this (#1184). It reads models.json,
 // applies the .env strategy (MODEL_TEST_ID → MODEL_TEST_PROVIDER → ALL_MODELS → one
