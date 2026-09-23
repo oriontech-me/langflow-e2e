@@ -94,7 +94,7 @@ function fullRun({ runExit = 0, warn = true } = {}) {
       'process.stdout.write(JSON.stringify({ ok: true, version: "1.2.3", warnings: ["no v1.2.3 tag"] }) + "\\n");',
     ].join("\n"),
     "scripts/prepare-target-dist.sh": "#!/bin/sh\necho frontend_dir=/nowhere/frontend\n",
-    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\nexit ${runExit}\n`,
+    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\necho "run-e2e got AUTO_REMOVE=[$AUTO_REMOVE] CREATE_ISSUE=[$CREATE_ISSUE]"\nexit ${runExit}\n`,
     "scripts/backup-ledger.sh": "#!/bin/sh\necho backup ran\n",
   };
 }
@@ -212,5 +212,16 @@ test("the scratch directory is removed on exit, and the cleanup does not error",
   assert.equal(r.status, 0);
   assert.doesNotMatch(r.stderr + r.log, /unbound variable/);
   assert.deepEqual(r.leftInTmp, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the lane turns the @stable removal on, and run-e2e.sh receives it (#1945)", () => {
+  // run-e2e.sh compares AUTO_REMOVE strictly against "1" and defaults it to 0, so the
+  // switch only exists if it crosses the exec into the orchestrator. Read from what the
+  // orchestrator saw, not from the wrapper's text: an unexported assignment reads right
+  // and does nothing.
+  const dir = makeTempDir("wrapper-auto-remove");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
+  assert.match(r.log, /run-e2e got AUTO_REMOVE=\[1\] CREATE_ISSUE=\[1\]/);
   rmSync(dir, { recursive: true, force: true });
 });
