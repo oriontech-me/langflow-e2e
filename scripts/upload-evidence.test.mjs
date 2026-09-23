@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { contentTypeFor, collectFiles, objectKey } from "./upload-evidence.mjs";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
+
+import { contentTypeFor, collectFiles, objectKey, toPosixKey } from "./upload-evidence.mjs";
 
 test("index.html is text/html — the type that decides render vs download", () => {
   assert.equal(contentTypeFor("index.html"), "text/html");
@@ -23,8 +24,10 @@ test("an unknown extension is octet-stream, never a guess", () => {
   assert.equal(contentTypeFor("data.unknownext"), "application/octet-stream");
 });
 
-test("an extensionless file does not inherit a type from its directory", () => {
-  // `trace.zip/` as a directory name would otherwise make `heartbeat` a zip.
+test("an extensionless file inside a dotted directory is not typed by the directory", () => {
+  // Documents the contract, and deliberately not claimed as a guard: reading the
+  // extension off the whole path answers the same here, because `zip/heartbeat`
+  // matches no key either. See the note on contentTypeFor.
   assert.equal(contentTypeFor("trace.zip/heartbeat"), "application/octet-stream");
   assert.equal(contentTypeFor("LICENSE"), "application/octet-stream");
 });
@@ -38,7 +41,7 @@ test("the extension match is case-insensitive", () => {
 });
 
 test("collectFiles walks nested directories and keys them relative to the root", () => {
-  const root = mkdtempSync(join(tmpdir(), "evidence-"));
+  const root = makeTempDir("upload-evidence");
   mkdirSync(join(root, "data"), { recursive: true });
   mkdirSync(join(root, "trace", "assets"), { recursive: true });
   writeFileSync(join(root, "index.html"), "x");
@@ -49,14 +52,16 @@ test("collectFiles walks nested directories and keys them relative to the root",
   assert.deepEqual(keys, ["data/a.png", "index.html", "trace/assets/b.js"]);
 });
 
-test("keys use forward slashes, because they become URL paths", () => {
-  const root = mkdtempSync(join(tmpdir(), "evidence-"));
-  mkdirSync(join(root, "data"), { recursive: true });
-  writeFileSync(join(root, "data", "a.png"), "x");
+test("toPosixKey turns a backslash path into a URL path", () => {
+  // Tested on the function rather than through collectFiles: on this platform `sep`
+  // is already "/", so a walk-based test passes whether or not the normalisation
+  // exists — it was green against its own mutation before this was split out.
+  assert.equal(toPosixKey("data\\a.png"), "data/a.png");
+  assert.equal(toPosixKey("trace\\assets\\b.js"), "trace/assets/b.js");
+});
 
-  const [file] = collectFiles(root);
-  assert.ok(!file.key.includes("\\"), `key must not carry a backslash: ${file.key}`);
-  assert.equal(file.key, "data/a.png");
+test("toPosixKey leaves an already-POSIX key untouched", () => {
+  assert.equal(toPosixKey("data/a.png"), "data/a.png");
 });
 
 test("objectKey keeps the playwright-report segment REPORT_URL expects", () => {

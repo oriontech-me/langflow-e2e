@@ -74,8 +74,12 @@ const TYPES = {
  * stored honestly is a file the browser prompts to save, while a wrong type is one it
  * tries to render and mangles.
  *
- * The extension is taken from the basename, so a directory with a dot in it cannot
- * decide the type of an extensionless file inside it.
+ * The basename is taken first for legibility, NOT for correctness — measured, and the
+ * note is here so nobody spends the same hour twice: reading the extension off the
+ * whole path gives the identical answer for every input, because a "extension" that
+ * spans a separator (`zip/heartbeat` for `trace.zip/heartbeat`) matches no key in the
+ * map and falls through to the same default. The two differ only if a key here ever
+ * contains a slash, which would be a different bug.
  */
 export function contentTypeFor(path) {
   const base = path.split(/[/\\]/).pop() ?? "";
@@ -85,18 +89,25 @@ export function contentTypeFor(path) {
 }
 
 /**
- * Every file under `dir`, as keys relative to it, with POSIX separators.
+ * A relative path as a URL path.
  *
- * The separator normalisation is not decoration: the key becomes a URL path, and a
- * backslash in it would be a literal character in the object name rather than a
- * directory boundary — the report would upload "successfully" into keys nothing can
- * resolve.
+ * Its own function so it can be TESTED: on this lane's platform `sep` is already `/`,
+ * so calling it inline would be a no-op here and a test for it would pass whether or
+ * not the normalisation existed — green, and covering nothing. It matters wherever
+ * `sep` is a backslash, because the key becomes a URL path and a backslash in it is a
+ * literal character in the object name rather than a directory boundary: the report
+ * would upload "successfully" into keys nothing can resolve.
  */
+export function toPosixKey(rel) {
+  return rel.split(sep).join("/").split("\\").join("/");
+}
+
+/** Every file under `dir`, as keys relative to it, with POSIX separators. */
 export function collectFiles(dir, base = dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) collectFiles(full, base, out);
-    else out.push({ path: full, key: relative(base, full).split(sep).join("/") });
+    else out.push({ path: full, key: toPosixKey(relative(base, full)) });
   }
   return out;
 }
