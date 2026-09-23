@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/integrations/connections-page.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev19`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev21`)
 
 Owning issue: #1969 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order in the #1971 comment). Seeds through `tests/helpers/integrations/` from #1966. The
@@ -44,10 +44,10 @@ written:
 | Tabs | a `role=tablist` named *Connection views* holding three `role=tab` (no testid): `Mine` (selected by default), `Instance`, `Other users` — the last rendered for a superuser only (source; the UI here is always the superuser) |
 | Search | `connections-search`, placeholder *Search name, handle, or account*; filters **client-side** (no request), matching the display name, the handle `<provider_key>/<name>`, the account display and the account id; the value is kept across a tab switch |
 | Columns | `Connection` · `Owner` · `Account` · `Status` · `Scopes` · `Last check` · `Actions` (the last `sr-only`) |
-| A seeded `ready` row | `E2E <name>` over the handle `google/<name>` · `You` · the account display · `Ready` · `2 scopes` plus an `sr-only` `gmail.send, drive.file` · an `sr-only` `Not checked` plus `Never` |
+| A seeded `ready` row | `E2E <name>` over the handle `google/<name>` · `You` · the account display over *The signed-in user* · `Ready` · `2 scopes` plus an `sr-only` `gmail.send, drive.file` · an `sr-only` `Not checked` plus `Never` |
 | Status cell | `ready` → `Ready`, no action; `pending` → `Pending` + `authorize-<name>` reading *Authorize*; `expired` → `Expired` + *Reconnect*; `revoked` → `Revoked` + *Reconnect*; `error` → `Error` + a reason line (source only — not reachable, see below) |
-| Owner cell | `You` for one's own row, `Instance` for an instance row, `Shared` for another user's |
-| Account cell | the account display (or its id); with no account, *Signed in, account not shared* when the connection holds a credential and *Not signed in yet* when it does not |
+| Owner cell | `You` for one's own row, `Instance` for an instance row, `Other user` for another user's (whose `owner_id` is in a tooltip, `Owner ID: <id>`) — `Shared` until langflow#15263 |
+| Account cell | two lines. First, the account display (or its id); with no account, *Account unavailable* when the connection holds a credential and *Not signed in yet* when it does not. Second, since langflow#15263 (`1.13.0.dev21`), the connection's `executing_identity.identity` as a muted subtitle — *The signed-in user* (`user_delegated`), *A bot* (`bot`), *A service account* (`service`) — on **every** row, pending included, since the identity is always set |
 | Empty view | `connections-empty` reading *"No connections yet."*; the table is not rendered; `add-connection` stays in the page header |
 
 ### Where the measurement disagrees with the issue
@@ -86,10 +86,11 @@ written:
 
 ### Recorded, not asserted
 
-- **The Owner cell reads `Shared` for another user's private connection**, which nobody
-  shared: `ownerKindOf` knows only `you | instance | shared`, and `ConnectionRead` carries
-  an `owner_id` but no username, so the page cannot name the owner. The spec asserts that
-  row's **tab**, not its Owner text — pinning `Shared` would make a fix read as a failure.
+- **The Owner cell used to read `Shared` for another user's private connection**, which
+  nobody shared (`ownerKindOf` knew only `you | instance | shared`). langflow#15263 renamed
+  the kind to `other` (*Other user*, with the owner id in a tooltip), so the reason this
+  was recorded rather than asserted — pinning a known defect — is gone, and test 2 now
+  asserts *Other user* on the other user's row.
 - **The scope counter has a single plural form** (`connections.scopes.count` =
   `{{count}} scopes`), so a one-scope row reads `1 scopes`. The spec seeds **two** scopes,
   so its count assertion holds before and after a pluralisation fix.
@@ -186,20 +187,24 @@ deleted by the superuser.
 1. Seed, all with unique names: **A** — user-owned, planted credential, two scopes
    (`https://www.googleapis.com/auth/gmail.send`,
    `https://www.googleapis.com/auth/drive.file`), account `{id, display}` with a unique
-   display; **P** — user-owned, no credential (`pending`); **C** — `ownership_mode:
+   display; **P** — user-owned, no credential (`pending`), `identity: "bot"`; **C** — `ownership_mode:
    "instance"`, planted credential. Then create a throwaway user through
    `POST /api/v1/users/`, activate it with `PATCH`, log it in with `postLogin`, and seed
    **F** as that user.
 2. Open `/settings/connections` → A's row renders; the table's columns include
    `Connection`, `Owner`, `Account`, `Status`, `Scopes`, `Last check` and `Actions`.
 3. Row A, cell by column: the display name over the handle `google/<A>`; `You`; the
-   account display; `Ready` with no `authorize-<A>`; `2 scopes` and an `sr-only`
+   Account cell's two lines — the account display, then *The signed-in user* — as two
+   separate elements, each exact; `Ready` with no `authorize-<A>`; `2 scopes` and an `sr-only`
    `gmail.send, drive.file`; `Never`.
-4. Row P: `Pending` with `authorize-<P>` reading *Authorize*; *Not signed in yet*;
-   *No scopes granted*.
+4. Row P: `Pending` with `authorize-<P>` reading *Authorize*; the Account cell's two
+   lines — *Not signed in yet*, then *A bot*; *No scopes granted*. (P is seeded as a bot
+   so the two rows' subtitles differ: a subtitle that did not follow the connection's
+   identity would fail one of them.)
 5. `Mine` holds A and P, and neither C nor F.
 6. `Instance` holds C, whose Owner reads `Instance`, and none of A, P or F.
-7. `Other users` holds F, and none of A, P or C (langflow#15182).
+7. `Other users` holds F, whose Owner reads `Other user`, and none of A, P or C
+   (langflow#15182).
 8. Back on `Mine`, search A's unique name → A stays and P is gone; search A's account
    display → A stays and P is gone; search P's handle `google/<P>` → P stays and A is
    gone. (The account probe and the handle probe each match a field the display name
@@ -219,9 +224,11 @@ deleted by the superuser.
 ## Validation criterion *(required)*
 
 All three tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev19`, with: the nav entry, the title, the heading, the subtitle and the empty
+`1.13.0.dev21`, with: the nav entry, the title, the heading, the subtitle and the empty
 copy asserted **verbatim**; seeded row A asserted **cell by column**, its scopes as the
-count **and** the exact `sr-only` list; each of the three tabs asserted to **hold** its
+count **and** the exact `sr-only` list, and its Account cell as exactly two lines (the
+account display, then *The signed-in user*) — while row P's reads *Not signed in yet*
+then *A bot*; each of the three tabs asserted to **hold** its
 own seeded row and **not** to hold the other three; the three search probes each
 asserted as *"the other row is gone"*, never as a total; and the `Pending`, `Expired` and
 `Revoked` badges each asserted with the exact label of their inline action. After the

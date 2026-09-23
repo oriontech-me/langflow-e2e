@@ -34,6 +34,7 @@ import {
 test.describe("Connections page — navigation, empty view, rows, tabs, search and status", () => {
   const PAGE = "/settings/connections";
   // Exact copy, measured on 1.13.0.dev19 (connections.* in the en bundle).
+  // The identity subtitles and "Other user" arrived with langflow#15263 (1.13.0.dev21).
   const SUBTITLE =
     "Accounts your flows act through. Tokens stay on the server; only metadata is shown here.";
   const EMPTY = "No connections yet.";
@@ -150,6 +151,15 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
     return row.locator("td").nth(index);
   }
 
+  /**
+   * The Account cell's lines, in order: the account (or its absence) and then the
+   * connection's executing identity. Located as the cell's child spans so the lines are
+   * asserted separately AND as a set — a third line, or a missing one, fails.
+   */
+  async function accountLines(page: Page, row: Locator): Promise<Locator> {
+    return (await cell(page, row, "Account")).locator(":scope > div > span");
+  }
+
   function tab(page: Page, name: string): Locator {
     return page
       .getByRole("tablist", { name: "Connection views" })
@@ -226,6 +236,9 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
         const pending = await createConnectionViaApi(request, headers, {
           label: "page_pending",
           credentials: null,
+          // A bot, not the default user_delegated: the two rows' identity subtitles
+          // then differ, so a subtitle that ignored the connection fails one of them.
+          identity: "bot",
         });
         seeded.push(pending);
         const instance = await createConnectionViaApi(request, headers, {
@@ -262,7 +275,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
         await expect(connectionCell.getByText(mine.displayName, { exact: true })).toBeVisible();
         await expect(connectionCell.getByText(`google/${mine.name}`, { exact: true })).toBeVisible();
         await expect(await cell(page, row, "Owner")).toHaveText("You");
-        await expect(await cell(page, row, "Account")).toHaveText(accountDisplay);
+        await expect(await accountLines(page, row)).toHaveText([accountDisplay, "The signed-in user"]);
         await expect(await cell(page, row, "Status")).toHaveText("Ready");
         await expect(row.getByTestId(`authorize-${mine.name}`)).toHaveCount(0);
         const scopesCell = await cell(page, row, "Scopes");
@@ -278,7 +291,7 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
         await expect(row).toBeVisible();
         await expect((await cell(page, row, "Status")).getByText("Pending", { exact: true })).toBeVisible();
         await expect(row.getByTestId(`authorize-${pending.name}`)).toHaveText("Authorize");
-        await expect(await cell(page, row, "Account")).toHaveText("Not signed in yet");
+        await expect(await accountLines(page, row)).toHaveText(["Not signed in yet", "A bot"]);
         await expect(await cell(page, row, "Scopes")).toHaveText("No scopes granted");
       });
 
@@ -301,9 +314,11 @@ test.describe("Connections page — navigation, empty view, rows, tabs, search a
         }
       });
 
-      await test.step("Other users holds the other user's private row and none of the superuser's (langflow#15182)", async () => {
+      await test.step("Other users holds the other user's private row, owned by Other user, and none of the superuser's (langflow#15182)", async () => {
         await openTab(page, "Other users");
         await expect(rowOf(theirs)).toBeVisible();
+        // "Shared" until langflow#15263 — nobody had shared it.
+        await expect(await cell(page, rowOf(theirs), "Owner")).toHaveText("Other user");
         for (const connection of [mine, pending, instance]) {
           await expect(rowOf(connection), `${connection.name} outside Other users`).toHaveCount(0);
         }
