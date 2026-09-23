@@ -1593,8 +1593,8 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| `integrations/` — Dedicated Integrations | 29 | 15 | 0 | 0 | 14 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **723** | **614 (85%)** | **36 (5%)** | **14 (2%)** | **59 (8%)** |
+| `integrations/` — Dedicated Integrations | 31 | 21 | 0 | 0 | 10 |
+| **TOTAL (OSS — excludes `enterprise/`)** | **725** | **620 (86%)** | **36 (5%)** | **14 (2%)** | **55 (8%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1610,7 +1610,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 688 `test()` calls carrying the `@stable` tag, distributed across 272 spec
+> 693 `test()` calls carrying the `@stable` tag, distributed across 273 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1630,6 +1630,11 @@
 - [x] a create body with a hyphenated name is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with an undeclared key is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
 - [x] a create body with executing_identity as a string is refused with one 422 naming it → `api-connections-lifecycle.spec.ts`
+- [x] every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain → `api-integrations-manifest.spec.ts`
+- [x] every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id → `api-integrations-manifest.spec.ts`
+- [x] a provider's enabled flag and connection count are derived from its connections, and only its own → `api-integrations-manifest.spec.ts`
+- [x] the manifest and the effective policy agree that the instance is unrestricted → `api-integrations-manifest.spec.ts`
+- [x] every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared → `api-integrations-manifest.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
