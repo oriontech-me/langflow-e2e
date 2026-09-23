@@ -187,16 +187,18 @@ The project uses a pattern where each model from `models.json` generates a separ
 Basic structure:
 
 ```typescript
-import * as dotenv from "dotenv";
-import path from "path";
 import { test, expect } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { hasProviderEnvKeys, type Provider } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
+// No `dotenv.config()` here: `playwright.config.ts` calls it with no path before
+// any spec is collected, in the runner and in every worker, so it loads the `.env`
+// of the working directory — the repo root, which is where every lane, script and
+// `npm run` target invokes Playwright from. A spec-level call is redundant at
+// best, and the copy this template used to carry resolved `../../../../.env` to
+// `tests/.env` — one level short — so 40 specs loaded nothing without anyone
+// noticing (#2014).
 
 // One shared resolver — NEVER inline a copy of this (#1184). It reads models.json,
 // applies the .env strategy (MODEL_TEST_ID → MODEL_TEST_PROVIDER → ALL_MODELS → one

@@ -1,4 +1,3 @@
-import * as dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import type { Page } from "@playwright/test";
@@ -36,10 +35,6 @@ import { armProviderSave } from "../../../../helpers/provider-setup/provider-pan
  * dropdown value changes to each exact target model name — a switch that
  * silently keeps the previous model selected fails the exact-name assert.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const PROVIDER = "anthropic";
 

@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page, Response } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -39,10 +37,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * bullet's contract is tool AVAILABILITY, not free selection (that is
  * agent-multi-tool-selection.spec.ts).
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const DATE_TOOL = "get_current_date";
 const SYSTEM_PROMPT =

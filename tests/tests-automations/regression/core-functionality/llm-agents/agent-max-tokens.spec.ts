@@ -1,4 +1,3 @@
-import * as dotenv from "dotenv";
 import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -34,10 +33,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * and from the saved flow; it left with the model-bundle refactor). Flagged on
  * the issue/PR — see the spec doc's Scope note.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const TOKEN_LIMIT = 50;
 const ESSAY_PROMPT =

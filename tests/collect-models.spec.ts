@@ -1,4 +1,3 @@
-import * as dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import { expect, test } from "./fixtures/fixtures";
@@ -23,10 +22,6 @@ import { isBuildAxisReason } from "./helpers/provider-setup/probe-component-buil
  * before them, a fully broken Model Providers UI still produced a green run
  * with empty JSONs (the #505 class of blind spot).
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../.env") });
-}
 
 const DATA_DIR = path.resolve(__dirname, "helpers/provider-setup/data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");

@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage, SimpleAgentTemplatePage } from "../../../../pages";
@@ -33,10 +31,6 @@ import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-g
  * model is selected and echoes a per-run sentinel, so the response can't be stale
  * or from another provider.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const PROVIDER = "google";
 

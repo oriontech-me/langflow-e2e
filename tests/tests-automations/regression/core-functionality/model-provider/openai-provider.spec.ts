@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage, SimpleAgentTemplatePage } from "../../../../pages";
@@ -44,10 +42,6 @@ import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-
  * that stored nothing can pass. Test 2 asserts a GPT model is selected and echoes
  * a per-run sentinel, so the response can't be stale or from another provider.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const PROVIDER = "openai";
 /** The global provider variable the Settings panel writes (Test 1's subject). */

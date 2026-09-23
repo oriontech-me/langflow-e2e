@@ -1,4 +1,3 @@
-import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -46,10 +45,6 @@ test(
   "user must not experience message duplication in mathematical expressions with agent component",
   { tag: ["@stable", "@release", "@regression", "@agents", "@playground"] },
   async ({ page }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-    }
-
     // Real completions run below, so gate on provider HEALTH, not on the env var
     // alone — a drained key would block the backend past gunicorn's 300s timeout
     // and kill the shard's Langflow worker (#1029).

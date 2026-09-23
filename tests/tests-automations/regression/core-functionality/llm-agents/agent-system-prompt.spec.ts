@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -13,10 +11,6 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Distinctive stem for the sentinel code word. A model would never emit it on
 // its own for an unrelated question (the negative-control test asserts exactly

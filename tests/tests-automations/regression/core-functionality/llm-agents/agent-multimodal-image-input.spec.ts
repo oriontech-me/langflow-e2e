@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -30,10 +28,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * node has no canvas file field — the only image-attach path is the chat input
  * widget (`input-wrapper` file input), which feeds the confirmed input handle.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const IMAGE_PATH = "tests/assets/media/chain.png";
 const IMAGE_ALT = "chain.png";

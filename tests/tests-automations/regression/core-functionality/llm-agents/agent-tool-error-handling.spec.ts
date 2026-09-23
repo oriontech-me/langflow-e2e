@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -35,10 +33,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * output ("Executed **fetch_content**"), NOT an "Error using" header — see
  * the spec doc's Rendering note.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const TARGET_URL = "http://localhost:7860/api/v1/version";
 const SYSTEM_PROMPT =

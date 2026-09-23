@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -39,10 +37,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  *   ({colors: str, As List}) comes back as an Array of strings — the shape
  *   follows the schema definition, not a fixed JSON habit of the model.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Flows created by the template load are tracked here and deleted by id in
 // afterEach — loadTemplateByName does NO cleanup (post-#553 contract), and the

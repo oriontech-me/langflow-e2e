@@ -1,6 +1,4 @@
-import * as dotenv from "dotenv";
 import { leaveFlowEditor } from "../../../helpers/flows/leave-flow-editor";
-import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -54,10 +52,6 @@ test(
   "user should be able to use Run Flow without any issues",
   { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-    }
-
     // Track the IDs of every flow THIS page creates so cleanup can target ONLY
     // those via the API, never example/starter flows or flows belonging to
     // sibling specs running in parallel.

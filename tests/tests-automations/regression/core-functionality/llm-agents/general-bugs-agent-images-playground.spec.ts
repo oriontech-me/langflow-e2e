@@ -1,5 +1,3 @@
-import dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage } from "../../../../pages";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -30,10 +28,6 @@ test(
   "user must be able to send images in the playground with the agent component",
   { tag: ["@stable", "@release", "@components", "@agents"] },
   async ({ page }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-    }
-
     // A real multimodal completion runs below, so gate on provider HEALTH, not on
     // the env var alone — a drained key would block the backend past gunicorn's
     // 300s timeout and kill the shard's Langflow worker (#1029).

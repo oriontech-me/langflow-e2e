@@ -1,4 +1,3 @@
-import * as dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import type { Page } from "@playwright/test";
@@ -11,10 +10,6 @@ import {
   missingProviderEnvKeys,
   type Provider,
 } from "../../../../helpers/provider-setup";
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 interface ModelRecord {
   provider: string;
