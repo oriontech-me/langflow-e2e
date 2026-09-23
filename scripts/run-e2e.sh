@@ -63,10 +63,11 @@
 #    catalog mid-read.
 #
 # 5. THE ISSUE, SLACK AND THE PLATFORM POSTS ARE SWITCHES, OFF BY DEFAULT HERE. Every
-#    one of them (CREATE_ISSUE, NOTIFY_SLACK, POST_QA_PLATFORM — the last gates both the
-#    run POST and the token POST) is 0 unless the caller exports it. Since the
-#    2026-09-20 cut this lane carries the verdict, and ops/vm/run-daily.sh turns them
-#    on; a rehearsal that exports none of them publishes nothing.
+#    one of them (CREATE_ISSUE, NOTIFY_SLACK, POST_QA_PLATFORM — the last gates the
+#    evidence upload, the run POST and the token POST) is 0 unless the caller exports
+#    it. ops/vm/run-daily.sh turns them on: the issue and Slack since the 2026-09-20
+#    cut, the platform since 2026-09-23 (#2015). A rehearsal that exports none of them
+#    publishes nothing.
 #
 # 6. THE THREE SERIES ARE WRITTEN, NOT COMMITTED. daily-history.jsonl,
 #    token-history.jsonl and spec-durations.json are appended to a LEDGER outside the
@@ -2402,17 +2403,21 @@ phase_publish() {
     elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
-      # `|| code=000` because curl exits non-zero when nothing answers (DNS, refused,
+      # `|| true` because curl exits non-zero when nothing answers (DNS, refused,
       # timeout), and under `set -e` that assignment aborted phase_publish — taking the
       # token POST, the history, the removal, the issue, Slack and the verdict with it,
-      # under a comment promising the POST "does not fail the run". --max-time for the
-      # same reason: a platform that accepts and never answers held the run for hours.
+      # under a comment promising the POST "does not fail the run". The status curl
+      # printed is kept (a 201 whose body stalled is still a recorded run); only an
+      # empty one becomes 000. --max-time because a platform that accepts and never
+      # answers would otherwise hold the run with no bound at all; 60 s is a generous
+      # bound for one JSON POST, not a measured one.
       local code
       code="$(curl -s --max-time 60 -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
         -X POST "$QA_PLATFORM_ENDPOINT" \
         -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" \
         -H "Content-Type: application/json" \
-        --data @"$RUN_DIR/payload.json")" || code="000"
+        --data @"$RUN_DIR/payload.json")" || true
+      code="${code:-000}"
       case "$code" in
         200 | 201) info "QA Platform: recorded (HTTP $code)" ;;
         *) warn "the QA Platform POST failed (HTTP $code) — this does not fail the run." ;;
@@ -2464,11 +2469,20 @@ phase_publish() {
   # sends the summarizer down its infra-abort branch, so the spend line and the block are
   # both lost under a message saying no test ran. The workflow cannot tell the two apart;
   # this lane can, so it passes empty instead.
+  #
+  # The price of that: on such a day the ledger can hold a spend line for a run the
+  # history records as `report_missing` with zero totals. Intended — the shards ran and
+  # the spend was real — and one low line cannot move the median anomaly baseline.
+  #
+  # GITHUB_STEP_SUMMARY is cleared for resolve_served_version's reason: this lane has
+  # no step summary (the summary text lands in token-summary.log), but a caller running
+  # under Actions — the unit lane — does, and the table would read there as a real
+  # spend report.
   local tests_total="${RUN_TESTS:-}"
   if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
     tests_total=""
   fi
-  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" GITHUB_STEP_SUMMARY="" \
     TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
     LANGFLOW_IMAGE="${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}" \
     TESTS_TOTAL="$tests_total" \

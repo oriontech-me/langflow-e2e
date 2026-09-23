@@ -2880,6 +2880,8 @@ async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1",
     );
   }
   // The coverage counts come from ts-node; stubbed so the test does not pay for it.
+  const summary = join(dir, "step-summary.md");
+  writeFileSync(summary, "");
   const bin = join(dir, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "npx"), "#!/usr/bin/env bash\necho 7\n", { mode: 0o755 });
@@ -2914,6 +2916,14 @@ async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1",
             ...process.env,
             TARGET_SSH: "unused-in-sourced-tests",
             PATH: `${bin}:${process.env.PATH}`,
+            // The caller's own values must not reach the run: a developer's exported
+            // LANGFLOW_IMAGE broke the ledger assertion, and under Actions the unit lane's
+            // step summary is a real file the PR's run page shows.
+            LANGFLOW_IMAGE: "",
+            TOKEN_POST_TIMEOUT_MS: "",
+            EVIDENCE_UPLOAD_BASE: "",
+            RUN_DATE: "",
+            GITHUB_STEP_SUMMARY: summary,
             KEEP_LEDGER: "0",
             CREATE_ISSUE: "0",
             NOTIFY_SLACK: "0",
@@ -2932,7 +2942,7 @@ async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1",
       child.stderr.on("data", (d) => (out += d));
       child.on("close", (code) => resolveRun({ code, out }));
     });
-    return { ...r, dir, received };
+    return { ...r, dir, received, summary: readFileSync(summary, "utf8") };
   } finally {
     server.close();
   }
@@ -2954,6 +2964,9 @@ test("phase_publish sends the token rows as a second POST of the same run", asyn
   assert.match(r.out, /post-token-payload: outcome=delivered/);
   assert.match(readFileSync(join(r.dir, "logs", "token-post.log"), "utf8"), /outcome=delivered/);
   assert.ok(existsSync(join(r.dir, "tokens-block.json")), "the block is kept in the run dir as evidence");
+  assert.equal(r.code, 0, "phase_publish must exit 0");
+  assert.equal(r.summary, "",
+    "the summary must not reach a caller's GITHUB_STEP_SUMMARY — under Actions it reads as a real spend report");
 });
 
 test("the token POST is behind POST_QA_PLATFORM, like the run POST", async () => {
