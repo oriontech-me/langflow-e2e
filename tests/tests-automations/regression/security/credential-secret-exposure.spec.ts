@@ -457,43 +457,17 @@ test.describe("Credential secret exposure", () => {
 
   test(
     "the exported flow carries the credential binding, never the secret",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
-      // DECLARED FAILING (#1546, LE-2649), and the declaration is the alarm in
-      // both directions.
-      //
-      // The assertions below are the contract, unweakened: the export keeps each
-      // bound field's variable NAME — what an import re-resolves the credential
-      // from — and never the secret. Langflow's own docs (Import and export
-      // flows) promise that contract: an importing instance needs global
-      // variables with the same names. Upstream PR langflow-ai/langflow#14639
-      // (fc3810da0, the LE-2240 fix, merged 2026-08-19 into release-1.12.0)
-      // moved POST /api/v1/flows/download/ onto the scrubber's default mode,
-      // which nulls load_from_db bindings together with literal secrets, so this
-      // body fails today at "the export keeps the binding an import resolves"
-      // (5/5 on 1.13.0.dev14; see docs/upstream-bugs/
-      // UPSTREAM-BUG-flow-export-drops-credential-binding.md). Field names
-      // matter here: an API-key-shaped field (`api_key`) lost its binding on
-      // this endpoint even before #14639, through the legacy remove_api_keys,
-      // while `secret_token` and `gateway_pin` kept theirs until that PR
-      // (measured on 1.11.4) — so this file measures the regression itself. The
-      // scrubber already ships the mode that fixes it (`variable_references`),
-      // and both variable names this file creates pass its shape check.
-      // Declaring the failure keeps a known-broken product path out of a
-      // permanent red and — the half the test.fixme this replaces never gave —
-      // makes the FIX detectable: the day upstream lands it, this body passes,
-      // Playwright reports "expected to fail but passed", and the daily goes red
-      // naming this test. The lift: delete this call and this comment, keep
-      // @stable, flip the QA-CHECKLIST §17.3 binding bullet, mark LE-2649's
-      // REGRESSIONS.md row Fixed, close #1546.
-      //
-      // test.fail() turns ANY failure green (see
-      // mcp-client-agent-gemini-tool-regression.spec.ts), which is why the test
-      // above issues the same two requests undeclared: a dead instance or a
-      // broken export reddens it instead of hiding here. This test runs LAST, so
-      // its red on the fix day skips nothing behind it in the serial describe.
-      test.fail();
-
+      // The export keeps each bound field's variable NAME — what an import
+      // re-resolves the credential from — and never the secret; Langflow's own
+      // docs (Import and export flows) promise it. Upstream broke it with
+      // langflow-ai/langflow#14639 (LE-2649, #1546) and fixed it with #15143,
+      // first in 1.13.0.dev21; this test was declared failing (test.fail()) in
+      // between, and its red on the fix day lifted it (#2008). Neither field is
+      // API-key-shaped: those lost their binding here before #14639 too, so
+      // these two measure the regression itself. Test 3 issues the same two
+      // requests and stays silent about the binding — the attribution control.
       const surfaces: Array<{ label: string; body: string }> = [];
       let exportedFlow: StoredFlow;
 
@@ -528,10 +502,10 @@ test.describe("Credential secret exposure", () => {
       });
 
       await test.step("the export keeps the binding an import resolves", async () => {
-        // Structural as well, and the step that fails while #1546 is live. The
-        // textual check below passes on ANY other occurrence of the name in the
-        // payload — a flow named after its variable is enough — which here
-        // would read as the fix having landed.
+        // Structural as well, and the step that failed while LE-2649 was live.
+        // The textual check below passes on ANY other occurrence of the name in
+        // the payload — a flow named after its variable is enough — so on its
+        // own it would miss the binding being dropped again.
         expectBinding(exportedFlow, "POST /api/v1/flows/download/");
       });
 
