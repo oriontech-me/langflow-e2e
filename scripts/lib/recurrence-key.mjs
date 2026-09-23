@@ -73,7 +73,10 @@ const LONG_NUMBER_RE = /\d{6,}/g;
 // count separately). Measured on the 2026-09-23 daily: `a2a-target-9bbd49b7-0-option`,
 // `connection-row-page_row_mue51qw0_83sqzi` — a fresh id per run, which made each
 // occurrence of one cause a different locator. Named ids (`provider-item-OpenAI`,
-// `llm-toggle-gpt-4o-mini`, `sidebar-search-input`) have no such segment.
+// `llm-toggle-gpt-4o-mini`, `sidebar-search-input`) have no such segment. Over
+// the 758 literal test ids in `tests/` it also masks three named ones —
+// `A2AAgent`, `icon-Trash2`, `llama3.2:1b-option` — which only costs anything if
+// two of them fail at one call site, since the rest of the key is unchanged.
 const GENERATED_TOKEN_RE = /(?<![A-Za-z0-9])(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{6,}(?![A-Za-z0-9])/g;
 
 /** Masks that apply to every field that can carry a generated value. */
@@ -213,8 +216,10 @@ function frameStatement(text) {
   if (at === -1) return null;
   const parts = [FRAME_ROW.exec(lines[at])[2].trim()];
   for (let i = at + 1; i < lines.length && parts.length < 5; i++) {
-    const joined = parts.join(" ");
-    const open = bracketDepth(joined) > 0 || /(?:\bexpect|[(,.{]|=>)$/.test(joined);
+    // A trailing `//` comment is dropped before asking whether the statement is
+    // still open, or a comment ending in `,` would pull the next statement in.
+    const joined = parts.join(" ").replace(/\s*\/\/.*$/, "");
+    const open = bracketDepth(joined) > 0 || /(?:\bexpect|[(,{]|=>)$/.test(joined);
     const row = FRAME_ROW.exec(lines[i]);
     if (!row) {
       if (/^\s*\|/.test(lines[i])) continue; // the caret row under the failing one
@@ -248,7 +253,9 @@ export function recurrenceKey(error, root = "", inFlight = null) {
   const message = error.message || error.value || "";
   const head = recurrenceHead(firstLine(message));
   if (!head) return null;
-  const site = TEST_TIMEOUT_HEAD.test(head) && inFlight ? inFlight : error;
+  // Only an error that points at code can stand in as the site — a teardown
+  // error carries no location and would name the fixture, not the action.
+  const site = TEST_TIMEOUT_HEAD.test(head) && inFlight?.location ? inFlight : error;
   const siteMessage = site.message || site.value || "";
   const locator = recurrenceLocator(siteMessage);
   return {

@@ -401,3 +401,49 @@ test("a skipped attempt contributes no key even when it carries an error", () =>
   });
   assert.deepEqual(keys.map((k) => k.head), ["error: real"]);
 });
+
+// ------------------------------------------------- review round 2 (#1626)
+
+const frameOf = (...rows) => ({ snippet: rows.join("\n") });
+
+test("a statement left open only by a bracket continues onto the next row", () => {
+  // No trailing `(`, `,` or `{` — only the unbalanced `(` of `toBeVisible(` keeps it open.
+  const src = recurrenceSource(
+    frameOf("> 10 |   await expect(page.getByTestId(\"a\")).toBeVisible({ timeout: 1 }", "     |   ^", "  11 |   );", "  12 |   await next();"),
+  );
+  assert.equal(src, 'await expect(page.getByTestId("a")).toBeVisible({ timeout: 1 } );');
+});
+
+test("a bracket inside a string literal does not hold the statement open", () => {
+  const src = recurrenceSource(
+    frameOf("> 10 |   await page.getByText(\"Save (draft)\").click();", "     |   ^", "  11 |   await next();"),
+  );
+  assert.equal(src, 'await page.getByText("Save (draft)").click();');
+  const unbalanced = recurrenceSource(
+    frameOf("> 10 |   await page.getByText(\"open (\").click();", "     |   ^", "  11 |   await next();"),
+  );
+  assert.equal(unbalanced, 'await page.getByText("open (").click();');
+});
+
+test("a trailing comment ending in a comma does not pull the next statement in", () => {
+  const src = recurrenceSource(
+    frameOf("> 10 |   await step(); // first the step,", "     |   ^", "  11 |   await next();"),
+  );
+  assert.equal(src, "await step(); // first the step,");
+});
+
+test("a test timeout whose next error points at no code keeps its own site", () => {
+  const [k] = recurrenceKeysForTest({
+    results: [
+      {
+        status: "timedOut",
+        errors: [
+          { message: "Test timeout of 300000ms exceeded.", location: { file: `${ROOT}/tests/x.spec.ts`, line: 3 } },
+          { message: "Error: 1 flow error(s) during teardown" },
+        ],
+      },
+    ],
+  }, ROOT);
+  assert.equal(k.file, "x.spec.ts");
+  assert.equal(k.locator, null);
+});
