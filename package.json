@@ -42,7 +42,7 @@
     "coverage:refresh": "ts-node scripts/refresh-coverage-matrix.ts && ts-node scripts/build-coverage-matrix-feed.ts"
   },
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^18.0.0"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",
