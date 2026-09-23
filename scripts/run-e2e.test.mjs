@@ -23,7 +23,8 @@
 // for: no machines, no ssh, no real run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 
@@ -2895,4 +2896,177 @@ test("the token POST cannot abort the phase", () => {
   const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
   const after = publish.slice(publish.indexOf("post-token-payload.mjs"));
   assert.match(after.slice(0, 120), /\|\|\s*true/, "phase_publish runs under set -e — the token POST needs a guard");
+});
+
+// ---------------------------------------------------------------------------
+// The token rows, driven for real (#2020)
+//
+// The two tests above pin the call's POSITION against the run POST, and both passed on a
+// phase that sent nothing: the POST ran before the summary that writes the block, and
+// the summary was never asked to write one. These run phase_publish against a local
+// platform and assert on what it RECEIVED, which no ordering or wiring slip survives.
+// ---------------------------------------------------------------------------
+
+/** phase_publish, run for real, against a local platform that records what it got. */
+async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1", endpoint, ledger = false } = {}) {
+  const dir = makeTempDir("publish-tokens-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  if (ledger) mkdirSync(join(dir, "ledger"), { recursive: true });
+  writeFileSync(join(dir, "results.json"), JSON.stringify({ stats: { expected: 1 }, suites: [] }));
+  if (probes) {
+    writeFileSync(
+      join(dir, "all-tokens", "token-probes-1.jsonl"),
+      JSON.stringify({
+        trace_id: "t1",
+        flow_id: "f1",
+        start_time: "2026-09-23T07:00:00Z",
+        status: "ok",
+        total_tokens: 88,
+        models: [{ model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
+      }) + "\n",
+    );
+  }
+  const summary = join(dir, "step-summary.md");
+  writeFileSync(summary, "");
+  // The coverage counts come from ts-node; stubbed so the test does not pay for it.
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "npx"), "#!/usr/bin/env bash\necho 7\n", { mode: 0o755 });
+
+  const received = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const json = JSON.parse(body);
+      received.push(json);
+      res.writeHead(json.tokens ? 200 : 201, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify(
+          json.tokens
+            ? { status: "exists", tokens_status: "ingested", tokens_dropped: 0, tokens_received: json.tokens.rows.length }
+            : { status: "created" },
+        ),
+      );
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address();
+  try {
+    const r = await new Promise((resolveRun) => {
+      const child = spawn(
+        BASH,
+        [
+          "-c",
+          `source ${JSON.stringify(SCRIPT)}\nRUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0 ${state} LANGFLOW_VERSION=1.13.0.dev21\nphase_publish\necho REACHED_AFTER_PUBLISH`,
+        ],
+        {
+          cwd: REPO_ROOT,
+          env: {
+            ...process.env,
+            TARGET_SSH: "unused-in-sourced-tests",
+            PATH: `${bin}:${process.env.PATH}`,
+            // The caller's own values must not reach the run: an exported LANGFLOW_IMAGE
+            // breaks the ledger assertion, and under Actions the unit lane's step summary
+            // is a real file the PR's run page shows.
+            LANGFLOW_IMAGE: "",
+            EVIDENCE_UPLOAD_BASE: "",
+            RUN_DATE: "",
+            GITHUB_STEP_SUMMARY: summary,
+            KEEP_LEDGER: "0",
+            CREATE_ISSUE: "0",
+            NOTIFY_SLACK: "0",
+            AUTO_REMOVE: "0",
+            POST_QA_PLATFORM: post,
+            QA_PLATFORM_ENDPOINT: endpoint ?? `http://127.0.0.1:${port}/runs`,
+            QA_E2E_AUTOMATION_TOKEN: "tok",
+            ...(ledger ? { KEEP_LEDGER: "1", EVENT_NAME: "schedule", LEDGER_DIR: join(dir, "ledger") } : {}),
+          },
+        },
+      );
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => resolveRun({ code, out }));
+    });
+    return { ...r, dir, received, summary: readFileSync(summary, "utf8") };
+  } finally {
+    server.close();
+  }
+}
+
+test("phase_publish sends the token rows as a second POST of the same run", async () => {
+  const r = await publishTokens();
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.code, 0, "phase_publish must exit 0");
+  assert.equal(r.received.length, 2, `expected the run POST and the token POST:\n${r.out}`);
+  const [run, tokens] = r.received;
+  assert.equal(run.tokens, undefined, "the run's own POST must not wait for, or carry, the tokens");
+  const rest = { ...tokens };
+  delete rest.tokens;
+  assert.deepEqual(rest, run, "the token POST re-sends the SAME run payload, so only the token rows land");
+  assert.equal(tokens.tokens.total_tokens, 88);
+  assert.match(r.out, /\[tokens\] Token rows delivered/);
+  assert.equal(r.summary, "",
+    "the summary must not reach a caller's GITHUB_STEP_SUMMARY — under Actions it reads as a real spend report");
+});
+
+test("the token POST is behind POST_QA_PLATFORM, like the run POST", async () => {
+  const r = await publishTokens({ post: "0" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 0);
+  assert.doesNotMatch(r.out, /\[tokens\]/);
+});
+
+test("a run that captured no tokens POSTs the run only, and says why", async () => {
+  const r = await publishTokens({ probes: false });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 1, "no token block means no token POST — never a zeroed one");
+  assert.match(r.out, /No token block for this run/);
+});
+
+test("a report the guards could not read keeps its token block — UNKNOWN is not a zero-test abort", async () => {
+  // check-run-integrity answers tests_total=0 for a missing results.json (#1726).
+  // Passed through, that "0" sent the summarizer down its infra-abort branch and the
+  // spend was lost under "the run executed zero tests" on a day every shard ran.
+  const r = await publishTokens({ state: "RUN_TESTS=0 MERGE_OK=false RUN_UNREADABLE=true" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.ok(existsSync(join(r.dir, "tokens-block.json")), `the block must be written:\n${r.out}`);
+  assert.doesNotMatch(readFileSync(join(r.dir, "logs", "token-summary.log"), "utf8"), /zero tests/);
+  assert.equal(r.received.length, 0, "no payload was built, so nothing is POSTed");
+});
+
+test("a READABLE zero-test run is still the abort it always was, and POSTs no tokens", async () => {
+  const r = await publishTokens({ state: "RUN_TESTS=0" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(readFileSync(join(r.dir, "logs", "token-summary.log"), "utf8"), /zero tests/);
+  assert.equal(r.received.length, 1);
+});
+
+test("a platform that does not answer cannot abort publish — neither POST fails the run", async () => {
+  // Port 9 on loopback: nothing listens, so both requests are refused. Before #2020 the
+  // run POST's curl exited 7 under `set -e` and phase_publish died on the spot.
+  const r = await publishTokens({ endpoint: "http://127.0.0.1:9/runs" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(r.out, /the QA Platform POST failed \(HTTP 000\)/);
+  assert.match(r.out, /the token POST could not be sent/);
+});
+
+test("the ledger's spend line names what ran", async () => {
+  // LANGFLOW_IMAGE labels the row; without it the line reads langflow_image: null.
+  const r = await publishTokens({ ledger: true, state: "RUN_TESTS=1 RUN_EMPTY=false RUN_PARTIAL=false" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  const line = JSON.parse(readFileSync(join(r.dir, "ledger", "token-history.jsonl"), "utf8").trim().split("\n").at(-1));
+  assert.equal(line.langflow_image, "pypi:langflow==1.13.0.dev21");
+  assert.equal(line.workflow, "daily-stable-vm");
+});
+
+test("the token POST reads the matrix's shard count, not the requested one", () => {
+  // SHARDS is what was asked for; SHARD_TOTAL is what the partitioner produced, and
+  // only the second tells merge-token-payload how many provider files to expect.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const call = publish.slice(publish.lastIndexOf("TOKENS_DIR=", publish.indexOf("post-token-payload.mjs")), publish.indexOf("post-token-payload.mjs"));
+  assert.match(call, /TOKENS_SHARD_TOTAL="\$\{SHARD_TOTAL:-\}"/);
 });

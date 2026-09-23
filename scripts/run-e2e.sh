@@ -2396,45 +2396,26 @@ phase_publish() {
     elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
+      # `|| true` because curl exits non-zero when nothing answers (DNS, refused,
+      # timeout), and under `set -e` that assignment aborted phase_publish — taking the
+      # token POST, the history, the removal, the issue, Slack and the verdict with it,
+      # under a comment promising the POST "does not fail the run" (#2020). The status
+      # curl printed is kept (a 201 whose body stalled is still a recorded run); only an
+      # empty one becomes 000. --max-time because a platform that accepts and never
+      # answers would otherwise hold the run with no bound; 60 s is a generous bound for
+      # one JSON POST, not a measured one.
       local code
-      code="$(curl -s -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
+      code="$(curl -s --max-time 60 -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
         -X POST "$QA_PLATFORM_ENDPOINT" \
         -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" \
         -H "Content-Type: application/json" \
-        --data @"$RUN_DIR/payload.json")"
+        --data @"$RUN_DIR/payload.json")" || true
+      code="${code:-000}"
       case "$code" in
         200 | 201) info "QA Platform: recorded (HTTP $code)" ;;
         *) warn "the QA Platform POST failed (HTTP $code) — this does not fail the run." ;;
       esac
     fi
-  fi
-
-  # The token consumption, as a SECOND POST (#2017). The total does not exist when the
-  # run's own POST goes out: it is only known once every shard has finished and its
-  # artifacts have been gathered, and delaying the verdict for a diagnostic would be the
-  # wrong trade. The platform's ingest is idempotent on the run row, so this re-POSTs the
-  # same payload with a `tokens` block added and only the token rows land.
-  #
-  # Until this line the lane CAPTURED and never sent: all-tokens/ holds a token-attrib
-  # and a token-probes file per shard, and nothing read them. Invisible while the Actions
-  # lane still posts, and a silent stop the day it is retired.
-  #
-  # The reporting lives in the script rather than here because there are eight outcomes
-  # that must stay distinguishable — four from the merge, four from the ingest, HTTP 200
-  # being no verdict at all — and #1226 is the standing lesson about composing that kind
-  # of message where nothing can assert on it.
-  #
-  # Never fatal, and no `|| warn` needed: every path in it returns 0 by design, because
-  # telemetry is an attachment to a verdict. The `|| true` is belt and braces against a
-  # crash in the interpreter itself, which under `set -e` would take the phase down.
-  if [ "$POST_QA_PLATFORM" = "1" ] && [ "$PAYLOAD_BUILT" = "true" ]; then
-    log "Posting the token consumption"
-    TOKENS_DIR="$RUN_DIR/all-tokens" \
-    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
-    PAYLOAD_IN="$RUN_DIR/payload.json" \
-    PAYLOAD_OUT="$RUN_DIR/payload-with-tokens.json" \
-    TOKENS_SHARD_TOTAL="${SHARDS:-}" \
-      node scripts/post-token-payload.mjs || true
   fi
 
   # The durations series. Empty and partial are excluded for the workflow's own reason:
@@ -2469,9 +2450,65 @@ phase_publish() {
   fi
   local tokens_env=() kv
   while IFS= read -r kv; do tokens_env+=("$kv"); done < <(tokens_history_env)
-  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+  #
+  # TOKENS_SUMMARY_OUT is what makes the spend leave the machine at all (#2020): without
+  # it the summarizer writes the history line and no block, and the POST below has
+  # nothing to attach. LANGFLOW_IMAGE and TESTS_TOTAL are the workflow's own two: the
+  # image labels the row, and TESTS_TOTAL is how a zero-test abort is told from a run
+  # that spent nothing.
+  #
+  # A report the guards could not read is UNKNOWN, never zero (#1012): check-run-
+  # integrity answers `tests_total: 0` for a missing results.json, and that is the #1726
+  # day — every shard ran and spent, only the merge failed. Passed through, the "0" sends
+  # the summarizer down its infra-abort branch and the spend line and the block are lost
+  # under a message saying no test ran. So this lane passes empty there. The price: the
+  # ledger can hold a spend line for a run the history records as `report_missing`,
+  # which is intended — the spend was real.
+  #
+  # GITHUB_STEP_SUMMARY is cleared for resolve_served_version's reason: this lane has no
+  # step summary, but a caller running under Actions — the unit lane — does, and the
+  # table would read there as a real spend report.
+  local tests_total="${RUN_TESTS:-}"
+  if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
+    tests_total=""
+  fi
+  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" GITHUB_STEP_SUMMARY="" \
+    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    LANGFLOW_IMAGE="${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}" \
+    TESTS_TOTAL="$tests_total" \
     node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
+
+  # The token consumption, as a SECOND POST (#2017). AFTER the summary, which is what
+  # writes tokens-block.json: placed before it, the merge found no block every day and
+  # reported a run that "captured nothing" (#2020). The total does not exist when the
+  # run's own POST goes out: it is only known once every shard has finished and its
+  # artifacts have been gathered, and delaying the verdict for a diagnostic would be the
+  # wrong trade. The platform's ingest is idempotent on the run row, so this re-POSTs the
+  # same payload with a `tokens` block added and only the token rows land.
+  #
+  # Until this line the lane CAPTURED and never sent: all-tokens/ holds a token-attrib
+  # and a token-probes file per shard, and nothing read them. Invisible while the Actions
+  # lane still posts, and a silent stop the day it is retired.
+  #
+  # The reporting lives in the script rather than here because there are eight outcomes
+  # that must stay distinguishable — four from the merge, four from the ingest, HTTP 200
+  # being no verdict at all — and #1226 is the standing lesson about composing that kind
+  # of message where nothing can assert on it.
+  #
+  # Never fatal, and no `|| warn` needed: every path in it returns 0 by design, because
+  # telemetry is an attachment to a verdict. The `|| true` is belt and braces against a
+  # crash in the interpreter itself, which under `set -e` would take the phase down.
+  if [ "$POST_QA_PLATFORM" = "1" ] && [ "$PAYLOAD_BUILT" = "true" ]; then
+    log "Posting the token consumption"
+    TOKENS_DIR="$RUN_DIR/all-tokens" \
+    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    PAYLOAD_IN="$RUN_DIR/payload.json" \
+    PAYLOAD_OUT="$RUN_DIR/payload-with-tokens.json" \
+    TOKENS_SHARD_TOTAL="${SHARD_TOTAL:-}" \
+      node scripts/post-token-payload.mjs || true
+  fi
+
 
   # The run series — one line per scheduled sweep, and the switch that used to gate it
   # was named for something this script does not do. COMMIT_HISTORY implied a commit;
