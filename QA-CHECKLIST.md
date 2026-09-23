@@ -1047,9 +1047,9 @@
       → security/credential-secret-exposure.spec.ts
 - [x] The same secret is absent from the exported flow JSON
       → security/credential-secret-exposure.spec.ts
-- [!] The exported flow keeps each credential field bound to its variable name, so an
-      import can re-resolve it (**declared failing** — `test.fail()` against the live
-      upstream export regression, #1546 / LE-2649; the daily goes red the day the fix lands)
+- [x] The exported flow keeps each credential field bound to its variable name, so an
+      import can re-resolve it (upstream regression LE-2649 / #1546, fixed by
+      langflow#15143 in `1.13.0.dev21`; the `test.fail()` declaration was lifted by #2008)
       → security/credential-secret-exposure.spec.ts
 - [x] The same secret is absent from the API response of a run
       → security/credential-secret-exposure.spec.ts
