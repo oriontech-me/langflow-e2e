@@ -1592,14 +1592,14 @@
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 47 | 43 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 30 | 24 | 0 | 1 | 5 |
+| `security/` — Validation, SSRF, Secrets | 30 | 25 | 0 | 0 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **730** | **628 (86%)** | **36 (5%)** | **14 (2%)** | **52 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **730** | **629 (86%)** | **36 (5%)** | **13 (2%)** | **52 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1615,7 +1615,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 699 `test()` calls carrying the `@stable` tag, distributed across 274 spec
+> 700 `test()` calls carrying the `@stable` tag, distributed across 274 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2301,6 +2301,7 @@
 - [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
 - [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
 - [x] the exported flow never carries the secret value → `credential-secret-exposure.spec.ts`
+- [x] the exported flow carries the credential binding, never the secret → `credential-secret-exposure.spec.ts`
 - [x] a loopback base URL is refused, naming every address the name resolves to → `model-provider-base-url-ssrf.spec.ts`
 - [x] the cloud-metadata address is refused → `model-provider-base-url-ssrf.spec.ts`
 - [x] a non-http(s) scheme is refused, naming the scheme → `model-provider-base-url-ssrf.spec.ts`
