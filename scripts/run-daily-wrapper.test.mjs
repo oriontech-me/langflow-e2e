@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -32,10 +32,14 @@ const COMPLETE_LANE = [
  * that gets past every refusal stops at "could not resolve the version" -- which is the
  * observable proof that it got past them, without touching a network or a venv.
  */
-function makeLane(dir, laneLines) {
+function makeLane(dir, laneLines, files = {}) {
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm"), { recursive: true });
   copyFileSync(WRAPPER, join(repo, "ops", "vm", "run-daily.sh"));
+  for (const [rel, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, rel)), { recursive: true });
+    writeFileSync(join(repo, rel), body, { mode: 0o755 });
+  }
   const git = (...args) => execFileSync(REAL_GIT, args, { cwd: repo, stdio: "pipe" });
   git("init", "-q");
   git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", ".");
@@ -58,12 +62,15 @@ function makeLane(dir, laneLines) {
   return { repo, home, secrets, lane, logs: join(dir, "logs") };
 }
 
-function runWrapper(dir, laneLines, script = WRAPPER) {
-  const l = makeLane(dir, laneLines);
+function runWrapper(dir, laneLines, script = WRAPPER, files = {}) {
+  const l = makeLane(dir, laneLines, files);
+  const tmp = join(dir, "tmp");
+  mkdirSync(tmp);
   const r = spawnSync("bash", [script], {
     encoding: "utf8",
     env: {
       PATH: process.env.PATH,
+      TMPDIR: tmp,
       HOME: l.home,
       E2E_DAILY_REPO: l.repo,
       E2E_DAILY_LOG_DIR: l.logs,
@@ -72,7 +79,24 @@ function runWrapper(dir, laneLines, script = WRAPPER) {
       E2E_DAILY_VENV: join(dir, "venv"),
     },
   });
-  return { ...r, log: readFileSync(join(l.logs, "latest.log"), "utf8") };
+  return { ...r, log: readFileSync(join(l.logs, "latest.log"), "utf8"), leftInTmp: readdirSync(tmp) };
+}
+
+/**
+ * Stubs for everything after the lane check, so a run goes the whole way through. The
+ * resolver is the real one's output shape: one `::warning::` line on stderr, the JSON
+ * on stdout -- which is what every fallback path of the real one prints.
+ */
+function fullRun({ runExit = 0, warn = true } = {}) {
+  return {
+    "scripts/resolve-target-version.mjs": [
+      warn ? 'process.stderr.write("::warning::resolve-target-version: no v1.2.3 tag in the refs\\n");' : "",
+      'process.stdout.write(JSON.stringify({ ok: true, version: "1.2.3", warnings: ["no v1.2.3 tag"] }) + "\\n");',
+    ].join("\n"),
+    "scripts/prepare-target-dist.sh": "#!/bin/sh\necho frontend_dir=/nowhere/frontend\n",
+    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\nexit ${runExit}\n`,
+    "scripts/backup-ledger.sh": "#!/bin/sh\necho backup ran\n",
+  };
 }
 
 test("with no lane file, it refuses before resolving or installing anything", () => {
@@ -154,3 +178,16 @@ test("it installs the target with the repository's installer, not a machine copy
   assert.doesNotMatch(code, /install-target-dist/);
   assert.doesNotMatch(code, /python3\.\d+\/site-packages/, "the frontend path is guessed again");
 });
+
+test("a resolver warning does not stop the run: stderr is kept out of the JSON", () => {
+  // Every fallback path of the resolver warns on stderr. Mixed into the captured JSON,
+  // the warning made the parse fail and the day the fallback exists for refused to run.
+  const dir = makeTempDir("wrapper-resolver-warns");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun());
+  assert.doesNotMatch(r.log, /could not resolve/);
+  assert.match(r.log, /target should be: 1\.2\.3/);
+  assert.match(r.log, /::warning::resolve-target-version: no v1\.2\.3 tag/, "the warning left the log");
+  assert.match(r.log, /run-e2e ran/);
+  rmSync(dir, { recursive: true, force: true });
+});
+

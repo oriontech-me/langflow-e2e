@@ -127,7 +127,11 @@ main() {
   git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$TMP/refs.txt" \
     || echo "WARNING: the upstream ref listing is unreachable"
   local DECISION WANT
-  DECISION="$(node scripts/resolve-target-version.mjs --refs-file "$TMP/refs.txt" --image-tags-file "$TMP/tags.json" 2>&1 || true)"
+  # stderr apart from stdout: the resolver writes its warnings there, one `::warning::`
+  # line each, and every fallback path emits one -- mixed into the JSON they would make
+  # the parse fail, and the day the fallback exists for would refuse to run.
+  DECISION="$(node scripts/resolve-target-version.mjs --refs-file "$TMP/refs.txt" --image-tags-file "$TMP/tags.json" 2>"$TMP/resolver.err" || true)"
+  cat "$TMP/resolver.err"
   WANT="$(node -p "try{JSON.parse(process.argv[1]).version||''}catch{''}" "$DECISION" 2>/dev/null)"
   if [ -z "$WANT" ]; then
     echo "FATAL: could not resolve the version this lane should serve. Refusing to run:"
