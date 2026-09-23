@@ -334,21 +334,9 @@ and nothing is fetched from the npm registry.
 - The MCP Server **tab** on a flow (exposing a project) — `mcp-server-tab.spec.ts`.
 - Protocol-level tool listing/execution — `mcp-server-protocol.spec.ts`.
 - Flow-file **resources** — `mcp-server-resources.spec.ts`.
-- Registration **status codes** (409/404) — `mcp/client/mcp-server-registration-status-codes.spec.ts`.
-- **The read/update paths for a name that does not exist.** Measured on nightly
-  `1.12.0.dev20` and deliberately left unasserted, because both look wrong and
-  asserting either way would be a decision this spec should not make on its own:
-  `GET /api/v2/mcp/servers/{unknown}` answers **200 `null`** rather than the 404
-  its sibling `DELETE` returns (upstream `#14005` fixed the delete path and left
-  this one), and `PATCH /api/v2/mcp/servers/{unknown}` answers **200 and creates
-  the server** — so a typo'd name silently registers a ghost instead of failing.
-  Asserting today's behaviour would enshrine it; asserting the corrected
-  behaviour would ship a durably red `@stable` test, which the current triage
-  policy strips within a day. Both are filed upstream — `LE-2646` (PATCH) and
-  `LE-2647` (GET) — and tracked in #1406; the PATCH half is the API-level cause
-  of upstream PR #13464, which fixed the edit modal only. The assertions land
-  in `mcp/client/mcp-server-registration-status-codes.spec.ts` once the
-  contract is settled.
+- Registration **status codes** (409/404), including `GET` and `PATCH` of a name
+  that does not exist (404, and the PATCH creates nothing; #1406) —
+  `mcp/client/mcp-server-registration-status-codes.spec.ts`.
 - **The stdio security policy on the PATCH path.** Also measured: a merge patch
   that sends `args` **without** `command` is validated with no command in scope,
   so `{"args": ["-y", "…"]}` is refused with 422 (`dangerous keyword '-y'`) while

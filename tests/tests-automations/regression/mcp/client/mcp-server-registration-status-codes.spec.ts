@@ -10,8 +10,17 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 //
 //   • POST an already-registered name  → 409 Conflict  (duplicate resource)
 //   • DELETE a non-existent server      → 404 Not Found
+//   • GET a non-existent server         → 404 Not Found            (#1406)
+//   • PATCH a non-existent server       → 404, and nothing created (#1406)
 //
-// HISTORY — these were expected-red watchdogs, and they are not any more (#991).
+// HISTORY (GET/PATCH, #1406): until Nightly 1.13.0.dev20 the GET answered 200
+// `null` and the PATCH answered 200 and CREATED the server, because
+// `update_server(..., merge_existing=True)` upserted a missing row. Filed as
+// LE-2647 / LE-2646 and fixed in langflow-ai/langflow#15130. `dev21` is the first
+// nightly carrying that fix, so on an older image both tests fail at the status
+// check with `Received: 200`, which is the old defect and not a new one.
+//
+// HISTORY (POST/DELETE) — these were expected-red watchdogs, and they are not any more (#991).
 // From 1.5.0 (upstream PR langflow-ai/langflow#8388) until 2026-07-27,
 // `api/v2/mcp.py` answered **500** for both conditions ("Server already exists."
 // / "Server not found."), so both tests failed by design against the nightly and
@@ -60,6 +69,8 @@ const WORKER = process.env.TEST_WORKER_INDEX ?? "0";
 const UNIQUE = `${WORKER}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const DUP_SERVER_NAME = `dup-status-${UNIQUE}`;
 const MISSING_SERVER_NAME = `missing-status-${UNIQUE}`;
+const UNREAD_SERVER_NAME = `unread-status-${UNIQUE}`;
+const UNPATCHED_SERVER_NAME = `unpatched-status-${UNIQUE}`;
 // Registration is lazy — Langflow persists the config without probing the URL —
 // so an unreachable port-1 URL still registers successfully (matches the sibling
 // mcp-client-regression.spec.ts convention).
@@ -172,6 +183,106 @@ test.describe("MCP v2 server registration — HTTP status codes", () => {
           "404 must be the resource-not-found case, not a missing/renamed route",
         ).toMatch(/server not found/i);
       });
+    },
+  );
+
+  test(
+    "reading a non-existent MCP server returns 404 Not Found",
+    { tag: ["@mcp", "@regression", "@api", "@stable"] },
+    async ({ page }) => {
+      const authHeader = await getAuthToken(page.request);
+      expect(
+        authHeader,
+        "Auth token is empty — the instance did not return an access_token; " +
+          "the status assertion below would fail for an auth reason, not the contract",
+      ).toBeTruthy();
+      const headers = { Authorization: authHeader };
+      // Unique and never registered, so the resource is absent by construction.
+      const path = `/api/v2/mcp/servers/${UNREAD_SERVER_NAME}`;
+
+      await test.step("Reading a missing server is rejected with 404 Not Found", async () => {
+        const resp = await page.request.get(path, { headers });
+        expect(
+          resp.status(),
+          "Reading a non-existent MCP server must return 404 Not Found. " +
+            "A 200 here (body `null`) is a REGRESSION of langflow-ai/langflow#15130 " +
+            "(see #1406), or an image older than Nightly 1.13.0.dev21",
+        ).toBe(404);
+        // Same guard as the DELETE test: a bare route-level "Not Found" must not
+        // pass for the resource-level "Server not found."
+        expect(
+          await readDetail(resp),
+          "404 must be the resource-not-found case, not a missing/renamed route",
+        ).toMatch(/server not found/i);
+      });
+    },
+  );
+
+  test(
+    "patching a non-existent MCP server returns 404 and creates nothing",
+    { tag: ["@mcp", "@regression", "@api", "@stable"] },
+    async ({ page }) => {
+      const authHeader = await getAuthToken(page.request);
+      expect(
+        authHeader,
+        "Auth token is empty — the instance did not return an access_token; " +
+          "the status assertions below would fail for an auth reason, not the contract",
+      ).toBeTruthy();
+      const headers = {
+        Authorization: authHeader,
+        "Content-Type": "application/json",
+      };
+      // Unique and never registered, so the PATCH targets an absent resource.
+      const path = `/api/v2/mcp/servers/${UNPATCHED_SERVER_NAME}`;
+
+      try {
+        await test.step("Patching a missing server is rejected with 404 Not Found", async () => {
+          const resp = await page.request.patch(path, {
+            headers,
+            data: { url: HTTP_URL },
+          });
+          expect(
+            resp.status(),
+            "Patching a non-existent MCP server must return 404 Not Found. " +
+              "A 200 here means the PATCH upserted a ghost server — a REGRESSION of " +
+              "langflow-ai/langflow#15130 (see #1406), or an image older than " +
+              "Nightly 1.13.0.dev21",
+          ).toBe(404);
+          expect(
+            await readDetail(resp),
+            "404 must be the resource-not-found case, not a missing/renamed route",
+          ).toMatch(/server not found/i);
+        });
+
+        await test.step("The rejected PATCH registered nothing", async () => {
+          // The status alone is not enough: a 404 answered after the row was
+          // already written would still be the ghost-server defect.
+          const list = await page.request.get("/api/v2/mcp/servers", {
+            headers: { Authorization: authHeader },
+          });
+          expect(list.status(), "The server listing must be readable").toBe(
+            200,
+          );
+          const servers: unknown = await list.json();
+          // An array is required, so a non-list body cannot make the absence
+          // check below pass vacuously.
+          expect(
+            Array.isArray(servers),
+            "The server listing must be an array",
+          ).toBe(true);
+          const names = (servers as { name?: unknown }[]).map((s) => s?.name);
+          expect(
+            names,
+            "A PATCH of an unknown name must not create the server",
+          ).not.toContain(UNPATCHED_SERVER_NAME);
+        });
+      } finally {
+        await test.step("Cleanup: delete the name in case a regressed PATCH created it", async () => {
+          // Answers 404 on a healthy instance; removes the ghost only when the
+          // PATCH regressed, so a red run leaves nothing on the shared account.
+          await page.request.delete(path, { headers });
+        });
+      }
     },
   );
 });
