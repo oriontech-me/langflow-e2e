@@ -234,6 +234,8 @@ main() {
     echo "WARNING: scripts/backup-ledger.sh is absent -- the ledger was NOT copied off this machine"
   fi
   find "$LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +"$LOG_KEEP_DAYS" -delete
+  # The run's status, not the pruning's: without it a red day ends Result=success.
+  return "$code"
 }
 main "$@"
-exit
+exit $?

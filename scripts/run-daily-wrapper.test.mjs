@@ -191,3 +191,16 @@ test("a resolver warning does not stop the run: stderr is kept out of the JSON",
   rmSync(dir, { recursive: true, force: true });
 });
 
+for (const runExit of [0, 1, 3]) {
+  test(`the wrapper exits with the run's status (${runExit}), not the log pruning's`, () => {
+    // It ends by pruning logs and copying the ledger, both of which succeed on a red
+    // day; a bare `exit` after them made every red day Result=success in systemd.
+    const dir = makeTempDir(`wrapper-exit-${runExit}`);
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ runExit, warn: false }));
+    assert.match(r.log, new RegExp(`=== daily end, exit=${runExit} ===`));
+    assert.match(r.log, /backup ran/, "the ledger is copied on a red day too");
+    assert.equal(r.status, runExit);
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
