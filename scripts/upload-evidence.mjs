@@ -149,9 +149,10 @@ export async function main({ env = process.env, argv = process.argv.slice(2), fe
   //
   // The first version of this script sent the automation token, and nothing caught it:
   // the tests covered key shapes and content types, never WHICH credential goes out.
-  // Read from the route rather than measured against it — every file would 401, the
-  // upload would report a complete failure, and the run record would still advertise an
-  // evidence URL that then 404s in serve-report.
+  // Measured against production on 2026-09-23, both directions: the service role key
+  // (180 chars) gets past auth, the automation token (64 chars) comes back 401. So every
+  // file would have failed, the upload would have reported a complete failure, and the
+  // run record would still have advertised an evidence URL that 404s in serve-report.
   //
   // It is also what the platform hands the VMs it orchestrates itself
   // (start-execution.ts, run-single.ts: `callbackAuthToken: env.serviceRoleKey`), so
