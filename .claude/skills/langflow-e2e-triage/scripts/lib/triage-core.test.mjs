@@ -955,3 +955,20 @@ test('#1763 one variant is exempted without the other one disappearing', () => {
     assert.equal(Object.keys(byParam).length, 2, 'and the two are told apart by their provider');
   }
 });
+
+test('computeRecurrence is not answered by a parameterized sibling with another cause (#1626)', () => {
+  const k = (head) => ({ head, locator: null, file: 'f', source: 's' });
+  const entry = (param, head) => ({
+    test: 'agent runs', param, error_signature: head,
+    recurrence_keys: [k(head)], recurrence_key_version: 1,
+  });
+  const item = entry('google / g', 'MODEL_PICKER_DEFECT');
+  const rows = [
+    // The sibling is listed first, as the report orders providers.
+    { date: '2026-09-01', flaky: [entry('openai / o', 'error: other'), entry('google / g', 'MODEL_PICKER_DEFECT')] },
+    { date: '2026-09-02', flaky: [item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.dates, ['2026-09-01', '2026-09-02']);
+  assert.equal(r.same_signature, true);
+});

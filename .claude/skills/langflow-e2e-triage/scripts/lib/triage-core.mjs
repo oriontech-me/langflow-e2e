@@ -129,12 +129,16 @@ export function computeRecurrence(item, rowsInWindow) {
   for (const row of rowsInWindow) {
     const entries = [...(row.failures || []), ...(row.flaky || [])];
     // The item's own row answers with the item itself: a legacy row compared
-    // with itself is only `unverified` on the head, and a parameterized spec can
-    // carry the same title twice in one row, so `find` could return the sibling.
-    const hit = entries.includes(item) ? item : entries.find((e) => e.test === item.test);
-    if (!hit) continue;
+    // with itself is only `unverified` on the head. Every other row may carry the
+    // title more than once — a parameterized spec emits one entry per provider —
+    // so taking the first one let a sibling with a different cause answer for the
+    // item and read a real recurrence as `none`. Same-`param` entries are asked
+    // first, and the best verdict among them wins.
+    const titled = entries.filter((e) => e.test === item.test);
+    if (!titled.length) continue;
     allDates.push(row.date);
-    const verdict = hit === item ? 'match' : compareRecurrence(item, hit);
+    const verdict = titled.includes(item) ? 'match' : bestVerdict(item, titled);
+    const hit = titled.find((e) => compareRecurrence(item, e) === verdict) || titled[0];
     if (verdict === 'unverified') unverifiedDates.push(row.date);
     if (verdict !== 'none') {
       sameDates.push(row.date);
@@ -153,6 +157,22 @@ export function computeRecurrence(item, rowsInWindow) {
     unverified_dates: unverifiedDates,
     outage_by_date: outageByDate,
   };
+}
+
+const VERDICT_RANK = { match: 2, unverified: 1, none: 0 };
+
+/** The strongest verdict any of `candidates` gives, same-`param` entries first. */
+function bestVerdict(item, candidates) {
+  const sameParam = candidates.filter((e) => (e.param ?? null) === (item.param ?? null));
+  for (const pool of [sameParam, candidates]) {
+    let best = 'none';
+    for (const e of pool) {
+      const v = compareRecurrence(item, e);
+      if (VERDICT_RANK[v] > VERDICT_RANK[best]) best = v;
+    }
+    if (best !== 'none') return best;
+  }
+  return 'none';
 }
 
 /** True when the run had more hard failures than the auto-remove guard allows. */
@@ -346,7 +366,7 @@ const DEFAULT_DELIVERABLES = [
  * Make a value safe as a single Markdown table cell.
  *
  * Signatures are copied verbatim out of `reports/daily-history.jsonl` so that
- * recurrence stays matchable via `normalizeSignature()`. Two things still have
+ * the dedup against open issues stays matchable via `normalizeSignature()`. Two things still have
  * to be neutralised or the table silently breaks: a literal `|` ends the cell
  * early, and an embedded newline ends the row. Both are escaped rather than
  * stripped — `normalizeSignature()` collapses whitespace and the reader can
@@ -686,8 +706,8 @@ export function buildDataset(rows, issues, opts = {}) {
 
   const hard_failures = dedupeEntries(run.failures).map(withRecurrence);
 
-  // A flake is actionable when it recurs under the same signature — AND when the
-  // failure is the spec's own. #1031 exempted wedge collateral from `@stable`
+  // A flake is actionable when it recurs under the same cause (the recurrence
+  // key, #1626) — AND when the failure is the spec's own. #1031 exempted wedge collateral from `@stable`
   // auto-removal, but that path only ever sees hard failures, so a flake whose
   // error is transport-level still satisfied the recurrence criterion and the
   // protocol then required a dedicated issue *and* a quarantine PR for it: a
@@ -719,7 +739,7 @@ export function buildDataset(rows, issues, opts = {}) {
             infra_excluded: {
               signature: f.infra_signature,
               classified_from: f.infra_classified_from,
-              why: 'recurs under the same signature, but the error is transport-level — the harness could not reach the backend, so the failure is not attributable to this spec (#1031/#1310). Note it against the run backend outage; do not file or quarantine.',
+              why: 'recurs under the same cause, but the error is transport-level — the harness could not reach the backend, so the failure is not attributable to this spec (#1031/#1310). Note it against the run backend outage; do not file or quarantine.',
             },
           }
         : {}),
@@ -734,7 +754,7 @@ export function buildDataset(rows, issues, opts = {}) {
               ...(f.outage_overlap.shard_down_pct !== undefined
                 ? { shard_down_pct: f.outage_overlap.shard_down_pct }
                 : {}),
-              why: `recurs under the same signature, and the error is NOT transport-level — but the in-run liveness recorder measured every failed attempt of it at least ${Math.round(OUTAGE_COVERAGE_THRESHOLD * 100)}% inside a backend outage on its own shard, so the failure is not attributable to this spec (#1763). Note it against the run backend outage; do not file or quarantine. Read min_coverage against shard_down_pct before accepting it, and say so in the proposal — this is a measurement, not a signature.`,
+              why: `recurs under the same cause, and the error is NOT transport-level — but the in-run liveness recorder measured every failed attempt of it at least ${Math.round(OUTAGE_COVERAGE_THRESHOLD * 100)}% inside a backend outage on its own shard, so the failure is not attributable to this spec (#1763). Note it against the run backend outage; do not file or quarantine. Read min_coverage against shard_down_pct before accepting it, and say so in the proposal — this is a measurement, not a signature.`,
             },
           }
         : {}),
