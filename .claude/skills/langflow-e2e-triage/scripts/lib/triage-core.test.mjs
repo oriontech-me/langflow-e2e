@@ -1006,3 +1006,17 @@ test('computeRecurrence does not let a sibling match when the item\'s variant fa
   const legacy = [{ date: '2026-09-01', flaky: [entry(undefined, 'h')] }, { date: '2026-09-02', flaky: [item] }];
   assert.deepEqual(computeRecurrence(item, legacy).dates, ['2026-09-01', '2026-09-02']);
 });
+
+test('computeRecurrence reads a null param and an absent one as the same variant (#1626)', () => {
+  const entry = (extra, head) => ({
+    test: 't', error_signature: head, ...extra,
+    recurrence_keys: [{ head, locator: null, file: 'f', source: 's' }], recurrence_key_version: 1,
+  });
+  const item = entry({}, 'h');
+  const rows = [
+    { date: '2026-09-01', flaky: [entry({ param: 'openai / o' }, 'h'), entry({ param: null }, 'other')] },
+    { date: '2026-09-02', flaky: [item] },
+  ];
+  // The null-param entry IS the item's variant, so the openai sibling does not answer.
+  assert.deepEqual(computeRecurrence(item, rows).dates, ['2026-09-02']);
+});

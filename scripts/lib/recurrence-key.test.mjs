@@ -447,3 +447,23 @@ test("a test timeout whose next error points at no code keeps its own site", () 
   assert.equal(k.file, "x.spec.ts");
   assert.equal(k.locator, null);
 });
+
+// ------------------------------------------------- review round 3 (#1626)
+
+test("the // of a URL string is not read as a comment", () => {
+  const closed = recurrenceSource(
+    frameOf('> 10 |   await page.goto("http://x/a");', "     |   ^", "  11 |   await next();"),
+  );
+  assert.equal(closed, 'await page.goto("http://x/a");');
+  const open = recurrenceSource(
+    frameOf('> 10 |   const u = "http://" + path.join(', "     |   ^", "  11 |     base, id);"),
+  );
+  assert.equal(open, 'const u = "http://" + path.join( base, id);');
+});
+
+test("a comment's full stop does not pull the next statement in, a chain's dot does", () => {
+  const src = recurrenceSource(frameOf("> 10 |   await step(); // done.", "     |   ^", "  11 |   await next();"));
+  assert.equal(src, "await step(); // done.");
+  const chain = recurrenceSource(frameOf("> 10 |   await page.", "     |   ^", "  11 |     getByTestId(\"a\").click();"));
+  assert.equal(chain, 'await page. getByTestId("a").click();');
+});

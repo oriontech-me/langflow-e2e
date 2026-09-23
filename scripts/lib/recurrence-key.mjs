@@ -218,8 +218,10 @@ function frameStatement(text) {
   for (let i = at + 1; i < lines.length && parts.length < 5; i++) {
     // A trailing `//` comment is dropped before asking whether the statement is
     // still open, or a comment ending in `,` would pull the next statement in.
-    const joined = parts.join(" ").replace(/\s*\/\/.*$/, "");
-    const open = bracketDepth(joined) > 0 || /(?:\bexpect|[(,{]|=>)$/.test(joined);
+    // String literals go first, or the `//` of a URL would cut the line inside
+    // its string.
+    const joined = parts.join(" ").replace(QUOTED, '""').replace(/\s*\/\/.*$/, "");
+    const open = bracketDepth(joined) > 0 || /(?:\bexpect|[(,.{]|=>)$/.test(joined);
     const row = FRAME_ROW.exec(lines[i]);
     if (!row) {
       if (/^\s*\|/.test(lines[i])) continue; // the caret row under the failing one

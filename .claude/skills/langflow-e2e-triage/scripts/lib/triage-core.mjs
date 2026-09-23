@@ -168,9 +168,12 @@ const VERDICT_RANK = { match: 2, unverified: 1, none: 0 };
  * When the row carries the item's own variant (same `param`), only those entries
  * answer: another provider failing the same way is that provider's recurrence,
  * and letting it answer would also hand the item that variant's outage state.
- * Every same-title entry answers only when none shares the param — a row written
- * before `param` was recorded, or a spec that stopped parameterizing — which is
- * what the title-only rule always did.
+ * Every same-title entry answers when none shares the param, and that is the
+ * COMMON case, not an edge: `param` carries the model, and the daily rotates the
+ * provider by weekday (#1185), so most earlier rows hold another variant or none.
+ * There a sibling's same-cause failure counts — including its outage state —
+ * because it is the only occurrence that row has; the title-only rule always did
+ * this, and refusing it would make a rotated provider's cause unable to recur.
  */
 function bestHit(item, candidates) {
   const sameParam = candidates.filter((e) => (e.param ?? null) === (item.param ?? null));
