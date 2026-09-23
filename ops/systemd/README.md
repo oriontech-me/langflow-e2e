@@ -24,6 +24,26 @@ cron (3.0pl1) has no `CRON_TZ`, which is why none of this is a crontab line: a s
 written in local time silently moves an hour at the DST change, and the lane it is
 compared against (`.github/workflows/daily-stable.yml`) is expressed in UTC.
 
+## Machine prerequisites
+
+What the machine must have before the units are worth installing. Neither of these can
+live in this repository as a file, so they are listed here, with how to check each on
+the machine.
+
+| Prerequisite | Check | If it is missing |
+|---|---|---|
+| `uv` in `~/.local/bin` (the installer and the starter need it; systemd does not load that directory, which is why the wrapper puts it on `PATH`) | `~/.local/bin/uv --version` | the preflight **stops** the run and says so |
+| `localhost` resolving to **both** `127.0.0.1` and `::1`. Ubuntu's default `/etc/hosts` maps `::1` to `ip6-localhost ip6-loopback` only, so add `localhost` to that line: `::1 localhost ip6-localhost ip6-loopback` (#1998) | `python3 -c 'import socket; print({a[4][0] for a in socket.getaddrinfo("localhost", None)})'` shows both | the preflight **warns** and writes `logs/target-localhost.log`, and `model-provider-base-url-ssrf` fails on the environment, not the product |
+
+The asymmetry is deliberate. A missing `uv` cannot produce a run at all, so the preflight
+refuses one. A missing `::1` produces a run with one false red, and a refusal would trade
+a day of data for it. So the preflight warns, and the warning lands in the run's own
+evidence, where the triage of that red looks first.
+
+**Check with `getaddrinfo`, not `getent ahosts`.** On a host with no global IPv6 address
+`getent ahosts localhost` drops `::1` even when `/etc/hosts` is right. That was measured
+on the QA VM, and it is the resolver the backend does *not* use.
+
 ## Install
 
 ```sh
