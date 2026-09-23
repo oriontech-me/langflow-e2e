@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-22
+> **Last updated:** 2026-09-23
 
 ---
 
@@ -1573,8 +1573,8 @@
 | `core-components/` — Core Components | 94 | 93 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 40 | 36 | 0 | 1 | 3 |
-| `core-functionality/model-provider/` | 36 | 33 | 2 | 0 | 1 |
+| `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
+| `core-functionality/model-provider/` | 36 | 32 | 3 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 50 | 1 | 0 | 1 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
@@ -1592,7 +1592,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 29 | 15 | 0 | 0 | 14 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **723** | **617 (85%)** | **33 (5%)** | **14 (2%)** | **59 (8%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **723** | **614 (85%)** | **36 (5%)** | **14 (2%)** | **59 (8%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1608,7 +1608,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 689 `test()` calls carrying the `@stable` tag, distributed across 272 spec
+> 688 `test()` calls carrying the `@stable` tag, distributed across 272 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1979,7 +1979,6 @@
 - [x] input via ChatInput handle drives the agent response → `agent-input-sources.spec.ts`
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent reply renders as correct Markdown in the Playground → `agent-markdown-output.spec.ts`
-- [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
@@ -2367,8 +2366,8 @@
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
-| `core-functionality/llm-agents/` | 0 | 3 |
-| `core-functionality/model-provider/` | 2 | 1 |
+| `core-functionality/llm-agents/` | 2 | 3 |
+| `core-functionality/model-provider/` | 3 | 1 |
 | `core-functionality/playground/` | 1 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
