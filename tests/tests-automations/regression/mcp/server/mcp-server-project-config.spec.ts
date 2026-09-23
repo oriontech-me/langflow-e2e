@@ -168,9 +168,10 @@ test.describe("MCP Server — per-project tool exposure", () => {
     // truncates the PREFIX to what is left, so `e2ecf` is kept for readability
     // rather than for correctness and a longer one would be safe.
     //
-    // The product defect is still open (#1409) and still reproduces with two
-    // ordinary project names, so a spec creating projects by any other route
-    // still has to think about it.
+    // The product defect (#1409) is fixed upstream in langflow-ai/langflow#15144,
+    // first on nightly 1.13.0.dev21, and pinned by api-projects-crud.spec.ts. A
+    // spec creating projects by another route that must also pass on an older
+    // image still has to think about it.
     const project = await createProjectViaApi(request, headers, {
       namePrefix: "e2ecf",
       description: "Per-project MCP exposure (#1396)",

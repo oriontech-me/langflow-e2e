@@ -254,4 +254,99 @@ test.describe("Projects API — CRUD", () => {
       });
     },
   );
+
+  test(
+    "two projects sharing their first 26 characters are both created, each with its own MCP server",
+    { tag: ["@stable", "@api", "@workspace", "@mcp"] },
+    async ({ request, apiCoverage }) => {
+      apiCoverage.declare(["POST /api/v1/projects/"]);
+      const headers = { Authorization: await getAuthToken(request) };
+      // The per-run part (base36 timestamp + random tail) sits INSIDE the 26
+      // characters Langflow keeps for the derived `lf-…` name, so two runs never
+      // share a base name; the fixed padding pushes the point where the pair
+      // differs PAST the cut. Before langflow-ai/langflow#15144 (first on nightly
+      // 1.13.0.dev21) the second create was refused with 409 "MCP server name
+      // conflict" (#1409).
+      const head = `${uniqueName("pmcp")}-shared-prefix-pad`;
+      expect(
+        head.length,
+        "The shared head must fill the 26-character cut, or the pair would not collide",
+      ).toBeGreaterThanOrEqual(26);
+      const projects: { id: string; name: string }[] = [];
+
+      await test.step("both projects are created", async () => {
+        projects.push(await createProject(request, headers, `${head} alpha`));
+        // createProject asserts 201; a 409 here is the #1409 defect, or an image
+        // older than nightly 1.13.0.dev21.
+        projects.push(await createProject(request, headers, `${head} beta`));
+      });
+
+      await test.step("both are listed", async () => {
+        const res = await request.get("/api/v1/projects/", { headers });
+        expect(res.status()).toBe(200);
+        const ids = ((await res.json()) as { id: string }[]).map(
+          (row) => row.id,
+        );
+        for (const project of projects) {
+          expect(ids, `${project.name} must survive the create`).toContain(
+            project.id,
+          );
+        }
+      });
+
+      await test.step("each project has its own MCP server entry", async () => {
+        const res = await request.get("/api/v2/mcp/servers", { headers });
+        expect(res.status()).toBe(200);
+        const servers: unknown = await res.json();
+        expect(
+          Array.isArray(servers),
+          "The server listing must be an array",
+        ).toBe(true);
+        const names = (servers as { name?: unknown }[])
+          .map((entry) => entry?.name)
+          .filter(
+            (name): name is string =>
+              typeof name === "string" && name.startsWith("lf-"),
+          );
+        // The project an entry serves is named in its `args` (the streamable URL
+        // carries the project id), so the entry is matched by id rather than by
+        // the fallback name's spelling. Entries of other workers' projects can
+        // vanish between the listing and the read, hence non-200 is skipped.
+        const configs = await Promise.all(
+          names.map(async (name) => {
+            const one = await request.get(
+              `/api/v2/mcp/servers/${encodeURIComponent(name)}`,
+              {
+                headers,
+              },
+            );
+            return one.status() === 200
+              ? { name, args: JSON.stringify((await one.json())?.args ?? []) }
+              : null;
+          }),
+        );
+        const owners = projects.map((project) =>
+          configs
+            .filter(
+              (config): config is { name: string; args: string } =>
+                config !== null,
+            )
+            .filter((config) =>
+              config.args.includes(`/api/v1/mcp/project/${project.id}/`),
+            )
+            .map((config) => config.name),
+        );
+        for (const [i, project] of projects.entries()) {
+          expect(
+            owners[i],
+            `${project.name} must have exactly one MCP server entry`,
+          ).toHaveLength(1);
+        }
+        expect(
+          owners[0][0],
+          "The two projects must not share one MCP server entry",
+        ).not.toBe(owners[1][0]);
+      });
+    },
+  );
 });

@@ -148,7 +148,8 @@ Findings deliberately kept out of both tables, so nobody re-litigates them:
   nothing changed inside the window the suite validates — unlike LE-2020, which
   earned a row despite being "not new" because the 7× rate shift was measured.
   The suite hit it while validating #1396 and worked around it by shortening the
-  spec's `namePrefix`. Evidence: #1409.
+  spec's `namePrefix`. Fixed upstream in langflow-ai/langflow#15144, first on
+  nightly `1.13.0.dev21`. Evidence: #1409.
 - **#552 — no echo response for gemini-3.5-flash in `mcp-client-agent`** —
   closed on triage 2026-07-10 without a confirmed `langflow-regression` verdict
   or a filed ticket. (Former candidate.)
