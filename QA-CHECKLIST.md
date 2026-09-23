@@ -1612,7 +1612,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 698 `test()` calls carrying the `@stable` tag, distributed across 274 spec
+> 696 `test()` calls carrying the `@stable` tag, distributed across 274 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1958,7 +1958,6 @@
 
 #### core-functionality/integrations/
 - [x] Settings navigation reaches the Connections page, and an empty view says so while still offering Add → `connections-page.spec.ts`
-- [x] a seeded row shows what the account is, each tab holds only its ownership kind, and search narrows by name, account and handle → `connections-page.spec.ts`
 - [x] the status badge follows the connection's state: expired and revoked each offer Reconnect → `connections-page.spec.ts`
 - [x] the non-interactive opt-in is off by default, and every change to it shows on the switch and in the API → `connections-row-actions.spec.ts`
 - [x] Rename, Check credential, Revoke and Delete each act on the row, and the API agrees → `connections-row-actions.spec.ts`
@@ -2296,7 +2295,6 @@
 - [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
 - [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
 - [x] the exported flow never carries the secret value → `credential-secret-exposure.spec.ts`
-- [x] the exported flow carries the credential binding, never the secret → `credential-secret-exposure.spec.ts`
 - [x] a loopback base URL is refused, naming every address the name resolves to → `model-provider-base-url-ssrf.spec.ts`
 - [x] the cloud-metadata address is refused → `model-provider-base-url-ssrf.spec.ts`
 - [x] a non-http(s) scheme is refused, naming the scheme → `model-provider-base-url-ssrf.spec.ts`
