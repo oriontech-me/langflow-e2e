@@ -68,9 +68,22 @@ const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\
 // never a budget or a status code.
 const LONG_NUMBER_RE = /\d{6,}/g;
 
+// A generated token inside a test id: six or more alphanumerics mixing letters
+// and digits, bounded by anything that is not alphanumeric (so `_`-joined parts
+// count separately). Measured on the 2026-09-23 daily: `a2a-target-9bbd49b7-0-option`,
+// `connection-row-page_row_mue51qw0_83sqzi` — a fresh id per run, which made each
+// occurrence of one cause a different locator. Named ids (`provider-item-OpenAI`,
+// `llm-toggle-gpt-4o-mini`, `sidebar-search-input`) have no such segment.
+const GENERATED_TOKEN_RE = /(?<![A-Za-z0-9])(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{6,}(?![A-Za-z0-9])/g;
+
 /** Masks that apply to every field that can carry a generated value. */
 function maskIds(s) {
   return s.replace(UUID_RE, "<uuid>").replace(LONG_NUMBER_RE, "<n>");
+}
+
+/** A locator additionally loses the generated tokens a test id embeds. */
+function maskLocator(s) {
+  return maskIds(s).replace(GENERATED_TOKEN_RE, "<id>");
 }
 
 /** First non-empty line, trimmed and capped — `errorSignature()`'s exact rule in
@@ -87,12 +100,15 @@ function firstLine(message) {
 /**
  * The failure's kind, from its first line.
  *
- * Every digit run is masked, not only the long ones. Once the locator and the
- * call site discriminate, a number left in the head can only make one cause
- * unequal to itself: `page-entry barrier … answered GET /api/v1/version with
- * HTTP 200 in 1023ms` — 21 occurrences in the history, each carrying a measured
- * latency, so none could ever match another. A budget (`Timeout 3000ms` against
- * `Timeout 20000ms`) is a property of the call site, which `source` keeps.
+ * Every digit run is masked, not only the long ones. A number left in the head
+ * mostly makes one cause unequal to itself: `page-entry barrier … answered GET
+ * /api/v1/version with HTTP 200 in 1023ms` — 23 occurrences in the history on
+ * 2026-09-23, each carrying a measured latency, so none could ever match another.
+ * A budget (`Timeout 3000ms` against `Timeout 20000ms`) is a property of the call
+ * site, which `source` keeps. The price is paid in the other direction: one
+ * source line that interpolates an HTTP status now reads a 403 and a 500 as one
+ * kind. That is the rarer of the two, and it errs toward an unverified match a
+ * human reads rather than toward a cause that can never recur.
  */
 export function recurrenceHead(signature) {
   const line = stripAnsi(signature).replace(/\s+/g, " ").trim();
@@ -117,15 +133,15 @@ export function recurrenceHead(signature) {
 export function recurrenceLocator(message) {
   const text = stripAnsi(message);
   const assertion = /^\s*Locator:\s*(.+?)\s*$/m.exec(text);
-  if (assertion) return maskIds(assertion[1]);
+  if (assertion) return maskLocator(assertion[1]);
   const waiting = /^\s*-\s*waiting for (.+?)\s*$/m.exec(text);
   if (waiting) {
-    return maskIds(waiting[1].replace(/\s+to be (?:visible|hidden|attached|detached)$/, ""));
+    return maskLocator(waiting[1].replace(/\s+to be (?:visible|hidden|attached|detached)$/, ""));
   }
   const request = /^\s*-\s*→\s*([A-Z]+)\s+(\S+)/m.exec(text);
   if (request) {
     const path = request[2].replace(/^[a-z]+:\/\/[^/]+/i, "") || "/";
-    return maskIds(`${request[1]} ${path}`);
+    return maskLocator(`${request[1]} ${path}`);
   }
   return null;
 }
@@ -155,31 +171,91 @@ export function recurrenceFile(location, root = "") {
  *
  * The merged report usually leaves `snippet` empty and prints the frame inside
  * the message instead (measured on runs 33105369510 and 33511210195), so both are
- * read. A multi-line call keeps only its first line (`await page.waitForSelector(`)
- * — weaker, which is why `locator` travels beside it.
+ * read.
+ *
+ * A statement spanning several lines is followed into the rows below the `>` row
+ * until it closes, because its first line alone is often nothing:
+ * `await expect` heads 11 of the 127 keys the last ten dailies produce, and a
+ * value assertion (`expect(received)…`, `expect.poll`) has no locator to tell two
+ * such sites apart — so without the continuation, two different assertions in one
+ * spec collided exactly the way #1623 did. The frame only prints a few rows past
+ * the failing one, so a long statement is cut where the frame is; that cut is the
+ * same on every run, which is all a key needs.
  */
 export function recurrenceSource(error) {
   for (const text of [error?.snippet, error?.message, error?.value]) {
-    const row = /^\s*>\s*\d+\s*\|(.*)$/m.exec(stripAnsi(text));
-    if (row) {
-      const source = row[1].replace(/\s+/g, " ").trim();
-      if (source) return source;
-    }
+    const source = frameStatement(stripAnsi(text));
+    if (source) return cap(source);
   }
   return null;
 }
 
-/** The key of ONE failed attempt's error object, or null when it has none. */
-export function recurrenceKey(error, root = "") {
+const FRAME_ROW = /^\s*(>)?\s*\d+\s*\|(.*)$/;
+const QUOTED = /(["'`])(?:\\.|(?!\1).)*\1/g;
+
+/** Net bracket depth of a code fragment, string literals ignored. */
+function bracketDepth(code) {
+  let depth = 0;
+  for (const ch of code.replace(QUOTED, "")) {
+    if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch)) depth--;
+  }
+  return depth;
+}
+
+/** The failing statement from a code frame: the `>` row plus the rows it continues onto. */
+function frameStatement(text) {
+  const lines = String(text).split("\n");
+  const at = lines.findIndex((l) => {
+    const m = FRAME_ROW.exec(l);
+    return m && m[1] === ">";
+  });
+  if (at === -1) return null;
+  const parts = [FRAME_ROW.exec(lines[at])[2].trim()];
+  for (let i = at + 1; i < lines.length && parts.length < 5; i++) {
+    const joined = parts.join(" ");
+    const open = bracketDepth(joined) > 0 || /(?:\bexpect|[(,.{]|=>)$/.test(joined);
+    const row = FRAME_ROW.exec(lines[i]);
+    if (!row) {
+      if (/^\s*\|/.test(lines[i])) continue; // the caret row under the failing one
+      break;
+    }
+    const next = row[2].trim();
+    if (!open && !next.startsWith(".")) break;
+    parts.push(next);
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim() || null;
+}
+
+// Locator and source are otherwise unbounded — the longest measured was 434
+// characters — and they are written into every row of a committed file.
+const cap = (s) => (s.length > 240 ? s.slice(0, 240) : s);
+
+const TEST_TIMEOUT_HEAD = /^test timeout of #ms exceeded/;
+
+/**
+ * The key of ONE failed attempt's error object, or null when it has none.
+ *
+ * `inFlight` is the attempt's NEXT error. A test that runs out of its own budget
+ * reports `Test timeout of 300000ms exceeded.` first and carries neither locator
+ * nor frame — every such attempt of a test would be one cause — while the action
+ * that was waiting when the budget ran out is reported right after it. So for
+ * that head the site is read from the in-flight error, and the head stays the
+ * timeout's.
+ */
+export function recurrenceKey(error, root = "", inFlight = null) {
   if (!error) return null;
   const message = error.message || error.value || "";
   const head = recurrenceHead(firstLine(message));
   if (!head) return null;
+  const site = TEST_TIMEOUT_HEAD.test(head) && inFlight ? inFlight : error;
+  const siteMessage = site.message || site.value || "";
+  const locator = recurrenceLocator(siteMessage);
   return {
     head,
-    locator: recurrenceLocator(message),
-    file: recurrenceFile(error.location, root),
-    source: recurrenceSource(error),
+    locator: locator === null ? null : cap(locator),
+    file: recurrenceFile(site.location, root),
+    source: recurrenceSource(site),
   };
 }
 
@@ -198,7 +274,8 @@ export function recurrenceKeysForTest(test, root = "") {
   const keys = [];
   for (const result of test?.results || []) {
     if (result?.status === "passed" || result?.status === "skipped") continue;
-    const key = recurrenceKey(result?.error || result?.errors?.[0], root);
+    const errors = result?.errors || [];
+    const key = recurrenceKey(result?.error || errors[0], root, errors[1] || null);
     if (key && !keys.some((k) => sameKey(k, key))) keys.push(key);
   }
   return keys;
@@ -237,8 +314,10 @@ function headsOf(entry) {
  *   `none`        different causes.
  *
  * An entry with an empty key list (an unexpected pass, or a failure whose error
- * was lost) stands on its head alone; between two current-form entries that is
- * still a `match`, since there is no locator either side could have disagreed on.
+ * was lost) is compared by the head of its stored signature, with every other
+ * field null — so it matches another keyless entry of the same head, and never a
+ * keyed row, whose fields are not null. In practice empty keys mean `unknown`, so
+ * that only ever pairs `unknown` with `unknown`, which is what it did before.
  */
 export function compareRecurrence(a, b) {
   if (currentForm(a) && currentForm(b)) {

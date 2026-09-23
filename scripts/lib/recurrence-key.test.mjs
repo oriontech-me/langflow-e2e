@@ -298,10 +298,106 @@ test("a legacy row in the window is counted and named, not dropped", () => {
   const [older] = rows;
   const legacy = {
     ...older,
-    flaky: older.flaky.map(({ recurrence_keys, recurrence_key_version, ...rest }) => rest),
+    flaky: older.flaky.map((e) => {
+      const legacyEntry = { ...e };
+      delete legacyEntry.recurrence_keys;
+      delete legacyEntry.recurrence_key_version;
+      return legacyEntry;
+    }),
   };
   const r = computeRecurrence(item, [legacy, rows[1]]);
   // Head-only, the #1694 pair is the collision again — which is why it is named.
   assert.equal(r.count, 2);
   assert.deepEqual(r.unverified_dates, ["2026-08-31"]);
+});
+
+// ------------------------------------------------- review round 1 (#1626)
+
+test("two multi-line value assertions in one spec are different keys", () => {
+  // A value assertion has no locator, and both statements open with `await expect`
+  // alone on their first line — the #1623 collision for the second commonest head.
+  const at = (line, rows) => ({
+    message: ["Error: expect(received).toBe(expected) // Object.is equality", "", ...rows].join("\n"),
+    location: { file: `${ROOT}/tests/x.spec.ts`, line },
+  });
+  const a = at(131, [
+    "> 131 |       await expect",
+    "      |       ^",
+    "  132 |         .poll(() => projectFlowNames(request, projectId!), {",
+    "  133 |           timeout: 15000,",
+  ]);
+  const b = at(212, [
+    "> 212 |       await expect",
+    "      |       ^",
+    "  213 |         .poll(() => parked, { timeout: 20000 })",
+    "  214 |         .toBe(true);",
+  ]);
+  assert.equal(recurrenceSource(a), "await expect .poll(() => projectFlowNames(request, projectId!), { timeout: 15000,");
+  assert.equal(recurrenceSource(b), "await expect .poll(() => parked, { timeout: 20000 }) .toBe(true);");
+  assert.notDeepEqual(recurrenceKey(a, ROOT), recurrenceKey(b, ROOT));
+});
+
+test("a complete one-line statement does not swallow the next line", () => {
+  const frame = [
+    "> 145 |       await expect(page.getByTestId(\"t\")).toBeVisible({ timeout: 8000 });",
+    "      |                                              ^",
+    "  146 |       await page.close();",
+  ].join("\n");
+  assert.equal(recurrenceSource({ snippet: frame }), 'await expect(page.getByTestId("t")).toBeVisible({ timeout: 8000 });');
+});
+
+test("a test timeout takes its site from the action that was in flight", () => {
+  // Measured shape (run 32827671203): errors[0] is the timeout, errors[1] the action.
+  const waiting = (id) => ({
+    status: "timedOut",
+    errors: [
+      { message: "Test timeout of 300000ms exceeded." },
+      {
+        message: `Error: locator.click: Test timeout of 300000ms exceeded.\nCall log:\n  - waiting for getByTestId('${id}')`,
+        location: { file: `${ROOT}/tests/x.spec.ts`, line: 9 },
+      },
+    ],
+  });
+  const [a] = recurrenceKeysForTest({ results: [waiting("a")] }, ROOT);
+  const [b] = recurrenceKeysForTest({ results: [waiting("b")] }, ROOT);
+  assert.equal(a.head, "test timeout of #ms exceeded.");
+  assert.equal(a.locator, "getByTestId('a')");
+  assert.equal(a.file, "x.spec.ts");
+  assert.notDeepEqual(a, b);
+});
+
+test("a generated id inside a locator is masked, a named one is kept", () => {
+  assert.equal(
+    recurrenceLocator("Locator: getByTestId('connection-row-page_row_mue51qw0_83sqzi')"),
+    "getByTestId('connection-row-page_row_<id>_<id>')",
+  );
+  assert.equal(recurrenceLocator("Locator: getByTestId('a2a-target-9bbd49b7-0-option')"), "getByTestId('a2a-target-<id>-0-option')");
+  assert.equal(recurrenceLocator("Locator: getByTestId('llm-toggle-gpt-4o-mini')"), "getByTestId('llm-toggle-gpt-4o-mini')");
+});
+
+test("locator and source are capped like the signature", () => {
+  const long = "x".repeat(500);
+  const k = recurrenceKey({ message: `Error: e\nLocator: getByTestId('${long}')\n\n> 1 | ${long}` });
+  assert.equal(k.locator.length, 240);
+  assert.equal(k.source.length, 240);
+});
+
+test("a line 1 over 240 characters gives the same head the stored signature does", () => {
+  // The `[backend-unreachable]` barrier family: line 1 runs past 240 characters,
+  // and `error_signature` stores it cut there — so the key must cut it the same.
+  const line1 = `Error: page-entry barrier did not render — ${"and the backend did not answer ".repeat(10)}END`;
+  assert.ok(line1.length > 240);
+  const k = recurrenceKey({ message: `${line1}\nmore` });
+  assert.equal(k.head, recurrenceHead(line1.slice(0, 240)));
+  assert.notEqual(k.head, recurrenceHead(line1));
+});
+
+test("a skipped attempt contributes no key even when it carries an error", () => {
+  const keys = recurrenceKeysForTest({
+    results: [
+      { status: "failed", error: { message: "Error: real" } },
+      { status: "skipped", error: { message: "Error: never ran" } },
+    ],
+  });
+  assert.deepEqual(keys.map((k) => k.head), ["error: real"]);
 });
