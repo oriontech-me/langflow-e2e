@@ -922,18 +922,21 @@ export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], ex
  *   index.tsx` is unresolvable as written and is exactly the class at hand, and
  *   two docs carry that shape today.
  *
- * WHAT IT CANNOT SEE, MEASURED
+ * A WRONG ABBREVIATION — THE GAPPED RULE (#1925)
  *
- * An abbreviation that is also WRONG resolves to nothing and stays invisible.
- * `playground-message-logs.md` wrote `tableComponent/TableOptions/index.tsx` for a
- * file whose real path carries one more `components/` segment, and no clause here
- * reaches it. Falling back to the BASENAME when the written suffix resolves to
- * nothing was measured over the whole of `docs/` and REJECTED: it yields ~130
- * rows, essentially all of them HTTP endpoints (`POST /api/v1/flows/` → the seven
- * upstream directories named `flows`), and the one true positive it would have
- * found resolves 456 ways. A check that loud is a check nobody reads, which is the
- * `mode=count` lesson. That token was corrected by hand and the limit is recorded
- * here rather than worked around.
+ * An abbreviation that is also wrong resolves to nothing, so the rule above reads
+ * it as prose. `playground-message-logs.md` wrote `tableComponent/TableOptions/
+ * index.tsx` for a file whose real path carries one more `components/` segment,
+ * and #1592 corrected it by hand. Falling back to the BASENAME when the written
+ * suffix resolves to nothing was measured over the whole of `docs/` and REJECTED:
+ * ~130 rows, essentially all HTTP endpoints (`POST /api/v1/flows/` → the seven
+ * upstream directories named `flows`), with the one true positive resolving 456
+ * ways — the `mode=count` lesson. What does clear the bar #1925 set (false
+ * positives in the single digits) is narrower: a FILE token whose written segments
+ * all occur, in order, in exactly one upstream file — see `gappedCandidates`,
+ * which carries the measurement and the shape it still cannot see (a segment
+ * written wrong rather than left out). Those are reported as `gapped`, with the
+ * same severity rule and the same declarations as a plain abbreviation.
  *
  * WHAT IS *NOT* A FINDING, AND WHY IT IS DECLARED RATHER THAN HEURISTIC
  *
@@ -958,6 +961,7 @@ export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], ex
  *   checked: number,
  *   findings: Array<{file: string, line: number, token: string, resolved: string, refs: string[], severity: "fail"|"warn"}>,
  *   ambiguous: Array<{file: string, line: number, token: string, candidates: string[], severity: "fail"|"warn"}>,
+ *   gapped: Array<{file: string, line: number, token: string, resolved: string, refs: string[], severity: "fail"|"warn"}>,
  *   expired: Array<{doc: string, token: string, reason: string}>,
  *   declared: number,
  * }}
@@ -992,8 +996,27 @@ export function findAbbreviatedDeps({
     }
   }
 
+  // Files only, keyed by basename, for the GAPPED rule below. A directory is left
+  // out on a measurement, not a hunch: over the whole of `docs/` the same rule on
+  // directory tokens considers ~220 of them and its one hit is `ollama/ollama` —
+  // a docker image, not a path.
+  const upstreamFiles = new Map(); // basename -> Map<path, ref[]>
+  for (const { ref, entries } of trees) {
+    for (const entry of entries) {
+      const base = entry.slice(entry.lastIndexOf("/") + 1);
+      if (!hasFileExtension(base)) continue;
+      let byPath = upstreamFiles.get(base);
+      if (!byPath) upstreamFiles.set(base, (byPath = new Map()));
+      const refs = byPath.get(entry);
+      if (refs) {
+        if (!refs.includes(ref)) refs.push(ref);
+      } else byPath.set(entry, [ref]);
+    }
+  }
+
   const findings = [];
   const ambiguous = [];
+  const gapped = [];
   const used = new Set();
   const declaredBy = new Map(declarations.map((d) => [`${d.doc}\u0000${d.token}`, d]));
   let checked = 0;
@@ -1018,10 +1041,25 @@ export function findAbbreviatedDeps({
       // this repo is consulted BEFORE the upstream one rather than beside it.
       if (ownSuffixes.has(target)) continue;
 
-      const matches = upstream.get(target);
-      if (!matches || matches.size === 0) continue;
-
       const key = `${doc.file}\u0000${token}`;
+      const matches = upstream.get(target);
+      if (!matches || matches.size === 0) {
+        // Nothing ends with the token as written. Before calling it prose, ask
+        // whether it is a real file written with a segment MISSING (#1925).
+        const candidates = gappedCandidates(target, upstreamFiles);
+        if (candidates.size !== 1) continue;
+        const [resolved, refs] = [...candidates.entries()][0];
+        // The same two clauses as a plain abbreviation, over the same relation.
+        if (declaredHere.some((declared) => segmentsEmbed(target, declared))) continue;
+        if (ownFiles.some((own) => segmentsEmbed(target, own))) continue;
+        if (declaredBy.has(key)) {
+          used.add(key);
+          continue;
+        }
+        gapped.push({ file: doc.file, line, token, resolved, refs, severity: changed.has(doc.file) ? "fail" : "warn" });
+        continue;
+      }
+
       if (declaredBy.has(key)) {
         used.add(key);
         continue;
@@ -1049,7 +1087,75 @@ export function findAbbreviatedDeps({
         "it now matches one of this repo's own files; or the doc is exempt",
     }));
 
-  return { checked, findings, ambiguous, expired, declared: used.size };
+  return { checked, findings, ambiguous, gapped, expired, declared: used.size };
+}
+
+/**
+ * The upstream FILES a token could be a gapped spelling of: same basename, and
+ * every written segment present in order — the token with one or more directory
+ * segments left out (#1925).
+ *
+ * The measured instance is `tableComponent/TableOptions/index.tsx`, written in
+ * `playground-message-logs.md` for
+ * `…/tableComponent/components/TableOptions/index.tsx`. As written it suffix-matches
+ * nothing, so the plain rule read it as prose. Replayed over the pre-#1592 `docs/`
+ * (`ad2271fc3^`) it is the only token this relation reaches; today's `docs/` carry
+ * that file in full, so today the relation reaches nothing at all.
+ *
+ * WHY THIS AND NOT THE BASENAME FALLBACK
+ *
+ * The rejected widening — resolve by basename when the suffix finds nothing — was
+ * measured at ~130 rows, almost all endpoints, with the true positive resolving 456
+ * ways. Two clauses keep this one at zero false positives on both corpora: a file
+ * extension (an endpoint has none, and neither does the one directory the same
+ * relation would hit), and exactly ONE candidate — a gapped `components/index.tsx`
+ * embeds in hundreds of files and says nothing about which. A bare basename never
+ * reaches here: if it matches no upstream file by suffix it shares no basename
+ * either, so the rejected fallback is not re-admitted by the back door.
+ *
+ * WHAT IT STILL CANNOT SEE
+ *
+ * A segment written WRONG rather than left out — `components/agents/agent.py` for
+ * `components/models_and_agents/agent.py`. A one-segment SUBSTITUTION rule, run
+ * after this one, reaches that shape and measured it adds nothing usable: its only
+ * hit on today's `docs/` is that very token, which sits beside its full path as
+ * history and matches two files (`lfx/base/agents/agent.py` too), so uniqueness
+ * drops it. (A full edit distance used INSTEAD of this rule is worse: it matches
+ * the TableOptions instance twice — `tableComponent/index.tsx` is one deletion
+ * away — and a uniqueness rule over it loses the one true positive.)
+ *
+ * @param {string} target an `abbreviationTarget` result
+ * @param {Map<string, Map<string, string[]>>} byBase upstream files keyed by basename
+ * @returns {Map<string, string[]>} candidate path → refs carrying it
+ */
+export function gappedCandidates(target, byBase) {
+  const segments = target.split("/");
+  const base = segments[segments.length - 1];
+  const out = new Map();
+  if (!hasFileExtension(base)) return out;
+  for (const [candidate, refs] of byBase.get(base) ?? []) {
+    if (segmentsEmbed(target, candidate)) out.set(candidate, refs);
+  }
+  return out;
+}
+
+/** `written`'s segments occur in `full` in order, with the basenames aligned. */
+function segmentsEmbed(written, full) {
+  const want = written.split("/");
+  const have = String(full).split("/");
+  if (have[have.length - 1] !== want[want.length - 1]) return false;
+  let at = have.length - 2;
+  for (let index = want.length - 2; index >= 0; index -= 1) {
+    while (at >= 0 && have[at] !== want[index]) at -= 1;
+    if (at < 0) return false;
+    at -= 1;
+  }
+  return true;
+}
+
+function hasFileExtension(basename) {
+  const dot = basename.lastIndexOf(".");
+  return dot > 0 && dot < basename.length - 1;
 }
 
 /**
@@ -1861,7 +1967,7 @@ function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
   }
 
   const docs = collectDocFiles(repoRoot);
-  const { checked, findings, ambiguous, expired, declared: used } = findAbbreviatedDeps({
+  const { checked, findings, ambiguous, gapped, expired, declared: used } = findAbbreviatedDeps({
     docs,
     trees,
     ownFiles,
@@ -1919,13 +2025,23 @@ function runCheckDocAbbrevs(root, trunkRef, releaseRefs, changedListPath) {
       (a) => `${a.file}:${a.line} \`${a.token}\` matches ${a.candidates.length}: ${a.candidates.join(" | ")} — name the one meant, in full.`,
     );
   }
+  if (gapped.length > 0) {
+    process.stdout.write(
+      `\n${gapped.length} path(s) that match no file as written, but match exactly one upstream file with a segment left out:\n`,
+    );
+    emit(
+      gapped,
+      (g) =>
+        `${g.file}:${g.line} \`${g.token}\` matches nothing as written; it embeds in \`${g.resolved}\` (on ${g.refs.join(", ")}) — write that full path, or declare it as context in ${DOC_DEP_DECLARATIONS_FILE}.`,
+    );
+  }
   if (stale.length > 0) {
     process.stdout.write(`\n${stale.length} declaration(s) silence nothing any more:\n`);
     emit(stale, (e) => `${DOC_DEP_DECLARATIONS_FILE}: \`${e.token}\` for ${e.doc} ${e.reason} — delete the entry.`);
   }
 
-  const failed = [...findings, ...ambiguous, ...stale].filter((item) => item.severity === "fail");
-  if (findings.length === 0 && ambiguous.length === 0 && stale.length === 0) {
+  const failed = [...findings, ...ambiguous, ...gapped, ...stale].filter((item) => item.severity === "fail");
+  if (findings.length === 0 && ambiguous.length === 0 && gapped.length === 0 && stale.length === 0) {
     process.stdout.write("Every upstream module named in a dependency section is written as a resolvable `src/` path.\n");
     return;
   }
