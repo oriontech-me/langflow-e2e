@@ -2446,10 +2446,21 @@ phase_publish() {
   # there is nothing for the POST below to attach. LANGFLOW_IMAGE and TESTS_TOTAL are
   # the workflow's own two: the image labels the row, and TESTS_TOTAL is how a zero-test
   # abort is told from a run that spent nothing (empty means UNKNOWN, never zero).
+  #
+  # A report the guards could not read is UNKNOWN, never zero (#1012): check-run-
+  # integrity answers `tests_total: 0` for a missing results.json, and that is the #1726
+  # day — every shard ran and spent, and only the merge failed. Passed through, the "0"
+  # sends the summarizer down its infra-abort branch, so the spend line and the block are
+  # both lost under a message saying no test ran. The workflow cannot tell the two apart;
+  # this lane can, so it passes empty instead.
+  local tests_total="${RUN_TESTS:-}"
+  if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
+    tests_total=""
+  fi
   env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
     TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
     LANGFLOW_IMAGE="${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}" \
-    TESTS_TOTAL="${RUN_TESTS:-}" \
+    TESTS_TOTAL="$tests_total" \
     node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 

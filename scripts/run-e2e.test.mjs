@@ -2860,7 +2860,7 @@ test("the evidence upload is gated on the same switch as the POST", () => {
 // ---------------------------------------------------------------------------
 
 /** phase_publish, run for real, against a local platform that records what it got. */
-async function publishTokens({ post = "1", probes = true } = {}) {
+async function publishTokens({ post = "1", probes = true, state = "RUN_TESTS=1", endpoint } = {}) {
   const dir = makeTempDir("publish-tokens-");
   mkdirSync(join(dir, "logs"), { recursive: true });
   mkdirSync(join(dir, "all-tokens"), { recursive: true });
@@ -2906,7 +2906,7 @@ async function publishTokens({ post = "1", probes = true } = {}) {
     const r = await new Promise((resolveRun) => {
       const child = spawn(
         BASH,
-        ["-c", `source ${JSON.stringify(SCRIPT)}\nRUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0 RUN_TESTS=1 LANGFLOW_VERSION=1.13.0.dev21\nphase_publish\necho REACHED_AFTER_PUBLISH`],
+        ["-c", `source ${JSON.stringify(SCRIPT)}\nRUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=1 TEST_JOB_FAILED=0 ${state} LANGFLOW_VERSION=1.13.0.dev21\nphase_publish\necho REACHED_AFTER_PUBLISH`],
         {
           cwd: REPO_ROOT,
           env: {
@@ -2918,7 +2918,7 @@ async function publishTokens({ post = "1", probes = true } = {}) {
             NOTIFY_SLACK: "0",
             AUTO_REMOVE: "0",
             POST_QA_PLATFORM: post,
-            QA_PLATFORM_ENDPOINT: `http://127.0.0.1:${port}/runs`,
+            QA_PLATFORM_ENDPOINT: endpoint ?? `http://127.0.0.1:${port}/runs`,
             QA_E2E_AUTOMATION_TOKEN: "tok",
           },
         },
@@ -2961,5 +2961,25 @@ test("a run that captured no tokens POSTs the run only, and says why", async () 
   const r = await publishTokens({ probes: false });
   assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
   assert.equal(r.received.length, 1, "no token block means no token POST — never a zeroed one");
+  assert.match(r.out, /post-token-payload: outcome=block_missing/);
+});
+
+test("a report the guards could not read keeps its token block — UNKNOWN is not a zero-test abort", async () => {
+  // check-run-integrity answers tests_total=0 for a missing results.json (#1726). Passed
+  // through, that "0" sent the summarizer down its infra-abort branch and the spend was
+  // lost under "the run executed zero tests" on a day every shard ran.
+  const r = await publishTokens({ state: "RUN_TESTS=0 MERGE_OK=false RUN_UNREADABLE=true" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.ok(existsSync(join(r.dir, "tokens-block.json")), `the block must be written:\n${r.out}`);
+  assert.doesNotMatch(readFileSync(join(r.dir, "logs", "token-summary.log"), "utf8"), /zero tests/);
+  // No payload was built, so the tokens cannot be attached — said as discarded, not as
+  // a run that captured nothing.
+  assert.match(r.out, /post-token-payload: outcome=payload_missing/);
+});
+
+test("a READABLE zero-test run is still the abort it always was, and POSTs no tokens", async () => {
+  const r = await publishTokens({ state: "RUN_TESTS=0" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(readFileSync(join(r.dir, "logs", "token-summary.log"), "utf8"), /zero tests/);
   assert.match(r.out, /post-token-payload: outcome=block_missing/);
 });
