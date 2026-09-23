@@ -193,10 +193,23 @@ main() {
   # The issue token lives in $SECRETS and has an expiry; the preflight reads it and
   # refuses the run when the host rejects the credential (#1950).
   #
-  # What this lane does NOT do yet: remove @stable from the specs that failed. Since
-  # #1944 no lane does -- the removal is off in Actions and the write path here waits on
-  # the origin push token. Until then AUTO_REMOVE stays unset and the removal is done
-  # by hand, from this run's results.json.
+  # And from here this lane removes @stable from the specs that hard-failed (#1945). The
+  # write path is run-e2e.sh's auto_remove_commit (PR 1946): it commits the removal,
+  # replays it onto the source's main, and pushes it there with SOURCE_PUSH_TOKEN from
+  # $SECRETS -- the source, not the destination, because the mirror would erase a commit
+  # made on the destination. Only hard failures (failed on every attempt), at most
+  # MAX_AUTO_REMOVE of them, with the infra-signature and corroborated-attempt
+  # exemptions; restoring a tag stays manual, by PR, once the test or Langflow is fixed.
+  #
+  # Both gates were passed on 2026-09-23 before this line: the token was approved (the
+  # push dry-run that answered 403 on 2026-09-21 landed), and a provoked hard failure ran
+  # the whole path against a throwaway branch -- one line removed on the failed test only,
+  # replayed onto a main that had moved, pushed, and the branch deleted on both sides.
+  #
+  # Rollback: drop this line. run-e2e.sh compares AUTO_REMOVE strictly against "1", so
+  # the lane goes back to removing nothing, and the removal is done by hand again from
+  # this run's results.json.
+  export AUTO_REMOVE=1
   export CREATE_ISSUE=1
   export ISSUE_HOST ISSUE_REPO ISSUE_CC
   export PREPARE_TARGET=0                # the clone does not serve; this also turns the build stamp off
