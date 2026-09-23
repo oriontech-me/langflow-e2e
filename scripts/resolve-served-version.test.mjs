@@ -216,13 +216,25 @@ test("a version that is not a single line is REFUSED, not trimmed into shape", (
     expectShards: 1,
   });
   assert.equal(verdict.version, null);
-  // Re-PARSED, not scanned as an array: `outputLines` returns six fixed elements, so
+  // Re-PARSED, not scanned as an array: `outputLines` returns seven fixed elements, so
   // an injected key would sit INSIDE element 0 and a `startsWith` scan would miss it
   // — which is how the file that receives these lines actually reads them.
   const emitted = outputLines(verdict).join("\n").split("\n");
   const keys = emitted.map((line) => line.slice(0, line.indexOf("=")));
   assert.ok(!keys.includes("injected"), `a value became a key: ${emitted.join(" | ")}`);
   assert.equal(keys.filter((k) => k === "version").length, 1);
+});
+
+test("a version carrying the list separator is REFUSED, not split downstream", () => {
+  // The distinct versions reach the history row as `versions=a,b` and the appender
+  // re-splits on the comma (#1964). A version containing one arrives as two, which the
+  // comparator reads as a duplicate and reports UNREADABLE — a real straddle described
+  // as a corrupt row. Refused here, where the value is still one string.
+  assert.equal(parseVersionBody('{"version":"1.13.0,dev16"}').version, null);
+  assert.match(parseVersionBody('{"version":"1.13.0,dev16"}').reason, /list separator/);
+  const verdict = resolveServedVersion(dirOf({ 1: '{"version":"1.13.0,dev16"}' }), { expectShards: 1 });
+  assert.equal(verdict.version, null);
+  assert.ok(!outputLines(verdict).some((l) => l.startsWith("versions=1")));
 });
 
 test("surrounding whitespace in a real body is tolerated", () => {
@@ -408,9 +420,32 @@ test("the output lines carry the version, its shard, and the counts", () => {
     "source=2",
     "answered=1",
     "expected=4",
+    "silent=3",
     "disagreement=false",
     "versions=1.13.0.dev16",
   ]);
+});
+
+test("a shard OUTSIDE the expected range cannot hide a silent one", () => {
+  // #1964 review: `answered` counts a stray shard (a leftover file under a reused
+  // RUN_ID), so `expected - answered` downstream read 4 - 4 = 0 and the comparator
+  // called a run with a dead shard 4 fully answered. `silent` counts in-range only.
+  const verdict = resolveServedVersion(
+    dirOf({ 1: body("v"), 2: body("v"), 3: body("v"), 5: body("v") }),
+    { expectShards: 4 },
+  );
+  assert.equal(verdict.answered.length, 4, "the stray still answers — evidence is kept");
+  assert.deepEqual(verdict.unexpected, [5]);
+  assert.equal(verdict.silent, 1);
+  assert.ok(outputLines(verdict).includes("silent=1"));
+});
+
+test("silent is empty exactly when expected is", () => {
+  const verdict = resolveServedVersion(dirOf({ 1: body("v") }));
+  assert.equal(verdict.silent, null);
+  const lines = outputLines(verdict);
+  assert.ok(lines.includes("expected="));
+  assert.ok(lines.includes("silent="));
 });
 
 test("an unresolved sweep emits an EMPTY version rather than omitting the key", () => {

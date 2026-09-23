@@ -249,6 +249,123 @@ test("an absent version is null, never omitted, so a reader can tell 'unknown' f
   assert.ok("langflow_version" in entry);
 });
 
+// ---------- how many products the run actually served (#1964) ----------
+
+// `langflow_version` is ONE version: the lowest-index shard that answered. A sharded
+// run can have served more, because the shards pull `:latest` into their own
+// containers independently — and until this block nothing recorded that, so
+// `compare-lane-verdicts.mjs` compared two single values for equality and its version
+// gate PASSED while up to three shards of a lane had tested another build.
+
+test("the sweep's facts ride on the row beside the one version it picked", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION: "1.13.0.dev3",
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSION_ANSWERED: "4",
+    LANGFLOW_VERSION_SILENT: "0",
+    LANGFLOW_VERSIONS: "1.13.0.dev3,1.13.0.dev4",
+  });
+  assert.deepEqual(entry.langflow_version_sweep, {
+    expected: 4,
+    answered: 4,
+    silent: 0,
+    versions: ["1.13.0.dev3", "1.13.0.dev4"],
+  });
+  // All of them, because two agreeing answers prove nothing if two shards never spoke.
+  assert.equal(entry.langflow_version, "1.13.0.dev3", "the picked version still rides alone");
+});
+
+test("no block at all when the lane does not measure it", () => {
+  // Keyed on ANSWERED alone, the one value the reader always emits as a number when it
+  // ran — so every row before #1964, and any lane not wired to it, simply has no block.
+  // Absent is "this lane cannot say", which the comparator reports as UNVERIFIED rather
+  // than as agreement (#1012).
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION: "1.13.0.dev3",
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSIONS: "1.13.0.dev3",
+  });
+  assert.ok(!("langflow_version_sweep" in entry));
+});
+
+test("an EMPTY answered count means no block, not an unreadable one", () => {
+  // Actions sets these from `steps.lfver.outputs.*`, which are empty strings when that
+  // step never ran — a state that must read as "this lane did not measure", not as a
+  // half-written block the comparator then reports as UNREADABLE.
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION_EXPECTED: "",
+    LANGFLOW_VERSION_ANSWERED: "",
+    LANGFLOW_VERSIONS: "",
+  });
+  assert.ok(!("langflow_version_sweep" in entry));
+});
+
+test("a sweep that resolved nothing is recorded as that, not as no sweep", () => {
+  // Every shard silent is a measurement — and it is the state a wedged run produces.
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION: "",
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSION_ANSWERED: "0",
+    LANGFLOW_VERSION_SILENT: "4",
+    LANGFLOW_VERSIONS: "",
+  });
+  assert.deepEqual(entry.langflow_version_sweep, { expected: 4, answered: 0, silent: 4, versions: [] });
+  assert.equal(entry.langflow_version, null);
+});
+
+test("an unknown expected count is null, and does not take the block down with it", () => {
+  // `--expect-shards` is optional and can be refused, so the reader emits `expected=`
+  // empty. Reading that as 0 would make every answered shard look unaccounted for.
+  // `0x10` and `1e3` are the load-bearing entries: `Number` reads them as 16 and 1000,
+  // an input nobody meant, honoured without a word. `"abc"` pins nothing here — NaN
+  // serialises to `null` through the row's JSON round trip, which is the same answer
+  // the digit test gives — and it stays only as documentation of the shape.
+  for (const expected of ["", "abc", "-1", "4.5", "0x10", "1e3"]) {
+    const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+      LANGFLOW_VERSION_EXPECTED: expected,
+      LANGFLOW_VERSION_ANSWERED: "2",
+      LANGFLOW_VERSION_SILENT: "1",
+      LANGFLOW_VERSIONS: "1.13.0.dev3",
+    });
+    // `silent` goes with it: a count of expected shards means nothing without one.
+    assert.deepEqual(
+      entry.langflow_version_sweep,
+      { expected: null, answered: 2, silent: null, versions: ["1.13.0.dev3"] },
+      `expected=${JSON.stringify(expected)} was not read as unknown`,
+    );
+  }
+});
+
+test("a stray shard's answer is not allowed to cancel a silent one out", () => {
+  // #1964 review: 3 of 4 expected shards answered plus a leftover shard 5, so
+  // `answered` is 4. The reader's `silent=1` is carried verbatim — the row must not be
+  // left for the comparator to recompute as `expected - answered`, which is 0.
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSION_ANSWERED: "4",
+    LANGFLOW_VERSION_SILENT: "1",
+    LANGFLOW_VERSIONS: "1.13.0.dev3",
+  });
+  assert.equal(entry.langflow_version_sweep.silent, 1);
+});
+
+test("a missing silent count beside a known expected one is null, for the comparator to refuse", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSION_ANSWERED: "4",
+    LANGFLOW_VERSIONS: "1.13.0.dev3",
+  });
+  assert.equal(entry.langflow_version_sweep.silent, null);
+});
+
+test("the version list is tolerated the way the listing's is, never thrown on", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION_ANSWERED: "3",
+    LANGFLOW_VERSIONS: " 1.13.0.dev3 , ,1.13.0.dev4, ",
+  });
+  assert.deepEqual(entry.langflow_version_sweep.versions, ["1.13.0.dev3", "1.13.0.dev4"]);
+});
+
 // ---------- the listing's provider gate rides on the row (#1813) ----------
 
 // These keys gate COLLECTION: a spec file generated entirely from a missing one yields

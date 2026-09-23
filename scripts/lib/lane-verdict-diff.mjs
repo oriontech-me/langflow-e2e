@@ -423,6 +423,61 @@ const executed = (t) => (t?.passed ?? 0) + (t?.failed ?? 0) + (t?.flaky ?? 0) + 
 const shardsOf = (row) => row?.backend?.shard_total ?? null;
 
 /**
+ * The version sweep a lane recorded (#1964), or `null` when it cannot be trusted.
+ *
+ * `langflow_version` is ONE version — the lowest-index shard that answered — and a
+ * sharded run can have served more than one, because the shards pull `:latest`
+ * independently. The row's single value cannot say which happened, so the version
+ * gate below passed on shard 1's answer while up to three shards of a lane may have
+ * tested another build.
+ *
+ * Validated in SHAPE and in CONSISTENCY, the way `listingOf` validates both of its
+ * fields: a block claiming versions no shard answered, or more distinct versions
+ * than shards that spoke, is a half-written row and must read as UNREADABLE rather
+ * than as a measurement. Neither shipped producer can emit one, so this is the
+ * foreign- or hand-edited-row case — the same one that made a malformed
+ * `listing_completeness` render as "listing complete".
+ */
+const sweepOf = (row) => {
+  const s = row?.langflow_version_sweep;
+  if (!s || typeof s !== "object") return null;
+  const { expected, answered, silent, versions } = s;
+  if (!Number.isInteger(answered) || answered < 0) return null;
+  if (expected !== null && (!Number.isInteger(expected) || expected < 0)) return null;
+  // `silent` is the reader's own count of EXPECTED shards that reported nothing, and it
+  // is required rather than recomputed as `expected - answered`: `answered` counts a
+  // shard outside the expected range too, so a stray answer cancelled a silent shard
+  // out and a run with a dead shard read as fully answered (#1964 review). It exists
+  // exactly when `expected` does, and the expected shards that DID answer can never
+  // outnumber every shard that answered.
+  if (expected === null ? silent !== null : !Number.isInteger(silent) || silent < 0 || silent > expected)
+    return null;
+  if (expected !== null && expected - silent > answered) return null;
+  if (!Array.isArray(versions) || versions.some((v) => typeof v !== "string" || !v)) return null;
+  if (versions.length > answered) return null;
+  if ((answered > 0) !== versions.length > 0) return null;
+  // DISTINCT, because `straddled` keys on the count: `["dev3", "dev3"]` rendered
+  // "SERVED 2 VERSIONS: 1.13.0.dev3, 1.13.0.dev3" and warned that the lane did not
+  // test one product, off a row that says it did. The shipped reader dedupes
+  // (`[...new Set(...)]` in served-version.mjs) and the appender copies the list
+  // verbatim, so distinctness lives three processes upstream — exactly the
+  // foreign- or hand-edited-row case this guard exists for, failing in the worse
+  // direction: a wrong verdict rather than UNREADABLE (found in review).
+  if (new Set(versions).size !== versions.length) return null;
+  return { expected: expected ?? null, answered, silent: silent ?? null, versions };
+};
+
+/** More than one distinct version served — the run did not test one product. */
+const straddled = (sweep) => Boolean(sweep && sweep.versions.length > 1);
+
+/**
+ * Shards the run expected that never reported a version — the reader's count, read
+ * straight off the row. `expected: null` (a lane with no shard count to compare
+ * against) carries `silent: null`, which is 0 here.
+ */
+const unaccounted = (sweep) => (sweep && sweep.silent !== null ? sweep.silent : 0);
+
+/**
  * Classify every test the two lanes disagree about.
  *
  * `agreed` is returned, not discarded: a failure both lanes saw is the product
@@ -450,10 +505,11 @@ export function compareRuns({
   let versionMismatch = null;
   let gateMismatch = null;
   let listingMismatch = null;
+  let versionStraddle = null;
 
   if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
   if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the VM lane did not record a run.`);
-  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, listingMismatch, comparable: false };
+  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, comparable: false };
 
   for (const [label, row] of [["Actions", ci], ["VM", vm]]) {
     const errs = row.run_errors ?? [];
@@ -491,6 +547,89 @@ export function compareRuns({
     warnings.push(
       `version parity UNVERIFIED: ${missing} a langflow_version. Rows written before that field existed ` +
         `lack it; the comparison below assumes a parity it cannot show.`,
+    );
+  }
+
+  // WHETHER EITHER LANE TESTED ONE PRODUCT AT ALL (#1964).
+  //
+  // The check above compares two single values. That is the right comparison only if
+  // each value describes its whole run, and on a sharded lane it need not: the shards
+  // pull `:latest` into their own containers independently, so a nightly published
+  // mid-run leaves two of them on two builds and the row names whichever answered
+  // first. Equality of two such values is not parity, which is why this fires even
+  // when the versions match — the case it exists for is the one the gate passes.
+  //
+  // Warnings, never blockers, and deliberately so: a straddled run still produced
+  // every verdict it produced, and most of it did run the version on the row. What
+  // must not happen is a reader taking "the versions matched" for "the lanes tested
+  // the same product". Same three states the version itself uses — agreed, disagreed,
+  // unverified — with a straddle landing in the third.
+  const ciSweep = sweepOf(ci);
+  const vmSweep = sweepOf(vm);
+  const straddledLanes = [
+    straddled(ciSweep) ? `Actions served ${ciSweep.versions.join(", ")}` : null,
+    straddled(vmSweep) ? `the VM served ${vmSweep.versions.join(", ")}` : null,
+  ].filter(Boolean);
+  if (straddledLanes.length) {
+    versionStraddle = { ci: ciSweep?.versions ?? [], vm: vmSweep?.versions ?? [] };
+    warnings.push(
+      `version parity UNVERIFIED: a lane did NOT test one product - ${straddledLanes.join("; ")}. ` +
+        `Its row carries one of those versions, so the version comparison above answered about part of the run; ` +
+        `a product difference between those builds lands in this list as an environment difference.`,
+    );
+  }
+
+  // A shard that never reported is not a shard that agreed. Reported separately and
+  // more softly than a straddle, because this is an ABSENCE: the version on the row
+  // did serve, it just was not shown to be the only one.
+  // PER LANE, not once for the pair: the first version suppressed this whenever
+  // EITHER lane straddled, so Actions serving two versions hid "2 of the VM's 4 shards
+  // reported nothing" from the warnings and from `--json` entirely. Within one lane the
+  // suppression is right — both sentences say "the row's one version is not the whole
+  // run" — and across two it drops a finding about the other lane, which is the mistake
+  // the listing-completeness comparison records having made ("A KNOWN LOSS IS REPORTED
+  // ON ITS OWN, never gated on the other lane also having a block"). Named rather than
+  // cited by distance: the first version of this said "20 lines above" and it is ~112
+  // lines BELOW, which is #1504's rule — line pointers drift, headings do not — broken
+  // in the same branch that quotes it.
+  //
+  // COMPOSED PER LANE, sentence included. The first fix made the suppression per lane
+  // and left the sentence computed across both, which reproduced the same defect one
+  // line further on: Actions with 2 of 4 silent (its row DOES name a served version)
+  // beside a VM with 0 of 4 printed one warning saying "a lane's row cannot name the
+  // Langflow it ran at all", true of the VM, false of Actions — and the sentence that
+  // was true of Actions was dropped. `answered === 0` is what a wedged run produces,
+  // so it is the state this field is most often read for, and it needs its own clause
+  // attached to the lane it is about.
+  const silentOf = (label, sweep) => {
+    if (!unaccounted(sweep) || straddled(sweep)) return null;
+    const scope = `${label} ${unaccounted(sweep)} of ${sweep.expected}`;
+    return sweep.answered === 0
+      ? `${scope} - no shard answered, so its row cannot name the Langflow it ran at all`
+      : `${scope} - so the version on its row is one that served rather than the only one that did`;
+  };
+  const silent = [silentOf("Actions", ciSweep), silentOf("the VM", vmSweep)].filter(Boolean);
+  if (silent.length) {
+    warnings.push(
+      `version parity PARTIAL: shards reported no served version - ${silent.join("; ")}. ` +
+        `The run's own summary names which shards went silent.`,
+    );
+  }
+
+  if (!ciSweep || !vmSweep) {
+    // ABSENT and MALFORMED are different diagnoses, the distinction `listing_completeness`
+    // had to learn: one is a row written before the field existed, the other is a row
+    // that can be repaired.
+    const describe = (label, row, parsed) =>
+      parsed
+        ? null
+        : row?.langflow_version_sweep
+          ? `${label} carries an UNREADABLE langflow_version_sweep block`
+          : `${label} carries no langflow_version_sweep block`;
+    const sides = [describe("the Actions row", ci, ciSweep), describe("the VM row", vm, vmSweep)].filter(Boolean);
+    warnings.push(
+      `one-product parity UNVERIFIED: ${sides.join("; ")}. Whether that lane's shards all served the same Langflow ` +
+        `is unknown - which is not the same as yes (#1964).`,
     );
   }
 
@@ -734,7 +873,7 @@ export function compareRuns({
   // Leaving the array populated would let the two surfaces tell different stories
   // about one run, and the machine-readable one would be the fiction.
   if (blockers.length) {
-    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, gateMismatch, listingMismatch, comparable: false };
+    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, comparable: false };
   }
 
   // Below the return, not above it: nothing between here and the top reads these any
@@ -799,7 +938,7 @@ export function compareRuns({
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, gateMismatch, listingMismatch, comparable: blockers.length === 0 };
+  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, versionStraddle, gateMismatch, listingMismatch, comparable: blockers.length === 0 };
 }
 
 const KIND_LABEL = {
@@ -858,10 +997,30 @@ export function renderReport(result, { sources = [] } = {}) {
             : "listing complete"),
     );
   };
+  // Same placement and the same argument as the two above: a reader comparing two
+  // version strings has to see "that lane served two of them" in the same glance,
+  // not in the warning list below the counts it is about to trust (#1964).
+  const pushSweep = (row) => {
+    const sweep = sweepOf(row);
+    if (!sweep) return;
+    const silent = unaccounted(sweep);
+    L.push(
+      `${" ".repeat(11)}` +
+        (straddled(sweep)
+          ? `SERVED ${sweep.versions.length} VERSIONS: ${sweep.versions.join(", ")}`
+          : sweep.answered === 0
+            ? "no shard reported a served version"
+            : silent
+              ? `one version across ${sweep.answered} shard(s); ${silent} reported none`
+              : `one version across ${sweep.answered} shard(s)`),
+    );
+  };
   pushLane("Actions", ci);
   pushListing(ci);
+  pushSweep(ci);
   pushLane("VM", vm);
   pushListing(vm);
+  pushSweep(vm);
 
   // The stamp rides at the head, not buried in the warning list: a report produced
   // across two different products has to say so where it cannot be scrolled past.

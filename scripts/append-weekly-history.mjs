@@ -38,6 +38,13 @@
 //                             `collection_gate_keys` block; neither alone can, because
 //                             a lane that resolved nothing and a lane that never
 //                             measured both send an empty string (#1813).
+//   LANGFLOW_VERSION_EXPECTED Optional, read together (#1964): how many shards the
+//   LANGFLOW_VERSION_ANSWERED run expected, how many reported a served version, how
+//   LANGFLOW_VERSION_SILENT   many EXPECTED shards reported none, and the distinct
+//   LANGFLOW_VERSIONS         versions they served. All four come from
+//                             `scripts/resolve-served-version.mjs`'s own outputs.
+//                             `LANGFLOW_VERSION_ANSWERED` unset means the lane does not
+//                             measure this, and no block is written.
 //   LISTING_VERIFIED          Optional, and read as a PAIR with the one below:
 //   LISTING_MISSING           whether the run's listing was shown to contain every spec
 //                             file declaring an `@stable` test ("true"/"false"), and the
@@ -510,6 +517,56 @@ const collectionGateKeys =
 // produced, and a spec generated at COLLECTION time can vanish between them with no
 // failure, skip or error to show for it (#1764).
 //
+// `langflow_version_sweep` (optional, additive to schema v1, #1964).
+//
+// `langflow_version` is ONE version — the lowest-index shard that answered
+// (`scripts/lib/served-version.mjs`) — and a sharded run can have served more than
+// one: the four shards pull `:latest` into their own containers independently, so a
+// nightly published mid-run really can split them. The sweep sees that and, until
+// this field, nothing recorded it: the row carried shard 1's answer and
+// `compare-lane-verdicts.mjs` compared two single values for equality, passing its
+// own version gate while up to three shards of a lane tested another build.
+//
+// Three facts, because the question "did this lane test one product?" needs all
+// three: how many shards were EXPECTED, how many ANSWERED, and the DISTINCT
+// versions they served. Two answers agreeing proves nothing if two shards never
+// spoke, so the counts are not decoration.
+//
+// Keyed on `LANGFLOW_VERSION_ANSWERED` alone — the one variable the reader always
+// emits as a number when it ran at all — so an absent block means the lane does not
+// measure this (every row before #1964, and any lane not wired to the reader).
+const versionSweep = (() => {
+  const answeredRaw = process.env.LANGFLOW_VERSION_ANSWERED;
+  if (answeredRaw === undefined || answeredRaw.trim() === "") return null;
+  // DECIMAL DIGITS ONLY, and blank is `null`, not zero. `Number("")` is 0, which read
+  // an unknown expected count — what the reader emits when `--expect-shards` was absent
+  // or refused — as "the run expected no shards", and then every shard that answered
+  // looked unaccounted for. Garbage in `answered` leaves `null` too, so the block reads
+  // as UNREADABLE downstream rather than as a measurement of nothing.
+  const count = (raw) => {
+    const text = String(raw ?? "").trim();
+    return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : null;
+  };
+  const expected = count(process.env.LANGFLOW_VERSION_EXPECTED);
+  return {
+    expected,
+    answered: count(answeredRaw),
+    // The expected shards that reported nothing, as the reader counted them. Not
+    // `expected - answered`: `answered` includes a shard outside the expected range,
+    // so a stray answer would cancel a silent shard out (#1964 review). Meaningless
+    // without an expected count, so `null` whenever `expected` is.
+    silent: expected === null ? null : count(process.env.LANGFLOW_VERSION_SILENT),
+    // A comma list, which is what the reader emits. Tolerant in the same direction
+    // as `listingMissing`: anything unparseable becomes an empty list rather than a
+    // throw, and the consumer reads a block whose `answered` disagrees with its
+    // `versions` as UNREADABLE rather than as a measurement.
+    versions: String(process.env.LANGFLOW_VERSIONS ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean),
+  };
+})();
+
 // Keyed on `LISTING_VERIFIED` ALONE, not on "either field has content", because the
 // informative state here is the opposite of the gate's: `missing: []` with
 // `verified: true` is the answer worth recording every day, and an "either is
@@ -563,6 +620,7 @@ const entry = {
   ...(backend ? { backend } : {}),
   ...(collectionGateKeys ? { collection_gate_keys: collectionGateKeys } : {}),
   ...(listingCompleteness ? { listing_completeness: listingCompleteness } : {}),
+  ...(versionSweep ? { langflow_version_sweep: versionSweep } : {}),
 };
 
 mkdirSync(dirname(historyPath), { recursive: true });

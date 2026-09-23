@@ -730,6 +730,16 @@ gh_out() {
 # rather than four lines in phase_merge: the caller reads it through a command
 # substitution, so under `set -e` any non-zero status becomes the assignment's and
 # aborts phase_merge — losing the run's verdict and its publish for a diagnostic.
+# The guarantee is the FUNCTION's, and #1964 proved that is not the same as the
+# path's: `gh_out` reads added beside the call site reproduced the abort
+# exactly. Anything reading this file from phase_merge carries `|| true` too, and
+# a test drives phase_merge over an unreadable one.
+#
+# SCOPE, because the fix is easy to over-read: this covers the reads of THIS file. The
+# eleven `gh_out "$outputs"` reads earlier in phase_merge, and the unguarded
+# `: > "$outputs"` above them, abort the phase on the identical unreadable-file state —
+# measured, and identical on `main`, so it is not this change's doing and not its fix
+# either. Tracked separately.
 #
 # The last one took two review rounds to find, and it is the instructive one: the
 # read is `gh_out`, whose own guard is `[ -f "$file" ] || return 0` — EXISTENCE
@@ -743,8 +753,18 @@ gh_out() {
 # than cited by line, because the line moved the moment this comment grew (#1504's
 # rule: line numbers drift, titles do not). The mkdir is for a caller that has not
 # been through that phase.
+# $1: where to leave the reader's `$GITHUB_OUTPUT` file, so the caller can read the
+# REST of the sweep out of it (#1964) — stdout is the version and only the version,
+# which is a pinned contract, and this function runs in a command substitution, so a
+# global it sets would not survive to the caller.
+# Where `resolve_served_version` leaves the reader's `$GITHUB_OUTPUT`. ONE spelling,
+# because the function defaults to it and phase_merge reads the rest of the sweep out
+# of it: two copies meant changing one silently pointed the function's own tests at a
+# different file than production uses (#1964 review).
+served_version_out() { printf '%s' "$RUN_DIR/logs/served-version.out"; }
+
 resolve_served_version() {
-  local version_out="$RUN_DIR/logs/served-version.out"
+  local version_out="${1:-$(served_version_out)}"
   mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
   : > "$version_out" 2>/dev/null || true
   # GITHUB_STEP_SUMMARY is cleared as well as redirected: in Actions it is set for
@@ -1891,7 +1911,28 @@ phase_merge() {
 
   # The version that actually served. Sweeping every shard avoids ending up without
   # one just because shard 1 was the one that died.
-  LANGFLOW_VERSION="$(resolve_served_version)"
+  # The version, and then the rest of what the sweep saw. One version is what the row
+  # used to carry, and on a sharded run it need not describe the whole run: the shards
+  # pull `:latest` independently, so a nightly published mid-run leaves two of them on
+  # two builds and `compare-lane-verdicts.mjs` compared two single values for equality
+  # (#1964). Both lanes write the sweep, or the comparator sits permanently on "one
+  # lane does not measure this" — the reachability trap `langflow_version` itself
+  # documents.
+  # `|| true` on each read, for the reason `resolve_served_version` carries its own:
+  # `gh_out` guards the file's EXISTENCE and then reads it unguarded, so a file that
+  # exists and cannot be read (a root-owned leftover under a reused RUN_ID) throws
+  # EACCES — and under `set -e` a command substitution's status becomes the
+  # assignment's, which takes phase_merge, its metadata, the history row and the
+  # publish with it. Measured on the first version of this block: `exit=1`, no
+  # run-metadata.json, nothing after phase_merge ran. The function was written to
+  # keep that from happening and then three of its lines were lifted OUT of it.
+  local sweep_out
+  sweep_out="$(served_version_out)"
+  LANGFLOW_VERSION="$(resolve_served_version "$sweep_out")"
+  LANGFLOW_VERSION_EXPECTED="$(gh_out "$sweep_out" expected || true)"
+  LANGFLOW_VERSION_ANSWERED="$(gh_out "$sweep_out" answered || true)"
+  LANGFLOW_VERSION_SILENT="$(gh_out "$sweep_out" silent || true)"
+  LANGFLOW_VERSIONS="$(gh_out "$sweep_out" versions || true)"
 
   # The comparison this step exists for. A mismatch is now FATAL by default: the run
   # placed the clone itself a few phases ago, so the two sides disagreeing means
@@ -1976,6 +2017,10 @@ phase_merge() {
     langflow_expected_sha "${TARGET_EXPECTED_SHA:-}" \
     langflow_version_resolution "${TARGET_RESOLUTION:-}" \
     langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
+    langflow_version_expected_shards "${LANGFLOW_VERSION_EXPECTED:-}" \
+    langflow_version_answered_shards "${LANGFLOW_VERSION_ANSWERED:-}" \
+    langflow_version_silent_shards "${LANGFLOW_VERSION_SILENT:-}" \
+    langflow_versions "${LANGFLOW_VERSIONS:-}" \
     langflow_prepared_sha "${TARGET_PREPARED_SHA:-}" \
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
@@ -2384,6 +2429,10 @@ phase_publish() {
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
+    LANGFLOW_VERSION_EXPECTED="${LANGFLOW_VERSION_EXPECTED:-}" \
+    LANGFLOW_VERSION_ANSWERED="${LANGFLOW_VERSION_ANSWERED:-}" \
+    LANGFLOW_VERSION_SILENT="${LANGFLOW_VERSION_SILENT:-}" \
+    LANGFLOW_VERSIONS="${LANGFLOW_VERSIONS:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \
     OUTAGE_ATTEMPTS="$RUN_DIR/outage-attempts.json" \
