@@ -85,3 +85,44 @@ test("objectKey collapses duplicate slashes a sloppy prefix would introduce", ()
     "vm/RUN1/playwright-report/index.html",
   );
 });
+
+// ---------------------------------------------------------------------------
+// WHICH credential goes out (#2019)
+// ---------------------------------------------------------------------------
+// The storage route compares the bearer against the SERVICE ROLE key and 401s on
+// anything else, deliberately. The first version of this script sent the run-ingest
+// automation token instead, and every test here stayed green — because none of them
+// asked what was in the Authorization header.
+
+import { main } from "./upload-evidence.mjs";
+
+/** A fixture report and a fetch that records what it was asked to send. */
+function harness(env) {
+  const root = makeTempDir("upload-cred");
+  writeFileSync(join(root, "index.html"), "x");
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, auth: init?.headers?.Authorization });
+    return { ok: true, status: 200 };
+  };
+  const argv = ["--dir", root, "--base", "https://platform.example/storage/v1/object/playwright-evidence",
+                "--run-id", "RUN1", "--prefix", "vm"];
+  return { calls, run: () => main({ env, argv, fetchImpl }) };
+}
+
+test("the upload sends the SERVICE ROLE key, not the automation token", async () => {
+  const h = harness({ SUPABASE_SERVICE_ROLE_KEY: "service-role-value", QA_E2E_AUTOMATION_TOKEN: "automation-value" });
+  assert.equal(await h.run(), 0);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].auth, "Bearer service-role-value");
+  assert.doesNotMatch(h.calls[0].auth, /automation-value/,
+    "the automation token has no write access to the bucket — the route 401s on it");
+});
+
+test("with only the automation token set, it refuses instead of uploading 401s", async () => {
+  // Refusing names the missing variable once; uploading would produce one 401 per file
+  // and bury the single fact that matters.
+  const h = harness({ QA_E2E_AUTOMATION_TOKEN: "automation-value" });
+  assert.equal(await h.run(), 2, "a missing credential is a refusal (2), not a partial upload (1)");
+  assert.equal(h.calls.length, 0, "nothing may be sent without the service role key");
+});

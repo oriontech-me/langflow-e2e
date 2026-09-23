@@ -246,6 +246,11 @@ main() {
   # are different services on the same host and only one of them takes a bearer upload.
   export EVIDENCE_UPLOAD_BASE="https://api.oriontech.me/storage/v1/object/playwright-evidence"
   export EVIDENCE_PREFIX=vm
+  # The upload's credential is NOT the one the run POST uses, and that cost a defect
+  # (#2019): the storage route compares the bearer against the platform's service role
+  # key and 401s on anything else, deliberately. It lives in $SECRETS with the rest, so
+  # this only has to re-export it.
+  export SUPABASE_SERVICE_ROLE_KEY
   #
   # Rollback: drop the four lines. POST_QA_PLATFORM defaults to 0 and the upload is
   # gated on it, so the lane goes back to publishing nothing and the Actions lane
