@@ -23,7 +23,7 @@
 #       ISSUE_HOST=<host the umbrella issue opens on>
 #       ISSUE_REPO=<owner/name on that host>
 #       ISSUE_CC="<@handle ...>"     # the empty string opens an issue that pings nobody
-#       BACKUP_DEST=<ssh-alias>:<dir>   # where the ledger is copied
+#       BACKUP_DEST=<ssh-alias>:<dir>   # where the ledger is copied, or local:<dir>
 #
 # ISSUE_CC is required to be SET, not non-empty: create-failure-issue.mjs tests for
 # `undefined`, so ISSUE_CC="" is a real choice (no /cc line), while an absent key would
@@ -119,7 +119,8 @@ main() {
   fi
 
   # --- which Langflow today, by the same resolution the run itself uses ---------------
-  local TMP
+  # Global, not local: the EXIT trap fires after main has returned, when a local is out
+  # of scope and `set -u` turns the cleanup into an error that leaves the directory.
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   curl -sfS --max-time 20 "$NIGHTLY_TAGS_URL" -o "$TMP/tags.json" \
     || echo "WARNING: the published image listing is unreadable; the refs will answer, and they can run ahead of what shipped"

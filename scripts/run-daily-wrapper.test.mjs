@@ -204,3 +204,13 @@ for (const runExit of [0, 1, 3]) {
   });
 }
 
+test("the scratch directory is removed on exit, and the cleanup does not error", () => {
+  // The EXIT trap fires after main returns. With TMP a local of main, `set -u` made the
+  // trap fail on an unbound variable and the directory stayed behind every day.
+  const dir = makeTempDir("wrapper-tmp-cleanup");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stderr + r.log, /unbound variable/);
+  assert.deepEqual(r.leftInTmp, []);
+  rmSync(dir, { recursive: true, force: true });
+});
