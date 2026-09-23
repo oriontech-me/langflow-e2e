@@ -300,12 +300,22 @@ export function resolveServedVersion(read, { expectShards = null } = {}) {
 
   const versions = [...new Set(answered.map((a) => a.version))];
   const pick = answered[0] ?? null;
+  // EXPECTED shards that reported no version, counted here rather than derived
+  // downstream as `expected - answered` (#1964 review). `answered` also counts a shard
+  // outside the expected range — deliberately, see the JSDoc — so a leftover shard-5
+  // file under a reused RUN_ID answering beside a silent shard 4 made that subtraction
+  // 0, and the comparator printed "one version across 4 shard(s)" for a run one
+  // expected shard never spoke in. Only this function knows which shards were in range.
+  const silent = expected
+    ? unanswered.filter(({ shard }) => shard >= 1 && shard <= expected).length
+    : null;
   return {
     version: pick ? pick.version : null,
     source: pick ? pick.shard : null,
     answered,
     unanswered,
     unexpected,
+    silent,
     versions,
     disagreement: versions.length > 1,
     expected,
@@ -355,10 +365,13 @@ export function renderReport(verdict) {
  * spelled in a workflow's `run:` — a `node -e` in the YAML is where a mutation
  * survives the whole unit suite (#1812's own finding, in the code written for it).
  *
- * Four of the six now have a consumer. `version` rides the history row alone, and
- * `expected`, `answered` and `versions` ride it together as `langflow_version_sweep`
- * (#1964), which is what lets `compare-lane-verdicts.mjs` stop reading two equal
- * single versions as proof the lanes tested the same product. `source` and
+ * Five of the seven now have a consumer. `version` rides the history row alone, and
+ * `expected`, `answered`, `silent` and `versions` ride it together as
+ * `langflow_version_sweep` (#1964), which is what lets `compare-lane-verdicts.mjs`
+ * stop reading two equal single versions as proof the lanes tested the same product.
+ * `silent` is its own line rather than `expected - answered` downstream, because
+ * `answered` counts a shard outside the expected range and only this side can tell
+ * them apart. `silent=` is empty exactly when `expected=` is. `source` and
  * `disagreement` remain diagnostic, for a human reading a step's outputs — the
  * comparator derives the straddle from `versions` itself rather than trusting a
  * boolean it cannot recompute.
@@ -374,6 +387,7 @@ export function outputLines(verdict) {
     `source=${verdict.source ?? ""}`,
     `answered=${verdict.answered.length}`,
     `expected=${verdict.expected ?? ""}`,
+    `silent=${verdict.silent ?? ""}`,
     `disagreement=${verdict.disagreement ? "true" : "false"}`,
     `versions=${verdict.versions.join(",")}`,
   ];

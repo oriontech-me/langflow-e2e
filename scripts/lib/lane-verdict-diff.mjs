@@ -441,9 +441,18 @@ const shardsOf = (row) => row?.backend?.shard_total ?? null;
 const sweepOf = (row) => {
   const s = row?.langflow_version_sweep;
   if (!s || typeof s !== "object") return null;
-  const { expected, answered, versions } = s;
+  const { expected, answered, silent, versions } = s;
   if (!Number.isInteger(answered) || answered < 0) return null;
   if (expected !== null && (!Number.isInteger(expected) || expected < 0)) return null;
+  // `silent` is the reader's own count of EXPECTED shards that reported nothing, and it
+  // is required rather than recomputed as `expected - answered`: `answered` counts a
+  // shard outside the expected range too, so a stray answer cancelled a silent shard
+  // out and a run with a dead shard read as fully answered (#1964 review). It exists
+  // exactly when `expected` does, and the expected shards that DID answer can never
+  // outnumber every shard that answered.
+  if (expected === null ? silent !== null : !Number.isInteger(silent) || silent < 0 || silent > expected)
+    return null;
+  if (expected !== null && expected - silent > answered) return null;
   if (!Array.isArray(versions) || versions.some((v) => typeof v !== "string" || !v)) return null;
   if (versions.length > answered) return null;
   if ((answered > 0) !== versions.length > 0) return null;
@@ -455,22 +464,18 @@ const sweepOf = (row) => {
   // foreign- or hand-edited-row case this guard exists for, failing in the worse
   // direction: a wrong verdict rather than UNREADABLE (found in review).
   if (new Set(versions).size !== versions.length) return null;
-  return { expected: expected ?? null, answered, versions };
+  return { expected: expected ?? null, answered, silent: silent ?? null, versions };
 };
 
 /** More than one distinct version served — the run did not test one product. */
 const straddled = (sweep) => Boolean(sweep && sweep.versions.length > 1);
 
 /**
- * Shards the run expected that never reported a version.
- *
- * `expected: null` — a lane with no shard count to compare against — is 0 here, and
- * the explicit test is belt-and-braces rather than a guard: `Math.max` already makes
- * `null` and any over-count come out 0, so removing either alone changes nothing.
- * Kept because the intent is not otherwise readable at the call site.
+ * Shards the run expected that never reported a version — the reader's count, read
+ * straight off the row. `expected: null` (a lane with no shard count to compare
+ * against) carries `silent: null`, which is 0 here.
  */
-const unaccounted = (sweep) =>
-  sweep && sweep.expected !== null ? Math.max(0, sweep.expected - sweep.answered) : 0;
+const unaccounted = (sweep) => (sweep && sweep.silent !== null ? sweep.silent : 0);
 
 /**
  * Classify every test the two lanes disagree about.

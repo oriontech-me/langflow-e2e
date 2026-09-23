@@ -887,6 +887,7 @@ test("daily-stable.yml passes the version sweep to the history appender", () => 
   assert.match(step, /append-weekly-history\.mjs/, "scoped to the wrong step");
   assert.match(step, /LANGFLOW_VERSION_EXPECTED:/);
   assert.match(step, /LANGFLOW_VERSION_ANSWERED:/);
+  assert.match(step, /LANGFLOW_VERSION_SILENT:/);
   assert.match(step, /LANGFLOW_VERSIONS:/);
 });
 
@@ -895,6 +896,7 @@ test("run-e2e.sh passes the version sweep to the history appender", () => {
   const block = blockAfter(sh, /HISTORY_FILE="\$LEDGER_HISTORY"/, /append-weekly-history\.mjs/);
   assert.match(block, /LANGFLOW_VERSION_EXPECTED=/);
   assert.match(block, /LANGFLOW_VERSION_ANSWERED=/);
+  assert.match(block, /LANGFLOW_VERSION_SILENT=/);
   assert.match(block, /LANGFLOW_VERSIONS=/);
 });
 
@@ -1480,9 +1482,14 @@ test("an UNVERIFIED lane is named even when the other lane has no block at all",
 // another build, and every product difference between the two then lands in the
 // divergence list wearing an environment's clothes. These pin the case that passes.
 
-const sweep = (over = {}) => ({
-  langflow_version_sweep: { expected: 4, answered: 4, versions: ["1.13.0.dev3"], ...over },
-});
+// `silent` defaults to what the reader would count when no stray shard answered, so a
+// case only has to spell it when the stray is the point.
+const sweep = (over = {}) => {
+  const block = { expected: 4, answered: 4, versions: ["1.13.0.dev3"], ...over };
+  if (!("silent" in over))
+    block.silent = block.expected === null ? null : Math.max(0, block.expected - block.answered);
+  return { langflow_version_sweep: block };
+};
 // The three sentences this field can produce, matched by their OWN wording rather
 // than by a pattern that happens not to hit the collection-gate and listing warnings
 // (they contain neither "product" nor "version" today, which is luck, not a contract).
@@ -1552,6 +1559,20 @@ test("a shard that reported nothing is PARTIAL — an absence, reported more sof
   assert.equal(result.comparable, true);
 });
 
+test("a stray shard's answer does not hide a silent expected one", () => {
+  // #1964 review: shards 1-3 answered, shard 4 died, a leftover shard-5 file answered.
+  // `answered` is 4 and `expected - answered` is 0, so this read "one version across 4
+  // shard(s)" with no warning. The reader's `silent` is what the comparator reads now.
+  const result = compare(
+    row("daily-stable", sweep({ answered: 4, silent: 1 })),
+    row("vm-daily", sweep({ expected: 1, answered: 1 })),
+  );
+  const w = result.warnings.find((x) => x.includes("parity PARTIAL"));
+  assert.ok(w, `no partial warning: ${result.warnings.join(" | ")}`);
+  assert.match(w, /Actions 1 of 4/);
+  assert.match(renderReport(result), /one version across 4 shard\(s\); 1 reported none/);
+});
+
 test("a straddle SUPPRESSES the partial line, because it is the bigger statement", () => {
   // Both are true of the same lane and both say "the row's one version is not the
   // whole run"; printing two sentences for it is how a reader stops reading either.
@@ -1584,15 +1605,25 @@ test("a malformed sweep block is UNREADABLE, never a measurement", () => {
   // answered, or more distinct versions than shards that spoke, is half-written. The
   // shipped producers cannot emit one, so this is the foreign- or hand-edited row —
   // the same case that once rendered a corrupt listing block as "listing complete".
+  // Each block is broken in exactly ONE way, `silent` included — a block missing it
+  // would be refused for that alone and pin nothing about the defect it is listed for.
   const broken = [
-    { expected: 4, answered: "4", versions: ["a"] },
-    { expected: "4", answered: 4, versions: ["a"] },
-    { expected: 4, answered: 4, versions: "a" },
-    { expected: 4, answered: 4, versions: [""] },
-    { expected: 4, answered: 1, versions: ["a", "b"] },
-    { expected: 4, answered: 0, versions: ["a"] },
-    { expected: 4, answered: 2, versions: [] },
-    { expected: -1, answered: 4, versions: ["a"] },
+    { expected: 4, answered: "4", silent: 0, versions: ["a"] },
+    { expected: "4", answered: 4, silent: 0, versions: ["a"] },
+    { expected: 4, answered: 4, silent: 0, versions: "a" },
+    { expected: 4, answered: 4, silent: 0, versions: [""] },
+    { expected: 4, answered: 1, silent: 3, versions: ["a", "b"] },
+    { expected: 4, answered: 0, silent: 4, versions: ["a"] },
+    { expected: 4, answered: 2, silent: 2, versions: [] },
+    { expected: -1, answered: 4, silent: 0, versions: ["a"] },
+    // `silent` itself: absent, mistyped, out of range, present without an expected
+    // count, and fewer silent shards than the answers could account for.
+    { expected: 4, answered: 4, versions: ["a"] },
+    { expected: 4, answered: 4, silent: "0", versions: ["a"] },
+    { expected: 4, answered: 4, silent: 5, versions: ["a"] },
+    { expected: 4, answered: 4, silent: -1, versions: ["a"] },
+    { expected: null, answered: 2, silent: 0, versions: ["a"] },
+    { expected: 4, answered: 2, silent: 1, versions: ["a"] },
   ];
   for (const block of broken) {
     const result = compare(

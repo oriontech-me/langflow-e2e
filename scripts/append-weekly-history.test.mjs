@@ -257,19 +257,21 @@ test("an absent version is null, never omitted, so a reader can tell 'unknown' f
 // `compare-lane-verdicts.mjs` compared two single values for equality and its version
 // gate PASSED while up to three shards of a lane had tested another build.
 
-test("the sweep's three facts ride on the row beside the one version it picked", () => {
+test("the sweep's facts ride on the row beside the one version it picked", () => {
   const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
     LANGFLOW_VERSION: "1.13.0.dev3",
     LANGFLOW_VERSION_EXPECTED: "4",
     LANGFLOW_VERSION_ANSWERED: "4",
+    LANGFLOW_VERSION_SILENT: "0",
     LANGFLOW_VERSIONS: "1.13.0.dev3,1.13.0.dev4",
   });
   assert.deepEqual(entry.langflow_version_sweep, {
     expected: 4,
     answered: 4,
+    silent: 0,
     versions: ["1.13.0.dev3", "1.13.0.dev4"],
   });
-  // All three, because two agreeing answers prove nothing if two shards never spoke.
+  // All of them, because two agreeing answers prove nothing if two shards never spoke.
   assert.equal(entry.langflow_version, "1.13.0.dev3", "the picked version still rides alone");
 });
 
@@ -304,9 +306,10 @@ test("a sweep that resolved nothing is recorded as that, not as no sweep", () =>
     LANGFLOW_VERSION: "",
     LANGFLOW_VERSION_EXPECTED: "4",
     LANGFLOW_VERSION_ANSWERED: "0",
+    LANGFLOW_VERSION_SILENT: "4",
     LANGFLOW_VERSIONS: "",
   });
-  assert.deepEqual(entry.langflow_version_sweep, { expected: 4, answered: 0, versions: [] });
+  assert.deepEqual(entry.langflow_version_sweep, { expected: 4, answered: 0, silent: 4, versions: [] });
   assert.equal(entry.langflow_version, null);
 });
 
@@ -321,14 +324,38 @@ test("an unknown expected count is null, and does not take the block down with i
     const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
       LANGFLOW_VERSION_EXPECTED: expected,
       LANGFLOW_VERSION_ANSWERED: "2",
+      LANGFLOW_VERSION_SILENT: "1",
       LANGFLOW_VERSIONS: "1.13.0.dev3",
     });
+    // `silent` goes with it: a count of expected shards means nothing without one.
     assert.deepEqual(
       entry.langflow_version_sweep,
-      { expected: null, answered: 2, versions: ["1.13.0.dev3"] },
+      { expected: null, answered: 2, silent: null, versions: ["1.13.0.dev3"] },
       `expected=${JSON.stringify(expected)} was not read as unknown`,
     );
   }
+});
+
+test("a stray shard's answer is not allowed to cancel a silent one out", () => {
+  // #1964 review: 3 of 4 expected shards answered plus a leftover shard 5, so
+  // `answered` is 4. The reader's `silent=1` is carried verbatim — the row must not be
+  // left for the comparator to recompute as `expected - answered`, which is 0.
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSION_ANSWERED: "4",
+    LANGFLOW_VERSION_SILENT: "1",
+    LANGFLOW_VERSIONS: "1.13.0.dev3",
+  });
+  assert.equal(entry.langflow_version_sweep.silent, 1);
+});
+
+test("a missing silent count beside a known expected one is null, for the comparator to refuse", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]), {
+    LANGFLOW_VERSION_EXPECTED: "4",
+    LANGFLOW_VERSION_ANSWERED: "4",
+    LANGFLOW_VERSIONS: "1.13.0.dev3",
+  });
+  assert.equal(entry.langflow_version_sweep.silent, null);
 });
 
 test("the version list is tolerated the way the listing's is, never thrown on", () => {

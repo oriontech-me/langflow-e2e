@@ -1733,6 +1733,7 @@ test("phase_merge survives a served-version output file it cannot read", (t) => 
   // came back empty rather than aborting the phase that carries them.
   assert.equal(meta.langflow_version_expected_shards, "");
   assert.equal(meta.langflow_version_answered_shards, "");
+  assert.equal(meta.langflow_version_silent_shards, "");
   assert.equal(meta.langflow_versions, "");
 });
 
@@ -1750,6 +1751,7 @@ test("the metadata carries the sweep beside the version it qualifies", () => {
   assert.equal(meta.langflow_version, "1.13.0.dev3", "the picked version still rides alone");
   assert.equal(meta.langflow_version_expected_shards, "2");
   assert.equal(meta.langflow_version_answered_shards, "2");
+  assert.equal(meta.langflow_version_silent_shards, "0");
   assert.equal(meta.langflow_versions, "1.13.0.dev3,1.13.0.dev4");
 });
 

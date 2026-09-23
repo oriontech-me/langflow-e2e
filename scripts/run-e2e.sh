@@ -719,7 +719,7 @@ gh_out() {
 # substitution, so under `set -e` any non-zero status becomes the assignment's and
 # aborts phase_merge — losing the run's verdict and its publish for a diagnostic.
 # The guarantee is the FUNCTION's, and #1964 proved that is not the same as the
-# path's: three `gh_out` reads added beside the call site reproduced the abort
+# path's: `gh_out` reads added beside the call site reproduced the abort
 # exactly. Anything reading this file from phase_merge carries `|| true` too, and
 # a test drives phase_merge over an unreadable one.
 #
@@ -1846,7 +1846,7 @@ phase_merge() {
   # used to carry, and on a sharded run it need not describe the whole run: the shards
   # pull `:latest` independently, so a nightly published mid-run leaves two of them on
   # two builds and `compare-lane-verdicts.mjs` compared two single values for equality
-  # (#1964). Both lanes write the triple, or the comparator sits permanently on "one
+  # (#1964). Both lanes write the sweep, or the comparator sits permanently on "one
   # lane does not measure this" — the reachability trap `langflow_version` itself
   # documents.
   # `|| true` on each read, for the reason `resolve_served_version` carries its own:
@@ -1862,6 +1862,7 @@ phase_merge() {
   LANGFLOW_VERSION="$(resolve_served_version "$sweep_out")"
   LANGFLOW_VERSION_EXPECTED="$(gh_out "$sweep_out" expected || true)"
   LANGFLOW_VERSION_ANSWERED="$(gh_out "$sweep_out" answered || true)"
+  LANGFLOW_VERSION_SILENT="$(gh_out "$sweep_out" silent || true)"
   LANGFLOW_VERSIONS="$(gh_out "$sweep_out" versions || true)"
 
   # The comparison this step exists for. A mismatch is now FATAL by default: the run
@@ -1949,6 +1950,7 @@ phase_merge() {
     langflow_version_match "${TARGET_VERSION_MATCH:-unchecked}" \
     langflow_version_expected_shards "${LANGFLOW_VERSION_EXPECTED:-}" \
     langflow_version_answered_shards "${LANGFLOW_VERSION_ANSWERED:-}" \
+    langflow_version_silent_shards "${LANGFLOW_VERSION_SILENT:-}" \
     langflow_versions "${LANGFLOW_VERSIONS:-}" \
     langflow_prepared_sha "${TARGET_PREPARED_SHA:-}" \
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
@@ -2360,6 +2362,7 @@ phase_publish() {
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LANGFLOW_VERSION_EXPECTED="${LANGFLOW_VERSION_EXPECTED:-}" \
     LANGFLOW_VERSION_ANSWERED="${LANGFLOW_VERSION_ANSWERED:-}" \
+    LANGFLOW_VERSION_SILENT="${LANGFLOW_VERSION_SILENT:-}" \
     LANGFLOW_VERSIONS="${LANGFLOW_VERSIONS:-}" \
     LIVENESS_DIR="$RUN_DIR/all-liveness" \
     SHARD_TOTAL="${SHARD_TOTAL:-}" \

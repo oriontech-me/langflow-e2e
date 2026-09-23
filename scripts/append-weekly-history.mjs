@@ -38,9 +38,10 @@
 //                             `collection_gate_keys` block; neither alone can, because
 //                             a lane that resolved nothing and a lane that never
 //                             measured both send an empty string (#1813).
-//   LANGFLOW_VERSION_EXPECTED Optional, read as a TRIPLE (#1964): how many shards the
-//   LANGFLOW_VERSION_ANSWERED run expected, how many reported a served version, and the
-//   LANGFLOW_VERSIONS         distinct versions they served. All three come from
+//   LANGFLOW_VERSION_EXPECTED Optional, read together (#1964): how many shards the
+//   LANGFLOW_VERSION_ANSWERED run expected, how many reported a served version, how
+//   LANGFLOW_VERSION_SILENT   many EXPECTED shards reported none, and the distinct
+//   LANGFLOW_VERSIONS         versions they served. All four come from
 //                             `scripts/resolve-served-version.mjs`'s own outputs.
 //                             `LANGFLOW_VERSION_ANSWERED` unset means the lane does not
 //                             measure this, and no block is written.
@@ -546,9 +547,15 @@ const versionSweep = (() => {
     const text = String(raw ?? "").trim();
     return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : null;
   };
+  const expected = count(process.env.LANGFLOW_VERSION_EXPECTED);
   return {
-    expected: count(process.env.LANGFLOW_VERSION_EXPECTED),
+    expected,
     answered: count(answeredRaw),
+    // The expected shards that reported nothing, as the reader counted them. Not
+    // `expected - answered`: `answered` includes a shard outside the expected range,
+    // so a stray answer would cancel a silent shard out (#1964 review). Meaningless
+    // without an expected count, so `null` whenever `expected` is.
+    silent: expected === null ? null : count(process.env.LANGFLOW_VERSION_SILENT),
     // A comma list, which is what the reader emits. Tolerant in the same direction
     // as `listingMissing`: anything unparseable becomes an empty list rather than a
     // throw, and the consumer reads a block whose `answered` disagrees with its
