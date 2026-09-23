@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -43,10 +41,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * Grounding: the `.markdown.prose` container and `<code>` rendering are confirmed
  * live by the @stable `playground/playground-output-data.spec.ts`.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // A Markdown-only prompt exercising the four most reliably-produced constructs:
 // a level-2 heading, a three-item bulleted list, a bold run, and a fenced code

@@ -1,6 +1,4 @@
 import type { Page } from "@playwright/test";
-import * as dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
@@ -47,10 +45,6 @@ test(
   "user must interact with chat with Input/Output",
   { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
   async ({ page }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-    }
-
     // Real completions run below, so gate on provider HEALTH, not on the env var
     // alone — a drained key would block the backend past gunicorn's 300s timeout
     // and kill the shard's Langflow worker (#1029).

@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages/SettingsPage";
 import {
@@ -8,10 +6,6 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { errorToastLocator } from "../../../../helpers/ui/error-toast";
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // ─── Target builder ───────────────────────────────────────────────────────────
 // Configuração por provider centralizada em helpers/provider-setup/provider-config.ts

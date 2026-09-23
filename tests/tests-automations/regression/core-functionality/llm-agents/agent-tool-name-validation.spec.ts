@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -32,10 +30,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * the LangChain tool. The block comes from the provider's request validation
  * (deterministic HTTP 400 before any inference). See the spec doc's Scope note.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const INVALID_TOOL_NAME = "invalid tool name!!";
 const VALID_TOOL_NAME = "fetch_content_renamed";

@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -39,10 +37,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * title reached the reply (see FETCH_URL — httpbin.org by default, go-httpbin
  * in the daily; both serve the identical /json slideshow).
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // URL-tool fetch target. Defaults to the public httpbin.org, overridable via
 // ECHO_BASE_URL / HTTPBIN_BASE_URL. httpbin.org is chronically unreliable —

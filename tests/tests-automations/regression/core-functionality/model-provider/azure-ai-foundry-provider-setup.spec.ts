@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages";
@@ -53,10 +51,6 @@ import {
  * - test 4 enables a name present in NO catalog, so only the free-text
  *   mechanism can satisfy it.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const PROVIDER_NAME = "Azure AI Foundry";
 const PROVIDER_ITEM = `provider-item-${PROVIDER_NAME}`;

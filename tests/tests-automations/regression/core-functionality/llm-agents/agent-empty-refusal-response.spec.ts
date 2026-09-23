@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -29,10 +27,6 @@ import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows
  * output fails the test automatically. A green run therefore proves the §6.5
  * "does not crash" contract. Mirrors agent-system-prompt.spec.ts.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // The user message is unrelated to the instruction — a plain question the agent
 // would normally answer, so a refusal / empty reply can only come from the

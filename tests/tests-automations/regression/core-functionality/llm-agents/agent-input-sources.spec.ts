@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -28,10 +26,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  *   - agent-system-prompt.spec.ts: system prompt influence on the response.
  * This spec owns only the "which input source reached the agent" contract (§6.5).
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Track every flow the template load creates (POST /api/v1/flows → 201) so
 // afterEach can delete exactly those ids. SimpleAgentTemplatePage.load() does NO

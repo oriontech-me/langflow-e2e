@@ -24,8 +24,6 @@
  * - No messages are missing or lost
  */
 
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -163,10 +161,6 @@ test(
   "Settings > Messages displays sent messages in correct order with working filters",
   { tag: ["@stable", "@release", "@workspace", "@api", "@settings"] },
   async ({ page, request }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-    }
-
     // Two real OpenAI completions run below, so gate on provider HEALTH, not on
     // the env var alone — a drained key would otherwise block the backend past
     // gunicorn's 300s timeout and kill the shard's Langflow worker (#1029).

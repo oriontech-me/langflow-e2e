@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages";
@@ -78,10 +76,6 @@ import { armProviderSave } from "../../../../helpers/provider-setup/provider-pan
  *   the provider itself rather than inheriting ambient model-status (#1334 — see
  *   `persistedModelBinding` and `setModelEnabled`).
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const PROVIDER_NAME = "OpenAI Compatible";
 const PROVIDER_ITEM = `provider-item-${PROVIDER_NAME}`;

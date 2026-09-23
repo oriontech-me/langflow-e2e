@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -58,10 +56,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * tools. Neither asserts the tool call's INPUT arguments are captured — this
  * spec's subject.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const HTTPBIN_BASE = (
   process.env.ECHO_BASE_URL ||

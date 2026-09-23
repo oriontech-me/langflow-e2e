@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
@@ -50,10 +48,6 @@ test(
   },
   async ({ page }) => {
     trackCreatedFlows(page);
-
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-    }
 
     // A real playground send runs below, so gate on provider HEALTH rather than on
     // the mere presence of the env var: a key that exists but is drained blocks

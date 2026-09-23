@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
@@ -29,10 +27,6 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 // Google tests below did exactly that on run 30374528125.
 // - the "Manage Model Providers" test lost its if-wrapping: every step is a
 //   hard assertion against live-scouted testids.
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 test.describe("Language Model Component Regression", () => {
   // Each test opens the Basic Prompting template, which creates a flow. The

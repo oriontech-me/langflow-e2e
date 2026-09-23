@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -51,10 +49,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * does not carry it) — the contract is the memory layer's behavior, not the
  * input widget.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Flows created by test 2 are tracked here and deleted by id in afterEach —
 // loadTemplateByName does NO cleanup (post-#553 contract), and the app can

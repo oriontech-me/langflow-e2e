@@ -1,6 +1,4 @@
 import type { Page } from "@playwright/test";
-import * as dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import {
   lockFlow,
@@ -69,10 +67,6 @@ test(
       !process?.env?.OPENAI_API_KEY,
       "OPENAI_API_KEY required to run this test",
     );
-
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-    }
 
     // Isolated, uniquely-named flow addressed by id — parallel-safe (#684).
     const flowId = await createFlowFromStarter(

@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -56,10 +54,6 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * limit message when the model writes text alongside its tool call is a separate
  * product regression, LE-2728 (#1991), and Test 1 is quarantined for it below.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Data the model CANNOT fabricate, so calling the URL tool is the only way to
 // answer. `/uuid` returns a fresh random UUID per request: unknowable (unlike a

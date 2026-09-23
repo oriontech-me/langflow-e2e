@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
@@ -35,10 +33,6 @@ import {
  * MISTRAL_TEST_MODEL text (the component defaults to codestral-latest — a
  * skipped selection fails); the reply assert requires a genuine inference.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY ?? "";
 const MISTRAL_TEST_MODEL = process.env.MISTRAL_TEST_MODEL ?? "mistral-small-latest";

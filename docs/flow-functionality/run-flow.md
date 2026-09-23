@@ -227,7 +227,7 @@ issue #1548 rather than widened here.
 
 ## Notes *(optional)*
 
-- `dotenv.config()` is called at the start only in non-CI environments to load `.env` variables; in CI, environment variables are injected directly.
+- The spec does not load `.env` itself: `playwright.config.ts` loads the repo-root `.env` before collection (locally), and CI injects the variables directly. The spec-level `dotenv.config()` it used to carry resolved to `tests/.env`, which does not exist, so it never loaded anything (#2014).
 - The test uses `getByTestId(/^textarea_str_chatinput.*/)` (regex) because the testid includes a dynamic suffix.
 - Final assertion uses Playwright-native `await expect(value).toHaveValue("...")` (auto-waiting) instead of `expect(await ...inputValue()).toBe("...")`.
 - Test body is wrapped in `try { ... } finally { /* API cleanup */ }` that deletes the 2 most-recently-created flows via `getAuthToken` + `DELETE /api/v1/flows/{id}`. Cleanup is best-effort (errors swallowed) so original test failures aren't masked by cleanup errors.

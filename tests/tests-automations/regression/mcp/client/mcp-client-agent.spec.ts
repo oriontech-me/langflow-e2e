@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import type { LoadSimpleAgentOptions } from "../../../../pages";
@@ -23,10 +21,6 @@ import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-n
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Worker- and timestamp-suffixed name prevents cross-file races with
 // mcp-client-regression.spec.ts (which also registers an "everything" MCP server).

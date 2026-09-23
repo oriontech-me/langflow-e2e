@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
@@ -35,10 +33,6 @@ import {
  * the model assert requires the exact GROQ_TEST_MODEL text; the reply assert
  * requires a genuine authenticated inference.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
 // `||`, not `??`: the CI lanes inject this from a repository variable, and an

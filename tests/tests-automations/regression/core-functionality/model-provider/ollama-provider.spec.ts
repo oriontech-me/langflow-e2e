@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages";
@@ -61,10 +59,6 @@ import { armProviderSave } from "../../../../helpers/provider-setup/provider-pan
  * a reachable instance both tests skip with an explicit reason — the same
  * missing-dependency contract the keyed providers use for absent env keys.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Reachability probe from the TEST host.
 const OLLAMA_BASE_URL = ollamaBaseUrl();

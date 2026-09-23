@@ -1,6 +1,4 @@
 import type { Page } from "@playwright/test";
-import * as dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
@@ -76,10 +74,6 @@ test(
   "user must be able to send an image on chat using advanced tool on ChatInputComponent",
   { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-    }
-
     // A real build runs below, so gate on provider HEALTH rather than on the mere
     // presence of the env var: a key that exists but is drained blocks the backend
     // past gunicorn's 300s timeout and kills the shard's Langflow worker (#1029).

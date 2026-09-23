@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import { randomUUID } from "crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test, type PageWithErrorHooks } from "../../../../fixtures/fixtures";
@@ -22,10 +20,6 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../../.env") });
-}
 
 // Spec doc: docs/core-functionality/a2a/a2a-client-agent-as-tool.md
 //

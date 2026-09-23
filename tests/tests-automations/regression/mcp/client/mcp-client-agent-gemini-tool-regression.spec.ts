@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Page, APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -34,10 +32,6 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
  * instance, an unregistered MCP server) into a green "expected failure", masking
  * real breakage. Here the setup asserts stay LOUD: infra breakage goes red.
  */
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Worker- and timestamp-suffixed name prevents cross-file races with the other
 // specs that also register an "everything" MCP server.

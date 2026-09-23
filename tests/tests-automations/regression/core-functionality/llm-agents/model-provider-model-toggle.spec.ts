@@ -1,5 +1,3 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import type { Locator, Page, Request, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage } from "../../../../pages";
@@ -24,10 +22,6 @@ import {
 } from "../../../../helpers/provider-setup/model-option";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-
-if (!process.env.CI) {
-  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
 
 // Resolve the provider to drive the test. The behavior under test (per-model
 // enable/disable toggles in Settings → Model Providers) is provider-agnostic,
