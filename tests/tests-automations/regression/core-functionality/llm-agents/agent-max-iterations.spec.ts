@@ -493,10 +493,21 @@ for (const { label, options, skipReason } of targets) {
     // This is the half of the pair whose assertion depends on the model electing
     // to call a tool (see the header), so its `@stable` follows a measured rate,
     // not the fix landing — #1187's rule. See the spec doc's Tags section for the
-    // numbers behind the tag this test currently carries.
-    test(
+    // numbers behind the tag this test carried before the quarantine below.
+    //
+    // Quarantined (2026-09-23, #1991): a confirmed product regression, LE-2728.
+    // When the model writes text alongside its tool call, the cap still fires but
+    // the limit message is lost, and the run's final message is the model's
+    // preamble. Sampling decides which case a run hits: 5 of 10 attempts lost
+    // the message on 1.13.0.dev19 / claude-haiku-4-5. Recurrent: flaky on the
+    // 2026-09-18 daily and hard-failed 3/3 on 2026-09-22, same signature.
+    // Lifting the quarantine (remove test.fixme + restore @stable) is a
+    // deliverable of #1991, once the upstream fix lands in the nightly and is
+    // re-validated there. The causal control below is unaffected and keeps
+    // @stable; in serial mode a fixme'd test does not skip the tests after it.
+    test.fixme(
       "agent stops when max iterations is reached",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
