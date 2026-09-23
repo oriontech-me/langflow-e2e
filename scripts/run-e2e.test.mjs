@@ -2947,7 +2947,8 @@ test("phase_publish sends the token rows as a second POST of the same run", asyn
   assert.equal(r.received.length, 2, `expected the run POST and the token POST:\n${r.out}`);
   const [run, tokens] = r.received;
   assert.equal(run.tokens, undefined, "the run's own POST must not wait for, or carry, the tokens");
-  const { tokens: _block, ...rest } = tokens;
+  const rest = { ...tokens };
+  delete rest.tokens;
   assert.deepEqual(rest, run, "the token POST re-sends the SAME run payload, so only the token rows land");
   assert.equal(tokens.tokens.total_tokens, 88);
   assert.match(r.out, /post-token-payload: outcome=delivered/);

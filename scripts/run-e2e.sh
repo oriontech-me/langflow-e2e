@@ -9,7 +9,10 @@
 # ordinary VMs, calling exactly the same scripts the workflow calls —
 # partition-shards.mjs, wait-for-backend.mjs, watch-backend.mjs, watch-tokens.mjs,
 # check-run-integrity.mjs, report-backend-outages.mjs, build-run-payload.mjs,
-# append-weekly-history.mjs. No logic is reimplemented here. What changes is the
+# append-weekly-history.mjs. No logic is reimplemented here, with one exception: the
+# token POST's outcome handling is inline shell in the workflow and a script here
+# (post-token-payload.mjs, #2017), because this lane's copy had to be testable on output
+# (#1226) — the two can drift, and the workflow's is the one being retired. What changes is the
 # ORCHESTRATOR (bash instead of the Actions runner) and the SUBSTRATE (native
 # processes instead of `services:` containers).
 #
@@ -26,6 +29,8 @@
 #   job `merge`                         | phase_merge + phase_publish
 #     "Append daily history"            |   the same appenders, writing to the LEDGER
 #     "Commit daily history"            |   nothing — see difference 6
+#     "Summarize token consumption"     |   watch-tokens.mjs --summarize, to the LEDGER
+#     "POST token consumption to ..."   |   post-token-payload.mjs (the exception above)
 #   "Fail scheduled run on ..."         | phase_verdict
 #
 # ## The six differences that matter
@@ -57,10 +62,11 @@
 #    models.json in globalSetup — shards in one directory overwrite each other's
 #    catalog mid-read.
 #
-# 5. NO ISSUE, NO SLACK, NO PLATFORM POST — yet. While the VM daily runs beside the
-#    Actions one, only the Actions verdict has consequence: this run is observed, not
-#    acted on. The code paths exist and are off by default; they turn on when the
-#    webhook and the secrets exist.
+# 5. THE ISSUE, SLACK AND THE PLATFORM POSTS ARE SWITCHES, OFF BY DEFAULT HERE. Every
+#    one of them (CREATE_ISSUE, NOTIFY_SLACK, POST_QA_PLATFORM — the last gates both the
+#    run POST and the token POST) is 0 unless the caller exports it. Since the
+#    2026-09-20 cut this lane carries the verdict, and ops/vm/run-daily.sh turns them
+#    on; a rehearsal that exports none of them publishes nothing.
 #
 # 6. THE THREE SERIES ARE WRITTEN, NOT COMMITTED. daily-history.jsonl,
 #    token-history.jsonl and spec-durations.json are appended to a LEDGER outside the
