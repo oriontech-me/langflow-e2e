@@ -1894,6 +1894,144 @@ test("prose that resolves to nothing is silent — that is what keeps the check 
   assert.deepEqual(result.ambiguous, []);
 });
 
+/*
+ * The gapped rule (#1925): a file written with a directory segment LEFT OUT.
+ * The tree mirrors the measured instance — `tableComponent/TableOptions/index.tsx`
+ * written for a path with one more `components/` segment — plus the shapes that
+ * must stay silent: a second embedding file, a directory, and endpoint-like prose.
+ */
+const TABLE_OPTIONS = "src/frontend/src/components/core/parameterRenderComponent/components/tableComponent/components/TableOptions/index.tsx";
+const gappedTrees = [
+  {
+    ref: "origin/main",
+    entries: [
+      TABLE_OPTIONS,
+      "src/frontend/src/components/core/parameterRenderComponent/components/tableComponent/index.tsx",
+      "src/frontend/src/pages/FlowPage/components/PageComponent/index.tsx",
+      "src/frontend/src/pages/MainPage/components/PageComponent/index.tsx",
+      "src/lfx/src/lfx/components/models_and_agents/agent.py",
+      "src/backend/base/langflow/api/v1/flows.py",
+      "src/bundles/ollama/src/lfx_ollama/components/ollama",
+    ],
+  },
+  { ref: "origin/release-1.13.0", entries: [TABLE_OPTIONS] },
+];
+
+test("a file written with a segment LEFT OUT is reported as gapped, with the path it embeds in", () => {
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`tableComponent/TableOptions/index.tsx` — the delete-row button"))],
+    trees: gappedTrees,
+  });
+  assert.deepEqual(result.findings, [], "as written it suffix-matches nothing, so it is not a plain abbreviation");
+  assert.deepEqual(result.ambiguous, []);
+  assert.equal(result.gapped.length, 1);
+  assert.equal(result.gapped[0].token, "tableComponent/TableOptions/index.tsx");
+  assert.equal(result.gapped[0].resolved, TABLE_OPTIONS);
+  assert.deepEqual(result.gapped[0].refs, ["origin/main", "origin/release-1.13.0"]);
+  assert.equal(result.gapped[0].severity, "warn");
+});
+
+test("a gapped token that embeds in two files is silent — it names neither", () => {
+  // `components/PageComponent/index.tsx` suffix-matches both as written, so it is
+  // the ambiguity rule's; `pages/PageComponent/index.tsx` embeds in both with a
+  // gap, and a uniqueness rule has nothing to say about which one was meant.
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`pages/PageComponent/index.tsx` — one of the two"))],
+    trees: gappedTrees,
+  });
+  assert.deepEqual(result.gapped, []);
+  assert.deepEqual(result.ambiguous, []);
+});
+
+test("the gapped rule reads files only, never a directory or an endpoint", () => {
+  // Measured over `docs/`: the relation's one directory hit is `ollama/ollama`,
+  // a docker image; endpoints were the basename fallback's ~130 false rows.
+  const result = findAbbreviatedDeps({
+    docs: [
+      abbrevDoc(
+        depsSection(
+          "`ollama/ollama` — the docker image",
+          "`POST /api/v1/flows/` — the endpoint",
+          "`api/flows.py` — no such file, but it embeds in `api/v1/flows.py`",
+        ),
+      ),
+    ],
+    trees: gappedTrees,
+  });
+  assert.deepEqual(
+    result.gapped.map((g) => g.token),
+    ["api/flows.py"],
+    "a FILE that embeds uniquely is a finding even when the written segments are few — the endpoint and the image are not",
+  );
+});
+
+test("a segment written WRONG, rather than left out, stays invisible — the recorded limit", () => {
+  // #1925's residual: a substitution rule would reach it, but measured its only hit
+  // on today's docs is this token, ambiguous between two upstream files.
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`components/agents/agent.py` — the old directory name"))],
+    trees: gappedTrees,
+  });
+  assert.deepEqual(result.gapped, []);
+  assert.deepEqual(result.findings, []);
+});
+
+test("a gapped token is covered by its full path in the same section, and by one of OUR files", () => {
+  const covered = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection(`\`${TABLE_OPTIONS}\` — in full`, "`tableComponent/TableOptions/index.tsx` — again"))],
+    trees: gappedTrees,
+  });
+  assert.deepEqual(covered.gapped, []);
+
+  const ours = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`tableComponent/TableOptions/index.tsx` — ours"))],
+    trees: gappedTrees,
+    ownFiles: ["tests/helpers/tableComponent/ui/TableOptions/index.tsx"],
+  });
+  assert.deepEqual(ours.gapped, [], "ours wins over a gapped match exactly as over a suffix match");
+});
+
+test("one upstream segment cannot stand for two written ones", () => {
+  // `TableOptions/TableOptions/index.tsx` must not embed in a path carrying ONE
+  // `TableOptions/` — each written segment consumes its own upstream segment, or a
+  // doubled word would read as a gapped spelling.
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`TableOptions/TableOptions/index.tsx` — a doubled segment"))],
+    trees: gappedTrees,
+  });
+  assert.deepEqual(result.gapped, []);
+});
+
+test("an own file with the same directories but ANOTHER basename does not cover a gapped token", () => {
+  // The silent direction: coverage that ignored the basename would let any file of
+  // ours under a same-named directory swallow a real finding.
+  const result = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection("`tableComponent/TableOptions/index.tsx` — upstream"))],
+    trees: gappedTrees,
+    ownFiles: ["tests/helpers/tableComponent/TableOptions/other.tsx"],
+  });
+  assert.equal(result.gapped.length, 1);
+});
+
+test("a declaration silences a gapped token, counts as used, and fails on a changed doc otherwise", () => {
+  const token = "tableComponent/TableOptions/index.tsx";
+  const declared = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection(`\`${token}\` — named as context`))],
+    trees: gappedTrees,
+    declarations: [{ doc: "docs/area/spec.md", token, reason: "context, not a dependency" }],
+  });
+  assert.deepEqual(declared.gapped, []);
+  assert.equal(declared.declared, 1);
+  assert.deepEqual(declared.expired, [], "a declaration that silences a gapped token is NOT expired");
+
+  const owned = findAbbreviatedDeps({
+    docs: [abbrevDoc(depsSection(`\`${token}\` — a dependency`))],
+    trees: gappedTrees,
+    changedFiles: ["docs/area/spec.md"],
+  });
+  assert.equal(owned.gapped[0].severity, "fail");
+});
+
 test("severity follows the diff: a changed doc fails, a pre-existing one is reported", () => {
   // #980 — one upstream rename must not redden every PR that edits an unrelated
   // doc, and it must not be invisible either (#1012).
@@ -2067,6 +2205,10 @@ test("no doc abbreviates a module that ANOTHER doc already names in full", () =>
     result.ambiguous.map((a) => `${a.file}:${a.line} \`${a.token}\``),
     [],
   );
+  assert.deepEqual(
+    result.gapped.map((g) => `${g.file}:${g.line} \`${g.token}\` → ${g.resolved}`),
+    [],
+  );
 });
 
 test("the PR lane runs the abbreviation check, after the path resolver and on the same trees", () => {
@@ -2198,6 +2340,8 @@ function abbrevUpstreamFixture() {
   // Two live files of the same basename — the ambiguity class, on the transport.
   write("src/frontend/src/a/session-selector.tsx");
   write("src/frontend/src/b/session-selector.tsx");
+  // A file a doc can name with a segment left out — the gapped class (#1925).
+  write("src/frontend/src/tableComponent/components/TableOptions/index.tsx");
   run("add", "-A");
   run("commit", "-qm", "upstream");
   return root;
@@ -2267,6 +2411,20 @@ test("the CLI prints the ambiguity rather than picking one, and fails on it the 
   const r = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
   assert.equal(r.status, 1, r.stdout);
   assert.match(r.stdout, /matches 2: src\/frontend\/src\/a\/session-selector\.tsx \| src\/frontend\/src\/b\/session-selector\.tsx/);
+});
+
+test("the CLI prints a gapped path with the file it embeds in, and fails on it the same way", () => {
+  const { home, upstream } = abbrevCliFixture({
+    docs: { "docs/area/spec.md": depsSection("`tableComponent/TableOptions/index.tsx` — the delete button") },
+  });
+  const owned = runAbbrevCli(home, upstream, ["docs/area/spec.md"]);
+  assert.equal(owned.status, 1, `${owned.stdout}${owned.stderr}`);
+  assert.match(owned.stdout, /1 path\(s\) that match no file as written/);
+  assert.match(owned.stderr, /::error::docs\/area\/spec\.md:\d+ `tableComponent\/TableOptions\/index\.tsx` matches nothing as written; it embeds in `src\/frontend\/src\/tableComponent\/components\/TableOptions\/index\.tsx`/);
+
+  const untouched = runAbbrevCli(home, upstream, ["docs/other.md"]);
+  assert.equal(untouched.status, 0, untouched.stderr);
+  assert.match(untouched.stderr, /::warning::.*embeds in/);
 });
 
 test("the CLI reports a clean corpus as clean, and says what it actually read", () => {
