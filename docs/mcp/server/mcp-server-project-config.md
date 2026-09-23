@@ -299,12 +299,15 @@ project). Teardown deletes the flow and then the project.
   left, so the whole unique part survives for any prefix — long, variable or empty. This
   spec's `e2ecf` is kept for readability, not for correctness, and a longer one would be
   safe.
-  **The product behaviour behind it is unchanged, and is not a test artefact** —
-  reproduced with two ordinary names on `1.12.0.dev20` and again on `1.13.0.dev14`:
-  `Marketing Automation Project Alpha` creates, and `Marketing Automation Project Beta`
-  is refused, because they share their first 26 characters. Filed as **#1409**, still
-  open — so a spec that creates projects by any route other than `createProjectViaApi`
-  still has to think about it.
+  **The product behaviour behind it was not a test artefact.** It was reproduced
+  with two ordinary names on `1.12.0.dev20` and again on `1.13.0.dev14`:
+  `Marketing Automation Project Alpha` created, and `Marketing Automation Project Beta`
+  was refused, because they share their first 26 characters. Filed as **#1409**
+  (`LE-2648`) and fixed upstream in langflow-ai/langflow#15144, first on nightly
+  `1.13.0.dev21`, where the second project gets an id-suffixed server name instead of
+  a 409. The fix is pinned by `api/projects/api-projects-crud.spec.ts` test 4. A spec
+  that creates projects by another route and must also pass on an older image still
+  has to think about it.
 - **`PATCH` merges per flow id.** `update_project_mcp_settings` iterates the project's
   flows and touches only those named in `settings`, so this test cannot disable
   anything it did not create — worth knowing before reusing this pattern against a
