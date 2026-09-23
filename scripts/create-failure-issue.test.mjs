@@ -1411,3 +1411,21 @@ test("#2009 both umbrella callers pass the merged report to the renderer", () =>
   const block = vm.slice(vm.lastIndexOf('log "Opening the failure issue"', call), call);
   assert.match(block, /PLAYWRIGHT_JSON="\$RUN_DIR\/results\.json" \\/, "the VM call must pass the report");
 });
+
+test("#2009 a file is re-anchored on the repo when the report names its rootDir", () => {
+  const dir = makeTempDir("unexpected-pass-root-");
+  const file = join(dir, "results.json");
+  const withRoot = (rootDir) => ({ ...UNEXPECTED_PASS_REPORT, config: { rootDir } });
+  writeFileSync(file, JSON.stringify(withRoot("/repo/tests")));
+  assert.equal(
+    readUnexpectedPasses(file, "/repo")[0].file,
+    "tests/tests-automations/regression/security/credential-secret-exposure.spec.ts",
+    "the same spelling as the auto-removal block (repo-relative)",
+  );
+  // A rootDir outside the repo (a report merged elsewhere) keeps the report's own path.
+  writeFileSync(file, JSON.stringify(withRoot("/elsewhere/tests")));
+  assert.equal(
+    readUnexpectedPasses(file, "/repo")[0].file,
+    "tests-automations/regression/security/credential-secret-exposure.spec.ts",
+  );
+});

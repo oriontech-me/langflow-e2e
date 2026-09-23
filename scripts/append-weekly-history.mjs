@@ -431,7 +431,10 @@ function visit(node, suitePath = []) {
         // An unexpected pass (#2009) has no failed attempt, so `lastFailed` is
         // undefined and this used to be "unknown" — pooling the fix-day signal of a
         // declared bug with every failure whose error was lost. `build-run-payload.mjs`
-        // records the same signature from the same predicate.
+        // records the same signature from the same predicate. When an EARLIER attempt
+        // failed (`[timedOut, passed]`), `infra_signature` below is still classified
+        // from that attempt — deliberately, since it is the attempt
+        // `remove-stable-from-failures.ts` reads too, and the two must not disagree.
         error_signature: isUnexpectedPass(test)
           ? UNEXPECTED_PASS_SIGNATURE
           : firstErrorMessage(lastFailed) || "unknown",

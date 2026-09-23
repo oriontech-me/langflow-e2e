@@ -82,9 +82,11 @@
 import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { withoutCommittedClaim } from "./lib/auto-remove-claim.mjs";
 import { UNEXPECTED_PASS_SIGNATURE, collectUnexpectedPasses } from "./lib/unexpected-pass.mjs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Who gets pinged. Configurable rather than hardcoded: the handles are a team
 // roster, which changes independently of this file, and a run that must NOT ping
@@ -587,7 +589,7 @@ export function renderIssue({
         `### ✅ ${passes.length} test(s) declared failing with \`test.fail()\` PASSED — possible fix day`,
         "",
         "Playwright reports these as `unexpected`, the same status as a hard failure, so they",
-        "count in the failed total and any auto-removal below may list them. **They did not",
+        "count in the failed total and, where the auto-removal ran, it may list them. **They did not",
         "fail**: each is declared failing for a filed bug, and its body passed. Recorded with",
         `\`error_signature: "${UNEXPECTED_PASS_SIGNATURE}"\`.`,
         "",
@@ -753,10 +755,22 @@ export function parseListingMissing(raw) {
  * exactly what the `empty` and `mergeFailed` shapes describe — must not stop it.
  * Returning none there is true: a report nobody can read names no test.
  */
-export function readUnexpectedPasses(path) {
+export function readUnexpectedPasses(path, repoRoot = REPO_ROOT) {
   if (!path) return [];
   try {
-    return collectUnexpectedPasses(JSON.parse(readFileSync(path, "utf8")));
+    const report = JSON.parse(readFileSync(path, "utf8"));
+    // The report spells a file relative to Playwright's rootDir (`tests/`), while the
+    // auto-removal block in the same body spells it relative to the repo — so the one
+    // test would appear under two paths. Re-anchor on the repo when the report says
+    // where its rootDir is and the result stays inside the repo; otherwise keep the
+    // report's own spelling rather than invent one.
+    const rootDir = report?.config?.rootDir;
+    const toRepo = (file) => {
+      if (typeof rootDir !== "string" || !isAbsolute(rootDir) || !file) return file;
+      const rel = relative(repoRoot, resolve(rootDir, file));
+      return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : file;
+    };
+    return collectUnexpectedPasses(report).map((p) => ({ ...p, file: toRepo(p.file) }));
   } catch {
     return [];
   }
