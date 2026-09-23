@@ -902,6 +902,55 @@ tokens_history_env() {
 
 HELD_SESSIONS=()
 
+# What `localhost` resolves to on the target: one address per line, first field. The
+# backend is what resolves it, so it is asked on the target and not here, and through
+# Python's getaddrinfo, which is what the backend calls. One verdict line, never an exit
+# code: the caller only reports.
+#
+# Both loopback families are required, and the IPv6 one is the one that goes missing.
+# Ubuntu's default /etc/hosts maps ::1 to `ip6-localhost ip6-loopback` and NOT to
+# `localhost`, so on such a host `localhost` is 127.0.0.1 alone -- and
+# model-provider-base-url-ssrf, which requires the SSRF refusal to name both legs of the
+# loopback, goes red on the environment. The QA VM was that host until 2026-09-20, and the
+# fix was one line made by hand (#1998). Nothing else would say so: the red reads as a
+# product regression.
+localhost_verdict() {
+  local addrs
+  addrs=" $(printf '%s\n' "$1" | awk 'NF { print $1 }' | sort -u | tr '\n' ' ')"
+  if [ "$addrs" = " " ]; then
+    echo "UNKNOWN: the target's python3 answered nothing for localhost, so whether it resolves to both loopback families is not known (#1998)."
+  elif [[ "$addrs" != *" ::1 "* ]]; then
+    echo "MISSING ::1: localhost resolves to${addrs% } only on the target. model-provider-base-url-ssrf will fail on the environment, not the product: add \`::1 localhost\` to the target's /etc/hosts (#1998)."
+  elif [[ "$addrs" != *" 127.0.0.1 "* ]]; then
+    echo "MISSING 127.0.0.1: localhost resolves to${addrs% } only on the target. Add \`127.0.0.1 localhost\` to the target's /etc/hosts (#1998)."
+  else
+    echo "ok: localhost resolves to both loopback families on the target (127.0.0.1, ::1)"
+  fi
+}
+
+# Asks the target, records the verdict in the run directory, and reports it. Never fails:
+# see the call site in phase_preflight for why this one is fail-soft.
+#
+# NOT `getent ahosts localhost`, which the first version used and which was wrong in the
+# field: getent filters by the families the host has configured, and a VM with no global
+# IPv6 address gets 127.0.0.1 alone even with `::1 localhost` in /etc/hosts. Measured on
+# the QA VM: getent said 127.0.0.1 with the file fixed, while getaddrinfo said
+# 127.0.0.1 and ::1 with it fixed and 127.0.0.1 alone with Ubuntu's default -- the exact
+# difference the ssrf spec sees.
+LOCALHOST_PROBE='python3 -c "import socket; print(chr(10).join(sorted({a[4][0] for a in socket.getaddrinfo(\"localhost\", None)})))"'
+check_target_localhost() {
+  local out line
+  out="$(target_ssh "$LOCALHOST_PROBE" 2> /dev/null)" || out=""
+  line="$(localhost_verdict "$out")"
+  printf '%s\n' "$line" > "$RUN_DIR/logs/target-localhost.log" \
+    || warn "could not write $RUN_DIR/logs/target-localhost.log"
+  case "$line" in
+    ok:*) info "$line" ;;
+    *)    warn "$line" ;;
+  esac
+  return 0
+}
+
 # Which of the given ports have no local listener. `ssh -L` opens its listener as soon
 # as it connects, so this is answerable before anything else starts.
 #
@@ -1064,6 +1113,14 @@ phase_preflight() {
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
   info "run dir: $RUN_DIR"
+
+  # A machine prerequisite that fails SILENTLY, which is why it is asked and `uv` above
+  # is not a model for it: a missing uv stops the run with a message, a localhost without
+  # ::1 turns one spec red and says nothing (see localhost_verdict). FAIL-SOFT, like the
+  # mirror check below and for the same reason: it compromises one spec's verdict, and
+  # dying here would trade a day of data for it. Written into the run directory so the
+  # triage of a red ssrf spec finds the cause in the run's own evidence.
+  check_target_localhost
 
   # The credential the umbrella needs, asked before the run spends anything. Expiry is
   # the rare silent failure that comes with a DATE, so it can be caught rather than

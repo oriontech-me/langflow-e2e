@@ -2678,3 +2678,67 @@ test("the preflight asks whether the suite is current, and does not die on the a
   assert.ok(!/\bdie\b/.test(call), "a stale mirror aborts the run instead of reporting it");
   assert.match(call, /warn "/, "the answer reaches nobody");
 });
+
+// --- #1998: localhost must resolve to both loopback families on the target -------------
+
+// What the probe prints: getaddrinfo's addresses for localhost, one per line.
+const probed = (...addrs) => addrs.join("\n");
+
+for (const [name, out, expected] of [
+  ["both families", probed("::1", "127.0.0.1"), /^ok: /],
+  ["Ubuntu's default /etc/hosts, where ::1 is only ip6-localhost", probed("127.0.0.1"), /^MISSING ::1: localhost resolves to 127\.0\.0\.1 only/],
+  ["IPv6 only", probed("::1"), /^MISSING 127\.0\.0\.1: /],
+  ["no answer at all", "", /^UNKNOWN: /],
+]) {
+  test(`localhost_verdict: ${name}`, () => {
+    const r = sourced('localhost_verdict "$OUT"', { OUT: out });
+    assert.equal(r.status, 0);
+    assert.match(r.stdout.trim(), expected);
+    assert.equal(r.stdout.trim().split("\n").length, 1, "one verdict line");
+  });
+}
+
+test("a missing ::1 names the spec it falsifies and the line that fixes it", () => {
+  // The whole value of the check is that a red ssrf spec is attributed on sight.
+  const r = sourced('localhost_verdict "$OUT"', { OUT: probed("127.0.0.1") });
+  assert.match(r.stdout, /model-provider-base-url-ssrf/);
+  assert.match(r.stdout, /::1 localhost/);
+});
+
+for (const [name, targetOut, level] of [
+  ["a target without ::1", probed("127.0.0.1"), "warn"],
+  ["a target that cannot be asked", null, "warn"],
+  ["a correct target", probed("::1", "127.0.0.1"), "info"],
+]) {
+  test(`check_target_localhost never fails the run, and records the verdict: ${name}`, () => {
+    // Fail-soft by design: one spec's verdict is not worth a day of data. And written into
+    // the run directory, because that is what a triage opens.
+    const dir = makeTempDir("run-e2e-localhost-");
+    mkdirSync(join(dir, "logs"));
+    const stub = targetOut === null ? "target_ssh() { return 255; }" : `target_ssh() { printf '%s\\n' "$TARGET_OUT"; }`;
+    const r = sourced(`RUN_DIR="$DIR"\n${stub}\ncheck_target_localhost; echo "rc=$?"`, { DIR: dir, TARGET_OUT: targetOut ?? "" });
+    assert.match(r.stdout, /rc=0/);
+    const logged = readFileSync(join(dir, "logs", "target-localhost.log"), "utf8").trim();
+    assert.ok(logged.length > 0);
+    if (level === "warn") assert.match(r.stderr, new RegExp(`::warning:: ${logged.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    else assert.match(r.stdout, /ok: localhost resolves to both/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
+test("the preflight asks the target, after the run directory exists", () => {
+  // Before the mkdir there is nowhere to write the verdict; the first version of the
+  // mirror check made exactly that mistake (#1947).
+  const body = readFileSync(SCRIPT, "utf8").split("\nphase_preflight() {")[1].split("\n}\n")[0];
+  const mkdir = body.indexOf('mkdir -p "$RUN_DIR"/{logs');
+  const call = body.indexOf("check_target_localhost");
+  assert.ok(mkdir > 0 && call > mkdir, "check_target_localhost runs after the run directory is created");
+});
+
+test("the probe asks the resolver the backend uses, not getent", () => {
+  // getent drops ::1 on a host without global IPv6 even when /etc/hosts is right, so a
+  // getent-based check warns on a correct machine -- measured on the QA VM (#1998).
+  const r = sourced('printf "%s" "$LOCALHOST_PROBE"');
+  assert.match(r.stdout, /^python3 -c .*socket\.getaddrinfo/);
+  assert.doesNotMatch(r.stdout, /getent/);
+});
