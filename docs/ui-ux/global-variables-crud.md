@@ -1,9 +1,7 @@
 # Global Variables — CRUD via the Settings page
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev16`); the #1303 fix
-verified on `1.12.2rc1`. **Not** re-validated on 1.13.x — the defect below is
-still live there, and the spec is observed flaking on `1.13.0.dev12`, which is
-an observation and not a validation.
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev20`), including the
+#1303 fix under a forced late `/api/v1/session` — see **Status** below.
 
 ---
 
@@ -121,27 +119,18 @@ the refetch is observed firing.
 
 **Status.** Fixed upstream by `canSessionProbeClearAuth()`
 (langflow-ai/langflow#15028), which lets an unauthenticated probe clear auth
-only when auto-login is not in play. Merged into `release-1.12.2` and present in
-the `v1.12.2` tag; verified in the built frontend of the `1.12.2rc1` image
-(`autoLogin!==!0`, both call sites), where all 3 tests of this spec pass in one
-`--retries=0` run. No 1.12.2 release was published: engineering routed the fix
-through the **1.12.3** patch release first, and only then into
-`release-1.13.0` — the line the nightly is cut from — so the defect stays live
-on the daily until it lands there. Landing check, from a Langflow clone:
+only when auto-login is not in play. It reached `release-1.13.0` — the line the
+nightly is cut from — by back-merge, and entered the nightly between
+`1.13.0.dev12` (guard absent from the built frontend) and `1.13.0.dev14`
+(present, both call sites). Re-validated on `1.13.0.dev20` (2026-09-23),
+unmodified spec, `--retries=0`, through a proxy delaying **only**
+`/api/v1/session`: control 3/3, 600 ms **9/9**, 3000 ms **9/9** — the two delays
+that failed 3/3 and flaked 1-of-3 before the fix. #1303 is closed on that run;
+`@stable` stays.
 
-```bash
-git fetch -q origin release-1.13.0 && git ls-tree FETCH_HEAD \
-  src/frontend/src/controllers/API/queries/auth/session-probe.ts
-```
-
-A line means landed; empty means not landed. #1303 stays **open** until then and
-until the spec is re-validated on a nightly that carries it.
-
-**`@stable` meanwhile.** Kept, and the basis is the recurrence rule, not the
-quality of the message: 2026-09-14 is the **first** occurrence of this
-`error_signature` (the earlier three carried the generic
-`expect(locator).toBeVisible() failed`). A second occurrence of it inside 30
-days triggers quarantine per `CONTRIBUTING.md`, fix in flight or not.
+If the refetch message above reappears, check the guard is still in the bundle
+(`autoLogin!==!0` in `langflow/frontend/assets/*.js`) before attributing it
+here — with the fix present, a missing refetch is a different cause.
 
 ---
 
