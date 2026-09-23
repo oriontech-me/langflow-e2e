@@ -60,6 +60,8 @@
 //     take the title away from the per-test one (#1800)
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
+//   PLAYWRIGHT_JSON — the merged report, read ONLY to name unexpected passes
+//     (#2009); absent or unreadable means none are named, never a failed render
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
 //   ISSUE_CC   (default the QA roster; set to "" to open the issue without a /cc)
 //   GITHUB_TOKEN / GH_TOKEN  used for the REST path; absent = fall back to `gh`
@@ -77,8 +79,9 @@
 // fails to open is how a red day ends up with no triage attached to it. The
 // workflow sets ISSUE_STRICT=1; the VM leaves it unset.
 
-import { writeFileSync, mkdirSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { withoutCommittedClaim } from "./lib/auto-remove-claim.mjs";
+import { UNEXPECTED_PASS_SIGNATURE, collectUnexpectedPasses } from "./lib/unexpected-pass.mjs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -208,6 +211,9 @@ export function renderIssue({
   firstError = "",
   runTests = "0",
   liveness = "",
+  // #2009: `{ file, line, title, attempts, passedAttempts }` per test declared failing
+  // with `test.fail()` whose body passed — from `collectUnexpectedPasses`.
+  unexpectedPasses = [],
   cc = CC_DEFAULT,
 } = {}) {
   // Which lane rendered this. `RUN_URL` is the only honest discriminator: it is
@@ -566,6 +572,40 @@ export function renderIssue({
         ]
       : [];
 
+  // #2009. A `test.fail()` whose body passed is reported `unexpected`, like a hard
+  // failure, and nothing below says otherwise: the auto-removal block names it by
+  // title alone, and the payload used to record it as `unknown`. Found on the VM
+  // lane's 2026-09-23 run only by opening `results.json` and reading three `passed`
+  // attempts under an `unexpected` status. It is the OPPOSITE reading of a failure —
+  // the fix-day signal of a declared bug — so it is named above the per-test
+  // material, on every shape that has a report to name it from. It explains nothing
+  // below it and is not a cause, which is why it sits after the two banners.
+  const safe = (text) => String(text).replaceAll("`", "'");
+  const passes = Array.isArray(unexpectedPasses) ? unexpectedPasses : [];
+  const unexpectedPassSection = passes.length
+    ? [
+        `### ✅ ${passes.length} test(s) declared failing with \`test.fail()\` PASSED — possible fix day`,
+        "",
+        "Playwright reports these as `unexpected`, the same status as a hard failure, so they",
+        "count in the failed total and any auto-removal below may list them. **They did not",
+        "fail**: each is declared failing for a filed bug, and its body passed. Recorded with",
+        `\`error_signature: "${UNEXPECTED_PASS_SIGNATURE}"\`.`,
+        "",
+        ...passes.map(
+          (p) =>
+            `- \`${safe(p.file)}${p.line ? `:${p.line}` : ""}\` — ${safe(p.title)} ` +
+            (p.passedAttempts === p.attempts
+              ? `_(passed on all ${p.attempts} attempt(s))_`
+              : `_(passed on ${p.passedAttempts} of ${p.attempts} attempt(s), including the last)_`),
+        ),
+        "",
+        "**Triage as a possible upstream fix, not as a regression**: confirm the declared bug",
+        "is fixed on this version, then turn the `test.fail()` into a passing assertion in the",
+        "test's dedicated issue — which is also where a removed `@stable` is restored.",
+        "",
+      ]
+    : [];
+
   // The title is what gets scanned in the issue list, so an empty run must not
   // claim that tests failed — none ran. Nor may a failed merge claim that nothing
   // ran: every shard did, and the title is the only part most people read (#1726).
@@ -604,6 +644,7 @@ export function renderIssue({
     ...livenessSection,
     ...accountBanner,
     ...listingBanner,
+    ...unexpectedPassSection,
     ...section,
     ...(cc.trim() ? ["", `/cc ${cc.trim()}`] : []),
   ].join("\n");
@@ -706,6 +747,21 @@ export function parseListingMissing(raw) {
   }
 }
 
+/**
+ * The unexpected passes in the report at `path` (#2009). Fail-soft by design: this
+ * step exists to open the umbrella, and a missing or damaged report — which is
+ * exactly what the `empty` and `mergeFailed` shapes describe — must not stop it.
+ * Returning none there is true: a report nobody can read names no test.
+ */
+export function readUnexpectedPasses(path) {
+  if (!path) return [];
+  try {
+    return collectUnexpectedPasses(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    return [];
+  }
+}
+
 async function main() {
   const env = process.env;
   const runDir = env.RUN_DIR || ".";
@@ -773,6 +829,7 @@ async function main() {
     coverageProviders: env.COVERAGE_PROVIDERS || "",
     coverageSkips: env.COVERAGE_SKIPS || "0",
     liveness: env.LIVENESS_MD || "",
+    unexpectedPasses: readUnexpectedPasses(env.PLAYWRIGHT_JSON),
     cc: env.ISSUE_CC === undefined ? CC_DEFAULT : env.ISSUE_CC,
   });
 

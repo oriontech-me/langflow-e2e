@@ -8,6 +8,7 @@
 // function uploads it to Storage and stores only the URL (the DB keeps no base64).
 import { readFileSync, existsSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
 
 const reportPath = process.env.PLAYWRIGHT_JSON || "results.json";
 if (!existsSync(reportPath)) { console.error(`[payload] no ${reportPath}`); process.exit(1); }
@@ -111,7 +112,15 @@ function visit(node) {
       if (t.status === "expected") { totals.passed++; continue; }
       if (t.status === "flaky") { totals.flaky++; flaky.push({ test: title, file, line, tags, attempts }); continue; }
       totals.failed++;
-      failures.push({ test: title, file, line, tags, attempts, error_signature: firstErr(lastFailed) || "unknown" });
+      // An unexpected pass (#2009) — a `test.fail()` whose body passed — has no failed
+      // attempt to take a signature from, so it used to record "unknown": the same
+      // string as a failure whose error was lost, for what is the fix-day signal of a
+      // declared bug. It keeps its place in `failures[]` (the status IS unexpected, and
+      // the removal treats it as a hard failure), under a signature of its own.
+      const error_signature = isUnexpectedPass(t)
+        ? UNEXPECTED_PASS_SIGNATURE
+        : firstErr(lastFailed) || "unknown";
+      failures.push({ test: title, file, line, tags, attempts, error_signature });
     }
   }
   for (const c of node.suites || []) visit(c);

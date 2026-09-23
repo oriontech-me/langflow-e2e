@@ -169,6 +169,7 @@ import { dirname, relative, resolve } from "node:path";
 import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 import { paramFromSuitePath } from "./lib/spec-param.mjs";
+import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -427,7 +428,13 @@ function visit(node, suitePath = []) {
         line,
         tags,
         attempts,
-        error_signature: firstErrorMessage(lastFailed) || "unknown",
+        // An unexpected pass (#2009) has no failed attempt, so `lastFailed` is
+        // undefined and this used to be "unknown" — pooling the fix-day signal of a
+        // declared bug with every failure whose error was lost. `build-run-payload.mjs`
+        // records the same signature from the same predicate.
+        error_signature: isUnexpectedPass(test)
+          ? UNEXPECTED_PASS_SIGNATURE
+          : firstErrorMessage(lastFailed) || "unknown",
         // Classified from the LAST failed attempt, matching the exemption's own
         // wording ("a hard failure whose LAST error is transport-level") and
         // `remove-stable-from-failures.ts`, so the history and the umbrella's

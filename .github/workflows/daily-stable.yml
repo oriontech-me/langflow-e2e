@@ -1938,6 +1938,9 @@ jobs:
           # ends up with no triage attached to it. The off-Actions lane leaves this
           # unset and keeps the body-on-disk fallback instead.
           ISSUE_STRICT: "1"
+          # The merged report, read only to name a `test.fail()` whose body passed
+          # (#2009). Absent or unreadable names nothing and never fails the step.
+          PLAYWRIGHT_JSON: results.json
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
           # Set by the (schedule-only) auto-remove step above; empty only if that
           # step errored, its mass-failure guard left everything untouched, or a

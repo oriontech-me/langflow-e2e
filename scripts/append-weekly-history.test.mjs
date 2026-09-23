@@ -917,3 +917,39 @@ test("#1763 an OUTAGE_ATTEMPTS that cannot be read still names the reason, not t
   assert.match(stderr, /could not be read/);
   assert.equal(stderr.includes("LIVENESS_DIR is set"), false, "the path was provided — this is a different failure");
 });
+
+test("#2009 an unexpected pass records its own signature, not \"unknown\"", () => {
+  // The measured shape of a `test.fail()` whose body passed (Playwright 1.58.2):
+  // status `unexpected`, every attempt `passed`, no error anywhere. There is no
+  // failed attempt, which is why `lastFailed` found nothing and the row said
+  // "unknown" — the same string as a failure whose error was lost.
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("passed"), result("passed"), result("passed")],
+      },
+      { title: "lost error", status: "unexpected", results: [result("failed")] },
+    ]),
+  );
+  assert.deepEqual(entry.totals, { passed: 0, failed: 2, flaky: 0, skipped: 0 });
+  const [pass, lost] = entry.failures;
+  assert.equal(pass.error_signature, "expected to fail but passed");
+  assert.equal(pass.infra_signature, null, "a passing attempt is never transport-level");
+  assert.equal(pass.attempts, 3);
+  assert.equal(lost.error_signature, "unknown", "the genuine no-message failure is unchanged");
+});
+
+test("#2009 the pass is read off the LAST attempt: an earlier timeout does not mask it", () => {
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("passed")],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].error_signature, "expected to fail but passed");
+});
