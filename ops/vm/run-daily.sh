@@ -212,6 +212,44 @@ main() {
   export AUTO_REMOVE=1
   export CREATE_ISSUE=1
   export ISSUE_HOST ISSUE_REPO ISSUE_CC
+
+  # The platform half of the verdict (#2013). Until this line the lane produced a run a
+  # day that `app.oriontech.me/e2e-tests/spec-files` could not see: the switch defaults
+  # to 0, so since the 2026-09-20 cut the Actions lane was the platform's only source
+  # while this machine was the one actually running the suite.
+  #
+  # Two things had to be true before the switch was worth turning, and neither was:
+  #
+  #   1. The credentials on this machine were wrong in both halves. The platform moved
+  #      off Kong to a Fastify service at api.oriontech.me, and $SECRETS still named the
+  #      retired Kong (404 Application not found) with an EMPTY token beside it. Both
+  #      fixed on the machine on 2026-09-23; the endpoint now carries the full path,
+  #      because run-e2e.sh POSTs to $QA_PLATFORM_ENDPOINT verbatim.
+  #   2. A payload from this lane was REJECTED: `langflow_image` is required and this
+  #      lane has no image, so it arrived null and came back 400 -- silently, the POST
+  #      being fail-soft. run-e2e.sh now derives `pypi:langflow==<version>` (#2013).
+  #
+  # Verified before this line, not after: the 2026-09-23 run's own payload was posted by
+  # hand with the field set and returned 201 {"status":"created"}, so the endpoint, the
+  # token and the payload shape are known good rather than assumed.
+  export POST_QA_PLATFORM=1
+  # Where the report is READ from, and it is not where it is written. Public storage
+  # serves .html as text/plain -- the browser downloads the report instead of rendering
+  # it -- so the platform routes reports through serve-report, which restores the type.
+  # REPORT_URL is built as $RUN_URL_BASE/$RUN_ID/playwright-report/index.html, which is
+  # exactly the key upload-evidence.mjs writes, so the two need no second agreement.
+  #
+  # Left unset, this falls back to file://$RUNS_ROOT and the platform records a path
+  # that resolves on this machine alone. Measured: it did, on 2026-09-23.
+  export RUN_URL_BASE="https://api.oriontech.me/fn/serve-report/vm"
+  # Where it is WRITTEN. A separate variable rather than a derivation, because the two
+  # are different services on the same host and only one of them takes a bearer upload.
+  export EVIDENCE_UPLOAD_BASE="https://api.oriontech.me/storage/v1/object/playwright-evidence"
+  export EVIDENCE_PREFIX=vm
+  #
+  # Rollback: drop the four lines. POST_QA_PLATFORM defaults to 0 and the upload is
+  # gated on it, so the lane goes back to publishing nothing and the Actions lane
+  # remains the platform's source.
   export PREPARE_TARGET=0                # the clone does not serve; this also turns the build stamp off
   export LANGFLOW_SRC_RUN_CMD="$VENV/bin/langflow run"
   export LANGFLOW_SRC_FRONTEND_DIR="$FRONTEND_DIR"
