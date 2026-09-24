@@ -1,0 +1,14 @@
+# Thirty minutes before e2e-daily.timer, on the same days: the question is "will the
+# daily run an older suite?", and half an hour is enough to sync if someone is awake.
+# `Persistent=false` for the daily's reason: a catch-up after downtime would warn about
+# a run that already happened.
+[Unit]
+Description=Pre-daily check that the e2e mirror still follows main
+
+[Timer]
+OnCalendar=Mon..Fri 07:30 UTC
+Persistent=false
+Unit=e2e-mirror-freshness-announce.service
+
+[Install]
+WantedBy=timers.target

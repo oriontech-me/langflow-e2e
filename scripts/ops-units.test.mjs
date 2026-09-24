@@ -45,11 +45,11 @@ test("the daily does not pull the ssh tunnel, and that absence is the point", ()
   assert.deepEqual(texts.flatMap((t) => directives(t, "After")), ["network-online.target"]);
 });
 
-test("both calendars say UTC out loud, because this machine's clock does not", () => {
+test("every weekday calendar says UTC out loud, because this machine's clock does not", () => {
   // The clock is EDT and Debian's cron has no CRON_TZ -- the reason none of this is a
   // crontab line. A calendar without the suffix moves an hour at the DST change, and
   // the lane it is compared against is expressed in UTC.
-  for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer"]) {
+  for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness-announce.timer"]) {
     const [calendar, ...rest] = directives(read(unit), "OnCalendar");
     assert.equal(rest.length, 0, `${unit} has more than one OnCalendar`);
     assert.match(calendar, /\bUTC$/, `${unit}: OnCalendar carries no UTC suffix`);
@@ -65,11 +65,27 @@ test("Persistent= is opposite between the run and its alarm, deliberately", () =
   assert.deepEqual(directives(read("e2e-daily-watchdog.timer"), "Persistent"), ["true"]);
 });
 
+test("the mirror announce runs before the daily, and only it may post", () => {
+  // The channel hears about the mirror once a day, when a stale suite would reach a
+  // verdict. After the daily the warning is about a run that already happened; the
+  // hourly unit posting again is the four-messages-a-night noise this split removed.
+  const time = (unit) => directives(read(unit), "OnCalendar")[0].match(/(\d\d):(\d\d) UTC$/).slice(1).map(Number);
+  const [dh, dm] = time("e2e-daily.timer");
+  const [ah, am] = time("e2e-mirror-freshness-announce.timer");
+  assert.ok(ah * 60 + am < dh * 60 + dm, "the announce check runs after the daily it warns about");
+  assert.deepEqual(directives(read("e2e-mirror-freshness-announce.timer"), "Persistent"), ["false"]);
+  assert.ok(directives(read("e2e-mirror-freshness-announce.service"), "Environment").includes("ANNOUNCE=1"));
+  assert.ok(
+    !directives(read("e2e-mirror-freshness.service"), "Environment").some((v) => v.startsWith("ANNOUNCE=")),
+    "the hourly unit sets ANNOUNCE, so it posts",
+  );
+});
+
 test("every service declares HOME, because systemd sets none (#1715)", () => {
   // cron does, systemd does not, and run-e2e.sh builds the uv PATH out of $HOME under
   // `set -u` -- so the run dies before doing anything. Found by running a unit, not by
   // reading one.
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service"]) {
     assert.ok(
       directives(read(unit), "Environment").some((v) => v === "HOME=/root"),
       `${unit} does not declare HOME`,
@@ -111,10 +127,10 @@ test("the timers are enablable and the services are not, by design", () => {
   // service with one invites `systemctl enable e2e-daily.service`, which would arm the
   // run with no schedule behind it; a timer without one makes `enable` a no-op that
   // warns and is easy to miss.
-  for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness.timer"]) {
+  for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness.timer", "e2e-mirror-freshness-announce.timer"]) {
     assert.deepEqual(directives(read(unit), "WantedBy"), ["timers.target"], `${unit}`);
   }
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service"]) {
     assert.doesNotMatch(read(unit), /^\[Install\]/m, `${unit} carries an [Install] section`);
   }
 });
