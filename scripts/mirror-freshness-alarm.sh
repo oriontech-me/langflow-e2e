@@ -111,12 +111,6 @@ if [ "$state" = "$previous" ] && [ "$announced" = "yes" ]; then
   exit 0
 fi
 
-case "$state" in
-  current)  text=":white_check_mark: The e2e mirror is following \`main\` again. ${output}" ;;
-  unknown)  text=":warning: The e2e mirror's freshness could not be determined twice in a row — this says nothing about the mirror, only that the question cannot be asked from the VM. ${output}" ;;
-  *)        text=":rotating_light: The e2e mirror is not current, so the VM lane may be running an older suite than \`main\`. ${output}" ;;
-esac
-
 if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
   # Deliberately left UNANNOUNCED: nothing can deliver from here, so the journal
   # repeating the line is the only signal there is, and marking it announced would
@@ -126,11 +120,39 @@ if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
   exit 0
 fi
 
+# Transport is keyed on the URL PATH, the rule scripts/notify-slack.mjs and
+# ops/vm/e2e-daily-watchdog.sh already follow. A Workflow Builder trigger
+# (`/triggers/`) takes FLAT variables — `headline`, `body`, `links`, all three always
+# sent — and drops any key it does not declare. `{"text": …}` is such a key: the
+# trigger answers 200 and the channel gets its template with every variable empty,
+# which is what the stall alarm of 2026-09-24 02:01 BRT looked like. The variables
+# are inserted as plain text, so the workflow shape carries no mrkdwn and uses
+# Unicode glyphs rather than `:shortcodes:`.
+case "$SLACK_WEBHOOK_URL" in
+  */triggers/*) transport="workflow"; main_ref="main" ;;
+  *)            transport="text";     main_ref="\`main\`" ;;
+esac
+
+case "$state" in
+  current)  glyph=":white_check_mark:"; plain_glyph="✅"
+            sentence="The e2e mirror is following ${main_ref} again." ;;
+  unknown)  glyph=":warning:"; plain_glyph="⚠️"
+            sentence="The e2e mirror's freshness could not be determined twice in a row — this says nothing about the mirror, only that the question cannot be asked from the VM." ;;
+  *)        glyph=":rotating_light:"; plain_glyph="🚨"
+            sentence="The e2e mirror is not current, so the VM lane may be running an older suite than ${main_ref}." ;;
+esac
+
 # The HTTP status decides, because `curl -sS` exits 0 for a 404 and a 500 alike: a
 # rotated webhook answers `404 no_service`, and without this the failure line never
 # prints and the change is recorded as delivered.
-status="$(printf '%s' "$text" \
-  | python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read()}))' \
+status="$(TRANSPORT="$transport" HEADLINE="$plain_glyph $sentence" BODY="$output" \
+  TEXT="$glyph $sentence $output" python3 -c '
+import json, os
+if os.environ["TRANSPORT"] == "workflow":
+    print(json.dumps({"headline": os.environ["HEADLINE"], "body": os.environ["BODY"], "links": ""}))
+else:
+    print(json.dumps({"text": os.environ["TEXT"]}))
+' \
   | curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
       -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" 2>/dev/null)"
 case "$status" in
