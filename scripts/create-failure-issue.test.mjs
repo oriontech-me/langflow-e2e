@@ -1470,3 +1470,40 @@ test("#2009 a file is re-anchored on the repo when the report names its rootDir"
     "tests-automations/regression/security/credential-secret-exposure.spec.ts",
   );
 });
+
+test("the triage dataset is the second reading: after the per-test section, before the /cc (#2031)", () => {
+  const triage = "### Triage dataset — computed from the ledger over 30 days\n\n**Flakes (1)**";
+  const { body } = renderIssue({ ...VM, triage });
+  const at = body.indexOf("### Triage dataset");
+  assert.ok(at > body.indexOf("### Next steps"), "it classifies what the per-test section names, so it comes after it");
+  assert.ok(at < body.indexOf("/cc "), "the /cc stays the last line");
+  // Absent is not rendered at all — the Actions lane passes nothing, and its body is
+  // pinned byte-for-byte above.
+  assert.equal(renderIssue(VM).body, renderIssue({ ...VM, triage: "  \n" }).body);
+});
+
+test("the triage dataset is dropped where the body says there is no per-test material (#2031)", () => {
+  // On these shapes the ledger's row for this run holds nothing to classify, and a
+  // dataset there would describe some other run.
+  const triage = "### Triage dataset\n\nsomething";
+  for (const shape of [{ empty: true }, { mergeFailed: true }, { uncovered: true }]) {
+    assert.doesNotMatch(renderIssue({ ...VM, ...shape, triage }).body, /### Triage dataset/, JSON.stringify(shape));
+  }
+  // A partial run keeps it: the shards that ran produced real failures.
+  assert.match(renderIssue({ ...VM, partial: true, triage }).body, /### Triage dataset/);
+});
+
+test("TRIAGE_MD_FILE reaches the body through main(), and a missing file opens the issue without it (#2031)", () => {
+  const dir = makeTempDir("triage-md-");
+  const md = join(dir, "triage-summary.md");
+  writeFileSync(md, "### Triage dataset — computed from the ledger over 30 days\n\nNone.\n");
+  const run = (file) =>
+    spawnSync(process.execPath, [SCRIPT], {
+      encoding: "utf-8",
+      env: { ...process.env, RUN_DIR: dir, RUN_ID: "r1", ISSUE_DRY_RUN: "1", ISSUE_CC: "", TRIAGE_MD_FILE: file },
+    });
+  assert.equal(run(md).status, 0);
+  assert.match(readFileSync(join(dir, "issue-body.md"), "utf8"), /### Triage dataset — computed from the ledger/);
+  assert.equal(run(join(dir, "absent.md")).status, 0, "an unreadable file must not cost the umbrella");
+  assert.doesNotMatch(readFileSync(join(dir, "issue-body.md"), "utf8"), /### Triage dataset/);
+});
