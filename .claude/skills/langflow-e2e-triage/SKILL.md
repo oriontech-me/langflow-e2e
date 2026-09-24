@@ -121,7 +121,7 @@ via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
 `umbrella_issue`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
 (each carrying `provider`/`model`, `recurrence`, and an `actionable` flag),
-`provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
+`declared_fix_candidates[]` (see Phase 3), `provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
 past run; `--results <json>` backfills provider labels + per-skip reasons.
 
 **Citing recurrence faithfully:** cite `recurrence.count` / `recurrence.dates`
@@ -189,6 +189,28 @@ they are one backend outage, triaged once for the run against the umbrella's
 backend liveness section. Rule and signature list: `CONTRIBUTING.md` →
 *Infra-signature exemption (wedge collateral)*.
 
+**Set aside the declared-fix candidates (#2027).** `declared_fix_candidates[]`
+holds the tests declared failing with `test.fail()` whose body **passed**
+(`error_signature: "expected to fail but passed"`, #2009). Playwright reports
+them `unexpected`, so they count in `totals.failed` and the workflow's `@stable`
+auto-removal treats them as hard failures, but the dataset keeps them out of
+`hard_failures[]` because the likeliest reading is the opposite: **the bug the
+test is declared against may be fixed** in the version under test. Do **not**
+cluster them, do **not** file them as failures, and **never** quarantine them,
+on a guard day included. Cite `passes.count` / `passes.dates` as the days the
+test **passed again**, never as a failure recurring. The path, per candidate,
+is the entry's `action`:
+
+1. confirm the upstream fix for the version under test (by version, not by the
+   release branch — `CONTRIBUTING.md` → *Triage protocol*);
+2. remove `test.fail()`;
+3. restore `@stable`;
+4. close the issue the declaration cites.
+
+Record the candidates in the umbrella's closing comment. A dedicated issue is
+warranted only when the fix cannot be confirmed; say that it is about a
+possible fix, not a failure.
+
 Then cluster the rest of `hard_failures[]` by root cause: **same normalized
 error signature + same area + same failure symptom → one issue.** Don't open one
 issue per failing spec by default — a shared root cause is one problem, not N.
@@ -215,7 +237,8 @@ the end of triage (Phase 7). Full rule + wording: `references/issue-templates.md
   holds (`references/issue-templates.md` → *Guard-Tripped Rule*, rules 2–3), and
   a day judged environmental does not make every failure on it collateral.
 - **Hard failures:** the workflow's automatic `@stable` removal is suppressed,
-  so the tags are still in place. If the verdict is **not** environmental,
+  so the tags are still in place. `declared_fix_candidates[]` entries are not
+  hard failures here either — they are never quarantined, on any day. If the verdict is **not** environmental,
   **manually quarantine** the real hard failures — **record the exact spec path +
   line here**, exactly as Phase 4 does for a flake, and carry each one into the
   plan (Phase 6) as its own row; it is executed only in Phase 7 step 3, behind
