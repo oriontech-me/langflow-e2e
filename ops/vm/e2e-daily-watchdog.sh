@@ -77,6 +77,19 @@ WATCHDOG_LOG="$LOG_DIR/watchdog.log"
 # running when this fires is stuck, not slow.
 STILL_RUNNING_ALARM_AFTER_MIN="${STILL_RUNNING_ALARM_AFTER_MIN:-45}"
 DRY_RUN="${DRY_RUN:-0}"
+# Exactly 0 or 1, refused before anything runs (#2056). It is read below as `= "1"`, so
+# a typo'd `yes` meant NOT a dry run: the one invocation whose purpose is to post
+# nothing sent a fake incident to the channel. Same rule as run-e2e.sh's require_flag.
+case "$DRY_RUN" in
+  0 | 1) ;;
+  *) echo "DRY_RUN must be exactly '0' or '1', got: '$DRY_RUN'" >&2; exit 1 ;;
+esac
+# A whole number of minutes, for the same reason and in the same direction: `[ -ge ]`
+# on `abc` errors, the error reads as false, and a run stuck for an hour was logged
+# as "under the abc min alarm point" -- the watchdog went quiet on the case it covers.
+case "$STILL_RUNNING_ALARM_AFTER_MIN" in
+  '' | *[!0-9]*) echo "STILL_RUNNING_ALARM_AFTER_MIN must be a whole number of minutes, got: '$STILL_RUNNING_ALARM_AFTER_MIN'" >&2; exit 1 ;;
+esac
 
 mkdir -p "$LOG_DIR"
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$WATCHDOG_LOG"; }
