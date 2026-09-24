@@ -4,6 +4,8 @@
 // Imported, not injected like the infra classifier: this module is pure too, and
 // it is the SAME comparison the appender's keys were derived for (#1626).
 import { compareRecurrence } from '../../../../../scripts/lib/recurrence-key.mjs';
+// Same reason: the one predicate the appender wrote the row with (#2009/#2027).
+import { isUnexpectedPassEntry } from '../../../../../scripts/lib/unexpected-pass.mjs';
 
 /** Parse JSONL history text into an array of run rows (chronological order). */
 export function parseHistory(text) {
@@ -715,7 +717,29 @@ export function buildDataset(rows, issues, opts = {}) {
     };
   };
 
-  const hard_failures = dedupeEntries(run.failures).map(withRecurrence);
+  // An unexpected pass (#2009) is an `unexpected` row, so it arrives in
+  // `failures[]` — but it is the opposite reading of a hard failure: a test
+  // declared failing with `test.fail()` whose body passed, i.e. the declared bug
+  // may be FIXED in the version under test (#2027). Kept in `hard_failures[]` it
+  // was clustered as a failure, filed as one, and — on a guard day, where Phase 3
+  // quarantines the real hard failures by hand — quarantined. So it is lifted out
+  // into its own list whose every field says what to do instead, and it never
+  // reaches the paths that file or quarantine.
+  const runFailures = dedupeEntries(run.failures);
+  const hard_failures = runFailures.filter((e) => !isUnexpectedPassEntry(e)).map(withRecurrence);
+  const declared_fix_candidates = runFailures.filter(isUnexpectedPassEntry).map((e) => {
+    const { recurrence, ...rest } = withRecurrence(e);
+    return {
+      ...rest,
+      // "Passed again", never "failed again": since #2025 an unexpected pass
+      // records no recurrence key, so these dates are the days the declared bug
+      // PASSED, and nothing else (pre-#2009 rows said "unknown" and do not count).
+      passes: { count: recurrence.count, dates: recurrence.dates },
+      actionable: false,
+      action:
+        'possible fix day for the bug this test is declared against (test.fail() body passed): confirm the fix upstream for the version under test, then remove test.fail(), restore @stable and close the issue the declaration cites. Never file it as a failure and never quarantine it (#2027).',
+    };
+  });
 
   // A flake is actionable when it recurs under the same cause (the recurrence
   // key, #1626) — AND when the failure is the spec's own. #1031 exempted wedge collateral from `@stable`
@@ -812,6 +836,7 @@ export function buildDataset(rows, issues, opts = {}) {
     infra_classification_gap,
     totals: run.totals,
     hard_failures,
+    declared_fix_candidates,
     flakes,
     provider_wide_clusters,
     skips: [],

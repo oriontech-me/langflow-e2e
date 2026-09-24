@@ -2,7 +2,7 @@
 // Run with: node --test scripts/lib/unexpected-pass.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { UNEXPECTED_PASS_SIGNATURE, collectUnexpectedPasses, isUnexpectedPass } from "./unexpected-pass.mjs";
+import { UNEXPECTED_PASS_SIGNATURE, collectUnexpectedPasses, isUnexpectedPass, isUnexpectedPassEntry } from "./unexpected-pass.mjs";
 
 const r = (status) => ({ status });
 
@@ -46,4 +46,14 @@ test("collection walks nested suites, inherits the suite file and survives junk"
   ]);
   assert.deepEqual(collectUnexpectedPasses(null), []);
   assert.deepEqual(collectUnexpectedPasses({ suites: "x" }), []);
+});
+
+test("#2027 a history row is an unexpected pass only by the appender's own signature", () => {
+  assert.equal(isUnexpectedPassEntry({ error_signature: UNEXPECTED_PASS_SIGNATURE }), true);
+  assert.equal(isUnexpectedPassEntry({ error_signature: ` ${UNEXPECTED_PASS_SIGNATURE}\n` }), true);
+  // A pre-#2009 row said "unknown" for the same case and cannot be told from a lost error.
+  assert.equal(isUnexpectedPassEntry({ error_signature: "unknown" }), false);
+  assert.equal(isUnexpectedPassEntry({ error_signature: "Error: expected to fail but passed, then failed" }), false);
+  assert.equal(isUnexpectedPassEntry({}), false);
+  assert.equal(isUnexpectedPassEntry(null), false);
 });

@@ -61,3 +61,14 @@ export function collectUnexpectedPasses(report) {
   for (const s of Array.isArray(report?.suites) ? report.suites : []) visit(s, s?.file || "");
   return out;
 }
+
+/**
+ * Whether a HISTORY ROW entry (`reports/daily-history.jsonl`, `failures[]`) records an
+ * unexpected pass. The row keeps no attempts, so the signature the appender wrote is
+ * the only evidence — read here, beside the constant, so the triage never carries its
+ * own spelling of the string (#2027). Rows written before #2009 said `"unknown"` for
+ * the same case and are indistinguishable from a lost error; they answer false.
+ */
+export function isUnexpectedPassEntry(entry) {
+  return String(entry?.error_signature ?? "").trim() === UNEXPECTED_PASS_SIGNATURE;
+}
