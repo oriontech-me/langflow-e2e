@@ -1457,18 +1457,27 @@ test("USE_LEDGER_DURATIONS is validated the same way", () => {
   assert.match(r.stderr, /USE_LEDGER_DURATIONS must be exactly '0' or '1'/);
 });
 
-test("the four switches a typo turns off the unsafe way are validated too (#1725)", () => {
+test("the switches a typo turns off the unsafe way are validated too (#1725)", () => {
   // Each is read as `= "1"` or `!= "1"`, so anything but "1" meant OFF: DRY_RUN=yes ran
   // the whole suite against the target, and REQUIRE_TARGET_VERSION=true switched
   // enforcement off while looking like it asked for it.
-  for (const name of ["DRY_RUN", "REQUIRE_TARGET_VERSION", "CHECK_TARGET_VERSION", "PREPARE_TARGET"]) {
+  const switches = [
+    "DRY_RUN",
+    "REQUIRE_TARGET_VERSION",
+    "CHECK_TARGET_VERSION",
+    "PREPARE_TARGET",
+    "CHECK_ISSUE_CREDENTIAL",
+    "LANGFLOW_TUNNEL",
+  ];
+  for (const name of switches) {
     for (const value of ["yes", "true", "1 "]) {
       const r = sourced(`echo REACHED`, { [name]: value });
       assert.equal(r.status, 1, `${name}=${JSON.stringify(value)} was accepted`);
       assert.match(r.stderr, new RegExp(`${name} must be exactly '0' or '1'`));
     }
-    for (const value of ["0", "1"]) {
-      assert.match(sourced(`echo REACHED`, { [name]: value }).stdout, /REACHED/, `${name}=${value} was refused`);
+    // "" is the default, not a bad value: `${X:-default}` treats empty as unset.
+    for (const value of ["0", "1", ""]) {
+      assert.match(sourced(`echo REACHED`, { [name]: value }).stdout, /REACHED/, `${name}=${JSON.stringify(value)} was refused`);
     }
   }
 });
