@@ -1066,3 +1066,26 @@ test('buildDataset has an empty declared_fix_candidates on a day with no unexpec
   assert.deepEqual(ds.declared_fix_candidates, []);
   assert.equal(ds.hard_failures.length, 2);
 });
+
+test('declared_fix_candidates count passes per variant, and never form a provider-wide cluster (#2027)', () => {
+  const uxp = (file, param, line = 5) => ({
+    test: 'declared failing', file, line, param, error_signature: 'expected to fail but passed',
+    infra_signature: null, recurrence_keys: [], recurrence_key_version: 1,
+  });
+  const rows = [
+    // Another provider passing says nothing about this variant's declared bug.
+    { date: '2026-09-20', totals: { failed: 1, flaky: 0 }, failures: [uxp('a.spec.ts', 'google / g')], flaky: [] },
+    {
+      date: '2026-09-21',
+      run_id: 'r',
+      totals: { failed: 2, flaky: 0 },
+      // The same provider across two spec files is what a provider-wide cluster needs.
+      failures: [uxp('a.spec.ts', 'openai / o'), uxp('b.spec.ts', 'openai / o', 9)],
+      flaky: [],
+    },
+  ];
+  const ds = buildDataset(rows, []);
+  assert.equal(ds.declared_fix_candidates.length, 2);
+  for (const c of ds.declared_fix_candidates) assert.deepEqual(c.passes, { count: 1, dates: ['2026-09-21'] });
+  assert.deepEqual(ds.provider_wide_clusters.filter((k) => k.provider_wide), []);
+});

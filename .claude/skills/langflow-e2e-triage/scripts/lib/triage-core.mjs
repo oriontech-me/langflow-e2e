@@ -632,6 +632,28 @@ export function assertDedicatedIssueBody(body, opts = {}) {
   return problems;
 }
 
+/**
+ * The days THIS variant of `item` passed as an unexpected pass, in the window.
+ *
+ * "Passed again", never "failed again" — and counted directly rather than through
+ * `computeRecurrence`, whose same-title fallback lets another provider's row answer
+ * when a row has none of the item's variant. That is fair for a failure and weak
+ * for a fix: google passing says nothing about whether openai's declared bug is
+ * fixed. Pre-#2009 rows recorded the same case as `"unknown"` and do not count.
+ */
+function passesOf(item, rowsInWindow) {
+  const variant = item.param ?? null;
+  const dates = [];
+  for (const row of rowsInWindow) {
+    const hit = (row.failures || []).some(
+      (e) => e.test === item.test && (e.param ?? null) === variant && isUnexpectedPassEntry(e),
+    );
+    if (hit) dates.push(row.date);
+  }
+  dates.sort();
+  return { count: dates.length, dates };
+}
+
 /** Assemble the normalized triage dataset from the latest red run. */
 /**
  * Is this entry's failure the harness failing to reach the backend, rather than
@@ -728,13 +750,11 @@ export function buildDataset(rows, issues, opts = {}) {
   const runFailures = dedupeEntries(run.failures);
   const hard_failures = runFailures.filter((e) => !isUnexpectedPassEntry(e)).map(withRecurrence);
   const declared_fix_candidates = runFailures.filter(isUnexpectedPassEntry).map((e) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { recurrence, ...rest } = withRecurrence(e);
     return {
       ...rest,
-      // "Passed again", never "failed again": since #2025 an unexpected pass
-      // records no recurrence key, so these dates are the days the declared bug
-      // PASSED, and nothing else (pre-#2009 rows said "unknown" and do not count).
-      passes: { count: recurrence.count, dates: recurrence.dates },
+      passes: passesOf(e, window),
       actionable: false,
       action:
         'possible fix day for the bug this test is declared against (test.fail() body passed): confirm the fix upstream for the version under test, then remove test.fail(), restore @stable and close the issue the declaration cites. Never file it as a failure and never quarantine it (#2027).',
