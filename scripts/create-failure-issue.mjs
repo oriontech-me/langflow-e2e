@@ -60,6 +60,8 @@
 //     take the title away from the per-test one (#1800)
 //   MERGE_OK="false" — the shards ran and merging them failed (VM lane, #1726)
 //   LIVENESS_MD
+//   TRIAGE_MD_FILE — the rendered triage dataset (VM lane, #2031); absent means the
+//     caller does not produce one, and the Actions body is unchanged
 //   PLAYWRIGHT_JSON — the merged report, read ONLY to name unexpected passes
 //     (#2009); absent or unreadable means none are named, never a failed render
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
@@ -213,6 +215,10 @@ export function renderIssue({
   firstError = "",
   runTests = "0",
   liveness = "",
+  // #2031. The triage dataset rendered by `render-triage-summary.mjs`: recurrence,
+  // exemptions and skips, which on the Actions lane reach a reader through the
+  // triage-dispatch comment and on the VM lane reached nobody. Empty = not produced.
+  triage = "",
   // #2009: `{ file, line, title, attempts, passedAttempts }` per test declared failing
   // with `test.fail()` whose body passed — from `collectUnexpectedPasses`.
   unexpectedPasses = [],
@@ -608,6 +614,14 @@ export function renderIssue({
       ]
     : [];
 
+  // #2031. AFTER the per-test section, because it classifies what that section names —
+  // it is the second reading, not the first. Scoped away from the shapes whose bodies
+  // say there is no per-test material (`empty`, `mergeFailed`, `uncovered`): a dataset
+  // there would describe the ledger's LAST red run, not this one. `partial` keeps it —
+  // the shards that ran produced real failures.
+  const triageSection =
+    triage.trim() && !empty && !mergeFailed && !uncovered ? ["", triage.trim()] : [];
+
   // The title is what gets scanned in the issue list, so an empty run must not
   // claim that tests failed — none ran. Nor may a failed merge claim that nothing
   // ran: every shard did, and the title is the only part most people read (#1726).
@@ -648,6 +662,7 @@ export function renderIssue({
     ...listingBanner,
     ...unexpectedPassSection,
     ...section,
+    ...triageSection,
     ...(cc.trim() ? ["", `/cc ${cc.trim()}`] : []),
   ].join("\n");
 
@@ -786,6 +801,21 @@ export function readUnexpectedPasses(path, repoRoot = REPO_ROOT) {
   }
 }
 
+/**
+ * The rendered triage dataset, or "" when there is none (#2031). Never throws: the
+ * orchestrator writes a line saying the dataset could not be built when that happens,
+ * so an unreadable file here is a caller that produced nothing, and the umbrella
+ * opens without the section rather than not at all.
+ */
+export function readTriageSummary(path) {
+  if (!path) return "";
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 async function main() {
   const env = process.env;
   const runDir = env.RUN_DIR || ".";
@@ -853,6 +883,7 @@ async function main() {
     coverageProviders: env.COVERAGE_PROVIDERS || "",
     coverageSkips: env.COVERAGE_SKIPS || "0",
     liveness: env.LIVENESS_MD || "",
+    triage: readTriageSummary(env.TRIAGE_MD_FILE),
     unexpectedPasses: readUnexpectedPasses(env.PLAYWRIGHT_JSON),
     cc: env.ISSUE_CC === undefined ? CC_DEFAULT : env.ISSUE_CC,
   });
