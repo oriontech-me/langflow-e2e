@@ -2916,6 +2916,7 @@ test("#1904 a shard never inherits the clone's providers.json", () => {
   const shardData = join(run, "shard-1/tests/helpers/provider-setup/data");
   assert.equal(existsSync(join(shardData, "providers.json")), false, "the clone's health record must not ride in");
   assert.equal(existsSync(join(shardData, "models.json")), true, "the rest of the tree is still copied");
+});
 
 test("the push credential warns on every answer and never stops the run (#2028)", () => {
   // The opposite of the umbrella's check above, on purpose: a refused push still leaves
