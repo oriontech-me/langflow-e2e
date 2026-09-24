@@ -109,8 +109,10 @@ the reason says the probe could not decide and carries the underlying error. An
 unknown must not be recorded as a verdict (#1012), least of all in the one
 sentence a lane-coverage reader parses.
 
-`generalBugs-shard-11.spec.ts` carries the same absence from the other side (it
-hard-fails waiting for the ComposIO sidebar entry) and is triaged in **#1912**.
+`generalBugs-shard-11.spec.ts` carries the same absence from the other side — the
+canvas rather than the component — and **was** hard-failing on the ComposIO sidebar
+entry until #1912 gave it this same gate on 2026-09-24. Both now skip with the same
+attributed reason; see `docs/flow-functionality/generalBugs-shard-11.md`.
 
 ---
 

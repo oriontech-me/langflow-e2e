@@ -109,7 +109,7 @@ Two consequences that are easy to get wrong:
 
 Two directions, because they fail differently and only one of them is visible today.
 
-**(a) Specs that PLACE a component from a vendor distribution the image ships — 8 of 247.**
+**(a) Specs that PLACE a component from a vendor distribution the image ships — 7 of 247.**
 These pass today and are coupled to a packaging choice, not to a Langflow feature.
 (9 when measured; `flow-functionality/generalBugs-shard-7.spec.ts` placed Ollama
 Embeddings only to type into a node field, and moved to the core Split Text in #1908.)
@@ -121,7 +121,6 @@ entirely on the criterion.
 | Vendor category | Spec |
 |---|---|
 | `amazon` | `core-components/beta-components-toggle-regression.spec.ts` |
-| `duckduckgo` | `core-functionality/llm-agents/duckduckgo.spec.ts` |
 | `ollama` | `core-functionality/model-provider/ollama-provider.spec.ts` |
 | `openai` | `flow-functionality/generalBugs-shard-3.spec.ts` |
 | `datastax` | `ui-ux/filterSidebar.spec.ts` |
@@ -129,11 +128,23 @@ entirely on the criterion.
 | `openai` | `ui-ux/sidebar-search-and-filter.spec.ts` |
 | `openai` | `ui-ux/use-global-variable-in-component.spec.ts` |
 
-**(b) Specs gated on a family the image does NOT ship — 4.**
+(8 when measured. The `duckduckgo` row left on 2026-09-24 (#1912) and is the one departure this table cannot represent: the family is not a vendor distribution the image stopped shipping, it is **gone from the source tree** — there is no
+`lfx/components/duckduckgo` directory and therefore no shim and no distribution to install. Its spec was rewritten onto the core `UnifiedWebSearch` that absorbed the capability, so the coupling is now to a **core** family and out of this table's scope by its own criterion.)
+
+**(b) Specs gated on a family the image does NOT ship — 6.**
 `groq-provider.spec.ts` and `mistral-provider.spec.ts` skip on every run (#1039), and
 `core-functionality/llm-agents/composio.spec.ts` joined them on 2026-09-18 (#1913 →
 #1916): `composio` is an `lfx-bundles-shim`, `import lfx_bundles` raises
 `ModuleNotFoundError` in the nightly, and the catalog carries zero `composio` types.
+Two more joined on 2026-09-24 (#1912), the second half of the same T2 packaging
+cluster: `core-functionality/llm-agents/youtube-transcripts.spec.ts` (`youtube` is an
+`lfx-bundles-shim`, zero catalog entries on `1.13.0.dev22`) and
+`flow-functionality/generalBugs-shard-11.spec.ts`, which carries ComposIO's absence
+from the **canvas** side where `composio.spec.ts` carries it from the component side.
+Both replaced a failing or inert declaration rather than a passing test, so the gate
+removed two deep unattributed timeouts (`locator.hover: Timeout 20000ms` and
+`page.waitForSelector: Timeout 3000ms`) — measured by removing each gate and watching
+the spec hard-fail on exactly those.
 `ollama-provider.spec.ts` carries the same gate but Ollama **returned** to the default
 image, so its gate currently passes — it is insurance, not an active skip.
 
