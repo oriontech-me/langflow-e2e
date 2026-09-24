@@ -972,3 +972,21 @@ test("#2009 an unexpected pass records no recurrence key, even after an earlier 
   assert.deepEqual(pass.recurrence_keys, []);
   assert.equal(timeout.recurrence_keys.length, 1, "a genuine failure still records its key");
 });
+
+// ---------- which suite revision the run executed (#2060) ----------
+
+test("the suite revision rides on the row when the lane sends it", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  assert.equal(append(report([]), { SUITE_SHA: sha }).suite_sha, sha);
+  assert.equal(append(report([]), { SUITE_SHA: `  ${sha}\n` }).suite_sha, sha);
+});
+
+test("a lane that does not send the revision gets no field, never an empty one", () => {
+  assert.ok(!("suite_sha" in append(report([]), { SUITE_SHA: "" })));
+  assert.ok(!("suite_sha" in append(report([]), { SUITE_SHA: "   " })));
+});
+
+test("a revision of the wrong shape is recorded as sent, for the comparator to call unreadable", () => {
+  // Dropping it would make a wiring break look like a lane that never sent anything.
+  assert.equal(append(report([]), { SUITE_SHA: "abc1234" }).suite_sha, "abc1234");
+});
