@@ -3021,3 +3021,27 @@ test("the triage section is built only where the umbrella opens, and handed to i
   // After the history append: the dataset reads this run's row from the ledger.
   assert.ok(publish.indexOf("build_triage_summary") > publish.indexOf("append-weekly-history.mjs"));
 });
+
+test("the umbrella names the machine that holds the evidence (#2036)", () => {
+  // HOSTNAME is a bash variable that is not exported, so the issue creator never saw
+  // it and every VM umbrella said "on the QA VM".
+  const host = spawnSync("hostname", { encoding: "utf8" }).stdout.trim();
+  const plain = sourced(`printf '[%s]' "$(evidence_host)"`, { VM_HOSTNAME: "" });
+  assert.equal(plain.stdout, `[${host}]`, "the machine's own name did not reach the umbrella");
+
+  const named = sourced(`printf '[%s]' "$(evidence_host)"`, { VM_HOSTNAME: "qa-runner.internal.example" });
+  assert.equal(named.stdout, "[qa-runner.internal.example]", "an explicit VM_HOSTNAME was not honoured");
+
+  // `hostname` missing is empty, not an abort: the creator falls back on its own.
+  const bin = makeTempDir("no-hostname");
+  writeFileSync(join(bin, "hostname"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  // `$?` read off the assignment is the function's own status; read after a printf it
+  // would be the printf's, and that version passed with the `|| true` removed.
+  const failing = sourced(`set +e; out="$(evidence_host)"; echo "[$out] EXIT=$?"`, { VM_HOSTNAME: "", PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(failing.stdout.trim(), "[] EXIT=0");
+
+  const sh = readFileSync(SCRIPT, "utf8");
+  const publish = sh.slice(sh.indexOf("phase_publish() {"), sh.indexOf("phase_verdict() {"));
+  const call = publish.slice(publish.indexOf('log "Opening the failure issue"'), publish.indexOf("node scripts/create-failure-issue.mjs"));
+  assert.match(call, /VM_HOSTNAME="\$\(evidence_host\)"/, "the issue creator is not handed the host");
+});
