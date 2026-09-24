@@ -149,7 +149,10 @@ status="$(TRANSPORT="$transport" HEADLINE="$plain_glyph $sentence" BODY="$output
   TEXT="$glyph $sentence $output" python3 -c '
 import json, os
 if os.environ["TRANSPORT"] == "workflow":
-    print(json.dumps({"headline": os.environ["HEADLINE"], "body": os.environ["BODY"], "links": ""}))
+    # The check writes `main` in its verdict; a backtick never belongs to a SHA or a
+    # spec name, so dropping it loses nothing that the trigger would not print raw.
+    body = os.environ["BODY"].replace("`", "")
+    print(json.dumps({"headline": os.environ["HEADLINE"], "body": body, "links": ""}))
 else:
     print(json.dumps({"text": os.environ["TEXT"]}))
 ' \

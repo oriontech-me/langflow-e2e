@@ -33,7 +33,9 @@ function runAlarm({ dir, exitCode, message = "stubbed verdict", webhook = true, 
   );
   // The stub is an executable, not a command string — see CHECK_BIN in the script.
   const check = join(bin, "check-stub");
-  writeFileSync(check, `#!/bin/sh\necho ${JSON.stringify(message)}\nexit ${exitCode}\n`, { mode: 0o755 });
+  // Single-quoted: inside double quotes sh would run a backtick in the message as a command.
+  const quoted = `'${message.replace(/'/g, "'\\''")}'`;
+  writeFileSync(check, `#!/bin/sh\necho ${quoted}\nexit ${exitCode}\n`, { mode: 0o755 });
   const secrets = join(dir, "secrets.env");
   // `webhook` is true for a generic URL, or the URL itself when the transport matters.
   const url = typeof webhook === "string" ? webhook : "https://example.invalid/hook";
@@ -146,12 +148,13 @@ test("a Workflow Builder trigger gets its three variables, not a `text` it drops
   const hook = "https://hooks.slack.com/triggers/T000/000/abc";
   const dir = makeTempDir("alarm-workflow");
   runAlarm({ dir, exitCode: 0, webhook: hook });
-  const stall = runAlarm({ dir, exitCode: 1, message: "BEHIND: 2 commit(s)", webhook: hook });
+  const stall = runAlarm({ dir, exitCode: 1, message: "BEHIND: older suite than `main`", webhook: hook });
   const sent = JSON.parse(stall.posted);
   assert.deepEqual(Object.keys(sent).sort(), ["body", "headline", "links"]);
   assert.match(sent.headline, /^🚨 The e2e mirror is not current/);
   assert.doesNotMatch(sent.headline, /`|:rotating_light:/, "markup the trigger would print literally");
-  assert.equal(sent.body, "BEHIND: 2 commit(s)", "the verdict did not travel with the alarm");
+  // The check's own verdict carries backticks (the 02:01 journal line did); plain there too.
+  assert.equal(sent.body, "BEHIND: older suite than main", "the verdict did not travel, or kept its markup");
   assert.equal(sent.links, "");
 
   const back = JSON.parse(runAlarm({ dir, exitCode: 0, message: "ok: current", webhook: hook }).posted);
