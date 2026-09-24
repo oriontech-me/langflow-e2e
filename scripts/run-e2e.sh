@@ -343,7 +343,19 @@ KEEP_BACKENDS="${KEEP_BACKENDS:-0}"
 # `command -v uv` fails, and the Langflow starter needs it to build the source clone.
 # Exported because the starters run through ssh, which starts another non-interactive
 # shell on the far side — that one is handled explicitly at the call sites.
-export PATH="$HOME/.local/bin:$PATH"
+#
+# The home directory is RESOLVED rather than read from `$HOME` (#1715): cron sets HOME
+# and systemd does not for a system service, so under `set -u` the bare `$HOME` here
+# ended the run before preflight. Tilde expansion falls back to the passwd entry only
+# when HOME is truly unset, hence the subshell; `${HOME:-~}` yields a literal `~`. HOME
+# itself is left alone, because the ledger below deliberately refuses to guess a path
+# when it is missing. Not absolute means no passwd entry either: then nothing is
+# prepended, rather than a relative PATH entry, and preflight's uv check says what is
+# missing.
+USER_HOME="${HOME:-$(unset HOME; echo ~)}"
+case "$USER_HOME" in
+  /*) export PATH="$USER_HOME/.local/bin:$PATH" ;;
+esac
 
 # Playwright 1.58.2 does not know Ubuntu 26.04 and refuses to install browsers there.
 # Without this, any browser (re)install on these machines dies and the run ends in
@@ -511,7 +523,7 @@ die()  { err "$*"; exit 1; }
 run_on_target_locally() {
   # A login shell so the machine's own profile applies, as it does over ssh; HOME and TERM
   # because a login shell needs them and ssh's side has them too.
-  env -i HOME="$HOME" TERM="${TERM:-dumb}" bash -lc "$*"
+  env -i HOME="$USER_HOME" TERM="${TERM:-dumb}" bash -lc "$*"
 }
 
 # shellcheck disable=SC2086

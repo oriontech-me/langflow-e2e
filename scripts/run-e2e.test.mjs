@@ -26,6 +26,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
+import { userInfo } from "node:os";
 
 import { fileURLToPath } from "node:url";
 import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
@@ -1493,12 +1494,47 @@ test("preflight refuses a ledger inside the clone, and creates nothing on the wa
 test("preflight refuses when there is nowhere to put the ledger, rather than skipping it", () => {
   // A scheduled run that quietly keeps no series is indistinguishable, months later,
   // from a machine that was down — which is the same confusion the watchdog exists to
-  // remove, one layer down. (With HOME truly UNSET this script dies earlier still, on
-  // the PATH export: that is #1715, and it is a different bug.)
+  // remove, one layer down.
   const r = preflightLedger({ LEDGER_DIR: "", HOME: "", XDG_STATE_HOME: "" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /nowhere to keep the three series/);
   assert.match(r.stderr, /KEEP_LEDGER=0/, "the message has to name the way out it expects");
+});
+
+/** Like sourced(), with HOME absent from the environment rather than empty. */
+function sourcedWithoutHome(body, env = {}) {
+  const { HOME: _home, ...rest } = process.env;
+  return spawnSync(BASH, ["-c", `source ${JSON.stringify(SCRIPT)}\n${body}`], {
+    encoding: "utf8",
+    cwd: REPO_ROOT,
+    env: { ...rest, TARGET_SSH: "unused-in-sourced-tests", ...env },
+  });
+}
+
+test("an unset HOME does not end the run: uv's PATH comes from the passwd entry (#1715)", () => {
+  // cron sets HOME and systemd does not for a system service, so under `set -u` the
+  // bare `$HOME` in the PATH export was `HOME: unbound variable` before preflight ran.
+  const passwdHome = userInfo().homedir;
+  const r = sourcedWithoutHome(`echo "\${PATH%%:*}"`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), `${passwdHome}/.local/bin`);
+  // Empty is treated as unset, not as a relative `/.local/bin`.
+  assert.equal(sourced(`echo "\${PATH%%:*}"`, { HOME: "" }).stdout.trim(), `${passwdHome}/.local/bin`);
+  // A HOME that IS set still wins: the script is run by hand on developer machines.
+  assert.equal(sourced(`echo "\${PATH%%:*}"`, { HOME: "/home/nobody" }).stdout.trim(), "/home/nobody/.local/bin");
+});
+
+test("with HOME unset, the local target's login shell gets the resolved home, and the ledger still refuses to guess", () => {
+  const passwdHome = userInfo().homedir;
+  const shell = sourcedWithoutHome(`run_on_target_locally 'printf "%s" "$HOME"' | tail -n 1`);
+  assert.equal(shell.status, 0, shell.stderr);
+  assert.equal(shell.stdout.trim().split("\n").pop(), passwdHome);
+  // HOME itself is not filled in, on purpose: an unplaceable ledger is refused in
+  // preflight, where it costs a variable, rather than guessed into a directory.
+  const ledger = sourcedWithoutHome(`preflight_ledger`, { LEDGER_DIR: "", XDG_STATE_HOME: "" });
+  assert.equal(ledger.status, 1);
+  assert.match(ledger.stderr, /nowhere to keep the three series/);
+  assert.doesNotMatch(ledger.stderr, /unbound variable/);
 });
 
 test("KEEP_LEDGER=0 passes preflight and says so, which is what a smoke needs", () => {
