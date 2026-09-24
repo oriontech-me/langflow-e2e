@@ -141,3 +141,14 @@ test("#1904 an inactive skip still parses to exactly its old shape", () => {
     error: "x",
   });
 });
+
+test("#1904 the stale reason names what is wrong with the timestamp, not just that it is old", () => {
+  assert.match(formatProviderStaleReason("openai", "2026-09-17T14:11:35Z", 12), /checked 2026-09-17T14:11:35Z, outside the 12 h window/);
+  const unreadable = formatProviderStaleReason("openai", "abc", 12, "unreadable");
+  assert.match(unreadable, /unreadable checkedAt "abc"/);
+  assert.doesNotMatch(unreadable, /checked abc|outside the/);
+  const future = formatProviderStaleReason("openai", "2027-01-01T00:00:00Z", 12, "future");
+  assert.match(future, /is in the future, which no sweep writes/);
+  assert.doesNotMatch(future, /outside the/);
+  for (const line of [unreadable, future]) assert.equal(parseProviderInactiveReason(line).stale, true);
+});

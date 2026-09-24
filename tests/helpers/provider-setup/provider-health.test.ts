@@ -605,3 +605,12 @@ test("#1904 a dead key on one provider outranks another's old record", () => {
   ];
   assert.match(String(unavailableReason(["openai", "google"], records, ALL_KEYS_SET, NOW)), /monthly spending cap/);
 });
+
+test("#1904 the gate's reason says which way the timestamp failed", () => {
+  const reason = (checkedAt: string | undefined) =>
+    String(unavailableReason(["openai"], [activeAt("openai", checkedAt)], ALL_KEYS_SET, NOW));
+  assert.match(reason(at(48)), /outside the 12 h window/);
+  assert.match(reason("abc"), /unreadable checkedAt "abc"/);
+  assert.match(reason(new Date(NOW + 2 * HOUR).toISOString()), /is in the future/);
+  assert.match(reason(undefined), /no checkedAt recorded/);
+});

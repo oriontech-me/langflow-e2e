@@ -9,6 +9,7 @@ export declare function formatProviderStaleReason(
   provider: string,
   checkedAt: string | null | undefined,
   maxAgeHours: number,
+  problem?: "old" | "unreadable" | "future",
 ): string;
 export declare function parseProviderInactiveReason(
   description: unknown,

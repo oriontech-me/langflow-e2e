@@ -91,14 +91,25 @@ export function isExpired(
   env: NodeJS.ProcessEnv = process.env,
   now: number = Date.now(),
 ): boolean {
-  if (record.status !== "active") return false;
-  const at = Date.parse(String(record.checkedAt ?? ""));
-  if (!Number.isFinite(at) || at - now > 3_600_000) return true;
-  return now - at > maxAgeHours(env) * 3_600_000;
+  return expiryProblem(record, env, now) !== null;
 }
 
-function staleReason(record: ProviderHealthRecord, env: NodeJS.ProcessEnv): string {
-  return formatProviderStaleReason(record.provider, record.checkedAt, maxAgeHours(env));
+/** Why an `active` record expired, or `null` when it has not. See `isExpired`. */
+function expiryProblem(
+  record: ProviderHealthRecord,
+  env: NodeJS.ProcessEnv,
+  now: number,
+): "old" | "unreadable" | "future" | null {
+  if (record.status !== "active") return null;
+  const at = Date.parse(String(record.checkedAt ?? ""));
+  if (!Number.isFinite(at)) return "unreadable";
+  if (at - now > 3_600_000) return "future";
+  return now - at > maxAgeHours(env) * 3_600_000 ? "old" : null;
+}
+
+function staleReason(record: ProviderHealthRecord, env: NodeJS.ProcessEnv, now: number): string {
+  const problem = expiryProblem(record, env, now) ?? "old";
+  return formatProviderStaleReason(record.provider, record.checkedAt, maxAgeHours(env), problem);
 }
 
 const PROVIDERS_PATH = path.join(__dirname, "data", "providers.json");
@@ -243,7 +254,7 @@ export function unavailableReason(
   // 30374528125 — and it does so silently, since no skip line names the cause.
   // A false skip here costs one re-sweep and says so in the report.
   for (const record of own) {
-    if (record && isExpired(record, env, now)) return staleReason(record, env);
+    if (record && isExpired(record, env, now)) return staleReason(record, env, now);
   }
 
   return undefined;
@@ -268,7 +279,8 @@ function inactiveReason(record: ProviderHealthRecord): string {
 }
 
 /**
- * Every `inactive` provider and why, as `provider → reason` (issue #1043).
+ * Every provider the gate would skip and why, as `provider → reason` (issue #1043):
+ * each `inactive` record, and since #1904 each expired `active` one.
  *
  * The shape the provider-**parametrized** specs consume: they build one test target
  * per `models.json` entry and need the reason for the target's provider, whichever
@@ -332,7 +344,7 @@ export function providerSkipReasons(
     } else if (isExpired(record, env, now)) {
       // Same rule and same reason as `unavailableReason` (#1904): the parametrized
       // specs are the larger population, and the stale `active` hazard is theirs too.
-      reasons.set(record.provider, staleReason(record, env));
+      reasons.set(record.provider, staleReason(record, env, now));
     }
   }
   return reasons;
