@@ -245,9 +245,15 @@ Four things about it:
 - **It skips rather than failing open.** Failing open was weighed and rejected: it
   keeps the one direction nothing handled — a dead key reaching the backend — while
   a false skip costs one re-sweep and names itself in the report.
-- **CI cannot reach it.** Every lane sweeps immediately before its run. The longest
-  daily in `reports/daily-history.jsonl` took 82 min and `manual.yml`'s job cap is
-  180 min, a quarter of the window.
+- **No lane reaches it.** Every lane sweeps immediately before its run and starts
+  each shard without an older file: Actions from a fresh checkout, and the VM
+  because `scripts/run-e2e.sh` drops the clone's gitignored copy from each shard.
+  Without that drop, a leftover file in the VM clone would be read whenever a
+  shard's sweep failed. The longest daily in `reports/daily-history.jsonl` took
+  82 min and `manual.yml`'s job cap is 180 min, a quarter of the window.
+- **It cannot be switched off on its own.** A `PROVIDER_HEALTH_MAX_AGE_HOURS` that
+  is not a positive number, `0` included, falls back to 12. `IGNORE_PROVIDER_HEALTH=1`
+  is the switch, and it lifts the `inactive` skips too.
 - **An old `inactive` record is left alone.** It still names a key that was dead,
   and its skip already has the escape hatch.
 - **The lane counts it as a provider-health skip.** The wording is parsed by the

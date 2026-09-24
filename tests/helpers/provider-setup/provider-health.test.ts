@@ -586,3 +586,22 @@ test("#1904 the parametrized specs' reasons carry an expired active record too",
 test("#1904 no file is still no signal — expiry never turns absence into a skip", () => {
   assert.equal(unavailableReason(["openai"], null, ALL_KEYS_SET, NOW), undefined);
 });
+
+test("#1904 the window's edge: exactly 12 h still runs, a millisecond more skips", () => {
+  const edge = new Date(NOW - DEFAULT_MAX_AGE_HOURS * HOUR).toISOString();
+  assert.equal(isExpired(activeAt("openai", edge), {}, NOW), false);
+  assert.equal(isExpired(activeAt("openai", new Date(NOW - DEFAULT_MAX_AGE_HOURS * HOUR - 1).toISOString()), {}, NOW), true);
+});
+
+test("#1904 a timestamp far in the future is unreadable, not fresh for ever", () => {
+  assert.equal(isExpired(activeAt("openai", new Date(NOW + 30 * 60_000).toISOString()), {}, NOW), false);
+  assert.equal(isExpired(activeAt("openai", new Date(NOW + 2 * HOUR).toISOString()), {}, NOW), true);
+});
+
+test("#1904 a dead key on one provider outranks another's old record", () => {
+  const records = [
+    activeAt("openai", at(48)),
+    { provider: "google", model: null, status: "inactive" as const, error: SPEND_CAP, checkedAt: at(1) },
+  ];
+  assert.match(String(unavailableReason(["openai", "google"], records, ALL_KEYS_SET, NOW)), /monthly spending cap/);
+});

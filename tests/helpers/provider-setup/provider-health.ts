@@ -54,14 +54,18 @@ export interface ProviderHealthRecord {
 /**
  * How old an `active` record may be before it stops counting as a signal (#1904).
  *
- * The record is only as good as the sweep that wrote it. Every CI lane sweeps
- * immediately before its run, so there it is minutes old: the longest daily in
+ * The record is only as good as the sweep that wrote it. Every lane sweeps
+ * immediately before its run and starts each shard without an older file — Actions
+ * from a fresh checkout, the VM because `run-e2e.sh` drops the clone's copy from
+ * each shard — so there it is minutes old: the longest daily in
  * `reports/daily-history.jsonl` took 82 min, and `manual.yml`'s job cap is 180 min.
  * `providers.json` is gitignored, though, and survives across days on a dev box —
  * the one this was written on held a six-day-old all-`active` file — and a
  * targeted local run does not sweep, by design. 12 h is four times the longest
- * lane, so no scheduled run can reach it, and short enough that yesterday's sweep
- * is never trusted today. `PROVIDER_HEALTH_MAX_AGE_HOURS` moves it.
+ * lane, and short enough that yesterday's sweep is never trusted today.
+ * `PROVIDER_HEALTH_MAX_AGE_HOURS` moves it; a value that is not a positive number
+ * (`0` included) falls back to 12, so expiry cannot be switched off on its own —
+ * `IGNORE_PROVIDER_HEALTH=1` is the switch, and it lifts the `inactive` skips too.
  */
 export const DEFAULT_MAX_AGE_HOURS = 12;
 
@@ -78,8 +82,9 @@ export function maxAgeHours(env: NodeJS.ProcessEnv = process.env): number {
  * and a skip the escape hatch already covers; it is the stale `active` that runs a
  * spec into a dead key, which is the direction this gate exists for and the one
  * nothing handled. An unreadable or missing `checkedAt` cannot be shown to be
- * fresh, so it is expired rather than trusted (#1012). A timestamp in the future
- * (clock skew) is not old, and is trusted.
+ * fresh, so it is expired rather than trusted (#1012). A timestamp up to an hour
+ * in the future is clock skew and is trusted; further ahead it cannot be a real
+ * sweep, and trusting it would never expire the record, so it counts as unreadable.
  */
 export function isExpired(
   record: ProviderHealthRecord,
@@ -88,7 +93,7 @@ export function isExpired(
 ): boolean {
   if (record.status !== "active") return false;
   const at = Date.parse(String(record.checkedAt ?? ""));
-  if (!Number.isFinite(at)) return true;
+  if (!Number.isFinite(at) || at - now > 3_600_000) return true;
   return now - at > maxAgeHours(env) * 3_600_000;
 }
 
@@ -220,20 +225,24 @@ export function unavailableReason(
 
   // Escape hatch for a STALE local providers.json, in either direction: an old
   // `inactive` record can hold back a spec that would pass today, and an expired
-  // `active` one now skips too (#1904). CI never needs this — every shard collects
-  // its own health immediately before the @stable run.
+  // `active` one now skips too (#1904). No lane needs this — every shard collects
+  // its own health immediately before its run.
   if (env.IGNORE_PROVIDER_HEALTH === "1") return undefined;
 
   if (!records) return undefined; // no signal — fail open, see readProviderHealth
 
-  for (const provider of providers) {
-    const record = records.find((r) => r.provider === provider);
+  const own = providers.map((p) => records.find((r) => r.provider === p));
+  // Every provider's `inactive` first: a key measured dead is the more useful line
+  // than another provider's record merely being old.
+  for (const record of own) {
     if (record?.status === "inactive") return inactiveReason(record);
-    // An expired `active` record SKIPS rather than failing open (#1904). Failing
-    // open was weighed and rejected: it lands a drained key on the backend, which
-    // is #1029's worker kill — six restarts and 14 collateral timeouts on run
-    // 30374528125 — and it does so silently, since no skip line names the cause.
-    // A false skip here costs one re-sweep and says so in the report.
+  }
+  // An expired `active` record SKIPS rather than failing open (#1904). Failing
+  // open was weighed and rejected: it lands a drained key on the backend, which
+  // is #1029's worker kill — six restarts and 14 collateral timeouts on run
+  // 30374528125 — and it does so silently, since no skip line names the cause.
+  // A false skip here costs one re-sweep and says so in the report.
+  for (const record of own) {
     if (record && isExpired(record, env, now)) return staleReason(record, env);
   }
 
