@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-23
+> **Last updated:** 2026-09-24
 
 ---
 
@@ -1584,7 +1584,7 @@
 | `core-components/` — Core Components | 94 | 93 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 40 | 34 | 2 | 1 | 3 |
+| `core-functionality/llm-agents/` | 43 | 35 | 3 | 1 | 4 |
 | `core-functionality/model-provider/` | 36 | 32 | 3 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 50 | 1 | 0 | 1 |
@@ -1594,7 +1594,7 @@
 | `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
 | `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
-| `ui-ux/` — Canvas | 47 | 43 | 0 | 4 | 0 |
+| `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 25 | 0 | 0 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
@@ -1603,7 +1603,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **730** | **629 (86%)** | **36 (5%)** | **13 (2%)** | **52 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **631 (86%)** | **37 (5%)** | **13 (2%)** | **53 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1619,7 +1619,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 700 `test()` calls carrying the `@stable` tag, distributed across 274 spec
+> 702 `test()` calls carrying the `@stable` tag, distributed across 276 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2052,6 +2052,7 @@
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 - [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
+- [x] Web Search component places, offers its three search modes and persists its query → `web-search-component.spec.ts`
 
 #### core-functionality/memory/
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
@@ -2341,6 +2342,7 @@
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] user should be able to see integrations in the sidebar when bundles is selected → `integration-side-bar.spec.ts`
 - [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
@@ -2389,7 +2391,7 @@
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
-| `core-functionality/llm-agents/` | 2 | 3 |
+| `core-functionality/llm-agents/` | 3 | 4 |
 | `core-functionality/model-provider/` | 3 | 1 |
 | `core-functionality/playground/` | 1 | 1 |
 | `mcp/client/` | 1 | 2 |
