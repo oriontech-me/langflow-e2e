@@ -77,6 +77,13 @@ WATCHDOG_LOG="$LOG_DIR/watchdog.log"
 # running when this fires is stuck, not slow.
 STILL_RUNNING_ALARM_AFTER_MIN="${STILL_RUNNING_ALARM_AFTER_MIN:-45}"
 DRY_RUN="${DRY_RUN:-0}"
+# Exactly 0 or 1, refused before anything runs (#2056). It is read below as `= "1"`, so
+# a typo'd `yes` meant NOT a dry run: the one invocation whose purpose is to post
+# nothing sent a fake incident to the channel. Same rule as run-e2e.sh's require_flag.
+case "$DRY_RUN" in
+  0 | 1) ;;
+  *) echo "DRY_RUN must be exactly '0' or '1', got: '$DRY_RUN'" >&2; exit 1 ;;
+esac
 
 mkdir -p "$LOG_DIR"
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$WATCHDOG_LOG"; }
