@@ -147,18 +147,18 @@ NOTIFY_SLACK="${NOTIFY_SLACK:-0}"
 NOTIFY_SLACK_ALWAYS="${NOTIFY_SLACK_ALWAYS:-0}"
 POST_QA_PLATFORM="${POST_QA_PLATFORM:-0}"
 
-# The write half of the verdict (#1945). This one is a switch rather than absent code
-# — unlike the ledger commit in note 6 above — because the code is complete and what
-# is missing is a CREDENTIAL, days away, not a later etapa's design. It is also how
-# the provoked failure (task 6) turns the path on deliberately, on a branch, before
-# any morning depends on it. Strict "1": a typo has to leave it OFF, and this is the
-# switch that commits to `main` (#1725).
 # Is the suite this run is about to execute still the one `main` holds? ON by default,
 # unlike the publish switches: it changes nothing about the run, it only refuses to let
 # a stale checkout go unremarked — and the silence it removes has already cost two days
 # recorded as measured and NOT comparable (#1947).
 CHECK_MIRROR="${CHECK_MIRROR:-1}"
 
+# The write half of the verdict (#1945). This one is a switch rather than absent code
+# — unlike the ledger commit in note 6 above — because the code is complete and what
+# is missing is a CREDENTIAL, days away, not a later etapa's design. It is also how
+# the provoked failure (task 6) turns the path on deliberately, on a branch, before
+# any morning depends on it. Strict "1": a typo has to leave it OFF, and this is the
+# switch that commits to `main` (#1725).
 AUTO_REMOVE="${AUTO_REMOVE:-0}"
 MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
 # Can this run still push the removal it may make? Asked only when AUTO_REMOVE=1, and
@@ -396,12 +396,17 @@ require_bool() {
 # because a scheduled run keeping no series is indistinguishable, months later, from a
 # machine that was down — it lands in the `else` and says so in a log line nobody reads.
 #
-# The ledger pair is NOT the complete set that rule selects, and saying so here rather
-# than letting the two calls below imply otherwise. Four more fall the unsafe way and
-# are deferred to #1725: DRY_RUN (a typo'd `yes` runs the whole suite on the VM instead
-# of stopping after the partition), REQUIRE_TARGET_VERSION (enforcement silently off,
-# on a flag whose own error text argues an unperformed check is not a weaker guarantee
-# but none), and CHECK_TARGET_VERSION / PREPARE_TARGET, which have the same shape.
+# The same rule selects six more (#1725): DRY_RUN (a typo'd `yes` runs the whole suite
+# on the target instead of stopping after the partition), REQUIRE_TARGET_VERSION
+# (enforcement silently off, on a flag whose own error text argues an unperformed check
+# is not a weaker guarantee but none), CHECK_TARGET_VERSION (the resolution is skipped,
+# the clone is not placed, and under REQUIRE_TARGET_VERSION the run fails only at the
+# verdict, after the whole suite), PREPARE_TARGET (the clone is not placed, and
+# STAMP_REQUIRED follows it off, so the starter stops demanding the stamp),
+# CHECK_ISSUE_CREDENTIAL (a refused credential no longer stops the run, which then
+# spends the suite on a verdict whose umbrella cannot open, #1950), and LANGFLOW_TUNNEL
+# (against a remote target, the missing-listener refusal is skipped and the ten
+# clipboard specs fail for a reason that is not the product).
 require_flag() {
   case "$2" in
     0 | 1) ;;
@@ -413,6 +418,12 @@ require_flag() {
 # exists.
 require_flag KEEP_LEDGER "$KEEP_LEDGER"
 require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
+require_flag DRY_RUN "$DRY_RUN"
+require_flag REQUIRE_TARGET_VERSION "$REQUIRE_TARGET_VERSION"
+require_flag CHECK_TARGET_VERSION "$CHECK_TARGET_VERSION"
+require_flag PREPARE_TARGET "$PREPARE_TARGET"
+require_flag CHECK_ISSUE_CREDENTIAL "$CHECK_ISSUE_CREDENTIAL"
+require_flag LANGFLOW_TUNNEL "$LANGFLOW_TUNNEL"
 require_flag REQUIRE_PROVIDER_KEYS "$REQUIRE_PROVIDER_KEYS"
 
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
