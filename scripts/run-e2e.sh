@@ -349,11 +349,14 @@ KEEP_BACKENDS="${KEEP_BACKENDS:-0}"
 # ended the run before preflight. Tilde expansion falls back to the passwd entry only
 # when HOME is truly unset, hence the subshell; `${HOME:-~}` yields a literal `~`. HOME
 # itself is left alone, because the ledger below deliberately refuses to guess a path
-# when it is missing. Not absolute means no passwd entry either: then nothing is
-# prepended, rather than a relative PATH entry, and preflight's uv check says what is
+# when it is missing: a scheduled run with no HOME gets past this line and is then
+# refused there, by name, with the way out. With no passwd entry either (an arbitrary
+# container UID), bash 5.2 answers `/`, measured; that is not a home, and neither is
+# anything relative, so nothing is prepended and preflight's uv check says what is
 # missing.
-USER_HOME="${HOME:-$(unset HOME; echo ~)}"
+USER_HOME="${HOME:-$(unset HOME; printf '%s' ~)}"
 case "$USER_HOME" in
+  /) ;;
   /*) export PATH="$USER_HOME/.local/bin:$PATH" ;;
 esac
 
