@@ -239,8 +239,9 @@ So both readers compare `checkedAt` with a window: **12 h** by default, set by
 `PROVIDER_HEALTH_MAX_AGE_HOURS`. An `active` record older than that, or with no
 readable `checkedAt`, **skips**, with a reason that says the record is old and how
 to re-establish it: `Provider "openai" health record stale — checked …, outside the
-12 h window; re-run tests/collect-models.spec.ts, or set IGNORE_PROVIDER_HEALTH=1`.
-Four things about it:
+12 h window; re-run tests/collect-models.spec.ts, or set IGNORE_PROVIDER_HEALTH=1 to
+run anyway`. A missing, unreadable or future timestamp says so instead of "checked".
+Five things about it:
 
 - **It skips rather than failing open.** Failing open was weighed and rejected: it
   keeps the one direction nothing handled — a dead key reaching the backend — while
@@ -260,6 +261,12 @@ Four things about it:
   same shared module as the `inactive` one (`scripts/lib/provider-health-reason.mjs`,
   marked `stale: true`), so `lane-coverage-verdict` counts it and does not read the
   provider as covered.
+
+The rule lives in the two gate readers only. The three model-target selectors
+(`scripts/select-{pr,daily,manual}-model-target.mjs`) also read `status: "active"`
+out of `providers.json` with no expiry, so they could pin a provider whose tests then
+skip as stale. They run only on the CI lanes, right after the sweep, where no record
+is old, so nothing reaches that today.
 
 > **The escape hatch is local-only, and it is now blunter than it was.** The
 > variable is set in no workflow, script or config — only ever exported by hand.

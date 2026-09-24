@@ -73,15 +73,25 @@ export function formatProviderInactiveReason(provider, error) {
  * the line says why and what re-establishes the signal — it is not a claim the key
  * is dead, which is why it is a different sentence from the `inactive` one.
  *
+ * `problem` says WHY the record expired, because the three ways it can are
+ * different facts: an old timestamp, one that cannot be read, and one from the
+ * future. Printing all three as "checked <x>, outside the window" misreports two
+ * of them.
+ *
  * @param {string} provider provider name as `collect-models` recorded it
  * @param {string|null|undefined} checkedAt the record's timestamp, if it had one
- * @param {number} maxAgeHours the window the record fell outside of
+ * @param {number} maxAgeHours the window the record is judged against
+ * @param {"old"|"unreadable"|"future"} [problem] why it expired; `"old"` by default
  * @returns {string}
  */
-export function formatProviderStaleReason(provider, checkedAt, maxAgeHours) {
-  const when = checkedAt ? `checked ${checkedAt}` : "no checkedAt recorded";
+export function formatProviderStaleReason(provider, checkedAt, maxAgeHours, problem = "old") {
+  let what;
+  if (!checkedAt) what = "no checkedAt recorded";
+  else if (problem === "unreadable") what = `unreadable checkedAt "${checkedAt}"`;
+  else if (problem === "future") what = `checkedAt ${checkedAt} is in the future, which no sweep writes`;
+  else what = `checked ${checkedAt}, outside the ${maxAgeHours} h window`;
   return (
-    `Provider "${provider}" health record stale — ${when}, outside the ${maxAgeHours} h window; ` +
+    `Provider "${provider}" health record stale — ${what}; ` +
     "re-run tests/collect-models.spec.ts, or set IGNORE_PROVIDER_HEALTH=1 to run anyway"
   );
 }
