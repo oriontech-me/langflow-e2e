@@ -574,6 +574,16 @@ test("the elision notice survives the section cap — the list is budgeted, not 
   // And it must be the TRUTH: shown + elided is every failure there was.
   const shown = (body.body.match(/^• /gm) || []).length;
   assert.equal(shown + Number(notice[1]), 22, "shown + elided must account for every failure");
+
+  // The mirror line cannot be dropped either: it comes out of the list's budget, so on
+  // the same payload it still closes the body, the body still fits, and the count
+  // still tells the truth.
+  const line = "BEHIND at run time, so this run executed an older suite than main · fell behind 1 time(s) in the last 24h, the longest for about 9h";
+  const withMirror = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc", PAYLOAD_JSON: long, MIRROR_SUMMARY: line }).body.body;
+  assert.ok(withMirror.length <= 2900, "the mirror line pushed the body past the cap");
+  assert.ok(withMirror.endsWith(`Mirror: ${line}`), "the mirror line was cut by the cap");
+  const n2 = /and (\d+) more not listed here/.exec(withMirror);
+  assert.equal((withMirror.match(/^• /gm) || []).length + Number(n2[1]), 22);
 });
 
 test("an unrecognised SLACK_MODE keeps the derived mode and says so", () => {
@@ -588,4 +598,26 @@ test("an unrecognised SLACK_MODE keeps the derived mode and says so", () => {
   assert.equal(status, 0, "a bad knob must not fail the run — the fail-soft contract outranks it");
   assert.match(stderr, /SLACK_MODE="workflows" is not one of/);
   assert.match(stdout, /mode=workflow\b/, "it falls back to what the URL says, not to blockkit");
+});
+
+test("the mirror line closes the message on every shape, decorated per transport", () => {
+  // The freshness alarm posts at most once a day now; this line is where the rest of
+  // the mirror's day is written down (scripts/mirror-freshness-summary.mjs).
+  const line = "current at run time · fell behind 2 time(s) in the last 24h, the longest for about 4h";
+  const wf = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc", MIRROR_SUMMARY: line });
+  assert.ok(wf.body.body.endsWith(`Mirror: ${line}`), "the workflow body does not end with the plain mirror line");
+
+  const bk = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T1/B2/xyz", MIRROR_SUMMARY: line });
+  assert.ok(bodyText(bk.body).includes(`*Mirror*: ${line}`), "Block Kit lost the label's markup");
+
+  const green = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    PAYLOAD_JSON: greenPayloadPath,
+    SLACK_ANNOUNCE_GREEN: "1",
+    MIRROR_SUMMARY: line,
+  });
+  assert.ok(green.body.body.endsWith(`Mirror: ${line}`), "a green day dropped the mirror line");
+
+  const none = render({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc" });
+  assert.doesNotMatch(none.body.body, /Mirror:/, "a line appeared with no summary to carry");
 });

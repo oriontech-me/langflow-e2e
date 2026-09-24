@@ -1214,6 +1214,14 @@ phase_preflight() {
     local mirror_out mirror_rc=0
     mirror_out="$(node scripts/check-mirror-freshness.mjs 2>&1)" || mirror_rc=$?
     printf '%s\n' "$mirror_out" | tee "$RUN_DIR/logs/mirror-freshness.log"
+    # Kept for the Slack message's mirror line (scripts/mirror-freshness-summary.mjs):
+    # the alarm no longer posts every change, so the daily's message is where the
+    # state at run time is written down.
+    case "$mirror_rc" in
+      0) MIRROR_RUN_STATE="current" ;;
+      2) MIRROR_RUN_STATE="unknown" ;;
+      *) MIRROR_RUN_STATE="behind" ;;
+    esac
     if [ "$mirror_rc" != "0" ]; then
       warn "the suite this run will execute may not be what \`main\` holds — see $RUN_DIR/logs/mirror-freshness.log."
       warn "A comparison drawn from this run is MEASURED but may not be COMPARABLE (#1947)."
@@ -2657,8 +2665,13 @@ phase_publish() {
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ] \
       || [ "$NOTIFY_SLACK_ALWAYS" = "1" ]; }; then
     log "Notifying Slack"
-    local issue_url=""
+    local issue_url="" mirror_summary=""
     [ -f "$RUN_DIR/issue-url.txt" ] && issue_url="$(cat "$RUN_DIR/issue-url.txt")" || true
+    # Only when the preflight asked: with CHECK_MIRROR=0 there is no state to report,
+    # and a line built from the history alone would read as though it had been checked.
+    if [ "$CHECK_MIRROR" = "1" ]; then
+      mirror_summary="$(MIRROR_RUN_STATE="${MIRROR_RUN_STATE:-}" node scripts/mirror-freshness-summary.mjs 2>/dev/null)" || mirror_summary=""
+    fi
     PAYLOAD_JSON="$RUN_DIR/payload.json" \
     RUN_EMPTY="$RUN_EMPTY" RUN_PARTIAL="$RUN_PARTIAL" RUN_UNREADABLE="$RUN_UNREADABLE" \
     MERGE_OK="${MERGE_OK:-true}" \
@@ -2669,6 +2682,7 @@ phase_publish() {
     LANGFLOW_VERSION="$LANGFLOW_VERSION" \
     SLACK_ANNOUNCE_GREEN="$NOTIFY_SLACK_ALWAYS" \
     TEST_JOB_FAILED="$TEST_JOB_FAILED" \
+    MIRROR_SUMMARY="$mirror_summary" \
       node scripts/notify-slack.mjs || warn "the Slack notification failed (does not fail the run)."
   fi
 }
