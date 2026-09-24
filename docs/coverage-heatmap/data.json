@@ -106,9 +106,9 @@
     "penalty": 0.031
    },
    "mitigation": 0.65,
-   "checklistBullets": 30,
+   "checklistBullets": 32,
    "bulletStates": {
-    "x": 24,
+    "x": 26,
     "-": 2,
     " ": 3,
     "~": 1
@@ -300,7 +300,7 @@
   },
   {
    "area": "NEW security",
-   "residualRisk": 6,
+   "residualRisk": 5.7,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
@@ -311,19 +311,18 @@
     "weightedBugs": 6.6,
     "weightedChurn": 0.59
    },
-   "mitigationBulletDerived": 0.65,
+   "mitigationBulletDerived": 0.67,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 1,
     "chronicFlaky": 0,
     "stableSpecs": 7,
-    "penalty": 0.046
+    "penalty": 0.048
    },
-   "mitigation": 0.6,
+   "mitigation": 0.62,
    "checklistBullets": 30,
    "bulletStates": {
-    "x": 24,
-    "!": 1,
+    "x": 25,
     " ": 5
    },
    "previous": {
@@ -716,13 +715,13 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 37,
+    "stableSpecs": 38,
     "penalty": 0
    },
    "mitigation": 0.76,
-   "checklistBullets": 101,
+   "checklistBullets": 102,
    "bulletStates": {
-    "x": 95,
+    "x": 96,
     "!": 1,
     "-": 1,
     "~": 2,
@@ -742,8 +741,8 @@
    },
    "upstreamBugCount": 18,
    "specCounts": {
-    "specs": 37,
-    "stable": 37
+    "specs": 38,
+    "stable": 38
    }
   },
   {
@@ -1220,9 +1219,9 @@
    }
   }
  ],
- "refreshed": "2026-09-23",
+ "refreshed": "2026-09-24",
  "refreshWindow": {
-  "testHealthSince": "2026-08-09",
+  "testHealthSince": "2026-08-10",
   "days": 45
  }
 }
