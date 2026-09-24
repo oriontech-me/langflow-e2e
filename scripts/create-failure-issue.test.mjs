@@ -28,7 +28,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,7 @@ import {
   apiUrlFor,
   createIssue,
   parseListingMissing,
+  readUnexpectedPasses,
   CC_DEFAULT,
 } from "./create-failure-issue.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -1293,4 +1294,179 @@ test("a lost removal points the reader at a place that exists on ITS lane (#1945
   const onActions = renderIssue({ ...ACTIONS, arStatus: "removed", arSummary: summary, arUncommitted: true });
   assert.match(onActions.body, /`Auto-remove @stable from hard failures` step/);
   assert.doesNotMatch(onActions.body, /the run log in the evidence directory above/);
+});
+
+// ─── #2009: an unexpected pass is named as one ──────────────────────────────
+
+/** The measured shape of a `test.fail()` whose body passed (Playwright 1.58.2). */
+const UNEXPECTED_PASS_REPORT = {
+  config: {},
+  suites: [
+    {
+      title: "security/credential-secret-exposure.spec.ts",
+      file: "tests-automations/regression/security/credential-secret-exposure.spec.ts",
+      specs: [
+        {
+          title: "declared failing for a filed bug",
+          file: "tests-automations/regression/security/credential-secret-exposure.spec.ts",
+          line: 458,
+          tests: [
+            {
+              status: "unexpected",
+              expectedStatus: "failed",
+              results: [{ status: "passed" }, { status: "passed" }, { status: "passed" }],
+            },
+          ],
+        },
+        {
+          title: "a real hard failure",
+          file: "tests-automations/regression/security/credential-secret-exposure.spec.ts",
+          line: 500,
+          tests: [{ status: "unexpected", results: [{ status: "failed", error: { message: "boom" } }] }],
+        },
+      ],
+    },
+  ],
+};
+
+test("#2009 the report's unexpected passes are read, and only those", () => {
+  const dir = makeTempDir("unexpected-pass-");
+  const file = join(dir, "results.json");
+  writeFileSync(file, JSON.stringify(UNEXPECTED_PASS_REPORT));
+  // A repo root with no tests/ tree, so this pins selection and not the anchoring.
+  assert.deepEqual(readUnexpectedPasses(file, "/nowhere"), [
+    {
+      file: "tests-automations/regression/security/credential-secret-exposure.spec.ts",
+      line: 458,
+      title: "declared failing for a filed bug",
+      attempts: 3,
+      passedAttempts: 3,
+    },
+  ]);
+});
+
+test("#2009 an absent or unreadable report names nothing and never throws", () => {
+  const dir = makeTempDir("unexpected-pass-");
+  const bad = join(dir, "results.json");
+  writeFileSync(bad, "{ not json");
+  assert.deepEqual(readUnexpectedPasses(undefined), []);
+  assert.deepEqual(readUnexpectedPasses(join(dir, "missing.json")), []);
+  assert.deepEqual(readUnexpectedPasses(bad), []);
+});
+
+for (const [lane, base] of [["Actions", ACTIONS], ["VM", VM]]) {
+  test(`#2009 the ${lane} umbrella names an unexpected pass as a pass, with its signature`, () => {
+    const unexpectedPasses = [
+      { file: "a.spec.ts", line: 458, title: "declared `failing`", attempts: 3, passedAttempts: 3 },
+    ];
+    const { title, body } = renderIssue({ ...base, unexpectedPasses });
+    // The title is untouched: the day still had an `unexpected` result.
+    assert.equal(title, renderIssue(base).title);
+    assert.match(body, /### ✅ 1 test\(s\) declared failing with `test\.fail\(\)` PASSED/);
+    assert.match(body, /`error_signature: "expected to fail but passed"`/);
+    assert.match(body, /- `a\.spec\.ts:458` — declared 'failing' _\(passed on all 3 attempt\(s\)\)_/);
+    // Ahead of the per-test material, so the list below is read against it.
+    assert.ok(body.indexOf("PASSED") < body.indexOf("### Next steps"));
+  });
+}
+
+test("#2009 a pass after an earlier non-passing attempt says how many passed", () => {
+  const { body } = renderIssue({
+    ...VM,
+    unexpectedPasses: [{ file: "a.spec.ts", line: 0, title: "t", attempts: 2, passedAttempts: 1 }],
+  });
+  assert.match(body, /- `a\.spec\.ts` — t _\(passed on 1 of 2 attempt\(s\), including the last\)_/);
+});
+
+test("#2009 with no unexpected pass the body is exactly what it was", () => {
+  assert.equal(renderIssue({ ...VM, unexpectedPasses: [] }).body, renderIssue(VM).body);
+  assert.doesNotMatch(renderIssue(ACTIONS).body, /PASSED/);
+});
+
+test("#2009 main() reads PLAYWRIGHT_JSON and names the unexpected pass in the body it writes", () => {
+  const runDir = makeTempDir("issue-body-uxp-");
+  const report = join(runDir, "results.json");
+  writeFileSync(report, JSON.stringify(UNEXPECTED_PASS_REPORT));
+  const r = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...process.env, ISSUE_DRY_RUN: "1", RUN_DIR: runDir, RUN_ID: "1", AUTO_REMOVE_STATUS: "", LIVENESS_MD: "", PLAYWRIGHT_JSON: report },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const body = readFileSync(join(runDir, "issue-body.md"), "utf-8");
+  assert.match(body, /credential-secret-exposure\.spec\.ts:458` — declared failing for a filed bug/);
+  assert.doesNotMatch(body, /a real hard failure/, "a real failure is not named as a pass");
+});
+
+// Structural, and scoped to what a structure can prove (#1226): that BOTH callers
+// still hand the renderer the report. The rendering itself is pinned above; without
+// the input it silently names nothing, on the host that opens the umbrella.
+test("#2009 both umbrella callers pass the merged report to the renderer", () => {
+  const daily = readFileSync(join(REPO, ".github/workflows/daily-stable.yml"), "utf8");
+  const step = daily.slice(daily.indexOf("- name: Create issue on failure"));
+  const end = step.indexOf("\n      - name:", 1);
+  const stepBody = step.slice(0, end === -1 ? undefined : end);
+  assert.match(stepBody, /\n {10}PLAYWRIGHT_JSON: results\.json\n/, "the Actions step must pass the report");
+
+  const vm = readFileSync(join(REPO, "scripts/run-e2e.sh"), "utf8");
+  const call = vm.indexOf("node scripts/create-failure-issue.mjs");
+  const block = vm.slice(vm.lastIndexOf('log "Opening the failure issue"', call), call);
+  assert.match(block, /PLAYWRIGHT_JSON="\$RUN_DIR\/results\.json" \\/, "the VM call must pass the report");
+});
+
+test("#2009 with no usable rootDir the file is anchored on <repo>/tests when it is there", () => {
+  // The auto-removal block's own fallback (remove-stable-from-failures.ts candidateBases).
+  const repo = makeTempDir("unexpected-pass-repo-");
+  const spec = "tests-automations/regression/security/credential-secret-exposure.spec.ts";
+  mkdirSync(join(repo, "tests", dirname(spec)), { recursive: true });
+  writeFileSync(join(repo, "tests", spec), "");
+  const file = join(repo, "results.json");
+  writeFileSync(file, JSON.stringify({ ...UNEXPECTED_PASS_REPORT, config: {} }));
+  assert.equal(readUnexpectedPasses(file, repo)[0].file, `tests/${spec}`);
+  // A rootDir outside the repo falls back the same way.
+  writeFileSync(file, JSON.stringify({ ...UNEXPECTED_PASS_REPORT, config: { rootDir: "/elsewhere/tests" } }));
+  assert.equal(readUnexpectedPasses(file, repo)[0].file, `tests/${spec}`);
+});
+
+test("#2009 a pass after an earlier timeout is collected with the attempts that passed", () => {
+  const dir = makeTempDir("unexpected-pass-");
+  const file = join(dir, "results.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      suites: [
+        {
+          title: "a.spec.ts",
+          specs: [
+            {
+              title: "declared failing",
+              file: "a.spec.ts",
+              line: 7,
+              tests: [{ status: "unexpected", results: [{ status: "timedOut", error: { message: "Test timeout" } }, { status: "passed" }] }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(readUnexpectedPasses(file, "/nowhere"), [
+    { file: "a.spec.ts", line: 7, title: "declared failing", attempts: 2, passedAttempts: 1 },
+  ]);
+});
+
+test("#2009 a file is re-anchored on the repo when the report names its rootDir", () => {
+  const dir = makeTempDir("unexpected-pass-root-");
+  const file = join(dir, "results.json");
+  const withRoot = (rootDir) => ({ ...UNEXPECTED_PASS_REPORT, config: { rootDir } });
+  writeFileSync(file, JSON.stringify(withRoot("/repo/tests")));
+  assert.equal(
+    readUnexpectedPasses(file, "/repo")[0].file,
+    "tests/tests-automations/regression/security/credential-secret-exposure.spec.ts",
+    "the same spelling as the auto-removal block (repo-relative)",
+  );
+  // A rootDir outside the repo (a report merged elsewhere) keeps the report's own path.
+  writeFileSync(file, JSON.stringify(withRoot("/elsewhere/tests")));
+  assert.equal(
+    readUnexpectedPasses(file, "/repo")[0].file,
+    "tests-automations/regression/security/credential-secret-exposure.spec.ts",
+  );
 });

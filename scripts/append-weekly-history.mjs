@@ -177,6 +177,7 @@ import { dirname, relative, resolve } from "node:path";
 import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 import { paramFromSuitePath } from "./lib/spec-param.mjs";
+import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
 import { RECURRENCE_KEY_VERSION, recurrenceKeysForTest } from "./lib/recurrence-key.mjs";
 
 const SCHEMA_VERSION = 1;
@@ -365,9 +366,16 @@ function outageOverlapField(file, title, param, test) {
 // The recurrence keys (#1626), spread-ready. `process.cwd()` is the root the
 // report's absolute error locations are made relative against — the same root
 // `specRelFile` uses for the spec path.
+//
+// An unexpected pass (#2009) records NO keys, even when an earlier attempt
+// failed. Its cause is the pass — `error_signature` says so — and a key left from
+// a `[timedOut, passed]` attempt would make the triage read the fix-day signal as
+// a recurrence of the old timeout and miss every other day the declared bug
+// passed. With an empty list the comparison falls back to the signature's head,
+// so unexpected passes match each other and nothing else.
 function recurrenceFields(test) {
   return {
-    recurrence_keys: recurrenceKeysForTest(test, process.cwd()),
+    recurrence_keys: isUnexpectedPass(test) ? [] : recurrenceKeysForTest(test, process.cwd()),
     recurrence_key_version: RECURRENCE_KEY_VERSION,
   };
 }
@@ -447,7 +455,16 @@ function visit(node, suitePath = []) {
         line,
         tags,
         attempts,
-        error_signature: firstErrorMessage(lastFailed) || "unknown",
+        // An unexpected pass (#2009) has no failed attempt, so `lastFailed` is
+        // undefined and this used to be "unknown" — pooling the fix-day signal of a
+        // declared bug with every failure whose error was lost. `build-run-payload.mjs`
+        // records the same signature from the same predicate. When an EARLIER attempt
+        // failed (`[timedOut, passed]`), `infra_signature` below is still classified
+        // from that attempt — deliberately, since it is the attempt
+        // `remove-stable-from-failures.ts` reads too, and the two must not disagree.
+        error_signature: isUnexpectedPass(test)
+          ? UNEXPECTED_PASS_SIGNATURE
+          : firstErrorMessage(lastFailed) || "unknown",
         // Classified from the LAST failed attempt, matching the exemption's own
         // wording ("a hard failure whose LAST error is transport-level") and
         // `remove-stable-from-failures.ts`, so the history and the umbrella's

@@ -103,3 +103,49 @@ test("adding run_attempt leaves the rest of the payload contract intact", () => 
   assert.equal(payload.tests.length, 1);
   assert.equal(payload.tests[0].status, "passed");
 });
+
+/** Run the builder against an arbitrary report. */
+function buildFrom(report) {
+  const dir = makeTempDir("payload-");
+  const reportPath = join(dir, "results.json");
+  writeFileSync(reportPath, JSON.stringify(report));
+  return JSON.parse(
+    execFileSync(process.execPath, [SCRIPT], {
+      encoding: "utf-8",
+      stdio: "pipe",
+      env: { PATH: process.env.PATH, PLAYWRIGHT_JSON: reportPath },
+    }),
+  );
+}
+
+const withTests = (tests) => ({
+  config: {},
+  suites: [
+    {
+      title: "a.spec.ts",
+      specs: tests.map(([title, t], i) => ({
+        title,
+        file: "tests/tests-automations/regression/smoke/a.spec.ts",
+        line: 10 + i,
+        tags: ["@stable"],
+        tests: [t],
+      })),
+    },
+  ],
+  stats: { duration: 1 },
+});
+
+test("#2009 an unexpected pass is a failure with its own signature, not \"unknown\"", () => {
+  // The measured shape of a `test.fail()` whose body passed (Playwright 1.58.2).
+  const passed = { status: "passed", duration: 5, steps: [] };
+  const payload = buildFrom(
+    withTests([
+      ["declared failing", { status: "unexpected", expectedStatus: "failed", results: [passed, passed, passed] }],
+      ["lost error", { status: "unexpected", results: [{ status: "failed", duration: 5 }] }],
+    ]),
+  );
+  assert.deepEqual(payload.totals, { passed: 0, failed: 2, flaky: 0, skipped: 0 });
+  assert.equal(payload.failures[0].error_signature, "expected to fail but passed");
+  assert.equal(payload.failures[0].attempts, 3);
+  assert.equal(payload.failures[1].error_signature, "unknown", "a genuinely lost error is unchanged");
+});

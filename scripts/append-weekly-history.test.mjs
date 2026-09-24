@@ -917,3 +917,58 @@ test("#1763 an OUTAGE_ATTEMPTS that cannot be read still names the reason, not t
   assert.match(stderr, /could not be read/);
   assert.equal(stderr.includes("LIVENESS_DIR is set"), false, "the path was provided — this is a different failure");
 });
+
+test("#2009 an unexpected pass records its own signature, not \"unknown\"", () => {
+  // The measured shape of a `test.fail()` whose body passed (Playwright 1.58.2):
+  // status `unexpected`, every attempt `passed`, no error anywhere. There is no
+  // failed attempt, which is why `lastFailed` found nothing and the row said
+  // "unknown" — the same string as a failure whose error was lost.
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("passed"), result("passed"), result("passed")],
+      },
+      { title: "lost error", status: "unexpected", results: [result("failed")] },
+    ]),
+  );
+  assert.deepEqual(entry.totals, { passed: 0, failed: 2, flaky: 0, skipped: 0 });
+  const [pass, lost] = entry.failures;
+  assert.equal(pass.error_signature, "expected to fail but passed");
+  assert.equal(pass.infra_signature, null, "a passing attempt is never transport-level");
+  assert.equal(pass.attempts, 3);
+  assert.equal(lost.error_signature, "unknown", "the genuine no-message failure is unchanged");
+});
+
+test("#2009 the pass is read off the LAST attempt: an earlier timeout does not mask it", () => {
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("passed")],
+      },
+    ]),
+  );
+  assert.equal(entry.failures[0].error_signature, "expected to fail but passed");
+});
+
+test("#2009 an unexpected pass records no recurrence key, even after an earlier timeout", () => {
+  // Otherwise the timeout's key answers for the row: the triage would match this
+  // fix day against a genuine timeout of the test and not against the other days
+  // the declared bug passed (#1626's matcher ignores the signature when keys exist).
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("passed")],
+      },
+      { title: "real timeout", status: "unexpected", results: [result("timedOut", "Test timeout of 30000ms exceeded.")] },
+    ]),
+  );
+  const [pass, timeout] = entry.failures;
+  assert.deepEqual(pass.recurrence_keys, []);
+  assert.equal(timeout.recurrence_keys.length, 1, "a genuine failure still records its key");
+});
