@@ -85,6 +85,8 @@
 //   SLACK_ANNOUNCE_GREEN=1  announce a CLEAN day too, as its own shape. Default: off.
 //   TEST_JOB_FAILED     "1" = the RUNNER failed this run, for a reason that may not be
 //                       in the report at all. It can never be announced as green.
+//   MIRROR_SUMMARY      one plain-text line on the suite's mirror, from
+//                       scripts/mirror-freshness-summary.mjs. Absent = no line.
 //   SLACK_FORCE=1       post even when the run reported nothing bad (wiring test).
 //                       Implies SLACK_ANNOUNCE_GREEN — it posts the green message, not
 //                       a red one with a zero in it.
@@ -475,9 +477,18 @@ const fixedText = [
   .filter(Boolean)
   .join("\n\n");
 
-const tail = diagnosis ? "" : failureList(SECTION_MAX - fixedText.length - 2);
+// Last, on every shape, after the failure list: it qualifies the whole message (was the
+// suite current?) and it is the only place the mirror's overnight stalls are written
+// down, since the freshness alarm posts at most once a day. It cannot be dropped, so its
+// length comes out of the list's budget like the fixed text's does. Plain text in,
+// decorated here.
+const mirrorText = env.MIRROR_SUMMARY ? `${bold("Mirror")}: ${truncate(env.MIRROR_SUMMARY, 300)}` : "";
 
-const body = [fixedText, tail].filter(Boolean).join("\n\n");
+const tail = diagnosis
+  ? ""
+  : failureList(SECTION_MAX - fixedText.length - 2 - (mirrorText ? mirrorText.length + 2 : 0));
+
+const body = [fixedText, tail, mirrorText].filter(Boolean).join("\n\n");
 
 const links = [];
 if (env.ISSUE_URL) links.push(linkTo(env.ISSUE_URL, "Triage issue"));

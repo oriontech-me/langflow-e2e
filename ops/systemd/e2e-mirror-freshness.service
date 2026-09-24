@@ -1,6 +1,7 @@
-# Asks whether the suite the VM lane reads is still what `main` holds, and says so when
-# the answer changes. See scripts/mirror-freshness-alarm.sh for why it is a change
-# notifier rather than an hourly repeat.
+# Asks whether the suite the VM lane reads is still what `main` holds, and RECORDS the
+# answer for the daily's mirror line. It never posts: the channel hears about the mirror
+# once a day, from e2e-mirror-freshness-announce.service. See
+# scripts/mirror-freshness-alarm.sh for why.
 #
 # Versioned here rather than living only in /root: the machine that carries the verdict
 # should not be less reproducible than the one that does not (the debt task 3 is about).
@@ -16,13 +17,13 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 # HOME is set for the same reason #1715 exists: a systemd unit does not have one, and
-# the state file and git both look for it. WorkingDirectory is the clone the lane runs.
+# the history file and git both look for it. WorkingDirectory is the clone the lane runs.
 Environment=HOME=/root
 # PATH is pinned, not inherited. systemd's default omits ~/.local/bin and anything a
 # version manager installs — the trap `prepare-target-source.sh` already documents —
 # and the failure here is worse than a missing binary: `node` not found exits 127, the
-# alarm reads any non-zero as "not current", and the channel gets a red siren whose
-# body is "node: command not found". Measured on this machine: node and git are in
+# alarm reads any non-zero as "not current", and the history records a stall whose
+# cause is "node: command not found". Measured on this machine: node and git are in
 # /usr/bin, and ~/.local/bin is where uv and friends live.
 Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WorkingDirectory=/root/e2e-qa

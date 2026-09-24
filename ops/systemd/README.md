@@ -10,7 +10,8 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-daily.timer` | 08:00 UTC on weekdays, `Persistent=false` |
 | `e2e-daily-watchdog.service` | the alarm for a day that produced **no** verdict |
 | `e2e-daily-watchdog.timer` | 09:00 UTC on weekdays, `Persistent=true` |
-| `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947) |
+| `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947). **Records** the answer, never posts |
+| `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
 
 ## Two asymmetries that look like inconsistencies and are not
 
@@ -51,11 +52,13 @@ cd /root/e2e-qa
 cp -r ops/systemd/e2e-daily.service ops/systemd/e2e-daily.timer \
       ops/systemd/e2e-daily-watchdog.service ops/systemd/e2e-daily-watchdog.timer \
       ops/systemd/e2e-mirror-freshness.service ops/systemd/e2e-mirror-freshness.timer \
+      ops/systemd/e2e-mirror-freshness-announce.service ops/systemd/e2e-mirror-freshness-announce.timer \
       /etc/systemd/system/
 mkdir -p /etc/systemd/system/e2e-daily.service.d
 cp ops/systemd/e2e-daily.service.d/10-target-dist.conf /etc/systemd/system/e2e-daily.service.d/
 systemctl daemon-reload
-systemctl enable --now e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer
+systemctl enable --now e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer \
+  e2e-mirror-freshness-announce.timer
 ```
 
 The `.service` units carry no `[Install]` section by design: each is pulled by its
@@ -65,14 +68,16 @@ timer's `Unit=`, so only the timers are enabled.
 
 ```sh
 for f in e2e-daily.service e2e-daily.timer e2e-daily-watchdog.service \
-         e2e-daily-watchdog.timer e2e-mirror-freshness.service e2e-mirror-freshness.timer; do
+         e2e-daily-watchdog.timer e2e-mirror-freshness.service e2e-mirror-freshness.timer \
+         e2e-mirror-freshness-announce.service e2e-mirror-freshness-announce.timer; do
   diff -q "ops/systemd/$f" "/etc/systemd/system/$f" || echo "$f DIFFERS"
 done
 diff -q ops/systemd/e2e-daily.service.d/10-target-dist.conf \
         /etc/systemd/system/e2e-daily.service.d/10-target-dist.conf
 
 systemctl show e2e-daily.service -p LoadState -p Wants -p After --value
-systemctl list-timers e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer
+systemctl list-timers e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer \
+  e2e-mirror-freshness-announce.timer
 ```
 
 Existence is `LoadState=loaded`, never `ActiveState` — a unit that does not exist reports
