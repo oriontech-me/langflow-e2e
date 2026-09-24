@@ -366,9 +366,16 @@ function outageOverlapField(file, title, param, test) {
 // The recurrence keys (#1626), spread-ready. `process.cwd()` is the root the
 // report's absolute error locations are made relative against — the same root
 // `specRelFile` uses for the spec path.
+//
+// An unexpected pass (#2009) records NO keys, even when an earlier attempt
+// failed. Its cause is the pass — `error_signature` says so — and a key left from
+// a `[timedOut, passed]` attempt would make the triage read the fix-day signal as
+// a recurrence of the old timeout and miss every other day the declared bug
+// passed. With an empty list the comparison falls back to the signature's head,
+// so unexpected passes match each other and nothing else.
 function recurrenceFields(test) {
   return {
-    recurrence_keys: recurrenceKeysForTest(test, process.cwd()),
+    recurrence_keys: isUnexpectedPass(test) ? [] : recurrenceKeysForTest(test, process.cwd()),
     recurrence_key_version: RECURRENCE_KEY_VERSION,
   };
 }

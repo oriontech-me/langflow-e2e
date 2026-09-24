@@ -953,3 +953,22 @@ test("#2009 the pass is read off the LAST attempt: an earlier timeout does not m
   );
   assert.equal(entry.failures[0].error_signature, "expected to fail but passed");
 });
+
+test("#2009 an unexpected pass records no recurrence key, even after an earlier timeout", () => {
+  // Otherwise the timeout's key answers for the row: the triage would match this
+  // fix day against a genuine timeout of the test and not against the other days
+  // the declared bug passed (#1626's matcher ignores the signature when keys exist).
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("passed")],
+      },
+      { title: "real timeout", status: "unexpected", results: [result("timedOut", "Test timeout of 30000ms exceeded.")] },
+    ]),
+  );
+  const [pass, timeout] = entry.failures;
+  assert.deepEqual(pass.recurrence_keys, []);
+  assert.equal(timeout.recurrence_keys.length, 1, "a genuine failure still records its key");
+});
