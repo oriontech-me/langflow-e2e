@@ -2949,3 +2949,54 @@ test("the push credential is only asked about where a removal can be pushed (#20
   // umbrella should not first spend a network call on the smaller question.
   assert.ok(start > preflight.indexOf("verify_issue_credential"), "asked before the check that can stop the run");
 });
+
+test("the umbrella's triage section is always written, and says so when it could not be built (#2031)", () => {
+  const dir = makeTempDir("triage-summary");
+  const ledger = join(dir, "ledger");
+  mkdirSync(ledger, { recursive: true });
+  const row = {
+    date: "2026-09-21",
+    run_id: "20260921T080025Z",
+    totals: { passed: 1, failed: 0, flaky: 1, skipped: 0 },
+    failures: [],
+    flaky: [{ test: "wobbles", file: "w.spec.ts", line: 4, error_signature: "TimeoutError: x", infra_signature: null }],
+  };
+  writeFileSync(join(ledger, "daily-history.jsonl"), `${JSON.stringify(row)}\n`);
+  writeFileSync(join(dir, "results.json"), JSON.stringify({ suites: [] }));
+
+  const run = (runId, env = {}) =>
+    sourced(
+      [`RUN_DIR=${JSON.stringify(dir)}`, `RUN_ID=${runId}`, `set +e; build_triage_summary; echo "EXIT=$? FILE=$TRIAGE_MD_FILE"`].join("\n"),
+      { LEDGER_DIR: ledger, KEEP_LEDGER: "1", EVENT_NAME: "schedule", ...env },
+    );
+  const summary = () => readFileSync(join(dir, "triage-summary.md"), "utf8");
+
+  // The real builder and the real renderer, over a real ledger row.
+  const ok = run(row.run_id);
+  assert.match(ok.stdout, /EXIT=0 FILE=.*triage-summary\.md/, ok.stderr);
+  assert.match(summary(), /### Triage dataset — computed from the ledger over 30 days/);
+  assert.match(summary(), /_Not recurrent \(1\)[\s\S]*w\.spec\.ts:4/);
+  assert.match(summary(), /\*\*Skips \(0\)\*\*/, "the report was passed, so skips were read");
+
+  // A run the ledger does not hold — the history append failed — is said, not skipped.
+  const missing = run("20260101T000000Z");
+  assert.match(missing.stdout, /EXIT=0/, "a dataset that cannot be built must not fail the run");
+  assert.match(missing.stderr, /::warning::.*triage dataset could not be built/);
+  assert.match(summary(), /_Could not be built on this run — see `.*triage-dataset\.log` on the VM/);
+
+  // No ledger, no window: said too.
+  const noLedger = run(row.run_id, { KEEP_LEDGER: "0" });
+  assert.match(noLedger.stdout, /EXIT=0/);
+  assert.match(summary(), /_Not computed: this run keeps no history ledger/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the triage section is built only where the umbrella opens, and handed to it (#2031)", () => {
+  const sh = readFileSync(SCRIPT, "utf8");
+  const publish = sh.slice(sh.indexOf("phase_publish() {"), sh.indexOf("phase_verdict() {"));
+  const block = publish.slice(publish.indexOf('log "Opening the failure issue"'), publish.indexOf("node scripts/create-failure-issue.mjs"));
+  assert.match(block, /build_triage_summary/, "the section is not built before the umbrella");
+  assert.match(block, /TRIAGE_MD_FILE="\$TRIAGE_MD_FILE"/, "the section never reaches the umbrella");
+  // After the history append: the dataset reads this run's row from the ledger.
+  assert.ok(publish.indexOf("build_triage_summary") > publish.indexOf("append-weekly-history.mjs"));
+});
