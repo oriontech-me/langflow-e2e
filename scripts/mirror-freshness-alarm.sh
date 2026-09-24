@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
-# The alarm around scripts/check-mirror-freshness.mjs: asks the question on a schedule
-# and says something OUT LOUD when the answer stops being "current".
+# The alarm around scripts/check-mirror-freshness.mjs. Two jobs, split by ANNOUNCE:
 #
-# ## Why a second caller
+#   hourly (default)  asks the question and RECORDS the answer. Never posts.
+#   ANNOUNCE=1        once, before the daily: posts only if the mirror is behind NOW.
 #
-# The daily's preflight asks it too, and that is the one that matters for a verdict.
-# This one covers the hours and days the daily does not run — a mirror that stalls on
-# a Friday evening is a mirror nobody asks about until Monday, and the stall of
-# 2026-09-16 ran for 43 syncs precisely because nothing asked between runs.
+# ## Why the channel hears about it once a day, not on every change
 #
-# ## Why it is not simply "post every hour"
+# The first version posted on every change of state: behind, then recovered. The mirror
+# is pushed from a laptop, and launchd does not fire while the laptop sleeps, so every
+# merge made with the lid closed became two messages. On 2026-09-23/24 that was four
+# messages in one night for two stalls, and neither touched a verdict.
 #
-# A stall lasts days. Hourly posts would make 24 messages about one fact, and a channel
-# that gets 24 identical alarms learns to mute the twenty-fifth — which is how an alarm
-# becomes worse than none. So this posts on a CHANGE of state: when the mirror stops
-# being current, and again when it recovers. The recovery message is not politeness: it
-# is what tells a reader the earlier alarm is closed without them having to go look.
+# A stale mirror costs something at ONE moment: when the daily checks it out. So the
+# question that deserves the channel is "will the daily run an older suite?", asked
+# half an hour before it starts. The rest is history, and the history is not lost: the
+# hourly runs write it to HISTORY_FILE, and the daily's own message carries a one-line
+# summary of the last 24h (scripts/mirror-freshness-summary.mjs).
 #
-# Fail-soft everywhere. A missing webhook, a curl that fails, an unwritable state file:
-# each is reported to stdout (which the journal keeps) and none of them makes this exit
-# non-zero, because a broken notifier must not be read as a broken mirror.
+# ## What still goes unsaid
+#
+# UNKNOWN at the announce check is not posted. The check could not ask, which says
+# nothing about the mirror, and the daily's preflight asks again thirty minutes later
+# and writes its answer into the run's evidence.
+#
+# Fail-soft everywhere. A missing webhook, a curl that fails, an unwritable history
+# file: each is reported to stdout (which the journal keeps) and none of them makes this
+# exit non-zero, because a broken notifier must not be read as a broken mirror.
 #
 # Usage:
 #   scripts/mirror-freshness-alarm.sh
-#   CHECK_BIN=/path/to/stub STATE_FILE=... SECRETS_FILE=... scripts/mirror-freshness-alarm.sh
+#   ANNOUNCE=1 scripts/mirror-freshness-alarm.sh
+#   CHECK_BIN=/path/to/stub HISTORY_FILE=... SECRETS_FILE=... scripts/mirror-freshness-alarm.sh
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,7 +38,12 @@ cd "$REPO_DIR"
 
 SECRETS_FILE="${SECRETS_FILE:-/root/.e2e-secrets}"
 STATE_DIR="${STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/langflow-e2e}"
-STATE_FILE="${STATE_FILE:-$STATE_DIR/mirror-freshness.state}"
+# One line per look: `<epoch seconds>\t<current|not-current|unknown>`. Read by
+# scripts/mirror-freshness-summary.mjs, which computes the same default path.
+HISTORY_FILE="${HISTORY_FILE:-$STATE_DIR/mirror-freshness.history}"
+# Enough for the 24h summary, with room to look back by hand after a long weekend.
+HISTORY_DAYS="${HISTORY_DAYS:-7}"
+ANNOUNCE="${ANNOUNCE:-0}"
 # An executable PATH, not a command string: `$CMD` unquoted is word-split, so a command
 # carrying quotes arrives mangled — the first version of this took a string and the
 # test caught it on the first run, with the shell's own parse error travelling into a
@@ -54,69 +66,49 @@ fi
 code=$?
 printf '%s\n' "$output"
 
-# UNKNOWN is its own state, and that matters for what gets SAID: "the mirror is not
-# current" is an assertion the check itself refuses to make when it could not tell, and
-# a 60-second DNS blip on an hourly timer would otherwise produce a false stall alarm
-# plus a recovery an hour later — the credibility erosion this file argues against.
+# UNKNOWN is its own state: "the mirror is not current" is an assertion the check
+# itself refuses to make when it could not tell.
 case "$code" in
   0) state="current" ;;
   2) state="unknown" ;;
   *) state="not-current" ;;
 esac
 
-# `none`, not `unknown`: UNKNOWN is a real verdict of the check now, and using it for
-# "never looked" would make the first look after an install indistinguishable from a
-# check that could not reach the source.
-# The state file holds TWO things, and one is not enough: what was last OBSERVED, and
-# whether it was ANNOUNCED. Observation alone cannot express "we saw this and could not
-# say it" — the shape a failed POST leaves behind, and the shape the first of two
-# consecutive UNKNOWNs leaves on purpose. Written as `<state>:<yes|no>`.
-previous="none"; announced="no"
-if [ -r "$STATE_FILE" ]; then
-  raw="$(cat "$STATE_FILE" 2>/dev/null || echo "none:no")"
-  previous="${raw%%:*}"
-  case "$raw" in *:*) announced="${raw#*:}" ;; *) announced="yes" ;; esac
+# Recorded on every run, announce included: the summary counts looks, and the announce
+# check is one. Trimmed on write, so the file cannot grow without bound on a machine
+# nobody logs into.
+mkdir -p "$(dirname "$HISTORY_FILE")" 2>/dev/null || true
+now="$(date +%s)"
+# The not-a-regular-file refusal is explicit because `mv tmp DIR` does not fail: it
+# moves the file INTO the directory and every later read finds nothing, silently.
+if { [ ! -e "$HISTORY_FILE" ] || [ -f "$HISTORY_FILE" ]; } \
+   && { if [ -r "$HISTORY_FILE" ]; then
+       awk -F'\t' -v cut="$(( now - HISTORY_DAYS * 86400 ))" '$1 >= cut' "$HISTORY_FILE"
+     fi
+     printf '%s\t%s\n' "$now" "$state"; } > "$HISTORY_FILE.tmp" 2>/dev/null \
+   && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE" 2>/dev/null; then
+  :
+else
+  rm -f "$HISTORY_FILE.tmp" 2>/dev/null
+  echo "[alarm] could not write $HISTORY_FILE — this look is missing from the daily's summary."
 fi
 
-mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
-remember() {
-  printf '%s:%s\n' "$1" "$2" > "$STATE_FILE" 2>/dev/null \
-    || echo "[alarm] could not write $STATE_FILE — the next run will repeat this message."
-}
-
-# Nothing to say, and that is most runs.
-if [ "$state" = "current" ] && { [ "$previous" = "current" ] || [ "$previous" = "none" ] || [ "$announced" = "no" ]; }; then
-  case "$previous" in
-    none)    echo "[alarm] first observation, and the mirror is current — nothing to say." ;;
-    current) echo "[alarm] unchanged (current) — not repeating it." ;;
-    *)       echo "[alarm] back to current, and the earlier state was never announced — nothing to close." ;;
-  esac
-  remember current yes
+if [ "$ANNOUNCE" != "1" ]; then
+  echo "[alarm] recorded '$state' — the channel hears about the mirror only at the pre-daily check."
   exit 0
 fi
 
-# A single UNKNOWN is weather. The check could not ask, which says nothing about the
-# mirror, and one 60-second blip on an hourly timer must not produce an alarm plus a
-# recovery an hour later. It is REMEMBERED though — otherwise the second look cannot
-# know it is the second.
-if [ "$state" = "unknown" ] && [ "$previous" != "unknown" ]; then
-  echo "[alarm] could not tell this time — waiting for a second look before saying anything."
-  remember unknown no
-  exit 0
-fi
-
-# Already said, and still true.
-if [ "$state" = "$previous" ] && [ "$announced" = "yes" ]; then
-  echo "[alarm] unchanged ($state) — not repeating it."
-  exit 0
-fi
+case "$state" in
+  current)
+    echo "[alarm] current before the daily — nothing to say."
+    exit 0 ;;
+  unknown)
+    echo "[alarm] could not tell before the daily — not posting; the daily's preflight asks again."
+    exit 0 ;;
+esac
 
 if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-  # Deliberately left UNANNOUNCED: nothing can deliver from here, so the journal
-  # repeating the line is the only signal there is, and marking it announced would
-  # record as handled a change no one was told about.
-  echo "[alarm] state changed to '$state' and there is no SLACK_WEBHOOK_URL — said here only."
-  remember "$state" no
+  echo "[alarm] the mirror is behind before the daily and there is no SLACK_WEBHOOK_URL — said here only."
   exit 0
 fi
 
@@ -133,20 +125,13 @@ case "$SLACK_WEBHOOK_URL" in
   *)            transport="text";     main_ref="\`main\`" ;;
 esac
 
-case "$state" in
-  current)  glyph=":white_check_mark:"; plain_glyph="✅"
-            sentence="The e2e mirror is following ${main_ref} again." ;;
-  unknown)  glyph=":warning:"; plain_glyph="⚠️"
-            sentence="The e2e mirror's freshness could not be determined twice in a row — this says nothing about the mirror, only that the question cannot be asked from the VM." ;;
-  *)        glyph=":rotating_light:"; plain_glyph="🚨"
-            sentence="The e2e mirror is not current, so the VM lane may be running an older suite than ${main_ref}." ;;
-esac
+sentence="The e2e mirror is behind ${main_ref} and the daily starts in about 30 minutes: unless the mirror is synced before then, it will run an older suite."
 
 # The HTTP status decides, because `curl -sS` exits 0 for a 404 and a 500 alike: a
 # rotated webhook answers `404 no_service`, and without this the failure line never
-# prints and the change is recorded as delivered.
-status="$(TRANSPORT="$transport" HEADLINE="$plain_glyph $sentence" BODY="$output" \
-  TEXT="$glyph $sentence $output" python3 -c '
+# prints and the message is taken as delivered.
+status="$(TRANSPORT="$transport" HEADLINE="🚨 $sentence" BODY="$output" \
+  TEXT=":rotating_light: $sentence $output" python3 -c '
 import json, os
 if os.environ["TRANSPORT"] == "workflow":
     # The check writes `main` in its verdict; a backtick never belongs to a SHA or a
@@ -159,15 +144,9 @@ else:
   | curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
       -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" 2>/dev/null)"
 case "$status" in
-  2??)
-    remember "$state" yes
-    ;;
-  *)
-    # Remembered as SEEN but not announced, so the next run says it again. Writing it as
-    # announced is the defect this replaced: one failed POST consumed the transition and
-    # every later run reported "unchanged".
-    echo "[alarm] the notification was not accepted (HTTP ${status:-none}) — not recording it as said, so the next run repeats it."
-    remember "$state" no
-    ;;
+  2??) echo "[alarm] posted: the mirror is behind before the daily." ;;
+  # No retry: the next chance to say it is tomorrow's check, and by then the daily's
+  # own message has already carried the fact in its mirror line.
+  *)   echo "[alarm] the notification was not accepted (HTTP ${status:-none}) — the daily's message still carries the mirror line." ;;
 esac
 exit 0
