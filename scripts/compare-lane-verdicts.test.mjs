@@ -1721,3 +1721,104 @@ test("more shards answering than the run expected is not a negative count", () =
   );
   assert.deepEqual(sweepWarning(result), []);
 });
+
+// ---------------------------------------------------------------------------
+// Suite revision (#2060) - divergence 6 of the VM migration
+// ---------------------------------------------------------------------------
+//
+// The lanes run hours apart, so a merge in between puts them on different suites.
+// Until the rows carried the revision, a count difference could only be explained by
+// the guess "they may not have run the same suite revision". The failures worth
+// pinning: a real gap that is not named, a matching revision that still reads as the
+// guess, and a missing or malformed field that reads as "same".
+
+const SHA_A = "a".repeat(40);
+const SHA_B = "b".repeat(40);
+const suite = (sha) => ({ suite_sha: sha });
+const suiteWarning = (result) => result.warnings.filter((w) => /SUITE REVISIONS|suite-revision parity/.test(w));
+const countLine = (result) => result.warnings.find((w) => w.includes("different test counts"));
+
+test("two different suite revisions are named, with both ids and the command that lists the gap", () => {
+  const result = compare(row("daily-stable", suite(SHA_A)), row("vm-daily", suite(SHA_B)));
+  const [w] = suiteWarning(result);
+  assert.match(w, /the lanes ran DIFFERENT SUITE REVISIONS - Actions aaaaaaaaaaaa, VM bbbbbbbbbbbb/);
+  assert.match(w, /git log --oneline --left-right aaaaaaaaaaaa\.\.\.bbbbbbbbbbbb/);
+  assert.deepEqual(result.suiteMismatch, { ci: SHA_A, vm: SHA_B });
+  // A warning, never a blocker: the day is still compared.
+  assert.equal(result.comparable, true);
+});
+
+test("a revision gap replaces the guess on the count line", () => {
+  const result = compare(
+    row("daily-stable", { ...suite(SHA_A), totals: { passed: 10, failed: 0, flaky: 0, skipped: 2 } }),
+    row("vm-daily", { ...suite(SHA_B), totals: { passed: 12, failed: 0, flaky: 0, skipped: 2 } }),
+  );
+  assert.match(countLine(result), /the suite revisions above differ/);
+  assert.doesNotMatch(countLine(result), /may not have run the same suite revision/);
+});
+
+test("the same revision rules the gap out instead of repeating the guess", () => {
+  const result = compare(
+    row("daily-stable", { ...suite(SHA_A), totals: { passed: 10, failed: 0, flaky: 0, skipped: 2 } }),
+    row("vm-daily", { ...suite(SHA_A), totals: { passed: 12, failed: 0, flaky: 0, skipped: 2 } }),
+  );
+  assert.deepEqual(suiteWarning(result), []);
+  assert.equal(result.suiteMismatch, null);
+  assert.match(countLine(result), /both lanes ran suite aaaaaaaaaaaa, so it is not a revision gap/);
+  assert.doesNotMatch(countLine(result), /may not have run the same suite revision/);
+});
+
+test("a named listing loss still outranks the revision on the count line", () => {
+  // The listing block names the files, which is the whole difference; the revision
+  // only says where one could have come from.
+  const result = compare(
+    row("daily-stable", {
+      ...suite(SHA_A),
+      listing_completeness: { verified: true, missing: ["a/lost.spec.ts"] },
+      totals: { passed: 9, failed: 0, flaky: 0, skipped: 2 },
+    }),
+    row("vm-daily", { ...suite(SHA_B), ...listing(true) }),
+  );
+  assert.match(countLine(result), /a lane's matrix was missing the spec file\(s\) named above/);
+});
+
+test("an absent suite_sha is parity UNVERIFIED, named per lane, and never reads as the same revision", () => {
+  const result = compare(
+    row("daily-stable", { ...suite(SHA_A), totals: { passed: 10, failed: 0, flaky: 0, skipped: 2 } }),
+    row("vm-daily", { totals: { passed: 12, failed: 0, flaky: 0, skipped: 2 } }),
+  );
+  const [w] = suiteWarning(result);
+  assert.match(w, /suite-revision parity UNVERIFIED: the VM row carries no suite_sha\./);
+  assert.doesNotMatch(w, /Actions row/);
+  assert.equal(result.suiteMismatch, null);
+  assert.match(countLine(result), /may not have run the same suite revision/);
+});
+
+test("a malformed suite_sha is UNREADABLE, not absent, and is never compared", () => {
+  // An abbreviated id is the realistic case: two prefixes can agree while the commits
+  // differ, and "same revision" is the answer that clears a count difference.
+  for (const bad of ["aaaaaaa", "A".repeat(40), 42, "", `${SHA_A}\n`]) {
+    const result = compare(row("daily-stable", suite(SHA_A)), row("vm-daily", suite(bad)));
+    const [w] = suiteWarning(result);
+    assert.match(w, /the VM row carries an UNREADABLE suite_sha/, JSON.stringify(bad));
+    assert.equal(result.suiteMismatch, null, JSON.stringify(bad));
+  }
+});
+
+test("every result carries suiteMismatch, including the paths that return early", () => {
+  assert.ok("suiteMismatch" in compare(row("daily-stable", suite(SHA_A)), null));
+  const blocked = compare(
+    row("daily-stable", { ...suite(SHA_A), langflow_version: "1.13.0.dev3" }),
+    row("vm-daily", { ...suite(SHA_B), langflow_version: "1.12.0" }),
+  );
+  assert.equal(blocked.comparable, false);
+  // A blocked day still reports every narrowing fact, this one included.
+  assert.deepEqual(blocked.suiteMismatch, { ci: SHA_A, vm: SHA_B });
+});
+
+test("the report prints each lane's readable revision on its count line, and nothing for an unreadable one", () => {
+  const text = renderReport(compare(row("daily-stable", suite(SHA_A)), row("vm-daily", suite("aaaaaaa"))));
+  const lines = text.split("\n");
+  assert.match(lines.find((l) => l.includes("Actions ")), /\| suite aaaaaaaaaaaa$/);
+  assert.doesNotMatch(lines.find((l) => l.includes("VM ")), /suite/);
+});

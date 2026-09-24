@@ -478,6 +478,20 @@ const straddled = (sweep) => Boolean(sweep && sweep.versions.length > 1);
 const unaccounted = (sweep) => (sweep && sweep.silent !== null ? sweep.silent : 0);
 
 /**
+ * The suite revision a lane ran (#2060), or `null` when the row cannot say.
+ *
+ * A full 40-hex commit id and nothing else. An abbreviated or otherwise shaped value
+ * is not compared: two prefixes can agree while the commits differ, and "same
+ * revision" is the one answer here that clears a count difference, so it must not be
+ * given off a value that cannot support it.
+ */
+const suiteShaOf = (row) => {
+  const sha = row?.suite_sha;
+  return typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+};
+const shortSha = (sha) => sha.slice(0, 12);
+
+/**
  * Classify every test the two lanes disagree about.
  *
  * `agreed` is returned, not discarded: a failure both lanes saw is the product
@@ -506,10 +520,11 @@ export function compareRuns({
   let gateMismatch = null;
   let listingMismatch = null;
   let versionStraddle = null;
+  let suiteMismatch = null;
 
   if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
   if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the VM lane did not record a run.`);
-  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, comparable: false };
+  if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, suiteMismatch, comparable: false };
 
   for (const [label, row] of [["Actions", ci], ["VM", vm]]) {
     const errs = row.run_errors ?? [];
@@ -759,6 +774,44 @@ export function compareRuns({
     );
   }
 
+  // WHICH SUITE REVISION EACH LANE RAN (#2060) — divergence 6 of the VM migration.
+  //
+  // The lanes run hours apart, so a PR merged in between puts them on different suites:
+  // specs it added are in one lane's totals only, and a spec it edited can fail on one
+  // lane and not the other with the product unchanged. Until the rows carried the
+  // revision, the count-difference line below could only guess at that.
+  //
+  // A warning, never a blocker. The measured cost of the gap is coverage — the specs
+  // merged in the interval — and blocking would throw the day's comparison away to
+  // report a state both lanes are expected to be in on any day with a merge.
+  const ciSuite = suiteShaOf(ci);
+  const vmSuite = suiteShaOf(vm);
+  if (ciSuite && vmSuite) {
+    if (ciSuite !== vmSuite) {
+      suiteMismatch = { ci: ciSuite, vm: vmSuite };
+      warnings.push(
+        `the lanes ran DIFFERENT SUITE REVISIONS - Actions ${shortSha(ciSuite)}, VM ${shortSha(vmSuite)}. ` +
+          `Specs added between the two are counted by one lane only, and a spec edited between them can ` +
+          `diverge with the product unchanged. \`git log --oneline --left-right ${shortSha(ciSuite)}...${shortSha(vmSuite)}\` ` +
+          `lists what separates them.`,
+      );
+    }
+  } else {
+    // ABSENT and MALFORMED apart, like the blocks above: one is a row written before
+    // the field existed, the other is a row that can be repaired.
+    const describe = (label, row, parsed) =>
+      parsed
+        ? null
+        : row?.suite_sha != null
+          ? `${label} carries an UNREADABLE suite_sha`
+          : `${label} carries no suite_sha`;
+    const sides = [describe("the Actions row", ci, ciSuite), describe("the VM row", vm, vmSuite)].filter(Boolean);
+    warnings.push(
+      `suite-revision parity UNVERIFIED: ${sides.join("; ")}. Whether both lanes ran the same suite is unknown - ` +
+        `which is not the same as yes.`,
+    );
+  }
+
   if (ciExtra || vmExtra) {
     warnings.push(
       `more than one row for this date (Actions +${ciExtra}, VM +${vmExtra}); the last append of each lane was used.`,
@@ -812,7 +865,14 @@ export function compareRuns({
           ? `a lane's matrix was missing the spec file(s) named above, which are absent from its totals outright.`
           : gateMismatch
             ? `the listing keys above differ, so the two matrices did not contain the same spec files.`
-            : `they may not have run the same suite revision.`),
+            : suiteMismatch
+              ? `the suite revisions above differ, so specs merged between them are counted by one lane only.`
+              : ciSuite && vmSuite
+                ? // The revision gap is RULED OUT here, and the line says so rather than
+                  // falling back to the guess: both rows name the same commit, so the
+                  // difference has a cause these rows do not record (#2060).
+                  `both lanes ran suite ${shortSha(ciSuite)}, so it is not a revision gap, and neither row names another cause.`
+                : `they may not have run the same suite revision.`),
     );
   }
 
@@ -873,7 +933,7 @@ export function compareRuns({
   // Leaving the array populated would let the two surfaces tell different stories
   // about one run, and the machine-readable one would be the fiction.
   if (blockers.length) {
-    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, comparable: false };
+    return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, suiteMismatch, comparable: false };
   }
 
   // Below the return, not above it: nothing between here and the top reads these any
@@ -938,7 +998,7 @@ export function compareRuns({
   divergences.sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.name.localeCompare(b.name));
   agreed.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, versionStraddle, gateMismatch, listingMismatch, comparable: blockers.length === 0 };
+  return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, versionStraddle, gateMismatch, listingMismatch, suiteMismatch, comparable: blockers.length === 0 };
 }
 
 const KIND_LABEL = {
@@ -963,7 +1023,10 @@ export function renderReport(result, { sources = [] } = {}) {
     row
       ? `  ${label.padEnd(8)} run ${row.run_id ?? "?"} | ${row.totals?.passed ?? 0} passed, ${row.totals?.failed ?? 0} failed, ` +
         `${row.totals?.flaky ?? 0} flaky, ${row.totals?.skipped ?? 0} skipped` +
-        `${row.langflow_version ? ` | Langflow ${row.langflow_version}` : ""}`
+        `${row.langflow_version ? ` | Langflow ${row.langflow_version}` : ""}` +
+        // Only a readable revision is printed: the warning list says which rows
+        // carry none or a malformed one, and a raw value here would look vouched for.
+        `${suiteShaOf(row) ? ` | suite ${shortSha(suiteShaOf(row))}` : ""}`
       : `  ${label.padEnd(8)} (no row)`;
   // The key set rides with the counts, on its own line under the lane it belongs to.
   // The whole point of recording it is that a reader looking at two different totals
