@@ -2896,3 +2896,56 @@ test("the token POST cannot abort the phase", () => {
   const after = publish.slice(publish.indexOf("post-token-payload.mjs"));
   assert.match(after.slice(0, 120), /\|\|\s*true/, "phase_publish runs under set -e — the token POST needs a guard");
 });
+
+test("the push credential warns on every answer and never stops the run (#2028)", () => {
+  // The opposite of the umbrella's check above, on purpose: a refused push still leaves
+  // an umbrella that names the removal it could not push, so dying here would give up
+  // the day's verdict to protect the removal.
+  const dir = makeTempDir("push-credential");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  const stub = join(dir, "stub");
+
+  const run = (exitCode, message = "stubbed") => {
+    writeFileSync(stub, `#!/bin/sh\necho ${JSON.stringify(message)}\nexit ${exitCode}\n`, { mode: 0o755 });
+    return sourced(
+      [
+        `RUN_DIR=${JSON.stringify(dir)}`,
+        `PUSH_CREDENTIAL_BIN=${JSON.stringify(stub)}`,
+        `set +e; verify_push_credential; echo "EXIT=$?"`,
+      ].join("\n"),
+    );
+  };
+
+  const ok = run(0, "ok: expires in 87 day(s)");
+  assert.match(ok.stdout, /EXIT=0/);
+  assert.match(ok.stdout, /expires in 87/, "the verdict never reached the run log");
+  assert.doesNotMatch(ok.stderr, /::warning::/, "a healthy credential was warned about");
+
+  const refused = run(3, "REFUSED: SOURCE_PUSH_TOKEN is unset");
+  assert.match(refused.stdout, /EXIT=0/, "a refused push credential stopped the run");
+  assert.doesNotMatch(refused.stderr, /::error::/, "a refused push credential was raised as an error");
+  assert.match(refused.stderr, /::warning::.*pushes @stable removals was refused/);
+
+  for (const code of [2, 1]) {
+    const soft = run(code, "UNKNOWN: no answer");
+    assert.match(soft.stdout, /EXIT=0/, `exit ${code} stopped the run`);
+    assert.match(soft.stderr, /::warning::.*could not be confirmed/, `exit ${code} was not warned about`);
+  }
+
+  assert.match(readFileSync(join(dir, "logs", "push-credential.log"), "utf8"), /UNKNOWN/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the push credential is only asked about where a removal can be pushed (#2028)", () => {
+  const sh = readFileSync(SCRIPT, "utf8");
+  assert.match(sh, /^CHECK_PUSH_CREDENTIAL="\$\{CHECK_PUSH_CREDENTIAL:-1\}"$/m);
+  const preflight = sh.slice(sh.indexOf("phase_preflight() {"), sh.indexOf("phase_services() {"));
+  const start = preflight.indexOf('if [ "$CHECK_PUSH_CREDENTIAL" = "1" ]');
+  assert.ok(start >= 0, "the push credential is never checked");
+  const block = preflight.slice(start, preflight.indexOf("\n  fi\n", start));
+  assert.match(block, /\[ "\$AUTO_REMOVE" = "1" \]/, "it would warn on a lane that pushes nothing");
+  assert.match(block, /verify_push_credential/);
+  // After the umbrella's check, which can stop the run: a run about to die over the
+  // umbrella should not first spend a network call on the smaller question.
+  assert.ok(start > preflight.indexOf("verify_issue_credential"), "asked before the check that can stop the run");
+});

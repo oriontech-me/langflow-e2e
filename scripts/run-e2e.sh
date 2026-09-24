@@ -161,6 +161,10 @@ CHECK_MIRROR="${CHECK_MIRROR:-1}"
 
 AUTO_REMOVE="${AUTO_REMOVE:-0}"
 MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
+# Can this run still push the removal it may make? Asked only when AUTO_REMOVE=1, and
+# unlike CHECK_ISSUE_CREDENTIAL it never stops the run: a refused push still leaves an
+# umbrella that names the removal it could not push (#2028).
+CHECK_PUSH_CREDENTIAL="${CHECK_PUSH_CREDENTIAL:-1}"
 # Where a removal is pushed, and it is NOT this clone's `origin`. That remote is the
 # read-only destination mirror: a commit written there is content the source does not
 # have, the sync guard records `diverged` and mirroring STOPS — worse than reverting,
@@ -1091,6 +1095,33 @@ verify_issue_credential() {
   esac
 }
 
+# The removal's push credential, shaped like verify_issue_credential above and stubbed
+# the same way (`PUSH_CREDENTIAL_BIN`). The difference is the refusal: it WARNS. The
+# umbrella's credential is fatal because without it a red day reports nothing; without
+# this one the umbrella still opens and says the removal was made and not pushed, so
+# stopping here would give up the day's verdict to protect the smaller thing (#2028).
+verify_push_credential() {
+  local rc=0 log="$RUN_DIR/logs/push-credential.log"
+  # No pipe, for the reason verify_issue_credential gives.
+  if [ -n "${PUSH_CREDENTIAL_BIN:-}" ]; then
+    "$PUSH_CREDENTIAL_BIN" > "$log" 2>&1 || rc=$?
+  else
+    node scripts/check-push-credential.mjs > "$log" 2>&1 || rc=$?
+  fi
+  cat "$log"
+
+  case "$rc" in
+    0) return 0 ;;
+    3)
+      warn "the credential that pushes @stable removals was refused — see the line above. The run goes on; a removal today would be reported as made and not pushed (#2028)."
+      ;;
+    *)
+      warn "the push credential for @stable removals could not be confirmed (exit $rc) — see $log (#2028)."
+      ;;
+  esac
+  return 0
+}
+
 phase_preflight() {
   log "Preflight"
 
@@ -1153,6 +1184,13 @@ phase_preflight() {
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
     verify_issue_credential
+  fi
+
+  # The same question about the credential that pushes a removal to the source, which
+  # also dies on a known date (2026-12-20). After the umbrella's, because that one can
+  # stop the run and this one only warns (#2028).
+  if [ "$CHECK_PUSH_CREDENTIAL" = "1" ] && [ "$AUTO_REMOVE" = "1" ]; then
+    verify_push_credential
   fi
 
   # The suite this run executes comes from a mirror that is pushed on a schedule, and
