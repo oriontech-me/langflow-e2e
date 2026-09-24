@@ -79,7 +79,7 @@
 // fails to open is how a red day ends up with no triage attached to it. The
 // workflow sets ISSUE_STRICT=1; the VM leaves it unset.
 
-import { readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { withoutCommittedClaim } from "./lib/auto-remove-claim.mjs";
 import { UNEXPECTED_PASS_SIGNATURE, collectUnexpectedPasses } from "./lib/unexpected-pass.mjs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -762,13 +762,23 @@ export function readUnexpectedPasses(path, repoRoot = REPO_ROOT) {
     // The report spells a file relative to Playwright's rootDir (`tests/`), while the
     // auto-removal block in the same body spells it relative to the repo — so the one
     // test would appear under two paths. Re-anchor on the repo when the report says
-    // where its rootDir is and the result stays inside the repo; otherwise keep the
-    // report's own spelling rather than invent one.
+    // where its rootDir is and the result stays inside the repo. Failing that, the
+    // same fallback `remove-stable-from-failures.ts` uses — `<repo>/tests`, only when
+    // the file is really there — so the two blocks cannot disagree on a report with
+    // no usable rootDir. Otherwise keep the report's own spelling rather than invent one.
     const rootDir = report?.config?.rootDir;
+    const insideRepo = (abs) => {
+      const rel = relative(repoRoot, abs);
+      return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : null;
+    };
     const toRepo = (file) => {
-      if (typeof rootDir !== "string" || !isAbsolute(rootDir) || !file) return file;
-      const rel = relative(repoRoot, resolve(rootDir, file));
-      return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : file;
+      if (!file) return file;
+      if (typeof rootDir === "string" && isAbsolute(rootDir)) {
+        const rel = insideRepo(resolve(rootDir, file));
+        if (rel) return rel;
+      }
+      const conventional = resolve(repoRoot, "tests", file);
+      return existsSync(conventional) ? insideRepo(conventional) || file : file;
     };
     return collectUnexpectedPasses(report).map((p) => ({ ...p, file: toRepo(p.file) }));
   } catch {

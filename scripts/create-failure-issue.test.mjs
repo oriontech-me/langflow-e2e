@@ -28,7 +28,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1333,7 +1333,8 @@ test("#2009 the report's unexpected passes are read, and only those", () => {
   const dir = makeTempDir("unexpected-pass-");
   const file = join(dir, "results.json");
   writeFileSync(file, JSON.stringify(UNEXPECTED_PASS_REPORT));
-  assert.deepEqual(readUnexpectedPasses(file), [
+  // A repo root with no tests/ tree, so this pins selection and not the anchoring.
+  assert.deepEqual(readUnexpectedPasses(file, "/nowhere"), [
     {
       file: "tests-automations/regression/security/credential-secret-exposure.spec.ts",
       line: 458,
@@ -1410,6 +1411,46 @@ test("#2009 both umbrella callers pass the merged report to the renderer", () =>
   const call = vm.indexOf("node scripts/create-failure-issue.mjs");
   const block = vm.slice(vm.lastIndexOf('log "Opening the failure issue"', call), call);
   assert.match(block, /PLAYWRIGHT_JSON="\$RUN_DIR\/results\.json" \\/, "the VM call must pass the report");
+});
+
+test("#2009 with no usable rootDir the file is anchored on <repo>/tests when it is there", () => {
+  // The auto-removal block's own fallback (remove-stable-from-failures.ts candidateBases).
+  const repo = makeTempDir("unexpected-pass-repo-");
+  const spec = "tests-automations/regression/security/credential-secret-exposure.spec.ts";
+  mkdirSync(join(repo, "tests", dirname(spec)), { recursive: true });
+  writeFileSync(join(repo, "tests", spec), "");
+  const file = join(repo, "results.json");
+  writeFileSync(file, JSON.stringify({ ...UNEXPECTED_PASS_REPORT, config: {} }));
+  assert.equal(readUnexpectedPasses(file, repo)[0].file, `tests/${spec}`);
+  // A rootDir outside the repo falls back the same way.
+  writeFileSync(file, JSON.stringify({ ...UNEXPECTED_PASS_REPORT, config: { rootDir: "/elsewhere/tests" } }));
+  assert.equal(readUnexpectedPasses(file, repo)[0].file, `tests/${spec}`);
+});
+
+test("#2009 a pass after an earlier timeout is collected with the attempts that passed", () => {
+  const dir = makeTempDir("unexpected-pass-");
+  const file = join(dir, "results.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      suites: [
+        {
+          title: "a.spec.ts",
+          specs: [
+            {
+              title: "declared failing",
+              file: "a.spec.ts",
+              line: 7,
+              tests: [{ status: "unexpected", results: [{ status: "timedOut", error: { message: "Test timeout" } }, { status: "passed" }] }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(readUnexpectedPasses(file, "/nowhere"), [
+    { file: "a.spec.ts", line: 7, title: "declared failing", attempts: 2, passedAttempts: 1 },
+  ]);
 });
 
 test("#2009 a file is re-anchored on the repo when the report names its rootDir", () => {
