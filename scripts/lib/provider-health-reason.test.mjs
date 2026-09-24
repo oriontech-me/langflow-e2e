@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import {
   NO_REASON_RECORDED,
   formatProviderInactiveReason,
+  formatProviderStaleReason,
   parseProviderInactiveReason,
 } from "./provider-health-reason.mjs";
 
@@ -113,4 +114,30 @@ test("surrounding whitespace does not hide a provider-health skip", () => {
     parseProviderInactiveReason('  Provider "openai" inactive — dead key\n'),
     { provider: "openai", error: "dead key" },
   );
+});
+
+// ─── #1904: an expired `active` record ───────────────────────────────────────
+
+test("#1904 an expired-record skip round-trips as a provider-health skip, marked stale", () => {
+  const line = formatProviderStaleReason("openai", "2026-09-17T14:11:35.276Z", 12);
+  assert.match(line, /^Provider "openai" health record stale — checked 2026-09-17T14:11:35\.276Z, outside the 12 h window;/);
+  assert.match(line, /re-run tests\/collect-models\.spec\.ts/);
+  const parsed = parseProviderInactiveReason(line);
+  assert.equal(parsed.provider, "openai");
+  assert.equal(parsed.stale, true);
+  assert.match(parsed.error, /outside the 12 h window/);
+});
+
+test("#1904 a record with no timestamp says so rather than printing undefined", () => {
+  const line = formatProviderStaleReason("google", undefined, 12);
+  assert.match(line, /no checkedAt recorded/);
+  assert.doesNotMatch(line, /undefined|null/);
+});
+
+test("#1904 an inactive skip still parses to exactly its old shape", () => {
+  // Consumers that deepEqual the parse must not see a new key on the old case.
+  assert.deepEqual(parseProviderInactiveReason(formatProviderInactiveReason("openai", "x")), {
+    provider: "openai",
+    error: "x",
+  });
 });

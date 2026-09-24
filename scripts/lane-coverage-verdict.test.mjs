@@ -37,7 +37,7 @@ import {
   renderSummary,
   shouldFail,
 } from "./lane-coverage-verdict.mjs";
-import { formatProviderInactiveReason } from "./lib/provider-health-reason.mjs";
+import { formatProviderInactiveReason, formatProviderStaleReason } from "./lib/provider-health-reason.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1685,4 +1685,17 @@ test("the run summary does not decide whether a re-run helps", () => {
     "whether a re-run helps depends on the reason, which this surface has already quoted",
   );
   assert.match(summary, /depends on the reason above/);
+});
+
+test("#1904 a skip from an expired health record is a provider-health skip, not an ordinary one", () => {
+  // Read as an ordinary skip it would leave the run `covered` and call openai
+  // exercised on a day none of its targets ran.
+  const result = laneCoverageVerdict(
+    report("tests/agent.spec.ts", [
+      executed("google target"),
+      skipped("openai target", formatProviderStaleReason("openai", "2026-09-17T14:11:35.276Z", 12)),
+    ]),
+  );
+  assert.equal(result.verdict, DEGRADED);
+  assert.deepEqual(result.providers.map((p) => p.provider), ["openai"]);
 });

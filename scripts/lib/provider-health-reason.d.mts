@@ -5,6 +5,11 @@ export declare function formatProviderInactiveReason(
   provider: string,
   error: string | null | undefined,
 ): string;
+export declare function formatProviderStaleReason(
+  provider: string,
+  checkedAt: string | null | undefined,
+  maxAgeHours: number,
+): string;
 export declare function parseProviderInactiveReason(
   description: unknown,
-): { provider: string; error: string } | null;
+): { provider: string; error: string; stale?: true } | null;
