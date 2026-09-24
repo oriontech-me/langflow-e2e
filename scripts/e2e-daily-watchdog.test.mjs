@@ -51,6 +51,21 @@ test("a DRY_RUN that is neither 0 nor 1 stops before anything is posted (#2056)"
   }
 });
 
+test("a non-numeric alarm point stops the check instead of silencing it", () => {
+  // `[ "$elapsed_min" -ge abc ]` errors, the error reads as false, and a run stuck for an
+  // hour was logged as "under the abc min alarm point": quiet on the case it covers.
+  for (const value of ["abc", "4 5", "45m", "-1"]) {
+    const r = runWatchdog({ STILL_RUNNING_ALARM_AFTER_MIN: value });
+    assert.equal(r.status, 1, `STILL_RUNNING_ALARM_AFTER_MIN=${JSON.stringify(value)} was accepted`);
+    assert.match(r.stderr, /STILL_RUNNING_ALARM_AFTER_MIN must be a whole number of minutes/);
+    assert.equal(r.posted, false);
+  }
+  // Empty is the default here too, and a number is a number.
+  for (const value of ["", "45", "0"]) {
+    assert.equal(runWatchdog({ STILL_RUNNING_ALARM_AFTER_MIN: value }).status, 0, `${JSON.stringify(value)} was refused`);
+  }
+});
+
 test("DRY_RUN=1 prints the alarm and posts nothing", () => {
   const r = runWatchdog({ DRY_RUN: "1" });
   assert.equal(r.status, 0);

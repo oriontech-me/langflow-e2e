@@ -84,6 +84,12 @@ case "$DRY_RUN" in
   0 | 1) ;;
   *) echo "DRY_RUN must be exactly '0' or '1', got: '$DRY_RUN'" >&2; exit 1 ;;
 esac
+# A whole number of minutes, for the same reason and in the same direction: `[ -ge ]`
+# on `abc` errors, the error reads as false, and a run stuck for an hour was logged
+# as "under the abc min alarm point" -- the watchdog went quiet on the case it covers.
+case "$STILL_RUNNING_ALARM_AFTER_MIN" in
+  '' | *[!0-9]*) echo "STILL_RUNNING_ALARM_AFTER_MIN must be a whole number of minutes, got: '$STILL_RUNNING_ALARM_AFTER_MIN'" >&2; exit 1 ;;
+esac
 
 mkdir -p "$LOG_DIR"
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$WATCHDOG_LOG"; }
