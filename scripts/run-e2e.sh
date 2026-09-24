@@ -349,8 +349,8 @@ KEEP_BACKENDS="${KEEP_BACKENDS:-0}"
 # ended the run before preflight. Tilde expansion falls back to the passwd entry only
 # when HOME is truly unset, hence the subshell; `${HOME:-~}` yields a literal `~`. HOME
 # itself is left alone, because the ledger below deliberately refuses to guess a path
-# when it is missing: a scheduled run with no HOME gets past this line and is then
-# refused there, by name, with the way out. With no passwd entry either (an arbitrary
+# when it is missing: a scheduled run with no HOME, and neither XDG_STATE_HOME nor
+# LEDGER_DIR, gets past this line and is then refused there, by name, with the way out. With no passwd entry either (an arbitrary
 # container UID), bash 5.2 answers `/`, measured; that is not a home, and neither is
 # anything relative, so nothing is prepended and preflight's uv check says what is
 # missing.
