@@ -261,7 +261,7 @@ Exit: the nine named spec items are validated under `@stable`; #1400 has landed 
 i18n batch is datable.
 Review (2026-08-27): reassess; date the i18n batch and revisit the pool.
 
-### Wave 7 — OSS API coverage  ·  2026-09-03 → 2026-09-17 ◀ **CURRENT**
+### Wave 7 — OSS API coverage  ·  2026-09-03 → 2026-09-17
 
 First wave measured against a **denominator the product defines**, not against
 checklist bullets: the OSS REST API surface. It exists because "100 % of the API
@@ -354,6 +354,53 @@ promoted, deleted or parked); the guard runs in the daily; the frozen baseline h
 shrunk to the parked set; Wave 9 is fillable with a concrete list.
 Review: at the next roadmap review — date Wave 9 off the table's T2 rows, and
 re-run `npm run triage:baseline -- --check` before quoting any count here.
+
+### Wave 10 — Memory Base ingestion & agent trust  ·  2026-09-24 → 2026-10-08 ◀ **CURRENT**
+
+Second **risk-driven** wave, and the first taken from the regenerated coverage heatmap
+(`docs/coverage-heatmap/`, generation 2026-09-21). That heatmap ranks MCP first,
+Memory Base second and Agents third by residual risk. The wave takes the areas where
+more work actually reduces risk. MCP and A2A are left out on purpose: their empty
+bullets are recorded as out of reach on the product (the heatmap marks them "capped
+by product"), so writing specs there would not move them.
+
+Requires (GitHub milestone *Wave 10 — Memory Base ingestion & agent trust*):
+- **Create** (`[ ]` → `[x]`):
+  - Memory Base ingestion, §20.4: the lifecycle (#2043) and its failure modes (#2044).
+  - The three knowledge-base templates, §11.5 (#2045). They reuse the ingestion
+    fixture, so they are scheduled after #2043.
+  - The risk-driven tail:
+    - serving job-lifecycle gating, §23 (#2047);
+    - catalog-policy usage, §21.4 (#2048);
+    - multi-hop credential propagation, §17.6 (#2049);
+    - HITL durability across a reload, §9.6 (#2050);
+    - graph-engine execution, §12.6 (#1896).
+- **Stabilize** (no new bullet): the chronic Agents `@stable` specs (#2046, with #1991
+  and #1679 attached), plus the page-entry barrier (#1549) that most of their hard
+  failures trace back to.
+- **Decide** (prerequisite, no coverage bullet — the same kind of item #1400 was for
+  Wave 6): whether `@serving` / `@enterprise` get a scheduled lane, or whether their
+  `[-]` bullets stop counting as coverage (#2051).
+
+Notes: Memory Base doubled its inherent risk (8 → 16) on measured upstream bugs, and
+all three filed since 2026-08-06 land on ingestion. Agents is rank 3 because its
+existing tests are not trusted, not because tests are missing: its test-health penalty
+comes from chronic reds and flakes, so the wave fixes those before adding to the area.
+#2047 and #2048 run only under lane selectors, so neither can carry `@stable` until
+#2051 is decided (#1010). Off-band on purpose, like Wave 6: 14 creation bullets plus
+stabilization, not the 50–60 band.
+
+Convergence: directional — +14 `[x]` if every creation item lands. The number that
+matters more is Memory Base's mitigation (0.45 today) at the next heatmap refresh
+(`dashboard-feed.json`).
+Exit:
+- §20.4 and §11.5 are validated.
+- Each #2046 spec is either clean over 10 dailies or has its cause filed.
+- #2051 records a decision.
+
+Review (2026-10-08): re-read `dashboard-feed.json` and compare the Memory Base and
+Agents rows against this wave's baseline, then coin the next wave from the refreshed
+ranking.
 
 ---
 
