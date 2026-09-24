@@ -1020,3 +1020,72 @@ test('computeRecurrence reads a null param and an absent one as the same variant
   // The null-param entry IS the item's variant, so the openai sibling does not answer.
   assert.deepEqual(computeRecurrence(item, rows).dates, ['2026-09-02']);
 });
+
+// #2027 — an unexpected pass is a possible fix day, not a hard failure.
+test('buildDataset lifts an unexpected pass out of hard_failures into declared_fix_candidates (#2027)', () => {
+  const pass = (date) => ({
+    date,
+    run_id: date,
+    totals: { passed: 10, failed: 2, flaky: 0, skipped: 0 },
+    failures: [
+      {
+        test: 'declared failing for a filed bug', file: 'a.spec.ts', line: 458, tags: ['@stable'],
+        attempts: 3, error_signature: 'expected to fail but passed', infra_signature: null,
+        recurrence_keys: [], recurrence_key_version: 1,
+      },
+      {
+        test: 'a real failure', file: 'b.spec.ts', line: 10, tags: ['@stable'], attempts: 3,
+        error_signature: 'Error: boom', infra_signature: null,
+        recurrence_keys: [{ head: 'error: boom', locator: null, file: 'b.spec.ts', source: 's' }],
+        recurrence_key_version: 1,
+      },
+    ],
+    flaky: [],
+  });
+  // A pre-#2009 day recorded the same case as "unknown": it must not count as a pass.
+  const legacy = {
+    date: '2026-09-20', run_id: 'legacy', totals: { passed: 10, failed: 1, flaky: 0, skipped: 0 },
+    failures: [{ test: 'declared failing for a filed bug', file: 'a.spec.ts', line: 458, error_signature: 'unknown' }],
+    flaky: [],
+  };
+  const ds = buildDataset([legacy, pass('2026-09-22'), pass('2026-09-23')], []);
+  assert.deepEqual(ds.hard_failures.map((f) => f.test), ['a real failure']);
+  assert.equal(ds.declared_fix_candidates.length, 1);
+  const [c] = ds.declared_fix_candidates;
+  assert.equal(c.test, 'declared failing for a filed bug');
+  assert.equal(c.actionable, false);
+  assert.deepEqual(c.passes, { count: 2, dates: ['2026-09-22', '2026-09-23'] });
+  assert.equal('recurrence' in c, false, 'no "failed again" figure a proposal could cite');
+  assert.match(c.action, /never quarantine/i);
+  // It never reaches the clusters that file or quarantine.
+  assert.equal(ds.provider_wide_clusters.some((k) => JSON.stringify(k).includes('declared failing')), false);
+});
+
+test('buildDataset has an empty declared_fix_candidates on a day with no unexpected pass (#2027)', () => {
+  const ds = buildDataset(parseHistory(fixture('history-sample.jsonl')), JSON.parse(fixture('issues-sample.json')));
+  assert.deepEqual(ds.declared_fix_candidates, []);
+  assert.equal(ds.hard_failures.length, 2);
+});
+
+test('declared_fix_candidates count passes per variant, and never form a provider-wide cluster (#2027)', () => {
+  const uxp = (file, param, line = 5) => ({
+    test: 'declared failing', file, line, param, error_signature: 'expected to fail but passed',
+    infra_signature: null, recurrence_keys: [], recurrence_key_version: 1,
+  });
+  const rows = [
+    // Another provider passing says nothing about this variant's declared bug.
+    { date: '2026-09-20', totals: { failed: 1, flaky: 0 }, failures: [uxp('a.spec.ts', 'google / g')], flaky: [] },
+    {
+      date: '2026-09-21',
+      run_id: 'r',
+      totals: { failed: 2, flaky: 0 },
+      // The same provider across two spec files is what a provider-wide cluster needs.
+      failures: [uxp('a.spec.ts', 'openai / o'), uxp('b.spec.ts', 'openai / o', 9)],
+      flaky: [],
+    },
+  ];
+  const ds = buildDataset(rows, []);
+  assert.equal(ds.declared_fix_candidates.length, 2);
+  for (const c of ds.declared_fix_candidates) assert.deepEqual(c.passes, { count: 1, dates: ['2026-09-21'] });
+  assert.deepEqual(ds.provider_wide_clusters.filter((k) => k.provider_wide), []);
+});

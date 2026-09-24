@@ -4,6 +4,8 @@
 // Imported, not injected like the infra classifier: this module is pure too, and
 // it is the SAME comparison the appender's keys were derived for (#1626).
 import { compareRecurrence } from '../../../../../scripts/lib/recurrence-key.mjs';
+// Same reason: the one predicate the appender wrote the row with (#2009/#2027).
+import { isUnexpectedPassEntry } from '../../../../../scripts/lib/unexpected-pass.mjs';
 
 /** Parse JSONL history text into an array of run rows (chronological order). */
 export function parseHistory(text) {
@@ -630,6 +632,28 @@ export function assertDedicatedIssueBody(body, opts = {}) {
   return problems;
 }
 
+/**
+ * The days THIS variant of `item` passed as an unexpected pass, in the window.
+ *
+ * "Passed again", never "failed again" — and counted directly rather than through
+ * `computeRecurrence`, whose same-title fallback lets another provider's row answer
+ * when a row has none of the item's variant. That is fair for a failure and weak
+ * for a fix: google passing says nothing about whether openai's declared bug is
+ * fixed. Pre-#2009 rows recorded the same case as `"unknown"` and do not count.
+ */
+function passesOf(item, rowsInWindow) {
+  const variant = item.param ?? null;
+  const dates = [];
+  for (const row of rowsInWindow) {
+    const hit = (row.failures || []).some(
+      (e) => e.test === item.test && (e.param ?? null) === variant && isUnexpectedPassEntry(e),
+    );
+    if (hit) dates.push(row.date);
+  }
+  dates.sort();
+  return { count: dates.length, dates };
+}
+
 /** Assemble the normalized triage dataset from the latest red run. */
 /**
  * Is this entry's failure the harness failing to reach the backend, rather than
@@ -715,7 +739,27 @@ export function buildDataset(rows, issues, opts = {}) {
     };
   };
 
-  const hard_failures = dedupeEntries(run.failures).map(withRecurrence);
+  // An unexpected pass (#2009) is an `unexpected` row, so it arrives in
+  // `failures[]` — but it is the opposite reading of a hard failure: a test
+  // declared failing with `test.fail()` whose body passed, i.e. the declared bug
+  // may be FIXED in the version under test (#2027). Kept in `hard_failures[]` it
+  // was clustered as a failure, filed as one, and — on a guard day, where Phase 3
+  // quarantines the real hard failures by hand — quarantined. So it is lifted out
+  // into its own list whose every field says what to do instead, and it never
+  // reaches the paths that file or quarantine.
+  const runFailures = dedupeEntries(run.failures);
+  const hard_failures = runFailures.filter((e) => !isUnexpectedPassEntry(e)).map(withRecurrence);
+  const declared_fix_candidates = runFailures.filter(isUnexpectedPassEntry).map((e) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { recurrence, ...rest } = withRecurrence(e);
+    return {
+      ...rest,
+      passes: passesOf(e, window),
+      actionable: false,
+      action:
+        'possible fix day for the bug this test is declared against (test.fail() body passed): confirm the fix upstream for the version under test, then remove test.fail(), restore @stable and close the issue the declaration cites. Never file it as a failure and never quarantine it (#2027).',
+    };
+  });
 
   // A flake is actionable when it recurs under the same cause (the recurrence
   // key, #1626) — AND when the failure is the spec's own. #1031 exempted wedge collateral from `@stable`
@@ -812,6 +856,7 @@ export function buildDataset(rows, issues, opts = {}) {
     infra_classification_gap,
     totals: run.totals,
     hard_failures,
+    declared_fix_candidates,
     flakes,
     provider_wide_clusters,
     skips: [],
