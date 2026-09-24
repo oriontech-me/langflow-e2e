@@ -1699,6 +1699,14 @@ prepare_shard_workdir() {
     --exclude=node_modules --exclude=.git --exclude=runs \
     --exclude=playwright-report --exclude=blob-report --exclude=test-results \
     -C "$REPO_DIR" . | tar -xf - -C "$wd"
+  # A shard's provider health is its own sweep's, never the clone's (#1904). The file
+  # is gitignored, so a copy left in "$REPO_DIR" by an earlier hand run would ride into
+  # every shard and be read whenever that shard's collect-models fails before it
+  # writes — an all-`active` record from days ago that now skips every provider spec
+  # as stale, where Actions (a fresh checkout) has no file and fails open. Removed
+  # after the copy rather than excluded from it: GNU and BSD tar match --exclude
+  # differently, and this must behave the same on the VM and on a dev box.
+  rm -f "$wd/tests/helpers/provider-setup/data/providers.json"
   ln -sfn "$REPO_DIR/node_modules" "$wd/node_modules"
 }
 

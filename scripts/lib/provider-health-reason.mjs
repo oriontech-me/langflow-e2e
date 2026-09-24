@@ -64,6 +64,28 @@ export function formatProviderInactiveReason(provider, error) {
   return `Provider "${provider}" inactive — ${error ?? NO_REASON_RECORDED}`;
 }
 
+/**
+ * The skip description for an `active` record too old to trust (#1904).
+ *
+ * `active` is the one state the gate cannot afford to believe past its date: a
+ * record from a sweep days ago says the key worked THEN, and a key drained since
+ * would run the spec into #1029's worker kill. So an expired `active` skips, and
+ * the line says why and what re-establishes the signal — it is not a claim the key
+ * is dead, which is why it is a different sentence from the `inactive` one.
+ *
+ * @param {string} provider provider name as `collect-models` recorded it
+ * @param {string|null|undefined} checkedAt the record's timestamp, if it had one
+ * @param {number} maxAgeHours the window the record fell outside of
+ * @returns {string}
+ */
+export function formatProviderStaleReason(provider, checkedAt, maxAgeHours) {
+  const when = checkedAt ? `checked ${checkedAt}` : "no checkedAt recorded";
+  return (
+    `Provider "${provider}" health record stale — ${when}, outside the ${maxAgeHours} h window; ` +
+    "re-run tests/collect-models.spec.ts, or set IGNORE_PROVIDER_HEALTH=1 to run anyway"
+  );
+}
+
 // The separator is matched as `\s*—\s*` rather than as the literal " — " the
 // formatter writes: the description reaches the parser through a JSON report and a
 // `.trim()`, and an `error` that is empty leaves the trailing space with nothing
@@ -71,6 +93,7 @@ export function formatProviderInactiveReason(provider, error) {
 // reading as "not a provider-health skip at all" — the one classification error that
 // would put the run back to the silent green this exists to remove.
 const INACTIVE_REASON = /^Provider "([^"]+)" inactive\s*—\s*([\s\S]*)$/;
+const STALE_REASON = /^Provider "([^"]+)" health record stale\s*—\s*([\s\S]*)$/;
 
 /**
  * Reads a skip description back, or `null` when it is not a provider-health skip.
@@ -86,7 +109,14 @@ const INACTIVE_REASON = /^Provider "([^"]+)" inactive\s*—\s*([\s\S]*)$/;
  */
 export function parseProviderInactiveReason(description) {
   if (typeof description !== "string") return null;
-  const match = INACTIVE_REASON.exec(description.trim());
-  if (!match) return null;
-  return { provider: match[1], error: match[2] };
+  const trimmed = description.trim();
+  const match = INACTIVE_REASON.exec(trimmed);
+  if (match) return { provider: match[1], error: match[2] };
+  // An expired `active` record (#1904) is a provider-health skip too: the provider
+  // went unexercised because of its health record. Parsed here rather than left to
+  // read as an ordinary skip, which would call the provider covered. `stale` lets a
+  // consumer tell "the key is dead" from "the record is old".
+  const stale = STALE_REASON.exec(trimmed);
+  if (stale) return { provider: stale[1], error: stale[2], stale: true };
+  return null;
 }

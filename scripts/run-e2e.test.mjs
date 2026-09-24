@@ -2897,6 +2897,27 @@ test("the token POST cannot abort the phase", () => {
   assert.match(after.slice(0, 120), /\|\|\s*true/, "phase_publish runs under set -e — the token POST needs a guard");
 });
 
+test("#1904 a shard never inherits the clone's providers.json", () => {
+  // Executed, not grepped: the function copies a real tree.
+  const repo = makeTempDir("run-e2e-repo-");
+  const run = makeTempDir("run-e2e-run-");
+  const data = join(repo, "tests/helpers/provider-setup/data");
+  mkdirSync(data, { recursive: true });
+  writeFileSync(join(data, "providers.json"), "[]");
+  writeFileSync(join(data, "models.json"), "{}");
+  mkdirSync(join(repo, "node_modules"));
+  // `idx` in scope as run_shard provides it: the function's own `local idx="$1"
+  // wd=".../shard-$idx"` expands `$idx` before assigning it, and relies on the caller's.
+  // Assigned after the source, which sets both from its own location.
+  const r = sourced(
+    `REPO_DIR=${JSON.stringify(repo)}; RUN_DIR=${JSON.stringify(run)}; idx=1; prepare_shard_workdir 1`,
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const shardData = join(run, "shard-1/tests/helpers/provider-setup/data");
+  assert.equal(existsSync(join(shardData, "providers.json")), false, "the clone's health record must not ride in");
+  assert.equal(existsSync(join(shardData, "models.json")), true, "the rest of the tree is still copied");
+});
+
 test("the push credential warns on every answer and never stops the run (#2028)", () => {
   // The opposite of the umbrella's check above, on purpose: a refused push still leaves
   // an umbrella that names the removal it could not push, so dying here would give up

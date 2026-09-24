@@ -30,7 +30,11 @@ import {
   writeProviderHealth,
   type ProviderHealthRecord,
   credentialRemedy,
+  DEFAULT_MAX_AGE_HOURS,
+  isExpired,
+  maxAgeHours,
 } from "./provider-health";
+import { parseProviderInactiveReason } from "../../../scripts/lib/provider-health-reason.mjs";
 import { makeTempDir } from "../../../scripts/lib/tmp-dir.mjs";
 
 /** Verbatim from run 30374528125's providers.json — Google monthly spend cap. */
@@ -50,7 +54,14 @@ const record = (
   provider: string,
   status: "active" | "inactive",
   error: string | null = null,
-): ProviderHealthRecord => ({ provider, model: "some-model", status, error });
+): ProviderHealthRecord => ({
+  provider,
+  model: "some-model",
+  status,
+  error,
+  // Fresh by default: an `active` record with no timestamp is expired since #1904.
+  checkedAt: new Date().toISOString(),
+});
 
 /** The exact provider state of run 30374528125: Google drained, the rest fine. */
 const RUN_30374528125: ProviderHealthRecord[] = [
@@ -503,4 +514,94 @@ test("#1823: a rejected credential is told to be replaced, not re-imported", () 
     /Run `npx playwright test tests\/collect-models\.spec\.ts`/,
     "re-running the collector cannot help a key the panel refuses",
   );
+});
+
+// ─── #1904: an `active` record expires ───────────────────────────────────────
+
+const NOW = Date.parse("2026-09-23T12:00:00Z");
+const HOUR = 3_600_000;
+const at = (hoursAgo: number) => new Date(NOW - hoursAgo * HOUR).toISOString();
+const activeAt = (provider: string, checkedAt: string | undefined): ProviderHealthRecord => ({
+  provider,
+  model: "m",
+  status: "active",
+  error: null,
+  ...(checkedAt === undefined ? {} : { checkedAt }),
+});
+
+test("#1904 an active record inside the window runs, one outside it skips", () => {
+  const within = unavailableReason(["openai"], [activeAt("openai", at(DEFAULT_MAX_AGE_HOURS - 1))], ALL_KEYS_SET, NOW);
+  assert.equal(within, undefined);
+  // The measured case: a six-day-old all-`active` local providers.json.
+  const reason = unavailableReason(["openai"], [activeAt("openai", at(6 * 24))], ALL_KEYS_SET, NOW);
+  assert.ok(reason, "a six-day-old `active` record must not be believed");
+  const parsed = parseProviderInactiveReason(reason);
+  assert.equal(parsed?.provider, "openai");
+  assert.equal(parsed?.stale, true, "the report must say the record is old, not that the key is dead");
+});
+
+test("#1904 an active record with no or an unreadable checkedAt is expired, never trusted", () => {
+  assert.equal(isExpired(activeAt("openai", undefined), {}, NOW), true);
+  assert.equal(isExpired(activeAt("openai", "yesterday-ish"), {}, NOW), true);
+  // Clock skew: a timestamp from the future is not old.
+  assert.equal(isExpired(activeAt("openai", new Date(NOW + HOUR).toISOString()), {}, NOW), false);
+});
+
+test("#1904 an inactive record never expires — its skip keeps the collected reason", () => {
+  const old: ProviderHealthRecord = { provider: "google", model: null, status: "inactive", error: SPEND_CAP, checkedAt: at(6 * 24) };
+  assert.equal(isExpired(old, {}, NOW), false);
+  assert.match(String(unavailableReason(["google"], [old], ALL_KEYS_SET, NOW)), /monthly spending cap/);
+});
+
+test("#1904 the window is PROVIDER_HEALTH_MAX_AGE_HOURS, and a bad value falls back", () => {
+  assert.equal(maxAgeHours({}), DEFAULT_MAX_AGE_HOURS);
+  assert.equal(maxAgeHours({ PROVIDER_HEALTH_MAX_AGE_HOURS: "2" }), 2);
+  for (const bad of ["0", "-1", "soon", ""]) {
+    assert.equal(maxAgeHours({ PROVIDER_HEALTH_MAX_AGE_HOURS: bad }), DEFAULT_MAX_AGE_HOURS, bad);
+  }
+  const threeHoursOld = [activeAt("openai", at(3))];
+  assert.equal(unavailableReason(["openai"], threeHoursOld, ALL_KEYS_SET, NOW), undefined);
+  assert.ok(
+    unavailableReason(["openai"], threeHoursOld, { ...ALL_KEYS_SET, PROVIDER_HEALTH_MAX_AGE_HOURS: "2" }, NOW),
+  );
+});
+
+test("#1904 IGNORE_PROVIDER_HEALTH=1 runs an expired record too", () => {
+  const env = { ...ALL_KEYS_SET, IGNORE_PROVIDER_HEALTH: "1" };
+  assert.equal(unavailableReason(["openai"], [activeAt("openai", at(48))], env, NOW), undefined);
+  assert.equal(providerSkipReasons([activeAt("openai", at(48))], env, undefined, NOW).size, 0);
+});
+
+test("#1904 the parametrized specs' reasons carry an expired active record too", () => {
+  const reasons = providerSkipReasons(
+    [activeAt("openai", at(48)), activeAt("anthropic", at(1))],
+    ALL_KEYS_SET,
+    undefined,
+    NOW,
+  );
+  assert.deepEqual([...reasons.keys()], ["openai"]);
+  assert.equal(parseProviderInactiveReason(reasons.get("openai"))?.stale, true);
+});
+
+test("#1904 no file is still no signal — expiry never turns absence into a skip", () => {
+  assert.equal(unavailableReason(["openai"], null, ALL_KEYS_SET, NOW), undefined);
+});
+
+test("#1904 the window's edge: exactly 12 h still runs, a millisecond more skips", () => {
+  const edge = new Date(NOW - DEFAULT_MAX_AGE_HOURS * HOUR).toISOString();
+  assert.equal(isExpired(activeAt("openai", edge), {}, NOW), false);
+  assert.equal(isExpired(activeAt("openai", new Date(NOW - DEFAULT_MAX_AGE_HOURS * HOUR - 1).toISOString()), {}, NOW), true);
+});
+
+test("#1904 a timestamp far in the future is unreadable, not fresh for ever", () => {
+  assert.equal(isExpired(activeAt("openai", new Date(NOW + 30 * 60_000).toISOString()), {}, NOW), false);
+  assert.equal(isExpired(activeAt("openai", new Date(NOW + 2 * HOUR).toISOString()), {}, NOW), true);
+});
+
+test("#1904 a dead key on one provider outranks another's old record", () => {
+  const records = [
+    activeAt("openai", at(48)),
+    { provider: "google", model: null, status: "inactive" as const, error: SPEND_CAP, checkedAt: at(1) },
+  ];
+  assert.match(String(unavailableReason(["openai", "google"], records, ALL_KEYS_SET, NOW)), /monthly spending cap/);
 });
