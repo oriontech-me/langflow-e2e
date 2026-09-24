@@ -23,6 +23,10 @@ const resultsPath = arg('--results', null);
 const windowRaw = Number(arg('--window', '30'));
 const windowDays = Number.isFinite(windowRaw) ? windowRaw : 30;
 const runId = arg('--run', null);
+// The VM lane has no `gh`, and the umbrella it would match is the one it is about to
+// open — so it asks for no issues rather than logging a failed call every red day
+// (#2031). The umbrella match and the stale-history check come back null.
+const noIssues = process.argv.includes('--no-issues');
 
 // Daily-failure issues (open + closed) — the umbrella may already be closed.
 function fetchIssues() {
@@ -38,9 +42,12 @@ function fetchIssues() {
   }
 }
 
-// Per-skip detail from a local Playwright results.json, if provided. Best effort.
+// Per-skip detail from a local Playwright results.json, if provided. Best effort —
+// and null, not [], when nothing was read: "no skips" and "skips not read" are two
+// different claims, and a renderer handed [] for both prints "None" over a report it
+// never opened (#1012, #2031).
 function readSkips(path) {
-  if (!path) return [];
+  if (!path) return null;
   try {
     const report = JSON.parse(readFileSync(path, 'utf8'));
     const skips = [];
@@ -60,7 +67,7 @@ function readSkips(path) {
     return skips;
   } catch (e) {
     process.stderr.write(`warning: could not read results.json (${e.message}); skips omitted\n`);
-    return [];
+    return null;
   }
 }
 
@@ -110,7 +117,7 @@ if (paramMap.size > 0) {
   }
 }
 
-const dataset = buildDataset(rows, fetchIssues(), { windowDays, runId, classifyInfra: classifyInfraError });
+const dataset = buildDataset(rows, noIssues ? [] : fetchIssues(), { windowDays, runId, classifyInfra: classifyInfraError });
 if (!dataset) {
   process.stderr.write(
     runId
@@ -119,7 +126,10 @@ if (!dataset) {
   );
   process.exit(2);
 }
-dataset.skips = readSkips(resultsPath);
+const skips = readSkips(resultsPath);
+dataset.skips = skips ?? [];
+// Additive, so every reader of `skips` keeps its array. The renderer reads this one.
+dataset.skips_read = skips !== null;
 if (dataset.stale_history) {
   const s = dataset.stale_history;
   process.stderr.write(
