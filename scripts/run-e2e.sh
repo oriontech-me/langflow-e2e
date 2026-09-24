@@ -396,12 +396,12 @@ require_bool() {
 # because a scheduled run keeping no series is indistinguishable, months later, from a
 # machine that was down — it lands in the `else` and says so in a log line nobody reads.
 #
-# The ledger pair is NOT the complete set that rule selects, and saying so here rather
-# than letting the two calls below imply otherwise. Four more fall the unsafe way and
-# are deferred to #1725: DRY_RUN (a typo'd `yes` runs the whole suite on the VM instead
-# of stopping after the partition), REQUIRE_TARGET_VERSION (enforcement silently off,
-# on a flag whose own error text argues an unperformed check is not a weaker guarantee
-# but none), and CHECK_TARGET_VERSION / PREPARE_TARGET, which have the same shape.
+# The same rule selects four more (#1725): DRY_RUN (a typo'd `yes` runs the whole suite
+# on the target instead of stopping after the partition), REQUIRE_TARGET_VERSION
+# (enforcement silently off, on a flag whose own error text argues an unperformed check
+# is not a weaker guarantee but none), CHECK_TARGET_VERSION (the resolution is skipped,
+# and the run reports an unperformed check), and PREPARE_TARGET (the clone is not
+# placed, and STAMP_REQUIRED follows it off, so the starter stops demanding the stamp).
 require_flag() {
   case "$2" in
     0 | 1) ;;
@@ -413,6 +413,10 @@ require_flag() {
 # exists.
 require_flag KEEP_LEDGER "$KEEP_LEDGER"
 require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
+require_flag DRY_RUN "$DRY_RUN"
+require_flag REQUIRE_TARGET_VERSION "$REQUIRE_TARGET_VERSION"
+require_flag CHECK_TARGET_VERSION "$CHECK_TARGET_VERSION"
+require_flag PREPARE_TARGET "$PREPARE_TARGET"
 require_flag REQUIRE_PROVIDER_KEYS "$REQUIRE_PROVIDER_KEYS"
 
 # Tracing ON, because daily-stable.yml runs with it on and the traces/observability
