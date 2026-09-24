@@ -149,7 +149,8 @@ Other flags: `--history <path>` (default `reports/daily-history.jsonl`),
 Read the full dataset before doing anything else. Then report the panorama
 to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
 flakes (of Z total flakes) / W skips**, whether the **guard tripped** (and at
-what count), and any **`provider_wide_clusters`** (same provider failing across
+what count), any **`declared_fix_candidates`** (a `test.fail()` body passed —
+possible fix day, Phase 3), and any **`provider_wide_clusters`** (same provider failing across
 ≥2 spec files — a descriptive hint the cause is environment/package, e.g. a
 missing `langchain-<provider>`, not per-test rot; #899). This is the shared
 frame of reference for every phase below.
@@ -197,19 +198,30 @@ auto-removal treats them as hard failures, but the dataset keeps them out of
 `hard_failures[]` because the likeliest reading is the opposite: **the bug the
 test is declared against may be fixed** in the version under test. Do **not**
 cluster them, do **not** file them as failures, and **never** quarantine them,
-on a guard day included. Cite `passes.count` / `passes.dates` as the days the
-test **passed again**, never as a failure recurring. The path, per candidate,
-is the entry's `action`:
+on a guard day included. Cite `passes.count` / `passes.dates` as the days **this
+variant** of the test **passed again**, never as a failure recurring.
 
-1. confirm the upstream fix for the version under test (by version, not by the
-   release branch — `CONTRIBUTING.md` → *Triage protocol*);
-2. remove `test.fail()`;
-3. restore `@stable`;
-4. close the issue the declaration cites.
+**What confirms a fix — both, never one alone:**
 
-Record the candidates in the umbrella's closing comment. A dedicated issue is
-warranted only when the fix cannot be confirmed; say that it is about a
-possible fix, not a failure.
+- the test passed on **at least two** dailies (`passes.count >= 2`); one pass
+  can be a lucky run of an intermittent bug; **and**
+- the upstream fix is located **in the image under test**, by its version. The
+  nightly is cut from a release line and lags it, so a fix merged to a release
+  branch is not yet a fix in the image — check the tag or wheel of the version
+  the run resolved (`run.langflow_image`, the row's `langflow_version`).
+
+**Owner: the issue the `test.fail()` cites**, never this triage. Each candidate
+is a Phase 6 row of Kind `declared-fix`:
+
+- **enrich** the cited issue with the pass dates and the evidence gathered for
+  the two conditions above;
+- or **create** one only when the declaration cites none, or the cited issue is
+  closed. Say that it is about a possible fix, not a failure.
+
+Removing `test.fail()`, restoring `@stable` and closing the bug are **that
+issue's deliverables**, done once both conditions hold — the same way lifting a
+quarantine belongs to its dedicated issue. The triage never edits the spec for
+them.
 
 Then cluster the rest of `hard_failures[]` by root cause: **same normalized
 error signature + same area + same failure symptom → one issue.** Don't open one
@@ -314,7 +326,7 @@ it to the user in PT-BR:
 
 | # | Cluster (symptom/area) | Kind | Action | Target |
 |---|---|---|---|---|
-| 1 | ... | hard-failure / flake / skip | create / enrich / note | new issue title, or existing #NNN |
+| 1 | ... | hard-failure / flake / skip / declared-fix | create / enrich / note | new issue title, or existing #NNN |
 
 Below the table, list the **quarantines the triage requires** (remove `@stable`
 + add `test.fixme`) as a separate block — one line per test
@@ -369,7 +381,8 @@ Only after the user approves the plan:
 4. Comment on the umbrella issue linking every dedicated issue just
    created/enriched (so the umbrella's history stays a readable index).
 5. **Close the umbrella only when the triage is truly complete:** every needed
-   dedicated issue created/enriched **and** every criterion-required `@stable`
+   dedicated issue created/enriched — `declared-fix` rows included, so a
+   possible fix day always reaches the issue that owns it — **and** every criterion-required `@stable`
    removal **verified done** (tag absent on `main`, or its removal PR open and
    linked). If any required removal is still pending (not authorized, not
    opened), **leave the umbrella open** and tell the user exactly what remains
