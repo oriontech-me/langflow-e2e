@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseHistory, summarize, mirrorLine } from "./mirror-freshness-summary.mjs";
@@ -99,5 +99,19 @@ test("the CLI reads the file the alarm writes and always exits 0", () => {
   const missing = spawnSync("node", [SCRIPT], { encoding: "utf8", env: { ...process.env, MIRROR_HISTORY_FILE: join(dir, "nope") } });
   assert.equal(missing.status, 0);
   assert.match(missing.stdout, /could not be read/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the CLI ignores a STATE_DIR in the daily's environment", () => {
+  // A collision, not an override: the default path must win over the generic name.
+  const dir = makeTempDir("mirror-summary-statedir");
+  const now = Math.floor(Date.now() / 1000);
+  mkdirSync(join(dir, "langflow-e2e"), { recursive: true });
+  writeFileSync(join(dir, "langflow-e2e", "mirror-freshness.history"), `${now - H}\tcurrent\n`);
+  const r = spawnSync("node", [SCRIPT], {
+    encoding: "utf8",
+    env: { ...process.env, MIRROR_HISTORY_FILE: "", XDG_STATE_HOME: dir, STATE_DIR: join(dir, "elsewhere") },
+  });
+  assert.equal(r.stdout.trim(), "no stall in the last 24h");
   rmSync(dir, { recursive: true, force: true });
 });

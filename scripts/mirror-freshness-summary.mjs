@@ -114,7 +114,10 @@ export function mirrorLine({ runState, history, now }) {
 
 function main() {
   const env = process.env;
-  const stateDir = env.STATE_DIR || join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local/state"), "langflow-e2e");
+  // Not STATE_DIR, although the alarm reads it: this runs inside the daily, where that
+  // generic name can only arrive by collision (the starters use it for their own
+  // directories), never on purpose. An override is MIRROR_HISTORY_FILE.
+  const stateDir = join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local/state"), "langflow-e2e");
   const file = env.MIRROR_HISTORY_FILE || join(stateDir, "mirror-freshness.history");
   let history = null;
   try {
