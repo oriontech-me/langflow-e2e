@@ -1822,3 +1822,19 @@ test("the report prints each lane's readable revision on its count line, and not
   assert.match(lines.find((l) => l.includes("Actions ")), /\| suite aaaaaaaaaaaa$/);
   assert.doesNotMatch(lines.find((l) => l.includes("VM ")), /suite/);
 });
+
+// Spelling guards, like the sweep's (#1226): they show the value reaches the appender
+// on each lane, not that it is right.
+
+test("daily-stable.yml passes the suite revision to the history appender", () => {
+  const yml = readFileSync(join(HERE, "..", ".github", "workflows", "daily-stable.yml"), "utf8");
+  const step = blockAfter(yml, /^\s*- name: Append daily history\s*$/, /^\s{6}- name: /);
+  assert.match(step, /append-weekly-history\.mjs/, "scoped to the wrong step");
+  assert.match(step, /SUITE_SHA: \$\{\{ github\.sha \}\}/);
+});
+
+test("run-e2e.sh passes the suite revision to the history appender", () => {
+  const sh = readFileSync(join(HERE, "run-e2e.sh"), "utf8");
+  const block = blockAfter(sh, /HISTORY_FILE="\$LEDGER_HISTORY"/, /append-weekly-history\.mjs/);
+  assert.match(block, /SUITE_SHA="\$\(git -C "\$REPO_DIR" rev-parse HEAD/);
+});

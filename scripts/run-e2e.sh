@@ -2626,6 +2626,10 @@ phase_publish() {
   # "not measured at all" — the empty-versus-absent distinction this lane keeps having
   # to make. Without it the comparator can only guess at a test-count difference, which
   # is how the missing invalid-auth pair was filed as a catalog problem twice (#1764).
+  #
+  # SUITE_SHA is the revision this clone ran, the same value run-metadata.json keeps.
+  # The Actions daily runs hours earlier, so a merge in between puts the two lanes on
+  # different suites, and the row is where the comparator reads that from (#2060).
   if ledger_active; then
     log "Recording the daily history"
     ledger_seed "$LEDGER_HISTORY" reports/daily-history.jsonl
@@ -2633,6 +2637,7 @@ phase_publish() {
     HISTORY_FILE="$LEDGER_HISTORY" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
+    SUITE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)" \
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LANGFLOW_VERSION_EXPECTED="${LANGFLOW_VERSION_EXPECTED:-}" \
     LANGFLOW_VERSION_ANSWERED="${LANGFLOW_VERSION_ANSWERED:-}" \

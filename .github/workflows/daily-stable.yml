@@ -1697,6 +1697,11 @@ jobs:
           HISTORY_FILE: reports/daily-history.jsonl
           WORKFLOW: daily-stable
           LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          # The suite revision the shards ran (#2060). Every checkout in this workflow
+          # takes no `ref:`, so each job resolved github.sha. The VM lane runs hours
+          # later and can sit on a newer main, and this is what lets the comparator
+          # state that instead of inferring it from totals that do not match.
+          SUITE_SHA: ${{ github.sha }}
           # The RESOLVED version, next to the tag that asked for it. The VM daily
           # appends to this same series, and comparing two rows that tested different
           # Langflows would file the product's changelog as an environment difference
