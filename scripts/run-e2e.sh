@@ -2328,6 +2328,19 @@ auto_remove_commit() {
   return 0
 }
 
+# The machine the umbrella names as holding the evidence (#2036). The issue creator
+# reads VM_HOSTNAME || HOSTNAME, and HOSTNAME is a bash variable that is NOT exported,
+# so every VM umbrella said "on the QA VM" — the one line that exists to say where the
+# run directory lives. Read at run time, so no host is written into this repository;
+# empty when `hostname` fails, which the creator turns back into its fallback.
+evidence_host() {
+  if [ -n "${VM_HOSTNAME:-}" ]; then
+    printf '%s' "$VM_HOSTNAME"
+  else
+    hostname 2>/dev/null || true
+  fi
+}
+
 # The triage dataset, rendered for the umbrella (#2031). On the Actions lane this
 # reaches a reader through the triage-dispatch comment; its trigger is a workflow_run
 # of the Actions daily, so for this lane it reached nobody, and on 2026-09-21 the
@@ -2615,6 +2628,7 @@ phase_publish() {
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
     TRIAGE_MD_FILE="$TRIAGE_MD_FILE" \
+    VM_HOSTNAME="$(evidence_host)" \
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     IMAGE="${IMAGE:-$LANGFLOW_VERSION}" \
     AUTO_REMOVE_STATUS="$AUTO_REMOVE_STATUS" AUTO_REMOVE_SUMMARY="$AUTO_REMOVE_SUMMARY" \
