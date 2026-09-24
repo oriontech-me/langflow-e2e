@@ -1,6 +1,10 @@
 // Pure, I/O-free triage helpers. Everything here is unit-tested with fixtures;
 // all filesystem / gh access lives in build-triage-dataset.mjs.
 
+// Imported, not injected like the infra classifier: this module is pure too, and
+// it is the SAME comparison the appender's keys were derived for (#1626).
+import { compareRecurrence } from '../../../../../scripts/lib/recurrence-key.mjs';
+
 /** Parse JSONL history text into an array of run rows (chronological order). */
 export function parseHistory(text) {
   return text
@@ -94,16 +98,25 @@ export function outageCorroborated(overlap, threshold = OUTAGE_COVERAGE_THRESHOL
  *  rowsInWindow must already include the latest run.
  *
  *  Recurrence is about the *same cause*, so `count`/`dates` report only the
- *  occurrences whose normalized error signature matches the item's — this is
- *  what the proposal should cite. A test can recur under the same title for
- *  different causes (different signatures); those inflate a raw title tally
- *  without being same-cause recurrence, so they are excluded from count/dates
- *  and surfaced separately as `total_count`/`total_dates` for context only.
- *  `same_signature` (>= 2 same-signature hits) is unchanged and still drives
- *  the actionable decision. */
+ *  occurrences whose recurrence key matches the item's — this is what the
+ *  proposal should cite. A test can recur under the same title for different
+ *  causes; those inflate a raw title tally without being same-cause recurrence,
+ *  so they are excluded from count/dates and surfaced separately as
+ *  `total_count`/`total_dates` for context only. `same_signature` (>= 2
+ *  same-cause hits) still drives the actionable decision.
+ *
+ *  "Same cause" is `compareRecurrence()` (`scripts/lib/recurrence-key.mjs`,
+ *  #1626), no longer equality of `error_signature`: that string named neither the
+ *  element nor the call site, so one spec collided with itself, and it carried the
+ *  model and counters a marker assertion interpolates, so one cause never matched
+ *  itself. A date whose row predates the keys can only be compared on the
+ *  failure's head — the collision that issue was raised about — so it is counted
+ *  (a legacy row read as "no recurrence" would reset every window the day the
+ *  keys shipped) and ALSO listed in `unverified_dates`, which the proposal must
+ *  check against that run's call log before citing the figure. */
 export function computeRecurrence(item, rowsInWindow) {
-  const target = normalizeSignature(item.error_signature);
   const allDates = [];
+  const unverifiedDates = [];
   const sameDates = [];
   // What the backend was doing on each of the earlier occurrences (#1763). The
   // `liveness-*` artifacts expire after 7 days and this window is 30, so the
@@ -115,24 +128,62 @@ export function computeRecurrence(item, rowsInWindow) {
   const outageByDate = {};
   for (const row of rowsInWindow) {
     const entries = [...(row.failures || []), ...(row.flaky || [])];
-    const hit = entries.find((e) => e.test === item.test);
-    if (!hit) continue;
+    // The item's own row answers with the item itself: a legacy row compared
+    // with itself is only `unverified` on the head. Every other row may carry the
+    // title more than once — a parameterized spec emits one entry per provider —
+    // so taking the first one let a sibling answer for the item, both for the
+    // verdict and for the outage state recorded below. Only the item's own
+    // variant answers when the row has one; see `bestHit`.
+    const titled = entries.filter((e) => e.test === item.test);
+    if (!titled.length) continue;
     allDates.push(row.date);
-    if (normalizeSignature(hit.error_signature) === target) {
+    const { verdict, hit } = titled.includes(item)
+      ? { verdict: 'match', hit: item }
+      : bestHit(item, titled);
+    if (verdict === 'unverified') unverifiedDates.push(row.date);
+    if (verdict !== 'none') {
       sameDates.push(row.date);
       outageByDate[row.date] = hit.outage_overlap?.state || 'unrecorded';
     }
   }
   allDates.sort();
   sameDates.sort();
+  unverifiedDates.sort();
   return {
     count: sameDates.length,
     dates: sameDates,
     same_signature: sameDates.length >= 2,
     total_count: allDates.length,
     total_dates: allDates,
+    unverified_dates: unverifiedDates,
     outage_by_date: outageByDate,
   };
+}
+
+const VERDICT_RANK = { match: 2, unverified: 1, none: 0 };
+
+/**
+ * The entry of a row that answers for `item`, and its verdict.
+ *
+ * When the row carries the item's own variant (same `param`), only those entries
+ * answer: another provider failing the same way is that provider's recurrence,
+ * and letting it answer would also hand the item that variant's outage state.
+ * Every same-title entry answers when none shares the param, and that is the
+ * COMMON case, not an edge: `param` carries the model, and the daily rotates the
+ * provider by weekday (#1185), so most earlier rows hold another variant or none.
+ * There a sibling's same-cause failure counts — including its outage state —
+ * because it is the only occurrence that row has; the title-only rule always did
+ * this, and refusing it would make a rotated provider's cause unable to recur.
+ */
+function bestHit(item, candidates) {
+  const sameParam = candidates.filter((e) => (e.param ?? null) === (item.param ?? null));
+  const pool = sameParam.length ? sameParam : candidates;
+  let best = { verdict: 'none', hit: pool[0] };
+  for (const e of pool) {
+    const v = compareRecurrence(item, e);
+    if (VERDICT_RANK[v] > VERDICT_RANK[best.verdict]) best = { verdict: v, hit: e };
+  }
+  return best;
 }
 
 /** True when the run had more hard failures than the auto-remove guard allows. */
@@ -326,7 +377,7 @@ const DEFAULT_DELIVERABLES = [
  * Make a value safe as a single Markdown table cell.
  *
  * Signatures are copied verbatim out of `reports/daily-history.jsonl` so that
- * recurrence stays matchable via `normalizeSignature()`. Two things still have
+ * the dedup against open issues stays matchable via `normalizeSignature()`. Two things still have
  * to be neutralised or the table silently breaks: a literal `|` ends the cell
  * early, and an embedded newline ends the row. Both are escaped rather than
  * stripped — `normalizeSignature()` collapses whitespace and the reader can
@@ -666,8 +717,8 @@ export function buildDataset(rows, issues, opts = {}) {
 
   const hard_failures = dedupeEntries(run.failures).map(withRecurrence);
 
-  // A flake is actionable when it recurs under the same signature — AND when the
-  // failure is the spec's own. #1031 exempted wedge collateral from `@stable`
+  // A flake is actionable when it recurs under the same cause (the recurrence
+  // key, #1626) — AND when the failure is the spec's own. #1031 exempted wedge collateral from `@stable`
   // auto-removal, but that path only ever sees hard failures, so a flake whose
   // error is transport-level still satisfied the recurrence criterion and the
   // protocol then required a dedicated issue *and* a quarantine PR for it: a
@@ -699,7 +750,7 @@ export function buildDataset(rows, issues, opts = {}) {
             infra_excluded: {
               signature: f.infra_signature,
               classified_from: f.infra_classified_from,
-              why: 'recurs under the same signature, but the error is transport-level — the harness could not reach the backend, so the failure is not attributable to this spec (#1031/#1310). Note it against the run backend outage; do not file or quarantine.',
+              why: 'recurs under the same cause, but the error is transport-level — the harness could not reach the backend, so the failure is not attributable to this spec (#1031/#1310). Note it against the run backend outage; do not file or quarantine.',
             },
           }
         : {}),
@@ -714,7 +765,7 @@ export function buildDataset(rows, issues, opts = {}) {
               ...(f.outage_overlap.shard_down_pct !== undefined
                 ? { shard_down_pct: f.outage_overlap.shard_down_pct }
                 : {}),
-              why: `recurs under the same signature, and the error is NOT transport-level — but the in-run liveness recorder measured every failed attempt of it at least ${Math.round(OUTAGE_COVERAGE_THRESHOLD * 100)}% inside a backend outage on its own shard, so the failure is not attributable to this spec (#1763). Note it against the run backend outage; do not file or quarantine. Read min_coverage against shard_down_pct before accepting it, and say so in the proposal — this is a measurement, not a signature.`,
+              why: `recurs under the same cause, and the error is NOT transport-level — but the in-run liveness recorder measured every failed attempt of it at least ${Math.round(OUTAGE_COVERAGE_THRESHOLD * 100)}% inside a backend outage on its own shard, so the failure is not attributable to this spec (#1763). Note it against the run backend outage; do not file or quarantine. Read min_coverage against shard_down_pct before accepting it, and say so in the proposal — this is a measurement, not a signature.`,
             },
           }
         : {}),

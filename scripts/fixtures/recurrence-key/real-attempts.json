@@ -1,0 +1,294 @@
+{
+ "//": "Real failed attempts copied from the daily-stable JSON reports named by run_id (#1626). ANSI stripped and each message capped at 2500 chars; otherwise verbatim.",
+ "cases": [
+  {
+   "group": "issue-1623",
+   "date": "2026-08-25",
+   "run_id": "32827671203",
+   "file": "tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+   "line": 43,
+   "title": "user must see on handle click the possibility connections",
+   "status": "flaky",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "TimeoutError: page.waitForSelector: Timeout 3000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"handle-apirequest-shownode-url-left\"]') to be visible\n\n\n  71 |     await adjustScreenView(page);\n  72 |\n> 73 |     await page.waitForSelector(\n     |                ^\n  74 |       '[data-testid=\"handle-apirequest-shownode-url-left\"]',\n  75 |       {\n  76 |         timeout: 3000,\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts:73:16",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+       "column": 16,
+       "line": 73
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "failed",
+     "retry": 1,
+     "error": {
+      "message": "TimeoutError: page.waitForSelector: Timeout 3000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"handle-apirequest-shownode-url-left\"]') to be visible\n\n\n  71 |     await adjustScreenView(page);\n  72 |\n> 73 |     await page.waitForSelector(\n     |                ^\n  74 |       '[data-testid=\"handle-apirequest-shownode-url-left\"]',\n  75 |       {\n  76 |         timeout: 3000,\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts:73:16",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+       "column": 16,
+       "line": 73
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "passed",
+     "retry": 2
+    }
+   ]
+  },
+  {
+   "group": "issue-1623",
+   "date": "2026-08-27",
+   "run_id": "33105369510",
+   "file": "tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+   "line": 43,
+   "title": "user must see on handle click the possibility connections",
+   "status": "unexpected",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "TimeoutError: page.waitForSelector: Timeout 3000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"sidebar-search-input\"]') to be visible\n    10 × locator resolved to hidden <input value=\"\" type=\"search\" autocomplete=\"off\" data-lpignore=\"true\" data-bwignore=\"true\" placeholder=\"Search\" data-1p-ignore=\"true\" data-form-type=\"other\" aria-label=\"Components\" data-testid=\"sidebar-search-input\" class=\"nopan nodelete nodrag noflow primary-input !placeholder-transparent pl-9 w-full rounded-lg bg-background text-sm\"/>\n\n\n  54 |\n  55 |     await page.getByTestId(\"blank-flow\").click();\n> 56 |     await page.waitForSelector('[data-testid=\"sidebar-search-input\"]', {\n     |                ^\n  57 |       timeout: 3000,\n  58 |     });\n  59 |\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts:56:16",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+       "column": 16,
+       "line": 56
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "failed",
+     "retry": 1,
+     "error": {
+      "message": "TimeoutError: page.waitForSelector: Timeout 3000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"handle-apirequest-shownode-url-left\"]') to be visible\n\n\n  71 |     await adjustScreenView(page);\n  72 |\n> 73 |     await page.waitForSelector(\n     |                ^\n  74 |       '[data-testid=\"handle-apirequest-shownode-url-left\"]',\n  75 |       {\n  76 |         timeout: 3000,\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts:73:16",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+       "column": 16,
+       "line": 73
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "failed",
+     "retry": 2,
+     "error": {
+      "message": "TimeoutError: page.waitForSelector: Timeout 3000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"handle-apirequest-shownode-url-left\"]') to be visible\n\n\n  71 |     await adjustScreenView(page);\n  72 |\n> 73 |     await page.waitForSelector(\n     |                ^\n  74 |       '[data-testid=\"handle-apirequest-shownode-url-left\"]',\n  75 |       {\n  76 |         timeout: 3000,\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts:73:16",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts",
+       "column": 16,
+       "line": 73
+      },
+      "snippet": ""
+     }
+    }
+   ]
+  },
+  {
+   "group": "issue-1694",
+   "date": "2026-08-31",
+   "run_id": "33410643882",
+   "file": "tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts",
+   "line": 251,
+   "title": "model toggle changes immediately and persists across reopen",
+   "status": "flaky",
+   "results": [
+    {
+     "status": "passed",
+     "retry": 0
+    },
+    {
+     "status": "passed",
+     "retry": 1
+    },
+    {
+     "status": "failed",
+     "retry": 2,
+     "error": {
+      "message": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for getByTestId('provider-item-OpenAI')\n\n\n   at helpers/provider-setup/setup-openai.ts:31\n\n  29 |\n  30 |   // Step 3: Select the OpenAI provider\n> 31 |   await page.getByTestId(\"provider-item-OpenAI\").click();\n     |                                                  ^\n  32 |\n  33 |   // Step 4: Save the API key if the config panel is visible.\n  34 |   // The config panel animates in (300ms) and requires a backend fetch after the provider\n    at Object.setupOpenAI (/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/setup-openai.ts:31:50)\n    at SimpleAgentTemplatePage.load (/__w/langflow-e2e/langflow-e2e/tests/pages/SimpleAgentTemplatePage.ts:98:5)\n    at loadAgentWithProvider (/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts:164:5)\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts:260:9\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts:259:7",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/setup-openai.ts",
+       "column": 50,
+       "line": 31
+      },
+      "snippet": ""
+     }
+    }
+   ]
+  },
+  {
+   "group": "issue-1694",
+   "date": "2026-09-03",
+   "run_id": "33756085604",
+   "file": "tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts",
+   "line": 256,
+   "title": "model toggle changes immediately and persists across reopen",
+   "status": "flaky",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for getByText('Model Providers').first()\n\n\n   at helpers/ui/go-to-settings.ts:15\n\n  13 |\n  14 |   if (settingsMenuName) {\n> 15 |     await page.getByText(`${settingsMenuName}`).first().click();\n     |                                                         ^\n  16 |     await page.waitForSelector('[data-testid=\"settings_menu_header\"]', {\n  17 |       timeout: 5000,\n  18 |     });\n    at navigateSettingsPages (/__w/langflow-e2e/langflow-e2e/tests/helpers/ui/go-to-settings.ts:15:57)\n    at openProviderModelList (/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts:176:3)\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts:290:9\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/model-provider-model-toggle.spec.ts:288:7",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/helpers/ui/go-to-settings.ts",
+       "column": 57,
+       "line": 15
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "passed",
+     "retry": 1
+    }
+   ]
+  },
+  {
+   "group": "comment-1665",
+   "date": "2026-08-31",
+   "run_id": "33410643882",
+   "file": "tests-automations/regression/core-functionality/llm-agents/agent-current-date-tool.spec.ts",
+   "line": 291,
+   "title": "toggle OFF: the date tool is removed from the agent's toolkit",
+   "status": "flaky",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "Error: MODEL_PICKER_DEFECT: \"gpt-4o-mini\" is ENABLED in the provider panel (llm-toggle-gpt-4o-mini) for OpenAI but the model picker does not offer it — 15 option(s) enumerated (Anthropic: 5, Google Generative AI: 5, OpenAI: 5). The two sources disagree, so the model is not absent: either the picker did not refresh after the panel closed, or the option list is filtered. Reported as a FAILURE, not a skip (#1461).\n\n   at helpers/provider-setup/model-option.ts:410\n\n  408 |   }\n  409 |\n> 410 |   throw new Error(verdict.message);\n      |         ^\n  411 | }\n  412 |\n    at selectPinnedModelOption (/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/model-option.ts:410:9)\n    at Object.setupOpenAI (/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/setup-openai.ts:107:23)\n    at SimpleAgentTemplatePage.load (/__w/langflow-e2e/langflow-e2e/tests/pages/SimpleAgentTemplatePage.ts:98:5)\n    at loadAgent (/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/agent-current-date-tool.spec.ts:89:5)\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/agent-current-date-tool.spec.ts:304:9",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/model-option.ts",
+       "column": 9,
+       "line": 410
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "passed",
+     "retry": 1
+    }
+   ]
+  },
+  {
+   "group": "comment-1665",
+   "date": "2026-09-01",
+   "run_id": "33511210195",
+   "file": "tests-automations/regression/core-functionality/llm-agents/agent-current-date-tool.spec.ts",
+   "line": 291,
+   "title": "toggle OFF: the date tool is removed from the agent's toolkit",
+   "status": "unexpected",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "Error: MODEL_PICKER_DEFECT: \"gemini-3.5-flash\" is ENABLED in the provider panel (llm-toggle-gemini-3.5-flash) for Google Generative AI but the model picker does not offer it — 15 option(s) enumerated (Anthropic: 5, Google Generative AI: 5, OpenAI: 5). The two sources disagree, so the model is not absent: either the picker did not refresh after the panel closed, or the option list is filtered. Reported as a FAILURE, not a skip (#1461).\n\n   at helpers/provider-setup/model-option.ts:496\n\n  494 |   }\n  495 |\n> 496 |   throw new Error(verdict.message);\n      |         ^\n  497 | }\n  498 |\n    at selectPinnedModelOption (/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/model-option.ts:496:9)\n    at Object.setupGoogle (/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/setup-google.ts:137:5)\n    at SimpleAgentTemplatePage.load (/__w/langflow-e2e/langflow-e2e/tests/pages/SimpleAgentTemplatePage.ts:98:5)\n    at loadAgent (/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/agent-current-date-tool.spec.ts:89:5)\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/llm-agents/agent-current-date-tool.spec.ts:304:9",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/helpers/provider-setup/model-option.ts",
+       "column": 9,
+       "line": 496
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "skipped",
+     "retry": 1
+    },
+    {
+     "status": "skipped",
+     "retry": 2
+    }
+   ]
+  },
+  {
+   "group": "comment-1676",
+   "date": "2026-08-28",
+   "run_id": "33205785035",
+   "file": "tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts",
+   "line": 826,
+   "title": "a discovered model runs a flow through the OpenAI Compatible provider",
+   "status": "flaky",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "Error: the persisted binding must still be this provider's model when the run is sent — if the run then executes another model, the run did not build the persisted flow\n\nexpect(received).toMatchObject(expected)\n\n- Expected  - 2\n+ Received  + 2\n\n  Object {\n    \"models\": Array [\n-     \"gpt-4o-mini\",\n+     \"claude-opus-5\",\n    ],\n    \"providers\": Array [\n-     \"OpenAI Compatible\",\n+     \"Anthropic\",\n    ],\n  }\n\n  1004 |           await persistedModelBinding(request, flowId),\n  1005 |           \"the persisted binding must still be this provider's model when the run is sent — if the run then executes another model, the run did not build the persisted flow\",\n> 1006 |         ).toMatchObject({ models: [TEST_MODEL], providers: [PROVIDER_NAME] });\n       |           ^\n  1007 |         await page\n  1008 |           .getByTestId(\"input-chat-playground\")\n  1009 |           .last()\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:1006:11\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:987:7",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts",
+       "column": 11,
+       "line": 1006
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "passed",
+     "retry": 1
+    }
+   ]
+  },
+  {
+   "group": "comment-1676",
+   "date": "2026-09-02",
+   "run_id": "33630411848",
+   "file": "tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts",
+   "line": 826,
+   "title": "a discovered model runs a flow through the OpenAI Compatible provider",
+   "status": "unexpected",
+   "results": [
+    {
+     "status": "failed",
+     "retry": 0,
+     "error": {
+      "message": "Error: the persisted binding must still be this provider's model when the run is sent — if the run then executes another model, the run did not build the persisted flow\n\nexpect(received).toMatchObject(expected)\n\n- Expected  - 2\n+ Received  + 2\n\n  Object {\n    \"models\": Array [\n-     \"gpt-4o-mini\",\n+     \"claude-fable-5-1\",\n    ],\n    \"providers\": Array [\n-     \"OpenAI Compatible\",\n+     \"Anthropic\",\n    ],\n  }\n\n  1004 |           await persistedModelBinding(request, flowId),\n  1005 |           \"the persisted binding must still be this provider's model when the run is sent — if the run then executes another model, the run did not build the persisted flow\",\n> 1006 |         ).toMatchObject({ models: [TEST_MODEL], providers: [PROVIDER_NAME] });\n       |           ^\n  1007 |         await page\n  1008 |           .getByTestId(\"input-chat-playground\")\n  1009 |           .last()\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:1006:11\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:987:7",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts",
+       "column": 11,
+       "line": 1006
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "failed",
+     "retry": 1,
+     "error": {
+      "message": "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: \"reply-contains-token\"\nReceived: \"AI reply for the session not persisted yet\"\n\nCall Log:\n- Timeout 90000ms exceeded while waiting on the predicate\n\n  1037 |         // placeholder mid-stream (#634 race).\n  1038 |         const bearer = await getAuthToken(request);\n> 1039 |         await expect\n       |         ^\n  1040 |           .poll(\n  1041 |             async () => {\n  1042 |               const res = await request.get(\"/api/v1/monitor/messages\", {\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:1039:9\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:987:7",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts",
+       "column": 9,
+       "line": 1039
+      },
+      "snippet": ""
+     }
+    },
+    {
+     "status": "failed",
+     "retry": 2,
+     "error": {
+      "message": "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: \"reply-contains-token\"\nReceived: \"AI reply for the session not persisted yet\"\n\nCall Log:\n- Timeout 90000ms exceeded while waiting on the predicate\n\n  1037 |         // placeholder mid-stream (#634 race).\n  1038 |         const bearer = await getAuthToken(request);\n> 1039 |         await expect\n       |         ^\n  1040 |           .poll(\n  1041 |             async () => {\n  1042 |               const res = await request.get(\"/api/v1/monitor/messages\", {\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:1039:9\n    at /__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts:987:7",
+      "location": {
+       "file": "/__w/langflow-e2e/langflow-e2e/tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts",
+       "column": 9,
+       "line": 1039
+      },
+      "snippet": ""
+     }
+    }
+   ]
+  }
+ ]
+}

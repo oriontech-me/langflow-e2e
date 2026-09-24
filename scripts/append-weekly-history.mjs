@@ -70,6 +70,14 @@
 //   "flaky":    [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
 //   "run_errors": [ "..." ]                     // optional, see below
 //   "report_missing": true                      // optional, see below
+//   `recurrence_keys` + `recurrence_key_version` (additive to schema v1, #1626)
+//   are the per-attempt keys the triage's recurrence rule compares instead of
+//   `error_signature`: `{ head, locator, file, source }` for every distinct failed
+//   attempt, derived by `scripts/lib/recurrence-key.mjs` (which documents why each
+//   field exists). `error_signature` is untouched — it still names the attempt
+//   `infra_signature` and `remove-stable-from-failures.ts` read. Rows written
+//   before #1626 lack both fields and are compared on the head alone, reported
+//   `unverified` rather than as no recurrence.
 //   `infra_signature_any_attempt` (additive to schema v1, #1589) is the same
 //   classifier run over EVERY failed attempt, earliest match wins — a lead for a
 //   triage recomputing recurrence, never a verdict, since it carries no
@@ -170,6 +178,7 @@ import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 import { paramFromSuitePath } from "./lib/spec-param.mjs";
 import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
+import { RECURRENCE_KEY_VERSION, recurrenceKeysForTest } from "./lib/recurrence-key.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -354,6 +363,16 @@ function outageOverlapField(file, title, param, test) {
   return block ? { outage_overlap: block } : {};
 }
 
+// The recurrence keys (#1626), spread-ready. `process.cwd()` is the root the
+// report's absolute error locations are made relative against — the same root
+// `specRelFile` uses for the spec path.
+function recurrenceFields(test) {
+  return {
+    recurrence_keys: recurrenceKeysForTest(test, process.cwd()),
+    recurrence_key_version: RECURRENCE_KEY_VERSION,
+  };
+}
+
 function visit(node, suitePath = []) {
   const path = node.title ? [...suitePath, node.title] : suitePath;
   const param = paramFromSuitePath(path);
@@ -397,6 +416,7 @@ function visit(node, suitePath = []) {
           error_signature: firstFailedSignature || "unknown",
           infra_signature: infraSignatureId(firstFailedResult),
           infra_signature_any_attempt: infraSignatureAnyAttempt(test),
+          ...recurrenceFields(test),
           ...outageOverlapField(file, title, param, test),
           ...(param ? { param } : {}),
         });
@@ -444,6 +464,7 @@ function visit(node, suitePath = []) {
         // collateral block cannot disagree about the same failure.
         infra_signature: infraSignatureId(lastFailed),
         infra_signature_any_attempt: infraSignatureAnyAttempt(test),
+        ...recurrenceFields(test),
         ...outageOverlapField(file, title, param, test),
         ...(param ? { param } : {}),
       });

@@ -129,7 +129,11 @@ past run; `--results <json>` backfills provider labels + per-skip reasons.
 07-13/15/16"). `recurrence.total_count` / `total_dates` also count the same
 test's *different*-cause hits — context only; never quote them as the recurrence
 figure (it overstates same-cause recurrence). `actionable` = `same_signature`
-(≥ 2 same-signature hits).
+(≥ 2 same-cause hits). "Same cause" is the rows' `recurrence_keys` (#1626), not
+string equality of `error_signature` — see `reports/README.md`. A date also in
+`recurrence.unverified_dates` came from a row written before the keys and matched
+on the failure's head alone, which is the collision #1626 fixed: read that run's
+call log (locator and line) before citing it.
 
 If a local Playwright report exists for that run (downloaded or already on
 disk), pass it for richer per-skip detail — the history file only carries
@@ -223,7 +227,7 @@ the end of triage (Phase 7). Full rule + wording: `references/issue-templates.md
 
 ### Phase 4 — FLAKES
 
-Only flakes with `actionable: true` (same `error_signature` recurring within
+Only flakes with `actionable: true` (same recurrence key recurring within
 the window — the dataset already computed this) become dedicated issues.
 **`actionable` is now two conditions, not one (#1310):** recurrent **and** not
 wedge collateral. If the dataset carries a non-null **`infra_classification_gap`**,

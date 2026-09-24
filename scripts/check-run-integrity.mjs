@@ -67,8 +67,8 @@ export function errorSignatures(report) {
 // umbrella issue's fenced block) WITHOUT changing what `errorSignature` returns:
 // that value is the clustering key shared with the history appender, and rewriting
 // it would stop new signatures from matching the ones already committed in
-// reports/daily-history.jsonl — the 30-day same-signature flake criterion in
-// CONTRIBUTING.md compares them across runs.
+// reports/daily-history.jsonl — the longitudinal queries over that file compare
+// them across runs.
 //   1. Playwright error messages carry ANSI colour codes (the committed history
 //      shows `Error: \u001b[2mexpect(\u001b[22m…`), which render as literal noise
 //      in an issue body.

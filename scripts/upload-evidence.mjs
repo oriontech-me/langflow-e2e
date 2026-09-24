@@ -125,8 +125,13 @@ export function objectKey(prefix, runId, rel) {
   return parts.join("/").replace(/\/{2,}/g, "/");
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+/**
+ * `env`, `argv` and `fetchImpl` are injectable so a test can ask WHICH credential this
+ * sends — the question nothing asked when the first version sent the wrong one and every
+ * test stayed green.
+ */
+export async function main({ env = process.env, argv = process.argv.slice(2), fetchImpl = fetch } = {}) {
+  const args = argv;
   const get = (name) => {
     const i = args.indexOf(name);
     return i >= 0 && i + 1 < args.length ? args[i + 1] : "";
@@ -136,7 +141,24 @@ async function main() {
   const base = get("--base").replace(/\/+$/, "");
   const runId = get("--run-id");
   const prefix = get("--prefix");
-  const token = process.env.QA_E2E_AUTOMATION_TOKEN || "";
+  // The SERVICE ROLE key, not the automation token — they are different credentials and
+  // the storage route accepts only this one: it compares the bearer against
+  // env.serviceRoleKey and 401s on anything else, deliberately ("Nothing else may
+  // write"). The automation token is a per-endpoint shared secret for the run ingest and
+  // has no write access to the bucket.
+  //
+  // The first version of this script sent the automation token, and nothing caught it:
+  // the tests covered key shapes and content types, never WHICH credential goes out.
+  // Measured against production on 2026-09-23, in both directions: the service role key
+  // (180 chars) gets past auth and stops at the body check, the automation token (64
+  // chars) comes back 401. So every file would have failed, the upload would have
+  // reported a complete failure, and the run record would still have advertised an
+  // evidence URL that 404s in serve-report.
+  //
+  // It is also what the platform hands the VMs it orchestrates itself
+  // (start-execution.ts, run-single.ts: `callbackAuthToken: env.serviceRoleKey`), so
+  // this lane is doing what every other uploading VM already does.
+  const token = env.SUPABASE_SERVICE_ROLE_KEY || "";
 
   // Refuse rather than half-upload: a missing base or token would send every file to
   // nowhere and report 35 failures, burying the one fact that matters.
@@ -144,7 +166,7 @@ async function main() {
   if (!dir) missing.push("--dir");
   if (!base) missing.push("--base");
   if (!runId) missing.push("--run-id");
-  if (!token) missing.push("QA_E2E_AUTOMATION_TOKEN");
+  if (!token) missing.push("SUPABASE_SERVICE_ROLE_KEY");
   if (missing.length) {
     console.error(`[evidence] refusing to upload — not set: ${missing.join(", ")}`);
     return 2;
@@ -167,7 +189,7 @@ async function main() {
   for (const file of files) {
     const key = objectKey(prefix, runId, file.key);
     try {
-      const res = await fetch(`${base}/${key}`, {
+      const res = await fetchImpl(`${base}/${key}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
