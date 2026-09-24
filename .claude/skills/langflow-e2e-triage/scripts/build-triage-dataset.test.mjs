@@ -2,11 +2,11 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { makeTempDir } from "../../../../scripts/lib/tmp-dir.mjs";
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), "build-triage-dataset.mjs");
 
@@ -29,21 +29,21 @@ const REPORT = {
 };
 
 function run(args, { withGh = true } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "triage-dataset-"));
+  const dir = makeTempDir("triage-dataset-");
   const history = join(dir, "h.jsonl");
   writeFileSync(history, `${JSON.stringify(ROW)}\n`);
   const results = join(dir, "results.json");
   writeFileSync(results, JSON.stringify(REPORT));
   // A `gh` that records being called, so --no-issues can be shown not to call it.
   const bin = join(dir, "bin");
-  spawnSync("mkdir", [bin]);
+  mkdirSync(bin);
   const marker = join(dir, "gh-called");
   writeFileSync(join(bin, "gh"), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\necho '[]'\n`, { mode: 0o755 });
   const r = spawnSync(process.execPath, [CLI, "--history", history, "--run", ROW.run_id, ...args.map((a) => (a === "@results" ? results : a))], {
     encoding: "utf8",
     env: { ...process.env, PATH: withGh ? `${bin}:${process.env.PATH}` : process.env.PATH },
   });
-  const called = spawnSync("test", ["-e", marker]).status === 0;
+  const called = existsSync(marker);
   rmSync(dir, { recursive: true, force: true });
   return { ...r, called, dataset: r.status === 0 ? JSON.parse(r.stdout) : null };
 }
