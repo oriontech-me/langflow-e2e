@@ -1,7 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { providerConfigMap, type Provider } from "./provider-config";
-import { formatProviderInactiveReason } from "../../../scripts/lib/provider-health-reason.mjs";
+import {
+  formatProviderInactiveReason,
+  formatProviderStaleReason,
+} from "../../../scripts/lib/provider-health-reason.mjs";
 
 // Provider health gate for specs that HARDCODE a provider (issue #1029).
 //
@@ -32,16 +35,65 @@ import { formatProviderInactiveReason } from "../../../scripts/lib/provider-heal
  * `collect-models.ts`: that module imports `@playwright/test` and drives a
  * `SettingsPage`, and this one is consumed by a `node --test` unit lane that must
  * not pull a browser-facing dependency graph. Only the fields this gate reads are
- * declared — the real records also carry `checkedAt`, the timestamp that would let
- * a future version expire a stale record automatically instead of relying on
- * `IGNORE_PROVIDER_HEALTH=1`. Keep in sync with `collect-models.ts` by hand; the
- * producer's own spec asserts the record shape it writes.
+ * declared. Keep in sync with `collect-models.ts` by hand; the producer's own spec
+ * asserts the record shape it writes.
+ *
+ * `checkedAt` is optional here although `collect-models` always writes it, because
+ * `degradeProviders` (below) writes `inactive` records without one — and an
+ * `inactive` record never needs it. On an `active` record its absence is read as
+ * an age that cannot be established, i.e. as expired (#1904, see `isExpired`).
  */
 export interface ProviderHealthRecord {
   provider: string;
   model: string | null;
   status: "active" | "inactive";
   error: string | null;
+  checkedAt?: string;
+}
+
+/**
+ * How old an `active` record may be before it stops counting as a signal (#1904).
+ *
+ * The record is only as good as the sweep that wrote it. Every CI lane sweeps
+ * immediately before its run, so there it is minutes old: the longest daily in
+ * `reports/daily-history.jsonl` took 82 min, and `manual.yml`'s job cap is 180 min.
+ * `providers.json` is gitignored, though, and survives across days on a dev box —
+ * the one this was written on held a six-day-old all-`active` file — and a
+ * targeted local run does not sweep, by design. 12 h is four times the longest
+ * lane, so no scheduled run can reach it, and short enough that yesterday's sweep
+ * is never trusted today. `PROVIDER_HEALTH_MAX_AGE_HOURS` moves it.
+ */
+export const DEFAULT_MAX_AGE_HOURS = 12;
+
+/** The window from the environment, or the default when unset or not a positive number. */
+export function maxAgeHours(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.PROVIDER_HEALTH_MAX_AGE_HOURS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_AGE_HOURS;
+}
+
+/**
+ * Whether an `active` record is too old to believe.
+ *
+ * Only `active` expires. An old `inactive` record still names a key that was dead
+ * and a skip the escape hatch already covers; it is the stale `active` that runs a
+ * spec into a dead key, which is the direction this gate exists for and the one
+ * nothing handled. An unreadable or missing `checkedAt` cannot be shown to be
+ * fresh, so it is expired rather than trusted (#1012). A timestamp in the future
+ * (clock skew) is not old, and is trusted.
+ */
+export function isExpired(
+  record: ProviderHealthRecord,
+  env: NodeJS.ProcessEnv = process.env,
+  now: number = Date.now(),
+): boolean {
+  if (record.status !== "active") return false;
+  const at = Date.parse(String(record.checkedAt ?? ""));
+  if (!Number.isFinite(at)) return true;
+  return now - at > maxAgeHours(env) * 3_600_000;
+}
+
+function staleReason(record: ProviderHealthRecord, env: NodeJS.ProcessEnv): string {
+  return formatProviderStaleReason(record.provider, record.checkedAt, maxAgeHours(env));
 }
 
 const PROVIDERS_PATH = path.join(__dirname, "data", "providers.json");
@@ -155,6 +207,7 @@ export function unavailableReason(
   providers: Provider[],
   records: ProviderHealthRecord[] | null,
   env: NodeJS.ProcessEnv = process.env,
+  now: number = Date.now(),
 ): string | undefined {
   for (const provider of providers) {
     const missing = (providerConfigMap[provider]?.envKeys ?? []).filter(
@@ -165,10 +218,10 @@ export function unavailableReason(
     }
   }
 
-  // Escape hatch for a STALE local providers.json: `collect-models` is not part
-  // of a targeted local run, so a record from days ago can hold back a spec that
-  // would pass today. CI never needs this — every shard collects its own health
-  // immediately before the @stable run.
+  // Escape hatch for a STALE local providers.json, in either direction: an old
+  // `inactive` record can hold back a spec that would pass today, and an expired
+  // `active` one now skips too (#1904). CI never needs this — every shard collects
+  // its own health immediately before the @stable run.
   if (env.IGNORE_PROVIDER_HEALTH === "1") return undefined;
 
   if (!records) return undefined; // no signal — fail open, see readProviderHealth
@@ -176,6 +229,12 @@ export function unavailableReason(
   for (const provider of providers) {
     const record = records.find((r) => r.provider === provider);
     if (record?.status === "inactive") return inactiveReason(record);
+    // An expired `active` record SKIPS rather than failing open (#1904). Failing
+    // open was weighed and rejected: it lands a drained key on the backend, which
+    // is #1029's worker kill — six restarts and 14 collateral timeouts on run
+    // 30374528125 — and it does so silently, since no skip line names the cause.
+    // A false skip here costs one re-sweep and says so in the report.
+    if (record && isExpired(record, env, now)) return staleReason(record, env);
   }
 
   return undefined;
@@ -245,6 +304,7 @@ export function providerSkipReasons(
   records?: ProviderHealthRecord[] | null,
   env: NodeJS.ProcessEnv = process.env,
   jsonPath?: string,
+  now: number = Date.now(),
 ): Map<string, string> {
   const reasons = new Map<string, string>();
   if (env.IGNORE_PROVIDER_HEALTH === "1") return reasons;
@@ -260,6 +320,10 @@ export function providerSkipReasons(
   for (const record of resolved) {
     if (record.status === "inactive") {
       reasons.set(record.provider, inactiveReason(record));
+    } else if (isExpired(record, env, now)) {
+      // Same rule and same reason as `unavailableReason` (#1904): the parametrized
+      // specs are the larger population, and the stale `active` hazard is theirs too.
+      reasons.set(record.provider, staleReason(record, env));
     }
   }
   return reasons;
