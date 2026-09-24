@@ -116,6 +116,21 @@ test('computeRecurrence count/dates cover only same-signature occurrences (mixed
   assert.deepEqual(r.total_dates, ['2026-07-02', '2026-07-09', '2026-07-15', '2026-07-17']);
 });
 
+test('computeRecurrence reads the item\'s own row as a match, never as unverified (#1626)', () => {
+  // A legacy row compared with itself agrees only on the head, and a
+  // parameterized spec carries its title twice in one row — so the sibling
+  // variant, not the item, would be found first and judged instead.
+  const sibling = { test: 'vs query', line: 5, param: 'openai / a', error_signature: 'Error: other' };
+  const item = { test: 'vs query', line: 5, param: 'google / b', error_signature: 'Error: toBe' };
+  const rows = [
+    { date: '2026-09-17', flaky: [{ test: 'vs query', error_signature: 'Error: toBe' }] },
+    { date: '2026-09-23', flaky: [sibling, item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.dates, ['2026-09-17', '2026-09-23']);
+  assert.deepEqual(r.unverified_dates, ['2026-09-17']);
+});
+
 test('detectGuard trips above the threshold', () => {
   assert.equal(detectGuard({ totals: { failed: 6 } }, 5), true);
   assert.equal(detectGuard({ totals: { failed: 5 } }, 5), false);
@@ -939,4 +954,69 @@ test('#1763 one variant is exempted without the other one disappearing', () => {
     assert.equal(google.outage_excluded, undefined);
     assert.equal(Object.keys(byParam).length, 2, 'and the two are told apart by their provider');
   }
+});
+
+test('computeRecurrence is not answered by a parameterized sibling with another cause (#1626)', () => {
+  const k = (head) => ({ head, locator: null, file: 'f', source: 's' });
+  const entry = (param, head) => ({
+    test: 'agent runs', param, error_signature: head,
+    recurrence_keys: [k(head)], recurrence_key_version: 1,
+  });
+  const item = entry('google / g', 'MODEL_PICKER_DEFECT');
+  const rows = [
+    // The sibling is listed first, as the report orders providers.
+    { date: '2026-09-01', flaky: [entry('openai / o', 'error: other'), entry('google / g', 'MODEL_PICKER_DEFECT')] },
+    { date: '2026-09-02', flaky: [item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.dates, ['2026-09-01', '2026-09-02']);
+  assert.equal(r.same_signature, true);
+});
+
+test('computeRecurrence takes the outage state from the item\'s own variant (#1626)', () => {
+  const key = { head: 'h', locator: null, file: 'f', source: 's' };
+  const entry = (param, state, head = 'h') => ({
+    test: 't', param, error_signature: head,
+    recurrence_keys: [{ ...key, head }], recurrence_key_version: 1,
+    outage_overlap: { state },
+  });
+  const item = entry('google / g', 'clear');
+  const rows = [
+    { date: '2026-09-01', flaky: [entry('openai / o', 'overlapped'), entry('google / g', 'clear')] },
+    { date: '2026-09-02', flaky: [entry('openai / o', 'overlapped'), item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.outage_by_date, { '2026-09-01': 'clear', '2026-09-02': 'clear' });
+});
+
+test('computeRecurrence does not let a sibling match when the item\'s variant failed otherwise (#1626)', () => {
+  const entry = (param, head) => ({
+    test: 't', param, error_signature: head,
+    recurrence_keys: [{ head, locator: null, file: 'f', source: 's' }], recurrence_key_version: 1,
+  });
+  const item = entry('google / g', 'h');
+  const rows = [
+    { date: '2026-09-01', flaky: [entry('openai / o', 'h'), entry('google / g', 'other')] },
+    { date: '2026-09-02', flaky: [item] },
+  ];
+  const r = computeRecurrence(item, rows);
+  assert.deepEqual(r.dates, ['2026-09-02']);
+  assert.equal(r.same_signature, false);
+  // A row with no entry of the item's variant still answers title-only.
+  const legacy = [{ date: '2026-09-01', flaky: [entry(undefined, 'h')] }, { date: '2026-09-02', flaky: [item] }];
+  assert.deepEqual(computeRecurrence(item, legacy).dates, ['2026-09-01', '2026-09-02']);
+});
+
+test('computeRecurrence reads a null param and an absent one as the same variant (#1626)', () => {
+  const entry = (extra, head) => ({
+    test: 't', error_signature: head, ...extra,
+    recurrence_keys: [{ head, locator: null, file: 'f', source: 's' }], recurrence_key_version: 1,
+  });
+  const item = entry({}, 'h');
+  const rows = [
+    { date: '2026-09-01', flaky: [entry({ param: 'openai / o' }, 'h'), entry({ param: null }, 'other')] },
+    { date: '2026-09-02', flaky: [item] },
+  ];
+  // The null-param entry IS the item's variant, so the openai sibling does not answer.
+  assert.deepEqual(computeRecurrence(item, rows).dates, ['2026-09-02']);
 });
