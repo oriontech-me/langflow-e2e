@@ -3045,3 +3045,27 @@ test("the umbrella names the machine that holds the evidence (#2036)", () => {
   const call = publish.slice(publish.indexOf('log "Opening the failure issue"'), publish.indexOf("node scripts/create-failure-issue.mjs"));
   assert.match(call, /VM_HOSTNAME="\$\(evidence_host\)"/, "the issue creator is not handed the host");
 });
+
+test("the token summary is written, and BEFORE the POST that reads it", () => {
+  // Two defects in one assertion, both shipped in #2017 and both measured on the
+  // 20260924T080023Z run: the summariser ran without TOKENS_SUMMARY_OUT so the block
+  // was never written, AND it ran after the POST, so setting the variable alone would
+  // still have produced a file created one step too late. The POST reported
+  // `block_missing` — "the run captured nothing" — on a run whose four shards had
+  // captured plenty.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+
+  const summarize = publish.indexOf("watch-tokens.mjs --summarize");
+  const post = publish.indexOf("post-token-payload.mjs");
+  assert.ok(summarize > 0, "the token summariser is missing from phase_publish");
+  assert.ok(post > 0, "the token POST is missing from phase_publish");
+  assert.ok(summarize < post,
+    "the summariser must run BEFORE the POST — it writes the block the POST attaches");
+
+  // And it must be told where to write it: without TOKENS_SUMMARY_OUT the summariser
+  // still feeds the ledger and silently produces no block at all.
+  const block = publish.slice(summarize - 600, summarize);
+  assert.match(block, /TOKENS_SUMMARY_OUT="\$RUN_DIR\/tokens-block\.json"/,
+    "the summariser must be given TOKENS_SUMMARY_OUT, under $RUN_DIR");
+});

@@ -2519,6 +2519,21 @@ phase_publish() {
   # Never fatal, and no `|| warn` needed: every path in it returns 0 by design, because
   # telemetry is an attachment to a verdict. The `|| true` is belt and braces against a
   # crash in the interpreter itself, which under `set -e` would take the phase down.
+  local tokens_env=() kv
+  while IFS= read -r kv; do tokens_env+=("$kv"); done < <(tokens_history_env)
+  # TOKENS_SUMMARY_OUT is what makes the summariser WRITE the block, and without it the
+  # token POST downstream has nothing to attach: it reported `block_missing` — "the run
+  # captured nothing" — on a run whose four shards had captured plenty (#2017 shipped
+  # with this gap; measured on 20260924T080023Z, where all-tokens/ held four
+  # token-attrib files and tokens-block.json was ENOENT).
+  #
+  # The summariser has always run here, for the LEDGER. Two consumers, one pass: the
+  # history row it already wrote, and now the block the platform ingests.
+  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+    TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    node scripts/watch-tokens.mjs --summarize \
+    > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
+
   if [ "$POST_QA_PLATFORM" = "1" ] && [ "$PAYLOAD_BUILT" = "true" ]; then
     log "Posting the token consumption"
     TOKENS_DIR="$RUN_DIR/all-tokens" \
@@ -2559,11 +2574,6 @@ phase_publish() {
   if ledger_active; then
     ledger_seed "$LEDGER_TOKENS" reports/token-history.jsonl
   fi
-  local tokens_env=() kv
-  while IFS= read -r kv; do tokens_env+=("$kv"); done < <(tokens_history_env)
-  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
-    node scripts/watch-tokens.mjs --summarize \
-    > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 
   # The run series — one line per scheduled sweep, and the switch that used to gate it
   # was named for something this script does not do. COMMIT_HISTORY implied a commit;
