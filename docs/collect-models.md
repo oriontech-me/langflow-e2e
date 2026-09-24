@@ -228,6 +228,33 @@ has no file (it is gitignored) and CI is allowed to run with a failed
 `Collect models` step (#980), so "no signal" must never skip the suite. And both
 honour `IGNORE_PROVIDER_HEALTH=1`, which overrides a stale local file.
 
+**An `active` record expires; an `inactive` one does not (#1904).** The record is
+only as good as the sweep that wrote it, and `providers.json` survives across days
+on a dev box, where a targeted run does not sweep. The machine #1904 was worked on
+held a six-day-old file with all three providers `active`. Believing it runs a spec
+into a key drained since, which is #1029's worker kill again, and silently, because
+no skip line fires.
+
+So both readers compare `checkedAt` with a window: **12 h** by default, set by
+`PROVIDER_HEALTH_MAX_AGE_HOURS`. An `active` record older than that, or with no
+readable `checkedAt`, **skips**, with a reason that says the record is old and how
+to re-establish it: `Provider "openai" health record stale — checked …, outside the
+12 h window; re-run tests/collect-models.spec.ts, or set IGNORE_PROVIDER_HEALTH=1`.
+Four things about it:
+
+- **It skips rather than failing open.** Failing open was weighed and rejected: it
+  keeps the one direction nothing handled — a dead key reaching the backend — while
+  a false skip costs one re-sweep and names itself in the report.
+- **CI cannot reach it.** Every lane sweeps immediately before its run. The longest
+  daily in `reports/daily-history.jsonl` took 82 min and `manual.yml`'s job cap is
+  180 min, a quarter of the window.
+- **An old `inactive` record is left alone.** It still names a key that was dead,
+  and its skip already has the escape hatch.
+- **The lane counts it as a provider-health skip.** The wording is parsed by the
+  same shared module as the `inactive` one (`scripts/lib/provider-health-reason.mjs`,
+  marked `stale: true`), so `lane-coverage-verdict` counts it and does not read the
+  provider as covered.
+
 > **The escape hatch is local-only, and it is now blunter than it was.** The
 > variable is set in no workflow, script or config — only ever exported by hand.
 > Before #1043 it affected the hardcoded specs alone; it now also un-skips every
