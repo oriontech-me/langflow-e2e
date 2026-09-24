@@ -161,6 +161,10 @@ CHECK_MIRROR="${CHECK_MIRROR:-1}"
 
 AUTO_REMOVE="${AUTO_REMOVE:-0}"
 MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
+# Can this run still push the removal it may make? Asked only when AUTO_REMOVE=1, and
+# unlike CHECK_ISSUE_CREDENTIAL it never stops the run: a refused push still leaves an
+# umbrella that names the removal it could not push (#2028).
+CHECK_PUSH_CREDENTIAL="${CHECK_PUSH_CREDENTIAL:-1}"
 # Where a removal is pushed, and it is NOT this clone's `origin`. That remote is the
 # read-only destination mirror: a commit written there is content the source does not
 # have, the sync guard records `diverged` and mirroring STOPS — worse than reverting,
@@ -1091,6 +1095,33 @@ verify_issue_credential() {
   esac
 }
 
+# The removal's push credential, shaped like verify_issue_credential above and stubbed
+# the same way (`PUSH_CREDENTIAL_BIN`). The difference is the refusal: it WARNS. The
+# umbrella's credential is fatal because without it a red day reports nothing; without
+# this one the umbrella still opens and says the removal was made and not pushed, so
+# stopping here would give up the day's verdict to protect the smaller thing (#2028).
+verify_push_credential() {
+  local rc=0 log="$RUN_DIR/logs/push-credential.log"
+  # No pipe, for the reason verify_issue_credential gives.
+  if [ -n "${PUSH_CREDENTIAL_BIN:-}" ]; then
+    "$PUSH_CREDENTIAL_BIN" > "$log" 2>&1 || rc=$?
+  else
+    node scripts/check-push-credential.mjs > "$log" 2>&1 || rc=$?
+  fi
+  cat "$log"
+
+  case "$rc" in
+    0) return 0 ;;
+    3)
+      warn "the credential that pushes @stable removals was refused — see the line above. The run goes on; a removal today would be reported as made and not pushed (#2028)."
+      ;;
+    *)
+      warn "the push credential for @stable removals could not be confirmed (exit $rc) — see $log (#2028)."
+      ;;
+  esac
+  return 0
+}
+
 phase_preflight() {
   log "Preflight"
 
@@ -1153,6 +1184,13 @@ phase_preflight() {
   # weeks left still works today.
   if [ "$CHECK_ISSUE_CREDENTIAL" = "1" ] && [ "$CREATE_ISSUE" = "1" ]; then
     verify_issue_credential
+  fi
+
+  # The same question about the credential that pushes a removal to the source, which
+  # also dies on a known date (2026-12-20). After the umbrella's, because that one can
+  # stop the run and this one only warns (#2028).
+  if [ "$CHECK_PUSH_CREDENTIAL" = "1" ] && [ "$AUTO_REMOVE" = "1" ]; then
+    verify_push_credential
   fi
 
   # The suite this run executes comes from a mirror that is pushed on a schedule, and
@@ -2290,6 +2328,39 @@ auto_remove_commit() {
   return 0
 }
 
+# The triage dataset, rendered for the umbrella (#2031). On the Actions lane this
+# reaches a reader through the triage-dispatch comment; its trigger is a workflow_run
+# of the Actions daily, so for this lane it reached nobody, and on 2026-09-21 the
+# triage rebuilt it by hand from the ledger. Deterministic: the skill's own builder
+# over this machine's history, no model.
+#
+# ALWAYS writes the file, and never fails the run. When the dataset cannot be built the
+# section says so and names the log — an umbrella without the section would read as a
+# day with nothing recurrent, which is the claim #1012 exists to stop.
+build_triage_summary() {
+  local out="$RUN_DIR/triage-summary.md" ds="$RUN_DIR/triage-dataset.json"
+  local log="$RUN_DIR/logs/triage-dataset.log"
+  TRIAGE_MD_FILE="$out"
+  mkdir -p "$RUN_DIR/logs"
+
+  if ! ledger_active; then
+    printf '%s\n' "### Triage dataset" "" \
+      "_Not computed: this run keeps no history ledger, so there is no window to read recurrence from._" > "$out"
+    return 0
+  fi
+  if node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs \
+       --history "$LEDGER_HISTORY" --run "$RUN_ID" --results "$RUN_DIR/results.json" --no-issues \
+       > "$ds" 2> "$log" \
+     && node scripts/render-triage-summary.mjs "$ds" > "$out" 2>> "$log"; then
+    info "triage dataset rendered for the umbrella: $out"
+  else
+    warn "the triage dataset could not be built — see $log. The umbrella says so (#2031)."
+    printf '%s\n' "### Triage dataset" "" \
+      "_Could not be built on this run — see \`$log\` on the VM. Read recurrence from the ledger by hand today._" > "$out"
+  fi
+  return 0
+}
+
 phase_publish() {
   cd "$REPO_DIR"
 
@@ -2531,6 +2602,7 @@ phase_publish() {
   if [ "$CREATE_ISSUE" = "1" ] && [ "$EVENT_NAME" = "schedule" ] \
     && { [ "$TEST_JOB_FAILED" = "1" ] || [ "$RUN_EMPTY" = "true" ]; }; then
     log "Opening the failure issue"
+    build_triage_summary
     # MERGE_OK travels with the guards' flags, and it has to. A failed merge sets
     # RUN_EMPTY and RUN_UNREADABLE true, and both consumers keyed only off those —
     # so the issue's title said "executed ZERO tests" and its body said "find why
@@ -2542,6 +2614,7 @@ phase_publish() {
     MERGE_OK="${MERGE_OK:-true}" \
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
+    TRIAGE_MD_FILE="$TRIAGE_MD_FILE" \
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     IMAGE="${IMAGE:-$LANGFLOW_VERSION}" \
     AUTO_REMOVE_STATUS="$AUTO_REMOVE_STATUS" AUTO_REMOVE_SUMMARY="$AUTO_REMOVE_SUMMARY" \
