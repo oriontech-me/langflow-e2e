@@ -1507,3 +1507,30 @@ test("TRIAGE_MD_FILE reaches the body through main(), and a missing file opens t
   assert.equal(run(join(dir, "absent.md")).status, 0, "an unreadable file must not cost the umbrella");
   assert.doesNotMatch(readFileSync(join(dir, "issue-body.md"), "utf8"), /### Triage dataset/);
 });
+
+test("the target's dependency drift rides after the triage dataset, in every shape (#2063)", () => {
+  const targetDrift = "### Target dependencies against the lock\n\n**190 of 444** installed distributions are not at the version";
+  const { body } = renderIssue({ ...VM, triage: "### Triage dataset\n\nx", targetDrift });
+  const at = body.indexOf("### Target dependencies against the lock");
+  assert.ok(at > body.indexOf("### Triage dataset"), "after the triage dataset");
+  assert.ok(at < body.indexOf("/cc "), "the /cc stays the last line");
+  // Unlike the triage dataset it describes THIS run's target, and a dependency that
+  // moved can take the whole run down, an empty one included.
+  for (const shape of [{ empty: true }, { mergeFailed: true }, { uncovered: true }, { partial: true }]) {
+    assert.match(renderIssue({ ...VM, ...shape, targetDrift }).body, /### Target dependencies against the lock/, JSON.stringify(shape));
+  }
+  // Absent is not rendered at all, so the Actions body pinned above is unchanged.
+  assert.equal(renderIssue(VM).body, renderIssue({ ...VM, targetDrift: "  \n" }).body);
+});
+
+test("TARGET_DRIFT_MD_FILE reaches the body through main() (#2063)", () => {
+  const dir = makeTempDir("drift-md-");
+  const md = join(dir, "target-lock-drift.md");
+  writeFileSync(md, "### Target dependencies against the lock\n\nAll **1** installed distributions are at the lock.\n");
+  const r = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...process.env, RUN_DIR: dir, RUN_ID: "r1", ISSUE_DRY_RUN: "1", ISSUE_CC: "", TARGET_DRIFT_MD_FILE: md },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(readFileSync(join(dir, "issue-body.md"), "utf8"), /### Target dependencies against the lock/);
+});
