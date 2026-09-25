@@ -641,6 +641,14 @@ const listingCompleteness =
         missing: listingMissing(process.env.LISTING_MISSING),
       };
 
+// The suite revision the run executed (#2060). The two daily lanes run hours apart,
+// so a PR merged between them leaves them on different suites, and until this field
+// the comparator could only infer that from totals that did not match. Recorded
+// verbatim and only when sent: a lane that does not send it gets no field, and a
+// value of the wrong shape stays visible as itself for the comparator to call
+// unreadable, rather than being dropped as if it had never been sent.
+const suiteSha = String(process.env.SUITE_SHA ?? "").trim() || null;
+
 const entry = {
   version: SCHEMA_VERSION,
   date: new Date().toISOString().split("T")[0],
@@ -649,6 +657,7 @@ const entry = {
   run_url: runUrl,
   langflow_image: process.env.LANGFLOW_IMAGE || null,
   langflow_version: process.env.LANGFLOW_VERSION || null,
+  ...(suiteSha ? { suite_sha: suiteSha } : {}),
   duration_ms: Math.round(report?.stats?.duration ?? 0),
   totals,
   failures,
