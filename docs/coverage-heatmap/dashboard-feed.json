@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-09-24",
+ "refreshed": "2026-09-25",
  "refreshWindow": {
-  "testHealthSince": "2026-08-10",
+  "testHealthSince": "2026-08-11",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,70 +38,70 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 806,
-  "bulletsAutomatedUnwatched": 119,
-  "residualRiskTotal": 108.7
+  "bullets": 810,
+  "bulletsAutomatedUnwatched": 120,
+  "residualRiskTotal": 108.4
  },
  "areas": [
   {
-   "key": "mcp",
-   "label": "13/14 MCP",
+   "key": "agents",
+   "label": "6 Agents / LLM execution",
    "rank": 1,
-   "residualRisk": 8.8,
+   "residualRisk": 9.3,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.65,
-   "mitigationBulletDerived": 0.68,
+   "mitigation": 0.63,
+   "mitigationBulletDerived": 0.69,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
-    "churnQuintile": 3,
+    "churnQuintile": 5,
     "fragility": 5,
-    "weightedBugs": 56.6,
-    "weightedChurn": 1.36
+    "weightedBugs": 57.6,
+    "weightedChurn": 2.95
    },
    "bullets": {
-    "total": 32,
-    "validated": 26,
-    "automatedUnwatched": 2,
+    "total": 47,
+    "validated": 39,
+    "automatedUnwatched": 3,
     "partial": 1,
     "flaky": 0,
-    "empty": 3
+    "empty": 4
    },
    "specs": {
-    "specs": 12,
-    "stable": 11
+    "specs": 38,
+    "stable": 36
    },
    "testHealth": {
     "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 11,
-    "penalty": 0.031
+    "chronicFlaky": 5,
+    "stableSpecs": 36,
+    "penalty": 0.057
    },
    "upstreamBugsByYear": {
-    "2025": 51,
-    "2026": 18
+    "2024": 29,
+    "2025": 46,
+    "2026": 15
    },
    "previous": {
-    "rank": 2,
-    "residualRisk": 10.5,
+    "rank": 4,
+    "residualRisk": 7.4,
     "inherentRisk": 25,
-    "mitigation": 0.58
+    "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": -1.7,
-    "rank": 1,
-    "direction": "improved"
+    "residualRisk": 1.9,
+    "rank": 3,
+    "direction": "worsened"
    },
    "isNew": false,
-   "cappedByProduct": true,
+   "cappedByProduct": false,
    "instrumentCaveat": null,
    "platformItems": [
-    2834,
-    2838
+    2833
    ],
-   "rationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async"
+   "rationale": "Advertised promise; LLM nondeterminism and tool-calling"
   },
   {
    "key": "memory-base",
@@ -164,64 +164,64 @@
    "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
   },
   {
-   "key": "agents",
-   "label": "6 Agents / LLM execution",
+   "key": "mcp",
+   "label": "13/14 MCP",
    "rank": 3,
-   "residualRisk": 8.8,
+   "residualRisk": 8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.65,
-   "mitigationBulletDerived": 0.71,
+   "mitigation": 0.68,
+   "mitigationBulletDerived": 0.68,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
-    "churnQuintile": 5,
+    "churnQuintile": 3,
     "fragility": 5,
-    "weightedBugs": 57.6,
-    "weightedChurn": 2.95
+    "weightedBugs": 56.6,
+    "weightedChurn": 1.36
    },
    "bullets": {
-    "total": 44,
-    "validated": 38,
+    "total": 32,
+    "validated": 26,
     "automatedUnwatched": 2,
     "partial": 1,
     "flaky": 0,
     "empty": 3
    },
    "specs": {
-    "specs": 38,
-    "stable": 35
+    "specs": 12,
+    "stable": 11
    },
    "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 5,
-    "stableSpecs": 35,
-    "penalty": 0.061
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0
    },
    "upstreamBugsByYear": {
-    "2024": 29,
-    "2025": 46,
-    "2026": 15
+    "2025": 51,
+    "2026": 18
    },
    "previous": {
-    "rank": 4,
-    "residualRisk": 7.4,
+    "rank": 2,
+    "residualRisk": 10.5,
     "inherentRisk": 25,
-    "mitigation": 0.7
+    "mitigation": 0.58
    },
    "delta": {
-    "residualRisk": 1.4,
-    "rank": 1,
-    "direction": "worsened"
+    "residualRisk": -2.5,
+    "rank": -1,
+    "direction": "improved"
    },
    "isNew": false,
-   "cappedByProduct": false,
+   "cappedByProduct": true,
    "instrumentCaveat": null,
    "platformItems": [
-    2833
+    2834,
+    2838
    ],
-   "rationale": "Advertised promise; LLM nondeterminism and tool-calling"
+   "rationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async"
   },
   {
    "key": "serving-identity",
@@ -453,8 +453,8 @@
     "weightedChurn": 4.22
    },
    "bullets": {
-    "total": 58,
-    "validated": 53,
+    "total": 59,
+    "validated": 54,
     "automatedUnwatched": 0,
     "partial": 5,
     "flaky": 0,
@@ -462,12 +462,12 @@
    },
    "specs": {
     "specs": 27,
-    "stable": 25
+    "stable": 26
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 25,
+    "stableSpecs": 26,
     "penalty": 0
    },
    "upstreamBugsByYear": {

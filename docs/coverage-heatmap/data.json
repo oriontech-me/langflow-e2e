@@ -85,49 +85,50 @@
  },
  "areas": [
   {
-   "area": "13/14 MCP",
-   "residualRisk": 8.8,
+   "area": "6 Agents / LLM execution",
+   "residualRisk": 9.3,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
    "inputs": {
     "bugQuintile": 5,
-    "churnQuintile": 3,
+    "churnQuintile": 5,
     "fragility": 5,
-    "weightedBugs": 56.6,
-    "weightedChurn": 1.36
+    "weightedBugs": 57.6,
+    "weightedChurn": 2.95
    },
-   "mitigationBulletDerived": 0.68,
+   "mitigationBulletDerived": 0.69,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 11,
-    "penalty": 0.031
+    "chronicFlaky": 5,
+    "stableSpecs": 36,
+    "penalty": 0.057
    },
-   "mitigation": 0.65,
-   "checklistBullets": 32,
+   "mitigation": 0.63,
+   "checklistBullets": 47,
    "bulletStates": {
-    "x": 26,
-    "-": 2,
-    " ": 3,
+    "x": 39,
+    " ": 4,
+    "-": 3,
     "~": 1
    },
    "previous": {
-    "residualRisk": 10.5,
+    "residualRisk": 7.4,
     "inherentRisk": 25,
-    "mitigation": 0.58,
-    "checklistBullets": 29
+    "mitigation": 0.7,
+    "checklistBullets": 43
    },
-   "judgementRationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async",
+   "judgementRationale": "Advertised promise; LLM nondeterminism and tool-calling",
    "upstreamBugsByYear": {
-    "2025": 51,
-    "2026": 18
+    "2024": 29,
+    "2025": 46,
+    "2026": 15
    },
-   "upstreamBugCount": 69,
+   "upstreamBugCount": 90,
    "specCounts": {
-    "specs": 12,
-    "stable": 11
+    "specs": 38,
+    "stable": 36
    }
   },
   {
@@ -176,50 +177,49 @@
    }
   },
   {
-   "area": "6 Agents / LLM execution",
-   "residualRisk": 8.8,
+   "area": "13/14 MCP",
+   "residualRisk": 8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
    "inputs": {
     "bugQuintile": 5,
-    "churnQuintile": 5,
+    "churnQuintile": 3,
     "fragility": 5,
-    "weightedBugs": 57.6,
-    "weightedChurn": 2.95
+    "weightedBugs": 56.6,
+    "weightedChurn": 1.36
    },
-   "mitigationBulletDerived": 0.71,
+   "mitigationBulletDerived": 0.68,
    "mitigationOverride": null,
    "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 5,
-    "stableSpecs": 35,
-    "penalty": 0.061
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0
    },
-   "mitigation": 0.65,
-   "checklistBullets": 44,
+   "mitigation": 0.68,
+   "checklistBullets": 32,
    "bulletStates": {
-    "x": 38,
-    " ": 3,
+    "x": 26,
     "-": 2,
+    " ": 3,
     "~": 1
    },
    "previous": {
-    "residualRisk": 7.4,
+    "residualRisk": 10.5,
     "inherentRisk": 25,
-    "mitigation": 0.7,
-    "checklistBullets": 43
+    "mitigation": 0.58,
+    "checklistBullets": 29
    },
-   "judgementRationale": "Advertised promise; LLM nondeterminism and tool-calling",
+   "judgementRationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async",
    "upstreamBugsByYear": {
-    "2024": 29,
-    "2025": 46,
-    "2026": 15
+    "2025": 51,
+    "2026": 18
    },
-   "upstreamBugCount": 90,
+   "upstreamBugCount": 69,
    "specCounts": {
-    "specs": 38,
-    "stable": 35
+    "specs": 12,
+    "stable": 11
    }
   },
   {
@@ -404,13 +404,13 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 25,
+    "stableSpecs": 26,
     "penalty": 0
    },
    "mitigation": 0.75,
-   "checklistBullets": 58,
+   "checklistBullets": 59,
    "bulletStates": {
-    "x": 53,
+    "x": 54,
     "~": 5
    },
    "previous": {
@@ -429,7 +429,7 @@
    "upstreamBugCount": 54,
    "specCounts": {
     "specs": 27,
-    "stable": 25
+    "stable": 26
    }
   },
   {
@@ -1219,9 +1219,9 @@
    }
   }
  ],
- "refreshed": "2026-09-24",
+ "refreshed": "2026-09-25",
  "refreshWindow": {
-  "testHealthSince": "2026-08-10",
+  "testHealthSince": "2026-08-11",
   "days": 45
  }
 }
