@@ -63,6 +63,14 @@ test("the freeze keeps pinned lines, and a direct-URL line as its raw text", () 
   });
 });
 
+test("an editable line is kept, and lands in the drift as absent from the lock", () => {
+  // `uv pip freeze` prints an editable install as `-e <url>`, with no name to key on.
+  const installed = parseFreeze("anyio==4.14.2\n-e file:///src/langflow-base\n");
+  assert.equal(installed["-e file:///src/langflow-base"], "(editable)");
+  const diff = diffAgainstLock(installed, parseLockVersions(lock([["anyio", "4.14.2"]])));
+  assert.deepEqual(diff.unlocked, [{ name: "-e file:///src/langflow-base", installed: "(editable)" }]);
+});
+
 test("the lock yields every version it pins, and nothing from inline tables or the project itself", () => {
   const text = lock([
     ["numpy", "2.5.1"],

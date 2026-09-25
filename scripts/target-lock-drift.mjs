@@ -41,10 +41,11 @@ export const normalizeName = (name) => String(name).toLowerCase().replace(/[-_.]
 /**
  * `uv pip freeze` output as `{ name: version }`.
  *
- * Only `name==version` lines are versions. A direct-URL or editable line is kept with
- * its raw text as the "version", so it lands in the drift instead of disappearing: a
- * distribution installed from somewhere other than the index is exactly the kind of
- * difference this exists to show.
+ * Only `name==version` lines are versions. A direct-URL line (`name @ url`) is kept
+ * with its raw text as the "version", and an editable one (`-e url`, which names no
+ * distribution) under its own text with `(editable)`, so both land in the drift as
+ * absent from the lock instead of disappearing: a distribution installed from
+ * somewhere other than the index is exactly the kind of difference this exists to show.
  */
 export function parseFreeze(text) {
   const installed = {};
@@ -54,6 +55,10 @@ export function parseFreeze(text) {
     const pinned = line.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)$/);
     if (pinned) {
       installed[normalizeName(pinned[1])] = pinned[2];
+      continue;
+    }
+    if (/^(-e|--editable)\s+\S/.test(line)) {
+      installed[line] = "(editable)";
       continue;
     }
     const direct = line.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)\s*@\s*(.+)$/);
