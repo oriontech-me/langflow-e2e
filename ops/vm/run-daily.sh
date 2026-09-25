@@ -258,6 +258,9 @@ main() {
   export PREPARE_TARGET=0                # the clone does not serve; this also turns the build stamp off
   export LANGFLOW_SRC_RUN_CMD="$VENV/bin/langflow run"
   export LANGFLOW_SRC_FRONTEND_DIR="$FRONTEND_DIR"
+  # The venv itself, so the run records what it holds against the lock of the version
+  # it installed (#2063). Rollback: drop the line; without it the section is not built.
+  export TARGET_VENV="$VENV"
   # REQUIRE_TARGET_VERSION is left at its default of 1 ON PURPOSE: the installer above
   # pins the distribution to the version the resolver derived from the published image,
   # so the gate has something true to check instead of being switched off.

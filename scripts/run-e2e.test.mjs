@@ -3130,3 +3130,67 @@ test("the token summary is written, and BEFORE the POST that reads it", () => {
   assert.match(block, /TOKENS_SUMMARY_OUT="\$RUN_DIR\/tokens-block\.json"/,
     "the summariser must be given TOKENS_SUMMARY_OUT, under $RUN_DIR");
 });
+
+test("the dependency-drift section is written on every run, and says so when an input is missing (#2063)", () => {
+  const dir = makeTempDir("lock-drift-run");
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  const lockFile = join(dir, "served.lock");
+  writeFileSync(lockFile, ["version = 1", "", "[[package]]", 'name = "anyio"', 'version = "4.14.2"', ""].join("\n"));
+  // Stubs for the two external calls: `uv pip freeze` and the lock fetch.
+  writeFileSync(join(bin, "uv"), `#!/usr/bin/env bash\n[ -n "$STUB_FREEZE" ] || { echo "stub: no venv" >&2; exit 2; }\nprintf '%s\\n' "$STUB_FREEZE"\n`, { mode: 0o755 });
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/usr/bin/env bash\nout=""; url=""\nwhile [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; -*) shift;; *) url="$1"; shift;; esac; done\necho "$url" >> "${JSON.stringify(join(dir, "urls.txt")).slice(1, -1)}"\n[ -n "$STUB_LOCK" ] || exit 22\ncp "$STUB_LOCK" "$out"\n`,
+    { mode: 0o755 },
+  );
+  const run = (env) =>
+    sourced(
+      [`RUN_DIR=${JSON.stringify(dir)}`, `export PATH=${JSON.stringify(bin)}:$PATH`, `set +e; build_target_drift; echo "EXIT=$? FILE=$TARGET_DRIFT_MD_FILE"`].join("\n"),
+      { LANGFLOW_VERSION: "1.13.0.dev22", ...env },
+    );
+  const section = () => readFileSync(join(dir, "target-lock-drift.md"), "utf8");
+
+  // Any other target: no venv, no section, nothing handed to the umbrella.
+  const none = run({ TARGET_VENV: "" });
+  assert.match(none.stdout, /EXIT=0 FILE=$/m, none.stderr);
+
+  // The real renderer over a stubbed freeze and lock, fetched at the SERVED version's tag.
+  const ok = run({ TARGET_VENV: "/venv", STUB_FREEZE: "anyio==4.15.1", STUB_LOCK: lockFile });
+  assert.match(ok.stdout, /EXIT=0 FILE=.*target-lock-drift\.md/, ok.stderr);
+  assert.match(section(), /\*\*1 of 1\*\* installed distributions are not at the version pinned by the `uv.lock` of `v1.13.0.dev22`/);
+  assert.match(readFileSync(join(dir, "urls.txt"), "utf8"), /^https:\/\/raw\.githubusercontent\.com\/langflow-ai\/langflow\/v1\.13\.0\.dev22\/uv\.lock$/m);
+  assert.equal(readFileSync(join(dir, "target-freeze.txt"), "utf8"), "anyio==4.15.1\n", "the freeze is kept as evidence");
+
+  // A lock that cannot be fetched: said, and the run goes on.
+  const noLock = run({ TARGET_VENV: "/venv", STUB_FREEZE: "anyio==4.15.1", STUB_LOCK: "" });
+  assert.match(noLock.stdout, /EXIT=0/);
+  assert.match(noLock.stderr, /::warning::.*could not fetch uv\.lock for v1\.13\.0\.dev22/);
+  assert.match(section(), /_Not computed on this run: no `uv.lock` could be fetched for `v1.13.0.dev22`/);
+
+  // A venv that cannot be frozen: said, and the stale freeze of the last run is gone.
+  const noFreeze = run({ TARGET_VENV: "/venv", STUB_FREEZE: "", STUB_LOCK: lockFile });
+  assert.match(noFreeze.stdout, /EXIT=0/);
+  assert.match(section(), /_Not computed on this run: the target venv's freeze could not be read/);
+
+  // No served version: no tag to fetch at all.
+  const noVersion = run({ TARGET_VENV: "/venv", STUB_FREEZE: "anyio==4.15.1", STUB_LOCK: lockFile, LANGFLOW_VERSION: "" });
+  assert.match(noVersion.stdout, /EXIT=0/);
+  assert.match(section(), /the served Langflow version is unknown/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the drift section is built on every run and handed to the umbrella (#2063)", () => {
+  const sh = readFileSync(SCRIPT, "utf8");
+  const publish = sh.slice(sh.indexOf("phase_publish() {"), sh.indexOf("phase_verdict() {"));
+  const call = publish.indexOf("\n  build_target_drift\n");
+  assert.ok(call > 0, "built at the top level of phase_publish, not inside the red-day branch");
+  assert.ok(call < publish.indexOf('log "Opening the failure issue"'), "built before the umbrella opens");
+  const block = publish.slice(publish.indexOf('log "Opening the failure issue"'), publish.indexOf("node scripts/create-failure-issue.mjs"));
+  assert.match(block, /TARGET_DRIFT_MD_FILE="\$TARGET_DRIFT_MD_FILE"/, "the section never reaches the umbrella");
+});
+
+test("the VM wrapper names the target venv for the drift section (#2063)", () => {
+  const wrapper = readFileSync(join(REPO_ROOT, "ops", "vm", "run-daily.sh"), "utf8");
+  assert.match(wrapper, /^\s*export TARGET_VENV="\$VENV"$/m);
+});
