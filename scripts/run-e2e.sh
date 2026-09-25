@@ -285,8 +285,13 @@ REQUIRE_PROVIDER_KEYS="${REQUIRE_PROVIDER_KEYS:-0}"
 # whole day of comparison data is lost to a version difference nobody can fix at 08:00.
 UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}"
 # Where the lock of a Langflow tag is read from, for the dependency-drift section
-# (#2063). Derived from the repo URL so an override of one moves the other.
-UPSTREAM_RAW_URL="${UPSTREAM_RAW_URL:-https://raw.githubusercontent.com/${UPSTREAM_REPO_URL#https://github.com/}}"
+# (#2063). Derived from the repo URL when that is an https github.com one, with or
+# without `.git`, so an override of it moves this too. Any other host has no
+# raw.githubusercontent.com equivalent to derive: set UPSTREAM_RAW_URL with it. An
+# URL that cannot be derived fails the fetch, which the section reports by name.
+_upstream_repo="${UPSTREAM_REPO_URL%.git}"
+UPSTREAM_RAW_URL="${UPSTREAM_RAW_URL:-https://raw.githubusercontent.com/${_upstream_repo#https://github.com/}}"
+unset _upstream_repo
 # The PUBLISHED image is what the CI lane pulls, and therefore what this lane has to
 # match. Asking the registry rather than the git tags is not a detail: upstream tags
 # before it builds and only ships if the tests pass, so a tag can exist for an image

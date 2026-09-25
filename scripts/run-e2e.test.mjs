@@ -3202,3 +3202,16 @@ test("the VM wrapper names the target venv for the drift section (#2063)", () =>
   const wrapper = readFileSync(join(REPO_ROOT, "ops", "vm", "run-daily.sh"), "utf8");
   assert.match(wrapper, /^\s*export TARGET_VENV="\$VENV"$/m);
 });
+
+test("the lock URL follows an https github.com repo override, with or without .git (#2063)", () => {
+  for (const repo of ["https://github.com/some-org/langflow", "https://github.com/some-org/langflow.git"]) {
+    const r = sourced(`printf '[%s]' "$UPSTREAM_RAW_URL"`, { UPSTREAM_REPO_URL: repo, UPSTREAM_RAW_URL: "" });
+    assert.equal(r.stdout, "[https://raw.githubusercontent.com/some-org/langflow]", `${repo}: ${r.stderr}`);
+  }
+  // Any other host is set explicitly, and the explicit value wins.
+  const own = sourced(`printf '[%s]' "$UPSTREAM_RAW_URL"`, {
+    UPSTREAM_REPO_URL: "https://mirror.internal/langflow.git",
+    UPSTREAM_RAW_URL: "https://mirror.internal/raw/langflow",
+  });
+  assert.equal(own.stdout, "[https://mirror.internal/raw/langflow]");
+});
