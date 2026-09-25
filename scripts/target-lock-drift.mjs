@@ -210,7 +210,7 @@ function readOrNull(path) {
 export function renderSection({ freezePath, lockPath, ref }) {
   const freeze = readOrNull(freezePath);
   if (freeze === null) return renderNotComputed("the target venv's freeze could not be read");
-  if (!ref) return renderNotComputed("the served Langflow version is unknown, so there is no lock to compare against");
+  if (!ref) return renderNotComputed("neither a served nor an installed Langflow version is known, so there is no lock to compare against");
   const lock = readOrNull(lockPath);
   if (lock === null) return renderNotComputed(`no \`uv.lock\` could be fetched for \`${safe(ref)}\``);
   const pinned = parseLockVersions(lock);

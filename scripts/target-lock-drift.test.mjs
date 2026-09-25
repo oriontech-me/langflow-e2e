@@ -146,7 +146,7 @@ test("every input that cannot be read renders as not computed, never as clean", 
   const cases = [
     [{ freezePath: join(dir, "absent.txt"), lockPath: good, ref: "v1" }, /the target venv's freeze could not be read/],
     [{ freezePath: empty, lockPath: good, ref: "v1" }, /the target venv's freeze could not be read/],
-    [{ freezePath: freeze, lockPath: good, ref: "" }, /the served Langflow version is unknown/],
+    [{ freezePath: freeze, lockPath: good, ref: "" }, /neither a served nor an installed Langflow version is known/],
     [{ freezePath: freeze, lockPath: empty, ref: "v1" }, /no `uv.lock` could be fetched for `v1`/],
     [{ freezePath: freeze, lockPath: noPackages, ref: "v1" }, /names no package/],
   ];

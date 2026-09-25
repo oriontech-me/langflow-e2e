@@ -2436,8 +2436,17 @@ build_target_drift() {
   uv pip freeze --python "$TARGET_VENV/bin/python" > "$freeze" 2>> "$log" \
     || warn "could not freeze the target venv ($TARGET_VENV) — see $log. The drift section says so."
   # The SERVED version's tag, not the expected one: the lock has to describe what was
-  # installed, and the version gate is what says whether the two agreed.
-  [ -n "${LANGFLOW_VERSION:-}" ] && ref="v${LANGFLOW_VERSION}"
+  # installed, and the version gate is what says whether the two agreed. When no shard
+  # answered there is no served version, and that is the day this section matters
+  # most: a dependency that moved can stop the backend booting at all. The INSTALLED
+  # version is then read off the freeze, which is what the lock describes anyway.
+  if [ -n "${LANGFLOW_VERSION:-}" ]; then
+    ref="v${LANGFLOW_VERSION}"
+  else
+    local installed
+    installed="$(sed -n 's/^langflow==//p' "$freeze" | head -n 1)"
+    [ -n "$installed" ] && ref="v${installed}"
+  fi
   if [ -n "$ref" ]; then
     curl -sfS --max-time 30 "$UPSTREAM_RAW_URL/$ref/uv.lock" -o "$lock" 2>> "$log" \
       || { : > "$lock"; warn "could not fetch uv.lock for $ref — see $log. The drift section says so."; }

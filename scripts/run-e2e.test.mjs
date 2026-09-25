@@ -3173,10 +3173,18 @@ test("the dependency-drift section is written on every run, and says so when an 
   assert.match(noFreeze.stdout, /EXIT=0/);
   assert.match(section(), /_Not computed on this run: the target venv's freeze could not be read/);
 
-  // No served version: no tag to fetch at all.
+  // No served version — no shard answered, the day a dependency stops the backend
+  // booting — falls back to the INSTALLED version, read off the freeze.
+  writeFileSync(join(dir, "urls.txt"), "");
+  const unserved = run({ TARGET_VENV: "/venv", STUB_FREEZE: "langflow==1.13.0.dev23\nanyio==4.15.1", STUB_LOCK: lockFile, LANGFLOW_VERSION: "" });
+  assert.match(unserved.stdout, /EXIT=0/, unserved.stderr);
+  assert.match(readFileSync(join(dir, "urls.txt"), "utf8"), /\/v1\.13\.0\.dev23\/uv\.lock$/m);
+  assert.match(section(), /installed distributions are not at the version pinned by the `uv.lock` of `v1.13.0.dev23`/);
+
+  // Neither served nor installed: no tag to fetch at all.
   const noVersion = run({ TARGET_VENV: "/venv", STUB_FREEZE: "anyio==4.15.1", STUB_LOCK: lockFile, LANGFLOW_VERSION: "" });
   assert.match(noVersion.stdout, /EXIT=0/);
-  assert.match(section(), /the served Langflow version is unknown/);
+  assert.match(section(), /neither a served nor an installed Langflow version is known/);
   rmSync(dir, { recursive: true, force: true });
 });
 
