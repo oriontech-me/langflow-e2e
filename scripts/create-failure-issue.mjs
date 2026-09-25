@@ -62,6 +62,8 @@
 //   LIVENESS_MD
 //   TRIAGE_MD_FILE — the rendered triage dataset (VM lane, #2031); absent means the
 //     caller does not produce one, and the Actions body is unchanged
+//   TARGET_DRIFT_MD_FILE — the target's dependency drift from the lock (VM lane,
+//     #2063); absent means the caller does not produce one
 //   PLAYWRIGHT_JSON — the merged report, read ONLY to name unexpected passes
 //     (#2009); absent or unreadable means none are named, never a failed render
 //   ISSUE_HOST (default github.com), ISSUE_REPO (default oriontech-me/langflow-e2e)
@@ -219,6 +221,9 @@ export function renderIssue({
   // exemptions and skips, which on the Actions lane reach a reader through the
   // triage-dispatch comment and on the VM lane reached nobody. Empty = not produced.
   triage = "",
+  // #2063. How far the target venv's dependencies sit from the lock of the Langflow it
+  // installed, rendered by `target-lock-drift.mjs`. VM lane only; empty = not produced.
+  targetDrift = "",
   // #2009: `{ file, line, title, attempts, passedAttempts }` per test declared failing
   // with `test.fail()` whose body passed — from `collectUnexpectedPasses`.
   unexpectedPasses = [],
@@ -622,6 +627,11 @@ export function renderIssue({
   const triageSection =
     triage.trim() && !empty && !mergeFailed && !uncovered ? ["", triage.trim()] : [];
 
+  // #2063. In EVERY shape, unlike the triage dataset: it describes this run's target,
+  // not the ledger, and a dependency that moved is one of the few causes that can take
+  // a whole run down — an empty run included, if the backend no longer boots.
+  const driftSection = targetDrift.trim() ? ["", targetDrift.trim()] : [];
+
   // The title is what gets scanned in the issue list, so an empty run must not
   // claim that tests failed — none ran. Nor may a failed merge claim that nothing
   // ran: every shard did, and the title is the only part most people read (#1726).
@@ -663,6 +673,7 @@ export function renderIssue({
     ...unexpectedPassSection,
     ...section,
     ...triageSection,
+    ...driftSection,
     ...(cc.trim() ? ["", `/cc ${cc.trim()}`] : []),
   ].join("\n");
 
@@ -884,6 +895,7 @@ async function main() {
     coverageSkips: env.COVERAGE_SKIPS || "0",
     liveness: env.LIVENESS_MD || "",
     triage: readTriageSummary(env.TRIAGE_MD_FILE),
+    targetDrift: readTriageSummary(env.TARGET_DRIFT_MD_FILE),
     unexpectedPasses: readUnexpectedPasses(env.PLAYWRIGHT_JSON),
     cc: env.ISSUE_CC === undefined ? CC_DEFAULT : env.ISSUE_CC,
   });

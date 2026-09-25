@@ -284,6 +284,14 @@ REQUIRE_PROVIDER_KEYS="${REQUIRE_PROVIDER_KEYS:-0}"
 # change, and until it lands a mismatch has to be visible rather than fatal, or a
 # whole day of comparison data is lost to a version difference nobody can fix at 08:00.
 UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/langflow-ai/langflow}"
+# Where the lock of a Langflow tag is read from, for the dependency-drift section
+# (#2063). Derived from the repo URL when that is an https github.com one, with or
+# without `.git`, so an override of it moves this too. Any other host has no
+# raw.githubusercontent.com equivalent to derive: set UPSTREAM_RAW_URL with it. An
+# URL that cannot be derived fails the fetch, which the section reports by name.
+_upstream_repo="${UPSTREAM_REPO_URL%.git}"
+UPSTREAM_RAW_URL="${UPSTREAM_RAW_URL:-https://raw.githubusercontent.com/${_upstream_repo#https://github.com/}}"
+unset _upstream_repo
 # The PUBLISHED image is what the CI lane pulls, and therefore what this lane has to
 # match. Asking the registry rather than the git tags is not a detail: upstream tags
 # before it builds and only ships if the tests pass, so a tag can exist for an image
@@ -2408,6 +2416,57 @@ build_triage_summary() {
   return 0
 }
 
+# How far the target venv sits from the lock of the Langflow it installed (#2063).
+#
+# The VM installs `langflow==X` into a fresh venv with no constraints, as `pip install
+# langflow` does, and that is kept on purpose: it is the surface a pip user gets, and
+# the image lane runs the lock. The cost is attribution — a red here and not there can
+# come from a dependency that moved — so every run records what the venv holds
+# (`target-freeze.txt`) and how it differs from `uv.lock` at the served version's tag.
+#
+# Only when TARGET_VENV names the venv, which the VM wrapper does; any other target
+# has no venv to read. ALWAYS writes the section when it runs, and never fails the
+# run: an input that cannot be read becomes a "not computed" line naming it, because
+# a missing section would read as "no drift" (#1012).
+build_target_drift() {
+  TARGET_DRIFT_MD_FILE=""
+  [ -n "${TARGET_VENV:-}" ] || return 0
+  local out="$RUN_DIR/target-lock-drift.md" freeze="$RUN_DIR/target-freeze.txt"
+  local lock="$RUN_DIR/target-uv.lock" log="$RUN_DIR/logs/target-lock-drift.log" ref=""
+  TARGET_DRIFT_MD_FILE="$out"
+  mkdir -p "$RUN_DIR/logs"
+  : > "$freeze"
+  : > "$lock"
+
+  uv pip freeze --python "$TARGET_VENV/bin/python" > "$freeze" 2>> "$log" \
+    || warn "could not freeze the target venv ($TARGET_VENV) — see $log. The drift section says so."
+  # The SERVED version's tag, not the expected one: the lock has to describe what was
+  # installed, and the version gate is what says whether the two agreed. When no shard
+  # answered there is no served version, and that is the day this section matters
+  # most: a dependency that moved can stop the backend booting at all. The INSTALLED
+  # version is then read off the freeze, which is what the lock describes anyway.
+  if [ -n "${LANGFLOW_VERSION:-}" ]; then
+    ref="v${LANGFLOW_VERSION}"
+  else
+    local installed
+    installed="$(sed -n 's/^langflow==//p' "$freeze" | head -n 1)"
+    [ -n "$installed" ] && ref="v${installed}"
+  fi
+  if [ -n "$ref" ]; then
+    curl -sfS --max-time 30 "$UPSTREAM_RAW_URL/$ref/uv.lock" -o "$lock" 2>> "$log" \
+      || { : > "$lock"; warn "could not fetch uv.lock for $ref — see $log. The drift section says so."; }
+  fi
+
+  if node scripts/target-lock-drift.mjs --freeze "$freeze" --lock "$lock" --ref "$ref" > "$out" 2>> "$log"; then
+    info "target dependency drift written: $out"
+  else
+    warn "the dependency-drift section could not be rendered — see $log."
+    printf '%s\n' "### Target dependencies against the lock" "" \
+      "_Could not be rendered on this run — see \`$log\` on the VM. The venv's freeze is \`$freeze\`._" > "$out"
+  fi
+  return 0
+}
+
 phase_publish() {
   cd "$REPO_DIR"
 
@@ -2653,6 +2712,10 @@ phase_publish() {
       node scripts/append-weekly-history.mjs || warn "history append failed (not blocking)."
   fi
 
+  # On every run, not only a red one: the freeze is the record of which product this
+  # run tested, and a green day is the baseline a red one is read against (#2063).
+  build_target_drift
+
   # Before the issue, deliberately: the umbrella reports what the removal did, so the
   # removal has to have happened by the time the body is built. The same ordering the
   # Actions lane had between its step and its issue step.
@@ -2677,6 +2740,7 @@ phase_publish() {
     RUN_ERRORS="$RUN_ERRORS" RUN_FIRST_ERROR="$RUN_FIRST_ERROR" RUN_TESTS="$RUN_TESTS" \
     LIVENESS_MD="$LIVENESS_MD" \
     TRIAGE_MD_FILE="$TRIAGE_MD_FILE" \
+    TARGET_DRIFT_MD_FILE="$TARGET_DRIFT_MD_FILE" \
     VM_HOSTNAME="$(evidence_host)" \
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     IMAGE="${IMAGE:-$LANGFLOW_VERSION}" \
