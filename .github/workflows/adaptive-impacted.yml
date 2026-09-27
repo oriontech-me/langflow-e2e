@@ -165,6 +165,11 @@ jobs:
           # against a disabled one, which would pass while testing nothing (#1240;
           # surface scoped in #1195).
           LANGFLOW_A2A_ENABLED: "true"
+          # The knowledge-base `folder` connector refuses every walk without an operator
+          # allow-list (empty by default). Set to the image's config directory, where
+          # POST /api/v1/files/upload/{flow_id} stores uploads, so memory-base-ingestion.spec.ts
+          # can ingest a folder it owns (#2043). Literal `~`: the server expands it.
+          LANGFLOW_KB_ALLOWED_FOLDER_ROOTS: "~/.cache/langflow"
           # Tracing is OFF by default (cuts startup time / backend noise for the
           # majority of specs). Turn it ON when the full suite runs or when
           # observability/traces specs are impacted — they need the SUT to emit

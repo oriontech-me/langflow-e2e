@@ -257,6 +257,12 @@ export const CLASSIFICATION = {
     reason:
       "product default is OFF and its router is ALWAYS mounted, so with the flag off the three /api/v1/a2a/* routes answer 404 and every A2A spec passes while testing nothing (#1240, #1195). Right for any instance, so the starter carries it",
   },
+  LANGFLOW_KB_ALLOWED_FOLDER_ROOTS: {
+    carrier: "starter",
+    sameValue: false,
+    reason:
+      "the knowledge-base `folder` connector's allow-list, set on every lane to the instance's CONFIG DIRECTORY, because that is where flow-scoped uploads land and memory-base-ingestion.spec.ts ingests a folder it owns (#2043). The workflow's `~/.cache/langflow` is the image's config directory; the source starter points LANGFLOW_CONFIG_DIR at `${STATE_DIR}/data`, one per shard port, so it defaults the allow-list to that path instead. Mirroring the literal string would name a directory this instance never writes to, and the spec reads the roots back from the server rather than assuming either value",
+  },
   LANGFLOW_DEACTIVATE_TRACING: {
     carrier: "orchestrator",
     reason:

@@ -78,6 +78,7 @@ docker run -d \
   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
   -e LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
   -e LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
+  -e LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-~/.cache/langflow}" \
   -e LANGFLOW_WORKERS="${LANGFLOW_WORKERS:-1}" \
   "${IMAGE}"
 
@@ -102,6 +103,14 @@ docker run -d \
 # (core-functionality/llm-agents/agent-tool-error-handling.spec.ts), and
 # security/ssrf-url-validation.spec.ts asserts that refusal. Override to
 # reproduce another configuration: LANGFLOW_SSRF_ALLOWED_HOSTS="" ./scripts/...
+
+# LANGFLOW_KB_ALLOWED_FOLDER_ROOTS is the knowledge-base `folder` connector's
+# operator allow-list: empty by default, and empty refuses every walk. It is set to
+# the image's config directory — where POST /api/v1/files/upload/{flow_id} stores an
+# upload — so core-functionality/memory/memory-base-ingestion.spec.ts can ingest a
+# folder it owns, exactly as every CI lane allows (#2043). The `~` stays literal on
+# purpose (double quotes stop bash expanding it): it is the CONTAINER's home the
+# server must expand, not this host's.
 
 # LANGFLOW_WORKERS defaults to 1 here on purpose. Langflow's own default is
 # (2 * cpu_count) + 1 gunicorn workers, each inheriting the full in-memory

@@ -1211,13 +1211,16 @@
 >
 > **One connector ships today** — `folder` ("Ingest every matching file from a server-side
 > folder", `requires_credentials: false`), measured on 1.12.0. A test needs no external
-> service, but it does need a server-side path the instance can read.
+> service, but it does need a server-side path the instance can read **and** the operator
+> allow-list `LANGFLOW_KB_ALLOWED_FOLDER_ROOTS`, empty by default, which refuses every walk
+> (#2043 sets it on every lane). On `1.13.0.dev22` `GET /connectors` also lists
+> `google_drive`, `onedrive` and `sharepoint`, all of which need a connection.
 
-- [ ] Chunk settings chosen in the UI are the ones actually applied to the ingested chunks — `@regression` for `langflow-ai/langflow#13884` (*"the initial chunk settings are not properly set"*, `jira`)
-- [ ] `POST /preview-chunks` previews with the same settings the ingestion will use, so the preview is not a different code path from the run
-- [ ] Ingesting from the `folder` connector produces chunks readable back via `GET /{kb}/chunks`
-- [ ] An ingestion run is observable while it happens: `GET /{kb}/runs` lists it and `GET /{kb}/runs/{id}` reports its state
-- [ ] `POST /{kb}/cancel` stops an in-flight ingestion and the run reports the cancellation rather than silently completing
+- [x] Chunk settings chosen in the UI are the ones actually applied to the ingested chunks — `@regression` for `langflow-ai/langflow#13884` (*"the initial chunk settings are not properly set"*, `jira`): the Create Knowledge Base dialog opens with 1000 / 200 / `\n`, and with 300 / 60 chosen the preview it renders, the chunks stored and the settings the knowledge base records are all 300 / 60, and Ingest Files reopens pre-filled with them after a reload → `core-functionality/memory/memory-base-ingestion.spec.ts`
+- [!] `POST /preview-chunks` previews with the same settings the ingestion will use, so the preview is not a different code path from the run (**declared failing** — `test.fail()` against LE-2771, a live defect since the preview was introduced in `langflow-ai/langflow#11541`: for the dialog's own `\n` separator the preview splits on `[sep, "\n\n", "\n", " ", ""]` and the ingestion on `[sep]` alone, so a line longer than the chunk size is stored whole — 7 previewed chunks ≤ 200 against 4 stored, two of them 540 and 240. The same comparison on lines that fit is green and is the attribution control) → `core-functionality/memory/memory-base-ingestion.spec.ts`
+- [x] Ingesting from the `folder` connector produces chunks readable back via `GET /{kb}/chunks` — two files uploaded into the test's own flow folder, read back with `source_type: "folder"`, the run's `job_id` and both file names (needs `LANGFLOW_KB_ALLOWED_FOLDER_ROOTS`, set on every lane since #2043) → `core-functionality/memory/memory-base-ingestion.spec.ts`
+- [x] An ingestion run is observable while it happens: `GET /{kb}/runs` lists it and `GET /{kb}/runs/{id}` reports its state — `running` with no `finished_at` in flight, then its terminal status and counters → `core-functionality/memory/memory-base-ingestion.spec.ts`
+- [x] `POST /{kb}/cancel` stops an in-flight ingestion and the run reports the cancellation rather than silently completing — `cancelled`, `"ingestion cancelled by user"`, and no chunk left from the run → `core-functionality/memory/memory-base-ingestion.spec.ts`
 - [ ] An embedding provider that cannot be reached fails the ingestion **with the provider named** — `@regression` for the two reported cases: an unreachable Ollama endpoint (`langflow-ai/langflow#13883`, `jira`) and Google embedding models rejected outright (`langflow-ai/langflow#12277`)
 - [ ] A knowledge base bound to a memory base refuses ingestion through the `_check_memory_base_association` guard, which the API declares on five routes and nothing asserts
 

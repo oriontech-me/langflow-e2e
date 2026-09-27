@@ -30,6 +30,7 @@ LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING=true \
 LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
 LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
+LANGFLOW_KB_ALLOWED_FOLDER_ROOTS="${LANGFLOW_KB_ALLOWED_FOLDER_ROOTS:-~/.cache/langflow,~/Library/Caches/langflow}" \
   langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser \
     --workers "${LANGFLOW_WORKERS:-1}" &
 # LANGFLOW_A2A_ENABLED defaults to true: the product default is OFF, A2A's router
@@ -43,6 +44,12 @@ LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0
 # while working in CI, silently. Loopback stays OUT of the list on purpose —
 # specs use an SSRF-blocked loopback fetch as a deterministic error generator and
 # security/ssrf-url-validation.spec.ts asserts that refusal.
+# LANGFLOW_KB_ALLOWED_FOLDER_ROOTS is the knowledge-base `folder` connector's
+# allow-list (empty refuses every walk), set to Langflow's config directory — where
+# flow-scoped uploads land — as every lane sets it, so memory-base-ingestion.spec.ts
+# can ingest a folder it owns (#2043). Both platformdirs locations, because this
+# starter runs on Linux (~/.cache/langflow) and macOS (~/Library/Caches/langflow);
+# the spec reads the roots back from the server and uses the one holding its folder.
 # --workers defaults to 1: Langflow's own default is (2*cpu)+1 workers, each
 # holding the full in-memory state, which exhausts memory on a constrained dev
 # box and gets a worker SIGKILLed mid-build (ERR_EMPTY_RESPONSE / node run never
