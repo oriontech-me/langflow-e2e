@@ -40,6 +40,7 @@ import {
   indexOutcomes,
   compareRuns,
   renderReport,
+  laneLabels,
 } from "./lib/lane-verdict-diff.mjs";
 import { parseArgs, defaultHistorySources } from "./compare-lane-verdicts.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -1837,4 +1838,84 @@ test("run-e2e.sh passes the suite revision to the history appender", () => {
   const sh = readFileSync(join(HERE, "run-e2e.sh"), "utf8");
   const block = blockAfter(sh, /HISTORY_FILE="\$LEDGER_HISTORY"/, /append-weekly-history\.mjs/);
   assert.match(block, /SUITE_SHA="\$\(git -C "\$REPO_DIR" rev-parse HEAD/);
+});
+
+// ---------------------------------------------------------------------------
+// Lane labels (#2091) — the image shadow compares pairs that are not Actions × VM
+// ---------------------------------------------------------------------------
+
+test("the default ids keep their names, and any other id is named by itself", () => {
+  assert.deepEqual(laneLabels(), { ci: "Actions", vm: "VM", ciThe: "Actions", vmThe: "the VM" });
+  assert.deepEqual(laneLabels({ ciWorkflow: "daily-stable-vm", vmWorkflow: "daily-stable-vm-image" }),
+    { ci: "daily-stable-vm", vm: "daily-stable-vm-image", ciThe: "daily-stable-vm", vmThe: "daily-stable-vm-image" });
+  assert.deepEqual(laneLabels({ ciLabel: "VM+wheel", vmLabel: "VM+image" }),
+    { ci: "VM+wheel", vm: "VM+image", ciThe: "VM+wheel", vmThe: "VM+image" });
+});
+
+test("a pair that is not Actions × VM is never reported as if it were", () => {
+  // The case this exists for: VM+wheel × VM+image. Before #2091 a failure only the image
+  // saw was printed as "FAILED on the VM only" beside a lane line called "Actions".
+  const res = runCli(
+    ["--ci-workflow", "daily-stable-vm", "--vm-workflow", "daily-stable-vm-image", "--ci-label", "VM+wheel", "--vm-label", "VM+image"],
+    [
+      row("daily-stable-vm"),
+      row("daily-stable-vm-image", { failures: [fail()], totals: { passed: 9, failed: 1, flaky: 0, skipped: 5 } }),
+    ],
+  );
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /FAILED on VM\+image only/);
+  assert.match(res.stdout, /^ {2}VM\+wheel {2}run /m);
+  assert.match(res.stdout, /^ {2}VM\+image {2}run /m);
+  assert.match(res.stdout, /SKIPPED different numbers of tests \(VM\+wheel 2, VM\+image 5\)/);
+  assert.doesNotMatch(res.stdout, /\bActions\b/);
+  // "the VM" as the default's prose, not the start of the label "VM+wheel".
+  assert.doesNotMatch(res.stdout, /the VM(?![+\w])/);
+});
+
+test("an overridden id with no label is named by its id, not by the default's name", () => {
+  const res = runCli(["--vm-workflow", "daily-stable-vm-image"], [
+    row("daily-stable"),
+    row("daily-stable-vm-image", { failures: [fail()], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  ]);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /FAILED on daily-stable-vm-image only/);
+  assert.doesNotMatch(res.stdout, /the VM(?![+\w-])/);
+});
+
+test("the labels change the prose only: the JSON result has the same shape and values", () => {
+  const history = [
+    row("daily-stable", { totals: { passed: 10, failed: 0, flaky: 0, skipped: 2 } }),
+    row("daily-stable-vm", { failures: [fail()], totals: { passed: 9, failed: 1, flaky: 0, skipped: 7 } }),
+  ];
+  // `sources` is each call's own temporary file, so it is set aside.
+  const read = (args) => {
+    const { sources, ...rest } = JSON.parse(runCli(args, history).stdout);
+    assert.equal(sources.length, 1);
+    return rest;
+  };
+  const plain = read(["--json"]);
+  const named = read(["--json", "--ci-label", "ALPHA", "--vm-label", "BETA"]);
+  assert.deepEqual(Object.keys(named).sort(), Object.keys(plain).sort(), "labels must not add or drop a field");
+  assert.ok(!("labels" in named), "the labels are the report's, not the result's");
+  const unname = (x) => JSON.parse(JSON.stringify(x).replaceAll("ALPHA", "Actions").replaceAll("the BETA", "the VM").replaceAll("BETA", "the VM"));
+  const fold = (x) => JSON.parse(JSON.stringify(x).replace(/\b(the )?VM\b/g, "VM"));
+  assert.deepEqual(fold(unname(named)), fold(plain));
+});
+
+test("a label must not be empty", () => {
+  for (const flag of ["--ci-label", "--vm-label"]) {
+    assert.throws(() => parseArgs([flag, "  "]), /needs a non-empty value/);
+    assert.throws(() => parseArgs([flag]), /needs a value/);
+  }
+});
+
+test("a long label widens the lane columns instead of running into them", () => {
+  const result = compare(
+    row("daily-stable"),
+    row("daily-stable-vm", { failures: [fail({ param: "model:gpt-4o-mini" })], totals: { passed: 9, failed: 1, flaky: 0, skipped: 2 } }),
+  );
+  const out = renderReport(result, { labels: laneLabels({ ciLabel: "Actions+image", vmLabel: "VM" }) });
+  // The column is the longest label plus one, then the space before "run".
+  assert.match(out, /^ {2}Actions\+image {2}run /m);
+  assert.match(out, /^ {2}VM {13}run /m, "the shorter label pads to the longer one");
 });
