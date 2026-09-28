@@ -12,6 +12,7 @@ import { makeTempDir } from '../../../../scripts/lib/tmp-dir.mjs'
 import {
   ghIssueView, ghAssignSelf, ghPrView, runPlaywright, npmRun, gitCurrentBranch,
   gitDiffNames, gitDiffOf, enumerateTests, enumerateTestEntries, enumerateRunnableTests,
+  enumerateUnenumerableTests,
   getInstanceVersion, getLatestNightlyTag, sh, classifyRun, classOf, countsAsClean,
   gitChangedVsBase, gitIsDirty, ghRunArtifactName, ghRunDownload,
 } from './runners.ts'
@@ -94,6 +95,19 @@ function load(issue: number): PipelineState {
 
 function touchedSpecFiles(): string[] {
   return gitDiffNames().filter(f => f.endsWith('.spec.ts'))
+}
+
+/**
+ * What FORCE_FAIL must prove per touched spec. A test.fixme/test.skip never
+ * executes, so demanding a red run for it would deadlock the phase — only
+ * runnable titles are required, as the runtime titles `ff-run` records (#2067),
+ * plus the ones the source cannot spell, which the gate refuses by name.
+ */
+function forceFailRequired(): Array<{ file: string; titles: string[]; unenumerable: string[] }> {
+  return touchedSpecFiles().map(f => {
+    const source = fs.readFileSync(f, 'utf8')
+    return { file: f, titles: enumerateRunnableTests(source), unenumerable: enumerateUnenumerableTests(source) }
+  })
 }
 
 /**
@@ -315,11 +329,7 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
     // only the single `finalGreen` slot, which cannot say WHICH file it covered,
     // so such a pipeline re-runs them — one extra run per file, never one fewer.
     ev.finalGreenRuns ??= []
-    // A test.fixme/test.skip never executes, so demanding a red run for it
-    // would deadlock the phase — only runnable titles are required.
-    const required = touchedSpecFiles().map(f => ({
-      file: f, titles: enumerateRunnableTests(fs.readFileSync(f, 'utf8')),
-    }))
+    const required = forceFailRequired()
     const missing = checkForceFailCoverage(required, ev.ff)
     const dirty = checkNoMutationMarkers(
       touchedSpecFiles().map(f => ({ file: f, diff: gitDiffOf(f) })))
@@ -474,9 +484,7 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
     const ev = (rec?.evidence ?? {}) as {
       ff?: FFEntry[]; finalGreen?: PwStats; finalGreenRuns?: RunRecord[]
     }
-    const required = touchedSpecFiles().map(f => ({
-      file: f, titles: enumerateRunnableTests(fs.readFileSync(f, 'utf8')),
-    }))
+    const required = forceFailRequired()
     problems.push(...checkForceFailCoverage(required, ev.ff ?? []))
     problems.push(...checkNoMutationMarkers(
       touchedSpecFiles().map(f => ({ file: f, diff: gitDiffOf(f) }))))

@@ -200,8 +200,87 @@ export function countsAsClean(r: RunRecord): boolean {
   return c === 'clean' || c === 'clean-ambient'
 }
 
+// A backslash is only ever consumed together with the character it escapes, so
+// an escaped quote can never be taken for the closing one — the plain lazy
+// `[\s\S]*?` cut `"say \"hi\", then"` at the `\"` followed by a comma.
 const TEST_RE =
-  /(?<![\w.$])test(\.only|\.fixme|\.fail|\.skip)?\s*\(\s*(['"`])([\s\S]*?)\2\s*,/g
+  /(?<![\w.$])test(\.only|\.fixme|\.fail|\.skip)?\s*\(\s*(['"`])((?:\\[\s\S]|[^\\])*?)\2\s*,/g
+
+const SIMPLE_ESCAPES: Record<string, string> = {
+  n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v',
+}
+
+/**
+ * The value of the escape sequence whose backslash precedes `body[i]`, and the
+ * index just past it — or null for one strict code cannot contain (a legacy
+ * octal, a malformed `\x`/`\u`), since no runtime title exists to compare to.
+ */
+function cookEscape(body: string, i: number): [string, number] | null {
+  const c = body[i]
+  if (c === undefined) return null
+  if (Object.hasOwn(SIMPLE_ESCAPES, c)) return [SIMPLE_ESCAPES[c], i + 1]
+  if (c === '0' && !/[0-9]/.test(body[i + 1] ?? '')) return ['\0', i + 1]
+  if (/[0-9]/.test(c)) return null
+  if (c === 'x') {
+    const hex = body.slice(i + 1, i + 3)
+    return /^[0-9a-fA-F]{2}$/.test(hex) ? [String.fromCharCode(parseInt(hex, 16)), i + 3] : null
+  }
+  if (c === 'u') {
+    const braced = /^\{([0-9a-fA-F]+)\}/.exec(body.slice(i + 1))
+    if (braced) {
+      const cp = parseInt(braced[1], 16)
+      return cp <= 0x10ffff ? [String.fromCodePoint(cp), i + 1 + braced[0].length] : null
+    }
+    const hex = body.slice(i + 1, i + 5)
+    return /^[0-9a-fA-F]{4}$/.test(hex) ? [String.fromCharCode(parseInt(hex, 16)), i + 5] : null
+  }
+  // A line continuation contributes nothing (`\` + CRLF is ONE terminator).
+  if (c === '\r') return ['', body[i + 1] === '\n' ? i + 2 : i + 1]
+  if (c === '\n' || c === '\u2028' || c === '\u2029') return ['', i + 1]
+  // Identity escape: `\\`, `\'`, `\"`, `` \` ``, `\$` and any other character.
+  return [c, i + 1]
+}
+
+/**
+ * The title Playwright reports for a `test()` whose first argument is spelled
+ * `quote + body + quote`, or null when the source cannot say.
+ *
+ * `ff-run` records the RUNTIME title, so the force-fail gate has to enumerate
+ * the same thing: comparing the spelling made a `\\n` in a title (one
+ * backslash at runtime) unsatisfiable (#2043, #2067). Null means a template with a
+ * `${}` substitution, or a capture that is not one literal — an unescaped
+ * delimiter or line break inside quotes is the regex having run past an
+ * expression like `"a " + b`.
+ */
+function cookTitle(body: string, quote: string): string | null {
+  const template = quote === '`'
+  let out = ''
+  let i = 0
+  while (i < body.length) {
+    const c = body[i]
+    if (c === '\\') {
+      const cooked = cookEscape(body, i + 1)
+      if (!cooked) return null
+      out += cooked[0]
+      i = cooked[1]
+      continue
+    }
+    if (template) {
+      if (c === '`' || (c === '$' && body[i + 1] === '{')) return null
+      // A template normalises CRLF and a lone CR to LF in its cooked value.
+      if (c === '\r') {
+        out += '\n'
+        i += body[i + 1] === '\n' ? 2 : 1
+        continue
+      }
+    } else if (c === quote || c === '\n' || c === '\r') {
+      return null
+    }
+    out += c
+    i++
+  }
+  return out
+}
 
 /**
  * Title, modifier and tags of every `test(...)` in a spec file. Tags are read
@@ -220,7 +299,8 @@ export function enumerateTestEntries(source: string): TestEntry[] {
     const tags = tagBlock
       ? [...tagBlock[1].matchAll(/['"`]([^'"`]+)['"`]/g)].map(t => t[1])
       : []
-    entries.push({ title: m[3], modifier: m[1] ?? '', tags })
+    const cooked = cookTitle(m[3], m[2])
+    entries.push({ title: cooked ?? m[3], titleResolved: cooked !== null, modifier: m[1] ?? '', tags })
   }
   return entries
 }
@@ -232,13 +312,29 @@ export function enumerateTests(source: string): string[] {
   return enumerateTestEntries(source).filter(e => e.modifier !== '.skip').map(e => e.title)
 }
 
+const runnable = (e: TestEntry) => e.modifier !== '.fixme' && e.modifier !== '.skip'
+
 /**
- * Titles a force-fail can actually be run against. A `test.fixme`/`test.skip`
- * never executes, so requiring a red run for it would deadlock FORCE_FAIL.
+ * Runtime titles a force-fail can actually be run against. A
+ * `test.fixme`/`test.skip` never executes, so requiring a red run for it would
+ * deadlock FORCE_FAIL. Escapes are resolved (#2067), so each title is exactly
+ * what `ff-run` records.
  */
 export function enumerateRunnableTests(source: string): string[] {
   return enumerateTestEntries(source)
-    .filter(e => e.modifier !== '.fixme' && e.modifier !== '.skip')
+    .filter(e => runnable(e) && e.titleResolved)
+    .map(e => e.title)
+}
+
+/**
+ * Runnable tests whose runtime title the source cannot spell — a `${}`
+ * substitution, or a title that is not one literal — in their source spelling.
+ * No `ff-run` entry can ever match one, so the gate refuses them by name
+ * instead of reporting a force-fail nobody could have recorded.
+ */
+export function enumerateUnenumerableTests(source: string): string[] {
+  return enumerateTestEntries(source)
+    .filter(e => runnable(e) && !e.titleResolved)
     .map(e => e.title)
 }
 

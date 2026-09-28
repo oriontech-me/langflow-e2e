@@ -9,6 +9,7 @@ import {
   checkRegressionLedger, normalizeUpstreamTicket, LEDGER_FILE,
 } from './gates.ts'
 import type { RunRecord } from './types.ts'
+import { enumerateRunnableTests, enumerateUnenumerableTests } from './runners.ts'
 
 const GOOD_DOC = `# agent-tools spec
 ## What this test validates
@@ -83,7 +84,7 @@ test('checkQaDiff still rejects a generated line that looks structural', () => {
 })
 
 test('FF coverage requires one red entry per enumerated test', () => {
-  const required = [{ file: 'a.spec.ts', titles: ['t1', 't2'] }]
+  const required = [{ file: 'a.spec.ts', titles: ['t1', 't2'], unenumerable: [] }]
   const ff = [{ file: 'a.spec.ts', test: 't1', mutation: 'inverted assert', unexpected: 1, at: 'x' }]
   const problems = checkForceFailCoverage(required, ff)
   assert.equal(problems.length, 1)
@@ -91,9 +92,38 @@ test('FF coverage requires one red entry per enumerated test', () => {
 })
 
 test('FF entry with zero unexpected does not count', () => {
-  const required = [{ file: 'a.spec.ts', titles: ['t1'] }]
+  const required = [{ file: 'a.spec.ts', titles: ['t1'], unenumerable: [] }]
   const ff = [{ file: 'a.spec.ts', test: 't1', mutation: 'no-op', unexpected: 0, at: 'x' }]
   assert.equal(checkForceFailCoverage(required, ff).length, 1)
+})
+
+test('an escaped title is covered by the ff entry recorded with its runtime title (#2043)', () => {
+  // The source spells `\\n`; Playwright reports — and `ff-run` records — ONE
+  // backslash. Before #2043's fix the gate required the spelling and no
+  // ff-run could ever satisfy it.
+  const file = 'memory-base-ingestion.spec.ts'
+  const source = String.raw`
+    test(
+      "should open Create Knowledge Base with the 1000 / 200 / \\n defaults",
+      { tag: ["@regression"] },
+      async ({ page }) => {},
+    )
+  `
+  const runtimeTitle = 'should open Create Knowledge Base with the 1000 / 200 / \\n defaults'
+  const required = [{
+    file, titles: enumerateRunnableTests(source), unenumerable: enumerateUnenumerableTests(source),
+  }]
+  const ff = [{ file, test: runtimeTitle, mutation: 'inverted assert', unexpected: 1, at: 'x' }]
+  assert.deepEqual(checkForceFailCoverage(required, ff), [])
+})
+
+test('a ${} title is refused as unenumerable, not reported as a missing force-fail', () => {
+  const required = [{ file: 'a.spec.ts', titles: [], unenumerable: ['answers with ${provider}'] }]
+  const problems = checkForceFailCoverage(required, [])
+  assert.equal(problems.length, 1)
+  assert.doesNotMatch(problems[0], /no verified force-fail/)
+  assert.match(problems[0], /answers with \$\{provider\}/)
+  assert.match(problems[0], /literal title/)
 })
 
 test('mutation markers must be reverted', () => {
@@ -253,14 +283,14 @@ The test is "switching the agent's context_id re-tags new turns".
 `
 
 test('checkQuarantineLifted is inert for an issue that never quarantined anything', () => {
-  const files = [{ file: 'a.spec.ts', entries: [{ title: 't', modifier: '.fixme', tags: [] }] }]
+  const files = [{ file: 'a.spec.ts', entries: [{ title: 't', titleResolved: true, modifier: '.fixme', tags: [] }] }]
   assert.deepEqual(checkQuarantineLifted('a plain new-spec issue', files), [])
 })
 
 test('checkQuarantineLifted flags a surviving test.fixme', () => {
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '.fixme', tags: ['@stable'] }],
+    entries: [{ title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '.fixme', tags: ['@stable'] }],
   }]
   const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
   assert.equal(problems.length, 1)
@@ -275,8 +305,8 @@ test('checkQuarantineLifted ignores a test.fixme the issue does not name (#1422)
   const files = [{
     file: 'a.spec.ts',
     entries: [
-      { title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@stable'] },
-      { title: 'user must be able to change mode of MCP tools', modifier: '.fixme', tags: ['@release'] },
+      { title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '', tags: ['@stable'] },
+      { title: 'user must be able to change mode of MCP tools', titleResolved: true, modifier: '.fixme', tags: ['@release'] },
     ],
   }]
   assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files), [])
@@ -288,7 +318,7 @@ test('checkQuarantineLifted stays strict when the body names no touched test', (
   // flagged, so the precise path above can never become a way through.
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: 'some other muted test', modifier: '.fixme', tags: [] }],
+    entries: [{ title: 'some other muted test', titleResolved: true, modifier: '.fixme', tags: [] }],
   }]
   const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
   assert.equal(problems.length, 1)
@@ -298,7 +328,7 @@ test('checkQuarantineLifted stays strict when the body names no touched test', (
 test('checkQuarantineLifted flags a missing @stable when the issue asks for it', () => {
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+    entries: [{ title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '', tags: ['@regression'] }],
   }]
   const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
   assert.equal(problems.length, 1)
@@ -309,8 +339,8 @@ test('checkQuarantineLifted passes once fixme is gone and @stable is back', () =
   const files = [{
     file: 'a.spec.ts',
     entries: [
-      { title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@stable', '@agents'] },
-      { title: 'an unrelated sibling the issue never names', modifier: '', tags: ['@regression'] },
+      { title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '', tags: ['@stable', '@agents'] },
+      { title: 'an unrelated sibling the issue never names', titleResolved: true, modifier: '', tags: ['@regression'] },
     ],
   }]
   assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files), [])
@@ -339,7 +369,7 @@ test('checkQuarantineLifted passes once fixme is gone and @stable is back', () =
 test('checkQuarantineLifted does not demand @stable under a langflow-regression verdict (#1759)', () => {
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+    entries: [{ title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '', tags: ['@regression'] }],
   }]
   assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files, 'langflow-regression'), [])
 })
@@ -349,7 +379,7 @@ test('a langflow-regression verdict still demands the test.fixme comes off (#175
   // the tag, a product regression could ship a test muted in every context.
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '.fixme', tags: ['@regression'] }],
+    entries: [{ title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '.fixme', tags: ['@regression'] }],
   }]
   const problems = checkQuarantineLifted(QUARANTINE_BODY, files, 'langflow-regression')
   assert.equal(problems.length, 1)
@@ -360,7 +390,7 @@ test('a langflow-regression verdict still demands the test.fixme comes off (#175
 test('only a product verdict exempts the tag — every other verdict still demands it (#1759)', () => {
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+    entries: [{ title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '', tags: ['@regression'] }],
   }]
   for (const verdict of ['test-defect', 'transient-saturation', 'cross-worker-wiper', 'product-changed', 'stale-confirmed-bug']) {
     const problems = checkQuarantineLifted(QUARANTINE_BODY, files, verdict)
@@ -374,7 +404,7 @@ test('an absent verdict keeps the pre-#1759 behaviour', () => {
   // unaffected: no verdict is not a product verdict.
   const files = [{
     file: 'a.spec.ts',
-    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+    entries: [{ title: "switching the agent's context_id re-tags new turns", titleResolved: true, modifier: '', tags: ['@regression'] }],
   }]
   const problems = checkQuarantineLifted(QUARANTINE_BODY, files, undefined)
   assert.equal(problems.length, 1)
