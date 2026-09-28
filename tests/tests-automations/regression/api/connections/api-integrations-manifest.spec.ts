@@ -23,6 +23,27 @@ test.describe("Integrations API — capability manifest and effective policy", (
   const CATALOG = "/api/v1/all";
 
   /**
+   * The `IntegrationListRead` body, sorted. `deployment_context` arrived on
+   * `1.13.0.dev26` with upstream #15333 (#2074) — an intended addition, and the
+   * reason this stays an EXACT set: the key-set check is what surfaced it.
+   */
+  const MANIFEST_KEYS = ["deployment_context", "providers"];
+
+  /**
+   * `IntegrationListRead.deployment_context`'s declared literal. Narrower than
+   * the capability-level `DEPLOYMENT_CONTEXTS` below, which also has `headless`.
+   */
+  const INSTANCE_DEPLOYMENT_CONTEXTS = ["self_managed", "hosted", "desktop"];
+
+  /**
+   * What an instance with `LANGFLOW_CONNECTION_OAUTH_CONTEXT` unset must read —
+   * every lane of this repo. The upstream unit test always SETS the variable,
+   * so this default is covered nowhere else, and it decides whether the
+   * add-connection dialog offers the Slack token method (`offersSlackToken`).
+   */
+  const EXPECTED_DEPLOYMENT_CONTEXT = "self_managed";
+
+  /**
    * The provider row as `IntegrationProviderRead` declares it, measured on
    * `1.13.0.dev21` and identical on `dev19`. Asserted as the EXACT set: a
    * per-field `toHaveProperty` would pass a row that grew a key, and this
@@ -163,19 +184,29 @@ test.describe("Integrations API — capability manifest and effective policy", (
     }
   });
 
-  async function readManifest(
+  async function readManifestBody(
     request: APIRequestContext,
     headers: Record<string, string>,
-  ): Promise<Provider[]> {
+  ): Promise<{ providers: Provider[]; deploymentContext: string }> {
     const res = await request.get(MANIFEST, { headers });
     expect(res.status(), await res.text()).toBe(200);
     const body = await res.json();
-    expect(Object.keys(body), `${MANIFEST} answers a single "providers" key`).toEqual(["providers"]);
+    expect(Object.keys(body).sort(), `${MANIFEST} carries exactly the IntegrationListRead keys`).toEqual(
+      MANIFEST_KEYS,
+    );
+    expect(
+      INSTANCE_DEPLOYMENT_CONTEXTS,
+      `${MANIFEST} deployment_context "${body.deployment_context}" is a declared instance context`,
+    ).toContain(body.deployment_context);
     expect(Array.isArray(body.providers), `${MANIFEST} returns providers as a list`).toBe(true);
     // The floor, not a count: every assertion below runs inside a loop, so an
     // empty manifest would pass all of them having checked nothing (#1092).
     expect(body.providers.length, `${MANIFEST} lists at least one provider`).toBeGreaterThan(0);
-    return body.providers as Provider[];
+    return { providers: body.providers as Provider[], deploymentContext: body.deployment_context as string };
+  }
+
+  async function readManifest(request: APIRequestContext, headers: Record<string, string>): Promise<Provider[]> {
+    return (await readManifestBody(request, headers)).providers;
   }
 
   /**
@@ -206,7 +237,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -313,7 +344,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`, `GET ${CATALOG}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -381,7 +412,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "a provider's enabled flag and connection count are derived from its connections, and only its own",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         `GET ${MANIFEST}`,
@@ -461,7 +492,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "the manifest and the effective policy agree that the instance is unrestricted",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`, `GET ${POLICY}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -517,11 +548,11 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared",
-    { tag: ["@api", "@integrations"] },
+    { tag: ["@stable", "@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`]);
       const headers = { Authorization: await getAuthToken(request) };
-      const providers = await readManifest(request, headers);
+      const { providers, deploymentContext } = await readManifestBody(request, headers);
 
       await test.step("every policy key parses as integrations.<provider_id>.<action>", async () => {
         for (const provider of providers) {
@@ -570,6 +601,17 @@ test.describe("Integrations API — capability manifest and effective policy", (
             }
           }
         }
+      });
+
+      await test.step("the instance names the default deployment context those lists are compared against", async () => {
+        // Not a skip, like test 4's `unrestricted`: no lane sets
+        // LANGFLOW_CONNECTION_OAUTH_CONTEXT, so anything else is a configuration
+        // change or a broken default. The server applies no context filter
+        // (measured on dev26 under `hosted`), so no per-capability claim is made.
+        expect(
+          deploymentContext,
+          `${MANIFEST} reports the ${EXPECTED_DEPLOYMENT_CONTEXT} context an unconfigured instance defaults to`,
+        ).toBe(EXPECTED_DEPLOYMENT_CONTEXT);
       });
     },
   );

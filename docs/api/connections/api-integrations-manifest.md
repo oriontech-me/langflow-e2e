@@ -2,11 +2,12 @@
 
 **File:** `tests/tests-automations/regression/api/connections/api-integrations-manifest.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev21`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev26`)
 
 Owning issue: #1968 (Dedicated Integrations, batch 1 — the `follow-up` exception set;
 order and dependencies in the #1971 comment). Seeds through
-`tests/helpers/integrations/`, the helpers #1966 built.
+`tests/helpers/integrations/`, the helpers #1966 built. Revised for #2074, when the body
+grew a second top-level key — see *The top-level `deployment_context`* below.
 
 ---
 
@@ -33,8 +34,10 @@ between the two moved:
 |---|---|---|---|---|
 | `google` | `true` | `false` | `0` | 5 |
 | `microsoft` | `true` | `false` | `0` | 8 |
-| `slack` | `true` | `false` | `0` | 7 |
+| `slack` | `true` | `false` | `0` | 7 on `dev21`, **11** on `dev26` |
 
+- The body carries **2** top-level keys on `dev26` — `providers` and `deployment_context`
+  (only `providers` on `dev21`/`dev23`; see the #2074 section below).
 - The provider row carries **8** keys: `provider_id`, `display_name`, `icon`, `docs_url`,
   `approved`, `enabled`, `connection_count`, `capabilities`. Rows come back sorted by
   `provider_id`.
@@ -44,8 +47,47 @@ between the two moved:
 - `policy/effective` answers **6**: `approved_provider_ids`, `blocked_action_keys`,
   `loaded_provider_ids`, `unrestricted`, `managed_externally`, `policy_revision` —
   measured `["google","microsoft","slack"]`, `[]`, the same three, `true`, `false`, `1`.
-- All **20** capabilities cross-check: `ext:<provider_id>:<component_ref>@official` is a
-  key of `GET /api/v1/all`, and the entry's own `namespaced_id` is that same string.
+- All **24** capabilities cross-check (20 on `dev21`): `ext:<provider_id>:<component_ref>@official`
+  is a key of `GET /api/v1/all`, and the entry's own `namespaced_id` is that same string.
+  The 24 reference **22** distinct components — each Slack trigger component backs two
+  capabilities, one per transport.
+
+### The top-level `deployment_context` (#2074)
+
+Between `1.13.0.dev23` and `1.13.0.dev26` the body grew a second top-level key, and all
+five tests failed 3/3 at the first line of `readManifest`, which asserted the key set was
+exactly `["providers"]`. Root-caused upstream, **not a product regression**: an intended,
+documented contract addition.
+
+- **Where it came from.** `langflow-ai/langflow#15333` (*Slack message and reaction
+  triggers on the Events API and Socket Mode*, commit `2cdf8109bb`, 2026-09-24, on
+  `release-1.13.0`) added `deployment_context: Literal["self_managed", "hosted", "desktop"]`
+  to `IntegrationListRead`, with a `Field` description, a default of `self_managed`, and an
+  upstream unit test (`test_list_integrations_reports_the_deployment_context`) parametrized
+  over all three values. The value is `deployment_context()` in
+  `services/connection/oauth/config.py`: `LANGFLOW_CONNECTION_OAUTH_CONTEXT`, and
+  `self_managed` when that configuration is unset or unreadable.
+- **Why the key is load-bearing, not decorative.** The Connections page hands it to the
+  add-connection dialog, and `offersSlackToken()` offers the *paste a Slack app-level token*
+  method only when it is **present and not `hosted`** — a deployment that has not said what
+  it is yet offers nothing. So the key vanishing, or a default instance reading `hosted`,
+  silently removes the only way a self-managed user connects Slack Socket Mode. The upstream
+  unit test always *sets* the variable, so the **unset default** — which is what every lane
+  of this suite runs — is covered by nothing upstream.
+- **What the spec now asserts.** The body's key set is **exactly**
+  `["deployment_context", "providers"]` — still an exact set, for the reason the provider and
+  capability rows are: this endpoint sits next to the connection store, and a per-key check
+  would pass a body that grew one. `deployment_context` is inside its **declared** top-level
+  domain `{self_managed, hosted, desktop}` on every read — note it is narrower than the
+  capability-level `DeploymentContext`, which also has `headless`. And test 5 asserts the
+  instance reads `self_managed`, as a precondition in the same sense as test 4's
+  `unrestricted`: no lane sets `LANGFLOW_CONNECTION_OAUTH_CONTEXT`, so anything else is either
+  a configuration change this file should surface or a broken default.
+- **Its interaction with tests 4 and 5**, which #2074 asked to check. None with the
+  effective policy (test 4): the ceiling and the deny-list never read the deployment
+  context. With the per-capability `deployment_contexts` (test 5), it is the value those
+  lists are compared against — and on the `self_managed` instance the lanes run, **all 24**
+  capabilities declare `self_managed`, so nothing is excluded here.
 
 ### The enum domains are the DECLARED ones, not the measured ones
 
@@ -86,12 +128,30 @@ cross-checked. It asserts no upper bound and no total.
 
 ### Recorded, not asserted
 
-- **`policy_keys` is exactly `["integrations." + capability.id]`, 20 of 20.** The contract
-  upstream enforces is weaker — each key must parse as
-  `integrations.<provider_id>.<action>` and sit inside the owning provider's namespace —
+- **`policy_keys` is exactly `["integrations." + capability.id]`, 20 of 20 on `dev21` —
+  and 20 of 24 on `dev26`.** The contract upstream enforces is weaker — each key must parse
+  as `integrations.<provider_id>.<action>` and sit inside the owning provider's namespace —
   and `policy_keys` is a list precisely so a capability may declare several. Asserting the
   measured 1:1 identity would redden a legitimate manifest, so the spec asserts the
-  grammar and the namespace, which is what governance actually blocks on.
+  grammar and the namespace, which is what governance actually blocks on. `dev26` proved
+  the point: the four Slack trigger capabilities (`slack.trigger.{message,reaction}.
+  {events_api,socket_mode}`) share **one** key per event across both transports
+  (`integrations.slack.trigger.message`, `integrations.slack.trigger.reaction`), so an
+  operator blocks an event, not a transport — and a 1:1 assertion would have failed on a
+  correct manifest.
+- **The server does not omit a capability whose `deployment_contexts` exclude the
+  instance's context**, whatever the `deployment_context` field's own description says (*"A
+  capability or auth profile whose deployment contexts exclude it is not offered here"*).
+  Measured on `dev26` started with `LANGFLOW_CONNECTION_OAUTH_CONTEXT=hosted`: the body read
+  `deployment_context: "hosted"` and still listed all **24** capabilities, including
+  `slack.trigger.message.socket_mode` and `slack.trigger.reaction.socket_mode`, which
+  declare `["self_managed", "desktop"]`. `list_integrations` has no context filter, and the
+  only client consumer found (`offersSlackToken`) gates the token *method*, not the
+  capabilities. Not asserted: no lane runs `hosted`, and on `self_managed` every shipped
+  capability declares it, so an "every listed capability declares the instance's context"
+  check would be vacuously true here and would redden a legitimately hosted-only capability
+  the day one ships. Whether the omission is owed by the server or by the picker is an
+  upstream question; this file makes no claim.
 - **The catalog entry's `display_name` equals the capability's, 20 of 20** — the picker
   label and the canvas node label agree today. Not asserted: nothing upstream promises it,
   and a copy edit on one side is not a defect this file should own.
@@ -124,6 +184,9 @@ cross-checked. It asserts no upper bound and no total.
   `managed_externally` ceiling. Test 4 fails rather than skips if that stops being true:
   an instance-global configuration change is exactly what this file should surface, and a
   skip would report it as coverage.
+- **The instance runs in the default `self_managed` deployment context** —
+  `LANGFLOW_CONNECTION_OAUTH_CONTEXT` unset, which is how every lane and start script of this
+  repo runs it. Test 5 fails rather than skips otherwise, for the same reason.
 - **`microsoft` is this file's provider and `slack` is its untouched control.** Every
   other spec in the batch seeds `google` (the helper's default), so `connection_count` for
   `google` is contended between workers and is never asserted here. Test 3 asserts
@@ -135,7 +198,8 @@ cross-checked. It asserts no upper bound and no total.
   and cannot race; the round trip is asserted as a delta against a baseline read taken
   inside the same test.
 - **Budget.** The two integration routes share the connections **metadata-read** bucket
-  (60/min per user, `get_metadata_read_limit()`); this file issues 9 reads per run. Writes
+  (60/min per user, `get_metadata_read_limit()`); this file issues 9 reads per run
+  (unchanged by #2074 — the new checks read the bodies the tests already fetch). Writes
   come from the shared **write** bucket (30/min per user) and this file spends **2** — one
   create and one delete, both in test 3.
 
@@ -159,7 +223,10 @@ Five tests over the `request` fixture, each declaring its operations through
 a row that is already gone.
 
 **Test 1 — `every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain`**
-1. `GET /api/v1/integrations` → `200`, a body whose only key is `providers`.
+1. `GET /api/v1/integrations` → `200`, a body whose key set is exactly
+   `["deployment_context", "providers"]`, with `deployment_context` inside its declared
+   domain `{self_managed, hosted, desktop}`. Every read of the manifest in every test goes
+   through this check.
 2. `providers` is a non-empty array, sorted by `provider_id`, with unique ids each
    matching `^[a-z0-9][a-z0-9._-]*$`.
 3. Each provider row's key set equals the 8 above; `display_name` is non-empty;
@@ -231,15 +298,21 @@ a row that is already gone.
    manifest bug: an operator could never block that action.
 4. `deployment_contexts` is non-empty, free of duplicates, and a subset of
    `{hosted, self_managed, desktop, headless}`.
+5. The body's `deployment_context` — the value those lists are compared against — is
+   `self_managed`: the default a lane that never sets `LANGFLOW_CONNECTION_OAUTH_CONTEXT`
+   must read, and the one under which the add-connection dialog offers the Slack token
+   method. A precondition that fails rather than skips, like test 4's `unrestricted`.
 
 ---
 
 ## Validation criterion *(required)*
 
 All five tests pass three consecutive times at `--retries=0 --workers=1` against
-`1.13.0.dev21`, with: every provider row asserted as the exact 8-key set and every
-capability as the exact 13-key set; every enum-valued field asserted against its
-**declared** domain rather than the measured one; all 20 capabilities cross-checking to a
+`1.13.0.dev26`, with: every manifest read asserting the body's exact key set
+`["deployment_context", "providers"]` and `deployment_context` inside
+`{self_managed, hosted, desktop}`, and test 5 asserting it reads `self_managed`; every
+provider row asserted as the exact 8-key set and every capability as the exact 13-key set; every enum-valued field asserted against its
+**declared** domain rather than the measured one; all 24 capabilities cross-checking to a
 `GET /api/v1/all` entry whose `namespaced_id` is the same `ext:…@official` string, with
 `component_display_names` excluded from the index and a non-vacuity floor proving the loop
 ran; `microsoft`'s `connection_count` moving `c0 → c0+1 → c0` around one seeded connection
@@ -260,11 +333,16 @@ the fixture recorded.
 - A running Langflow **1.13** instance at `PLAYWRIGHT_BASE_URL`, auto-login or superuser,
   **unrestricted**: no integration policy bundle and no externally managed ceiling.
 - `src/backend/base/langflow/api/v1/integrations.py` — both routes under test, the
-  `IntegrationProviderRead` / `IntegrationCapabilityRead` / `EffectiveIntegrationPolicyRead`
-  shapes asserted here, the `enabled = approved and connection_count > 0` derivation, and
+  `IntegrationListRead` / `IntegrationProviderRead` / `IntegrationCapabilityRead` /
+  `EffectiveIntegrationPolicyRead` shapes asserted here (including `IntegrationListRead`'s
+  `deployment_context` literal and its absence of any context filter), the `enabled = approved and connection_count > 0` derivation, and
   the omission of blocked providers and actions from the default listing.
 - `src/backend/base/langflow/services/integration_policy_discovery.py` — how the ceiling
   and the action deny-list are resolved for the caller.
+- `src/backend/base/langflow/services/connection/oauth/config.py` — `deployment_context()`
+  and `OAuthSettings.context`, the `self_managed` default test 5 asserts.
+- `src/frontend/src/pages/SettingsPage/pages/ConnectionsPage/helpers/slack-token.ts` —
+  `offersSlackToken()`, the client consumer that makes the key's presence load-bearing.
 - `src/backend/base/langflow/api/v1/connections.py` — the create and delete test 3 drives,
   and the per-user write bucket its budget is sized against.
 - `src/lfx/src/lfx/integrations/capabilities.py` — the declared enum domains
