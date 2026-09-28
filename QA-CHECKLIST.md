@@ -1595,7 +1595,7 @@
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
-| `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
+| `flow-functionality/` | 37 | 33 | 0 | 3 | 1 |
 | `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
@@ -1607,7 +1607,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **638 (87%)** | **37 (5%)** | **14 (2%)** | **45 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **735** | **638 (87%)** | **37 (5%)** | **15 (2%)** | **45 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 709 `test()` calls carrying the `@stable` tag, distributed across 278 spec
+> 711 `test()` calls carrying the `@stable` tag, distributed across 278 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2234,7 +2234,9 @@
 - [x] 1 - runs the flow from the canvas terminal node → `flow-execution-canvas.spec.ts`
 - [x] 2 - the flow ran correctly: every node reached build success → `flow-execution-canvas.spec.ts`
 - [x] 3 - the chat input and chat output are visible in the Playground → `flow-execution-canvas.spec.ts`
+- [x] should lock and unlock a flow and verify UI changes → `flow-lock.spec.ts`
 - [x] should show correct lock/unlock icon in settings based on state → `flow-lock.spec.ts`
+- [x] should keep a lock saved while a node update lands mid-save → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
 - [x] a frozen component serves its cached output instead of recomputing → `freeze-and-state.spec.ts`
