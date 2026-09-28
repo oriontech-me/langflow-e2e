@@ -779,9 +779,9 @@
 
 #### 11.5 Execution — knowledge base
 
-- [ ] Document Q&A — against a knowledge base the spec creates and ingests a sentinel document into, the Knowledge node's retrieval contains the sentinel and the Agent's run completes with a non-empty reply and a clean flow-error report
-- [ ] Knowledge Retrieval — against such a knowledge base, Chat Output shows retrieved text containing the sentinel (this template has no LLM)
-- [ ] Vector Store RAG — the same observable as Document Q&A, through this template's graph
+- [x] Document Q&A — against a knowledge base the spec creates and ingests a sentinel document into, the Knowledge node's retrieval contains the sentinel, the prompt the Agent receives carries it, and the Agent's run completes with a non-empty reply and a clean flow-error report → `core-functionality/templates/templates-run-knowledge.spec.ts`
+- [x] Knowledge Retrieval — against such a knowledge base, Chat Output shows retrieved text containing the sentinel (this template has no LLM) → `core-functionality/templates/templates-run-knowledge.spec.ts`
+- [x] Vector Store RAG — the same observable as Document Q&A, through this template's graph → `core-functionality/templates/templates-run-knowledge.spec.ts`
 
 ---
 
