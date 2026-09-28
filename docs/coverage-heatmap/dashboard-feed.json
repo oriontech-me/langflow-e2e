@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 810,
+  "bullets": 811,
   "bulletsAutomatedUnwatched": 121,
-  "residualRiskTotal": 104.5
+  "residualRiskTotal": 104.9
  },
  "areas": [
   {
@@ -674,12 +674,12 @@
    "key": "flow-lifecycle",
    "label": "12 Flow lifecycle",
    "rank": 12,
-   "residualRisk": 4,
+   "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
-   "mitigation": 0.8,
-   "mitigationBulletDerived": 0.8,
+   "mitigation": 0.78,
+   "mitigationBulletDerived": 0.78,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
@@ -689,11 +689,11 @@
     "weightedChurn": 0.89
    },
    "bullets": {
-    "total": 25,
+    "total": 26,
     "validated": 25,
     "automatedUnwatched": 0,
     "partial": 0,
-    "flaky": 0,
+    "flaky": 1,
     "empty": 0
    },
    "specs": {
@@ -719,7 +719,7 @@
     "mitigation": 0.76
    },
    "delta": {
-    "residualRisk": -0.8,
+    "residualRisk": -0.4,
     "rank": -1,
     "direction": "improved"
    },

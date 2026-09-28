@@ -572,7 +572,7 @@
   },
   {
    "area": "12 Flow lifecycle",
-   "residualRisk": 4,
+   "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
@@ -583,7 +583,7 @@
     "weightedBugs": 34.8,
     "weightedChurn": 0.89
    },
-   "mitigationBulletDerived": 0.8,
+   "mitigationBulletDerived": 0.78,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
@@ -591,10 +591,11 @@
     "stableSpecs": 38,
     "penalty": 0
    },
-   "mitigation": 0.8,
-   "checklistBullets": 25,
+   "mitigation": 0.78,
+   "checklistBullets": 26,
    "bulletStates": {
-    "x": 25
+    "x": 25,
+    "!": 1
    },
    "previous": {
     "residualRisk": 4.8,
