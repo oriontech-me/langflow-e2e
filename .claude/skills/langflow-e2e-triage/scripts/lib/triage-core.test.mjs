@@ -1089,3 +1089,81 @@ test('declared_fix_candidates count passes per variant, and never form a provide
   for (const c of ds.declared_fix_candidates) assert.deepEqual(c.passes, { count: 1, dates: ['2026-09-21'] });
   assert.deepEqual(ds.provider_wide_clusters.filter((k) => k.provider_wide), []);
 });
+
+// --- an umbrella in another repository ---------------------------------------
+//
+// The VM lane opens its umbrella on the destination host, and dedicated issues are
+// opened here. A bare "#7" in a dedicated issue then autolinks to THIS repository's
+// #7 (on 2026-09-28, an unrelated closed PR) and leaves a cross-reference on its
+// timeline. `\#7` does not stop the autolink; an explicit `[#7](url)` does.
+
+const UMBRELLA_URL = 'https://github.example.com/Org/dest/issues/744';
+
+test('renderDedicatedIssueBody writes a cross-repository umbrella as an explicit link', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: UMBRELLA_URL });
+  assert.equal(
+    body.split('\n')[0],
+    'Spun out of daily-failure triage [#744](https://github.example.com/Org/dest/issues/744) (run [30261409427](https://gh/runs/30261409427), 2026-07-27).',
+  );
+  assert.ok(!/triage #744/.test(body), 'no bare #744 left to autolink to this repository');
+  assert.deepEqual(assertDedicatedIssueBody(body), [], 'the provenance contract still holds');
+});
+
+test('a provenance note still follows the provenance sentence', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: UMBRELLA_URL, provenanceNote: 'Actions had not run.' });
+  assert.match(body.split('\n')[0], /, 2026-07-27\)\. Actions had not run\.$/);
+});
+
+test('without umbrellaUrl nothing changes, as the Actions lane needs', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER });
+  assert.equal(renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: null }), body);
+  assert.equal(renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: undefined }), body);
+  assert.match(body, /^Spun out of daily-failure triage #744 \(run /);
+});
+
+test('renderDedicatedIssueBody refuses an umbrellaUrl for another issue, or not an issue URL', () => {
+  for (const bad of [
+    'https://github.example.com/Org/dest/issues/745',
+    'https://github.example.com/Org/dest/issues/0744',
+    'https://github.example.com/Org/dest/pull/744',
+    'https://github.example.com/Org/de)st/issues/744',
+    'github.example.com/Org/dest/issues/744',
+    '#744',
+    '',
+  ]) {
+    assert.throws(
+      () => renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: bad }),
+      /umbrellaUrl must be the issue URL of umbrella #744/,
+      `accepted ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('the validator accepts a linked umbrella only when the link names the same number', () => {
+  const good = renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: UMBRELLA_URL });
+  const swap = (from, to) => good.replace(from, to);
+  assert.deepEqual(assertDedicatedIssueBody(good), []);
+  for (const [why, body] of [
+    ['a link to another issue', swap('/issues/744)', '/issues/745)')],
+    ['a link that is not an issue URL', swap('/issues/744)', '/pull/744)')],
+    ['an escaped number, which GitHub still autolinks', swap('[#744](https://github.example.com/Org/dest/issues/744)', '\\#744')],
+  ]) {
+    assert.ok(
+      assertDedicatedIssueBody(body).some((p) => p.includes('provenance line')),
+      `${why} passed the provenance check`,
+    );
+  }
+});
+
+test('buildDataset carries the matched umbrella URL only when the listing has one', () => {
+  const rows = parseHistory(fixture('history-sample.jsonl'));
+  const issues = JSON.parse(fixture('issues-sample.json'));
+  assert.equal(buildDataset(rows, issues).umbrella_url, null, 'a listing without url must not invent one');
+  // Reversed so the matched umbrella (#900) is NOT the first issue listed: a lookup
+  // that took the first URL it saw would otherwise pass.
+  const withUrl = [...issues].reverse().map((i) => ({ ...i, url: `https://github.example.com/Org/dest/issues/${i.number}` }));
+  const ds = buildDataset(rows, withUrl);
+  assert.equal(ds.umbrella_issue, 900);
+  assert.equal(ds.umbrella_url, 'https://github.example.com/Org/dest/issues/900', 'the URL of the MATCHED issue, not of another');
+  assert.equal(buildDataset(rows, []).umbrella_url, null);
+});

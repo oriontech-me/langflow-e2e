@@ -27,13 +27,37 @@ const runId = arg('--run', null);
 // open — so it asks for no issues rather than logging a failed call every red day
 // (#2031). The umbrella match and the stale-history check come back null.
 const noIssues = process.argv.includes('--no-issues');
+// Where the umbrella lives, as `gh -R` takes it ([HOST/]OWNER/REPO). Without it `gh`
+// asks whatever repository it resolves for the checkout, which is right for the
+// Actions lane. The VM lane opens its umbrella on the destination host: from a clone
+// whose `origin` is this repository the match comes back null, and the umbrella has
+// to be typed in by hand. Measured 2026-09-28 against the real run: null from a
+// source-default checkout, #7 with this flag.
+//
+// Given without a value, it is REFUSED rather than read as absent: `arg()` treats an
+// empty value as missing, so `--issues-repo "$ISSUE_REPO"` with the variable unset
+// would quietly list the checkout's own repository, which is the wrong-repository
+// answer this flag exists to prevent. The same for a value that is another flag.
+const issuesRepoAt = process.argv.indexOf('--issues-repo');
+const issuesRepo = issuesRepoAt === -1 ? null : process.argv[issuesRepoAt + 1];
+if (issuesRepoAt !== -1 && (!issuesRepo || !issuesRepo.trim() || issuesRepo.startsWith('--'))) {
+  process.stderr.write('error: --issues-repo needs a repository ([HOST/]OWNER/REPO); refusing to fall back to the checkout\'s own\n');
+  process.exit(2);
+}
+// `arg()` has never read `--flag=value`, so `--issues-repo=<repo>` would be ignored
+// and the listing would silently fall back to the checkout's own repository.
+if (process.argv.some((a) => a.startsWith('--issues-repo='))) {
+  process.stderr.write('error: write --issues-repo <repo> with a space; the --issues-repo=<repo> form is not read, and falling back to the checkout\'s own repository is refused\n');
+  process.exit(2);
+}
 
 // Daily-failure issues (open + closed) — the umbrella may already be closed.
 function fetchIssues() {
   try {
     const out = execFileSync('gh', [
-      'issue', 'list', '--label', 'daily-failure', '--state', 'all',
-      '--limit', '50', '--json', 'number,title,body',
+      'issue', 'list', ...(issuesRepo ? ['-R', issuesRepo] : []),
+      '--label', 'daily-failure', '--state', 'all',
+      '--limit', '50', '--json', 'number,title,body,url',
     ], { encoding: 'utf8' });
     return JSON.parse(out);
   } catch (e) {

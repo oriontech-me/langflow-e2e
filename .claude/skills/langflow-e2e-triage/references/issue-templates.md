@@ -53,6 +53,13 @@ Example: `[Daily #744] agent/flow execution does not complete — div-chat-messa
 Spun out of daily-failure triage #<umbrella> (run [<run_id>](<run_url>), <date>).
 ```
 
+When the umbrella lives in another repository (a VM-lane run, whose umbrella is on
+`github.ibm.com/Langflow/e2e-qa`), `#<umbrella>` is written as an explicit link,
+`[#<umbrella>](<umbrella issue URL>)`. A bare `#N` would autolink to this
+repository's #N and leave a cross-reference on its timeline, and `\#N` does not
+prevent that. The renderer does this when given `umbrellaUrl`, and the contract
+guard accepts either form, provided the link names the same number (#2081).
+
 **Upstream (second line)**
 
 ```
