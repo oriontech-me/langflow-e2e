@@ -27,13 +27,21 @@ const runId = arg('--run', null);
 // open — so it asks for no issues rather than logging a failed call every red day
 // (#2031). The umbrella match and the stale-history check come back null.
 const noIssues = process.argv.includes('--no-issues');
+// Where the umbrella lives, as `gh -R` takes it ([HOST/]OWNER/REPO). Without it `gh`
+// asks whatever repository it resolves for the checkout, which is right for the
+// Actions lane. The VM lane opens its umbrella on the destination host: from a clone
+// whose `origin` is this repository the match comes back null, and the umbrella has
+// to be typed in by hand. Measured 2026-09-28 against the real run: null from a
+// source-default checkout, #7 with this flag.
+const issuesRepo = arg('--issues-repo', null);
 
 // Daily-failure issues (open + closed) — the umbrella may already be closed.
 function fetchIssues() {
   try {
     const out = execFileSync('gh', [
-      'issue', 'list', '--label', 'daily-failure', '--state', 'all',
-      '--limit', '50', '--json', 'number,title,body',
+      'issue', 'list', ...(issuesRepo ? ['-R', issuesRepo] : []),
+      '--label', 'daily-failure', '--state', 'all',
+      '--limit', '50', '--json', 'number,title,body,url',
     ], { encoding: 'utf8' });
     return JSON.parse(out);
   } catch (e) {
