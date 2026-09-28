@@ -1319,9 +1319,10 @@ test("the stop scripts run before the holders are killed", () => {
   // difference, so it is pinned by position rather than by comment.
   const text = readFileSync(SCRIPT, "utf8");
   const cleanup = text.slice(text.indexOf("cleanup() {"), text.indexOf("# HYGIENE"));
-  assert.ok(cleanup.includes("stop-langflow-source.sh"), "cleanup does not stop the backends");
+  // Through backend_stopper since #2088, which names the stopper for TARGET_KIND.
+  assert.ok(cleanup.includes("$(backend_stopper)"), "cleanup does not stop the backends");
   assert.ok(
-    cleanup.indexOf("stop-langflow-source.sh") < cleanup.indexOf('kill "$pid"'),
+    cleanup.indexOf("$(backend_stopper)") < cleanup.indexOf('kill "$pid"'),
     "cleanup kills the holding sessions before asking the stop scripts to run",
   );
 });
@@ -2310,7 +2311,7 @@ test("the local launch of the backend goes through the same sanitised path", () 
   // Asserted on the source because the launch needs a machine to run: what matters is
   // that it does not call bare `bash -c`, which is what leaked.
   const src = readFileSync(SCRIPT, "utf8");
-  const launch = src.split("\n").find((l) => l.includes("< scripts/start-langflow-source.sh") && l.includes("holder_log") && !l.includes("ssh -o"));
+  const launch = src.split("\n").find((l) => l.includes('< "$(backend_starter)"') && l.includes("holder_log") && !l.includes("ssh -o") && l.includes("run_on_target_locally"));
   assert.ok(launch, "could not find the local launch of the backend");
   assert.match(launch, /run_on_target_locally/);
   assert.doesNotMatch(launch, /bash -c/);
@@ -2853,32 +2854,25 @@ test("phase_publish names langflow_image, which the platform requires", () => {
   // on presence rather than on the value.
   const script = readFileSync(SCRIPT, "utf8");
   const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
-  assert.match(publish, /LANGFLOW_IMAGE="\$\{LANGFLOW_IMAGE:-/,
+  // Through target_artifact since #2088, the one expression the history row uses too.
+  assert.match(publish, /LANGFLOW_IMAGE="\$\(target_artifact\)"/,
     "phase_publish must pass LANGFLOW_IMAGE, and with a default the Actions lane can override");
 });
 
-test("the langflow_image default describes the venv, and the caller still wins", () => {
-  // Both halves in one place because they are one decision: the VM has no image to
-  // name, and the Actions lane has one it must keep. A plain assignment would satisfy
-  // the first and break the second.
-  const expr = 'printf "%s" "${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}"';
-
-  const derived = spawnSync(BASH, ["-c", expr], {
-    encoding: "utf8",
-    env: { ...process.env, LANGFLOW_VERSION: "1.13.0.dev21", LANGFLOW_IMAGE: "" },
-  });
+test("the langflow_image of a source run describes the venv, even with LANGFLOW_IMAGE inherited", () => {
+  // Until #2089 a caller's LANGFLOW_IMAGE won here, for "the Actions lane" — which does
+  // not run this script (daily-stable.yml builds its own payload). What that override
+  // actually allowed was a source run recording an image it never pulled, the moment a
+  // shadow's wrapper exported one into the same shell. The kind decides now.
+  const derived = sourced("target_artifact", { LANGFLOW_VERSION: "1.13.0.dev21", LANGFLOW_IMAGE: "" });
   assert.equal(derived.stdout, "pypi:langflow==1.13.0.dev21");
 
-  const passed = spawnSync(BASH, ["-c", expr], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      LANGFLOW_VERSION: "1.13.0.dev21",
-      LANGFLOW_IMAGE: "langflowai/langflow-nightly:latest",
-    },
+  const inherited = sourced("target_artifact", {
+    LANGFLOW_VERSION: "1.13.0.dev21",
+    LANGFLOW_IMAGE: "langflowai/langflow-nightly:1.13.0.dev21",
   });
-  assert.equal(passed.stdout, "langflowai/langflow-nightly:latest",
-    "the Actions lane passes its own image through the step env and must keep winning");
+  assert.equal(inherited.stdout, "pypi:langflow==1.13.0.dev21",
+    "a source run must not name an image it never pulled");
 });
 
 test("the evidence is uploaded BEFORE the record that links to it", () => {
@@ -3214,4 +3208,134 @@ test("the lock URL follows an https github.com repo override, with or without .g
     UPSTREAM_RAW_URL: "https://mirror.internal/raw/langflow",
   });
   assert.equal(own.stdout, "[https://mirror.internal/raw/langflow]");
+});
+
+// ---------------------------------------------------------------------------
+// THE IMAGE TARGET (#2088) — TARGET_KIND=image, for the shadow lane
+// ---------------------------------------------------------------------------
+
+const IMAGE = "langflowai/langflow-nightly:1.13.0.dev26";
+const imageEnv = (extra = {}) => ({ TARGET_SSH: "local", TARGET_KIND: "image", LANGFLOW_IMAGE: IMAGE, LANGFLOW_SRC_RUN_CMD: "", ...extra });
+
+test("the starter and the stopper follow TARGET_KIND, and source is the default", () => {
+  const src = sourced("backend_starter; backend_stopper", { TARGET_KIND: "" });
+  assert.equal(src.stdout, "scripts/start-langflow-source.sh\nscripts/stop-langflow-source.sh\n");
+  const img = sourced("backend_starter; backend_stopper", imageEnv());
+  assert.equal(img.stdout, "scripts/start-langflow-docker.sh\nscripts/stop-langflow-docker.sh\n");
+});
+
+test("every start and stop of a backend goes through the helpers", () => {
+  // The failure this rules out is the quiet one: an image run cleaned up by the source
+  // stopper leaves four containers running while the stopper says "nothing to stop".
+  // So no line may feed a starter or stopper to a shell except through the helpers.
+  const direct = readFileSync(SCRIPT, "utf8").split("\n")
+    .filter((l) => !l.trimStart().startsWith("#"))
+    .filter((l) => /<\s*"?(\$REPO_DIR\/)?scripts\/(start|stop)-langflow-(source|docker)\.sh/.test(l));
+  assert.deepEqual(direct, [], "a backend is started or stopped without backend_starter/backend_stopper");
+});
+
+test("an image stop names this port's container, and a source stop only the port", () => {
+  assert.equal(sourced("backend_stop_env 7871").stdout, "LANGFLOW_PORT=7871");
+  assert.equal(sourced("backend_stop_env 7871", imageEnv()).stdout,
+    "LANGFLOW_PORT=7871 LANGFLOW_CONTAINER_NAME=langflow-e2e-lane-7871");
+});
+
+test("the container name depends on the port alone, and is never the starter's documented default", () => {
+  // Stable across runs so phase_hygiene can clear what a killed run left; distinct
+  // from `langflow-e2e-runner` so a developer's instance on the machine is not touched.
+  const r = sourced("backend_container_name 7870; echo; backend_container_name 7870", imageEnv());
+  const [a, b] = r.stdout.trim().split("\n");
+  assert.equal(a, b);
+  assert.notEqual(a, "langflow-e2e-runner");
+});
+
+test("an image launch carries the image, its container, a loopback publish and this run's budget", () => {
+  const r = sourced("backend_launch_env 7872", imageEnv({ ...BLANKED, STAMP_REQUIRED: "0", BACKEND_START_TIMEOUT_S: "300" }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`LANGFLOW_IMAGE='${IMAGE.replace(/\./g, "\\.")}' `));
+  assert.match(r.stdout, / LANGFLOW_CONTAINER_NAME=langflow-e2e-lane-7872 /);
+  assert.match(r.stdout, / LANGFLOW_BIND_HOST=127\.0\.0\.1 /);
+  assert.match(r.stdout, / LANGFLOW_READY_TIMEOUT_S=300 /);
+  assert.match(r.stdout, /LANGFLOW_PORT=7872$/);
+});
+
+test("a source launch carries none of the image's variables", () => {
+  const r = sourced("backend_launch_env 7872", { ...BLANKED, STAMP_REQUIRED: "0", LANGFLOW_IMAGE: IMAGE });
+  for (const name of ["LANGFLOW_IMAGE", "LANGFLOW_CONTAINER_NAME", "LANGFLOW_READY_TIMEOUT_S"]) {
+    assert.doesNotMatch(r.stdout, new RegExp(`${name}=`), `${name} leaked into a source launch`);
+  }
+});
+
+test("PREPARE_TARGET defaults to 0 for an image and to 1 for source, and an explicit value wins", () => {
+  assert.equal(sourced('printf %s "$PREPARE_TARGET"', { TARGET_KIND: "", PREPARE_TARGET: "" }).stdout, "1");
+  assert.equal(sourced('printf %s "$PREPARE_TARGET"', imageEnv({ PREPARE_TARGET: "" })).stdout, "0");
+  assert.equal(sourced('printf %s "$PREPARE_TARGET"', { TARGET_KIND: "", PREPARE_TARGET: "0" }).stdout, "0");
+});
+
+test("the image target accepts a tag or a digest, and a source target is not checked", () => {
+  for (const ref of [IMAGE, "registry.local:5000/lf/langflow-nightly:1.13.0.dev26", `langflowai/langflow-nightly@sha256:${"a".repeat(64)}`]) {
+    const r = sourced("check_target_kind && echo ok", imageEnv({ LANGFLOW_IMAGE: ref, PREPARE_TARGET: "" }));
+    assert.equal(r.stdout.trim(), "ok", `${ref}: ${r.stderr}`);
+  }
+  assert.equal(sourced("check_target_kind && echo ok", { TARGET_KIND: "source", TARGET_SSH: "somewhere" }).stdout.trim(), "ok");
+});
+
+test("the image target refuses what would make its verdict about something else", () => {
+  const cases = [
+    [{ TARGET_KIND: "wheel" }, /TARGET_KIND must be 'source' or 'image'/],
+    [{ TARGET_SSH: "qa-vm" }, /needs TARGET_SSH=local/],
+    [{ LANGFLOW_IMAGE: "" }, /needs LANGFLOW_IMAGE/],
+    [{ LANGFLOW_IMAGE: "langflowai/langflow-nightly:latest" }, /moving tag/],
+    [{ LANGFLOW_IMAGE: "langflowai/langflow-nightly" }, /no tag or digest/],
+    // A registry port is not a tag: the colon is in the host part.
+    [{ LANGFLOW_IMAGE: "registry.local:5000/lf/langflow-nightly" }, /no tag or digest/],
+    [{ LANGFLOW_IMAGE: "langflowai/langflow-nightly:1.13; rm -rf /" }, /characters an image reference cannot/],
+    [{ PREPARE_TARGET: "1" }, /PREPARE_TARGET=1/],
+    [{ LANGFLOW_SRC_RUN_CMD: "/root/venv-target/bin/langflow run" }, /two artifacts are named/],
+  ];
+  for (const [extra, message] of cases) {
+    const r = sourced("check_target_kind && echo ok", imageEnv({ PREPARE_TARGET: "", ...extra }));
+    assert.equal(r.status, 1, `${JSON.stringify(extra)} must be refused`);
+    assert.match(r.stderr, message, JSON.stringify(extra));
+    assert.doesNotMatch(r.stdout, /ok/);
+  }
+});
+
+test("the history row and the metadata name the artifact that ran", () => {
+  // Before #2088 the VM history append passed no LANGFLOW_IMAGE, so every VM row said
+  // `langflow_image: null` and a VM+wheel row could not be told from a VM+image one.
+  const src = readFileSync(SCRIPT, "utf8");
+  const history = src.slice(src.indexOf('log "Recording the daily history"'), src.indexOf("node scripts/append-weekly-history.mjs"));
+  assert.match(history, /LANGFLOW_IMAGE="\$\(target_artifact\)"/);
+  assert.match(src, /target_kind "\$TARGET_KIND"/);
+  assert.match(src, /langflow_image "\$\(target_artifact\)"/);
+  assert.equal(sourced("target_artifact", imageEnv({ LANGFLOW_VERSION: "1.13.0.dev26" })).stdout, IMAGE);
+  assert.equal(sourced("target_artifact", { TARGET_KIND: "source", LANGFLOW_VERSION: "1.13.0.dev26", LANGFLOW_IMAGE: IMAGE }).stdout,
+    "pypi:langflow==1.13.0.dev26");
+});
+
+test("an image run writes no venv drift even with TARGET_VENV inherited", () => {
+  // The VM wrapper exports TARGET_VENV for the official pass; a shadow started from the
+  // same shell would otherwise describe the venv as the image it served.
+  const dir = makeTempDir("run-e2e-drift-");
+  try {
+    const r = sourced('RUN_DIR="$D"; build_target_drift; echo "file=[$TARGET_DRIFT_MD_FILE]"; ls "$D"', imageEnv({ D: dir, TARGET_VENV: "/root/venv-target" }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), "file=[]", "nothing may be written for an image run");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("hygiene clears only this run's kind, so one lane never stops the other's live backends", () => {
+  // Clearing both kinds was tried (#2089) and reverted: with no lock between the lanes,
+  // a shadow starting while the official run was still going would have killed the
+  // official run's live backends. Disjoint port ranges make the other kind's leftovers
+  // someone else's to clear; the shadow wrapper pins that its range is its own.
+  const src = readFileSync(SCRIPT, "utf8");
+  const start = src.indexOf('log "Clearing leftovers on the target"');
+  const hygiene = src.slice(start, src.indexOf("stop-echo-source.sh", start));
+  assert.match(hygiene, /< "\$\(backend_stopper\)"/);
+  assert.doesNotMatch(hygiene, /for kind in/);
+  assert.doesNotMatch(src, /stop_leftovers_on_port/);
 });

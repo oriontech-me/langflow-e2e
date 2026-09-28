@@ -109,6 +109,19 @@ TARGET_IS_LOCAL=0
 # does not always see, so a caller may need `-o HostName=<ip> -o HostKeyAlias=<name>`.
 TARGET_SSH_OPTS="${TARGET_SSH_OPTS:-}"
 
+# WHAT serves the target, as opposed to WHERE (#2088). `source` is every run before it:
+# a Langflow clone, or a published distribution through LANGFLOW_SRC_RUN_CMD, served by
+# scripts/start-langflow-source.sh. `image` serves LANGFLOW_IMAGE — an exact reference,
+# never a default — through scripts/start-langflow-docker.sh, one container per shard.
+# It exists for the image shadow lane: the same suite on the same machine against the
+# artifact the Actions lane runs, so a VM-only failure can be attributed to the machine
+# or to the artifact instead of to both at once.
+#
+# The image target is LOCAL only. The remote path holds one ssh session per shard
+# because a process dies with its session; a container does not, and nothing on the
+# remote side has been measured. Refused in preflight rather than half-supported.
+TARGET_KIND="${TARGET_KIND:-source}"
+
 SHARDS="${SHARDS:-4}"
 BASE_PORT="${BASE_PORT:-7860}"
 ECHO_PORT="${ECHO_PORT:-8080}"
@@ -322,7 +335,10 @@ REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
 # anything starts. That script is a no-op when the clone is already on the commit and
 # its build is stamped with it, so the cost lands only on the days the resolution
 # moves; with a nightly image, that is most days.
-PREPARE_TARGET="${PREPARE_TARGET:-1}"
+#
+# An image target has no clone to place, so its default is 0, and asking for 1 with it
+# is refused in preflight: the preparer would rebuild a tree that is not going to serve.
+PREPARE_TARGET="${PREPARE_TARGET:-$([ "$TARGET_KIND" = "image" ] && echo 0 || echo 1)}"
 # Move the clone but do not build. Not a normal setting: the starter refuses a build
 # that does not belong to HEAD, so this ends the run early ON PURPOSE. It exists to
 # measure what a rebuild would cost, and to move a clone whose build is being done
@@ -621,6 +637,87 @@ mirrored_target_env() {
 target_cmd_env() {
   printf 'LANGFLOW_SRC_RUN_CMD=%s ' "$(shq "${LANGFLOW_SRC_RUN_CMD:-}")"
   printf 'LANGFLOW_SRC_FRONTEND_DIR=%s ' "$(shq "${LANGFLOW_SRC_FRONTEND_DIR:-}")"
+}
+
+# The starter and the stopper for TARGET_KIND, as paths relative to the repository.
+# Every start and every stop goes through these, so the two kinds cannot be mixed — an
+# image run whose cleanup still called the source stopper would leave four containers
+# running, and the stopper would report "nothing to stop" while it did.
+backend_starter() {
+  if [ "$TARGET_KIND" = "image" ]; then echo scripts/start-langflow-docker.sh; else echo scripts/start-langflow-source.sh; fi
+}
+backend_stopper() {
+  if [ "$TARGET_KIND" = "image" ]; then echo scripts/stop-langflow-docker.sh; else echo scripts/stop-langflow-source.sh; fi
+}
+
+# One container per port, under a name that depends on the port alone. Stable ACROSS
+# runs on purpose: phase_hygiene clears what a killed run left behind by stopping each
+# port's name, which a run-scoped name would never match. The prefix is not the
+# starter's documented default, so a developer's `langflow-e2e-runner` on the same
+# machine is never touched.
+backend_container_name() { printf 'langflow-e2e-lane-%s' "$1"; }
+
+# What a stop needs to find this port's backend.
+backend_stop_env() {
+  printf 'LANGFLOW_PORT=%s' "$1"
+  [ "$TARGET_KIND" = "image" ] && printf ' LANGFLOW_CONTAINER_NAME=%s' "$(backend_container_name "$1")"
+  return 0
+}
+
+# The image target's own launch variables; empty for a source target.
+#
+# Published on loopback only: the probe and Playwright are on this machine, and the
+# instance logs in automatically as a superuser. On the QA VM the default publish
+# answered on the machine's private address (#2085). The readiness budget is this
+# run's, so the starter does not fail a cold start before the probe loop below would.
+target_image_env() {
+  [ "$TARGET_KIND" = "image" ] || return 0
+  printf 'LANGFLOW_IMAGE=%s ' "$(shq "${LANGFLOW_IMAGE:-}")"
+  printf 'LANGFLOW_CONTAINER_NAME=%s ' "$(backend_container_name "$1")"
+  printf 'LANGFLOW_BIND_HOST=127.0.0.1 '
+  printf 'LANGFLOW_READY_TIMEOUT_S=%s ' "$BACKEND_START_TIMEOUT_S"
+}
+
+# The artifact that ran, as the payload and the history row name it. ONE expression for
+# both, so the comparator and the platform cannot disagree about which build a row is.
+# Since #2088 the history row carries it too, so VM+wheel and VM+image rows are told
+# apart by what they say rather than by which ledger they sit in.
+#
+# The KIND decides, not whether LANGFLOW_IMAGE happens to be set. For an image run it
+# is the reference that was pulled and served; for a source run it is the published
+# distribution, even with LANGFLOW_IMAGE inherited — a shadow's wrapper exports it, and
+# an official run started from the same shell would otherwise record the image it never
+# pulled (#2089 review). The caller override this used to honour was for "the Actions
+# lane", which does not run this script: daily-stable.yml builds its payload itself.
+target_artifact() {
+  if [ "$TARGET_KIND" = "image" ]; then
+    printf '%s' "${LANGFLOW_IMAGE:-}"
+  else
+    printf '%s' "pypi:langflow==${LANGFLOW_VERSION:-}"
+  fi
+}
+
+# TARGET_KIND, and the image target's preconditions, refused together and before
+# anything runs. Split out so it is testable without docker.
+check_target_kind() {
+  case "$TARGET_KIND" in
+    source) return 0 ;;
+    image) ;;
+    *) die "TARGET_KIND must be 'source' or 'image', got: '$TARGET_KIND'." ;;
+  esac
+  [ "$TARGET_IS_LOCAL" = "1" ] || die "TARGET_KIND=image needs TARGET_SSH=local — the remote path holds one ssh session per shard, and nothing about a container on a remote target has been measured."
+  [ -n "${LANGFLOW_IMAGE:-}" ] || die "TARGET_KIND=image needs LANGFLOW_IMAGE, an exact reference such as langflowai/langflow-nightly:1.13.0.dev26. There is no default: the image IS what this lane measures."
+  case "$LANGFLOW_IMAGE" in
+    *[!A-Za-z0-9._/:@-]*) die "LANGFLOW_IMAGE has characters an image reference cannot: '$LANGFLOW_IMAGE'." ;;
+    *:latest) die "LANGFLOW_IMAGE is a moving tag ('$LANGFLOW_IMAGE'). Name the version: a comparison needs to know which build ran, and \`latest\` can move between the pull and the start." ;;
+  esac
+  case "${LANGFLOW_IMAGE##*/}" in
+    *:* | *@*) ;;
+    *) die "LANGFLOW_IMAGE has no tag or digest ('$LANGFLOW_IMAGE'), which docker reads as latest. Name the version." ;;
+  esac
+  [ "$PREPARE_TARGET" = "1" ] && die "TARGET_KIND=image with PREPARE_TARGET=1: the preparer would place and rebuild a clone that is not going to serve. Leave PREPARE_TARGET unset (it defaults to 0 for an image) or set it to 0."
+  [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] && die "TARGET_KIND=image with LANGFLOW_SRC_RUN_CMD set: two artifacts are named and only one would serve. Unset LANGFLOW_SRC_RUN_CMD."
+  return 0
 }
 
 # The two switches a run command silently collides with, warned about once, in the
@@ -1038,7 +1135,7 @@ cleanup() {
   local i port
   for i in $(seq 1 "${SHARD_TOTAL:-$SHARDS}"); do
     port=$((BASE_PORT + i - 1))
-    target_ssh "LANGFLOW_PORT=$port bash -s" < scripts/stop-langflow-source.sh > /dev/null 2>&1 || true
+    target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" > /dev/null 2>&1 || true
   done
   [ "$WITH_ECHO" = "1" ] && target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh > /dev/null 2>&1 || true
   [ "$WITH_OLLAMA" = "1" ] && target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh > /dev/null 2>&1 || true
@@ -1073,11 +1170,18 @@ phase_hygiene() {
   # Leftovers from a run that was killed rather than finished. Stopping through the
   # stop scripts (not pkill) keeps this honest: they only touch what a starter of
   # ours recorded a PID file for, so a Langflow somebody else is using survives.
+  #
+  # Only THIS run's kind, on purpose (#2089 review). The official lane and the image
+  # shadow run on the same machine on DISJOINT port ranges, so a killed run's leftovers
+  # sit on ports only its own kind uses, and the next run of that kind clears them here.
+  # Clearing the other kind as well was tried and reverted: with no lock between the
+  # lanes, a shadow starting while the official run was still going would have killed
+  # the official run's live backends.
   log "Clearing leftovers on the target"
   local i port
   for i in $(seq 1 "$SHARDS"); do
     port=$((BASE_PORT + i - 1))
-    target_ssh "LANGFLOW_PORT=$port bash -s" < scripts/stop-langflow-source.sh 2>&1 | sed 's/^/    /' || true
+    target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
   done
   target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh 2>&1 | sed 's/^/    /' || true
   target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh 2>&1 | sed 's/^/    /' || true
@@ -1174,7 +1278,9 @@ phase_preflight() {
   # backend that never answers, which reaches the operator as a shard timeout. Which
   # artifact was ASKED to serve has to be readable without waiting for a metadata file
   # the run may never write.
-  info "target env: $(mirrored_target_env)$(target_cmd_env)"
+  info "target env: $(mirrored_target_env)$(target_cmd_env)$(target_image_env "$BASE_PORT")"
+  check_target_kind
+  info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
   warn_target_cmd_conflicts
 
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives the target and will not guess where it is. Name an ssh alias, or 'local' for this machine."
@@ -1193,11 +1299,31 @@ phase_preflight() {
 
   # `uv` is the only thing that can build the Langflow source clone, and the trap is
   # PATH rather than absence: a non-interactive ssh does not load ~/.local/bin.
-  target_ssh 'PATH=$HOME/.local/bin:$PATH command -v uv' > /dev/null 2>&1 \
-    || die "uv is not reachable on the target even with ~/.local/bin on PATH — the Langflow starter cannot build the clone without it."
+  #
+  # An image target builds nothing and needs docker instead — asked through the same
+  # blank-environment shell the starter will get, so a docker only an interactive PATH
+  # finds (the snap's /snap/bin) is caught here and not as four shard timeouts.
+  if [ "$TARGET_KIND" = "image" ]; then
+    run_on_target_locally 'command -v docker && docker info --format "{{.ServerVersion}}"' > /dev/null 2>&1 \
+      || die "docker is not usable from the starter's environment (env -i, login shell) — the image target cannot start."
+  else
+    target_ssh 'PATH=$HOME/.local/bin:$PATH command -v uv' > /dev/null 2>&1 \
+      || die "uv is not reachable on the target even with ~/.local/bin on PATH — the Langflow starter cannot build the clone without it."
+  fi
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
   info "run dir: $RUN_DIR"
+
+  # Pulled ONCE, here. Left to the starter, four shards 10 s apart would pull the same
+  # image at the same time inside their readiness budgets, and a registry hiccup would
+  # read as four backends that never answered. Fatal, because an image run with no
+  # image has nothing to measure; the pull's own output is filed, not printed.
+  if [ "$TARGET_KIND" = "image" ]; then
+    local pull_log="$RUN_DIR/logs/image-pull.log" pull_start=$SECONDS
+    run_on_target_locally "docker pull $(shq "$LANGFLOW_IMAGE")" > "$pull_log" 2>&1 \
+      || { tail -n 20 "$pull_log" >&2; die "could not pull $LANGFLOW_IMAGE — see $pull_log."; }
+    info "image: $LANGFLOW_IMAGE pulled in $((SECONDS - pull_start))s ($(run_on_target_locally "docker image inspect --format '{{index .RepoDigests 0}}' $(shq "$LANGFLOW_IMAGE")" 2>/dev/null || echo 'digest unknown'))"
+  fi
 
   # A machine prerequisite that fails SILENTLY, which is why it is asked and `uv` above
   # is not a model for it: a missing uv stops the run with a message, a localhost without
@@ -1680,7 +1806,7 @@ backend_launch_env() {
   # paths without changing what a source run does.
   local repo_env="LANGFLOW_SRC_REPO= "
   [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || repo_env="LANGFLOW_SRC_REPO=\${LANGFLOW_SRC_REPO:-\$HOME/langflow} "
-  printf '%s' "PATH=\$HOME/.local/bin:\$PATH ${repo_env}LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)${bind_env}LANGFLOW_PORT=$port"
+  printf '%s' "PATH=\$HOME/.local/bin:\$PATH ${repo_env}LANGFLOW_REQUIRE_BUILD_STAMP=$STAMP_REQUIRED $(mirrored_target_env)$(target_cmd_env)$(target_image_env "$port")${bind_env}LANGFLOW_PORT=$port"
 }
 
 # Starts a backend on the target. A REMOTE one needs its ssh session HELD open, because
@@ -1700,7 +1826,7 @@ start_backend_for_shard() {
     # Swallowing it would hand a backend the starter already killed to the probe loop
     # below, which would then spend its whole budget rediscovering that, doubling the
     # time to report and naming the wrong cause.
-    if ! run_on_target_locally "$launch_env bash -s" < scripts/start-langflow-source.sh > "$holder_log" 2>&1; then
+    if ! run_on_target_locally "$launch_env bash -s" < "$(backend_starter)" > "$holder_log" 2>&1; then
       err "shard $idx: the starter failed on this machine. Last lines:"
       tail -n 30 "$holder_log" >&2 || true
       return 1
@@ -1711,7 +1837,7 @@ start_backend_for_shard() {
     # shellcheck disable=SC2086
     ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 $TARGET_SSH_OPTS "$TARGET_SSH" \
       "$launch_env bash -s; sleep 86400" \
-      < scripts/start-langflow-source.sh > "$holder_log" 2>&1 &
+      < "$(backend_starter)" > "$holder_log" 2>&1 &
     HELD_SESSIONS+=("$!")
   fi
 
@@ -1882,7 +2008,7 @@ run_shard() {
   done
   [ "$found" = "1" ] || err "shard $idx: produced no blob."
 
-  target_ssh "LANGFLOW_PORT=$port bash -s" < "$REPO_DIR/scripts/stop-langflow-source.sh" >> "$log" 2>&1 || true
+  target_ssh "$(backend_stop_env "$port") bash -s" < "$REPO_DIR/$(backend_stopper)" >> "$log" 2>&1 || true
   return $status
 }
 
@@ -2114,6 +2240,8 @@ phase_merge() {
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
+    target_kind "$TARGET_KIND" \
+    langflow_image "$(target_artifact)" \
     shards "$SHARD_TOTAL" \
     tunnel "$LANGFLOW_TUNNEL" \
     collection_gate_keys "${COLLECTION_GATE_KEYS:-}" \
@@ -2428,8 +2556,13 @@ build_triage_summary() {
 # has no venv to read. ALWAYS writes the section when it runs, and never fails the
 # run: an input that cannot be read becomes a "not computed" line naming it, because
 # a missing section would read as "no drift" (#1012).
+#
+# An image target is "any other target" even when TARGET_VENV is inherited — the VM
+# wrapper exports it for the official pass, and a shadow started from the same shell
+# would otherwise describe the venv as the image it served (#2088).
 build_target_drift() {
   TARGET_DRIFT_MD_FILE=""
+  [ "$TARGET_KIND" = "image" ] && return 0
   [ -n "${TARGET_VENV:-}" ] || return 0
   local out="$RUN_DIR/target-lock-drift.md" freeze="$RUN_DIR/target-freeze.txt"
   local lock="$RUN_DIR/target-uv.lock" log="$RUN_DIR/logs/target-lock-drift.log" ref=""
@@ -2536,15 +2669,15 @@ phase_publish() {
     # divergence. The platform renders this as text (`MetaCell … mono`), so the
     # `pypi:` form costs no UI change.
     #
-    # `${LANGFLOW_IMAGE:-…}` and not a plain assignment: the Actions lane passes its
-    # own value through the step `env:`, and it must keep winning, so the two lanes
-    # share one code path rather than branching on which one is running.
+    # The value comes from target_artifact, which the history row uses too, and there
+    # the KIND decides: an inherited LANGFLOW_IMAGE does not win on a source run
+    # (#2089). No workflow runs this script, so there is no caller override to keep.
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
     RUN_URL="$REPORT_URL" \
     LANGFLOW_VERSION="$LANGFLOW_VERSION" \
-    LANGFLOW_IMAGE="${LANGFLOW_IMAGE:-pypi:langflow==$LANGFLOW_VERSION}" \
+    LANGFLOW_IMAGE="$(target_artifact)" \
     STABLE_COUNT="$stable_count" \
     TOTAL_COUNT="$total_count" \
     EVIDENCE_URL="$REPORT_URL" \
@@ -2698,6 +2831,7 @@ phase_publish() {
     GITHUB_RUN_ID="$RUN_ID" \
     SUITE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)" \
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
+    LANGFLOW_IMAGE="$(target_artifact)" \
     LANGFLOW_VERSION_EXPECTED="${LANGFLOW_VERSION_EXPECTED:-}" \
     LANGFLOW_VERSION_ANSWERED="${LANGFLOW_VERSION_ANSWERED:-}" \
     LANGFLOW_VERSION_SILENT="${LANGFLOW_VERSION_SILENT:-}" \
