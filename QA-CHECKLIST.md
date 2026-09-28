@@ -1622,7 +1622,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 704 `test()` calls carrying the `@stable` tag, distributed across 277 spec
+> 709 `test()` calls carrying the `@stable` tag, distributed across 278 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1647,6 +1647,11 @@
 - [x] a create body refused for a missing provider_key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] a create body refused for an undeclared key does not echo the credential it carried → `api-connections-secret-boundary.spec.ts`
 - [x] status_reason stays null on every status a client can drive the connection into → `api-connections-secret-boundary.spec.ts`
+- [x] every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain → `api-integrations-manifest.spec.ts`
+- [x] every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id → `api-integrations-manifest.spec.ts`
+- [x] a provider's enabled flag and connection count are derived from its connections, and only its own → `api-integrations-manifest.spec.ts`
+- [x] the manifest and the effective policy agree that the instance is unrestricted → `api-integrations-manifest.spec.ts`
+- [x] every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared → `api-integrations-manifest.spec.ts`
 
 #### api/files/
 - [x] upload, list and download round-trip a flow-scoped file → `api-files-v1-flow-scoped.spec.ts`
