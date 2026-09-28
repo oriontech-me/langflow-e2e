@@ -643,14 +643,11 @@ target_cmd_env() {
 # Every start and every stop goes through these, so the two kinds cannot be mixed — an
 # image run whose cleanup still called the source stopper would leave four containers
 # running, and the stopper would report "nothing to stop" while it did.
-#
-# The stopper and the stop env take an optional kind, for the one caller that must stop
-# BOTH: see stop_leftovers_on_port.
 backend_starter() {
   if [ "$TARGET_KIND" = "image" ]; then echo scripts/start-langflow-docker.sh; else echo scripts/start-langflow-source.sh; fi
 }
 backend_stopper() {
-  if [ "${1:-$TARGET_KIND}" = "image" ]; then echo scripts/stop-langflow-docker.sh; else echo scripts/stop-langflow-source.sh; fi
+  if [ "$TARGET_KIND" = "image" ]; then echo scripts/stop-langflow-docker.sh; else echo scripts/stop-langflow-source.sh; fi
 }
 
 # One container per port, under a name that depends on the port alone. Stable ACROSS
@@ -663,26 +660,8 @@ backend_container_name() { printf 'langflow-e2e-lane-%s' "$1"; }
 # What a stop needs to find this port's backend.
 backend_stop_env() {
   printf 'LANGFLOW_PORT=%s' "$1"
-  [ "${2:-$TARGET_KIND}" = "image" ] && printf ' LANGFLOW_CONTAINER_NAME=%s' "$(backend_container_name "$1")"
+  [ "$TARGET_KIND" = "image" ] && printf ' LANGFLOW_CONTAINER_NAME=%s' "$(backend_container_name "$1")"
   return 0
-}
-
-# What a killed run of EITHER kind left on this port, cleared before this run starts.
-#
-# Both kinds, whatever this run's is: the official lane and the image shadow run on the
-# same machine, and a leftover of the other kind is invisible to this kind's stopper.
-# A shadow killed mid-run leaves containers answering on its ports; the next source run
-# finds no PID file, and its starter refuses a port that already answers — every shard
-# of the official daily fails over a run that had no consequence (#2089 review). The
-# reverse is a docker publish failing on a port an orphan holds. Only hygiene does this:
-# start, the per-shard stop and cleanup stay with this run's own kind. The docker half
-# runs only where docker exists, so a machine with no docker sees no change at all.
-stop_leftovers_on_port() {
-  local port="$1" kind
-  for kind in source image; do
-    if [ "$kind" = "image" ] && ! target_ssh 'command -v docker' > /dev/null 2>&1; then continue; fi
-    target_ssh "$(backend_stop_env "$port" "$kind") bash -s" < "$(backend_stopper "$kind")" 2>&1 | sed 's/^/    /' || true
-  done
 }
 
 # The image target's own launch variables; empty for a source target.
@@ -1191,11 +1170,18 @@ phase_hygiene() {
   # Leftovers from a run that was killed rather than finished. Stopping through the
   # stop scripts (not pkill) keeps this honest: they only touch what a starter of
   # ours recorded a PID file for, so a Langflow somebody else is using survives.
+  #
+  # Only THIS run's kind, on purpose (#2089 review). The official lane and the image
+  # shadow run on the same machine on DISJOINT port ranges, so a killed run's leftovers
+  # sit on ports only its own kind uses, and the next run of that kind clears them here.
+  # Clearing the other kind as well was tried and reverted: with no lock between the
+  # lanes, a shadow starting while the official run was still going would have killed
+  # the official run's live backends.
   log "Clearing leftovers on the target"
   local i port
   for i in $(seq 1 "$SHARDS"); do
     port=$((BASE_PORT + i - 1))
-    stop_leftovers_on_port "$port"
+    target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
   done
   target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh 2>&1 | sed 's/^/    /' || true
   target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh 2>&1 | sed 's/^/    /' || true
@@ -2683,9 +2669,9 @@ phase_publish() {
     # divergence. The platform renders this as text (`MetaCell … mono`), so the
     # `pypi:` form costs no UI change.
     #
-    # `${LANGFLOW_IMAGE:-…}` and not a plain assignment: the Actions lane passes its
-    # own value through the step `env:`, and it must keep winning, so the two lanes
-    # share one code path rather than branching on which one is running.
+    # The value comes from target_artifact, which the history row uses too, and there
+    # the KIND decides: an inherited LANGFLOW_IMAGE does not win on a source run
+    # (#2089). No workflow runs this script, so there is no caller override to keep.
     PLAYWRIGHT_JSON="$RUN_DIR/results.json" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \

@@ -3327,28 +3327,15 @@ test("an image run writes no venv drift even with TARGET_VENV inherited", () => 
   }
 });
 
-test("hygiene clears a leftover of EITHER kind on each port, and skips docker where there is none", () => {
-  // A shadow killed mid-run leaves containers on its ports; the next source run would
-  // find no PID file and every shard's starter would refuse the port (#2089 review).
-  // target_ssh is stubbed to answer the docker probe and to print what it was asked to
-  // run, with the stopper it was fed; the stoppers are the real files.
-  const run = (hasDocker, kind) => sourced(
-    `target_ssh() { if [ "$1" = 'command -v docker' ]; then return ${hasDocker ? 0 : 1}; fi; if grep -q 'docker rm'; then k=docker; else k=source; fi; echo "CALL $1 <stop-langflow-$k"; }; stop_leftovers_on_port 7870`,
-    { TARGET_KIND: kind },
-  ).stdout;
-  for (const kind of ["source", "image"]) {
-    const both = run(true, kind);
-    assert.match(both, /CALL LANGFLOW_PORT=7870 bash -s <stop-langflow-source/, `${kind} run: the source leftover is not cleared`);
-    assert.match(both, /CALL LANGFLOW_PORT=7870 LANGFLOW_CONTAINER_NAME=langflow-e2e-lane-7870 bash -s <stop-langflow-docker/, `${kind} run: the image leftover is not cleared`);
-  }
-  const noDocker = run(false, "source");
-  assert.match(noDocker, /CALL LANGFLOW_PORT=7870 bash -s/);
-  assert.doesNotMatch(noDocker, /LANGFLOW_CONTAINER_NAME/, "a machine with no docker must see no docker call");
-});
-
-test("phase_hygiene clears leftovers through stop_leftovers_on_port, not through this run's kind", () => {
+test("hygiene clears only this run's kind, so one lane never stops the other's live backends", () => {
+  // Clearing both kinds was tried (#2089) and reverted: with no lock between the lanes,
+  // a shadow starting while the official run was still going would have killed the
+  // official run's live backends. Disjoint port ranges make the other kind's leftovers
+  // someone else's to clear; the shadow wrapper pins that its range is its own.
   const src = readFileSync(SCRIPT, "utf8");
-  const hygiene = src.slice(src.indexOf('log "Clearing leftovers on the target"'), src.indexOf("stop-echo-source.sh", src.indexOf('log "Clearing leftovers on the target"')));
-  assert.match(hygiene, /stop_leftovers_on_port "\$port"/);
-  assert.doesNotMatch(hygiene, /backend_stopper\)/);
+  const start = src.indexOf('log "Clearing leftovers on the target"');
+  const hygiene = src.slice(start, src.indexOf("stop-echo-source.sh", start));
+  assert.match(hygiene, /< "\$\(backend_stopper\)"/);
+  assert.doesNotMatch(hygiene, /for kind in/);
+  assert.doesNotMatch(src, /stop_leftovers_on_port/);
 });
