@@ -54,7 +54,10 @@ export const DEFAULT_VM_WORKFLOW = "daily-stable-vm";
 export function laneLabels({ ciWorkflow = DEFAULT_CI_WORKFLOW, vmWorkflow = DEFAULT_VM_WORKFLOW, ciLabel, vmLabel } = {}) {
   const ci = ciLabel || (ciWorkflow === DEFAULT_CI_WORKFLOW ? "Actions" : ciWorkflow);
   const vm = vmLabel || (vmWorkflow === DEFAULT_VM_WORKFLOW ? "VM" : vmWorkflow);
-  return { ci, vm, ciThe: ci, vmThe: vm === "VM" ? "the VM" : vm };
+  // "VM" takes the article on either side; every other name, "Actions" included, is used
+  // as given.
+  const the = (name) => (name === "VM" ? "the VM" : name);
+  return { ci, vm, ciThe: the(ci), vmThe: the(vm) };
 }
 
 /** Parse a JSONL history file. Unreadable lines are reported, never skipped in silence. */
@@ -1032,6 +1035,11 @@ const kindLabels = ({ ciThe: theA, vmThe: theV }) => ({
 });
 
 /** Render the comparison for a person reading it in a terminal at 09:00. */
+// `labels` must be the ones compareRuns was given: its warnings are already worded with
+// them, and the result does not carry them. The default is the default pair's, which is
+// what compareRuns uses when it is given no ids. Deriving them here from the rows was
+// considered and declined (#2092 review): a caller whose rows and ids disagree would get
+// lane lines that contradict the warnings printed under them.
 export function renderReport(result, { sources = [], labels = laneLabels() } = {}) {
   const { ci: A, vm: V, ciThe: theA, vmThe: theV } = labels;
   const KIND_LABEL = kindLabels(labels);
@@ -1039,6 +1047,9 @@ export function renderReport(result, { sources = [], labels = laneLabels() } = {
   // label only widens them, so the defaults print exactly as before.
   const laneWidth = Math.max(8, A.length + 1, V.length + 1);
   const sigWidth = Math.max(7, A.length, V.length);
+  // The lines under a lane (listing, served versions) start where its "run" does:
+  // two spaces, the lane column, one space — 11 with the default labels.
+  const subIndent = " ".repeat(2 + laneWidth + 1);
   const L = [];
   const { date, ci, vm, blockers, warnings, divergences, agreed } = result;
 
@@ -1064,7 +1075,7 @@ export function renderReport(result, { sources = [], labels = laneLabels() } = {
     if (!gate || !Array.isArray(gate.present)) return;
     const absent = Array.isArray(gate.absent) ? gate.absent : [];
     L.push(
-      `${" ".repeat(11)}listed with ${gate.present.length ? gate.present.join(", ") : "no provider key"}` +
+      `${subIndent}listed with ${gate.present.length ? gate.present.join(", ") : "no provider key"}` +
         (absent.length ? ` | absent: ${absent.join(", ")}` : ""),
     );
   };
@@ -1078,7 +1089,7 @@ export function renderReport(result, { sources = [], labels = laneLabels() } = {
     if (!l || typeof l.verified !== "boolean" || !Array.isArray(l.missing)) return;
     const missing = l.missing;
     L.push(
-      `${" ".repeat(11)}` +
+      `${subIndent}` +
         (!l.verified
           ? "listing completeness UNVERIFIED"
           : missing.length
@@ -1094,7 +1105,7 @@ export function renderReport(result, { sources = [], labels = laneLabels() } = {
     if (!sweep) return;
     const silent = unaccounted(sweep);
     L.push(
-      `${" ".repeat(11)}` +
+      `${subIndent}` +
         (straddled(sweep)
           ? `SERVED ${sweep.versions.length} VERSIONS: ${sweep.versions.join(", ")}`
           : sweep.answered === 0

@@ -1919,3 +1919,24 @@ test("a long label widens the lane columns instead of running into them", () => 
   assert.match(out, /^ {2}Actions\+image {2}run /m);
   assert.match(out, /^ {2}VM {13}run /m, "the shorter label pads to the longer one");
 });
+
+test("the lines under a long-labelled lane stay aligned with its run line (#2092 review)", () => {
+  // Listing and served-version lines were indented a fixed 11 spaces, which is the run
+  // column only for the default labels.
+  const sweepOf = (versions) => ({ langflow_version_sweep: { expected: 2, answered: 2, silent: 0, versions } });
+  const ci = row("daily-stable", { ...sweepOf(["1.13.0.dev3"]), collection_gate_keys: { present: ["OPENAI_API_KEY"], absent: [] } });
+  const vm = row("daily-stable-vm", { ...sweepOf(["1.13.0.dev3"]), collection_gate_keys: { present: ["OPENAI_API_KEY"], absent: [] } });
+  for (const labels of [laneLabels(), laneLabels({ ciLabel: "Actions+image", vmLabel: "VM+wheel-long" })]) {
+    const out = renderReport(compare(ci, vm), { labels });
+    const lines = out.split("\n");
+    const runCol = lines.find((l) => / run \d|run step11|run 111/.test(l)).indexOf("run ");
+    const under = lines.filter((l) => /^\s+(listed with|one version across|SERVED)/.test(l));
+    assert.ok(under.length >= 2, `expected the lines under each lane:\n${out}`);
+    for (const l of under) assert.equal(l.search(/\S/), runCol, `misaligned under ${labels.ci}/${labels.vm}: '${l}'`);
+  }
+});
+
+test("the label VM takes the article on either side (#2092 review)", () => {
+  assert.equal(laneLabels({ ciLabel: "VM", vmLabel: "Actions" }).ciThe, "the VM");
+  assert.equal(laneLabels({ ciLabel: "VM", vmLabel: "Actions" }).vmThe, "Actions");
+});
