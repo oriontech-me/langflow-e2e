@@ -146,6 +146,17 @@ node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs --resul
 Other flags: `--history <path>` (default `reports/daily-history.jsonl`),
 `--window <days>` (default `30`, the recurrence window).
 
+**A VM-lane run has its umbrella on another repository.** The VM lane opens the
+umbrella on its issue host (`ISSUE_HOST`/`ISSUE_REPO` in the lane's wrapper),
+while dedicated issues are opened here. Pass that repository as `gh -R` takes it,
+`--issues-repo <HOST/OWNER/REPO>`: without it `gh` asks whatever repository it
+resolves for the checkout. From a clone whose `origin` is this repository that is
+the wrong one, `umbrella_issue` comes back `null`, and the renderer refuses; a
+checkout that happens to resolve to the issue host finds it, which is why the
+flag is passed explicitly rather than left to the remotes. With it the dataset
+also carries `umbrella_url`, which Phase 7 hands to the renderer. Steps 4 and 5 of
+Phase 7 (comment on and close the umbrella) take the same `-R`.
+
 Read the full dataset before doing anything else. Then report the panorama
 to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
 flakes (of Z total flakes) / W skips**, whether the **guard tripped** (and at
@@ -360,7 +371,11 @@ Only after the user approves the plan:
    built from the run id instead of the umbrella number. Then run
    `assertDedicatedIssueBody(body, { throwOnError: true })` before
    `gh issue create`, and apply the area-label mapping in
-   `references/issue-templates.md`.
+   `references/issue-templates.md`. When the umbrella lives in another
+   repository (a VM-lane run, see Phase 1), pass `umbrellaUrl:
+   dataset.umbrella_url`: a bare `#N` here resolves to this repository's #N,
+   and the renderer then adds the link after the provenance line. Do not write
+   that link into `provenanceNote` by hand.
 2. For each **enrich** row: `gh issue comment` on the matched existing issue,
    per the same reference's *Enrich vs Create Rule*. Match on the **normalized
    signature**, not on a description of the symptom.
