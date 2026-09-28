@@ -2859,21 +2859,20 @@ test("phase_publish names langflow_image, which the platform requires", () => {
     "phase_publish must pass LANGFLOW_IMAGE, and with a default the Actions lane can override");
 });
 
-test("the langflow_image default describes the venv, and the caller still wins", () => {
-  // Both halves in one place because they are one decision: the VM has no image to
-  // name, and the Actions lane has one it must keep. A plain assignment would satisfy
-  // the first and break the second.
-  // Asserted on the script's own target_artifact since #2088, not on a copy of the
-  // expression, so a change to the function cannot pass this test unchanged.
+test("the langflow_image of a source run describes the venv, even with LANGFLOW_IMAGE inherited", () => {
+  // Until #2089 a caller's LANGFLOW_IMAGE won here, for "the Actions lane" — which does
+  // not run this script (daily-stable.yml builds its own payload). What that override
+  // actually allowed was a source run recording an image it never pulled, the moment a
+  // shadow's wrapper exported one into the same shell. The kind decides now.
   const derived = sourced("target_artifact", { LANGFLOW_VERSION: "1.13.0.dev21", LANGFLOW_IMAGE: "" });
   assert.equal(derived.stdout, "pypi:langflow==1.13.0.dev21");
 
-  const passed = sourced("target_artifact", {
+  const inherited = sourced("target_artifact", {
     LANGFLOW_VERSION: "1.13.0.dev21",
-    LANGFLOW_IMAGE: "langflowai/langflow-nightly:latest",
+    LANGFLOW_IMAGE: "langflowai/langflow-nightly:1.13.0.dev21",
   });
-  assert.equal(passed.stdout, "langflowai/langflow-nightly:latest",
-    "the Actions lane passes its own image through the step env and must keep winning");
+  assert.equal(inherited.stdout, "pypi:langflow==1.13.0.dev21",
+    "a source run must not name an image it never pulled");
 });
 
 test("the evidence is uploaded BEFORE the record that links to it", () => {
@@ -3311,6 +3310,8 @@ test("the history row and the metadata name the artifact that ran", () => {
   assert.match(src, /target_kind "\$TARGET_KIND"/);
   assert.match(src, /langflow_image "\$\(target_artifact\)"/);
   assert.equal(sourced("target_artifact", imageEnv({ LANGFLOW_VERSION: "1.13.0.dev26" })).stdout, IMAGE);
+  assert.equal(sourced("target_artifact", { TARGET_KIND: "source", LANGFLOW_VERSION: "1.13.0.dev26", LANGFLOW_IMAGE: IMAGE }).stdout,
+    "pypi:langflow==1.13.0.dev26");
 });
 
 test("an image run writes no venv drift even with TARGET_VENV inherited", () => {
@@ -3324,4 +3325,30 @@ test("an image run writes no venv drift even with TARGET_VENV inherited", () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("hygiene clears a leftover of EITHER kind on each port, and skips docker where there is none", () => {
+  // A shadow killed mid-run leaves containers on its ports; the next source run would
+  // find no PID file and every shard's starter would refuse the port (#2089 review).
+  // target_ssh is stubbed to answer the docker probe and to print what it was asked to
+  // run, with the stopper it was fed; the stoppers are the real files.
+  const run = (hasDocker, kind) => sourced(
+    `target_ssh() { if [ "$1" = 'command -v docker' ]; then return ${hasDocker ? 0 : 1}; fi; if grep -q 'docker rm'; then k=docker; else k=source; fi; echo "CALL $1 <stop-langflow-$k"; }; stop_leftovers_on_port 7870`,
+    { TARGET_KIND: kind },
+  ).stdout;
+  for (const kind of ["source", "image"]) {
+    const both = run(true, kind);
+    assert.match(both, /CALL LANGFLOW_PORT=7870 bash -s <stop-langflow-source/, `${kind} run: the source leftover is not cleared`);
+    assert.match(both, /CALL LANGFLOW_PORT=7870 LANGFLOW_CONTAINER_NAME=langflow-e2e-lane-7870 bash -s <stop-langflow-docker/, `${kind} run: the image leftover is not cleared`);
+  }
+  const noDocker = run(false, "source");
+  assert.match(noDocker, /CALL LANGFLOW_PORT=7870 bash -s/);
+  assert.doesNotMatch(noDocker, /LANGFLOW_CONTAINER_NAME/, "a machine with no docker must see no docker call");
+});
+
+test("phase_hygiene clears leftovers through stop_leftovers_on_port, not through this run's kind", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const hygiene = src.slice(src.indexOf('log "Clearing leftovers on the target"'), src.indexOf("stop-echo-source.sh", src.indexOf('log "Clearing leftovers on the target"')));
+  assert.match(hygiene, /stop_leftovers_on_port "\$port"/);
+  assert.doesNotMatch(hygiene, /backend_stopper\)/);
 });

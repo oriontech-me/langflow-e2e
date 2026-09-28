@@ -643,11 +643,14 @@ target_cmd_env() {
 # Every start and every stop goes through these, so the two kinds cannot be mixed — an
 # image run whose cleanup still called the source stopper would leave four containers
 # running, and the stopper would report "nothing to stop" while it did.
+#
+# The stopper and the stop env take an optional kind, for the one caller that must stop
+# BOTH: see stop_leftovers_on_port.
 backend_starter() {
   if [ "$TARGET_KIND" = "image" ]; then echo scripts/start-langflow-docker.sh; else echo scripts/start-langflow-source.sh; fi
 }
 backend_stopper() {
-  if [ "$TARGET_KIND" = "image" ]; then echo scripts/stop-langflow-docker.sh; else echo scripts/stop-langflow-source.sh; fi
+  if [ "${1:-$TARGET_KIND}" = "image" ]; then echo scripts/stop-langflow-docker.sh; else echo scripts/stop-langflow-source.sh; fi
 }
 
 # One container per port, under a name that depends on the port alone. Stable ACROSS
@@ -660,8 +663,26 @@ backend_container_name() { printf 'langflow-e2e-lane-%s' "$1"; }
 # What a stop needs to find this port's backend.
 backend_stop_env() {
   printf 'LANGFLOW_PORT=%s' "$1"
-  [ "$TARGET_KIND" = "image" ] && printf ' LANGFLOW_CONTAINER_NAME=%s' "$(backend_container_name "$1")"
+  [ "${2:-$TARGET_KIND}" = "image" ] && printf ' LANGFLOW_CONTAINER_NAME=%s' "$(backend_container_name "$1")"
   return 0
+}
+
+# What a killed run of EITHER kind left on this port, cleared before this run starts.
+#
+# Both kinds, whatever this run's is: the official lane and the image shadow run on the
+# same machine, and a leftover of the other kind is invisible to this kind's stopper.
+# A shadow killed mid-run leaves containers answering on its ports; the next source run
+# finds no PID file, and its starter refuses a port that already answers — every shard
+# of the official daily fails over a run that had no consequence (#2089 review). The
+# reverse is a docker publish failing on a port an orphan holds. Only hygiene does this:
+# start, the per-shard stop and cleanup stay with this run's own kind. The docker half
+# runs only where docker exists, so a machine with no docker sees no change at all.
+stop_leftovers_on_port() {
+  local port="$1" kind
+  for kind in source image; do
+    if [ "$kind" = "image" ] && ! target_ssh 'command -v docker' > /dev/null 2>&1; then continue; fi
+    target_ssh "$(backend_stop_env "$port" "$kind") bash -s" < "$(backend_stopper "$kind")" 2>&1 | sed 's/^/    /' || true
+  done
 }
 
 # The image target's own launch variables; empty for a source target.
@@ -680,11 +701,22 @@ target_image_env() {
 
 # The artifact that ran, as the payload and the history row name it. ONE expression for
 # both, so the comparator and the platform cannot disagree about which build a row is.
-# For an image run LANGFLOW_IMAGE is the reference that was pulled and served; for any
-# other run it is the Actions lane's own value when it passes one, else the published
-# distribution. Since #2088 the history row carries it too, so VM+wheel and VM+image
-# rows are told apart by what they say rather than by which ledger they sit in.
-target_artifact() { printf '%s' "${LANGFLOW_IMAGE:-pypi:langflow==${LANGFLOW_VERSION:-}}"; }
+# Since #2088 the history row carries it too, so VM+wheel and VM+image rows are told
+# apart by what they say rather than by which ledger they sit in.
+#
+# The KIND decides, not whether LANGFLOW_IMAGE happens to be set. For an image run it
+# is the reference that was pulled and served; for a source run it is the published
+# distribution, even with LANGFLOW_IMAGE inherited — a shadow's wrapper exports it, and
+# an official run started from the same shell would otherwise record the image it never
+# pulled (#2089 review). The caller override this used to honour was for "the Actions
+# lane", which does not run this script: daily-stable.yml builds its payload itself.
+target_artifact() {
+  if [ "$TARGET_KIND" = "image" ]; then
+    printf '%s' "${LANGFLOW_IMAGE:-}"
+  else
+    printf '%s' "pypi:langflow==${LANGFLOW_VERSION:-}"
+  fi
+}
 
 # TARGET_KIND, and the image target's preconditions, refused together and before
 # anything runs. Split out so it is testable without docker.
@@ -1163,7 +1195,7 @@ phase_hygiene() {
   local i port
   for i in $(seq 1 "$SHARDS"); do
     port=$((BASE_PORT + i - 1))
-    target_ssh "$(backend_stop_env "$port") bash -s" < "$(backend_stopper)" 2>&1 | sed 's/^/    /' || true
+    stop_leftovers_on_port "$port"
   done
   target_ssh "ECHO_PORT=$ECHO_PORT bash -s" < scripts/stop-echo-source.sh 2>&1 | sed 's/^/    /' || true
   target_ssh "OLLAMA_PORT=$OLLAMA_PORT bash -s" < scripts/stop-ollama-source.sh 2>&1 | sed 's/^/    /' || true
