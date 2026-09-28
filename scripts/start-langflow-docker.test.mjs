@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./start-langflow-docker.sh", import.meta.url));
+const STOP_SCRIPT = fileURLToPath(new URL("./stop-langflow-docker.sh", import.meta.url));
 
 /**
  * Runs the script with `docker` and `curl` stubbed out.
@@ -31,9 +32,10 @@ const SCRIPT = fileURLToPath(new URL("./start-langflow-docker.sh", import.meta.u
  * are reached. The curl stub answers the health check immediately so the run
  * does not sit through the 120 s readiness loop.
  */
-function runScript({ args = [], env = {}, pullFails = false, localCopy = true } = {}) {
+function runScript({ args = [], env = {}, pullFails = false, localCopy = true, healthy = true, script = SCRIPT } = {}) {
   const dir = makeTempDir("start-langflow-test-");
   const log = join(dir, "docker.log");
+  const curlLog = join(dir, "curl.log");
 
   writeFileSync(
     join(dir, "docker"),
@@ -48,18 +50,27 @@ exit 0
   );
   writeFileSync(
     join(dir, "curl"),
-    `#!/usr/bin/env bash
+    healthy
+      ? `#!/usr/bin/env bash
+echo "$*" >> "${curlLog}"
 echo '{"version":"0.0.0-test"}'
 exit 0
+`
+      : `#!/usr/bin/env bash
+echo "$*" >> "${curlLog}"
+exit 7
 `,
   );
+  // The readiness loop sleeps 5 s per attempt; the stub keeps an unhealthy run instant.
+  writeFileSync(join(dir, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   chmodSync(join(dir, "docker"), 0o755);
   chmodSync(join(dir, "curl"), 0o755);
+  chmodSync(join(dir, "sleep"), 0o755);
 
   let stdout = "";
   let status = 0;
   try {
-    stdout = execFileSync("bash", [SCRIPT, ...args], {
+    stdout = execFileSync("bash", [script, ...args], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -80,6 +91,12 @@ exit 0
   } catch {
     // no docker call at all — a valid outcome for the hard-fail branch
   }
+  let urls = [];
+  try {
+    urls = readFileSync(curlLog, "utf8").trim().split("\n").filter(Boolean).map((c) => c.split(/\s+/).pop());
+  } catch {
+    // no probe at all — the script refused before starting anything
+  }
   rmSync(dir, { recursive: true, force: true });
 
   const runCall = calls.find((c) => c.startsWith("run "));
@@ -87,6 +104,7 @@ exit 0
     stdout,
     status,
     calls,
+    urls,
     pulled: calls.some((c) => c.startsWith("pull ")),
     // The image is the last argument of `docker run`.
     image: runCall ? runCall.trim().split(/\s+/).pop() : null,
@@ -187,4 +205,110 @@ test("LANGFLOW_A2A_ENABLED can be forced off to reproduce the disabled surface",
   const r = runScript({ env: { LANGFLOW_A2A_ENABLED: "false" } });
   const runCall = r.calls.find((c) => c.startsWith("run "));
   assert.match(runCall, /LANGFLOW_A2A_ENABLED=false/);
+});
+
+// #2085 — the knobs a lane sets. Each default is asserted as well as the override,
+// because the defaults are what every documented `docker exec langflow-e2e-runner …`
+// and every developer's instance depend on.
+
+const runCallOf = (r) => r.calls.find((c) => c.startsWith("run "));
+
+test("the container keeps its documented name unless one is given", () => {
+  const r = runScript();
+  assert.match(runCallOf(r), /--name langflow-e2e-runner /);
+  assert.ok(r.calls.includes("rm -f langflow-e2e-runner"), "the previous instance of THAT name is removed");
+});
+
+test("LANGFLOW_CONTAINER_NAME names the container, so shards do not remove each other", () => {
+  // Before #2085 the name was fixed and start ran `docker rm -f` on it, so starting
+  // shard 2 killed shard 1. The removal must target this instance's own name.
+  const r = runScript({ env: { LANGFLOW_CONTAINER_NAME: "langflow-e2e-runner-7871", LANGFLOW_PORT: "7871" } });
+  assert.match(runCallOf(r), /--name langflow-e2e-runner-7871 /);
+  assert.ok(r.calls.includes("rm -f langflow-e2e-runner-7871"));
+  assert.ok(!r.calls.includes("rm -f langflow-e2e-runner"), "another instance's name is left alone");
+});
+
+test("the port is published as before unless a bind host is given", () => {
+  const r0 = runScript();
+  assert.match(runCallOf(r0), / -p 7860:7860 /);
+  assert.deepEqual(r0.urls, ["http://localhost:7860/health_check", "http://localhost:7860/api/v1/version"]);
+  const r = runScript({ env: { LANGFLOW_BIND_HOST: "127.0.0.1", LANGFLOW_PORT: "7870" } });
+  assert.match(runCallOf(r), / -p 127\.0\.0\.1:7870:7860 /);
+});
+
+test("readiness asks the address the port is published on", () => {
+  // Bound to one non-loopback address, `localhost` is refused: a healthy container
+  // would wait out the whole budget and the start would fail (#2086 review).
+  const r = runScript({ env: { LANGFLOW_BIND_HOST: "10.23.12.107", LANGFLOW_PORT: "7870" } });
+  assert.match(runCallOf(r), / -p 10\.23\.12\.107:7870:7860 /);
+  assert.deepEqual(r.urls, ["http://10.23.12.107:7870/health_check", "http://10.23.12.107:7870/api/v1/version"]);
+});
+
+test("a wildcard bind is published as given and still probed on localhost", () => {
+  for (const [host, spec] of [["0.0.0.0", "0\\.0\\.0\\.0"], ["::", "\\[::\\]"]]) {
+    const r = runScript({ env: { LANGFLOW_BIND_HOST: host, LANGFLOW_PORT: "7870" } });
+    assert.match(runCallOf(r), new RegExp(` -p ${spec}:7870:7860 `));
+    assert.equal(r.urls[0], "http://localhost:7870/health_check", `${host} answers on localhost`);
+  }
+});
+
+test("an IPv6 bind takes brackets in the publish spec and the probe, given with or without them", () => {
+  for (const host of ["::1", "[::1]"]) {
+    const r = runScript({ env: { LANGFLOW_BIND_HOST: host, LANGFLOW_PORT: "7870" } });
+    assert.match(runCallOf(r), / -p \[::1\]:7870:7860 /, `from '${host}'`);
+    assert.equal(r.urls[0], "http://[::1]:7870/health_check", `from '${host}'`);
+  }
+});
+
+test("tracing stays off by default, and a lane can turn it on", () => {
+  // Off is the local decision (#1300). The lanes run with it on (#1714), and before
+  // #2085 no caller could ask for that.
+  assert.match(runCallOf(runScript()), /LANGFLOW_DEACTIVATE_TRACING=true /);
+  const r = runScript({ env: { LANGFLOW_DEACTIVATE_TRACING: "false" } });
+  assert.match(runCallOf(r), /LANGFLOW_DEACTIVATE_TRACING=false /);
+});
+
+test("the worker timeout and the SQLite pragmas are forwarded by name, never given a value here", () => {
+  // `-e NAME` with no value makes docker forward the variable only when it is set.
+  // A value written here would become a starter default, which run-e2e.sh rules out
+  // for the worker timeout (#1048), and an empty one would reach the container as "".
+  for (const env of [{}, { LANGFLOW_WORKER_TIMEOUT: "120", LANGFLOW_SQLITE_PRAGMAS: '{"foreign_keys": "ON"}' }]) {
+    const call = runCallOf(runScript({ env }));
+    assert.match(call, / -e LANGFLOW_WORKER_TIMEOUT -e /);
+    assert.match(call, / -e LANGFLOW_SQLITE_PRAGMAS -e /);
+    assert.doesNotMatch(call, /LANGFLOW_WORKER_TIMEOUT=/);
+    assert.doesNotMatch(call, /LANGFLOW_SQLITE_PRAGMAS=/);
+  }
+});
+
+test("the readiness budget is LANGFLOW_READY_TIMEOUT_S, and a failure names the container", () => {
+  const r = runScript({ healthy: false, env: { LANGFLOW_READY_TIMEOUT_S: "12", LANGFLOW_CONTAINER_NAME: "lf-7872" } });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /up to 12s/);
+  assert.match(r.stdout, /Waiting\.\.\. \(15s\)/, "12 s rounds up to three 5 s attempts");
+  assert.doesNotMatch(r.stdout, /Waiting\.\.\. \(20s\)/);
+  assert.ok(r.calls.includes("logs lf-7872"), "the logs printed are this instance's");
+});
+
+test("the default readiness budget is still 120 s", () => {
+  const r = runScript({ healthy: false });
+  assert.match(r.stdout, /Waiting\.\.\. \(120s\)/);
+  assert.doesNotMatch(r.stdout, /Waiting\.\.\. \(125s\)/);
+});
+
+test("a readiness budget that is not a positive integer is refused before anything starts", () => {
+  // Leading zeros included: bash reads them as octal, so `08` aborted AFTER the
+  // container was running and `030` silently meant 24 s (#2086 review).
+  for (const bad of ["0", "abc", "-5", "1.5", "00", "08", "09", "030"]) {
+    const r = runScript({ env: { LANGFLOW_READY_TIMEOUT_S: bad } });
+    assert.equal(r.status, 1, `'${bad}' must be refused`);
+    assert.match(r.stdout, /LANGFLOW_READY_TIMEOUT_S must be a positive integer/);
+    assert.equal(runCallOf(r), undefined, "nothing may be started");
+  }
+});
+
+test("stop removes the named container, and the documented one by default", () => {
+  assert.deepEqual(runScript({ script: STOP_SCRIPT }).calls, ["rm -f langflow-e2e-runner"]);
+  const r = runScript({ script: STOP_SCRIPT, env: { LANGFLOW_CONTAINER_NAME: "langflow-e2e-runner-7873" } });
+  assert.deepEqual(r.calls, ["rm -f langflow-e2e-runner-7873"]);
 });

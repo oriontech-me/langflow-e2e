@@ -23,8 +23,9 @@ carry. Four known blind spots (#1211), stated here rather than only in a PR body
 comment so a reader of a number finds its limits in the same place:
 
 - **A local instance records nothing, and developer spend is OUT OF SCOPE for this series
-  (#1300).** The Docker and pip start scripts set `LANGFLOW_DEACTIVATE_TRACING=true` as a
-  literal, and `start-langflow-source.sh` defaults it to `true`, so the poller has no traces to
+  (#1300).** The pip start script sets `LANGFLOW_DEACTIVATE_TRACING=true` as a literal, and
+  `start-langflow-docker.sh` and `start-langflow-source.sh` default it to `true` (the Docker one
+  since #2085; a lane that records its spend turns it on explicitly), so the poller has no traces to
   read at all when developing locally. That is a **decision**, not a
   pending fix: flipping the flag locally would produce traces nobody can attribute, because the CI
   secret and a developer's `.env` draw on one account balance and #1183's key-separation
