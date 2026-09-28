@@ -105,12 +105,19 @@ function visit(node) {
           if (shot) { entry.screenshot = shot; screenshotCount++; }
         }
       }
-      // A flake's error is its FIRST attempt that carries a message, the attempt
-      // append-weekly-history.mjs reads for the ledger row (#2079). The platform
+      // A flake's error is its FIRST attempt that carries a message (#2079), the same
+      // choice append-weekly-history.mjs makes for the ledger row. The platform
       // expands its fact table from tests[] and derives `error_signature` from this
       // `error`, so without it every flaky row there had a NULL signature and the
       // recurrence rule (same signature within 30 days) could not be applied from the
       // platform. No screenshot: that budget stays with hard failures.
+      //
+      // "Carries a message" is this file's `firstErr` (line 1, ANSI stripped), not the
+      // ledger's `errorSignature` (first non-blank line, ANSI kept). The two agree on
+      // every error of the 2026-09-28 run, and disagree on a message whose first line
+      // is blank: there the ledger may name a different attempt, and this file records
+      // "unknown" or a blank signature. failures[] has carried the same difference all
+      // along; aligning the two rules is a change of its own.
       const flakeAttempt = status === "flaky" ? results.find((r) => firstErr(r)) : undefined;
       if (flakeAttempt) entry.error = fullErr(flakeAttempt);
       tests.push(entry);
@@ -120,7 +127,8 @@ function visit(node) {
       if (t.status === "expected") { totals.passed++; continue; }
       if (t.status === "flaky") {
         totals.flaky++;
-        // Same field and fallback as failures[] below, and as the ledger's flaky rows.
+        // Same field and fallback as failures[] below and the ledger's flaky rows. The
+        // platform does not read it (its facts come from tests[]); it is here for parity.
         flaky.push({ test: title, file, line, tags, attempts, error_signature: firstErr(flakeAttempt) || "unknown" });
         continue;
       }

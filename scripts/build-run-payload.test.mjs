@@ -183,7 +183,7 @@ test("#2079 a flaky test carries its first failed attempt's error, in tests[] an
   assert.equal(
     payload.flaky[0].error_signature,
     "Error: first attempt",
-    "the ledger's attempt: the FIRST one with a message, not the last failed one",
+    "the FIRST attempt with a message, as the ledger chooses, not the last failed one",
   );
   const entry = payload.tests[0];
   assert.equal(entry.status, "flaky");
@@ -192,7 +192,21 @@ test("#2079 a flaky test carries its first failed attempt's error, in tests[] an
     "Error: first attempt",
     "the platform takes line 1 of tests[].error as the signature; it must match flaky[]",
   );
-  assert.ok(!("screenshot" in entry), "the screenshot budget stays with hard failures");
+});
+
+test("#2079 a flake never takes a screenshot, even when every attempt has one attached", () => {
+  // The attachment has to be there for this to prove anything: without it the
+  // builder has nothing to read, and a flake that DID take the budget would pass.
+  const SHOT = { name: "screenshot", contentType: "image/png", body: Buffer.from("png").toString("base64") };
+  const withShot = (r) => ({ ...r, attachments: [SHOT] });
+  const payload = buildFrom(
+    withTests([
+      ["flaky", flake([withShot(failedWith("Error: a")), withShot(PASSED)])],
+      ["fails", { status: "unexpected", results: [withShot(failedWith("Error: b"))] }],
+    ]),
+  );
+  assert.ok(payload.tests[1].screenshot, "control: the same attachment does become a hard failure's screenshot");
+  assert.ok(!("screenshot" in payload.tests[0]), "the screenshot budget stays with hard failures");
 });
 
 test("#2079 a message-less attempt before the real failure is skipped, as in the ledger", () => {
