@@ -44,6 +44,12 @@ if (issuesRepoAt !== -1 && (!issuesRepo || !issuesRepo.trim() || issuesRepo.star
   process.stderr.write('error: --issues-repo needs a repository ([HOST/]OWNER/REPO); refusing to fall back to the checkout\'s own\n');
   process.exit(2);
 }
+// `arg()` has never read `--flag=value`, so `--issues-repo=<repo>` would be ignored
+// and the listing would silently fall back to the checkout's own repository.
+if (process.argv.some((a) => a.startsWith('--issues-repo='))) {
+  process.stderr.write('error: write --issues-repo <repo> with a space; the --issues-repo=<repo> form is not read, and falling back to the checkout\'s own repository is refused\n');
+  process.exit(2);
+}
 
 // Daily-failure issues (open + closed) — the umbrella may already be closed.
 function fetchIssues() {

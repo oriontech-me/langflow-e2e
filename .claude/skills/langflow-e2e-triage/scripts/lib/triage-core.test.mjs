@@ -1126,6 +1126,7 @@ test('renderDedicatedIssueBody refuses an umbrellaUrl for another issue, or not 
     'https://github.example.com/Org/dest/issues/745',
     'https://github.example.com/Org/dest/issues/0744',
     'https://github.example.com/Org/dest/pull/744',
+    'https://github.example.com/Org/de)st/issues/744',
     'github.example.com/Org/dest/issues/744',
     '#744',
     '',

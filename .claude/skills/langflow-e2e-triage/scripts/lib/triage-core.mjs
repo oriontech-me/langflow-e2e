@@ -465,7 +465,9 @@ export function renderDedicatedIssueBody(input) {
   // number as `umbrella`: the two are passed separately, and a URL for another issue
   // would be a correct-looking link to the wrong place.
   if (umbrellaUrl != null) {
-    const m = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/issues\/(\d+)$/.exec(String(umbrellaUrl).trim());
+    // The same segment class as assertDedicatedIssueBody(): a `)` would close the
+    // Markdown link early, and the validator would then reject the rendered line.
+    const m = /^https?:\/\/[^/\s)]+\/[^/\s)]+\/[^/\s)]+\/issues\/(\d+)$/.exec(String(umbrellaUrl).trim());
     // Compared as written, not as a value: `issues/07` would pass a numeric check and
     // then fail the validator, which requires the link to repeat the number it shows.
     if (!m || m[1] !== String(Number(umbrella))) {
