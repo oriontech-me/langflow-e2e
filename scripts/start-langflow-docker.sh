@@ -10,6 +10,15 @@
 #   LANGFLOW_IMAGE  An exact image reference, which wins over both. Example:
 #                   LANGFLOW_IMAGE=langflowai/langflow:latest ./scripts/start-langflow-docker.sh
 #
+# Knobs a lane sets and a developer normally does not (#2085). Every default below is
+# what this script did before they existed, so local use is unchanged:
+#   LANGFLOW_CONTAINER_NAME   default langflow-e2e-runner. A sharded caller gives each
+#                             port its own name, because starting removes the old one.
+#   LANGFLOW_BIND_HOST        unset publishes on every interface, as before; set it
+#                             (e.g. 127.0.0.1) on a machine others can reach.
+#   LANGFLOW_READY_TIMEOUT_S  default 120. A caller with its own, longer budget raises
+#                             it, or this loop fails a cold start first.
+#
 # Nightly and released builds live in DIFFERENT Docker repositories
 # (langflowai/langflow-nightly vs langflowai/langflow), and the nightly repo keeps
 # only recent dev tags — which is why a version argument resolves against the
@@ -30,8 +39,14 @@ else
   IMAGE="${LANGFLOW_IMAGE_REPO:-langflowai/langflow-nightly}:latest"
 fi
 
-CONTAINER_NAME="langflow-e2e-runner"
+CONTAINER_NAME="${LANGFLOW_CONTAINER_NAME:-langflow-e2e-runner}"
 PORT="${LANGFLOW_PORT:-7860}"
+READY_TIMEOUT_S="${LANGFLOW_READY_TIMEOUT_S:-120}"
+case "${READY_TIMEOUT_S}" in
+  '' | *[!0-9]* | 0) echo "LANGFLOW_READY_TIMEOUT_S must be a positive integer of seconds, got: '${READY_TIMEOUT_S}'" >&2; exit 1 ;;
+esac
+PUBLISH="${PORT}:7860"
+[ -n "${LANGFLOW_BIND_HOST:-}" ] && PUBLISH="${LANGFLOW_BIND_HOST}:${PUBLISH}"
 
 echo "Starting Langflow: ${IMAGE} on port ${PORT}..."
 
@@ -68,13 +83,23 @@ docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 # and the key separation that would tell them apart is unimplemented (#1300, #1183).
 # The consequence: that file is CI spend and is never total account spend. The
 # reasoning is in reports/README.md; do not change this flag without updating it.
+# It is a DEFAULT since #2085, not a constant: a lane records its own spend and runs
+# with tracing on (run-e2e.sh, daily-stable.yml — #1714), and says so explicitly.
+#
+# LANGFLOW_WORKER_TIMEOUT and LANGFLOW_SQLITE_PRAGMAS are passed by NAME, with no
+# value: docker forwards a variable named that way only when it is set, so a
+# developer's instance keeps the product defaults and a lane that sets them gets them.
+# run-e2e.sh is explicit that the worker timeout is not a starter default (#1048), and
+# the pragmas replace the product dict wholesale (#1717) — neither belongs here as one.
 docker run -d \
   --name "${CONTAINER_NAME}" \
-  -p "${PORT}:7860" \
+  -p "${PUBLISH}" \
   -e LANGFLOW_AUTO_LOGIN=true \
   -e LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
   -e LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
-  -e LANGFLOW_DEACTIVATE_TRACING=true \
+  -e LANGFLOW_DEACTIVATE_TRACING="${LANGFLOW_DEACTIVATE_TRACING:-true}" \
+  -e LANGFLOW_WORKER_TIMEOUT \
+  -e LANGFLOW_SQLITE_PRAGMAS \
   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
   -e LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
   -e LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
@@ -122,8 +147,8 @@ docker run -d \
 # locally; see #773). One worker is plenty locally, where the heavy specs run
 # --workers=1 anyway. Override for a beefier box: LANGFLOW_WORKERS=4 ./scripts/...
 
-echo "Waiting for Langflow to be ready (up to 120s)..."
-for i in $(seq 1 24); do
+echo "Waiting for Langflow to be ready (up to ${READY_TIMEOUT_S}s)..."
+for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
   if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s"
     # Report the build that actually came up. The image tag alone does not say
