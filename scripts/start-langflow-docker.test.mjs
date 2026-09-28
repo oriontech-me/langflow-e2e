@@ -35,6 +35,7 @@ const STOP_SCRIPT = fileURLToPath(new URL("./stop-langflow-docker.sh", import.me
 function runScript({ args = [], env = {}, pullFails = false, localCopy = true, healthy = true, script = SCRIPT } = {}) {
   const dir = makeTempDir("start-langflow-test-");
   const log = join(dir, "docker.log");
+  const curlLog = join(dir, "curl.log");
 
   writeFileSync(
     join(dir, "docker"),
@@ -51,10 +52,12 @@ exit 0
     join(dir, "curl"),
     healthy
       ? `#!/usr/bin/env bash
+echo "$*" >> "${curlLog}"
 echo '{"version":"0.0.0-test"}'
 exit 0
 `
       : `#!/usr/bin/env bash
+echo "$*" >> "${curlLog}"
 exit 7
 `,
   );
@@ -88,6 +91,12 @@ exit 7
   } catch {
     // no docker call at all — a valid outcome for the hard-fail branch
   }
+  let urls = [];
+  try {
+    urls = readFileSync(curlLog, "utf8").trim().split("\n").filter(Boolean).map((c) => c.split(/\s+/).pop());
+  } catch {
+    // no probe at all — the script refused before starting anything
+  }
   rmSync(dir, { recursive: true, force: true });
 
   const runCall = calls.find((c) => c.startsWith("run "));
@@ -95,6 +104,7 @@ exit 7
     stdout,
     status,
     calls,
+    urls,
     pulled: calls.some((c) => c.startsWith("pull ")),
     // The image is the last argument of `docker run`.
     image: runCall ? runCall.trim().split(/\s+/).pop() : null,
@@ -219,9 +229,35 @@ test("LANGFLOW_CONTAINER_NAME names the container, so shards do not remove each 
 });
 
 test("the port is published as before unless a bind host is given", () => {
-  assert.match(runCallOf(runScript()), / -p 7860:7860 /);
+  const r0 = runScript();
+  assert.match(runCallOf(r0), / -p 7860:7860 /);
+  assert.deepEqual(r0.urls, ["http://localhost:7860/health_check", "http://localhost:7860/api/v1/version"]);
   const r = runScript({ env: { LANGFLOW_BIND_HOST: "127.0.0.1", LANGFLOW_PORT: "7870" } });
   assert.match(runCallOf(r), / -p 127\.0\.0\.1:7870:7860 /);
+});
+
+test("readiness asks the address the port is published on", () => {
+  // Bound to one non-loopback address, `localhost` is refused: a healthy container
+  // would wait out the whole budget and the start would fail (#2086 review).
+  const r = runScript({ env: { LANGFLOW_BIND_HOST: "10.23.12.107", LANGFLOW_PORT: "7870" } });
+  assert.match(runCallOf(r), / -p 10\.23\.12\.107:7870:7860 /);
+  assert.deepEqual(r.urls, ["http://10.23.12.107:7870/health_check", "http://10.23.12.107:7870/api/v1/version"]);
+});
+
+test("a wildcard bind is published as given and still probed on localhost", () => {
+  for (const [host, spec] of [["0.0.0.0", "0\\.0\\.0\\.0"], ["::", "\\[::\\]"]]) {
+    const r = runScript({ env: { LANGFLOW_BIND_HOST: host, LANGFLOW_PORT: "7870" } });
+    assert.match(runCallOf(r), new RegExp(` -p ${spec}:7870:7860 `));
+    assert.equal(r.urls[0], "http://localhost:7870/health_check", `${host} answers on localhost`);
+  }
+});
+
+test("an IPv6 bind takes brackets in the publish spec and the probe, given with or without them", () => {
+  for (const host of ["::1", "[::1]"]) {
+    const r = runScript({ env: { LANGFLOW_BIND_HOST: host, LANGFLOW_PORT: "7870" } });
+    assert.match(runCallOf(r), / -p \[::1\]:7870:7860 /, `from '${host}'`);
+    assert.equal(r.urls[0], "http://[::1]:7870/health_check", `from '${host}'`);
+  }
 });
 
 test("tracing stays off by default, and a lane can turn it on", () => {
@@ -261,7 +297,9 @@ test("the default readiness budget is still 120 s", () => {
 });
 
 test("a readiness budget that is not a positive integer is refused before anything starts", () => {
-  for (const bad of ["0", "abc", "-5", "1.5"]) {
+  // Leading zeros included: bash reads them as octal, so `08` aborted AFTER the
+  // container was running and `030` silently meant 24 s (#2086 review).
+  for (const bad of ["0", "abc", "-5", "1.5", "00", "08", "09", "030"]) {
     const r = runScript({ env: { LANGFLOW_READY_TIMEOUT_S: bad } });
     assert.equal(r.status, 1, `'${bad}' must be refused`);
     assert.match(r.stdout, /LANGFLOW_READY_TIMEOUT_S must be a positive integer/);

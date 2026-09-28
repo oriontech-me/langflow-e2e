@@ -42,11 +42,32 @@ fi
 CONTAINER_NAME="${LANGFLOW_CONTAINER_NAME:-langflow-e2e-runner}"
 PORT="${LANGFLOW_PORT:-7860}"
 READY_TIMEOUT_S="${LANGFLOW_READY_TIMEOUT_S:-120}"
+# A leading zero is refused, not stripped: bash reads it as octal, so `08` aborted
+# after the container was already running and `030` silently became 24 s.
 case "${READY_TIMEOUT_S}" in
-  '' | *[!0-9]* | 0) echo "LANGFLOW_READY_TIMEOUT_S must be a positive integer of seconds, got: '${READY_TIMEOUT_S}'" >&2; exit 1 ;;
+  '' | *[!0-9]* | 0*) echo "LANGFLOW_READY_TIMEOUT_S must be a positive integer of seconds with no leading zero, got: '${READY_TIMEOUT_S}'" >&2; exit 1 ;;
+esac
+
+# The readiness probe must ask the address the port is published on: bound to one
+# non-loopback address, `localhost` is refused and a healthy container would time
+# out. A wildcard bind, or none, still answers on localhost. IPv6 takes brackets in
+# both the publish spec and the URL; a value given with them is accepted as well.
+BIND_HOST="${LANGFLOW_BIND_HOST:-}"
+BIND_HOST="${BIND_HOST#[}"
+BIND_HOST="${BIND_HOST%]}"
+case "${BIND_HOST}" in
+  *:*) BIND_ADDR="[${BIND_HOST}]" ;;
+  *) BIND_ADDR="${BIND_HOST}" ;;
 esac
 PUBLISH="${PORT}:7860"
-[ -n "${LANGFLOW_BIND_HOST:-}" ] && PUBLISH="${LANGFLOW_BIND_HOST}:${PUBLISH}"
+PROBE_HOST="localhost"
+if [ -n "${BIND_HOST}" ]; then
+  PUBLISH="${BIND_ADDR}:${PUBLISH}"
+  case "${BIND_HOST}" in
+    0.0.0.0 | ::) ;;
+    *) PROBE_HOST="${BIND_ADDR}" ;;
+  esac
+fi
 
 echo "Starting Langflow: ${IMAGE} on port ${PORT}..."
 
@@ -149,12 +170,12 @@ docker run -d \
 
 echo "Waiting for Langflow to be ready (up to ${READY_TIMEOUT_S}s)..."
 for i in $(seq 1 $(((READY_TIMEOUT_S + 4) / 5))); do
-  if curl -sf "http://localhost:${PORT}/health_check" > /dev/null 2>&1; then
+  if curl -sf "http://${PROBE_HOST}:${PORT}/health_check" > /dev/null 2>&1; then
     echo "Langflow ready after $((i * 5))s"
     # Report the build that actually came up. The image tag alone does not say
     # it — `latest` moves, and a spec doc's `Last validated` field records this
     # version, not the tag.
-    VERSION="$(curl -sf "http://localhost:${PORT}/api/v1/version" 2>/dev/null || true)"
+    VERSION="$(curl -sf "http://${PROBE_HOST}:${PORT}/api/v1/version" 2>/dev/null || true)"
     [ -n "${VERSION}" ] && echo "Running: ${VERSION}"
     exit 0
   fi
