@@ -105,12 +105,25 @@ function visit(node) {
           if (shot) { entry.screenshot = shot; screenshotCount++; }
         }
       }
+      // A flake's error is its FIRST attempt that carries a message, the attempt
+      // append-weekly-history.mjs reads for the ledger row (#2079). The platform
+      // expands its fact table from tests[] and derives `error_signature` from this
+      // `error`, so without it every flaky row there had a NULL signature and the
+      // recurrence rule (same signature within 30 days) could not be applied from the
+      // platform. No screenshot: that budget stays with hard failures.
+      const flakeAttempt = status === "flaky" ? results.find((r) => firstErr(r)) : undefined;
+      if (flakeAttempt) entry.error = fullErr(flakeAttempt);
       tests.push(entry);
 
       // Existing aggregate arrays — unchanged contract (also feed the JSONL script).
       if (t.status === "skipped") { totals.skipped++; continue; }
       if (t.status === "expected") { totals.passed++; continue; }
-      if (t.status === "flaky") { totals.flaky++; flaky.push({ test: title, file, line, tags, attempts }); continue; }
+      if (t.status === "flaky") {
+        totals.flaky++;
+        // Same field and fallback as failures[] below, and as the ledger's flaky rows.
+        flaky.push({ test: title, file, line, tags, attempts, error_signature: firstErr(flakeAttempt) || "unknown" });
+        continue;
+      }
       totals.failed++;
       // An unexpected pass (#2009) — a `test.fail()` whose body passed — has no failed
       // attempt to take a signature from, so it used to record "unknown": the same

@@ -149,3 +149,80 @@ test("#2009 an unexpected pass is a failure with its own signature, not \"unknow
   assert.equal(payload.failures[0].attempts, 3);
   assert.equal(payload.failures[1].error_signature, "unknown", "a genuinely lost error is unchanged");
 });
+
+// --- #2079: a flake carries its error, so the platform can compare signatures ---
+//
+// The platform expands its fact table from tests[] and derives `error_signature` from
+// `tests[].error`. A flaky entry carried no `error`, so every flake landed with a NULL
+// signature and the recurrence rule (same signature within 30 days) had nothing to
+// compare. flaky[] had no `error_signature` either, unlike failures[] and the ledger.
+
+const flake = (results) => ({ status: "flaky", results });
+const failedWith = (message, stack) => ({
+  status: "failed",
+  duration: 5,
+  steps: [],
+  error: { message, ...(stack ? { stack } : {}) },
+});
+const PASSED = { status: "passed", duration: 5, steps: [] };
+
+test("#2079 a flaky test carries its first failed attempt's error, in tests[] and flaky[]", () => {
+  const payload = buildFrom(
+    withTests([
+      [
+        "flaky twice",
+        flake([
+          failedWith("Error: first attempt\n  at a.spec.ts:10", "at a.spec.ts:10"),
+          failedWith("Error: second attempt"),
+          PASSED,
+        ]),
+      ],
+    ]),
+  );
+  assert.deepEqual(payload.totals, { passed: 0, failed: 0, flaky: 1, skipped: 0 });
+  assert.equal(
+    payload.flaky[0].error_signature,
+    "Error: first attempt",
+    "the ledger's attempt: the FIRST one with a message, not the last failed one",
+  );
+  const entry = payload.tests[0];
+  assert.equal(entry.status, "flaky");
+  assert.equal(
+    entry.error.split("\n")[0],
+    "Error: first attempt",
+    "the platform takes line 1 of tests[].error as the signature; it must match flaky[]",
+  );
+  assert.ok(!("screenshot" in entry), "the screenshot budget stays with hard failures");
+});
+
+test("#2079 a message-less attempt before the real failure is skipped, as in the ledger", () => {
+  const payload = buildFrom(
+    withTests([
+      ["interrupted first", flake([{ status: "interrupted", duration: 5 }, failedWith("Error: the real one"), PASSED])],
+    ]),
+  );
+  assert.equal(payload.flaky[0].error_signature, "Error: the real one");
+  assert.equal(payload.tests[0].error.split("\n")[0], "Error: the real one");
+});
+
+test("#2079 a flake whose error was lost says \"unknown\" in flaky[] and adds no error to tests[]", () => {
+  const payload = buildFrom(withTests([["no message", flake([{ status: "failed", duration: 5 }, PASSED])]]));
+  assert.equal(payload.flaky[0].error_signature, "unknown", "the same fallback failures[] uses");
+  assert.ok(
+    !("error" in payload.tests[0]),
+    "no invented error text: the platform must store NULL, not a signature that was never observed",
+  );
+});
+
+test("#2079 passed and hard-failed entries are unchanged by the flaky path", () => {
+  const payload = buildFrom(
+    withTests([
+      ["passes", { status: "expected", results: [PASSED] }],
+      ["fails", { status: "unexpected", results: [failedWith("Error: a"), failedWith("Error: b")] }],
+    ]),
+  );
+  assert.ok(!("error" in payload.tests[0]), "a passing test carries no error");
+  assert.equal(payload.failures[0].error_signature, "Error: b", "a hard failure still reads its LAST failed attempt");
+  assert.equal(payload.tests[1].error.split("\n")[0], "Error: b");
+  assert.deepEqual(payload.flaky, []);
+});
