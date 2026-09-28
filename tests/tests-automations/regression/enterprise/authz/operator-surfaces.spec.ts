@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getEnterpriseAuthToken } from "../../../../helpers/enterprise/enterprise-auth";
 import {
+  builtinRoleIds,
   getSharedRbacSubject,
   readAuditLog,
   reconcileEntities,
@@ -17,14 +18,14 @@ import {
  *
  * Scoped reconcile works only when `entity_key` is the CASBIN key — `role:viewer`
  * answers `200` with `trigger: "operator:targeted"`. A role's UUID, its bare name,
- * and a key matching nothing all answer `500` with a `message` envelope rather
- * than the `detail` every other refusal here uses, which is the signature of an
- * unhandled exception (#1555). Test 2 asserts the correct behaviour and is
- * therefore EXPECTED RED.
+ * and a key matching nothing answer `422` with a `detail` that echoes the key and
+ * names the casbin format. On the 2026-08-18 build they answered `500` with a
+ * generic `message` envelope — an unhandled exception (#1555), fixed on the
+ * 2026-08-27 build — so test 2 guards the corrected contract.
  *
  * The audit filters are asserted from the POSITIVE side only. An invalid filter
  * value answers `200` with an empty envelope, indistinguishable in shape from
- * "nothing matched" (#1555) — an auditor with a typo gets a clean bill of health.
+ * "nothing matched" (#1555, LE-2772) — an auditor with a typo gets a clean bill of health.
  * That is a real hazard, and it is also a product choice between `422` and empty:
  * pinning today's answer as correct would be this repo deciding it by assertion,
  * so it is documented and the tests assert only that a valid filter genuinely
@@ -71,8 +72,9 @@ test.describe("Enterprise — operator surfaces: scoped reconcile, audit filters
       const bogusType = await reconcileEntities(request, superuserAuth, [
         { entity_type: "bogus", entity_key: "role:viewer" },
       ]);
-      // The enum IS validated — which is what makes the 500 in the next test a
-      // defect rather than this endpoint simply being unvalidated.
+      // The enum IS validated — the contrast that made the 500 #1555 recorded for
+      // an unmatched key a defect rather than this endpoint simply being
+      // unvalidated.
       expect(bogusType.status()).toBe(422);
       expect(await bogusType.text()).toContain("'role', 'assignment', 'team'");
 
@@ -90,14 +92,37 @@ test.describe("Enterprise — operator surfaces: scoped reconcile, audit filters
     "an unknown entity key is a client error, not a server error",
     { tag: ["@enterprise", "@api", "@regression", "@authz"] },
     async ({ request }) => {
-      // EXPECTED RED (#1555). A key that matches nothing answers 500 with a
-      // `message` envelope. The request is well-formed and its enum field passed
-      // validation, so the caller has no way to learn that the id they took from
-      // `GET /authz/roles` is the wrong identifier for this endpoint.
-      const unknown = await reconcileEntities(request, superuserAuth, [
-        { entity_type: "role", entity_key: "role:does-not-exist-anywhere" },
-      ]);
-      expect(unknown.status()).toBeLessThan(500);
+      // The wrong keys an operator actually sends are the ones this surface hands
+      // out: a role's UUID from `GET /authz/roles`, and its bare name. Both, and a
+      // casbin-shaped key that matches nothing, answered 500 until the 2026-08-27
+      // build (#1555).
+      const viewerId = (await builtinRoleIds(request, superuserAuth)).viewer;
+      expect(viewerId, "GET /authz/roles has no built-in viewer role").toBeTruthy();
+      const entityKeys = [viewerId, "viewer", "role:does-not-exist-anywhere"];
+
+      for (const entityKey of entityKeys) {
+        const response = await reconcileEntities(request, superuserAuth, [
+          { entity_type: "role", entity_key: entityKey },
+        ]);
+        const text = await response.text();
+        // A client error, bounded on BOTH sides: a 5xx is #1555's defect, and a
+        // 2xx would be the silent version of it — a reconcile of nothing
+        // reported as `outcome: "clean"`. `4xx` rather than `422` exactly,
+        // because the issue asked for "404 or 422" and that choice is not ours.
+        expect(response.status(), `${entityKey}: ${text}`).toBeGreaterThanOrEqual(400);
+        expect(response.status(), `${entityKey}: ${text}`).toBeLessThan(500);
+
+        // A `detail` string, not the generic `message` envelope an unhandled
+        // exception produces, and one that says WHICH key was refused.
+        const detail = (JSON.parse(text) as { detail?: unknown }).detail;
+        expect(typeof detail, `${entityKey}: ${text}`).toBe("string");
+        expect(detail as string).toContain(entityKey);
+        // For the UUID and the bare name, `role:` can only come from the format
+        // hint — the one thing that tells the operator the id they hold is the
+        // wrong identifier for this endpoint. (For the casbin-shaped key it is
+        // satisfied by the echo alone; the first two keys carry this assertion.)
+        expect(detail as string).toContain("role:");
+      }
     },
   );
 
