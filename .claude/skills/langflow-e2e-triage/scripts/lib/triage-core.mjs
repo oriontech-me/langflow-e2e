@@ -466,7 +466,9 @@ export function renderDedicatedIssueBody(input) {
   // would be a correct-looking link to the wrong place.
   if (umbrellaUrl != null) {
     const m = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/issues\/(\d+)$/.exec(String(umbrellaUrl).trim());
-    if (!m || Number(m[1]) !== Number(umbrella)) {
+    // Compared as written, not as a value: `issues/07` would pass a numeric check and
+    // then fail the validator, which requires the link to repeat the number it shows.
+    if (!m || m[1] !== String(Number(umbrella))) {
       throw new Error(`renderDedicatedIssueBody: umbrellaUrl must be the issue URL of umbrella #${umbrella}, got ${JSON.stringify(umbrellaUrl)}`);
     }
   }
@@ -496,11 +498,14 @@ export function renderDedicatedIssueBody(input) {
   }
 
   const runRef = run.run_url ? `[${run.run_id}](${run.run_url})` : `\`${run.run_id}\``;
-  // The first sentence is a contract: assertDedicatedIssueBody() and the
-  // deterministic pipeline both read "#N" from it, so the URL goes AFTER it.
+  // An umbrella in another repository is written as an explicit link, `[#N](url)`.
+  // A bare `#N` would autolink to THIS repository's #N and leave a cross-reference
+  // on its timeline; `\#N` does not stop GitHub's autolink (measured with the
+  // markdown API on 2026-09-28), an explicit link does. assertDedicatedIssueBody()
+  // accepts both forms, and requires the link to name the same number.
+  const umbrellaRef = umbrellaUrl != null ? `[#${umbrella}](${String(umbrellaUrl).trim()})` : `#${umbrella}`;
   const provenance =
-    `Spun out of daily-failure triage #${umbrella} (run ${runRef}, ${run.date}).` +
-    (umbrellaUrl != null ? ` Umbrella: ${String(umbrellaUrl).trim()}.` : '') +
+    `Spun out of daily-failure triage ${umbrellaRef} (run ${runRef}, ${run.date}).` +
     (provenanceNote.trim() ? ` ${provenanceNote.trim()}` : '');
 
   // The seam to the treatment layer. This issue tracks the *failure*; what is
@@ -593,8 +598,12 @@ export function assertDedicatedIssueBody(body, opts = {}) {
 
   // The date is matched explicitly: `\(run .+\)` accepted "(run 123, undefined)",
   // which shipped a provenance line that joins to nothing.
-  if (!/^Spun out of daily-failure triage #\d+ \(run .+, \d{4}-\d{2}-\d{2}\)\./m.test(text)) {
-    problems.push('missing or malformed provenance line (expected: "Spun out of daily-failure triage #N (run <id>, YYYY-MM-DD).")');
+  //
+  // The umbrella is `#N`, or `[#N](<issue URL of N>)` when it lives in another
+  // repository (#2081): the link has to name the same number it shows, or the line
+  // reads as one umbrella and points at another.
+  if (!/^Spun out of daily-failure triage (?:#\d+|\[#(\d+)\]\(https?:\/\/[^/\s)]+\/[^/\s)]+\/[^/\s)]+\/issues\/\1\)) \(run .+, \d{4}-\d{2}-\d{2}\)\./m.test(text)) {
+    problems.push('missing or malformed provenance line (expected: "Spun out of daily-failure triage #N (run <id>, YYYY-MM-DD).", with #N as [#N](<issue URL>) when the umbrella lives in another repository)');
   }
 
   if (!/`[^`\s]+\.spec\.ts:\d+`/.test(text)) {
@@ -852,6 +861,7 @@ export function buildDataset(rows, issues, opts = {}) {
       }
     : null;
 
+  const umbrellaIssue = matchUmbrella(issues, run.run_id);
   const newest = findNewestUmbrella(issues);
   const stale_history =
     newest && newest.date > run.date
@@ -866,12 +876,11 @@ export function buildDataset(rows, issues, opts = {}) {
       langflow_image: run.langflow_image,
       duration_ms: run.duration_ms,
     },
-    umbrella_issue: matchUmbrella(issues, run.run_id),
+    umbrella_issue: umbrellaIssue,
     // The matched issue's URL, when the listing carried one. It is what
     // renderDedicatedIssueBody() needs when the umbrella lives in another
     // repository than the dedicated issues (the VM lane); null otherwise.
-    umbrella_url:
-      (issues || []).find((i) => i.number === matchUmbrella(issues, run.run_id))?.url || null,
+    umbrella_url: (issues || []).find((i) => i.number === umbrellaIssue)?.url || null,
     guard_tripped: detectGuard(run, maxAutoRemove),
     stale_history,
     infra_classification_gap,

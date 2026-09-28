@@ -1093,36 +1093,38 @@ test('declared_fix_candidates count passes per variant, and never form a provide
 // --- an umbrella in another repository ---------------------------------------
 //
 // The VM lane opens its umbrella on the destination host, and dedicated issues are
-// opened here. A bare "#7" in a dedicated issue then resolves to THIS repository's
-// #7 (on 2026-09-28, an unrelated closed PR), so the body has to carry the link.
+// opened here. A bare "#7" in a dedicated issue then autolinks to THIS repository's
+// #7 (on 2026-09-28, an unrelated closed PR) and leaves a cross-reference on its
+// timeline. `\#7` does not stop the autolink; an explicit `[#7](url)` does.
 
 const UMBRELLA_URL = 'https://github.example.com/Org/dest/issues/744';
 
-test('renderDedicatedIssueBody links an umbrella that lives in another repository', () => {
+test('renderDedicatedIssueBody writes a cross-repository umbrella as an explicit link', () => {
   const body = renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: UMBRELLA_URL });
-  const first = body.split('\n')[0];
-  assert.match(
-    first,
-    /^Spun out of daily-failure triage #744 \(run \[30261409427\]\(https:\/\/gh\/runs\/30261409427\), 2026-07-27\)\. Umbrella: https:\/\/github\.example\.com\/Org\/dest\/issues\/744\.$/,
+  assert.equal(
+    body.split('\n')[0],
+    'Spun out of daily-failure triage [#744](https://github.example.com/Org/dest/issues/744) (run [30261409427](https://gh/runs/30261409427), 2026-07-27).',
   );
+  assert.ok(!/triage #744/.test(body), 'no bare #744 left to autolink to this repository');
   assert.deepEqual(assertDedicatedIssueBody(body), [], 'the provenance contract still holds');
 });
 
-test('the link comes before a provenance note, which is kept', () => {
+test('a provenance note still follows the provenance sentence', () => {
   const body = renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: UMBRELLA_URL, provenanceNote: 'Actions had not run.' });
-  assert.match(body.split('\n')[0], /issues\/744\. Actions had not run\.$/);
+  assert.match(body.split('\n')[0], /, 2026-07-27\)\. Actions had not run\.$/);
 });
 
-test('without umbrellaUrl nothing is added, as the Actions lane needs', () => {
+test('without umbrellaUrl nothing changes, as the Actions lane needs', () => {
   const body = renderDedicatedIssueBody({ ...CLUSTER });
   assert.equal(renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: null }), body);
   assert.equal(renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: undefined }), body);
-  assert.ok(!body.includes('Umbrella:'));
+  assert.match(body, /^Spun out of daily-failure triage #744 \(run /);
 });
 
 test('renderDedicatedIssueBody refuses an umbrellaUrl for another issue, or not an issue URL', () => {
   for (const bad of [
     'https://github.example.com/Org/dest/issues/745',
+    'https://github.example.com/Org/dest/issues/0744',
     'https://github.example.com/Org/dest/pull/744',
     'github.example.com/Org/dest/issues/744',
     '#744',
@@ -1132,6 +1134,22 @@ test('renderDedicatedIssueBody refuses an umbrellaUrl for another issue, or not 
       () => renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: bad }),
       /umbrellaUrl must be the issue URL of umbrella #744/,
       `accepted ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('the validator accepts a linked umbrella only when the link names the same number', () => {
+  const good = renderDedicatedIssueBody({ ...CLUSTER, umbrellaUrl: UMBRELLA_URL });
+  const swap = (from, to) => good.replace(from, to);
+  assert.deepEqual(assertDedicatedIssueBody(good), []);
+  for (const [why, body] of [
+    ['a link to another issue', swap('/issues/744)', '/issues/745)')],
+    ['a link that is not an issue URL', swap('/issues/744)', '/pull/744)')],
+    ['an escaped number, which GitHub still autolinks', swap('[#744](https://github.example.com/Org/dest/issues/744)', '\\#744')],
+  ]) {
+    assert.ok(
+      assertDedicatedIssueBody(body).some((p) => p.includes('provenance line')),
+      `${why} passed the provenance check`,
     );
   }
 });
