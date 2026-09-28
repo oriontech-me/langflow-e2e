@@ -206,7 +206,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "every provider row and every capability declares its full field set, with each enum-valued field inside its declared domain",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -313,7 +313,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "every capability's component_ref resolves to a catalog entry that identifies itself by the same namespaced id",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`, `GET ${CATALOG}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -381,7 +381,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "a provider's enabled flag and connection count are derived from its connections, and only its own",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         `GET ${MANIFEST}`,
@@ -461,7 +461,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "the manifest and the effective policy agree that the instance is unrestricted",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`, `GET ${POLICY}`]);
       const headers = { Authorization: await getAuthToken(request) };
@@ -517,7 +517,7 @@ test.describe("Integrations API — capability manifest and effective policy", (
 
   test(
     "every capability is governable — its policy keys use the grammar for its own provider, and its deployment contexts are declared",
-    { tag: ["@stable", "@api", "@integrations"] },
+    { tag: ["@api", "@integrations"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([`GET ${MANIFEST}`]);
       const headers = { Authorization: await getAuthToken(request) };
