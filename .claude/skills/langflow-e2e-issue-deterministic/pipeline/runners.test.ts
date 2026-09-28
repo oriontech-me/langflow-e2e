@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { PwStats } from './types.ts'
-import { parsePwJson, pwRunResult, enumerateTests, enumerateTestEntries, enumerateRunnableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs } from './runners.ts'
+import { parsePwJson, pwRunResult, enumerateTests, enumerateTestEntries, enumerateRunnableTests, enumerateUnenumerableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs } from './runners.ts'
 
 test('filterScoutSpecs drops throwaway scout/tmp specs, keeps real ones', () => {
   const kept = filterScoutSpecs([
@@ -166,6 +166,100 @@ test('enumerateRunnableTests drops fixme/skip — a muted test cannot be force-f
     enumerateRunnableTests(SPEC_SRC),
     ['quarantined one', 'promoted one', 'untagged one'],
   )
+})
+
+// ---------- titles as Playwright reports them (#2043) ----------
+
+// The title the ENGINE produces for a literal — the oracle every case below is
+// checked against, so the expectation is never a second hand-written decoder.
+const runtimeValueOf = (literal: string): string =>
+  new Function(`"use strict"; return ${literal}`)() as string
+
+const specWithTitle = (literal: string) => `test(${literal}, { tag: ["@regression"] }, async () => {})`
+
+test('an escaped title is enumerated as the runtime title, not as its spelling (#2043)', () => {
+  // Measured on #2043: the source spelled `\\n` (an escaped backslash, then
+  // `n`), Playwright reported ONE backslash, `ff-run` recorded that, and the
+  // gate — comparing against the spelling — could never be satisfied.
+  const literal = String.raw`"should open Create Knowledge Base with the 1000 / 200 / \\n defaults"`
+  const titles = enumerateRunnableTests(specWithTitle(literal))
+  assert.deepEqual(titles, ['should open Create Knowledge Base with the 1000 / 200 / \\n defaults'])
+  assert.equal(titles[0], runtimeValueOf(literal))
+  assert.ok(!titles[0].includes('\\\\'), 'the spelling (two backslashes) must not survive')
+})
+
+test('every string-literal escape resolves to what the engine produces', () => {
+  const literals = [
+    String.raw`"tab\there, newline\nthere, backslash \\ end"`,
+    String.raw`'it\'s quoted'`,
+    String.raw`"say \"hi\""`,
+    String.raw`"\u00e9 \u{1F600} \x41 \0 \v\f\b\r"`,
+    '"identity \\a \\d \\$ \\`"',
+    '"line \\\ncontinuation"',
+    String.raw`'mixed "double" and \'single\''`,
+  ]
+  for (const literal of literals) {
+    assert.deepEqual(
+      enumerateRunnableTests(specWithTitle(literal)),
+      [runtimeValueOf(literal)],
+      `title literal ${literal}`,
+    )
+  }
+})
+
+test('a no-substitution template title resolves too, an escaped ${ included', () => {
+  const literals = [
+    String.raw`${'`'}tab\t and \\n in a template${'`'}`,
+    String.raw`${'`'}escaped \${not a substitution}${'`'}`,
+    '`carriage\r\nreturn`',
+  ]
+  for (const literal of literals) {
+    assert.deepEqual(
+      enumerateRunnableTests(specWithTitle(literal)),
+      [runtimeValueOf(literal)],
+      `title literal ${JSON.stringify(literal)}`,
+    )
+  }
+})
+
+test('an escaped quote followed by a comma does not end the title', () => {
+  // The lazy capture used to stop at the first quote followed by `\s*,`, so
+  // `"say \"hi\", then leave"` was enumerated as `say \"hi\`.
+  const literal = String.raw`"say \"hi\", then leave"`
+  assert.deepEqual(enumerateRunnableTests(specWithTitle(literal)), ['say "hi", then leave'])
+})
+
+test('a title with a ${} substitution is unenumerable, never a required literal', () => {
+  const src = [
+    'for (const provider of PROVIDERS) {',
+    '  test(`answers with ${provider}`, { tag: ["@regression"] }, async () => {})',
+    '}',
+    'test("literal sibling", async () => {})',
+    'test.fixme(`muted ${x}`, async () => {})',
+  ].join('\n')
+  assert.deepEqual(enumerateRunnableTests(src), ['literal sibling'])
+  // Reported in its source spelling, so the refusal names what the author wrote;
+  // a muted one is still not in play.
+  assert.deepEqual(enumerateUnenumerableTests(src), ['answers with ${provider}'])
+  const entries = enumerateTestEntries(src)
+  assert.deepEqual(entries.map(e => e.titleResolved), [false, true, false])
+})
+
+test('a capture that is not one literal is unenumerable, never a cooked title', () => {
+  // The regex runs on to the next quote followed by a comma, so an expression
+  // title — or prose such as "a test (`rule`)" in a comment, which a real spec
+  // (global-variables-crud) carries — yields a span with an unescaped delimiter
+  // or a line break in it. Cooking that would invent a title nobody declared.
+  const expression = 'test("prefix " + name, { tag: ["@a", "@b"] }, async () => {})'
+  const prose = [
+    '// a test (`playwright/no-conditional-in-test`). The error is kept',
+    '// on the message.',
+    'throw new Error(`"${name}" never rendered`, { cause })',
+  ].join('\n')
+  for (const src of [expression, prose]) {
+    assert.deepEqual(enumerateRunnableTests(src), [], src)
+    assert.equal(enumerateUnenumerableTests(src).length, 1, src)
+  }
 })
 
 // ---------- declared-ambient backend errors (#1422) ----------

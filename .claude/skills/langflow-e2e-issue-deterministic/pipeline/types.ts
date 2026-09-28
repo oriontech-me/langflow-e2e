@@ -108,7 +108,13 @@ export interface ReproRate {
 }
 
 export interface TestEntry {
+  /**
+   * The title Playwright reports when `titleResolved`; otherwise the title as
+   * SPELLED in source (a `${}` substitution, or not a single literal).
+   */
   title: string
+  /** Escapes resolved: `title` equals the runtime title (#2067). */
+  titleResolved: boolean
   /** '', '.fixme', '.skip', '.only' or '.fail' as written in the source. */
   modifier: string
   tags: string[]

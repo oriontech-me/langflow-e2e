@@ -93,14 +93,23 @@ export function checkQaDiff(diff: string): string[] {
   return problems
 }
 
+/**
+ * `titles` are runtime titles, compared exactly against what `ff-run` recorded
+ * (#2067); `unenumerable` are captures whose runtime title the source cannot
+ * spell (a `${}` substitution, or not one literal), refused by name — reporting
+ * them as a missing force-fail asked for an entry no `ff-run` could produce.
+ */
 export function checkForceFailCoverage(
-  required: Array<{ file: string; titles: string[] }>, ff: FFEntry[],
+  required: Array<{ file: string; titles: string[]; unenumerable: string[] }>, ff: FFEntry[],
 ): string[] {
   const problems: string[] = []
-  for (const { file, titles } of required) {
+  for (const { file, titles, unenumerable } of required) {
     for (const title of titles) {
       const hit = ff.find(e => e.file === file && e.test === title && e.unexpected > 0)
       if (!hit) problems.push(`no verified force-fail for test "${title}" in ${file}`)
+    }
+    for (const spelling of unenumerable) {
+      problems.push(`cannot force-fail test "${spelling}" in ${file}: its title is not a plain string literal — a \`\${}\` substitution, an expression, or text the parser matched that is not a test() call at all (e.g. "test (" in a comment) — so no runtime title can be read from source and no ff-run entry can match it. Give the test a literal title, or reword the matched text.`)
     }
   }
   return problems
