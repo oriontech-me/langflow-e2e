@@ -42,9 +42,12 @@ test.afterEach(async ({ page }) => {
 });
 
 test.describe("Flow Lock Feature", () => {
-  test(
+  // Quarantined for #2075: recurrent first-attempt flake on the VM daily
+  // (2026-09-07, 2026-09-28), lock-flow-switch stays "unchecked" after the
+  // toggle. Lifting it (drop `test.fixme`, restore `@stable`) is #2075's deliverable.
+  test.fixme(
     "should lock and unlock a flow and verify UI changes",
-    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    { tag: ["@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       const flowId = await openIsolatedBasicPrompting(page);
       const auth = await getAuthToken(page.request);
