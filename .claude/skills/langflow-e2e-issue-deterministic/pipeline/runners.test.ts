@@ -247,19 +247,207 @@ test('a title with a ${} substitution is unenumerable, never a required literal'
 
 test('a capture that is not one literal is unenumerable, never a cooked title', () => {
   // The regex runs on to the next quote followed by a comma, so an expression
-  // title — or prose such as "a test (`rule`)" in a comment, which a real spec
-  // (global-variables-crud) carries — yields a span with an unescaped delimiter
-  // or a line break in it. Cooking that would invent a title nobody declared.
+  // title yields a span with an unescaped delimiter or a line break in it.
+  // Cooking that would invent a title nobody declared.
   const expression = 'test("prefix " + name, { tag: ["@a", "@b"] }, async () => {})'
-  const prose = [
-    '// a test (`playwright/no-conditional-in-test`). The error is kept',
-    '// on the message.',
-    'throw new Error(`"${name}" never rendered`, { cause })',
+  assert.deepEqual(enumerateRunnableTests(expression), [])
+  assert.equal(enumerateUnenumerableTests(expression).length, 1)
+})
+
+test('an expression title does not swallow the test declared after it', () => {
+  // The span of an unresolvable capture ends at the next quote followed by a
+  // comma — here inside the NEXT test's title — so resuming the scan after it
+  // made the literal test below silently absent.
+  const src = [
+    'test("prefix " + name, async () => {})',
+    'test("the literal one after it", async () => {})',
   ].join('\n')
-  for (const src of [expression, prose]) {
+  assert.deepEqual(enumerateRunnableTests(src), ['the literal one after it'])
+  assert.equal(enumerateUnenumerableTests(src).length, 1)
+})
+
+// ---------- only code declares a test (#2068) ----------
+
+test('prose in a comment is not a test (global-variables-crud shape)', () => {
+  // The real spec: the comment's "a test (`" opened a capture that ran ~50 lines
+  // to the next backtick followed by a comma, inside a template in a helper, and
+  // the gate then refused a "test" nobody declared — FORCE_FAIL could not close
+  // for any issue touching that spec.
+  const src = [
+    '// Resolve a waiter, turning a timeout into a verdict of its own. Lives',
+    '// outside the test bodies so the branch is not a conditional in',
+    '// a test (`playwright/no-conditional-in-test`). The underlying error is kept',
+    '// on the message.',
+    'async function reveal(page, name) {',
+    '  await expect.poll(async () => true, {',
+    '    timeout: 15000,',
+    '    message: `"${name}" never rendered in the variables table`,',
+    '  }).toBe(true)',
+    '}',
+    'test(',
+    '  "create a Generic type global variable",',
+    '  { tag: ["@stable", "@release"] },',
+    '  async ({ page }) => {},',
+    ')',
+  ].join('\n')
+  const entries = enumerateTestEntries(src)
+  assert.deepEqual(entries.map(e => e.title), ['create a Generic type global variable'])
+  assert.deepEqual(entries[0].tags, ['@stable', '@release'])
+  assert.deepEqual(enumerateUnenumerableTests(src), [])
+})
+
+test('a commented-out test is not a test', () => {
+  const src = [
+    '// test("retired in a line comment", async () => {})',
+    '/* test("retired in a block comment", { tag: ["@stable"] }, async () => {}) */',
+    '/**',
+    ' * test(`retired in a JSDoc`, async () => {})',
+    ' */',
+    'test("the live one", async () => {})',
+  ].join('\n')
+  assert.deepEqual(enumerateTestEntries(src).map(e => e.title), ['the live one'])
+})
+
+test('a test() spelled inside a string or template literal is not a test', () => {
+  const src = [
+    'const CASES = [',
+    `  { code: 'test("inside single quotes", async () => {})', lang: "ts" },`,
+    '  { code: `test("inside a template", async () => {})`, lang: "ts" },',
+    ']',
+    'test("the live one", async () => {})',
+  ].join('\n')
+  assert.deepEqual(enumerateTestEntries(src).map(e => e.title), ['the live one'])
+})
+
+test('a comment before the title does not hide the test (mcp-client-regression shape)', () => {
+  // The real spec is `@stable` and was invisible to every enumeration: the regex
+  // expected a quote right after `test(` and met `//`.
+  const src = [
+    'test(',
+    '  // Re-added @stable (#463): the hard failure was cold `npx',
+    '  // server-everything` startup, "fixed" upstream.',
+    '  "selects get-sum tool, provides numeric inputs, and verifies sum in output",',
+    '  { tag: ["@mcp", "@regression", "@stable"] },',
+    '  async ({ page }) => {},',
+    ')',
+  ].join('\n')
+  const entries = enumerateTestEntries(src)
+  assert.deepEqual(entries.map(e => e.title),
+    ['selects get-sum tool, provides numeric inputs, and verifies sum in output'])
+  assert.deepEqual(entries[0].tags, ['@mcp', '@regression', '@stable'])
+  assert.equal(entries[0].titleResolved, true)
+})
+
+test('a comment in the options object does not lend its tags to the test', () => {
+  const src = [
+    'test(',
+    '  "promoted one",',
+    '  { /* was: tag: ["@stable"] */ tag: ["@regression"] },',
+    '  async () => {},',
+    ')',
+  ].join('\n')
+  assert.deepEqual(enumerateTestEntries(src)[0].tags, ['@regression'])
+})
+
+test('URLs, regex literals and divisions are not mistaken for comments or strings', () => {
+  // The comment scan must know literals: a `//` inside a title is not a comment,
+  // and a quote inside a regex literal must not open a string that would swallow
+  // the tests after it — both would silently drop a real test.
+  // Each line hides its test if the lexer misjudges it.
+  const src = [
+    'test("fetches http://example.com/a//b", async () => {})',
+    'const FENCE = /```json/; test("after a regex holding backticks", async () => {}); const END = /`/',
+    'const r = a / b; test("between two divisions", async () => {}); const s = c / d',
+    'function f(s) { return /`/.test(s) }',
+    'test("after a regex that follows return", async () => {}) // closing ` ',
+  ].join('\n')
+  assert.deepEqual(enumerateTestEntries(src).map(e => e.title), [
+    'fetches http://example.com/a//b', 'after a regex holding backticks',
+    'between two divisions', 'after a regex that follows return',
+  ])
+})
+
+test('a comma or a template inside a ${} substitution does not end the title', () => {
+  // The title is the first argument up to its TOP-LEVEL comma, so a substitution
+  // is code with brackets of its own — and may hold a template of its own.
+  const src = [
+    'test(`answers ${fmt(a, b)} and ${ok ? `yes, ${n}` : "no"}`, { tag: ["@regression"] }, async () => {})',
+    'test("the literal one after it", async () => {})',
+  ].join('\n')
+  assert.deepEqual(enumerateUnenumerableTests(src), ['answers ${fmt(a, b)} and ${ok ? `yes, ${n}` : "no"}'])
+  assert.deepEqual(enumerateTestEntries(src)[0].tags, ['@regression'])
+  assert.deepEqual(enumerateRunnableTests(src), ['the literal one after it'])
+})
+
+test('a regex the lexer misjudges costs at most its own line', () => {
+  // After `)` a `/` is read as a division, so this regex's quote opens a string.
+  // A string ends at its line break, or it would run on and hide the next test.
+  const src = [
+    'if (ok) /"/.test(s)',
+    'test("after a misjudged regex", async () => {})',
+  ].join('\n')
+  assert.deepEqual(enumerateTestEntries(src).map(e => e.title), ['after a misjudged regex'])
+})
+
+// ---------- a title held in a name (#2068) ----------
+
+test('a title held in a same-file const is enumerated as its value (api-coverage-gate shape)', () => {
+  // The real spec keeps the title in a constant so later tests can find the
+  // record by it. `TEST_RE` wanted a quote, so the test was absent from every
+  // enumeration — the gate never asked for its force-fail and never said so.
+  const src = [
+    'const UNFULFILLED_TITLE = "a declaration the test never issues fails it";',
+    'test(',
+    '  UNFULFILLED_TITLE,',
+    '  { tag: ["@stable", "@api"] },',
+    '  async ({ request, apiCoverage }) => {},',
+    ')',
+  ].join('\n')
+  const entries = enumerateTestEntries(src)
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].title, 'a declaration the test never issues fails it')
+  assert.equal(entries[0].titleResolved, true)
+  assert.deepEqual(entries[0].tags, ['@stable', '@api'])
+  assert.deepEqual(enumerateRunnableTests(src), ['a declaration the test never issues fails it'])
+})
+
+test('a title held in a name the source cannot resolve is unenumerable, never absent', () => {
+  const cases: Array<[string, string]> = [
+    ['import { SHARED_TITLE } from "./titles"\ntest(SHARED_TITLE, async () => {})', 'SHARED_TITLE'],
+    ['test(CASES.first, { tag: ["@regression"] }, async () => {})', 'CASES.first'],
+    ['const T = "a " + suffix;\ntest(T, async () => {})', 'T'],
+    ['let T = "reassignable";\ntest(T, async () => {})', 'T'],
+    ['const T = "one";\nfunction f() { const T = "two" }\ntest(T, async () => {})', 'T'],
+    ['const T = `with ${x}`;\ntest(T, async () => {})', 'T'],
+    ['import { T } from "./titles"\nfunction f() { const T = "local"; }\ntest(T, async () => {})', 'T'],
+  ]
+  for (const [src, spelling] of cases) {
     assert.deepEqual(enumerateRunnableTests(src), [], src)
-    assert.equal(enumerateUnenumerableTests(src).length, 1, src)
+    assert.deepEqual(enumerateUnenumerableTests(src), [spelling], src)
   }
+})
+
+test('a conditional skip/fixme/fail annotation inside a body is not a test', () => {
+  // Same `test.<modifier>(name, …)` shape as a declaration; only a declaration
+  // passes an options object or a callback after its first argument.
+  const src = [
+    'test("the only declaration", async () => {',
+    '  test.skip(gate.skip, gate.reason)',
+    '  test.skip(true, e.message)',
+    '  test.fixme(isMac, "flaky on mac")',
+    '  test.fail(cond, `known ${bug}`)',
+    '  test.skip(!pristine, skipReason)',
+    // Both from real specs (api-validation-redaction, assistant-ollama-provider):
+    // a parenthesised reason is not a callback, and a condition that starts
+    // with a string is not a title.
+    '  test.skip(verdict.available === false, (verdict as { skipReason?: string }).skipReason)',
+    '  test.skip("skipReason" in setup, "skipReason" in setup ? setup.skipReason : "")',
+    '})',
+    'test.fixme(MUTED_TITLE, async () => {})',
+  ].join('\n')
+  const entries = enumerateTestEntries(src)
+  assert.deepEqual(entries.map(e => [e.title, e.modifier]),
+    [['the only declaration', ''], ['MUTED_TITLE', '.fixme']])
 })
 
 // ---------- declared-ambient backend errors (#1422) ----------

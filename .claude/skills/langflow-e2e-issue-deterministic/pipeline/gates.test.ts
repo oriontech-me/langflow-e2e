@@ -126,6 +126,59 @@ test('a ${} title is refused as unenumerable, not reported as a missing force-fa
   assert.match(problems[0], /literal title/)
 })
 
+const forceFailRequiredOf = (file: string, source: string) => [{
+  file, titles: enumerateRunnableTests(source), unenumerable: enumerateUnenumerableTests(source),
+}]
+
+test('comment prose in a touched spec does not block FORCE_FAIL (#2068)', () => {
+  // global-variables-crud: "a test (`playwright/…`)" in a comment was captured
+  // as a test and refused as unenumerable, so FORCE_FAIL could never close for
+  // an issue touching the spec — whatever the author force-failed.
+  const file = 'global-variables-crud.spec.ts'
+  const source = [
+    '// Lives outside the test bodies so the branch is not a conditional in',
+    '// a test (`playwright/no-conditional-in-test`). The error is kept.',
+    'async function reveal(name) {',
+    '  await expect.poll(check, { message: `"${name}" never rendered`, }).toBe(true)',
+    '}',
+    'test("create a Generic type global variable", { tag: ["@stable"] }, async () => {})',
+  ].join('\n')
+  const ff = [{
+    file, test: 'create a Generic type global variable', mutation: 'inverted assert', unexpected: 1, at: 'x',
+  }]
+  assert.deepEqual(checkForceFailCoverage(forceFailRequiredOf(file, source), ff), [])
+})
+
+test('a test titled by a const is required to be force-failed, never skipped (#2068)', () => {
+  // api-coverage-gate: `test(UNFULFILLED_TITLE, …)` was absent from the
+  // requirement, so the gate never asked for it and never said it had not.
+  const file = 'api-coverage-gate.spec.ts'
+  const source = [
+    'const UNFULFILLED_TITLE = "a declaration the test never issues fails it";',
+    'test(',
+    '  UNFULFILLED_TITLE,',
+    '  { tag: ["@stable", "@api"] },',
+    '  async ({ request, apiCoverage }) => {},',
+    ')',
+  ].join('\n')
+  const required = forceFailRequiredOf(file, source)
+  assert.deepEqual(checkForceFailCoverage(required, []), [
+    `no verified force-fail for test "a declaration the test never issues fails it" in ${file}`,
+  ])
+  const ff = [{
+    file, test: 'a declaration the test never issues fails it', mutation: 'declared a third op', unexpected: 1, at: 'x',
+  }]
+  assert.deepEqual(checkForceFailCoverage(required, ff), [])
+})
+
+test('a test titled by an imported name is refused by name, not silently skipped (#2068)', () => {
+  const file = 'shared-title.spec.ts'
+  const source = 'import { SHARED_TITLE } from "./titles"\ntest(SHARED_TITLE, async () => {})'
+  const problems = checkForceFailCoverage(forceFailRequiredOf(file, source), [])
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /cannot force-fail test "SHARED_TITLE"/)
+})
+
 test('mutation markers must be reverted', () => {
   const dirty = [{ file: 'a.spec.ts', diff: '+  expect(1).toBe(2) // FF-MUTATION' }]
   assert.ok(checkNoMutationMarkers(dirty).length > 0)

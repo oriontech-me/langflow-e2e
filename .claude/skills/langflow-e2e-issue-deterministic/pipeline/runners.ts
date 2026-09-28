@@ -200,11 +200,230 @@ export function countsAsClean(r: RunRecord): boolean {
   return c === 'clean' || c === 'clean-ambient'
 }
 
-// A backslash is only ever consumed together with the character it escapes, so
-// an escaped quote can never be taken for the closing one — the plain lazy
-// `[\s\S]*?` cut `"say \"hi\", then"` at the `\"` followed by a comma.
-const TEST_RE =
-  /(?<![\w.$])test(\.only|\.fixme|\.fail|\.skip)?\s*\(\s*(['"`])((?:\\[\s\S]|[^\\])*?)\2\s*,/g
+interface ScannedSource {
+  /** The source with every comment blanked to spaces; line breaks and offsets kept. */
+  code: string
+  /** 1 at every offset inside a string, template-text or regex literal. */
+  literal: Uint8Array
+  /** Start offset of each string or template literal → the offset just past it. */
+  literalEnd: Map<number, number>
+}
+
+// After one of these words a `/` opens a regex literal, not a division.
+const REGEX_AFTER_WORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw',
+  'case', 'do', 'else', 'yield', 'await',
+])
+
+/**
+ * Tell code from comments and literals, so a `test(` counts only where it is
+ * code (#2068): prose such as "a test (`rule`)" in a comment, a commented-out
+ * test and a snippet in a string are not declarations, while a `//` inside a
+ * title (a URL) is not a comment and a comment between `test(` and its title
+ * does not hide the test.
+ *
+ * A lexer, not a parser. Whether a `/` opens a regex literal is read from the
+ * previous significant character, which misjudges a regex right after `)` or
+ * `}` and a division right after `++`/`--`. A string a misjudgment opens ends at
+ * its line break, so one costs at most its own line; over every spec in the
+ * repo the scan kept every test the old regex found (#2068).
+ */
+function scanSource(source: string): ScannedSource {
+  const n = source.length
+  const chars = source.split('')
+  const literal = new Uint8Array(n)
+  const literalEnd = new Map<number, number>()
+  const templateStarts: number[] = []
+  const substitutions: number[] = [] // brace depth each open `${` closes back to
+  let depth = 0
+
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (chars[k] !== '\n' && chars[k] !== '\r') chars[k] = ' '
+  }
+  // Template text from `from` to the closing backtick or the next `${`; returns
+  // where code resumes. The `{` of `${` stays code, so brackets stay balanced.
+  const templateText = (from: number): number => {
+    let j = from
+    while (j < n) {
+      const c = source[j]
+      if (c === '\\') { j += 2; continue }
+      if (c === '`') {
+        literal.fill(1, from, j + 1)
+        literalEnd.set(templateStarts.pop()!, j + 1)
+        return j + 1
+      }
+      if (c === '$' && source[j + 1] === '{') {
+        literal.fill(1, from, j + 1)
+        substitutions.push(depth)
+        depth++
+        return j + 2
+      }
+      j++
+    }
+    literal.fill(1, from, n)
+    return n
+  }
+  const regexAllowed = (at: number): boolean => {
+    let k = at - 1
+    while (k >= 0 && /\s/.test(chars[k])) k--
+    if (k < 0) return true
+    const prev = chars[k]
+    if (/[\w$]/.test(prev)) {
+      let w = k
+      while (w > 0 && /[\w$]/.test(chars[w - 1])) w--
+      return REGEX_AFTER_WORDS.has(chars.slice(w, k + 1).join(''))
+    }
+    return !/[)\]}'"`]/.test(prev)
+  }
+  // Offset just past a regex literal opening at `at`, or -1 when none closes on its line.
+  const regexEnd = (at: number): number => {
+    let inClass = false
+    for (let j = at + 1; j < n; j++) {
+      const c = source[j]
+      if (c === '\n' || c === '\r') return -1
+      if (c === '\\') { j++; continue }
+      if (inClass) { if (c === ']') inClass = false; continue }
+      if (c === '[') inClass = true
+      else if (c === '/') {
+        let end = j + 1
+        while (end < n && /[\w$]/.test(source[end])) end++
+        return end
+      }
+    }
+    return -1
+  }
+
+  let i = 0
+  while (i < n) {
+    const c = source[i]
+    const next = source[i + 1]
+    if (c === '/' && next === '/') {
+      let end = i
+      while (end < n && source[end] !== '\n' && source[end] !== '\r') end++
+      blank(i, end)
+      i = end
+    } else if (c === '/' && next === '*') {
+      const close = source.indexOf('*/', i + 2)
+      const end = close === -1 ? n : close + 2
+      blank(i, end)
+      i = end
+    } else if (c === "'" || c === '"') {
+      // An unterminated string ends at its line break, so one stray quote
+      // cannot swallow the rest of the file.
+      let end = i + 1
+      while (end < n && source[end] !== c && source[end] !== '\n' && source[end] !== '\r') {
+        end += source[end] === '\\' ? 2 : 1
+      }
+      if (source[end] === c) end++
+      literal.fill(1, i, end)
+      literalEnd.set(i, end)
+      i = end
+    } else if (c === '`') {
+      templateStarts.push(i)
+      literal[i] = 1
+      i = templateText(i + 1)
+    } else {
+      const rx = c === '/' && regexAllowed(i) ? regexEnd(i) : -1
+      if (rx !== -1) {
+        literal.fill(1, i, rx)
+        i = rx
+        continue
+      }
+      if (c === '{') depth++
+      else if (c === '}') {
+        depth--
+        if (substitutions.length > 0 && substitutions[substitutions.length - 1] === depth) {
+          substitutions.pop()
+          i = templateText(i + 1)
+          continue
+        }
+      }
+      i++
+    }
+  }
+  return { code: chars.join(''), literal, literalEnd }
+}
+
+/**
+ * The first argument of the call whose `(` ends just before `open`, as
+ * [start, end) up to its top-level comma — or null when the call closes first.
+ * Brackets inside literals do not count.
+ */
+function firstArgument(scan: ScannedSource, open: number): [number, number] | null {
+  let depth = 0
+  for (let j = open; j < scan.code.length; j++) {
+    if (scan.literal[j]) continue
+    const c = scan.code[j]
+    if (c === '(' || c === '[' || c === '{') depth++
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth === 0) return null
+      depth--
+    } else if (c === ',' && depth === 0) return [open, j]
+  }
+  return null
+}
+
+/**
+ * Whether the argument starting at `from` is an options object or a callback —
+ * what a declaration passes after its title and an annotation such as
+ * `test.skip(cond, (x as T).reason)` never does.
+ */
+function opensDeclarationBody(scan: ScannedSource, from: number): boolean {
+  const rest = scan.code.slice(from)
+  const lead = rest.length - rest.trimStart().length
+  if (/^(?:\{|async\b|function\b|[A-Za-z_$][\w$]*\s*=>)/.test(rest.slice(lead))) return true
+  if (rest[lead] !== '(') return false
+  let depth = 0
+  for (let j = from + lead; j < scan.code.length; j++) {
+    if (scan.literal[j]) continue
+    const c = scan.code[j]
+    if (c === '(' || c === '[' || c === '{') depth++
+    else if ((c === ')' || c === ']' || c === '}') && --depth === 0) {
+      return /^\s*=>/.test(scan.code.slice(j + 1))
+    }
+  }
+  return false
+}
+
+const TEST_HEAD_RE = /(?<![\w.$])test(\.only|\.fixme|\.fail|\.skip)?\s*\(/g
+const NAME_RE = /^[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*$/
+const QUOTES = new Set(["'", '"', '`'])
+
+/**
+ * The string literal spanning exactly [start, end), as [body, quote] — or null
+ * when the span is anything else (an expression, a name, an unterminated string).
+ */
+function wholeLiteral(scan: ScannedSource, start: number, end: number): [string, string] | null {
+  const quote = scan.code[start]
+  if (!QUOTES.has(quote) || scan.literalEnd.get(start) !== end || end - start < 2) return null
+  if (scan.code[end - 1] !== quote) return null
+  return [scan.code.slice(start + 1, end - 1), quote]
+}
+
+/**
+ * The runtime value of `name` when this file binds it exactly once, as
+ * `const name = <one string literal>;` — otherwise null. An import, a `let`, a
+ * second declaration (a shadow) or an initializer that is more than one literal
+ * leaves the source unable to say. Not a scope analysis: a parameter or a
+ * destructured binding of the same name is not seen, and a wrong value costs a
+ * force-fail `ff-run` can never record, never a skipped one.
+ */
+function resolveConstTitle(scan: ScannedSource, name: string): string | null {
+  const id = name.replace(/\$/g, '\\$')
+  const decls = [...scan.code.matchAll(
+    new RegExp(`(?<![\\w.$])(const|let|var|function|class)\\s+${id}(?![\\w$])`, 'g'),
+  )].filter(m => !scan.literal[m.index])
+  if (decls.length !== 1 || decls[0][1] !== 'const') return null
+  if (new RegExp(`(?<![\\w.$])import\\b[^;]*(?<![\\w.$])${id}(?![\\w$])`).test(scan.code)) return null
+  const at = decls[0].index + decls[0][0].length
+  const eq = /^\s*=\s*/.exec(scan.code.slice(at))
+  if (!eq) return null
+  const start = at + eq[0].length
+  const end = scan.literalEnd.get(start)
+  if (end === undefined || !/^\s*;/.test(scan.code.slice(end))) return null
+  const lit = wholeLiteral(scan, start, end)
+  return lit ? cookTitle(lit[0], lit[1]) : null
+}
 
 const SIMPLE_ESCAPES: Record<string, string> = {
   n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v',
@@ -248,9 +467,9 @@ function cookEscape(body: string, i: number): [string, number] | null {
  * `ff-run` records the RUNTIME title, so the force-fail gate has to enumerate
  * the same thing: comparing the spelling made a `\\n` in a title (one
  * backslash at runtime) unsatisfiable (#2043, #2067). Null means a template with a
- * `${}` substitution, or a capture that is not one literal — an unescaped
- * delimiter or line break inside quotes is the regex having run past an
- * expression like `"a " + b`.
+ * `${}` substitution or an escape strict code cannot contain. The unescaped
+ * delimiter and line-break checks are a guard only: `scanSource` hands over one
+ * whole literal (#2068).
  */
 function cookTitle(body: string, quote: string): string | null {
   const template = quote === '`'
@@ -286,11 +505,43 @@ function cookTitle(body: string, quote: string): string | null {
  * Title, modifier and tags of every `test(...)` in a spec file. Tags are read
  * from the options object between the title and the callback, so a quarantine
  * (`test.fixme`) and a missing `@stable` are both machine-checkable.
+ *
+ * Only code declares a test: a `test(` in a comment or a literal is skipped
+ * (#2068). The title is the first argument up to its top-level comma — a string
+ * literal, a name bound to one in this file, or else unenumerable in its source
+ * spelling, so a title held in a name is reported rather than absent (#1012).
  */
 export function enumerateTestEntries(source: string): TestEntry[] {
+  const scan = scanSource(source)
+  const { code } = scan
   const entries: TestEntry[] = []
-  for (const m of source.matchAll(TEST_RE)) {
-    const after = source.slice(m.index + m[0].length)
+  for (const m of code.matchAll(TEST_HEAD_RE)) {
+    if (scan.literal[m.index]) continue
+    const arg = firstArgument(scan, m.index + m[0].length)
+    if (!arg) continue
+    const text = code.slice(arg[0], arg[1])
+    const start = arg[0] + (text.length - text.trimStart().length)
+    const end = arg[1] - (text.length - text.trimEnd().length)
+    const spelling = code.slice(start, end)
+    const modifier = m[1] ?? ''
+    const after = code.slice(arg[1] + 1)
+
+    let title: string
+    let titleResolved: boolean
+    const lit = wholeLiteral(scan, start, end)
+    if (lit) {
+      const cooked = cookTitle(lit[0], lit[1])
+      title = cooked ?? lit[0]
+      titleResolved = cooked !== null
+    } else {
+      // `test.skip(cond, reason)` inside a body has a declaration's shape; only
+      // a declaration passes an options object or a callback next.
+      if (modifier && !opensDeclarationBody(scan, arg[1] + 1)) continue
+      const cooked = /^[A-Za-z_$][\w$]*$/.test(spelling) ? resolveConstTitle(scan, spelling) : null
+      title = cooked ?? (NAME_RE.test(spelling) ? spelling.replace(/\s+/g, '') : spelling)
+      titleResolved = cooked !== null
+    }
+
     // The options object always precedes the callback; stop at the callback so
     // the NEXT test's tags can never be attributed to this one.
     const stop = after.search(/async\s*\(|\(\s*\{|\(\s*\)\s*=>/)
@@ -299,8 +550,7 @@ export function enumerateTestEntries(source: string): TestEntry[] {
     const tags = tagBlock
       ? [...tagBlock[1].matchAll(/['"`]([^'"`]+)['"`]/g)].map(t => t[1])
       : []
-    const cooked = cookTitle(m[3], m[2])
-    entries.push({ title: cooked ?? m[3], titleResolved: cooked !== null, modifier: m[1] ?? '', tags })
+    entries.push({ title, titleResolved, modifier, tags })
   }
   return entries
 }
@@ -328,7 +578,8 @@ export function enumerateRunnableTests(source: string): string[] {
 
 /**
  * Runnable tests whose runtime title the source cannot spell — a `${}`
- * substitution, or a title that is not one literal — in their source spelling.
+ * substitution, an expression, or a name this file does not bind to one string
+ * literal (#2068) — in their source spelling.
  * No `ff-run` entry can ever match one, so the gate refuses them by name
  * instead of reporting a force-fail nobody could have recorded.
  */
