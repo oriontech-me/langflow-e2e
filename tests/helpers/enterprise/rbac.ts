@@ -613,9 +613,10 @@ export function grantRoleByName(
  * Reconcile scoped to named entities.
  *
  * `entityKey` is the CASBIN key (`role:viewer`), NOT the entity's UUID and not its
- * bare name — both of those answer `500` today (#1555), as does any key that
- * matches nothing, with a `message` envelope instead of `detail`. Returned raw so
- * the `500` can be asserted against rather than thrown inside the helper.
+ * bare name — both of those answer `422`, as does any key that matches nothing,
+ * with a `detail` naming the expected format (a `500` with a `message` envelope
+ * until the 2026-08-27 build, #1555). Returned raw so the refusal can be asserted
+ * against rather than thrown inside the helper.
  */
 export function reconcileEntities(
   request: APIRequestContext,
