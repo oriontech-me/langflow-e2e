@@ -33,7 +33,17 @@ const noIssues = process.argv.includes('--no-issues');
 // whose `origin` is this repository the match comes back null, and the umbrella has
 // to be typed in by hand. Measured 2026-09-28 against the real run: null from a
 // source-default checkout, #7 with this flag.
-const issuesRepo = arg('--issues-repo', null);
+//
+// Given without a value, it is REFUSED rather than read as absent: `arg()` treats an
+// empty value as missing, so `--issues-repo "$ISSUE_REPO"` with the variable unset
+// would quietly list the checkout's own repository, which is the wrong-repository
+// answer this flag exists to prevent. The same for a value that is another flag.
+const issuesRepoAt = process.argv.indexOf('--issues-repo');
+const issuesRepo = issuesRepoAt === -1 ? null : process.argv[issuesRepoAt + 1];
+if (issuesRepoAt !== -1 && (!issuesRepo || !issuesRepo.trim() || issuesRepo.startsWith('--'))) {
+  process.stderr.write('error: --issues-repo needs a repository ([HOST/]OWNER/REPO); refusing to fall back to the checkout\'s own\n');
+  process.exit(2);
+}
 
 // Daily-failure issues (open + closed) — the umbrella may already be closed.
 function fetchIssues() {

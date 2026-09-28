@@ -114,3 +114,12 @@ test("without --issues-repo gh keeps asking the current repository, as the Actio
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!r.ghArgs.includes("-R"), `no -R expected: ${r.ghArgs}`);
 });
+
+test("--issues-repo without a value is refused, never read as the checkout's own repository", () => {
+  for (const args of [["--issues-repo", ""], ["--issues-repo"], ["--issues-repo", "--no-issues"], ["--issues-repo", "  "]]) {
+    const r = runAgainstUmbrella(args);
+    assert.equal(r.status, 2, `${JSON.stringify(args)} exited ${r.status}`);
+    assert.match(r.stderr, /--issues-repo needs a repository/);
+    assert.equal(r.ghArgs, null, `${JSON.stringify(args)} still called gh`);
+  }
+});
