@@ -1592,7 +1592,7 @@
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 50 | 1 | 0 | 1 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
-| `core-functionality/templates/` | 46 | 34 | 0 | 0 | 12 |
+| `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 36 | 33 | 0 | 2 | 1 |
 | `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
@@ -1606,7 +1606,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 83 | 8 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **635 (87%)** | **37 (5%)** | **14 (2%)** | **48 (7%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **638 (87%)** | **37 (5%)** | **14 (2%)** | **45 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1622,7 +1622,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 702 `test()` calls carrying the `@stable` tag, distributed across 276 spec
+> 705 `test()` calls carrying the `@stable` tag, distributed across 277 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2188,6 +2188,9 @@
 - [x] <template.name> instantiates with the template's components, edges and notes → `templates-instantiate.spec.ts`
 - [x] the registered template set matches the committed baseline → `templates-registration.spec.ts`
 - [x] every declared absence is still absent → `templates-registration.spec.ts`
+- [x] should run Knowledge Retrieval and show the ingested sentinel in its reply → `templates-run-knowledge.spec.ts`
+- [x] should run Document Q&A with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
+- [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 
 #### flow-functionality/
 - [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
@@ -2413,5 +2416,5 @@
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 0 | 1 |
 | `core-functionality/project-management/` | 3 | 0 |
-| `core-functionality/templates/` | 0 | 12 |
+| `core-functionality/templates/` | 0 | 9 |
 | `ui-ux/` — Settings | 0 | 0 |
