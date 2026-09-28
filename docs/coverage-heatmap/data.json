@@ -132,51 +132,6 @@
    }
   },
   {
-   "area": "20 Memory Base",
-   "residualRisk": 8.8,
-   "inherentRisk": 16,
-   "probability": 4,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 9.3,
-    "weightedChurn": 1.74
-   },
-   "mitigationBulletDerived": 0.45,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 2,
-    "penalty": 0
-   },
-   "mitigation": 0.45,
-   "checklistBullets": 16,
-   "bulletStates": {
-    "x": 9,
-    " ": 7
-   },
-   "previous": {
-    "residualRisk": 8,
-    "inherentRisk": 8,
-    "mitigation": 0,
-    "checklistBullets": 15
-   },
-   "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12",
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 2,
-    "2026": 6
-   },
-   "upstreamBugCount": 10,
-   "specCounts": {
-    "specs": 2,
-    "stable": 2
-   }
-  },
-  {
    "area": "13/14 MCP",
    "residualRisk": 8,
    "inherentRisk": 25,
@@ -282,8 +237,8 @@
    "mitigation": 0.34,
    "checklistBullets": 104,
    "bulletStates": {
-    "!": 6,
-    "-": 83,
+    "!": 5,
+    "-": 84,
     " ": 13,
     "~": 2
    },
@@ -385,6 +340,52 @@
    },
    "upstreamBugCount": 31,
    "specCounts": null
+  },
+  {
+   "area": "20 Memory Base",
+   "residualRisk": 5.3,
+   "inherentRisk": 16,
+   "probability": 4,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
+   },
+   "mitigationBulletDerived": 0.67,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 3,
+    "penalty": 0
+   },
+   "mitigation": 0.67,
+   "checklistBullets": 16,
+   "bulletStates": {
+    "x": 13,
+    "!": 1,
+    " ": 2
+   },
+   "previous": {
+    "residualRisk": 8,
+    "inherentRisk": 8,
+    "mitigation": 0,
+    "checklistBullets": 15
+   },
+   "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12",
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
+   },
+   "upstreamBugCount": 10,
+   "specCounts": {
+    "specs": 3,
+    "stable": 3
+   }
   },
   {
    "area": "15 Canvas / UI",
@@ -746,50 +747,6 @@
    }
   },
   {
-   "area": "11 Templates / starter",
-   "residualRisk": 3.3,
-   "inherentRisk": 8,
-   "probability": 2,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.9,
-    "weightedChurn": 6.91
-   },
-   "mitigationBulletDerived": 0.59,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 3,
-    "penalty": 0
-   },
-   "mitigation": 0.59,
-   "checklistBullets": 46,
-   "bulletStates": {
-    "x": 34,
-    " ": 12
-   },
-   "previous": {
-    "residualRisk": 7.4,
-    "inherentRisk": 8,
-    "mitigation": 0.08,
-    "checklistBullets": 34
-   },
-   "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path",
-   "upstreamBugsByYear": {
-    "2025": 5,
-    "2026": 1
-   },
-   "upstreamBugCount": 6,
-   "specCounts": {
-    "specs": 3,
-    "stable": 3
-   }
-  },
-  {
    "area": "4 Auth / users",
    "residualRisk": 3.3,
    "inherentRisk": 15,
@@ -833,6 +790,50 @@
    "specCounts": {
     "specs": 9,
     "stable": 8
+   }
+  },
+  {
+   "area": "11 Templates / starter",
+   "residualRisk": 2.9,
+   "inherentRisk": 8,
+   "probability": 2,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.9,
+    "weightedChurn": 6.91
+   },
+   "mitigationBulletDerived": 0.64,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 4,
+    "penalty": 0
+   },
+   "mitigation": 0.64,
+   "checklistBullets": 46,
+   "bulletStates": {
+    "x": 37,
+    " ": 9
+   },
+   "previous": {
+    "residualRisk": 7.4,
+    "inherentRisk": 8,
+    "mitigation": 0.08,
+    "checklistBullets": 34
+   },
+   "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path",
+   "upstreamBugsByYear": {
+    "2025": 5,
+    "2026": 1
+   },
+   "upstreamBugCount": 6,
+   "specCounts": {
+    "specs": 4,
+    "stable": 4
    }
   },
   {
@@ -1219,9 +1220,9 @@
    }
   }
  ],
- "refreshed": "2026-09-25",
+ "refreshed": "2026-09-28",
  "refreshWindow": {
-  "testHealthSince": "2026-08-11",
+  "testHealthSince": "2026-08-14",
   "days": 45
  }
 }
