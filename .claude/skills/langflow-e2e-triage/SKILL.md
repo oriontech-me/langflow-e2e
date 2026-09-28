@@ -119,7 +119,7 @@ It auto-discovers the latest red daily-stable run from
 detects the mass-failure guard, matches the umbrella `[Daily Failure]` issue
 via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
-`umbrella_issue`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
+`umbrella_issue`, `umbrella_url`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
 (each carrying `provider`/`model`, `recurrence`, and an `actionable` flag),
 `declared_fix_candidates[]` (see Phase 3), `provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
 past run; `--results <json>` backfills provider labels + per-skip reasons.
@@ -146,16 +146,23 @@ node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs --resul
 Other flags: `--history <path>` (default `reports/daily-history.jsonl`),
 `--window <days>` (default `30`, the recurrence window).
 
-**A VM-lane run has its umbrella on another repository.** The VM lane opens the
-umbrella on its issue host (`ISSUE_HOST`/`ISSUE_REPO` in the lane's wrapper),
-while dedicated issues are opened here. Pass that repository as `gh -R` takes it,
-`--issues-repo <HOST/OWNER/REPO>`: without it `gh` asks whatever repository it
-resolves for the checkout. From a clone whose `origin` is this repository that is
-the wrong one, `umbrella_issue` comes back `null`, and the renderer refuses; a
-checkout that happens to resolve to the issue host finds it, which is why the
-flag is passed explicitly rather than left to the remotes. With it the dataset
-also carries `umbrella_url`, which Phase 7 hands to the renderer. Steps 4 and 5 of
-Phase 7 (comment on and close the umbrella) take the same `-R`.
+**A VM-lane run has its umbrella on another repository.** Tell it by the run id:
+the VM lane's is a UTC timestamp (`20260928T080030Z`), an Actions run's is a
+number. The VM lane opens its umbrella on `github.ibm.com/Langflow/e2e-qa`, while
+dedicated issues are opened here, so pass that repository:
+
+```bash
+node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs \
+  --run <vm-run-id> --issues-repo github.ibm.com/Langflow/e2e-qa
+```
+
+Without the flag `gh` asks whatever repository it resolves for the checkout. From
+a clone whose `origin` is this repository that is the wrong one: `umbrella_issue`
+comes back `null` and the renderer refuses. A checkout that happens to resolve to
+the issue host finds it, which is why the flag is passed explicitly rather than
+left to the remotes; given without a value, it is refused. With it the dataset
+also carries `umbrella_url`, which Phase 7 hands to the renderer, and every `gh`
+call on the umbrella in Phase 7 takes the same `-R`.
 
 Read the full dataset before doing anything else. Then report the panorama
 to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
@@ -373,9 +380,10 @@ Only after the user approves the plan:
    `gh issue create`, and apply the area-label mapping in
    `references/issue-templates.md`. When the umbrella lives in another
    repository (a VM-lane run, see Phase 1), pass `umbrellaUrl:
-   dataset.umbrella_url`: a bare `#N` here resolves to this repository's #N,
-   and the renderer then adds the link after the provenance line. Do not write
-   that link into `provenanceNote` by hand.
+   dataset.umbrella_url`: the renderer then writes the umbrella as
+   `[#N](<url>)`, because a bare `#N` here autolinks to this repository's #N and
+   leaves a cross-reference on its timeline. Do not write the link into
+   `provenanceNote` by hand.
 2. For each **enrich** row: `gh issue comment` on the matched existing issue,
    per the same reference's *Enrich vs Create Rule*. Match on the **normalized
    signature**, not on a description of the symptom.
@@ -394,7 +402,11 @@ Only after the user approves the plan:
    too, behind the same per-test confirmation. A guard-tripped day never
    suspends the quarantine of a **recurrent flake**.)
 4. Comment on the umbrella issue linking every dedicated issue just
-   created/enriched (so the umbrella's history stays a readable index).
+   created/enriched (so the umbrella's history stays a readable index):
+   `gh issue comment <umbrella_issue> -R <umbrella repo>`. For a VM-lane run
+   that is `-R github.ibm.com/Langflow/e2e-qa`, and the links must be full URLs,
+   since a bare `#N` there points at the issue host's own #N. Without `-R` the
+   command acts on this repository's #N, which is a different issue.
 5. **Close the umbrella only when the triage is truly complete:** every needed
    dedicated issue created/enriched — `declared-fix` rows included, so a
    possible fix day always reaches the issue that owns it — **and** every criterion-required `@stable`
@@ -402,7 +414,8 @@ Only after the user approves the plan:
    linked). If any required removal is still pending (not authorized, not
    opened), **leave the umbrella open** and tell the user exactly what remains
    — never close on a half-done triage. Only when all are satisfied:
-   `gh issue close <umbrella_issue>`.
+   `gh issue close <umbrella_issue> -R <umbrella repo>`, with the same `-R` as
+   step 4.
    **A guard-tripped run is not an exception:** the umbrella closes there too,
    with the day's noted-not-filed collateral (Phase 3) listed in the closing
    comment. The standing record is `reports/daily-history.jsonl` — recurrence is
