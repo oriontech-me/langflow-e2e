@@ -20,6 +20,10 @@
 //                      failure this whole lane keeps finding in itself.
 //   --date <YYYY-MM-DD>  Compare that day instead of the newest complete one.
 //   --ci-workflow / --vm-workflow  Override the two `workflow` ids.
+//   --ci-label / --vm-label  What the report calls each lane. Default: "Actions" and
+//                      "VM" for the default ids, else the id itself — so a pair that
+//                      is not Actions × VM (the image shadow's) is never printed as if
+//                      it were (#2091).
 //   --json             Emit the full result as JSON instead of the readable report.
 //   --allow-version-mismatch
 //                      Compare anyway when the two lanes tested different Langflow
@@ -41,6 +45,7 @@ import {
   selectRuns,
   compareRuns,
   renderReport,
+  laneLabels,
   DEFAULT_CI_WORKFLOW,
   DEFAULT_VM_WORKFLOW,
 } from "./lib/lane-verdict-diff.mjs";
@@ -86,6 +91,8 @@ export function parseArgs(argv) {
     date: null,
     ciWorkflow: DEFAULT_CI_WORKFLOW,
     vmWorkflow: DEFAULT_VM_WORKFLOW,
+    ciLabel: null,
+    vmLabel: null,
     json: false,
     allowVersionMismatch: false,
   };
@@ -100,10 +107,15 @@ export function parseArgs(argv) {
     else if (a === "--date") opts.date = need();
     else if (a === "--ci-workflow") opts.ciWorkflow = need();
     else if (a === "--vm-workflow") opts.vmWorkflow = need();
+    else if (a === "--ci-label") opts.ciLabel = need();
+    else if (a === "--vm-label") opts.vmLabel = need();
     else if (a === "--json") opts.json = true;
     else if (a === "--allow-version-mismatch") opts.allowVersionMismatch = true;
     else if (a === "--help" || a === "-h") opts.help = true;
     else throw new Error(`unknown option: ${a}`);
+  }
+  for (const [flag, v] of [["--ci-label", opts.ciLabel], ["--vm-label", opts.vmLabel]]) {
+    if (v !== null && !v.trim()) throw new Error(`${flag} needs a non-empty value`);
   }
   if (opts.date && !/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) {
     throw new Error(`--date must be YYYY-MM-DD, got "${opts.date}"`);
@@ -167,17 +179,19 @@ function main(argv) {
     );
   }
 
+  const labels = laneLabels(opts);
   const result = compareRuns({
     ...selected,
     ciWorkflow: opts.ciWorkflow,
     vmWorkflow: opts.vmWorkflow,
+    labels,
     allowVersionMismatch: opts.allowVersionMismatch,
   });
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({ sources: read, ...result }, null, 2) + "\n");
   } else {
-    process.stdout.write(renderReport(result, { sources: read }) + "\n");
+    process.stdout.write(renderReport(result, { sources: read, labels }) + "\n");
     if (!result.comparable && selected.datesAvailable.length) {
       process.stderr.write(
         `\nDates present in this series: ${selected.datesAvailable.join(", ")}\n`,

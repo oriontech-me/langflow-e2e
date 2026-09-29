@@ -42,6 +42,24 @@
 export const DEFAULT_CI_WORKFLOW = "daily-stable";
 export const DEFAULT_VM_WORKFLOW = "daily-stable-vm";
 
+/**
+ * The names the report gives the two lanes (#2091). The defaults are the two lanes this
+ * comparator was written for, so a default run prints exactly what it always printed.
+ * A lane selected by another workflow id is named by that id unless a label is given:
+ * the image shadow compares VM+image with VM+wheel and with Actions+image, and a
+ * report that called one of those "Actions" or "the VM" would be describing a pair of
+ * lanes other than the one it compared. `ciThe`/`vmThe` are the prose forms — "the VM
+ * served …", "Actions served …" — kept separate so the defaults' wording survives.
+ */
+export function laneLabels({ ciWorkflow = DEFAULT_CI_WORKFLOW, vmWorkflow = DEFAULT_VM_WORKFLOW, ciLabel, vmLabel } = {}) {
+  const ci = ciLabel || (ciWorkflow === DEFAULT_CI_WORKFLOW ? "Actions" : ciWorkflow);
+  const vm = vmLabel || (vmWorkflow === DEFAULT_VM_WORKFLOW ? "VM" : vmWorkflow);
+  // "VM" takes the article on either side; every other name, "Actions" included, is used
+  // as given.
+  const the = (name) => (name === "VM" ? "the VM" : name);
+  return { ci, vm, ciThe: the(ci), vmThe: the(vm) };
+}
+
 /** Parse a JSONL history file. Unreadable lines are reported, never skipped in silence. */
 export function parseHistory(text) {
   const entries = [];
@@ -512,8 +530,13 @@ export function compareRuns({
   // otherwise be told a row is missing under a name it never asked for.
   ciWorkflow = DEFAULT_CI_WORKFLOW,
   vmWorkflow = DEFAULT_VM_WORKFLOW,
+  // The report's names for the two lanes; see laneLabels. Not part of the result: its
+  // shape and values do not depend on them, only the prose in blockers and warnings
+  // does — and with the default ids that prose is what it always was.
+  labels = laneLabels({ ciWorkflow, vmWorkflow }),
   allowVersionMismatch = false,
 } = {}) {
+  const { ci: A, vm: V, ciThe: theA, vmThe: theV } = labels;
   const blockers = [];
   const warnings = [];
   let versionMismatch = null;
@@ -522,11 +545,11 @@ export function compareRuns({
   let versionStraddle = null;
   let suiteMismatch = null;
 
-  if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the Actions lane has nothing to compare against.`);
-  if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the VM lane did not record a run.`);
+  if (!ci) blockers.push(`no ${ciWorkflow} row for ${date ?? "that date"} - the ${A} lane has nothing to compare against.`);
+  if (!vm) blockers.push(`no ${vmWorkflow} row for ${date ?? "that date"} - the ${V} lane did not record a run.`);
   if (!ci || !vm) return { date, ci, vm, blockers, warnings, divergences: [], agreed: [], versionMismatch, versionStraddle, gateMismatch, listingMismatch, suiteMismatch, comparable: false };
 
-  for (const [label, row] of [["Actions", ci], ["VM", vm]]) {
+  for (const [label, row] of [[A, ci], [V, vm]]) {
     const errs = row.run_errors ?? [];
     if (errs.length) {
       blockers.push(
@@ -541,7 +564,7 @@ export function compareRuns({
   if (ciVersion && vmVersion && ciVersion !== vmVersion) {
     versionMismatch = { ci: ciVersion, vm: vmVersion, allowed: allowVersionMismatch };
     const what =
-      `the lanes tested DIFFERENT Langflow versions - Actions ${ciVersion}, VM ${vmVersion}. ` +
+      `the lanes tested DIFFERENT Langflow versions - ${A} ${ciVersion}, ${V} ${vmVersion}. ` +
       `Every product change between those two lands in this list as an environment difference.`;
     // The escape hatch exists because the day this fires is often a day somebody wants
     // to look at: `:latest` can move between the Actions pull and the VM's resolution,
@@ -557,8 +580,8 @@ export function compareRuns({
       !ciVersion && !vmVersion
         ? "neither row carries"
         : !ciVersion
-          ? "the Actions row does not carry"
-          : "the VM row does not carry";
+          ? `the ${A} row does not carry`
+          : `the ${V} row does not carry`;
     warnings.push(
       `version parity UNVERIFIED: ${missing} a langflow_version. Rows written before that field existed ` +
         `lack it; the comparison below assumes a parity it cannot show.`,
@@ -582,8 +605,8 @@ export function compareRuns({
   const ciSweep = sweepOf(ci);
   const vmSweep = sweepOf(vm);
   const straddledLanes = [
-    straddled(ciSweep) ? `Actions served ${ciSweep.versions.join(", ")}` : null,
-    straddled(vmSweep) ? `the VM served ${vmSweep.versions.join(", ")}` : null,
+    straddled(ciSweep) ? `${theA} served ${ciSweep.versions.join(", ")}` : null,
+    straddled(vmSweep) ? `${theV} served ${vmSweep.versions.join(", ")}` : null,
   ].filter(Boolean);
   if (straddledLanes.length) {
     versionStraddle = { ci: ciSweep?.versions ?? [], vm: vmSweep?.versions ?? [] };
@@ -623,7 +646,7 @@ export function compareRuns({
       ? `${scope} - no shard answered, so its row cannot name the Langflow it ran at all`
       : `${scope} - so the version on its row is one that served rather than the only one that did`;
   };
-  const silent = [silentOf("Actions", ciSweep), silentOf("the VM", vmSweep)].filter(Boolean);
+  const silent = [silentOf(theA, ciSweep), silentOf(theV, vmSweep)].filter(Boolean);
   if (silent.length) {
     warnings.push(
       `version parity PARTIAL: shards reported no served version - ${silent.join("; ")}. ` +
@@ -641,7 +664,7 @@ export function compareRuns({
         : row?.langflow_version_sweep
           ? `${label} carries an UNREADABLE langflow_version_sweep block`
           : `${label} carries no langflow_version_sweep block`;
-    const sides = [describe("the Actions row", ci, ciSweep), describe("the VM row", vm, vmSweep)].filter(Boolean);
+    const sides = [describe(`the ${A} row`, ci, ciSweep), describe(`the ${V} row`, vm, vmSweep)].filter(Boolean);
     warnings.push(
       `one-product parity UNVERIFIED: ${sides.join("; ")}. Whether that lane's shards all served the same Langflow ` +
         `is unknown - which is not the same as yes (#1964).`,
@@ -674,8 +697,8 @@ export function compareRuns({
     if (ciOnly.length || vmOnly.length) {
       gateMismatch = { ci: ciGate.present, vm: vmGate.present, ciOnly, vmOnly };
       warnings.push(
-        `the lanes LISTED DIFFERENT SUITES - Actions resolved ${named(ciGate.present)}, VM resolved ${named(vmGate.present)}. ` +
-          `${[ciOnly.length ? `Only Actions had ${ciOnly.join(", ")}` : null, vmOnly.length ? `only the VM had ${vmOnly.join(", ")}` : null]
+        `the lanes LISTED DIFFERENT SUITES - ${A} resolved ${named(ciGate.present)}, ${V} resolved ${named(vmGate.present)}. ` +
+          `${[ciOnly.length ? `Only ${theA} had ${ciOnly.join(", ")}` : null, vmOnly.length ? `only ${theV} had ${vmOnly.join(", ")}` : null]
             .filter(Boolean)
             .join("; ")}. ` +
           `Whole spec files are generated from those keys at collection time, so the lane without one has fewer ` +
@@ -687,8 +710,8 @@ export function compareRuns({
       !ciGate && !vmGate
         ? "neither row carries"
         : !ciGate
-          ? "the Actions row does not carry"
-          : "the VM row does not carry";
+          ? `the ${A} row does not carry`
+          : `the ${V} row does not carry`;
     warnings.push(
       `collection-gate parity UNVERIFIED: ${missing} a collection_gate_keys block. A listing without a provider ` +
         `key drops whole spec files from its matrix silently (#1764), and a row written before that field existed ` +
@@ -736,8 +759,8 @@ export function compareRuns({
     warnings.push(
       `a lane's MATRIX WAS MISSING SPEC FILE(S) that declare an @stable test - ` +
         `${[
-          ciLost.length ? `Actions lost ${ciLost.join(", ")}` : null,
-          vmLost.length ? `the VM lost ${vmLost.join(", ")}` : null,
+          ciLost.length ? `${theA} lost ${ciLost.join(", ")}` : null,
+          vmLost.length ? `${theV} lost ${vmLost.join(", ")}` : null,
         ]
           .filter(Boolean)
           .join("; ")}. ` +
@@ -747,8 +770,8 @@ export function compareRuns({
   }
   // A lane that could not CHECK is not a lane that found nothing (#1012).
   const unverified = [
-    ciListing && !ciListing.verified ? "Actions" : null,
-    vmListing && !vmListing.verified ? "the VM" : null,
+    ciListing && !ciListing.verified ? theA : null,
+    vmListing && !vmListing.verified ? theV : null,
   ].filter(Boolean);
   if (unverified.length) {
     warnings.push(
@@ -766,7 +789,7 @@ export function compareRuns({
         : row?.listing_completeness
           ? `${label} carries an UNREADABLE listing_completeness block`
           : `${label} carries no listing_completeness block`;
-    const sides = [describe("the Actions row", ci, ciListing), describe("the VM row", vm, vmListing)].filter(Boolean);
+    const sides = [describe(`the ${A} row`, ci, ciListing), describe(`the ${V} row`, vm, vmListing)].filter(Boolean);
     warnings.push(
       `listing-completeness parity UNVERIFIED: ${sides.join("; ")}. A spec file can leave a lane's shard matrix with ` +
         `no skip, no error and no row to be missing from (#1764), and a row that cannot answer for that lane - ` +
@@ -790,7 +813,7 @@ export function compareRuns({
     if (ciSuite !== vmSuite) {
       suiteMismatch = { ci: ciSuite, vm: vmSuite };
       warnings.push(
-        `the lanes ran DIFFERENT SUITE REVISIONS - Actions ${shortSha(ciSuite)}, VM ${shortSha(vmSuite)}. ` +
+        `the lanes ran DIFFERENT SUITE REVISIONS - ${A} ${shortSha(ciSuite)}, ${V} ${shortSha(vmSuite)}. ` +
           `Specs added between the two are counted by one lane only, and a spec edited between them can ` +
           `diverge with the product unchanged. \`git log --oneline --left-right ${shortSha(ciSuite)}...${shortSha(vmSuite)}\` ` +
           `lists what separates them.`,
@@ -805,7 +828,7 @@ export function compareRuns({
         : row?.suite_sha != null
           ? `${label} carries an UNREADABLE suite_sha`
           : `${label} carries no suite_sha`;
-    const sides = [describe("the Actions row", ci, ciSuite), describe("the VM row", vm, vmSuite)].filter(Boolean);
+    const sides = [describe(`the ${A} row`, ci, ciSuite), describe(`the ${V} row`, vm, vmSuite)].filter(Boolean);
     warnings.push(
       `suite-revision parity UNVERIFIED: ${sides.join("; ")}. Whether both lanes ran the same suite is unknown - ` +
         `which is not the same as yes.`,
@@ -814,7 +837,7 @@ export function compareRuns({
 
   if (ciExtra || vmExtra) {
     warnings.push(
-      `more than one row for this date (Actions +${ciExtra}, VM +${vmExtra}); the last append of each lane was used.`,
+      `more than one row for this date (${A} +${ciExtra}, ${V} +${vmExtra}); the last append of each lane was used.`,
     );
   }
 
@@ -833,9 +856,9 @@ export function compareRuns({
   const skipDelta = (vm.totals?.skipped ?? 0) - (ci.totals?.skipped ?? 0);
   if (skipDelta !== 0) {
     warnings.push(
-      `the lanes SKIPPED different numbers of tests (Actions ${ci.totals?.skipped ?? 0}, VM ${vm.totals?.skipped ?? 0}). ` +
+      `the lanes SKIPPED different numbers of tests (${A} ${ci.totals?.skipped ?? 0}, ${V} ${vm.totals?.skipped ?? 0}). ` +
         `A history row does not name skipped tests, so those ${Math.abs(skipDelta)} are invisible below - ` +
-        `${skipDelta > 0 ? "the VM ran fewer specs than Actions did" : "Actions ran fewer specs than the VM did"}. ` +
+        `${skipDelta > 0 ? `${theV} ran fewer specs than ${theA} did` : `${theA} ran fewer specs than ${theV} did`}. ` +
         // DELIBERATELY not pointed at the gate, and this line is the reason the
         // distinction is worth stating twice. A skip happens at RUN time;
         // `collection_gate_keys` records the LISTING environment, and those are not
@@ -853,7 +876,7 @@ export function compareRuns({
   const execDelta = executed(vm.totals) - executed(ci.totals);
   if (execDelta !== 0) {
     warnings.push(
-      `the lanes accounted for different test counts (Actions ${executed(ci.totals)}, VM ${executed(vm.totals)}); ` +
+      `the lanes accounted for different test counts (${A} ${executed(ci.totals)}, ${V} ${executed(vm.totals)}); ` +
         // This one the gate CAN explain: collection decides which spec files enter the
         // matrix at all, so a file only one lane listed is missing from the other's
         // total outright - no skip, no error, nothing to subtract it from.
@@ -880,7 +903,7 @@ export function compareRuns({
   const vmShards = shardsOf(vm);
   if (ciShards && vmShards && ciShards !== vmShards) {
     warnings.push(
-      `different shard counts (Actions ${ciShards}, VM ${vmShards}). The verdict is comparable, but a spec's ` +
+      `different shard counts (${A} ${ciShards}, ${V} ${vmShards}). The verdict is comparable, but a spec's ` +
         `neighbours - and therefore contention and retry behaviour - differ.`,
     );
   }
@@ -902,7 +925,7 @@ export function compareRuns({
   // that said so outside a cross-target pair. It would also have left that pair's
   // "(see the narrowing above)" pointing at nothing on exactly the 2026-09-14 shape
   // above, where both lanes carried the signature on a FLAKY and neither on a failure.
-  for (const [label, laneRow] of [["Actions", ci], ["VM", vm]]) {
+  for (const [label, laneRow] of [[A, ci], [V, vm]]) {
     const carrying = (list) => (list ?? []).filter((e) => e?.infra_signature).length;
     const infraFailed = carrying(laneRow?.failures);
     const infraFlaky = carrying(laneRow?.flaky);
@@ -1001,18 +1024,32 @@ export function compareRuns({
   return { date, ci, vm, blockers, warnings, divergences, agreed, versionMismatch, versionStraddle, gateMismatch, listingMismatch, suiteMismatch, comparable: blockers.length === 0 };
 }
 
-const KIND_LABEL = {
+const kindLabels = ({ ciThe: theA, vmThe: theV }) => ({
   "cross-target-failed": "same spec on both lanes under DIFFERENT targets, hard failure on at least one lane",
   "cross-target-flaky": "same spec on both lanes under DIFFERENT targets, a retry passed on both",
-  "vm-only-failed": "FAILED on the VM only",
-  "ci-only-failed": "FAILED on Actions only",
+  "vm-only-failed": `FAILED on ${theV} only`,
+  "ci-only-failed": `FAILED on ${theA} only`,
   "severity-differs": "failed on one lane, flaky on the other",
-  "vm-only-flaky": "flaky on the VM only",
-  "ci-only-flaky": "flaky on Actions only",
-};
+  "vm-only-flaky": `flaky on ${theV} only`,
+  "ci-only-flaky": `flaky on ${theA} only`,
+});
 
 /** Render the comparison for a person reading it in a terminal at 09:00. */
-export function renderReport(result, { sources = [] } = {}) {
+// `labels` must be the ones compareRuns was given: its warnings are already worded with
+// them, and the result does not carry them. The default is the default pair's, which is
+// what compareRuns uses when it is given no ids. Deriving them here from the rows was
+// considered and declined (#2092 review): a caller whose rows and ids disagree would get
+// lane lines that contradict the warnings printed under them.
+export function renderReport(result, { sources = [], labels = laneLabels() } = {}) {
+  const { ci: A, vm: V, ciThe: theA, vmThe: theV } = labels;
+  const KIND_LABEL = kindLabels(labels);
+  // The columns the per-lane lines align on were sized for "Actions"/"VM"; a longer
+  // label only widens them, so the defaults print exactly as before.
+  const laneWidth = Math.max(8, A.length + 1, V.length + 1);
+  const sigWidth = Math.max(7, A.length, V.length);
+  // The lines under a lane (listing, served versions) start where its "run" does:
+  // two spaces, the lane column, one space — 11 with the default labels.
+  const subIndent = " ".repeat(2 + laneWidth + 1);
   const L = [];
   const { date, ci, vm, blockers, warnings, divergences, agreed } = result;
 
@@ -1021,13 +1058,13 @@ export function renderReport(result, { sources = [] } = {}) {
 
   const line = (label, row) =>
     row
-      ? `  ${label.padEnd(8)} run ${row.run_id ?? "?"} | ${row.totals?.passed ?? 0} passed, ${row.totals?.failed ?? 0} failed, ` +
+      ? `  ${label.padEnd(laneWidth)} run ${row.run_id ?? "?"} | ${row.totals?.passed ?? 0} passed, ${row.totals?.failed ?? 0} failed, ` +
         `${row.totals?.flaky ?? 0} flaky, ${row.totals?.skipped ?? 0} skipped` +
         `${row.langflow_version ? ` | Langflow ${row.langflow_version}` : ""}` +
         // Only a readable revision is printed: the warning list says which rows
         // carry none or a malformed one, and a raw value here would look vouched for.
         `${suiteShaOf(row) ? ` | suite ${shortSha(suiteShaOf(row))}` : ""}`
-      : `  ${label.padEnd(8)} (no row)`;
+      : `  ${label.padEnd(laneWidth)} (no row)`;
   // The key set rides with the counts, on its own line under the lane it belongs to.
   // The whole point of recording it is that a reader looking at two different totals
   // sees the listing difference in the same glance, instead of reaching for the
@@ -1038,7 +1075,7 @@ export function renderReport(result, { sources = [] } = {}) {
     if (!gate || !Array.isArray(gate.present)) return;
     const absent = Array.isArray(gate.absent) ? gate.absent : [];
     L.push(
-      `${" ".repeat(11)}listed with ${gate.present.length ? gate.present.join(", ") : "no provider key"}` +
+      `${subIndent}listed with ${gate.present.length ? gate.present.join(", ") : "no provider key"}` +
         (absent.length ? ` | absent: ${absent.join(", ")}` : ""),
     );
   };
@@ -1052,7 +1089,7 @@ export function renderReport(result, { sources = [] } = {}) {
     if (!l || typeof l.verified !== "boolean" || !Array.isArray(l.missing)) return;
     const missing = l.missing;
     L.push(
-      `${" ".repeat(11)}` +
+      `${subIndent}` +
         (!l.verified
           ? "listing completeness UNVERIFIED"
           : missing.length
@@ -1068,7 +1105,7 @@ export function renderReport(result, { sources = [] } = {}) {
     if (!sweep) return;
     const silent = unaccounted(sweep);
     L.push(
-      `${" ".repeat(11)}` +
+      `${subIndent}` +
         (straddled(sweep)
           ? `SERVED ${sweep.versions.length} VERSIONS: ${sweep.versions.join(", ")}`
           : sweep.answered === 0
@@ -1078,10 +1115,10 @@ export function renderReport(result, { sources = [] } = {}) {
               : `one version across ${sweep.answered} shard(s)`),
     );
   };
-  pushLane("Actions", ci);
+  pushLane(A, ci);
   pushListing(ci);
   pushSweep(ci);
-  pushLane("VM", vm);
+  pushLane(V, vm);
   pushListing(vm);
   pushSweep(vm);
 
@@ -1090,7 +1127,7 @@ export function renderReport(result, { sources = [] } = {}) {
   if (result.versionMismatch?.allowed) {
     L.push(
       "",
-      `!! VERSION MISMATCH ACCEPTED - Actions ${result.versionMismatch.ci} vs VM ${result.versionMismatch.vm}.`,
+      `!! VERSION MISMATCH ACCEPTED - ${A} ${result.versionMismatch.ci} vs ${V} ${result.versionMismatch.vm}.`,
       "   Product differences between those two are in the list below.",
     );
   }
@@ -1137,18 +1174,18 @@ export function renderReport(result, { sources = [] } = {}) {
         // here concludes anything about cause — see pairCrossTarget's docblock for why
         // this file stopped trying.
         const x = d.crossTarget ?? {};
-        L.push(`      Actions [${d.params.ci ?? "no target"}] ${d.ci?.status ?? "?"}: ${d.ci?.error ?? "(no signature)"}`);
-        L.push(`      VM      [${d.params.vm ?? "no target"}] ${d.vm?.status ?? "?"}: ${d.vm?.error ?? "(no signature)"}`);
+        L.push(`      ${A.padEnd(sigWidth)} [${d.params.ci ?? "no target"}] ${d.ci?.status ?? "?"}: ${d.ci?.error ?? "(no signature)"}`);
+        L.push(`      ${V.padEnd(sigWidth)} [${d.params.vm ?? "no target"}] ${d.vm?.status ?? "?"}: ${d.vm?.error ?? "(no signature)"}`);
         if (!x.providersKnown) {
           // The honest third state. Saying "same" here would assert a provider for a
           // row that never named one, and this is the only line in the block that
           // touches cause at all.
           L.push(
-            `      one side does not name a provider (Actions ${d.providers?.ci ?? "—"}, VM ${d.providers?.vm ?? "—"}):`,
+            `      one side does not name a provider (${A} ${d.providers?.ci ?? "—"}, ${V} ${d.providers?.vm ?? "—"}):`,
             "      whether the provider differs cannot be told from these two rows",
           );
         } else if (x.providersDiffer) {
-          L.push(`      providers DIFFER (Actions ${d.providers?.ci}, VM ${d.providers?.vm})`);
+          L.push(`      providers DIFFER (${A} ${d.providers?.ci}, ${V} ${d.providers?.vm})`);
         } else {
           L.push(`      SAME provider (${d.providers?.ci}), different target — the provider is NOT ruled out`);
         }
@@ -1162,7 +1199,7 @@ export function renderReport(result, { sources = [] } = {}) {
           L.push("      signatures do NOT match (or one is absent)");
         }
         if (x.infraCi || x.infraVm) {
-          const which = x.infraCi && x.infraVm ? "both lanes" : x.infraCi ? "Actions" : "the VM";
+          const which = x.infraCi && x.infraVm ? "both lanes" : x.infraCi ? theA : theV;
           L.push(`      an infra_signature is present on ${which}: the harness could not reach the backend there,`);
           L.push("      so that side's signature is not attributable to this spec (see the narrowing above)");
         }
@@ -1170,7 +1207,7 @@ export function renderReport(result, { sources = [] } = {}) {
       }
       const err = d.vm?.error ?? d.ci?.error;
       if (err) L.push(`      ${err}`);
-      if (d.kind === "severity-differs") L.push(`      Actions: ${d.ci.status} | VM: ${d.vm.status}`);
+      if (d.kind === "severity-differs") L.push(`      ${A}: ${d.ci.status} | ${V}: ${d.vm.status}`);
     }
   }
 
