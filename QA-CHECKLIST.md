@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 702 `test()` calls carrying the `@stable` tag, distributed across 277 spec
+> 703 `test()` calls carrying the `@stable` tag, distributed across 277 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2265,6 +2265,7 @@
 - [x] changing the display language re-renders the interface → `language-selection.spec.ts`
 - [x] the selected language survives a reload and a second tab of the same session → `language-selection.spec.ts`
 - [x] every language the selector offers loads a translation bundle → `language-selection.spec.ts`
+- [x] the application boots into a shipped language for every unsupported or regional preference → `locale-resilience.spec.ts`
 - [x] the application boots in English and never adopts the browser locale as a preference → `locale-resilience.spec.ts`
 - [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
