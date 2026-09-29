@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 703 `test()` calls carrying the `@stable` tag, distributed across 277 spec
+> 704 `test()` calls carrying the `@stable` tag, distributed across 277 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2379,6 +2379,7 @@
 - [x] changing a sticky note colour repaints it and persists the choice → `sticky-notes.spec.ts`
 - [x] resizing a sticky note grows it and persists the new size → `sticky-notes.spec.ts`
 - [x] bind a Credential global variable to a component secret field → `use-global-variable-in-component.spec.ts`
+- [x] component secret-field global-variable binding persists across reload → `use-global-variable-in-component.spec.ts`
 - [x] should interact with global variables → `userSettings.spec.ts`
 - [x] should see shortcuts → `userSettings.spec.ts`
 - [x] should interact with API Keys → `userSettings.spec.ts`
