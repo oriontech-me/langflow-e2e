@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-28
+> **Last updated:** 2026-09-29
 
 ---
 
@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 711 `test()` calls carrying the `@stable` tag, distributed across 278 spec
+> 705 `test()` calls carrying the `@stable` tag, distributed across 277 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2029,7 +2029,6 @@
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] user must not experience message duplication in mathematical expressions with agent component → `general-bugs-agent-sum-duplicate-message-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
-- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
@@ -2087,7 +2086,6 @@
 - [x] credentials that do not validate are rejected and nothing is persisted → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] a portal deployment name absent from every catalog is accepted and rendered → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
-- [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
@@ -2270,12 +2268,10 @@
 - [x] changing the display language re-renders the interface → `language-selection.spec.ts`
 - [x] the selected language survives a reload and a second tab of the same session → `language-selection.spec.ts`
 - [x] every language the selector offers loads a translation bundle → `language-selection.spec.ts`
-- [x] the application boots into a shipped language for every unsupported or regional preference → `locale-resilience.spec.ts`
 - [x] the application boots in English and never adopts the browser locale as a preference → `locale-resilience.spec.ts`
 - [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
-- [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
@@ -2295,7 +2291,6 @@
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
 - [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
-- [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
 - [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
@@ -2386,7 +2381,6 @@
 - [x] changing a sticky note colour repaints it and persists the choice → `sticky-notes.spec.ts`
 - [x] resizing a sticky note grows it and persists the new size → `sticky-notes.spec.ts`
 - [x] bind a Credential global variable to a component secret field → `use-global-variable-in-component.spec.ts`
-- [x] component secret-field global-variable binding persists across reload → `use-global-variable-in-component.spec.ts`
 - [x] should interact with global variables → `userSettings.spec.ts`
 - [x] should see shortcuts → `userSettings.spec.ts`
 - [x] should interact with API Keys → `userSettings.spec.ts`
