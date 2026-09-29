@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-09-28",
+ "refreshed": "2026-09-29",
  "refreshWindow": {
-  "testHealthSince": "2026-08-14",
+  "testHealthSince": "2026-08-15",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -40,18 +40,18 @@
   "cappedByProduct": 2,
   "bullets": 811,
   "bulletsAutomatedUnwatched": 121,
-  "residualRiskTotal": 104.9
+  "residualRiskTotal": 105.6
  },
  "areas": [
   {
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 1,
-   "residualRisk": 9.3,
+   "residualRisk": 9.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.63,
+   "mitigation": 0.61,
    "mitigationBulletDerived": 0.69,
    "mitigationOverride": null,
    "axes": {
@@ -75,9 +75,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 1,
-    "chronicFlaky": 5,
+    "chronicFlaky": 7,
     "stableSpecs": 36,
-    "penalty": 0.057
+    "penalty": 0.077
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -91,7 +91,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": 1.9,
+    "residualRisk": 2.4,
     "rank": 3,
     "direction": "worsened"
    },
@@ -131,12 +131,12 @@
    },
    "specs": {
     "specs": 12,
-    "stable": 11
+    "stable": 10
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 11,
+    "stableSpecs": 10,
     "penalty": 0
    },
    "upstreamBugsByYear": {
@@ -837,11 +837,11 @@
    "key": "rest-api",
    "label": "1 REST API / endpoints",
    "rank": 15,
-   "residualRisk": 3.6,
+   "residualRisk": 3.8,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
-   "mitigation": 0.76,
+   "mitigation": 0.75,
    "mitigationBulletDerived": 0.76,
    "mitigationOverride": null,
    "axes": {
@@ -865,9 +865,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 38,
-    "penalty": 0
+    "penalty": 0.01
    },
    "upstreamBugsByYear": {
     "2024": 10,
@@ -881,7 +881,7 @@
     "mitigation": 0.78
    },
    "delta": {
-    "residualRisk": -0.8,
+    "residualRisk": -0.6,
     "rank": -1,
     "direction": "improved"
    },

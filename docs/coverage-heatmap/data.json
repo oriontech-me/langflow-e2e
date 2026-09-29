@@ -86,7 +86,7 @@
  "areas": [
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 9.3,
+   "residualRisk": 9.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -101,11 +101,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 1,
-    "chronicFlaky": 5,
+    "chronicFlaky": 7,
     "stableSpecs": 36,
-    "penalty": 0.057
+    "penalty": 0.077
    },
-   "mitigation": 0.63,
+   "mitigation": 0.61,
    "checklistBullets": 47,
    "bulletStates": {
     "x": 39,
@@ -149,7 +149,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 11,
+    "stableSpecs": 10,
     "penalty": 0
    },
    "mitigation": 0.68,
@@ -174,7 +174,7 @@
    "upstreamBugCount": 69,
    "specCounts": {
     "specs": 12,
-    "stable": 11
+    "stable": 10
    }
   },
   {
@@ -701,7 +701,7 @@
   },
   {
    "area": "1 REST API / endpoints",
-   "residualRisk": 3.6,
+   "residualRisk": 3.8,
    "inherentRisk": 15,
    "probability": 3,
    "impact": 5,
@@ -716,11 +716,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 38,
-    "penalty": 0
+    "penalty": 0.01
    },
-   "mitigation": 0.76,
+   "mitigation": 0.75,
    "checklistBullets": 102,
    "bulletStates": {
     "x": 96,
@@ -1221,9 +1221,9 @@
    }
   }
  ],
- "refreshed": "2026-09-28",
+ "refreshed": "2026-09-29",
  "refreshWindow": {
-  "testHealthSince": "2026-08-14",
+  "testHealthSince": "2026-08-15",
   "days": 45
  }
 }
