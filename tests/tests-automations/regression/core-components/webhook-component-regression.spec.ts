@@ -7,6 +7,7 @@ import {
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { watchFlowSave } from "../../../helpers/flows/watch-flow-save";
 
 // Run tests serially to avoid 400 "flow must be unique" errors from parallel
 // autosaves of blank flows created within this file.
@@ -37,7 +38,15 @@ test.afterEach(async ({ page }) => {
 
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
-async function addWebhookComponent(page: any) {
+// With `awaitSave`, it also returns only once the add-node autosave has completed,
+// for tests that read the flow back, reload it, or POST to its webhook endpoint.
+// Waiting on the save itself, not a fixed sleep: the debounce is the instance's
+// `auto_saving_interval`, which went 2000 -> 5000 ms on 1.13.0.dev27, and the old
+// 4 s sleep then read a flow whose nodes had not been saved yet (#2097).
+async function addWebhookComponent(
+  page: any,
+  { awaitSave = false }: { awaitSave?: boolean } = {},
+) {
   await awaitBootstrapTest(page);
   // Let the home page's own transient-flow sweep (batch DELETE /api/v1/flows/)
   // finish before creating a flow — a create POST landing mid-sweep makes the
@@ -71,12 +80,23 @@ async function addWebhookComponent(page: any) {
     timeout: 10000,
   });
   await page.getByTestId("input_outputWebhook").hover();
-  await page.getByTestId("add-component-button-webhook").click();
-  await adjustScreenView(page);
-  // Wait for the Webhook node to appear on the canvas
-  await page.waitForSelector('[data-testid="input_output_webhook_draggable"]', {
-    timeout: 15000,
-  });
+  // Armed right before the add, with no drain first: measured on 1.13.0.dev27, the
+  // blank flow issues no PATCH before this click and the add issues exactly one,
+  // one debounce later, already carrying the Webhook node.
+  const save = awaitSave ? watchFlowSave(page) : undefined;
+  try {
+    await page.getByTestId("add-component-button-webhook").click();
+    await adjustScreenView(page);
+    // Wait for the Webhook node to appear on the canvas
+    await page.waitForSelector(
+      '[data-testid="input_output_webhook_draggable"]',
+      { timeout: 15000 },
+    );
+  } catch (e) {
+    save?.dispose();
+    throw e;
+  }
+  await save?.settled();
 }
 
 test(
@@ -89,15 +109,11 @@ test(
     const bearerToken = await getAuthToken(request);
 
     await test.step("Add Webhook component to a blank flow", async () => {
-      await addWebhookComponent(page);
+      // awaitSave: the webhook POSTs below resolve the flow from the database,
+      // so the add-node autosave must have landed first.
+      await addWebhookComponent(page, { awaitSave: true });
       flowId = page.url().split("/").slice(-1)[0];
       expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-    });
-
-    await test.step("Wait for autosave to persist the flow", async () => {
-      // The flow is created via UI; autosave debounce flushes it to the
-      // database before any webhook POST can resolve flowId.
-      await page.waitForTimeout(4000);
     });
 
     await test.step("Create temporary x-api-key for webhook auth", async () => {
@@ -145,21 +161,16 @@ test(
   },
 );
 
-// Quarantined for #2097: hard failure on the guard-tripped VM daily of 2026-09-29
-// (1.13.0.dev27), the saved flow carries no node of type "Webhook". Lifting it
-// (drop `test.fixme`, restore `@stable`) is #2097's deliverable.
-test.fixme(
+test(
   "Webhook component — flow is saved to database and contains the Webhook node",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page, request }) => {
-    await addWebhookComponent(page);
+    // awaitSave returns once the add-node autosave has completed, so the read
+    // below sees what the product persisted rather than racing the debounce (#2097).
+    await addWebhookComponent(page, { awaitSave: true });
 
     const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-
-    // Wait for the auto-save debounce to flush the flow to the database.
-    // This is required before making any API calls that depend on the flow existing.
-    await page.waitForTimeout(4000);
 
     // Verify the flow is persisted and contains the Webhook component.
     // Read it through the `request` fixture with an explicit bearer, NOT through
@@ -393,19 +404,15 @@ async function loadFlowWithDataField(
   await page.unroute(`**/api/v1/flows/${flowId}`);
 }
 
-// Quarantined for #2097: unmasked by the quarantine of the saved-node test above (serial
-// file); on the nightly the Webhook node's run button never renders after the flow
-// loads. Lifting it (drop `test.fixme`, restore `@stable`) is #2097's deliverable.
-test.fixme(
+test(
   "Webhook component — valid JSON payload is propagated as structured Data output",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
-    await addWebhookComponent(page);
+    // awaitSave: loadFlowWithDataField reloads the flow from the database, which
+    // must already hold the Webhook node or the canvas renders empty (#2097).
+    await addWebhookComponent(page, { awaitSave: true });
     const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-
-    // Wait for autosave before reloading
-    await page.waitForTimeout(4000);
 
     // The "data" field has no editable UI — inject the value via API response
     // intercept so the canvas receives the patched template on navigation.
@@ -436,19 +443,15 @@ test.fixme(
   },
 );
 
-// Quarantined for #2097: unmasked by the quarantine of the saved-node test above (serial
-// file); on the nightly the Webhook node's run button never renders after the flow
-// loads. Lifting it (drop `test.fixme`, restore `@stable`) is #2097's deliverable.
-test.fixme(
+test(
   "Webhook component — invalid JSON payload is encapsulated in {payload: ...}",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
-    await addWebhookComponent(page);
+    // awaitSave: loadFlowWithDataField reloads the flow from the database, which
+    // must already hold the Webhook node or the canvas renders empty (#2097).
+    await addWebhookComponent(page, { awaitSave: true });
     const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-
-    // Wait for autosave before reloading
-    await page.waitForTimeout(4000);
 
     // build_data() catches json.JSONDecodeError and wraps the raw string in
     // {"payload": "<raw string>"} — this tests that fallback path.
