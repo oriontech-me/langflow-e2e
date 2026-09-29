@@ -92,6 +92,24 @@ main() {
   cd "$REPO" || { echo "FATAL: $REPO is missing"; exit 1; }
   echo "wrapper at: $(git log --oneline -1 -- ops/vm/run-daily.sh)"
 
+  # This lane has priority over the image shadow (#2093). There is no lock between them,
+  # so a daily re-run by hand while the shadow is still going stops it first, instead of
+  # running two suites on one machine with the verdict that matters absorbing the
+  # contention. Only when it is running: every scheduled day it is not, and this is a
+  # no-op. Never fatal.
+  #
+  # Read as ActiveState, not `is-active`: the shadow is Type=oneshot, so while its
+  # wrapper runs systemd reports it `activating`, which `is-active` does not count --
+  # the first version of this check could never fire (#2094 review).
+  local shadow_state
+  shadow_state="$(systemctl show -p ActiveState --value e2e-shadow.service 2>/dev/null || true)"
+  case "$shadow_state" in
+    activating | active | reloading | deactivating)
+      echo "stopping the image shadow ($shadow_state) before this run"
+      systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
+      ;;
+  esac
+
   if [ -r "$SECRETS" ]; then
     # shellcheck disable=SC1090
     . "$SECRETS"
@@ -270,6 +288,11 @@ main() {
   # forced it off and lost sixteen tests a day; the published distribution serves that
   # family with tracing on (measured 2026-09-10: 654 tests, zero WORKER TIMEOUT).
 
+  # The commit this run tests, read BEFORE it: on a red day the @stable removal moves
+  # HEAD, and the shadow below must run the suite this run ran, not the one after it.
+  local SUITE_SHA
+  SUITE_SHA="$(git rev-parse HEAD)"
+
   ./scripts/run-e2e.sh
   local code=$?
   echo "=== daily end, exit=$code ==="
@@ -292,6 +315,16 @@ main() {
       ./scripts/backup-ledger.sh || true
   else
     echo "WARNING: scripts/backup-ledger.sh is absent -- the ledger was NOT copied off this machine"
+  fi
+  # The image shadow (#2093): the same suite against the published image of $WANT, as
+  # its own unit, after this one. Asked for on a red day too -- a red day is when the
+  # machine-or-artifact question is worth the most. It cannot fail or delay this run:
+  # the status is ignored, and --no-block returns before the shadow starts.
+  #
+  # Rollback: IMAGE_SHADOW=0 on this line, or remove e2e-shadow.service; the request
+  # script says "not installed" and asks for nothing.
+  if [ "${IMAGE_SHADOW:-1}" = "1" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+    SHADOW_VERSION="$WANT" SHADOW_SUITE_SHA="$SUITE_SHA" ./ops/vm/request-shadow.sh || true
   fi
   find "$LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +"$LOG_KEEP_DAYS" -delete
   # The run's status, not the pruning's: without it a red day ends Result=success.

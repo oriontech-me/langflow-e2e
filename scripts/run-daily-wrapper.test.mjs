@@ -32,7 +32,7 @@ const COMPLETE_LANE = [
  * that gets past every refusal stops at "could not resolve the version" -- which is the
  * observable proof that it got past them, without touching a network or a venv.
  */
-function makeLane(dir, laneLines, files = {}) {
+function makeLane(dir, laneLines, files = {}, binStubs = {}) {
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm"), { recursive: true });
   copyFileSync(WRAPPER, join(repo, "ops", "vm", "run-daily.sh"));
@@ -49,6 +49,7 @@ function makeLane(dir, laneLines, files = {}) {
   const bin = join(home, ".local", "bin");
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "curl"), "#!/bin/sh\nexit 22\n", { mode: 0o755 });
+  for (const [name, body] of Object.entries(binStubs)) writeFileSync(join(bin, name), body, { mode: 0o755 });
   writeFileSync(
     join(bin, "git"),
     `#!/bin/sh\n[ "$1" = ls-remote ] && exit 2\nexec ${JSON.stringify(REAL_GIT)} "$@"\n`,
@@ -62,8 +63,8 @@ function makeLane(dir, laneLines, files = {}) {
   return { repo, home, secrets, lane, logs: join(dir, "logs") };
 }
 
-function runWrapper(dir, laneLines, script = WRAPPER, files = {}) {
-  const l = makeLane(dir, laneLines, files);
+function runWrapper(dir, laneLines, script = WRAPPER, files = {}, binStubs = {}) {
+  const l = makeLane(dir, laneLines, files, binStubs);
   const tmp = join(dir, "tmp");
   mkdirSync(tmp);
   const r = spawnSync("bash", [script], {
@@ -224,4 +225,42 @@ test("the lane turns the @stable removal on, and run-e2e.sh receives it (#1945)"
   const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
   assert.match(r.log, /run-e2e got AUTO_REMOVE=\[1\] CREATE_ISSUE=\[1\]/);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("a running shadow is stopped before the official run, whatever state systemd names it by (#2094)", () => {
+  // Type=oneshot: while run-shadow.sh runs, systemd reports the unit `activating`, which
+  // `systemctl is-active` does not count. The first version of this guard asked
+  // is-active, so it could never fire; this runs the wrapper against each state.
+  for (const [state, stops] of [["activating", true], ["active", true], ["deactivating", true], ["reloading", true], ["inactive", false], ["failed", false], ["", false]]) {
+    const dir = makeTempDir("run-daily-shadow-");
+    try {
+      const calls = join(dir, "systemctl.calls");
+      const systemctl = `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\n[ "$1" = show ] && echo ${JSON.stringify(state)}\nexit 0\n`;
+      const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
+      const log = readFileSync(calls, "utf8");
+      assert.match(log, /show -p ActiveState --value e2e-shadow\.service/, `${state}: the state was not asked`);
+      if (stops) {
+        assert.match(log, /^stop e2e-shadow\.service$/m, `${state || "(none)"}: a running shadow was not stopped`);
+        assert.match(r.log, new RegExp(`stopping the image shadow \\(${state}\\) before this run`));
+      } else {
+        assert.doesNotMatch(log, /^stop /m, `${state || "(none)"}: a shadow that is not running was stopped`);
+      }
+      // Past the guard either way: it never ends the daily.
+      assert.match(r.log, /could not resolve the version/, `${state}: the daily did not continue past the guard`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a failed stop is said and does not end the daily (#2094)", () => {
+  const dir = makeTempDir("run-daily-shadow-");
+  try {
+    const systemctl = `#!/bin/sh\n[ "$1" = show ] && { echo activating; exit 0; }\n[ "$1" = stop ] && exit 1\nexit 0\n`;
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
+    assert.match(r.log, /WARNING: could not stop e2e-shadow\.service/);
+    assert.match(r.log, /could not resolve the version/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

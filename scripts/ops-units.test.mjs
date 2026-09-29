@@ -85,7 +85,7 @@ test("every service declares HOME, because systemd sets none (#1715)", () => {
   // cron does, systemd does not, and run-e2e.sh builds the uv PATH out of $HOME under
   // `set -u` -- so the run dies before doing anything. Found by running a unit, not by
   // reading one.
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service"]) {
     assert.ok(
       directives(read(unit), "Environment").some((v) => v === "HOME=/root"),
       `${unit} does not declare HOME`,
@@ -130,7 +130,7 @@ test("the timers are enablable and the services are not, by design", () => {
   for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness.timer", "e2e-mirror-freshness-announce.timer"]) {
     assert.deepEqual(directives(read(unit), "WantedBy"), ["timers.target"], `${unit}`);
   }
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service"]) {
     assert.doesNotMatch(read(unit), /^\[Install\]/m, `${unit} carries an [Install] section`);
   }
 });
@@ -196,4 +196,14 @@ test("nothing in ops/ names an internal host, alias or address", () => {
     .filter((r) => r.hits.length > 0)
     .map((r) => `${r.p}: ${[...new Set(r.hits)].join(", ")}`);
   assert.deepEqual(offenders, [], "an internal identifier reached a public repository");
+});
+
+test("the shadow has no timer and starts only after the daily's unit has finished (#2093)", () => {
+  // It is asked for by the daily, with --no-block, from inside the daily's own unit.
+  // Without After= the queued job would start while the daily is still finishing; with
+  // a timer it would run on days the official lane did not, against no request.
+  const unit = read("e2e-shadow.service");
+  assert.deepEqual(directives(unit, "After"), ["network-online.target e2e-daily.service"]);
+  assert.deepEqual(directives(unit, "ExecStart"), ["/root/e2e-qa/ops/vm/run-shadow.sh"]);
+  assert.ok(!readdirSync(OPS).includes("e2e-shadow.timer"), "the shadow must not have a schedule of its own");
 });
