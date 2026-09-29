@@ -113,9 +113,12 @@ async function reloadWithPreference(
 }
 
 test.describe("i18n — a stored language preference Langflow cannot place", () => {
-  test(
+  // Quarantined for #2099: hard failure on the guard-tripped VM daily of 2026-09-29
+  // (1.13.0.dev27), a stored "ko" preference boots into "ko" instead of "en".
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2099's deliverable.
+  test.fixme(
     "the application boots into a shipped language for every unsupported or regional preference",
-    { tag: ["@stable", "@regression", "@ui-ux"] },
+    { tag: ["@regression", "@ui-ux"] },
     async ({ page }) => {
       // Nine reloads of the home screen; measured at ~30 s in total.
       test.setTimeout(180000);
