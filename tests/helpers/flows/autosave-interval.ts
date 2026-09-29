@@ -11,10 +11,12 @@
  * `wait-for-flow-save-settled.ts` both said 300). The effective value is
  * `autoSavingInterval`, seeded from `GET /api/v1/config.auto_saving_interval`
  * (`use-get-config.ts`), and the server has already moved it: this repo measured
- * **1000** while writing `SimpleAgentTemplatePage.ts` and **2000** on
- * `1.13.0.dev4`. Any number pasted into our source goes stale the next time
- * upstream edits its default, and the failure is silent — a barrier that expires
- * early still returns, it just returns on a save that was never issued.
+ * **1000** while writing `SimpleAgentTemplatePage.ts`, **2000** on `1.13.0.dev4`
+ * and **5000** on `1.13.0.dev27` (upstream #14903, #2098) — see
+ * `SHIPPED_AUTOSAVE_INTERVALS_MS`. Any number pasted into our source goes stale
+ * the next time upstream edits its default, and the failure is silent — a
+ * barrier that expires early still returns, it just returns on a save that was
+ * never issued.
  *
  * So it is read from the instance under test, once, in `globalSetup`, and passed
  * to the workers through the environment. That is the same channel and the same
@@ -37,13 +39,103 @@
 export const AUTOSAVE_INTERVAL_ENV = "PW_AUTOSAVE_INTERVAL_MS";
 
 /**
- * Used when the interval could not be read. Above every value this repo has ever
- * READ from an instance (1000, then 2000), because over-waiting costs seconds
- * and under-waiting costs a false green. The 300 this list used to open with was
+ * Every `auto_saving_interval` this repo has READ from an instance, in the order
+ * they appeared. The per-line defaults as of 2026-09-29: 1000 on upstream `main`
+ * and `release-1.12.x`, 5000 on `release-1.13.0` since `1.13.0.dev27` (upstream
+ * #14903, which raised it from 2000). The 300 an earlier list opened with was
  * `SAVE_DEBOUNCE_TIME`, which is not an autosave interval at all — see the
  * header — so it never belonged in the sequence.
+ *
+ * A record, not a source of truth: the run's own value comes from the instance.
+ * It exists so the fallback below is pinned against something by a test rather
+ * than by prose — the prose said "above every value" for three weeks after the
+ * value it was written against had been overtaken (#2107).
  */
-export const AUTOSAVE_INTERVAL_FALLBACK_MS = 3000;
+export const SHIPPED_AUTOSAVE_INTERVALS_MS: readonly number[] = [
+  1000, 2000, 5000,
+];
+
+/**
+ * Used when the interval could not be read: **twice** the largest shipped value.
+ *
+ * Over-waiting costs seconds, only on a run that could not read its config;
+ * under-waiting costs a red on a healthy save (`watchFlowSave` fails at its
+ * deadline) or a drain that returns before a scheduled save exists (#1741). The
+ * margin is the lesson of #2107: this was 3000, "above every value", until
+ * upstream shipped 5000 and it silently became the one number guaranteed to be
+ * wrong. At 2x, a bump of the last one's absolute size (+3000 ms) is still
+ * covered; one of its ratio (2.5x, to 12500) is not, and that is what
+ * `fallbackStalenessWarning` is for — it names the list to update the first time
+ * an instance serves a larger value.
+ */
+export const AUTOSAVE_INTERVAL_FALLBACK_MS = 10000;
+
+/**
+ * The warning a run prints when the instance serves an interval LARGER than
+ * every value in `SHIPPED_AUTOSAVE_INTERVALS_MS`, or `null` otherwise.
+ *
+ * Only a run that READ the interval can know the record is out of date — the run
+ * that needs the fallback cannot — so the check lives on the success path of the
+ * preflight read. It fires on the first new maximum rather than when the value
+ * reaches the fallback, because adding that value to the record is what makes
+ * the unit lane demand a fallback of at least 2x it: warning only at the
+ * fallback would warn on the day it is already too short. It warns rather than
+ * fails: this run uses the real value and is unaffected (#980); what is at risk
+ * is the next run whose read fails.
+ */
+export function fallbackStalenessWarning(observedMs: number): string | null {
+  const largest = Math.max(...SHIPPED_AUTOSAVE_INTERVALS_MS);
+  if (observedMs <= largest) return null;
+  const urgency =
+    observedMs >= AUTOSAVE_INTERVAL_FALLBACK_MS
+      ? `and is not below AUTOSAVE_INTERVAL_FALLBACK_MS ` +
+        `(${AUTOSAVE_INTERVAL_FALLBACK_MS} ms), so a run that cannot read it has ` +
+        `no margin left and will fail healthy saves once render and request ` +
+        `latency is added`
+      : `so the fallback (${AUTOSAVE_INTERVAL_FALLBACK_MS} ms) has lost its 2x margin`;
+  return (
+    `the instance's autosave debounce (${observedMs} ms) is larger than every value ` +
+    `in SHIPPED_AUTOSAVE_INTERVALS_MS (max ${largest} ms), ${urgency}. Add ` +
+    `${observedMs} to that list in tests/helpers/flows/autosave-interval.ts; the ` +
+    `unit lane will then require AUTOSAVE_INTERVAL_FALLBACK_MS >= ${2 * observedMs}. ` +
+    `If the value was set on purpose for this lane (LANGFLOW_AUTO_SAVING_INTERVAL) ` +
+    `rather than shipped upstream, decide whether the fallback must cover it (#2107).`
+  );
+}
+
+// ANSI SGR sequences, which Playwright's request errors carry in their call log
+// when colour is on (locally; on Actions `CI` turns it off, so this is a backstop
+// and the line-break escaping below is the part that matters there).
+const ANSI_SGR = /\u001b\[[0-9;]*m/g;
+
+/**
+ * Prefix a preflight warning as a GitHub Actions annotation when running there.
+ *
+ * A `console.warn` in `globalSetup` lands in the middle of a long job log, and
+ * this one decides whether every save-dependent spec in the run waits long
+ * enough — the annotation puts it on the run page (#2107). Local runs keep the
+ * plain line.
+ *
+ * The annotation text is ESCAPED (`%`, `\r`, `\n`, GitHub's workflow-command
+ * rule) and stripped of ANSI colour codes. Without that, the likeliest way to
+ * reach the failure branch — a request error, whose message is multi-line with a
+ * coloured call log — ended the annotation at its first newline, and the sentence
+ * naming the fallback never reached the run page (found in review of #2108).
+ * The same one-liner lives in `scripts/check-stable-ownership.ts`; it is copied
+ * rather than imported because `tests/` does not depend on `scripts/`.
+ */
+export function preflightWarningLine(
+  message: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (env.GITHUB_ACTIONS !== "true") return `[preflight] WARNING: ${message}`;
+  const escaped = message
+    .replace(ANSI_SGR, "")
+    .replace(/%/g, "%25")
+    .replace(/\r/g, "%0D")
+    .replace(/\n/g, "%0A");
+  return `::warning::${escaped}`;
+}
 
 /** Publish the resolved interval for the workers. `null` clears it. */
 export function publishAutosaveInterval(intervalMs: number | null): void {
