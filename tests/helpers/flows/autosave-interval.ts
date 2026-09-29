@@ -103,7 +103,9 @@ export function fallbackStalenessWarning(observedMs: number): string | null {
   );
 }
 
-// ANSI SGR sequences, which Playwright's request errors carry in their call log.
+// ANSI SGR sequences, which Playwright's request errors carry in their call log
+// when colour is on (locally; on Actions `CI` turns it off, so this is a backstop
+// and the line-break escaping below is the part that matters there).
 const ANSI_SGR = /\u001b\[[0-9;]*m/g;
 
 /**
