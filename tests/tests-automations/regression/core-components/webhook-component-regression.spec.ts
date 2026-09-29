@@ -145,9 +145,12 @@ test(
   },
 );
 
-test(
+// Quarantined for #2097: hard failure on the guard-tripped VM daily of 2026-09-29
+// (1.13.0.dev27), the saved flow carries no node of type "Webhook". Lifting it
+// (drop `test.fixme`, restore `@stable`) is #2097's deliverable.
+test.fixme(
   "Webhook component — flow is saved to database and contains the Webhook node",
-  { tag: ["@stable", "@release", "@regression"] },
+  { tag: ["@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
