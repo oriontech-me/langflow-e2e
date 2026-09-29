@@ -25,7 +25,8 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
  * i18next ever sees it, transcribed from the shipped bundle:
  *
  * ```js
- * const SUPPORTED = ["en", "de", "es", "fr", "ja", "pt", "zh-Hans"];
+ * // 1.13.0.dev27 added "ko"; 1.12.x ships the other seven.
+ * const SUPPORTED = ["en", "de", "es", "fr", "ja", "ko", "pt", "zh-Hans"];
  * const normalize = (e) => {
  *   if (SUPPORTED.includes(e)) return e;
  *   if (["zh-hans", "zh-cn", "zh-sg"].includes(e.toLowerCase())) return "zh-Hans";
@@ -54,9 +55,13 @@ const PREFERENCE_LADDER: Array<{
     branch: "no bundle — upstream #12738 offered it in the selector without one",
   },
   {
-    seed: "ko",
+    // Was "ko" (upstream #12740, the same defect) until 1.13.0.dev27 shipped a
+    // Korean bundle and put "ko" in SUPPORTED (#2099). An unshipped seed must stay
+    // unshipped on every target this runs against, 1.12.x included, and no
+    // upstream PR is adding Italian.
+    seed: "it",
     expected: "en",
-    branch: "no bundle — upstream #12740, the same defect",
+    branch: "no bundle, no pending upstream locale for it",
   },
   {
     seed: "xx",
@@ -113,12 +118,9 @@ async function reloadWithPreference(
 }
 
 test.describe("i18n — a stored language preference Langflow cannot place", () => {
-  // Quarantined for #2099: hard failure on the guard-tripped VM daily of 2026-09-29
-  // (1.13.0.dev27), a stored "ko" preference boots into "ko" instead of "en".
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2099's deliverable.
-  test.fixme(
+  test(
     "the application boots into a shipped language for every unsupported or regional preference",
-    { tag: ["@regression", "@ui-ux"] },
+    { tag: ["@stable", "@regression", "@ui-ux"] },
     async ({ page }) => {
       // Nine reloads of the home screen; measured at ~30 s in total.
       test.setTimeout(180000);
