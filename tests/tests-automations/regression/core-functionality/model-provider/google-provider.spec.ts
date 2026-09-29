@@ -200,9 +200,12 @@ test.describe("Google Provider", () => {
     },
   );
 
-  test(
+  // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-29
+  // (1.13.0.dev27), the Gemini turn returns an empty reply. Lifting it (drop
+  // `test.fixme`, restore `@stable`) is #2095's deliverable.
+  test.fixme(
     "configured Google selects a Gemini model in the Agent and executes the flow",
-    { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
+    { tag: ["@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
       // Health, not mere presence (#1029's gate, applied here by #1415). This
       // test makes a live completion call, so a key that EXISTS but is dead

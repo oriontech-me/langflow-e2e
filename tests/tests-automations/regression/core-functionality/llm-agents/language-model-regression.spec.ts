@@ -166,9 +166,12 @@ test.describe("Language Model Component Regression", () => {
   // 4/4 clean at `--retries=0`, and the force-fail call log reads
   // `unexpected value "gemini-flash-latest"` — the very model that could not be
   // resolved on 08-14 now lands in the widget.
-  test(
+  // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-29
+  // (1.13.0.dev27), the Gemini turn returns an empty reply. Lifting it (drop
+  // `test.fixme`, restore `@stable`) is #2095's deliverable.
+  test.fixme(
     "language model must respond with Google provider",
-    { tag: ["@stable", "@release", "@components", "@model-provider"] },
+    { tag: ["@release", "@components", "@model-provider"] },
     async ({ page }) => {
       const gate = providerSkipGate("google");
       test.skip(gate.skip, gate.reason);

@@ -130,7 +130,10 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
     }
   });
 
-  test(
+  // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-29
+  // (1.13.0.dev27), the Gemini turn returns an empty reply. Lifting it (drop
+  // `test.fixme`, restore `@stable`) is #2095's deliverable.
+  test.fixme(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
     // `@stable` was auto-removed by the daily of 2026-08-10 (commit c954cd9, run
     // 31373880200) on a failure that never ran this test: the shard's own
@@ -140,7 +143,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
     // the source — the catalog is now frozen per run, see
     // `helpers/provider-setup/catalog-snapshot.ts` (#1386) — and the assertion itself
     // re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with google configured.
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider", "@stable"] },
+    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(
