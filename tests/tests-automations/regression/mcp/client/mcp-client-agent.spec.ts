@@ -206,7 +206,33 @@ const targets = resolveTestTargets({ tier: "tool-calling" });
 // Serial mode prevents parallel provider blocks from racing autosaves of the
 // template flow. (load() no longer deletes all flows — that cross-worker wipe
 // was removed in #553; teardown is now scoped per created flow, #515.)
-test.describe.configure({ mode: "serial" });
+// NOT serial, and the absence is the point (#963 §6, #1690). This file declared
+// `test.describe.configure({ mode: "serial" })`, which makes a failure SKIP every
+// later test in the file — and since each provider is its own `test.describe` with
+// one test, a failing openai variant silently took the google and anthropic ones
+// with it. That is what hid the google variant for three dailies while #963 was
+// open: `reports/daily-history.jsonl` showed the spec failing on 07-13/07-16/07-21
+// with `[google / gemini-2.5-flash]` never executing, so 2026-07-27 was the first
+// day it ran at all. A skipped variant reports `worker=-1`, zero duration and an
+// empty reason, which triage cannot tell from a lost one.
+//
+// Measured on the two lane shapes before removing it (3 describes, first failing):
+//
+//   with serial,    PW_SHARD_FILE_LEVEL=1 (daily)  → 1 worker,  1 failed, 2 SKIPPED
+//   without serial, PW_SHARD_FILE_LEVEL=1 (daily)  → 1 worker,  1 failed, 2 passed
+//   without serial, default (PR lane, workers=2)   → 2 workers, 1 failed, 2 passed
+//
+// So on the daily — the lane `@stable` is about — this introduces NO parallelism at
+// all (`fullyParallel: false` already serialises within a file); it only stops the
+// cascade. On the PR lane the variants can spread across the two workers, and the
+// one collision that reaches is two workers loading the same template, which
+// `loadTemplateByName` already retries (#1002) — `preconfigure-routed-provider.ts`
+// records that no run has failed on it. The normal path here picks the pinned model
+// straight from the Agent dropdown and never opens the provider panel, so the
+// `400 Variable name already exists` race that motivated that helper is not on it.
+//
+// `--workers=1` remains the run-level rule for agent specs (area `CLAUDE.md`); it is
+// not interchangeable with a serial declaration and neither substitutes for the other.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
@@ -241,7 +267,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent calls echo MCP tool and returns echoed message",
-      { tag: ["@mcp", "@agents", "@regression"] },
+      { tag: ["@stable", "@mcp", "@agents", "@regression"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
