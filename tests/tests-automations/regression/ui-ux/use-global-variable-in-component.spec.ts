@@ -3,6 +3,9 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
+import { pendingSaveQuietMs } from "../../../helpers/flows/autosave-interval";
+import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
+import { watchFlowSave } from "../../../helpers/flows/watch-flow-save";
 
 // Consumption side of global variables: binding a Credential-typed variable to a
 // component's secret field (OpenAI `api_key`, a SecretStrInput) via the field's
@@ -164,6 +167,49 @@ async function expectCredentialVariable(
 }
 
 /**
+ * Asserts the SAVED flow binds the OpenAI node's `api_key` to `varName`.
+ *
+ * Read over the API before the reload so the persistence test fails on the half
+ * that broke: a stored value that is wrong is the save, a correct one that does
+ * not render after the reload is the rehydration (#2098). The flow id comes from
+ * the editor URL, which a blank flow only reaches after its `POST` returned.
+ */
+async function expectSavedApiKeyBinding(
+  page: Page,
+  request: import("@playwright/test").APIRequestContext,
+  varName: string,
+): Promise<void> {
+  const flowId = /\/flow\/([0-9a-f-]{36})/.exec(page.url())?.[1];
+  expect(flowId, `flow id in the editor URL (${page.url()})`).toBeTruthy();
+  const authToken = await getAuthToken(request);
+  const res = await request.get(`/api/v1/flows/${flowId}`, {
+    headers: { Authorization: authToken },
+  });
+  expect(res.ok()).toBeTruthy();
+  const flow = (await res.json()) as {
+    data?: {
+      nodes?: Array<{
+        data?: {
+          node?: {
+            template?: {
+              api_key?: { value?: unknown; load_from_db?: unknown };
+            };
+          };
+        };
+      }>;
+    };
+  };
+  const apiKeyFields = (flow.data?.nodes ?? [])
+    .map((n) => n.data?.node?.template?.api_key)
+    .filter((f) => f !== undefined);
+  expect(
+    apiKeyFields,
+    "exactly one saved node with an api_key field",
+  ).toHaveLength(1);
+  expect(apiKeyFields[0]).toMatchObject({ value: varName, load_from_db: true });
+}
+
+/**
  * Best-effort deletion of a global variable by name via the REST API.
  */
 async function deleteVariableByName(
@@ -246,12 +292,9 @@ test.describe("Global variable bound to a component secret field", () => {
     },
   );
 
-  // Quarantined for #2098: hard failure on the guard-tripped VM daily of 2026-09-29
-  // (1.13.0.dev27), the global-variable anchor on api_key is gone after reload.
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2098's deliverable.
-  test.fixme(
+  test(
     "component secret-field global-variable binding persists across reload",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression"] },
     async ({ page, request }) => {
       const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const varName = `gv-api-key-${stamp}`;
@@ -260,12 +303,27 @@ test.describe("Global variable bound to a component secret field", () => {
       try {
         await test.step("Add an OpenAI component and bind a Credential variable to api_key", async () => {
           await addOpenAiComponent(page);
-          await createAndBindCredentialVariable(page, varName, sentinelValue);
+          // Drain the add-node autosave first: a save still pending when the watch
+          // is armed would satisfy it while carrying the pre-bind graph.
+          await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
+          const save = watchFlowSave(page);
+          try {
+            await createAndBindCredentialVariable(page, varName, sentinelValue);
+          } catch (e) {
+            save.dispose();
+            throw e;
+          }
+          // Wait for the save itself, never a fixed sleep: the debounce is the
+          // instance's `auto_saving_interval` (5000 ms since 1.13.0.dev27, #2098),
+          // and a 2 s sleep reloaded a flow that had not been saved at all.
+          await save.settled();
+        });
+
+        await test.step("The saved flow binds api_key to the variable", async () => {
+          await expectSavedApiKeyBinding(page, request, varName);
         });
 
         await test.step("Reload the page and confirm the binding survived", async () => {
-          // Let the flow autosave the binding, then reload from scratch.
-          await page.waitForTimeout(2000);
           await page.reload();
 
           // The rehydrated node still shows the same variable as its bound value —

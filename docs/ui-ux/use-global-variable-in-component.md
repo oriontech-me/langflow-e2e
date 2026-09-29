@@ -1,6 +1,6 @@
 # Use Global Variable in Component (API key)
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev8`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev27`)
 
 ---
 
@@ -72,11 +72,17 @@ is never selected).
 7. Cleanup: delete the variable via `DELETE /api/v1/variables/{id}` in a `finally` block
 
 **Test 2 — binding persists across reload**
-1. Run setup + create + bind the Credential variable (same as Test 1)
-2. Wait for autosave, then `page.reload()`
-3. Reopen the OpenAI node
-4. Assert the `api_key` field still shows the same variable name as its bound value
-   (rehydrated from the saved flow — auto-bind never overrides an explicit binding)
+1. Run setup, then drain the add-node autosave with a window longer than the
+   instance's debounce (`waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() })`),
+   so the save armed next cannot be the add-node one carrying pre-bind state
+2. Arm `watchFlowSave(page)`, create + bind the Credential variable (same as Test 1),
+   then await the save — it **fails** if no `PATCH /api/v1/flows/{id}` is issued
+   within one debounce plus slack, instead of reloading on a guess
+3. Read the flow back over `GET /api/v1/flows/{id}` and assert the OpenAI node's
+   `template.api_key` is `{ value: <varName>, load_from_db: true }` — the **save** half
+4. `page.reload()`; assert the `api_key` field still shows the same variable name as
+   its bound value (rehydrated from the saved flow — auto-bind never overrides an
+   explicit binding) — the **render** half
 5. Cleanup: delete the variable via `DELETE /api/v1/variables/{id}` in a `finally` block
 
 ---
@@ -85,8 +91,10 @@ is never selected).
 
 - **Test 1:** after selection, the `api_key` field displays the variable name as its
   bound global-variable value; the secret sentinel has visible-text count 0 on the page.
-- **Test 2:** after a full page reload and reopening the node, the `api_key` field is
-  still bound to the same variable name.
+- **Test 2:** the bind produces a flow save whose stored `api_key` is
+  `{ value: <varName>, load_from_db: true }`, and after a full page reload the
+  `api_key` field is still bound to the same variable name. The two halves fail
+  separately, so a red run says whether the **save** or the **render** broke.
 
 ---
 
@@ -98,6 +106,9 @@ is never selected).
 - `src/frontend/src/components/core/parameterRenderComponent/components/inputComponent/components/popover/index.tsx` — renders the option rows
   (`option-<name>` when selectable, `disabled-option-<name>` for Credential vars in
   non-secret fields) and the selected-value `OptionBadge`
+- `src/frontend/src/hooks/flows/use-autosave-flow.ts` — the debounced autosave the
+  reload depends on; its delay is `GET /api/v1/config.auto_saving_interval`
+  (`src/lfx/src/lfx/services/settings/groups/ui.py`, 5000 ms since upstream #14903)
 - `src/backend/base/langflow/api/v1/variable.py` — global variable CRUD endpoints
   (`GET /api/v1/variables/` → `[{id, name, type, ...}]`, `DELETE /api/v1/variables/{id}`)
 
@@ -225,7 +236,8 @@ The force-fail that does discriminate test 1 is creating and binding a
 assertion and the type readback go red. For test 2 it is removing the autosave wait
 before the reload, which confirms the persistence claim is real — the rehydrated node
 comes back **without** the binding, so auto-bind does not silently rescue the
-assertion.
+assertion. (Since #2098 that wait is `watchFlowSave`, and the discriminating
+mutation is reloading without it — see below.)
 
 ---
 
@@ -240,3 +252,31 @@ flow per test.
 `trackCreatedFlows(page)` now captures every `POST /api/v1/flows/` → `201` the page
 performs, and `afterEach` deletes exactly those ids. The variable deletion stays in
 each test's own `finally`, since it is scoped to that test's `varName`.
+
+---
+
+## The fixed 2 s wait lost its race with the autosave debounce (#2098) *(optional)*
+
+Test 2 waited `page.waitForTimeout(2000)` for "the flow to autosave" and then
+reloaded. On `1.13.0.dev27` it hard-failed 3/3 on the VM daily of 2026-09-29 with
+`anchor-popover-anchor-input-api_key` **not found** after the reload — not unbound,
+absent: the rehydrated canvas had **no node at all**.
+
+**Cause: an intentional upstream change, and a wait that was never a wait.**
+Upstream #14903 (*multi-user editing safety*, merged 2026-09-28, first shipped in
+`1.13.0.dev27`) raised `auto_saving_interval` from 2000 to **5000 ms** (its ADR-006:
+autosave at 5 s with a 15 s ceiling, to cut false edit conflicts). The autosave is a
+trailing debounce, so the `PATCH` is issued one interval after the **last** edit.
+Measured on `1.13.0.dev27` against a blank flow with one OpenAI node: a reload 2 s
+after the edit found **0 nodes** in the canvas and in `GET /api/v1/flows/{id}`, with
+**no** `PATCH` issued; waiting 15 s showed the single `PATCH` go out ~5.0 s after
+the edit, and the node survived the reload. Nothing about the binding itself changed
+— the flow simply had not been saved yet.
+
+The 2000 ms sleep was equal to the old debounce, so it passed on `dev26` only because
+the steps between the last edit and the sleep happened to cover the gap. It now waits
+for the evidence instead: `watchFlowSave` (armed after a drain, so the add-node save
+cannot satisfy it) derives its deadline from the instance's own interval and **fails**
+when no save appears, and the stored `api_key` is read back before the reload so a
+future red says whether the save or the render broke. Verdict: **product changed
+intentionally + test defect**; no upstream ticket.
