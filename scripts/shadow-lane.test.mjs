@@ -327,7 +327,8 @@ test("the official lane stops an active shadow before it runs, and only an activ
   const stop = daily.indexOf("systemctl stop e2e-shadow.service");
   assert.ok(stop > 0, "the daily does not stop the shadow");
   assert.ok(stop < daily.indexOf("./scripts/run-e2e.sh\n"), "the shadow must be stopped before the official run");
-  const block = daily.slice(daily.lastIndexOf("if ", stop), stop);
-  assert.match(block, /systemctl is-active --quiet e2e-shadow\.service/);
+  const block = daily.slice(daily.lastIndexOf("case ", stop), stop);
+  // The behaviour, state by state, is run-daily-wrapper.test.mjs's; this pins placement.
+  assert.match(block, /case "\$shadow_state" in/);
   assert.match(daily, /systemctl stop e2e-shadow\.service \|\| echo "WARNING/, "a failed stop must not end the daily");
 });

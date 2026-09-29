@@ -95,12 +95,20 @@ main() {
   # This lane has priority over the image shadow (#2093). There is no lock between them,
   # so a daily re-run by hand while the shadow is still going stops it first, instead of
   # running two suites on one machine with the verdict that matters absorbing the
-  # contention. Only when it is active: every scheduled day it is not, and this is a
+  # contention. Only when it is running: every scheduled day it is not, and this is a
   # no-op. Never fatal.
-  if systemctl is-active --quiet e2e-shadow.service 2>/dev/null; then
-    echo "stopping the image shadow, which is still running, before this run"
-    systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
-  fi
+  #
+  # Read as ActiveState, not `is-active`: the shadow is Type=oneshot, so while its
+  # wrapper runs systemd reports it `activating`, which `is-active` does not count --
+  # the first version of this check could never fire (#2094 review).
+  local shadow_state
+  shadow_state="$(systemctl show -p ActiveState --value e2e-shadow.service 2>/dev/null || true)"
+  case "$shadow_state" in
+    activating | active | reloading | deactivating)
+      echo "stopping the image shadow ($shadow_state) before this run"
+      systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
+      ;;
+  esac
 
   if [ -r "$SECRETS" ]; then
     # shellcheck disable=SC1090
