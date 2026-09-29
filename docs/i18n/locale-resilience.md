@@ -1,6 +1,6 @@
 # i18n — Locale resilience
 
-**Last validated:** Langflow 1.12.x (measured on nightly `1.12.0.dev44`)
+**Last validated:** Langflow 1.13.x (measured on `1.13.0.dev27`; test 1 re-measured there for #2099)
 
 ---
 
@@ -13,7 +13,7 @@ individual keys.
 
 1. **should boot into a shipped language for every unsupported or regional
    preference** — `localStorage.languagePreference` is seeded before the first
-   navigation with each of `nb-NO`, `ru`, `ko`, `xx`, `zh-CN`, `zh-SG`, `pt-BR`,
+   navigation with each of `nb-NO`, `ru`, `it`, `xx`, `zh-CN`, `zh-SG`, `pt-BR`,
    `de-AT` and an unset value. In every case the application reaches
    `mainpage_title` with a non-empty body, and `document.documentElement.lang`
    settles on the language the frontend's normaliser resolves — `en` for the
@@ -57,12 +57,12 @@ id-scoped.
 - **Test 1 asserts the frontend's normaliser, and the expected value per seed is
   measured, not assumed.** The shipped bundle resolves the stored preference
   through a three-step ladder before i18next ever sees it: exact match against
-  the seven shipped codes → the `zh-hans`/`zh-cn`/`zh-sg` special case → the
+  the shipped codes (eight on 1.13.x, seven on 1.12.x) → the `zh-hans`/`zh-cn`/`zh-sg` special case → the
   primary subtag (`pt-BR` → `pt`) → `en`. Each row of the table asserts one
   branch of that ladder, so a regression that flattens it to "unknown ⇒ en"
   would still be caught by the `zh-CN` and `de-AT` rows, and a regression that
   drops the final `en` fallback — the black-screen shape — by the `nb-NO`, `ru`,
-  `ko` and `xx` rows.
+  `it` and `xx` rows.
 - **"Boots" is asserted as three things, because a blank screen satisfies one of
   them.** The defect being pinned renders a black page with a live document: the
   navigation resolves and the URL is right. So each row requires
@@ -200,7 +200,8 @@ Playwright discards with it.
   is auditable:
 
   ```js
-  const SUPPORTED = ["en", "de", "es", "fr", "ja", "pt", "zh-Hans"];
+  // 1.13.0.dev27 added "ko"; 1.12.x ships the other seven.
+  const SUPPORTED = ["en", "de", "es", "fr", "ja", "ko", "pt", "zh-Hans"];
   const normalize = (e) => {
     if (SUPPORTED.includes(e)) return e;
     if (["zh-hans", "zh-cn", "zh-sg"].includes(e.toLowerCase())) return "zh-Hans";
@@ -211,6 +212,18 @@ Playwright discards with it.
 
   i18next is then initialised with `fallbackLng: "en"`, `returnNull: false` and
   `returnEmptyString: false` — the configuration test 3 exercises.
+- **Why `it` and not `ko` (#2099).** The table used to seed `ko` as an unshipped
+  preference, after upstream `#12740`. `1.13.0.dev27` shipped a Korean bundle
+  (`assets/ko-*.js`, and `"ko"` in `SUPPORTED`; the normaliser is otherwise
+  byte-identical to `1.13.0.dev26`), so `ko` now resolves to itself and the row
+  failed 3/3 on the 2026-09-29 daily. That is a stale test input, not a product
+  regression. `ko` could not simply flip to `expected: "ko"`: the suite also runs
+  against the stable 1.12.x image, which has no Korean bundle. The replacement
+  must stay unshipped on every target, so it was picked against the open
+  upstream locale PRs (Korean, Russian, Swedish, Indonesian, Polish and Turkish
+  have one; Italian does not). `ru` is covered by one of them (`#12739`), so
+  that row may go stale the same way; when it does, pick its replacement by the
+  same rule.
 - **Where the facts come from.** The five-key gap was produced by diffing the
   `en` translation object inside `assets/index-*.js` against each locale chunk
   (2387 English keys, 2382 in each of the six bundles, identical gap in all
