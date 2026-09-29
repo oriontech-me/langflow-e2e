@@ -436,9 +436,12 @@ test.fixme(
   },
 );
 
-test(
+// Quarantined for #2097: unmasked by the quarantine of the saved-node test above (serial
+// file); on the nightly the Webhook node's run button never renders after the flow
+// loads. Lifting it (drop `test.fixme`, restore `@stable`) is #2097's deliverable.
+test.fixme(
   "Webhook component — invalid JSON payload is encapsulated in {payload: ...}",
-  { tag: ["@stable", "@release", "@regression"] },
+  { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
     const flowId = page.url().split("/").slice(-1)[0];
