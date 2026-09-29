@@ -95,14 +95,14 @@ test("a unit that does not start is said, and the daily is still not failed", ()
  * credential. The run-e2e stub records the environment it was given and exits 3, so
  * the test reads what the real run would have received and that its status is kept.
  */
-function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest = false } = {}) {
+function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest = false, bogusWorktree = false, repoEnv = false } = {}) {
   const dir = makeTempDir("shadow-run-");
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "scripts"), { recursive: true });
   const envOut = join(dir, "run-e2e.env");
   const cmpOut = join(dir, "compare.log");
   const bakOut = join(dir, "backup.env");
-  writeFileSync(join(repo, "scripts", "run-e2e.sh"), `#!/usr/bin/env bash\nenv | sort > ${JSON.stringify(envOut)}\necho "cwd=$PWD head=$(git rev-parse HEAD)" >> ${JSON.stringify(envOut)}\nexit 3\n`, { mode: 0o755 });
+  writeFileSync(join(repo, "scripts", "run-e2e.sh"), `#!/usr/bin/env bash\nenv | sort > ${JSON.stringify(envOut)}\necho "cwd=$PWD head=$(git rev-parse HEAD)" >> ${JSON.stringify(envOut)}\necho "dotenv=$(readlink .env || echo none)" >> ${JSON.stringify(envOut)}\nexit 3\n`, { mode: 0o755 });
   writeFileSync(join(repo, "scripts", "compare-lane-verdicts.mjs"), `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(cmpOut)}, process.argv.slice(2).join(" ") + "\\n");\n`);
   writeFileSync(join(repo, "scripts", "backup-ledger.sh"), `#!/usr/bin/env bash\necho "LEDGER_DIR=$LEDGER_DIR BACKUP_DEST=$BACKUP_DEST" > ${JSON.stringify(bakOut)}\n`, { mode: 0o755 });
   const git = (...args) => execFileSync(REAL_GIT, args, { cwd: repo, stdio: "pipe", encoding: "utf8" }).trim();
@@ -110,6 +110,8 @@ function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest 
   git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", ".");
   git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "suite");
   const head = git("rev-parse", "HEAD");
+  // Untracked, as on the machine: the clone's .env is never committed.
+  if (repoEnv) writeFileSync(join(repo, ".env"), "SOME_PROVIDER_API_KEY=from-dotenv\n");
 
   const home = join(dir, "home");
   const bin = join(home, ".local", "bin");
@@ -123,6 +125,11 @@ function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest 
 
   const state = join(dir, "state");
   mkdirSync(state);
+  // A directory that is not a worktree of the clone, as a clone rebuilt under it leaves.
+  if (bogusWorktree) {
+    mkdirSync(join(state, "wt"));
+    writeFileSync(join(state, "wt", "leftover.txt"), "from an older clone\n");
+  }
   if (!noRequest) {
     writeFileSync(join(state, "request.env"), `SHADOW_DATE=${date}\nSHADOW_VERSION=${version}\nSHADOW_SUITE_SHA=${sha ?? head}\n`);
   }
@@ -152,6 +159,7 @@ function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest 
     compare: readIf(cmpOut),
     backup: readIf(bakOut),
     requestLeft: existsSync(join(state, "request.env")),
+    repo,
   };
   rmSync(dir, { recursive: true, force: true });
   return out;
@@ -278,4 +286,48 @@ test("the daily asks for the shadow after its own run and backup, and never lets
   assert.ok(sha < run, "the suite commit must be read before the run moves HEAD");
   assert.ok(run < backup && backup < ask && ask < ret, "the shadow must be asked for after the run and the backup, before the return");
   assert.match(daily, /if \[ "\$\{IMAGE_SHADOW:-1\}" = "1" \] && \[ "\$\{DRY_RUN:-0\}" != "1" \]; then/);
+});
+
+// ---------------------------------------------------------------------------
+// #2094 review
+// ---------------------------------------------------------------------------
+
+test("a directory that is not the clone's worktree is replaced, not a FATAL every weekday", () => {
+  const r = shadow({ bogusWorktree: true });
+  assert.ok(r.env, `run-e2e.sh was not reached:\n${r.log}`);
+  assert.match(r.log, /is not a worktree of .* removing it and creating it again/);
+  const [, , head] = r.env.match(/cwd=(\S+) head=(\S+)/);
+  assert.equal(head, r.head);
+});
+
+test("the shadow reads the clone's .env when there is one, and none when there is none", () => {
+  // The provider keys that decide which spec files enter the suite come from the
+  // working copy's .env; a worktree has none of its own.
+  const linked = shadow({ repoEnv: true });
+  assert.equal(linked.env.match(/dotenv=(\S+)/)[1], join(linked.repo, ".env"));
+  const none = shadow();
+  assert.equal(none.env.match(/dotenv=(\S+)/)[1], "none");
+});
+
+test("gh's stored login cannot reach the shadow's run either", () => {
+  // Without a token the issue creator falls back to `gh issue create`, which uses the
+  // login under ~/.config/gh or GH_ENTERPRISE_TOKEN; unsetting the tokens alone left
+  // that path open behind CREATE_ISSUE=0.
+  const r = shadow();
+  const e = envOf(r.env);
+  assert.equal(e.GH_CONFIG_DIR, join(r.state, "no-gh-login"));
+  assert.ok(!("GH_ENTERPRISE_TOKEN" in e));
+  assert.ok(!("GITHUB_ENTERPRISE_TOKEN" in e));
+});
+
+test("the official lane stops an active shadow before it runs, and only an active one", () => {
+  // No lock between the lanes: a daily re-run by hand while the shadow is still going
+  // would otherwise run two suites at once, with the verdict that matters absorbing it.
+  const daily = readFileSync(DAILY, "utf8");
+  const stop = daily.indexOf("systemctl stop e2e-shadow.service");
+  assert.ok(stop > 0, "the daily does not stop the shadow");
+  assert.ok(stop < daily.indexOf("./scripts/run-e2e.sh\n"), "the shadow must be stopped before the official run");
+  const block = daily.slice(daily.lastIndexOf("if ", stop), stop);
+  assert.match(block, /systemctl is-active --quiet e2e-shadow\.service/);
+  assert.match(daily, /systemctl stop e2e-shadow\.service \|\| echo "WARNING/, "a failed stop must not end the daily");
 });

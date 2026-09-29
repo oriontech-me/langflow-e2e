@@ -92,6 +92,16 @@ main() {
   cd "$REPO" || { echo "FATAL: $REPO is missing"; exit 1; }
   echo "wrapper at: $(git log --oneline -1 -- ops/vm/run-daily.sh)"
 
+  # This lane has priority over the image shadow (#2093). There is no lock between them,
+  # so a daily re-run by hand while the shadow is still going stops it first, instead of
+  # running two suites on one machine with the verdict that matters absorbing the
+  # contention. Only when it is active: every scheduled day it is not, and this is a
+  # no-op. Never fatal.
+  if systemctl is-active --quiet e2e-shadow.service 2>/dev/null; then
+    echo "stopping the image shadow, which is still running, before this run"
+    systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
+  fi
+
   if [ -r "$SECRETS" ]; then
     # shellcheck disable=SC1090
     . "$SECRETS"

@@ -11,9 +11,11 @@
 #   VM+image x VM+wheel        holds the machine, isolates the artifact
 #
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
-# to the platform, and the six publishing credentials are unset before the run -- the
-# switches being off is the mechanism, and the missing credentials are the reason a
-# switch flipped by mistake still cannot publish.
+# to the platform. The switches being off is the mechanism. Behind it, the six
+# publishing credentials are unset and gh is pointed at an empty config, so that a
+# switch flipped by mistake fails for want of a credential -- gh's stored login is the
+# fallback the issue creator uses when no token is set, and an unset token alone would
+# not have closed it (#2094 review).
 #
 # ## How it is started
 #
@@ -33,6 +35,14 @@
 #   runs      $STATE/runs
 #   ledger    ~/.local/state/langflow-e2e-shadow, as workflow daily-stable-vm-image
 #   logs      /var/log/e2e-shadow
+#
+# ## The official lane has priority
+#
+# There is no lock between the two, so run-daily.sh stops an active shadow when it
+# starts: a daily re-run by hand while the shadow is still going would otherwise run two
+# suites on one machine, and the lane with consequence would absorb the contention. A
+# shadow stopped that way leaves leftovers only on its own ports, which the next
+# shadow's hygiene clears.
 #
 # Rollback: run-daily.sh's IMAGE_SHADOW=0, or remove the unit; nothing here is read by
 # the official lane.
@@ -82,13 +92,33 @@ main() {
   # day, and a shadow that followed it would run a different suite than the one it is
   # compared with. Not the clone's working tree either, which the next pull rewrites.
   local WT="$STATE/wt"
-  if git -C "$WT" rev-parse --git-dir > /dev/null 2>&1; then
+  # A worktree the clone no longer knows, or a directory that is no longer the clone's
+  # worktree, would fail this every weekday with nothing watching the unit: both are
+  # cleared and the worktree recreated (#2094 review).
+  git -C "$REPO" worktree prune
+  if [ -e "$WT" ] && [ "$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" != "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)" ]; then
+    echo "WARNING: $WT is not a worktree of $REPO — removing it and creating it again"
+    rm -rf "$WT"
+    git -C "$REPO" worktree prune
+  fi
+  if [ -e "$WT" ]; then
     git -C "$WT" checkout -q --detach --force "$SHADOW_SUITE_SHA" || { echo "FATAL: could not move $WT to $SHADOW_SUITE_SHA"; exit 1; }
   else
     git -C "$REPO" worktree add -q --detach "$WT" "$SHADOW_SUITE_SHA" || { echo "FATAL: could not create $WT at $SHADOW_SUITE_SHA"; exit 1; }
   fi
   [ "$(git -C "$WT" rev-parse HEAD)" = "$SHADOW_SUITE_SHA" ] || { echo "FATAL: $WT is not at $SHADOW_SUITE_SHA after the checkout"; exit 1; }
   echo "suite at: $(git -C "$WT" log --oneline -1)"
+  # The provider keys that decide which spec files enter the suite are read from the
+  # working copy's .env (run-e2e.sh, #1764). A worktree has none, so the shadow would
+  # list a smaller suite than the official run from a key only the clone's .env holds,
+  # and the artifact comparison would charge the image with a difference of .env.
+  # Linked, never copied, so the two lanes read one file (#2094 review).
+  if [ -f "$REPO/.env" ]; then
+    ln -sfn "$REPO/.env" "$WT/.env"
+    echo "suite keys: $WT/.env -> $REPO/.env"
+  else
+    rm -f "$WT/.env"
+  fi
 
   # --- credentials: the provider keys, and nothing that can publish ---------------
   if [ -r "$SECRETS" ]; then
@@ -101,6 +131,9 @@ main() {
   # mistake then fails for want of a credential instead of speaking for a run with no
   # consequence.
   unset SOURCE_PUSH_TOKEN GH_TOKEN GITHUB_TOKEN QA_E2E_AUTOMATION_TOKEN SUPABASE_SERVICE_ROLE_KEY SLACK_WEBHOOK_URL
+  unset GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+  mkdir -p "$STATE/no-gh-login"
+  export GH_CONFIG_DIR="$STATE/no-gh-login"
   if [ -r "$LANE" ]; then
     # shellcheck disable=SC1090
     . "$LANE"
