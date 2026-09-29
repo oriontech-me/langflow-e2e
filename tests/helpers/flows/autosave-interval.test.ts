@@ -135,6 +135,29 @@ test("preflight warnings become annotations on GitHub Actions only", () => {
   );
 });
 
+test("an annotation keeps a multi-line error on ONE workflow-command line", () => {
+  // The shape a failed read really produces: Playwright's request error is
+  // multi-line and carries ANSI colour codes in its call log (measured against a
+  // closed port in the review of #2108). An unescaped newline ends the
+  // annotation, and the fallback sentence would never reach the run page.
+  const message =
+    `${describeAutosaveInterval(null)} — could not read the flow autosave debounce: ` +
+    "Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:7899\r\n" +
+    "Call log:\n\u001b[2m  - → GET http://127.0.0.1:7899/api/v1/config\u001b[22m\n100%";
+  const line = preflightWarningLine(message, { GITHUB_ACTIONS: "true" });
+  assert.ok(line.startsWith("::warning::"));
+  assert.doesNotMatch(line, /[\r\n]/, "a raw newline ends the annotation");
+  assert.doesNotMatch(line, /\u001b/, "ANSI codes would render as garbage");
+  assert.match(line, /using the 10000 ms fallback/);
+  assert.match(line, /%0D%0ACall log:%0A/);
+  assert.match(line, /100%25$/, "a literal % must be escaped, not read as one");
+  // Locally the message is printed as is, colours and newlines included.
+  assert.equal(
+    preflightWarningLine(message, {}),
+    `[preflight] WARNING: ${message}`,
+  );
+});
+
 test("the description names which of the two states produced the number", () => {
   assert.match(describeAutosaveInterval(2000), /2000 ms/);
   assert.match(describeAutosaveInterval(2000), /auto_saving_interval/);

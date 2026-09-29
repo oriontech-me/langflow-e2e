@@ -103,6 +103,9 @@ export function fallbackStalenessWarning(observedMs: number): string | null {
   );
 }
 
+// ANSI SGR sequences, which Playwright's request errors carry in their call log.
+const ANSI_SGR = /\u001b\[[0-9;]*m/g;
+
 /**
  * Prefix a preflight warning as a GitHub Actions annotation when running there.
  *
@@ -110,14 +113,26 @@ export function fallbackStalenessWarning(observedMs: number): string | null {
  * this one decides whether every save-dependent spec in the run waits long
  * enough — the annotation puts it on the run page (#2107). Local runs keep the
  * plain line.
+ *
+ * The annotation text is ESCAPED (`%`, `\r`, `\n`, GitHub's workflow-command
+ * rule) and stripped of ANSI colour codes. Without that, the likeliest way to
+ * reach the failure branch — a request error, whose message is multi-line with a
+ * coloured call log — ended the annotation at its first newline, and the sentence
+ * naming the fallback never reached the run page (found in review of #2108).
+ * The same one-liner lives in `scripts/check-stable-ownership.ts`; it is copied
+ * rather than imported because `tests/` does not depend on `scripts/`.
  */
 export function preflightWarningLine(
   message: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return env.GITHUB_ACTIONS === "true"
-    ? `::warning::${message}`
-    : `[preflight] WARNING: ${message}`;
+  if (env.GITHUB_ACTIONS !== "true") return `[preflight] WARNING: ${message}`;
+  const escaped = message
+    .replace(ANSI_SGR, "")
+    .replace(/%/g, "%25")
+    .replace(/\r/g, "%0D")
+    .replace(/\n/g, "%0A");
+  return `::warning::${escaped}`;
 }
 
 /** Publish the resolved interval for the workers. `null` clears it. */

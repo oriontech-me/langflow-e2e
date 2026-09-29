@@ -494,7 +494,11 @@ function freezeCatalog(): void {
  *
  * Never fatal, and never silently defaulted: a run that cannot read it says so
  * and the consumers use a documented fallback that is larger than any interval
- * upstream has shipped (#1012 — an unknown value is unknown, not clean).
+ * upstream has shipped (#1012 — an unknown value is unknown, not clean). Failing
+ * here was weighed and declined in #2107: it would abort the whole run, zero
+ * tests, over one input the run can survive without (#980). What #2107 changed is
+ * the visibility — on Actions the warning is an annotation on the run page — and
+ * the fallback's floor, now 2x the largest recorded interval.
  * Authenticates explicitly, because the endpoint answers 200 with a PUBLIC
  * payload that omits the field entirely — the failure mode is a resolved-looking
  * `undefined`, not an error.
@@ -547,9 +551,11 @@ async function resolveAutosaveInterval(ctx: APIRequestContext): Promise<void> {
   } catch (e) {
     publishAutosaveInterval(null);
     console.warn(
+      // The fallback sentence goes FIRST: the error after it can be a long
+      // multi-line call log, and the sentence is what the reader acts on.
       preflightWarningLine(
-        `could not read the flow autosave debounce (${String(e)}). ` +
-          `${describeAutosaveInterval(null)}.`,
+        `${describeAutosaveInterval(null)} — could not read the flow autosave ` +
+          `debounce: ${String(e)}`,
       ),
     );
   }
