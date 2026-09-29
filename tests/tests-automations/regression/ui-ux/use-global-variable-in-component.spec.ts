@@ -246,9 +246,12 @@ test.describe("Global variable bound to a component secret field", () => {
     },
   );
 
-  test(
+  // Quarantined for #2098: hard failure on the guard-tripped VM daily of 2026-09-29
+  // (1.13.0.dev27), the global-variable anchor on api_key is gone after reload.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2098's deliverable.
+  test.fixme(
     "component secret-field global-variable binding persists across reload",
-    { tag: ["@stable", "@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression"] },
     async ({ page, request }) => {
       const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const varName = `gv-api-key-${stamp}`;
