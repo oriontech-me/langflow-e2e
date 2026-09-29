@@ -143,9 +143,12 @@ test.afterEach(async ({ page, request }) => {
   }
 });
 
-test(
+// Quarantined for #2096: recurrent first-attempt flake (2026-09-03, 2026-09-29), the
+// renamed project "lf-renamed_project" is not listed within 5 s. Lifting it (drop
+// `test.fixme`, restore `@stable`) is #2096's deliverable.
+test.fixme(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 
