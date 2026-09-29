@@ -19,8 +19,9 @@ global variable inside a component" as out of scope. Closes QA-CHECKLIST.md §4.
    field's Globe dropdown puts the field into "global variable" mode: the variable
    **name** is shown as the field's bound value, and the secret value entered at
    creation is never rendered as visible text.
-2. **Persistence** — the binding survives a full page reload: reopening the OpenAI
-   node shows the `api_key` field still bound to the same variable name.
+2. **Persistence** — the binding is saved with the flow and survives a full page
+   reload: the rehydrated OpenAI node shows the `api_key` field still bound to the
+   same variable name.
 
 If this breaks, users who store API keys as Credential global variables cannot wire
 them into components, or the wiring silently drops on reload — forcing plaintext keys
@@ -47,24 +48,26 @@ No lane selector is present, so the tag cannot silence the spec (#1010).
 1. Set viewport to 1920×1080 (the Globe dropdown/variable modal can overflow smaller screens)
 2. Bootstrap app, create blank flow
 3. Add the OpenAI component via sidebar hover + `add-component-button-openai`
-4. Open the OpenAI node so the `api_key` field (`anchor-popover-anchor-input-api_key`) is visible
+4. Assert the `api_key` field (`anchor-popover-anchor-input-api_key`) is visible — the
+   node renders expanded, so there is nothing to open
 
 **Opening the api_key variable dropdown (state-aware helper):**
 The `api_key` field is a secret field (`SecretStrInput`). When a Credential variable
 whose `default_fields` include "OpenAI API Key" already exists, Langflow **auto-binds**
 it: the field renders a value badge (the variable name) and shows **no** Globe trigger.
-Clicking the field anchor switches it back to the editable input, which exposes the
-`icon-Globe` trigger. The helper therefore: if the field's Globe is not visible, click
-the anchor to reveal the editable input; then click the field's `icon-Globe` (scoped via
-the `popover-anchor-input-api_key` input so the non-secret "OpenAI API Base" field's Globe
-is never selected).
+The helper therefore: when the field's `icon-Globe` exists (scoped via the
+`popover-anchor-input-api_key` input so the non-secret "OpenAI API Base" field's Globe is
+never selected), click it; otherwise fire `dispatchEvent("click")` on the bound field's
+dropdown trigger (see *Indirect mechanism justified* under Notes).
 
 **Test 1 — bind a Credential variable to the API key field**
 1. Run setup
 2. Open the `api_key` variable dropdown (helper above) → "Add New Variable"
 3. Create a Credential variable `gv-api-key-{timestamp}` with a distinctive secret
    sentinel value `SECRET-SENTINEL-{timestamp}` (switch to the `credential-tab` before save)
-4. Back in the still-open dropdown, click `option-gv-api-key-{timestamp}` to **select/bind** it
+4. Wait for the variable to be either bound or listed as `option-gv-api-key-{timestamp}`
+   in the still-open dropdown; click the option **only** when the field is not already
+   bound (creating it from the field may auto-bind it)
 5. Assert the field is bound: the variable **name** is displayed as the field's value badge
    (an `OptionBadge` rendered as `button "gv-api-key-{timestamp}"` inside the field)
 6. Assert the secret sentinel value never appears as visible text anywhere on the page
@@ -78,11 +81,12 @@ is never selected).
 2. Arm `watchFlowSave(page)`, create + bind the Credential variable (same as Test 1),
    then await the save — it **fails** if no `PATCH /api/v1/flows/{id}` is issued
    within one debounce plus slack, instead of reloading on a guess
-3. Read the flow back over `GET /api/v1/flows/{id}` and assert the OpenAI node's
-   `template.api_key` is `{ value: <varName>, load_from_db: true }` — the **save** half
+3. Poll the flow over `GET /api/v1/flows/{id}` until it holds exactly one `api_key`,
+   equal to `{ value: <varName>, load_from_db: true }` — the **save** half, and the one
+   assertion that proves persistence
 4. `page.reload()`; assert the `api_key` field still shows the same variable name as
-   its bound value (rehydrated from the saved flow — auto-bind never overrides an
-   explicit binding) — the **render** half
+   its bound value — the **render** half. It cannot prove persistence by itself: see
+   *Auto-bind rescues an unsaved binding* below
 5. Cleanup: delete the variable via `DELETE /api/v1/variables/{id}` in a `finally` block
 
 ---
@@ -108,7 +112,9 @@ is never selected).
   non-secret fields) and the selected-value `OptionBadge`
 - `src/frontend/src/hooks/flows/use-autosave-flow.ts` — the debounced autosave the
   reload depends on; its delay is `GET /api/v1/config.auto_saving_interval`
-  (`src/lfx/src/lfx/services/settings/groups/ui.py`, 5000 ms since upstream #14903)
+  (`src/lfx/src/lfx/services/settings/groups/ui.py` — the default is per release line:
+  5000 ms on `release-1.13.0` since upstream #14903, 2000 there before it, and still
+  1000 on `main` and `release-1.12.1` as of 2026-09-29)
 - `src/backend/base/langflow/api/v1/variable.py` — global variable CRUD endpoints
   (`GET /api/v1/variables/` → `[{id, name, type, ...}]`, `DELETE /api/v1/variables/{id}`)
 
@@ -233,11 +239,11 @@ the spec.
 
 The force-fail that does discriminate test 1 is creating and binding a
 **differently-named** variable than the one the assertions name: both the bound-value
-assertion and the type readback go red. For test 2 it is removing the autosave wait
-before the reload, which confirms the persistence claim is real — the rehydrated node
-comes back **without** the binding, so auto-bind does not silently rescue the
-assertion. (Since #2098 that wait is `watchFlowSave`, and the discriminating
-mutation is reloading without it — see below.)
+assertion and the type readback go red. For test 2 it was, on `dev8`, removing the autosave wait
+before the reload: the rehydrated node came back **without** the binding. That no longer
+holds on `1.13.0.dev27` — see the next section — so since #2098 the discriminating
+mutation is the saved-flow poll's expectation (a different variable name goes red on
+its `toEqual`).
 
 ---
 
@@ -259,24 +265,49 @@ each test's own `finally`, since it is scoped to that test's `varName`.
 
 Test 2 waited `page.waitForTimeout(2000)` for "the flow to autosave" and then
 reloaded. On `1.13.0.dev27` it hard-failed 3/3 on the VM daily of 2026-09-29 with
-`anchor-popover-anchor-input-api_key` **not found** after the reload — not unbound,
-absent: the rehydrated canvas had **no node at all**.
+`anchor-popover-anchor-input-api_key` **not found** after the reload — the field
+itself absent, not merely unbound. (The daily recorded only that; what the canvas
+held is from the local reproduction below.)
 
 **Cause: an intentional upstream change, and a wait that was never a wait.**
 Upstream #14903 (*multi-user editing safety*, merged 2026-09-28, first shipped in
 `1.13.0.dev27`) raised `auto_saving_interval` from 2000 to **5000 ms** (its ADR-006:
 autosave at 5 s with a 15 s ceiling, to cut false edit conflicts). The autosave is a
 trailing debounce, so the `PATCH` is issued one interval after the **last** edit.
-Measured on `1.13.0.dev27` against a blank flow with one OpenAI node: a reload 2 s
+Reproduced locally on `1.13.0.dev27` (the spec: 1 passed / 1 failed, same error),
+then measured against a blank flow with one OpenAI node: a reload 2 s
 after the edit found **0 nodes** in the canvas and in `GET /api/v1/flows/{id}`, with
 **no** `PATCH` issued; waiting 15 s showed the single `PATCH` go out ~5.0 s after
 the edit, and the node survived the reload. Nothing about the binding itself changed
 — the flow simply had not been saved yet.
 
-The 2000 ms sleep was equal to the old debounce, so it passed on `dev26` only because
-the steps between the last edit and the sleep happened to cover the gap. It now waits
-for the evidence instead: `watchFlowSave` (armed after a drain, so the add-node save
-cannot satisfy it) derives its deadline from the instance's own interval and **fails**
-when no save appears, and the stored `api_key` is read back before the reload so a
-future red says whether the save or the render broke. Verdict: **product changed
+The 2000 ms sleep was equal to the old debounce, so on `dev26` it had no margin to
+speak of; why it passed there was not measured. The test now waits for the evidence
+instead: `watchFlowSave` derives its deadline from the instance's own interval and
+**fails** when no save appears, and the stored `api_key` is polled back before the
+reload so a future red says whether the save or the render broke. The drain before
+arming is insurance rather than a measured need — a save only *scheduled* at arming
+merges into the bind's trailing debounce, and one *issued* before the bind would need
+the bind to start more than one interval after the node add (0.6 s measured) — and the
+poll covers the remaining case, where a pre-bind save satisfies the watch and the
+bind's own save is still one debounce away.
+
+### Auto-bind rescues an unsaved binding on `1.13.0.dev27`
+
+Force-failing the fix exposed it. With **both** the save wait and the saved-flow read
+removed — the shape of the original test, minus the 2 s sleep — test 2 still **passes**.
+Instrumented on `1.13.0.dev27`: at the reload the stored `api_key` was
+`{ value: "", load_from_db: false }` (unbound); after the reload the field rendered the
+variable anyway, and ~4.6 s later a `PATCH` wrote the binding. The variable created
+from the field carries `default_fields: ["OpenAI API Key"]`, so it is auto-bound when
+the node loads; nothing was in `localStorage`, so it is not a restored draft.
+
+So the reload assertion cannot tell "persisted" from "auto-bound". The poll is what
+makes test 2 falsifiable; the reload assertion stays as the render half. Two measured
+mutations bear this out: not awaiting `watchFlowSave` alone stays green (the poll
+waits out the debounce itself), and naming a different variable in the poll goes red.
+
+**Known gap, tracked separately:** when `globalSetup` cannot read the interval, the
+helpers fall back to `AUTOSAVE_INTERVAL_FALLBACK_MS = 3000`, now **below** the 5000 ms
+this build ships, so `watchFlowSave` would fail at 4500 ms on a healthy save. Verdict: **product changed
 intentionally + test defect**; no upstream ticket.

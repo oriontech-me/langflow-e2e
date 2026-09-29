@@ -3,7 +3,11 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
-import { pendingSaveQuietMs } from "../../../helpers/flows/autosave-interval";
+import {
+  pendingSaveQuietMs,
+  SAVE_COMPLETION_BUDGET_MS,
+  saveScheduledDeadlineMs,
+} from "../../../helpers/flows/autosave-interval";
 import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 import { watchFlowSave } from "../../../helpers/flows/watch-flow-save";
 
@@ -182,31 +186,44 @@ async function expectSavedApiKeyBinding(
   const flowId = /\/flow\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   expect(flowId, `flow id in the editor URL (${page.url()})`).toBeTruthy();
   const authToken = await getAuthToken(request);
-  const res = await request.get(`/api/v1/flows/${flowId}`, {
-    headers: { Authorization: authToken },
-  });
-  expect(res.ok()).toBeTruthy();
-  const flow = (await res.json()) as {
-    data?: {
-      nodes?: Array<{
-        data?: {
-          node?: {
-            template?: {
-              api_key?: { value?: unknown; load_from_db?: unknown };
-            };
+
+  // Polled, not read once: `watchFlowSave` resolves on the first save it sees,
+  // and if some edit before the bind had its own save issued after the watch was
+  // armed, the bind's save would still be one debounce away. A single read would
+  // then fail a healthy product. Bounded by one more debounce plus completion, so
+  // a save that never carries the binding still fails here, naming what is stored.
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get(`/api/v1/flows/${flowId}`, {
+          headers: { Authorization: authToken },
+        });
+        expect(res.ok()).toBeTruthy();
+        const flow = (await res.json()) as {
+          data?: {
+            nodes?: Array<{
+              data?: {
+                node?: {
+                  template?: {
+                    api_key?: { value?: unknown; load_from_db?: unknown };
+                  };
+                };
+              };
+            }>;
           };
         };
-      }>;
-    };
-  };
-  const apiKeyFields = (flow.data?.nodes ?? [])
-    .map((n) => n.data?.node?.template?.api_key)
-    .filter((f) => f !== undefined);
-  expect(
-    apiKeyFields,
-    "exactly one saved node with an api_key field",
-  ).toHaveLength(1);
-  expect(apiKeyFields[0]).toMatchObject({ value: varName, load_from_db: true });
+        return (flow.data?.nodes ?? [])
+          .map((n) => n.data?.node?.template?.api_key)
+          .filter((f) => f !== undefined)
+          .map((f) => ({ value: f.value, load_from_db: f.load_from_db }));
+      },
+      {
+        message:
+          "the saved flow holds exactly one api_key, bound to the variable",
+        timeout: saveScheduledDeadlineMs() + SAVE_COMPLETION_BUDGET_MS,
+      },
+    )
+    .toEqual([{ value: varName, load_from_db: true }]);
 }
 
 /**
@@ -326,8 +343,12 @@ test.describe("Global variable bound to a component secret field", () => {
         await test.step("Reload the page and confirm the binding survived", async () => {
           await page.reload();
 
-          // The rehydrated node still shows the same variable as its bound value —
-          // auto-bind never overrides an explicit binding saved in the flow.
+          // The rehydrated node still shows the same variable as its bound value.
+          // On its own this does NOT prove persistence: a variable created from
+          // this field carries `default_fields: ["OpenAI API Key"]`, so auto-bind
+          // renders it after a reload even when the save never happened (measured
+          // on 1.13.0.dev27, #2098). The saved-flow poll above is the proof; this
+          // is the render half.
           await expect(page.getByTestId(API_KEY_ANCHOR)).toBeVisible({
             timeout: 30000,
           });

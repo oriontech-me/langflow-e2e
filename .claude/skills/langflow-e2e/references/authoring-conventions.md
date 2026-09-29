@@ -132,8 +132,10 @@ bullets** — the Coverage Summary table and Phase 0 block auto-regenerate.
   then click `checkAndSaveBtn` (#496).
 - **HTTP component specs** hit `https://httpbin.org/<verb>` — each endpoint only
   accepts its own verb (others return 405); `/status/{code}` for error paths.
-- **Autosave debounce is the instance's `auto_saving_interval`** — 5000 ms since
-  `1.13.0.dev27` (upstream #14903; 2000 before). Before a reload, a navigation away,
+- **Autosave debounce is the instance's `auto_saving_interval`**, and the default
+  differs per release line — 5000 ms on `release-1.13.0` since `1.13.0.dev27`
+  (upstream #14903; 2000 there before), 1000 on `main` and `release-1.12.x` as of
+  2026-09-29. Never hardcode it. Before a reload, a navigation away,
   an API read of the flow, or a POST to a freshly-created webhook endpoint, wait
   for the save with `watchFlowSave(page)` — never a fixed sleep: a 2 s sleep
   reloaded an unsaved flow once the debounce grew (#2098).
