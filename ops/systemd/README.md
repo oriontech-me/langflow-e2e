@@ -11,6 +11,7 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-daily-watchdog.service` | the alarm for a day that produced **no** verdict |
 | `e2e-daily-watchdog.timer` | 09:00 UTC on weekdays, `Persistent=true` |
 | `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947). **Records** the answer, never posts |
+| `e2e-shadow.service` | the **image shadow** (#2093): the same suite against the published image of the version the daily served, on its own ports, worktree, ledger and logs, publishing nothing. **No timer**: `ops/vm/request-shadow.sh` starts it with `--no-block` at the end of the daily, and `After=e2e-daily.service` holds it until the daily's unit has finished |
 | `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
 
 ## Two asymmetries that look like inconsistencies and are not
@@ -53,6 +54,7 @@ cp -r ops/systemd/e2e-daily.service ops/systemd/e2e-daily.timer \
       ops/systemd/e2e-daily-watchdog.service ops/systemd/e2e-daily-watchdog.timer \
       ops/systemd/e2e-mirror-freshness.service ops/systemd/e2e-mirror-freshness.timer \
       ops/systemd/e2e-mirror-freshness-announce.service ops/systemd/e2e-mirror-freshness-announce.timer \
+      ops/systemd/e2e-shadow.service \
       /etc/systemd/system/
 mkdir -p /etc/systemd/system/e2e-daily.service.d
 cp ops/systemd/e2e-daily.service.d/10-target-dist.conf /etc/systemd/system/e2e-daily.service.d/
@@ -62,14 +64,17 @@ systemctl enable --now e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-fresh
 ```
 
 The `.service` units carry no `[Install]` section by design: each is pulled by its
-timer's `Unit=`, so only the timers are enabled.
+timer's `Unit=`, so only the timers are enabled. `e2e-shadow.service` has no timer
+either: it is installed and never enabled, and the daily asks for it. Removing it is the
+shadow's rollback, and the daily then logs `shadow: NOT requested — … not installed`.
 
 ## Verify
 
 ```sh
 for f in e2e-daily.service e2e-daily.timer e2e-daily-watchdog.service \
          e2e-daily-watchdog.timer e2e-mirror-freshness.service e2e-mirror-freshness.timer \
-         e2e-mirror-freshness-announce.service e2e-mirror-freshness-announce.timer; do
+         e2e-mirror-freshness-announce.service e2e-mirror-freshness-announce.timer \
+         e2e-shadow.service; do
   diff -q "ops/systemd/$f" "/etc/systemd/system/$f" || echo "$f DIFFERS"
 done
 diff -q ops/systemd/e2e-daily.service.d/10-target-dist.conf \

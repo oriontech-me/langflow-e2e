@@ -270,6 +270,11 @@ main() {
   # forced it off and lost sixteen tests a day; the published distribution serves that
   # family with tracing on (measured 2026-09-10: 654 tests, zero WORKER TIMEOUT).
 
+  # The commit this run tests, read BEFORE it: on a red day the @stable removal moves
+  # HEAD, and the shadow below must run the suite this run ran, not the one after it.
+  local SUITE_SHA
+  SUITE_SHA="$(git rev-parse HEAD)"
+
   ./scripts/run-e2e.sh
   local code=$?
   echo "=== daily end, exit=$code ==="
@@ -292,6 +297,16 @@ main() {
       ./scripts/backup-ledger.sh || true
   else
     echo "WARNING: scripts/backup-ledger.sh is absent -- the ledger was NOT copied off this machine"
+  fi
+  # The image shadow (#2093): the same suite against the published image of $WANT, as
+  # its own unit, after this one. Asked for on a red day too -- a red day is when the
+  # machine-or-artifact question is worth the most. It cannot fail or delay this run:
+  # the status is ignored, and --no-block returns before the shadow starts.
+  #
+  # Rollback: IMAGE_SHADOW=0 on this line, or remove e2e-shadow.service; the request
+  # script says "not installed" and asks for nothing.
+  if [ "${IMAGE_SHADOW:-1}" = "1" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+    SHADOW_VERSION="$WANT" SHADOW_SUITE_SHA="$SUITE_SHA" ./ops/vm/request-shadow.sh || true
   fi
   find "$LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +"$LOG_KEEP_DAYS" -delete
   # The run's status, not the pruning's: without it a red day ends Result=success.
