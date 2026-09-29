@@ -1,0 +1,20 @@
+[Unit]
+# The image shadow (#2093): the same @stable suite against the published image of the
+# version the official run served, so a failure only this machine sees can be told apart
+# into machine and artifact. No consequence: it publishes nothing (see the wrapper).
+#
+# No timer, on purpose. ops/vm/request-shadow.sh starts it with --no-block at the end of
+# run-daily.sh, after writing what to run. After= the daily, so the job it queues from
+# inside the daily's own unit starts only once that unit has finished.
+Description=E2E @stable image shadow (VM lane, no consequence)
+After=network-online.target e2e-daily.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service (#1715), and run-e2e.sh needs it.
+Environment=HOME=/root
+ExecStart=/root/e2e-qa/ops/vm/run-shadow.sh
+# The official run takes ~19 minutes; the image pull adds about one. Well above both,
+# so a slow shadow is not mistaken for a hung one.
+TimeoutStartSec=2h
