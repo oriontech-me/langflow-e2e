@@ -335,6 +335,9 @@ Mutations measured on `1.13.0.dev27`, each isolated and reverted:
 
 Verdict: **product changed intentionally + test defect**; no upstream ticket.
 
-**Known gap, tracked in #2107:** when `globalSetup` cannot read the interval, the
-helpers fall back to `AUTOSAVE_INTERVAL_FALLBACK_MS = 3000`, now **below** the 5000 ms
-this build ships, so `watchFlowSave` would fail at 4500 ms on a healthy save.
+**Unknown-interval fallback (#2107):** when `globalSetup` cannot read the
+interval, the helpers fall back to `AUTOSAVE_INTERVAL_FALLBACK_MS`. It was 3000 —
+below the 5000 ms this build ships — so `watchFlowSave` failed at 4500 ms on a healthy
+save (measured: this test red with the read forced to fail). It is now 10000, pinned
+by `autosave-interval.test.ts` at 2x the largest value in `SHIPPED_AUTOSAVE_INTERVALS_MS`;
+with the read forced to fail this test is green.

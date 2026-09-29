@@ -8,6 +8,8 @@ import * as dotenv from "dotenv";
 import { getAuthToken } from "./helpers/auth/get-auth-token";
 import {
   describeAutosaveInterval,
+  fallbackStalenessWarning,
+  preflightWarningLine,
   publishAutosaveInterval,
 } from "./helpers/flows/autosave-interval";
 import {
@@ -483,7 +485,8 @@ function freezeCatalog(): void {
  *
  * The number is `GET /api/v1/config.auto_saving_interval`, and it is neither the
  * 300 ms `SAVE_DEBOUNCE_TIME` upstream's frontend constant names nor a value we
- * can pin: this repo has measured 1000 and, on `1.13.0.dev4`, 2000. Every
+ * can pin: the values this repo has read are recorded, and unit-tested against
+ * the fallback, in `SHIPPED_AUTOSAVE_INTERVALS_MS` (5000 on `1.13.0.dev27`). Every
  * save-timing helper derives its deadline from it, so it is read once here, from
  * the instance actually under test, and inherited by the forked workers through
  * the environment — the same channel and the same reason as the frozen model
@@ -539,11 +542,15 @@ async function resolveAutosaveInterval(ctx: APIRequestContext): Promise<void> {
     }
     publishAutosaveInterval(interval);
     console.log(`[preflight] ${describeAutosaveInterval(interval)}`);
+    const stale = fallbackStalenessWarning(interval);
+    if (stale) console.warn(preflightWarningLine(stale));
   } catch (e) {
     publishAutosaveInterval(null);
     console.warn(
-      `[preflight] WARNING: could not read the flow autosave debounce ` +
-        `(${String(e)}). ${describeAutosaveInterval(null)}.`,
+      preflightWarningLine(
+        `could not read the flow autosave debounce (${String(e)}). ` +
+          `${describeAutosaveInterval(null)}.`,
+      ),
     );
   }
 }
