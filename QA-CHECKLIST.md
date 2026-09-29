@@ -1596,7 +1596,7 @@
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 37 | 33 | 0 | 3 | 1 |
-| `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
+| `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
 | `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
@@ -1607,7 +1607,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **735** | **638 (87%)** | **37 (5%)** | **15 (2%)** | **45 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **735** | **639 (87%)** | **36 (5%)** | **15 (2%)** | **45 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 704 `test()` calls carrying the `@stable` tag, distributed across 277 spec
+> 705 `test()` calls carrying the `@stable` tag, distributed across 278 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2270,6 +2270,7 @@
 - [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
+- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
@@ -2400,7 +2401,7 @@
 | `core-functionality/llm-agents/` | 3 | 4 |
 | `core-functionality/model-provider/` | 3 | 1 |
 | `core-functionality/playground/` | 1 | 1 |
-| `mcp/client/` | 1 | 2 |
+| `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
 
