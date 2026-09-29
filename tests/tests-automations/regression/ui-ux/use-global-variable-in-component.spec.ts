@@ -198,7 +198,12 @@ async function expectSavedApiKeyBinding(
         const res = await request.get(`/api/v1/flows/${flowId}`, {
           headers: { Authorization: authToken },
         });
-        expect(res.ok()).toBeTruthy();
+        // A non-2xx here ends the poll at once (the generator runs outside
+        // expect.poll's retry), so say which request and what it answered.
+        expect(
+          res.status(),
+          `GET /api/v1/flows/${flowId}: ${res.ok() ? "" : await res.text()}`,
+        ).toBe(200);
         const flow = (await res.json()) as {
           data?: {
             nodes?: Array<{
@@ -224,6 +229,42 @@ async function expectSavedApiKeyBinding(
       },
     )
     .toEqual([{ value: varName, load_from_db: true }]);
+}
+
+/**
+ * Clears the variable's `default_fields`, so auto-bind can no longer attach it.
+ *
+ * A variable created from the `api_key` field's own dropdown is saved with
+ * `default_fields: ["OpenAI API Key"]`, and on load the field auto-binds any such
+ * Credential to an empty value. After a reload that renders the binding whether or
+ * not it was saved — and re-binds one that rehydration dropped — so the reload
+ * assertion proved nothing until this ran (measured on 1.13.0.dev27, #2098). The
+ * route is the one the frontend's own variable upsert uses.
+ */
+async function detachVariableFromAutoBind(
+  request: import("@playwright/test").APIRequestContext,
+  varName: string,
+): Promise<void> {
+  const authToken = await getAuthToken(request);
+  const headers = { Authorization: authToken };
+  const list = async () =>
+    (await (
+      await request.get("/api/v1/variables/", { headers })
+    ).json()) as Array<{ id: string; name: string; default_fields?: string[] }>;
+
+  const match = (await list()).find((v) => v.name === varName);
+  expect(match, `global variable ${varName} must exist`).toBeTruthy();
+  const res = await request.patch(`/api/v1/variables/${match!.id}`, {
+    headers,
+    data: { id: match!.id, default_fields: [] },
+  });
+  expect(
+    res.status(),
+    `PATCH /api/v1/variables/${match!.id}: ${res.ok() ? "" : await res.text()}`,
+  ).toBe(200);
+  expect(
+    (await list()).find((v) => v.name === varName)?.default_fields,
+  ).toEqual([]);
 }
 
 /**
@@ -330,9 +371,11 @@ test.describe("Global variable bound to a component secret field", () => {
             save.dispose();
             throw e;
           }
-          // Wait for the save itself, never a fixed sleep: the debounce is the
-          // instance's `auto_saving_interval` (5000 ms since 1.13.0.dev27, #2098),
-          // and a 2 s sleep reloaded a flow that had not been saved at all.
+          // Never a fixed sleep: the debounce is the instance's
+          // `auto_saving_interval` (5000 ms since 1.13.0.dev27, #2098), and a 2 s
+          // sleep reloaded a flow that had not been saved at all. The saved-flow
+          // poll below would also wait the save out; this is kept for attribution,
+          // since "no PATCH was issued" names the cause where the poll cannot.
           await save.settled();
         });
 
@@ -340,15 +383,16 @@ test.describe("Global variable bound to a component secret field", () => {
           await expectSavedApiKeyBinding(page, request, varName);
         });
 
+        await test.step("Detach the variable from auto-bind", async () => {
+          await detachVariableFromAutoBind(request, varName);
+        });
+
         await test.step("Reload the page and confirm the binding survived", async () => {
           await page.reload();
 
-          // The rehydrated node still shows the same variable as its bound value.
-          // On its own this does NOT prove persistence: a variable created from
-          // this field carries `default_fields: ["OpenAI API Key"]`, so auto-bind
-          // renders it after a reload even when the save never happened (measured
-          // on 1.13.0.dev27, #2098). The saved-flow poll above is the proof; this
-          // is the render half.
+          // With auto-bind detached, only the saved binding can put the variable
+          // back in the field: this is the rehydration half, the poll above the
+          // persistence half.
           await expect(page.getByTestId(API_KEY_ANCHOR)).toBeVisible({
             timeout: 30000,
           });

@@ -80,14 +80,17 @@ dropdown trigger (see *Indirect mechanism justified* under Notes).
    so the save armed next cannot be the add-node one carrying pre-bind state
 2. Arm `watchFlowSave(page)`, create + bind the Credential variable (same as Test 1),
    then await the save — it **fails** if no `PATCH /api/v1/flows/{id}` is issued
-   within one debounce plus slack, instead of reloading on a guess
+   within one debounce plus slack. The poll below would wait the save out too; the
+   watch is kept for attribution, since "no PATCH was issued" names the cause
 3. Poll the flow over `GET /api/v1/flows/{id}` until it holds exactly one `api_key`,
-   equal to `{ value: <varName>, load_from_db: true }` — the **save** half, and the one
-   assertion that proves persistence
-4. `page.reload()`; assert the `api_key` field still shows the same variable name as
-   its bound value — the **render** half. It cannot prove persistence by itself: see
-   *Auto-bind rescues an unsaved binding* below
-5. Cleanup: delete the variable via `DELETE /api/v1/variables/{id}` in a `finally` block
+   equal to `{ value: <varName>, load_from_db: true }` — the **persistence** half
+4. Detach the variable from auto-bind: `PATCH /api/v1/variables/{id}` with
+   `default_fields: []`, then read it back as `[]` (see *Auto-bind rescues an unsaved
+   binding* below for why the reload proves nothing without this)
+5. `page.reload()`; assert the `api_key` field still shows the same variable name as
+   its bound value — the **rehydration** half: with auto-bind detached, only the saved
+   binding can put it there
+6. Cleanup: delete the variable via `DELETE /api/v1/variables/{id}` in a `finally` block
 
 ---
 
@@ -116,11 +119,14 @@ dropdown trigger (see *Indirect mechanism justified* under Notes).
   5000 ms on `release-1.13.0` since upstream #14903, 2000 there before it, and still
   1000 on `main` and `release-1.12.1` as of 2026-09-29)
 - `src/backend/base/langflow/api/v1/variable.py` — global variable CRUD endpoints
-  (`GET /api/v1/variables/` → `[{id, name, type, ...}]`, `DELETE /api/v1/variables/{id}`)
+  (`GET /api/v1/variables/` → `[{id, name, type, default_fields, ...}]`,
+  `PATCH /api/v1/variables/{id}` — `include_in_schema=False`, the route the frontend's
+  own upsert uses — and `DELETE /api/v1/variables/{id}`)
 
 Confirmed testids (verified against the live DOM):
-- `anchor-popover-anchor-input-api_key` — the api_key field wrapper (role=button); click
-  to switch an auto-bound field back to editable mode
+- `anchor-popover-anchor-input-api_key` — the api_key field wrapper (role=button); the
+  bound value badge renders inside it, and the dropdown trigger of a bound field is the
+  button in its parent's next sibling
 - `popover-anchor-input-api_key` — the editable secret input (only present in edit mode)
 - `icon-Globe` — opens the field's global-variable dropdown (scope via the field's input,
   because the non-secret "OpenAI API Base" field also renders an `icon-Globe`)
@@ -137,6 +143,9 @@ Confirmed testids (verified against the live DOM):
 - **Auto-cleanup:** deleting a bound variable clears the field — not exercised here.
 - **Runtime resolution:** actually running the flow so the backend resolves the secret
   value from the variable — out of scope (no real API key, component is never run).
+- **Auto-bind on load:** a Credential whose `default_fields` names the field binds to it
+  when the field is empty. Test 2 detaches the variable from it on purpose (#2098), so
+  that behaviour is not asserted anywhere here.
 - CRUD and secrecy-in-list guarantees — covered by `global-variables-crud.spec.ts`.
 - Editing an existing variable's value — covered by `global-variable-edit.spec.ts`.
 
@@ -240,10 +249,9 @@ the spec.
 The force-fail that does discriminate test 1 is creating and binding a
 **differently-named** variable than the one the assertions name: both the bound-value
 assertion and the type readback go red. For test 2 it was, on `dev8`, removing the autosave wait
-before the reload: the rehydrated node came back **without** the binding. That no longer
-holds on `1.13.0.dev27` — see the next section — so since #2098 the discriminating
-mutation is the saved-flow poll's expectation (a different variable name goes red on
-its `toEqual`).
+before the reload: the rehydrated node came back **without** the binding. On
+`1.13.0.dev27` that only holds once auto-bind is detached — see the next section, which
+also lists the two mutations that discriminate test 2 since #2098.
 
 ---
 
@@ -302,12 +310,31 @@ variable anyway, and ~4.6 s later a `PATCH` wrote the binding. The variable crea
 from the field carries `default_fields: ["OpenAI API Key"]`, so it is auto-bound when
 the node loads; nothing was in `localStorage`, so it is not a restored draft.
 
-So the reload assertion cannot tell "persisted" from "auto-bound". The poll is what
-makes test 2 falsifiable; the reload assertion stays as the render half. Two measured
-mutations bear this out: not awaiting `watchFlowSave` alone stays green (the poll
-waits out the debounce itself), and naming a different variable in the poll goes red.
+So, as the test stood, the reload assertion could not tell "persisted" from
+"auto-bound" — and for the same reason it would have stayed green if rehydration
+**dropped** a saved binding, since the field's load-time effect
+(`inputGlobalComponent/hooks.ts`, `useInitialLoad`) auto-binds a variable whose
+`default_fields` names the field whenever the value is empty. The variable's
+`default_fields` comes from `GlobalVariableModal`, which sends the referencing field
+when the variable is created from it.
 
-**Known gap, tracked separately:** when `globalSetup` cannot read the interval, the
+The test therefore detaches the variable before reloading (`default_fields: []` over
+the API). That is also the stronger evidence for the mechanism: with it cleared, an
+unsaved binding renders **unbound** after the reload, which rules out a restored draft
+in any browser store. Test 2 no longer exercises auto-bind itself — that is product
+behaviour worth its own assertion, not something to leave hiding the rehydration check.
+
+Mutations measured on `1.13.0.dev27`, each isolated and reverted:
+
+| Mutation | Result |
+|---|---|
+| Undo the binding (`remove-icon-badge`) before the save lands — a save happens, unbound | **red** at the poll (`Timeout 16500ms exceeded`) |
+| Reload before the save (no watch, no poll), auto-bind detached | **red** after the reload: the node is there, the variable name is not |
+| Not awaiting `watchFlowSave` alone | green — the poll waits out the debounce itself |
+| Neither the save wait nor the poll, auto-bind **not** detached | green — the pre-fix shape; this is what the detach step exists to close |
+
+Verdict: **product changed intentionally + test defect**; no upstream ticket.
+
+**Known gap, tracked in #2107:** when `globalSetup` cannot read the interval, the
 helpers fall back to `AUTOSAVE_INTERVAL_FALLBACK_MS = 3000`, now **below** the 5000 ms
-this build ships, so `watchFlowSave` would fail at 4500 ms on a healthy save. Verdict: **product changed
-intentionally + test defect**; no upstream ticket.
+this build ships, so `watchFlowSave` would fail at 4500 ms on a healthy save.
