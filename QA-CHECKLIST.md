@@ -1280,7 +1280,7 @@
 - [-] Every accepted policy write mints a new revision with `source: "api"` and `GET /api/v1/policy-bundle/history` lists them newest-first (a fresh instance starts at revision 1, `source: "migration"`) → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
 - [-] `POST /api/v1/policy-bundle/rollback/{revision}` is optimistically concurrent: a stale `expected_revision` is refused `409` with a body naming both `expected_revision` and `active_revision` → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
 - [-] An accepted rollback **appends** rather than rewinds — new higher revision, `source: "rollback"`, `rollback_of_revision` pointing at the target, `reason` echoed — and the restored content is enforced, not just recorded → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
-- [ ] `GET /api/v1/catalog-policy/usage` and `usage/flows` report the blast radius of a block (which flows use the component) before an operator applies it
+- [-] `GET /api/v1/catalog-policy/usage` and `usage/flows` report the blast radius of a block before an operator applies it — exactly the flows using the component, another user's included (a flow the superuser cannot even open), a two-node flow counted once, a class-name alias folded into the canonical key, `total` untouched by `limit`, superuser-only — and the block then refuses a re-save of exactly the reported set while an unreported control still saves → `governance/catalog-policy/usage-blast-radius.spec.ts`
 
 ## enterprise/ — Enterprise-only Surfaces (EE)
 
