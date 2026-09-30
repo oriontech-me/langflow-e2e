@@ -3593,3 +3593,33 @@ test("with nothing declared the upstream resolution still runs, and off still me
   assert.deepEqual(off.calls, []);
   assert.equal(off.result, "||");
 });
+
+test("a refused provider does not add a false second cause when the version went uncaptured (#2111 review)", () => {
+  // The state the qa field run produced: every shard refused before its round, so no
+  // served version was captured and the comparison came back unknown. The check was
+  // on and the resolution worked, so "turn the check on, fix the resolution" is the
+  // wrong remedy to print next to the real cause.
+  const dir = makeTempDir("run-e2e-refusal-version-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeFileSync(join(dir, "logs", "shard-1.model-refused"), 'the declared provider "mistral" is not usable\n');
+  const state = (refused) =>
+    sourced(
+      `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0 RUN_DIR=${JSON.stringify(refused ? dir : "/tmp/does-not-matter")}\n` +
+        `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]'\n` +
+        `TARGET_VERSION_MATCH=unknown TARGET_RESOLUTION=declared TARGET_VERSION_REASON="the target reported no version"\n` +
+        `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+      { REQUIRE_TARGET_VERSION: "1" },
+    );
+  const r = state(true);
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1, "still a failure");
+  assert.match(r.stderr, /ran none of their @stable specs/, "the whole round was lost, not only the agent specs");
+  assert.match(r.stderr, /the version check had no served version to compare/);
+  assert.match(r.stderr, /declared provider's refusal above, before capturing it/);
+  assert.doesNotMatch(r.stderr, /Set CHECK_TARGET_VERSION=1/);
+
+  // Without a refusal, an uncaptured version keeps its original, general remedy.
+  const plain = state(false);
+  assert.equal(Number(plain.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(plain.stderr, /the version check could not be performed/);
+  assert.match(plain.stderr, /Set CHECK_TARGET_VERSION=1/);
+});

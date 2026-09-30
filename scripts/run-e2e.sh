@@ -3185,8 +3185,9 @@ phase_verdict() {
   model_refusal="$(declared_model_refusal)"
   if [ -n "$model_refusal" ]; then
     err "the declared provider could not be used: $model_refusal"
-    err "A declared provider is never swapped for another one, so the agent specs did not"
-    err "run. Declare a provider collect-models probes active, or leave it to the rotation."
+    err "A declared provider is never swapped for another one, so the refused shard(s)"
+    err "ended before their round and ran none of their @stable specs. Declare a provider"
+    err "collect-models probes active, or leave it to the rotation."
     failed=1
   fi
   if [ "$REQUIRE_TARGET_VERSION" = "1" ]; then
@@ -3213,14 +3214,23 @@ phase_verdict() {
         ;;
       yes | cycle) ;;
       *)
-        # "Require" has to require. Every way the check itself can fail — the registry
-        # or github unreachable, the resolver erroring, the target reporting no version
-        # — lands here, and passing green on those is passing green precisely when
-        # nobody can tell whether the two lanes ran the same product.
-        err "the version check could not be performed (${TARGET_VERSION_MATCH:-unchecked}${TARGET_VERSION_REASON:+: $TARGET_VERSION_REASON})."
-        err "REQUIRE_TARGET_VERSION=1 asks for a guarantee, and an unperformed check is"
-        err "not a weaker guarantee — it is none. Set CHECK_TARGET_VERSION=1 and make the"
-        err "resolution work, or drop REQUIRE_TARGET_VERSION."
+        if [ -n "$model_refusal" ]; then
+          # The refused shards ended before capturing the served version, so the check
+          # had nothing to compare. Still a failure, but the remedy in the other branch
+          # (turn the check on, fix the resolution) would send the reader after a cause
+          # that is not there: the check was on and the resolution worked. (#2111 review)
+          err "the version check had no served version to compare: the shards ended at the"
+          err "declared provider's refusal above, before capturing it."
+        else
+          # "Require" has to require. Every way the check itself can fail — the registry
+          # or github unreachable, the resolver erroring, the target reporting no version
+          # — lands here, and passing green on those is passing green precisely when
+          # nobody can tell whether the two lanes ran the same product.
+          err "the version check could not be performed (${TARGET_VERSION_MATCH:-unchecked}${TARGET_VERSION_REASON:+: $TARGET_VERSION_REASON})."
+          err "REQUIRE_TARGET_VERSION=1 asks for a guarantee, and an unperformed check is"
+          err "not a weaker guarantee — it is none. Set CHECK_TARGET_VERSION=1 and make the"
+          err "resolution work, or drop REQUIRE_TARGET_VERSION."
+        fi
         failed=1
         ;;
     esac
