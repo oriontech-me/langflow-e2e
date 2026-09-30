@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 706 `test()` calls carrying the `@stable` tag, distributed across 278 spec
+> 709 `test()` calls carrying the `@stable` tag, distributed across 278 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1916,11 +1916,14 @@
 - [x] applying a single component update refreshes it, decrements the outdated count, and creates a backup → `update-component-action.spec.ts`
 - [x] user should be able to see errors on popups when raise an error → `validate-raise-errors-components.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — flow is saved to database and contains the Webhook node → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
 - [x] Webhook component — copy button copies the endpoint URL to clipboard → `webhook-component-regression.spec.ts`
 - [x] Webhook component — POST to non-existent flow name returns 404 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
+- [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/a2a/
