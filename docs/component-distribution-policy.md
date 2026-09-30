@@ -131,7 +131,7 @@ entirely on the criterion.
 (8 when measured. The `duckduckgo` row left on 2026-09-24 (#1912) and is the one departure this table cannot represent: the family is not a vendor distribution the image stopped shipping, it is **gone from the source tree** — there is no
 `lfx/components/duckduckgo` directory and therefore no shim and no distribution to install. Its spec was rewritten onto the core `UnifiedWebSearch` that absorbed the capability, so the coupling is now to a **core** family and out of this table's scope by its own criterion.)
 
-**(b) Specs gated on a family the image does NOT ship — 4.**
+**(b) Specs gated on a family the image does NOT ship — 5.**
 `groq-provider.spec.ts` and `mistral-provider.spec.ts` skip on every run (#1039).
 `core-functionality/llm-agents/youtube-transcripts.spec.ts` joined them on 2026-09-24
 (#1912, owned by #2065): `youtube` is an `lfx-bundles-shim`, `import lfx_bundles`
@@ -141,6 +141,52 @@ a deep unattributed timeout (`locator.hover: Timeout 20000ms`) — measured by r
 the gate and watching the spec hard-fail on exactly that.
 `ollama-provider.spec.ts` carries the same gate but Ollama **returned** to the default
 image, so its gate currently passes — it is insurance, not an active skip.
+
+**`core-components/loop-component-regression.spec.ts`'s Research Translation Loop test
+is the fifth, and it reached this table through a surface the rest of this file does
+not describe (#1744).** Its subject is a **starter project**, not a component: the
+image ships the template's JSON (one of 27 on disk) and then refuses to register it,
+serving 26. The cause is nonetheless this file's: `ArXivComponent` ships as the
+separate **`lfx-arxiv`** distribution — upstream `src/bundles/arxiv/`, with its own
+`pyproject.toml` and `extension.json` — which the image does not install, so
+`filter_starter_projects_by_available_components` drops the project at startup and
+says so:
+
+```
+[warning] Skipping starter project 'Research Translation Loop'; unavailable components: ArXivComponent
+```
+
+**#1744 asked whether this was a packaging decision or a component that would come
+back, and called the template-registration shape "different from a component that
+simply is not in the catalog because its bundle is not installed". Measured on
+`1.13.0.dev26`, it is that case exactly** — the difference is only which surface
+reports it. Three readings, and the third is the one that is new here:
+
+- **zero** occurrences of the string `arxiv` anywhere in `GET /api/v1/all` (3.2 MB,
+  32 categories / 202 types) — not merely zero matching component types;
+- the template absent from the 26 registered starter projects while its JSON sits on
+  disk;
+- **no `lfx/components/arxiv` directory at all.** Under the bundle layout the
+  component lives entirely in its own distribution, so there is **no shim** — and
+  therefore no `ModuleNotFoundError` naming `lfx-bundles` to diagnose it by. That is
+  why the *"which flavour of absence"* question in this file's decision table does
+  not resolve for it, and why it surfaced through template registration instead. The
+  two shim flavours described above are not the only shapes: a family can be absent
+  with nothing left behind in `lfx/components/` to inspect.
+
+**The mechanism here is `test.fixme` plus a watcher, deliberately not the gate-and-skip
+this table prescribes**, and the exception is argued rather than assumed. A gate exists
+to convert a deep, misleading timeout into an attributed skip (#1039's whole point); a
+`test.fixme` already prevents any run, so there is no timeout to convert. What the gate
+would add is self-healing, and that is covered better elsewhere:
+`core-functionality/templates/templates-registration.spec.ts` (`@stable`, so it runs in
+the daily) verifies `registered-templates-baseline.json`'s `declaredAbsences` **in both
+directions** and **fails the moment the template comes back, naming the declaration to
+delete**. That is a louder lift signal than a gate quietly opening — and the test it
+would unmute runs two real completions under an 8-minute budget, which should not
+resume without the human re-validation `CONTRIBUTING.md` requires. The `@stable`
+removal is declared in `scripts/lib/stable-orphan-exemptions.json` (#1746 verifies it
+in both directions too), which is what let #1744 close.
 
 **The two ComposIO entries left this table on 2026-09-30, by REMOVAL rather than by
 the image changing — and that is a decision this file does not govern, recorded here
