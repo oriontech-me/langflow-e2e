@@ -133,7 +133,7 @@
   },
   {
    "area": "13/14 MCP",
-   "residualRisk": 8,
+   "residualRisk": 7.5,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -144,20 +144,20 @@
     "weightedBugs": 56.6,
     "weightedChurn": 1.36
    },
-   "mitigationBulletDerived": 0.68,
+   "mitigationBulletDerived": 0.7,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 10,
+    "stableSpecs": 11,
     "penalty": 0
    },
-   "mitigation": 0.68,
+   "mitigation": 0.7,
    "checklistBullets": 32,
    "bulletStates": {
-    "x": 26,
-    "-": 2,
+    "x": 27,
     " ": 3,
+    "-": 1,
     "~": 1
    },
    "previous": {
@@ -174,7 +174,7 @@
    "upstreamBugCount": 69,
    "specCounts": {
     "specs": 12,
-    "stable": 10
+    "stable": 11
    }
   },
   {
@@ -572,7 +572,7 @@
   },
   {
    "area": "12 Flow lifecycle",
-   "residualRisk": 4.4,
+   "residualRisk": 4,
    "inherentRisk": 20,
    "probability": 4,
    "impact": 5,
@@ -583,7 +583,7 @@
     "weightedBugs": 34.8,
     "weightedChurn": 0.89
    },
-   "mitigationBulletDerived": 0.78,
+   "mitigationBulletDerived": 0.8,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
@@ -591,11 +591,10 @@
     "stableSpecs": 38,
     "penalty": 0
    },
-   "mitigation": 0.78,
+   "mitigation": 0.8,
    "checklistBullets": 26,
    "bulletStates": {
-    "x": 25,
-    "!": 1
+    "x": 26
    },
    "previous": {
     "residualRisk": 4.8,
@@ -1221,9 +1220,9 @@
    }
   }
  ],
- "refreshed": "2026-09-29",
+ "refreshed": "2026-09-30",
  "refreshWindow": {
-  "testHealthSince": "2026-08-15",
+  "testHealthSince": "2026-08-16",
   "days": 45
  }
 }
