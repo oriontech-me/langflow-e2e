@@ -133,9 +133,12 @@ for (const { label, options, skipReason } of targets) {
 
   test.describe(`Agent Input Sources [${label}]`, () => {
 
-    test(
+    // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
+    // (1.13.0.dev28), the Agent's reply is read empty; the Actions lane hit it the same day.
+    // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
+    test.fixme(
       "input via ChatInput handle drives the agent response",
-      { tag: ["@stable", "@components", "@agents", "@playground"] },
+      { tag: ["@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

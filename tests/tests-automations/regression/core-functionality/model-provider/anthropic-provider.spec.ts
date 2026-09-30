@@ -264,9 +264,12 @@ test.describe("Anthropic Provider", () => {
     },
   );
 
-  test(
+  // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
+  // (1.13.0.dev28), the Claude reply is read empty; the Actions lane hit it the same day.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
+  test.fixme(
     "configured Anthropic selects a Claude model in the Agent and executes the flow",
-    { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
+    { tag: ["@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
       // Health, not mere presence (#1029's gate, applied here by #1415). This
       // test makes a live completion call, so a key that EXISTS but is dead

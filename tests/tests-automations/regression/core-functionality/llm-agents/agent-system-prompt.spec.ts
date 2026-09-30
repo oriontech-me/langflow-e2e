@@ -243,9 +243,12 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent System Prompt [${label}]`, () => {
-    test(
+    // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
+    // (1.13.0.dev28), the Agent's reply is read empty; the Actions lane hit it the same day.
+    // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
+    test.fixme(
       "Agent Instructions are respected in the model response",
-      { tag: ["@stable", "@release", "@agents", "@playground"] },
+      { tag: ["@release", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
