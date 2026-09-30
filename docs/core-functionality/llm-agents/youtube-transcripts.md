@@ -6,9 +6,12 @@
 > **Parked, not pending.** The component is not shipped by the image this suite tests.
 > The test is gated on component availability and skips with an attributed reason on
 > every run — the treatment `docs/component-distribution-policy.md` prescribes for a
-> distribution the tested image does not install, and the same one `groq-provider`,
-> `mistral-provider` (#1039) and `composio` (#1916) carry. The park is owned by issue
-> **#1912**; the triage row is `docs/triage/inherited-spec-triage.md` (T2,
+> distribution the tested image does not install, and the same one `groq-provider`
+> and `mistral-provider` (#1039) carry. (`composio` carried it too, from #1916, until
+> both ComposIO specs were removed on 2026-09-30 as a scope decision rather than a
+> packaging one.) The park is owned by issue
+> **#2065** — #1912 filed it and closed on merge, which left this spec briefly unowned
+> (#2062); the triage row is `docs/triage/inherited-spec-triage.md` (T2,
 > `core-functionality/llm-agents/youtube-transcripts.spec.ts`, `0/3 green`).
 
 ---

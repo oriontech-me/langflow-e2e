@@ -131,22 +131,34 @@ entirely on the criterion.
 (8 when measured. The `duckduckgo` row left on 2026-09-24 (#1912) and is the one departure this table cannot represent: the family is not a vendor distribution the image stopped shipping, it is **gone from the source tree** — there is no
 `lfx/components/duckduckgo` directory and therefore no shim and no distribution to install. Its spec was rewritten onto the core `UnifiedWebSearch` that absorbed the capability, so the coupling is now to a **core** family and out of this table's scope by its own criterion.)
 
-**(b) Specs gated on a family the image does NOT ship — 6.**
-`groq-provider.spec.ts` and `mistral-provider.spec.ts` skip on every run (#1039), and
-`core-functionality/llm-agents/composio.spec.ts` joined them on 2026-09-18 (#1913 →
-#1916): `composio` is an `lfx-bundles-shim`, `import lfx_bundles` raises
-`ModuleNotFoundError` in the nightly, and the catalog carries zero `composio` types.
-Two more joined on 2026-09-24 (#1912), the second half of the same T2 packaging
-cluster: `core-functionality/llm-agents/youtube-transcripts.spec.ts` (`youtube` is an
-`lfx-bundles-shim`, zero catalog entries on `1.13.0.dev22`) and
-`flow-functionality/generalBugs-shard-11.spec.ts`, which carries ComposIO's absence
-from the **canvas** side where `composio.spec.ts` carries it from the component side.
-Both replaced a failing or inert declaration rather than a passing test, so the gate
-removed two deep unattributed timeouts (`locator.hover: Timeout 20000ms` and
-`page.waitForSelector: Timeout 3000ms`) — measured by removing each gate and watching
-the spec hard-fail on exactly those.
+**(b) Specs gated on a family the image does NOT ship — 4.**
+`groq-provider.spec.ts` and `mistral-provider.spec.ts` skip on every run (#1039).
+`core-functionality/llm-agents/youtube-transcripts.spec.ts` joined them on 2026-09-24
+(#1912, owned by #2065): `youtube` is an `lfx-bundles-shim`, `import lfx_bundles`
+raises `ModuleNotFoundError` in the nightly, and the catalog carried zero `youtube`
+entries on `1.13.0.dev22`. Its gate replaced an inert `test.skip`, so it also removed
+a deep unattributed timeout (`locator.hover: Timeout 20000ms`) — measured by removing
+the gate and watching the spec hard-fail on exactly that.
 `ollama-provider.spec.ts` carries the same gate but Ollama **returned** to the default
 image, so its gate currently passes — it is insurance, not an active skip.
+
+**The two ComposIO entries left this table on 2026-09-30, by REMOVAL rather than by
+the image changing — and that is a decision this file does not govern, recorded here
+so it does not read as the policy being violated.** `composio.spec.ts` and
+`flow-functionality/generalBugs-shard-11.spec.ts` (whose only remaining test drove
+ComposIO Tools) were deleted with their docs. The decision table below answers an
+absent distribution with *gate and skip, do not delete*, and that is right while a
+surface is still ours and merely unavailable. ComposIO is neither: `QA-CHECKLIST.md`
+§ 6.2 carries a dated team decision (2026-08-06) that the surface is out of scope and
+the spec **must not be promoted**, so the gate was preserving coverage the team had
+already decided never to count. Nothing was lost by deleting: neither spec had
+executed once in any lane since its 2026-03-11 import — the component is in no tested
+image and `COMPOSIO_API_KEY` is not a repository secret, so both gates were closed on
+two independent grounds. **The generalisable rule: this file decides what to do about
+a family the image does not ship; it does not decide whether a surface is in the
+team's scope.** When those two disagree, scope wins and the reason is written down.
+Should the team take ComposIO back, both specs are recoverable from git history
+(#1913 → #1916 and #1912 → #2065 record their parks).
 
 **The criterion is "places a component", and mixing it with "mentions a provider"
 is how the first version of this table got it wrong.** A spec that sends
