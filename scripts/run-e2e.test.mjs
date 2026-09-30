@@ -3339,3 +3339,257 @@ test("hygiene clears only this run's kind, so one lane never stops the other's l
   assert.doesNotMatch(hygiene, /for kind in/);
   assert.doesNotMatch(src, /stop_leftovers_on_port/);
 });
+
+// ---------------------------------------------------------------------------
+// THE DECLARED TARGET — an image built from one commit, for the on-demand run
+// ---------------------------------------------------------------------------
+
+const DECLARED_SHA = "cff33f57b163a59f2b2ab2dd43cbcc1a07d6bd8e";
+const declaredEnv = (extra = {}) =>
+  imageEnv({
+    LANGFLOW_IMAGE: "langflow-ondemand:cff33f57",
+    PREPARE_TARGET: "",
+    TARGET_DECLARED_SHA: DECLARED_SHA,
+    TARGET_DECLARED_VERSION: "1.13.0",
+    TARGET_DECLARED_REF: "release-1.13.0",
+    DECLARED_MODEL_PROVIDER: "",
+    DECLARED_MODEL_ID: "",
+    ...extra,
+  });
+
+test("nothing declared is the daily and the shadow, and passes untouched", () => {
+  for (const env of [imageEnv({ PREPARE_TARGET: "" }), { TARGET_KIND: "source" }]) {
+    const r = sourced("check_declared_target && check_declared_model && echo ok", {
+      TARGET_DECLARED_SHA: "", TARGET_DECLARED_VERSION: "", TARGET_DECLARED_REF: "",
+      DECLARED_MODEL_PROVIDER: "", DECLARED_MODEL_ID: "", ...env,
+    });
+    assert.equal(r.stdout.trim(), "ok", r.stderr);
+  }
+});
+
+test("a well-formed declaration on an image target is accepted", () => {
+  const r = sourced("check_declared_target && echo ok", declaredEnv());
+  assert.equal(r.stdout.trim(), "ok", r.stderr);
+  // The ref is informational, so leaving it out is fine.
+  assert.equal(sourced("check_declared_target && echo ok", declaredEnv({ TARGET_DECLARED_REF: "" })).stdout.trim(), "ok");
+});
+
+test("a declaration this run cannot check is refused before anything runs", () => {
+  const cases = [
+    [{ TARGET_KIND: "source", LANGFLOW_IMAGE: "" }, /needs TARGET_KIND=image/],
+    [{ TARGET_DECLARED_SHA: "" }, /needs TARGET_DECLARED_SHA/],
+    [{ TARGET_DECLARED_SHA: "cff33f57" }, /full 40-character lowercase commit/],
+    [{ TARGET_DECLARED_SHA: DECLARED_SHA.toUpperCase() }, /full 40-character lowercase commit/],
+    [{ TARGET_DECLARED_VERSION: "" }, /needs TARGET_DECLARED_VERSION/],
+    [{ TARGET_DECLARED_VERSION: "1.13.0; rm -rf /" }, /characters a version cannot/],
+    [{ TARGET_DECLARED_REF: "release-1.13.0 && curl x" }, /characters a branch name cannot/],
+    [{ CHECK_TARGET_VERSION: "0" }, /CHECK_TARGET_VERSION=0/],
+  ];
+  for (const [extra, message] of cases) {
+    const r = sourced("check_declared_target && echo ok", declaredEnv(extra));
+    assert.equal(r.status, 1, `${JSON.stringify(extra)} must be refused`);
+    assert.match(r.stderr, message, JSON.stringify(extra));
+    assert.doesNotMatch(r.stdout, /ok/);
+  }
+});
+
+test("a declared model needs its provider, and both are refused when malformed", () => {
+  const run = (extra) => sourced("check_declared_model && echo ok", declaredEnv(extra));
+  assert.equal(run({ DECLARED_MODEL_PROVIDER: "anthropic" }).stdout.trim(), "ok");
+  assert.equal(run({ DECLARED_MODEL_PROVIDER: "openai", DECLARED_MODEL_ID: "gpt-4.1" }).stdout.trim(), "ok");
+  for (const [extra, message] of [
+    [{ DECLARED_MODEL_ID: "gpt-4.1" }, /needs DECLARED_MODEL_PROVIDER/],
+    [{ DECLARED_MODEL_PROVIDER: "Open AI" }, /characters a provider name cannot/],
+    [{ DECLARED_MODEL_PROVIDER: "openai", DECLARED_MODEL_ID: "gpt 4" }, /characters a model id cannot/],
+  ]) {
+    const r = run(extra);
+    assert.equal(r.status, 1, JSON.stringify(extra));
+    assert.match(r.stderr, message);
+  }
+});
+
+test("the image label decides match, mismatch or absent, and <no value> is never a match", () => {
+  const verdictFor = (label) => sourced(`declared_image_verdict ${JSON.stringify(label)}`, declaredEnv()).stdout.trim();
+  assert.equal(verdictFor(DECLARED_SHA), "match");
+  assert.equal(verdictFor("01ff86c54ef9b22ff70db3405707366bee2a8fa5"), "mismatch");
+  assert.equal(verdictFor(""), "absent");
+  assert.equal(verdictFor("<no value>"), "absent");
+});
+
+/** verify_declared_image against a fake docker: `inspect` answers with `label`, or fails when the image is missing. */
+function verifyImage({ present = true, label = DECLARED_SHA } = {}) {
+  const fake = [
+    `run_on_target_locally() {`,
+    `  case "$1" in`,
+    `    *--format*) ${present ? `printf '%s' ${JSON.stringify(label)}` : "return 1"} ;;`,
+    `    *) ${present ? "return 0" : "return 1"} ;;`,
+    `  esac`,
+    `}`,
+  ].join("\n");
+  return sourced(`${fake}\nverify_declared_image && echo "LABEL=$TARGET_IMAGE_LABEL_SHA"`, declaredEnv());
+}
+
+test("a declared image is checked where it would be pulled: present, and built from the declared commit", () => {
+  const ok = verifyImage();
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, new RegExp(`LABEL=${DECLARED_SHA}`));
+  assert.match(ok.stdout + ok.stderr, /not pulled/);
+
+  const missing = verifyImage({ present: false });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /is not on this machine.*never pulled/);
+
+  const other = verifyImage({ label: "01ff86c54ef9b22ff70db3405707366bee2a8fa5" });
+  assert.equal(other.status, 1);
+  assert.match(other.stderr, /was built from 01ff86c5.*not from the declared cff33f57/);
+
+  const unlabelled = verifyImage({ label: "<no value>" });
+  assert.equal(unlabelled.status, 1);
+  assert.match(unlabelled.stderr, /carries no org\.langflow\.sha label/);
+});
+
+test("preflight verifies a declared image instead of pulling it, and still pulls an undeclared one", () => {
+  // Placement, not behaviour: the pull and the verification are two branches of one
+  // `if` in phase_preflight, which needs a whole machine to run. The behaviour of each
+  // branch is tested above; this pins that the declared one comes FIRST, so a declared
+  // run can never reach `docker pull`.
+  const src = readFileSync(SCRIPT, "utf8");
+  const block = src.slice(src.indexOf('TARGET_IMAGE_LABEL_SHA=""'), src.indexOf("pulled in $((SECONDS - pull_start))s"));
+  assert.ok(block.indexOf("verify_declared_image") < block.indexOf("docker pull"), "verification must precede the pull");
+  assert.match(block, /\[ "\$TARGET_KIND" = "image" \] && \[ -n "\$TARGET_DECLARED_SHA" \]; then\s+verify_declared_image\s+elif \[ "\$TARGET_KIND" = "image" \]; then/);
+});
+
+test("a declared target becomes the expectation under the `declared` strategy", () => {
+  const r = sourced(
+    `apply_declared_target; printf '%s|%s|%s|%s|%s' "$TARGET_EXPECTED_VERSION" "$TARGET_EXPECTED_SHA" "$TARGET_EXPECTED_REF" "$TARGET_EXPECTED_BRANCH" "$TARGET_RESOLUTION"`,
+    declaredEnv(),
+  );
+  assert.equal(r.stdout, `1.13.0|${DECLARED_SHA}|release-1.13.0|release-1.13.0|declared`);
+});
+
+test("a declared mismatch is authoritative: it fails as the wrong Langflow, not as an unverifiable one", () => {
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]' RUN_DIR=/tmp/does-not-matter\n` +
+      `TARGET_VERSION_MATCH=no TARGET_RESOLUTION=declared TARGET_VERSION_REASON="declared 1.13.0, the target served 1.13.0.dev3"\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+    { REQUIRE_TARGET_VERSION: "1" },
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(r.stderr, /served the wrong Langflow — declared 1\.13\.0/);
+  assert.doesNotMatch(r.stderr, /could not be established authoritatively/);
+});
+
+/** pin_model_target against a real providers.json, in a scratch RUN_DIR. */
+function pinModel(declared, providers) {
+  const dir = makeTempDir("run-e2e-pin-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  const providersFile = join(dir, "providers.json");
+  writeFileSync(providersFile, JSON.stringify(providers));
+  writeFileSync(join(dir, "models.json"), JSON.stringify([{ provider: "openai", model: "gpt-4o-mini" }, { provider: "anthropic", model: "claude-sonnet-5" }]));
+  const ghEnv = join(dir, "gh.env");
+  writeFileSync(ghEnv, "");
+  const r = sourced(
+    `RUN_DIR=${JSON.stringify(dir)}\n` +
+      `set +e; pin_model_target 1 ${JSON.stringify(ghEnv)} ${JSON.stringify(join(dir, "shard.log"))} ${JSON.stringify(providersFile)}; code=$?; set -e\n` +
+      `echo "EXIT=$code"; echo "REFUSAL=$(declared_model_refusal)"`,
+    { DECLARED_MODEL_PROVIDER: "", DECLARED_MODEL_ID: "", ...declared },
+  );
+  return { ...r, code: Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), refusal: r.stdout.match(/REFUSAL=(.*)/)?.[1] ?? "", pinned: readFileSync(ghEnv, "utf8") };
+}
+
+const providersUp = [
+  { provider: "openai", status: "active", model: "gpt-4o-mini" },
+  { provider: "anthropic", status: "inactive", model: "claude-sonnet-5", error: "credit balance too low" },
+  { provider: "google", status: "active", model: "gemini-2.5-flash" },
+];
+
+test("a declared, active provider pins the shard to it, whatever the rotation would say", () => {
+  const r = pinModel({ DECLARED_MODEL_PROVIDER: "google" }, providersUp);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.pinned, "MODEL_TEST_ID=gemini-2.5-flash\nMODEL_TEST_PROVIDER=google\n");
+  assert.equal(r.refusal, "");
+});
+
+test("a declared provider that is down fails the shard and files the reason, instead of swapping", () => {
+  const r = pinModel({ DECLARED_MODEL_PROVIDER: "anthropic" }, providersUp);
+  assert.equal(r.code, 1);
+  assert.equal(r.pinned, "", "nothing is pinned, so no other provider can run");
+  assert.match(r.refusal, /declared provider "anthropic" is not usable.*credit balance too low/);
+  assert.match(r.stderr, /shard 1: the declared provider was refused/);
+});
+
+test("a declared model the provider does not expose fails the shard too", () => {
+  const r = pinModel({ DECLARED_MODEL_PROVIDER: "openai", DECLARED_MODEL_ID: "gpt-4.1" }, providersUp);
+  assert.equal(r.code, 1);
+  assert.match(r.refusal, /not one "openai" exposes/);
+});
+
+test("with nothing declared the rotation runs as before, and its failure is never fatal", () => {
+  const r = pinModel({}, providersUp);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.refusal, "");
+  // An unreadable providers file makes the rotation exit 2: warned, not fatal.
+  const broken = pinModel({}, { not: "a list" });
+  assert.equal(broken.code, 0);
+  assert.match(broken.stderr, /provider rotation failed \(the lane stays multi-provider\)/);
+});
+
+test("a refused declared provider fails the verdict with the reason, not as anonymous shard failures", () => {
+  const dir = makeTempDir("run-e2e-refusal-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeFileSync(join(dir, "logs", "shard-1.model-refused"), 'the declared provider "anthropic" is not usable\n');
+  writeFileSync(join(dir, "logs", "shard-2.model-refused"), 'the declared provider "anthropic" is not usable\n');
+  const r = sourced(
+    `RUN_EMPTY=false RUN_PARTIAL=false SHARD_COMPLETE=true TEST_JOB_FAILED=0 RUN_DIR=${JSON.stringify(dir)}\n` +
+      `LISTING_VERIFIED=true LISTING_MISSING='[]' LISTING_UNEXPECTED='[]' TARGET_VERSION_MATCH=yes\n` +
+      `set +e; phase_verdict; code=$?; set -e; echo "EXIT=$code"`,
+  );
+  assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
+  assert.match(r.stderr, /the declared provider could not be used: the declared provider "anthropic" is not usable/);
+  assert.equal(r.stderr.match(/could not be used/g).length, 1, "stated once, not once per shard");
+});
+
+test("the metadata carries what was declared, beside what was served", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  for (const field of ["langflow_declared_ref", "langflow_image_label_sha", "model_declared_provider", "model_declared_id"]) {
+    assert.match(src, new RegExp(`^\\s+${field} "\\$\\{`, "m"), `${field} is written to run-metadata.json`);
+  }
+});
+
+/** resolve_expected_target with curl and git replaced by recorders, so no test reaches the network. */
+function resolveExpected(env) {
+  const dir = makeTempDir("run-e2e-resolve-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  const calls = join(dir, "calls.txt");
+  writeFileSync(calls, "");
+  const r = sourced(
+    [
+      `RUN_DIR=${JSON.stringify(dir)}`,
+      `curl() { echo curl >> ${JSON.stringify(calls)}; return 22; }`,
+      `git() { echo "git $1" >> ${JSON.stringify(calls)}; return 128; }`,
+      `resolve_expected_target`,
+      `printf 'RESULT=%s|%s|%s\\n' "$TARGET_EXPECTED_VERSION" "$TARGET_EXPECTED_SHA" "$TARGET_RESOLUTION"`,
+    ].join("\n"),
+    env,
+  );
+  return { ...r, result: r.stdout.match(/RESULT=(.*)/)?.[1], calls: readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) };
+}
+
+test("a declared target is the expectation, and upstream is never asked", () => {
+  const r = resolveExpected(declaredEnv());
+  assert.equal(r.result, `1.13.0|${DECLARED_SHA}|declared`, r.stderr);
+  assert.deepEqual(r.calls, [], "neither the registry nor github may be consulted for a declared target");
+});
+
+test("with nothing declared the upstream resolution still runs, and off still means off", () => {
+  const undeclared = { TARGET_DECLARED_SHA: "", TARGET_DECLARED_VERSION: "", TARGET_DECLARED_REF: "" };
+  const on = resolveExpected({ ...undeclared, CHECK_TARGET_VERSION: "1" });
+  assert.ok(on.calls.includes("curl"), `the registry is asked: ${on.calls}`);
+  assert.ok(on.calls.includes("git ls-remote"), `and github: ${on.calls}`);
+  assert.notEqual(on.result.split("|")[2], "declared");
+
+  const off = resolveExpected({ ...undeclared, CHECK_TARGET_VERSION: "0" });
+  assert.deepEqual(off.calls, []);
+  assert.equal(off.result, "||");
+});
