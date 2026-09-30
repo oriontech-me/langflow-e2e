@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { spawnSync, execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync, symlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
@@ -203,6 +204,9 @@ test("the snap's docker is refused a build context under /tmp or /var/tmp, and a
     assert.ok(!r.calls.some((c) => c.startsWith("build")));
   }
   // The same snap-shaped docker under a normal root builds; the refusal is about the
-  // directory, not the snap.
-  assert.equal(build("release-1.13.0", { snap: true }).status, 0);
+  // directory, not the snap. The root is made under $HOME, because the temp directory
+  // IS /tmp on Linux (CI), where the refusal above is exactly the right answer.
+  const normal = join(makeTempDir("build-target-image-root-", { dir: homedir() }), "root");
+  const r = build("release-1.13.0", { snap: true, buildRoot: normal });
+  assert.equal(r.status, 0, r.stderr);
 });
