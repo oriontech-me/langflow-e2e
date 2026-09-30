@@ -278,13 +278,19 @@ export function resolveTargetVersion(refsText, imageTagsText = null, imageReques
  * cycle — comparing those as strings would report a mismatch on a correctly placed
  * clone, which is the false alarm that teaches people to ignore this check.
  *
+ * `declared` is exact, and for a stronger reason than the published image: the caller
+ * built the target from one commit and read the version out of that commit's own
+ * `pyproject.toml`, so there is no cycle to be lenient about. Nothing here resolves it;
+ * run-e2e.sh takes it from TARGET_DECLARED_VERSION and names the strategy, so this
+ * comparison and the verdict after it know which claim they are checking.
+ *
  * An unrecognised strategy is UNKNOWN, never one of the two. Falling through to the
  * looser rule is how a wrong answer gets a passing verdict: with a typo in the
  * strategy, `1.13.0.dev1` against `1.13.0.dev0` stops being a mismatch and becomes
  * "same cycle" — a pass, from a script whose entire purpose is refusing silent wrong
  * decisions.
  */
-const STRATEGIES = new Set(["published-image", "nightly-tag", "branch-head"]);
+const STRATEGIES = new Set(["published-image", "nightly-tag", "branch-head", "declared"]);
 
 export function compareVersions(expected, actual, strategy) {
   if (!STRATEGIES.has(strategy)) {
@@ -295,6 +301,11 @@ export function compareVersions(expected, actual, strategy) {
   }
   if (!actual) return { match: "unknown", reason: "the target reported no version" };
   if (!expected) return { match: "unknown", reason: "no expected version was resolved" };
+  if (strategy === "declared") {
+    return expected === actual
+      ? { match: "yes", reason: `exact: ${actual}, as declared` }
+      : { match: "no", reason: `declared ${expected} (read from the built commit's pyproject.toml), the target served ${actual}` };
+  }
   if (strategy === "published-image" || strategy === "nightly-tag") {
     return expected === actual
       ? { match: "yes", reason: `exact: ${actual}` }
