@@ -32,6 +32,7 @@
 #   4  the commit has no readable [project].version, or no nightly Dockerfile
 #   5  docker build failed (the log is kept and named)
 #   6  the built image does not carry the commit it was built from
+#   7  this machine cannot run the build (python3 without tomllib, i.e. older than 3.11)
 #
 # Only branches of UPSTREAM_REPO_URL, which is langflow-ai/langflow unless overridden
 # (the tests point it at a local repository). Building a branch runs its code on this
@@ -91,9 +92,19 @@ main() {
   [ -n "$sha" ] || refuse 2 "'$branch' is not a branch of $upstream. A fork's branch is never one, and a deleted or mistyped branch is not either."
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse 3 "$upstream answered '$sha' for $branch, which is not a commit."
 
-  local src="$build_root/src-$sha"
+  # The pyproject is read with tomllib, which exists from Python 3.11. Checked before
+  # anything is fetched, so an old interpreter on the machine is not reported as every
+  # branch having "no readable version".
+  python3 -c 'import tomllib' 2>/dev/null \
+    || refuse 7 "python3 on this machine has no tomllib (it needs 3.11 or later: $(python3 --version 2>&1 || echo 'no python3')). This is the machine, not the branch."
+
+  # One directory PER RUN, not per commit: two requests for the same branch close
+  # together would otherwise share a tree, and the second one's cleanup would delete
+  # what the first one's docker build is still reading. The log is per run for the
+  # same reason, and sits beside the tree so it survives the tree's removal.
   mkdir -p "$build_root" || refuse 3 "cannot create $build_root."
-  rm -rf "$src"
+  local src
+  src="$(mktemp -d "$build_root/src-${sha:0:12}-XXXXXX")" || refuse 3 "cannot create a build directory under $build_root."
   # GLOBAL, not the local above: the EXIT trap runs after main has returned, when a
   # local is out of scope and `rm -rf ""` removes nothing. That is how the first
   # version of this left every successful build's source tree behind.
@@ -115,10 +126,15 @@ with open(sys.argv[1], "rb") as f:
   [ -n "$version" ] || refuse 4 "$branch @ ${sha:0:12} has no readable [project].version in pyproject.toml."
   [[ "$version" =~ ^[0-9A-Za-z.+!-]+$ ]] || refuse 4 "$branch @ ${sha:0:12} declares a version run-e2e.sh cannot accept: '$version'."
   [ -f "$src/$dockerfile" ] || refuse 4 "$branch @ ${sha:0:12} has no $dockerfile, so it cannot be built the way the nightly is. The branch may predate it."
+  # The build asks for the stage the nightly builds. A Dockerfile without it would fail
+  # inside docker and read as status 5, a build failure, when the commit simply cannot
+  # be built this way.
+  grep -qiE '^[[:space:]]*FROM[[:space:]].*[[:space:]]AS[[:space:]]+full[[:space:]]*$' "$src/$dockerfile" \
+    || refuse 4 "$branch @ ${sha:0:12}: $dockerfile has no 'full' stage, which is what the nightly builds. The branch may predate it."
 
   # --- The build ---------------------------------------------------------------------
   local image="$image_repo:${sha:0:12}"
-  local log="$build_root/build-${sha:0:12}.log"
+  local log="$build_root/build-${sha:0:12}-${src##*-}.log"
   local start=$SECONDS
   echo "build-target-image: building $branch @ ${sha:0:12} (version $version) as $image; log: $log" >&2
   if ! "$docker" build -f "$src/$dockerfile" --target full \

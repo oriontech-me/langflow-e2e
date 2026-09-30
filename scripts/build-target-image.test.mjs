@@ -8,7 +8,7 @@
 // records what it was asked and answers `image inspect` with the label it was given.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync, symlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -49,18 +49,19 @@ function makeRepo(dir, branches) {
 
 const buildable = (version = "1.13.0") => ({
   "pyproject.toml": `[project]\nname = "langflow"\nversion = "${version}"\n`,
-  "docker/build_and_push.Dockerfile": "FROM scratch\n",
+  "docker/build_and_push.Dockerfile": "FROM scratch AS runtime\nFROM runtime AS full\n",
 });
 
 /** Runs the script against a local upstream and a stub docker. */
-function build(branch, { buildFails = false, label = null, snap = false, buildRoot = null, fork = false } = {}) {
+function build(branch, { buildFails = false, label = null, snap = false, buildRoot = null, fork = false, oldPython = false } = {}) {
   const dir = makeTempDir("build-target-image-");
   const upstream = join(dir, "upstream");
   const shas = makeRepo(upstream, {
     "release-1.13.0": buildable(),
     "feature/nested-name": buildable("1.14.0.dev0"),
     "no-dockerfile": { "pyproject.toml": '[project]\nversion = "1.2.0"\n' },
-    "no-version": { "pyproject.toml": '[project]\nname = "langflow"\n', "docker/build_and_push.Dockerfile": "FROM scratch\n" },
+    "no-version": { "pyproject.toml": '[project]\nname = "langflow"\n', "docker/build_and_push.Dockerfile": "FROM scratch AS full\n" },
+    "no-full-stage": { "pyproject.toml": '[project]\nversion = "1.0.0"\n', "docker/build_and_push.Dockerfile": "FROM scratch AS runtime\n" },
   });
   if (fork) makeRepo(join(dir, "fork"), { "only-in-fork": buildable() });
 
@@ -88,6 +89,14 @@ esac`;
     writeFileSync(join(bin, "docker"), stubBody, { mode: 0o755 });
   }
 
+  if (oldPython) {
+    // A python3 that predates tomllib: the import fails, and --version says so.
+    writeFileSync(join(bin, "python3"), `#!/usr/bin/env bash
+[ "$1" = "--version" ] && { echo "Python 3.10.12"; exit 0; }
+case "$*" in *tomllib*) echo "ModuleNotFoundError: No module named 'tomllib'" >&2; exit 1 ;; esac
+exit 1
+`, { mode: 0o755 });
+  }
   const root = buildRoot ?? join(dir, "root");
   const r = spawnSync("bash", [SCRIPT, ...(branch === undefined ? [] : [branch])], {
     encoding: "utf8",
@@ -209,4 +218,61 @@ test("the snap's docker is refused a build context under /tmp or /var/tmp, and a
   const normal = join(makeTempDir("build-target-image-root-", { dir: homedir() }), "root");
   const r = build("release-1.13.0", { snap: true, buildRoot: normal });
   assert.equal(r.status, 0, r.stderr);
+});
+
+test("a Dockerfile with no 'full' stage is the commit's problem (4), not a failed build (5)", () => {
+  const r = build("no-full-stage");
+  assert.equal(r.status, 4, r.stderr);
+  assert.match(r.stderr, /has no 'full' stage, which is what the nightly builds/);
+  assert.ok(!r.calls.some((c) => c.startsWith("build")), "docker was never asked");
+});
+
+test("a python3 without tomllib is the machine's problem (7), never every branch's", () => {
+  const r = build("release-1.13.0", { oldPython: true });
+  assert.equal(r.status, 7, r.stderr);
+  assert.match(r.stderr, /no tomllib \(it needs 3\.11 or later: Python 3\.10\.12\)\. This is the machine, not the branch/);
+  assert.doesNotMatch(r.stderr, /no readable \[project\]\.version/);
+});
+
+test("each run builds from its own directory and writes its own log", () => {
+  const r = build("release-1.13.0");
+  assert.equal(r.status, 0, r.stderr);
+  const sha12 = r.shas["release-1.13.0"].slice(0, 12);
+  const context = r.calls.find((c) => c.startsWith("build ")).split(" ").pop();
+  assert.match(context, new RegExp(`/src-${sha12}-[A-Za-z0-9]{6}$`), "the context is a per-run directory");
+  const logs = readdirSync(r.root).filter((n) => n.endsWith(".log"));
+  assert.deepEqual(logs, [`build-${sha12}-${context.split("-").pop()}.log`], "and the log is named for that run");
+});
+
+test("two builds of the same commit at the same time do not break each other", async () => {
+  // Measured shape of the defect this pins: with the tree named for the commit alone,
+  // the second run's cleanup removed the tree the first run's build was still reading.
+  const dir = makeTempDir("build-target-image-concurrent-");
+  const upstream = join(dir, "upstream");
+  makeRepo(upstream, { "release-1.13.0": buildable() });
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  // A build that takes a second and fails if its context disappears meanwhile.
+  writeFileSync(join(bin, "docker"), `#!/usr/bin/env bash
+case "$1" in
+  build)
+    ctx="\${@: -1}"; for a in "$@"; do case "$a" in org.langflow.sha=*) sha="\${a#org.langflow.sha=}" ;; esac; done
+    sleep 1
+    [ -f "$ctx/pyproject.toml" ] || { echo "context vanished: $ctx"; exit 1; }
+    printf '%s' "$sha" > "$ctx.label" ;;
+  image) cat "$(ls ${JSON.stringify(join(dir, "root"))}/src-*.label | head -1)" ;;
+esac
+`, { mode: 0o755 });
+  const env = { PATH: `${bin}:${process.env.PATH}`, UPSTREAM_REPO_URL: `file://${upstream}`, BUILD_ROOT: join(dir, "root") };
+  const once = () =>
+    new Promise((resolve) => {
+      const p = spawn("bash", [SCRIPT, "release-1.13.0"], { env });
+      let err = "";
+      p.stderr.on("data", (d) => (err += d));
+      p.on("close", (code) => resolve({ code, err }));
+    });
+  const [a, b] = await Promise.all([once(), once()]);
+  assert.equal(a.code, 0, a.err);
+  assert.equal(b.code, 0, b.err);
+  assert.deepEqual(readdirSync(join(dir, "root")).filter((n) => n.startsWith("src-") && !n.endsWith(".label")), [], "both trees are removed");
 });
