@@ -241,6 +241,18 @@ test("comparing under branch-head accepts the cycle, because the .devN is not ou
   assert.equal(compareVersions("1.13.0", "1.12.0", "branch-head").match, "no");
 });
 
+test("declared compares exactly: the version was read from the very commit that was built", () => {
+  const same = compareVersions("1.13.0", "1.13.0", "declared");
+  assert.equal(same.match, "yes");
+  assert.match(same.reason, /as declared/);
+  // The branch-head leniency must NOT apply: a declared 1.13.0 that serves a .devN of
+  // the same cycle was built from something other than the commit that was declared.
+  const devN = compareVersions("1.13.0", "1.13.0.dev3", "declared");
+  assert.equal(devN.match, "no");
+  assert.match(devN.reason, /declared 1\.13\.0 .*served 1\.13\.0\.dev3/);
+  assert.equal(compareVersions("1.13.0", "", "declared").match, "unknown");
+});
+
 test("an unrecognised strategy is UNKNOWN, never the looser comparison", () => {
   // One character decides whether a different commit is a mismatch or a pass, and
   // the looser rule is the one that answers when nobody recognises the strategy.

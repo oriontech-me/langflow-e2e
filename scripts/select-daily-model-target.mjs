@@ -92,6 +92,7 @@
  * it pins. Always prints the decision as JSON on stdout.
  */
 import * as fs from "fs";
+import * as path from "path";
 import { displaySafe, tableCell } from "./lib/display-text.mjs";
 import {
   readProvidersFile,
@@ -108,8 +109,73 @@ const HELP = `Usage: node scripts/select-daily-model-target.mjs [options]
   --order LIST           comma-separated rotation order
                          (default: ${DEFAULT_ORDER.join(",")})
   --date ISO             UTC instant deciding the weekday (default: now)
+  --provider NAME        a DECLARED provider: no rotation, no fallback — refused
+                         (exit 3) when collect-models did not probe it active
+  --model ID             with --provider, a declared model; must be one that
+                         provider exposes in models.json (default: its settled one)
+  --models-file PATH     models.json written by collect-models
+                         (default: beside --providers-file)
   -h, --help             this text
 `;
+
+/**
+ * Resolve a provider, and optionally a model, that the CALLER declared (the on-demand
+ * run's "Provider" field) instead of the day's rotation slot.
+ *
+ * The difference from `selectDailyModelTarget` is the whole point: there is NO
+ * fallback. The rotation advances past a dry key because losing the day costs more
+ * than a different provider does. A declaration inverts that trade — someone asked for
+ * anthropic, and a run that quietly served openai instead would answer a question they
+ * did not ask, green, with their name on it. That is the same defect as a target that
+ * serves a different commit than the one declared, so it is refused the same way.
+ *
+ * A declared model has to be one the provider actually exposes in `models.json`,
+ * because `resolveTestTargets()` only WARNS on an unknown `MODEL_TEST_ID` and the specs
+ * then skip — a run that reports green over tests it never ran.
+ *
+ * @param {unknown} providers  parsed providers.json
+ * @param {unknown} models     parsed models.json, or null when it is missing
+ * @param {{ provider: string, model?: string }} declared
+ * @returns {{ ok: boolean, provider: string|null, model: string|null, reason: string|null, declared: true }}
+ * @throws {Error} on a providers payload that cannot be read (#1035), and on a
+ *   models.json that exists but is not a record list — both undecidable.
+ */
+export function selectDeclaredModelTarget(providers, models, declared) {
+  const provider = declared?.provider;
+  if (typeof provider !== "string" || provider === "") {
+    throw new Error("a declared target needs a provider name");
+  }
+  const refuse = (reason) => ({ ok: false, provider, model: null, reason, declared: true });
+
+  const settled = selectSettledTarget(providers, { provider });
+  if (!settled.ok) {
+    return refuse(
+      `the declared provider "${provider}" is not usable, and a declaration is not ` +
+        `swapped for another provider: ${advanceReason(providers, provider)}`,
+    );
+  }
+  if (!declared.model) {
+    return { ok: true, provider, model: settled.model, reason: null, declared: true };
+  }
+  if (models === null || models === undefined) {
+    return refuse(
+      `the declared model "${declared.model}" cannot be checked: models.json is ` +
+        `missing, so collect-models did not say what "${provider}" exposes`,
+    );
+  }
+  if (!Array.isArray(models)) {
+    throw new Error("models.json must be an array of { provider, model } records");
+  }
+  const exposed = models.filter((m) => m && m.provider === provider).map((m) => m.model);
+  if (!exposed.includes(declared.model)) {
+    return refuse(
+      `the declared model "${declared.model}" is not one "${provider}" exposes in ` +
+        `models.json (${exposed.length ? exposed.join(", ") : "none"}); the specs would ` +
+        `skip rather than run it`,
+    );
+  }
+  return { ok: true, provider, model: declared.model, reason: null, declared: true };
+}
 
 /**
  * The rotation slot for a UTC date. Monday is slot 0 — the daily's cron is 05:00 BRT
@@ -487,10 +553,72 @@ function parseArgs(argv) {
         .filter(Boolean);
       if (args.order.length === 0) throw new Error("--order is empty");
     } else if (flag === "--date") args.date = new Date(value);
+    else if (flag === "--provider") args.provider = value;
+    else if (flag === "--model") args.model = value;
+    else if (flag === "--models-file") args.modelsFile = value;
     else throw new Error(`unknown flag: ${flag}`);
     i++;
   }
+  // An empty value is refused rather than read as "not declared": the caller passes
+  // these from a variable, and an unset one arriving as "" must not turn a declared run
+  // back into the rotation it was meant to replace.
+  if (args.provider === "") throw new Error("--provider is empty");
+  if (args.model !== undefined && !args.provider) {
+    throw new Error("--model needs --provider: a model is declared FOR a provider");
+  }
+  if (args.model === "") throw new Error("--model is empty");
   return args;
+}
+
+/**
+ * The declared path of the CLI: exit 0 with the pin written, 3 when the declaration is
+ * refused, 2 when the inputs are unreadable. Kept apart from the rotation path so none
+ * of the rotation's fallback or displacement reporting can reach a declared run.
+ */
+function runDeclared(args) {
+  let result;
+  try {
+    const { providers, missing } = readProvidersFile(args.providersFile);
+    if (missing) {
+      result = {
+        ok: false,
+        provider: args.provider,
+        model: null,
+        reason:
+          `${args.providersFile} does not exist — collect-models did not write it, so ` +
+          `the declared provider "${args.provider}" cannot be confirmed usable`,
+        declared: true,
+      };
+    } else {
+      const modelsFile =
+        args.modelsFile ?? path.join(path.dirname(args.providersFile), "models.json");
+      const models = fs.existsSync(modelsFile)
+        ? JSON.parse(fs.readFileSync(modelsFile, "utf-8"))
+        : null;
+      result = selectDeclaredModelTarget(providers, models, {
+        provider: args.provider,
+        model: args.model,
+      });
+    }
+  } catch (error) {
+    process.stderr.write(`::error::select-daily-model-target: ${error.message}\n`);
+    return 2;
+  }
+  if (!result.ok) {
+    process.stderr.write(`::error::select-daily-model-target: ${displaySafe(result.reason)}\n`);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return 3;
+  }
+  const lines = [`MODEL_TEST_ID=${result.model}`, `MODEL_TEST_PROVIDER=${result.provider}`];
+  if (process.env.GITHUB_ENV) {
+    fs.appendFileSync(process.env.GITHUB_ENV, `${lines.join("\n")}\n`);
+  }
+  process.stderr.write(
+    `lane pinned to the DECLARED ${result.provider} / ${result.model}; the rotation ` +
+      `was not consulted. The provider-contract specs still cover every provider.\n`,
+  );
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  return 0;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -505,6 +633,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.stdout.write(HELP);
     process.exit(0);
   }
+  if (args.provider) process.exit(runDeclared(args));
 
   let result;
   try {

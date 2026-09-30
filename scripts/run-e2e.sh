@@ -328,6 +328,33 @@ CHECK_TARGET_VERSION="${CHECK_TARGET_VERSION:-1}"
 # expects, so enforcement cannot fail a correctly placed clone over a formatting
 # difference. Set to 0 to diagnose against a deliberately mismatched target.
 REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
+# A target DECLARED by the caller instead of resolved from upstream's nightly: the
+# on-demand run builds an image from one commit of a branch and says which commit, and
+# which version that commit's pyproject.toml carries. Resolving the nightly for such a
+# run compares it with the wrong thing — the branch is not what the CI is testing today.
+#
+# Declared means checked, not trusted. The image must be LOCAL (it is never pulled: a
+# locally built reference exists in no registry, and pulling a same-named one would
+# serve something else), its `org.langflow.sha` label must equal TARGET_DECLARED_SHA
+# before anything starts, and the version it serves is compared EXACTLY with
+# TARGET_DECLARED_VERSION under the `declared` strategy — fatal under
+# REQUIRE_TARGET_VERSION like any other mismatch. TARGET_DECLARED_REF is the branch the
+# SHA was resolved from; it is carried into the metadata and never checked out.
+#
+# Image targets only. A source clone already has its commit verified by the preparer,
+# and a published distribution (LANGFLOW_SRC_RUN_CMD) has no commit to verify at all;
+# a declaration there would be a claim nothing in this run can check.
+TARGET_DECLARED_SHA="${TARGET_DECLARED_SHA:-}"
+TARGET_DECLARED_VERSION="${TARGET_DECLARED_VERSION:-}"
+TARGET_DECLARED_REF="${TARGET_DECLARED_REF:-}"
+# The provider, and optionally the model, the agent specs run against, DECLARED instead
+# of the weekday rotation (scripts/select-daily-model-target.mjs --provider/--model).
+# No fallback: a declared provider that collect-models did not probe active, or a model
+# that provider does not expose, fails the shard and the verdict says why. The rotation
+# advances past a dry key because losing the day costs more; a run someone asked to use
+# anthropic that quietly used openai answers a question nobody asked.
+DECLARED_MODEL_PROVIDER="${DECLARED_MODEL_PROVIDER:-}"
+DECLARED_MODEL_ID="${DECLARED_MODEL_ID:-}"
 # Whether the run OBEYS the resolution instead of only reporting it. Reporting was
 # step 16's first half and was deliberately not fatal: failing at 08:00 over a clone
 # somebody had to move by hand threw away a day of data. This is the second half —
@@ -717,6 +744,113 @@ check_target_kind() {
   esac
   [ "$PREPARE_TARGET" = "1" ] && die "TARGET_KIND=image with PREPARE_TARGET=1: the preparer would place and rebuild a clone that is not going to serve. Leave PREPARE_TARGET unset (it defaults to 0 for an image) or set it to 0."
   [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] && die "TARGET_KIND=image with LANGFLOW_SRC_RUN_CMD set: two artifacts are named and only one would serve. Unset LANGFLOW_SRC_RUN_CMD."
+  return 0
+}
+
+# A declared target (TARGET_DECLARED_*), refused before anything runs when it cannot be
+# checked. Split out, like check_target_kind, so every refusal is testable without docker.
+# Nothing declared is the daily and the shadow, and returns at once.
+check_declared_target() {
+  [ -n "${TARGET_DECLARED_SHA}${TARGET_DECLARED_VERSION}${TARGET_DECLARED_REF}" ] || return 0
+  [ "$TARGET_KIND" = "image" ] || die "a declared target (TARGET_DECLARED_*) needs TARGET_KIND=image. A source clone has its commit verified by the preparer and a published distribution has no commit at all, so a declaration there is a claim this run cannot check."
+  [ -n "$TARGET_DECLARED_SHA" ] || die "a declared target needs TARGET_DECLARED_SHA, the commit the image was built from. TARGET_DECLARED_VERSION or TARGET_DECLARED_REF alone names no build."
+  [[ "$TARGET_DECLARED_SHA" =~ ^[0-9a-f]{40}$ ]] || die "TARGET_DECLARED_SHA must be a full 40-character lowercase commit, got: '$TARGET_DECLARED_SHA'. A short one can match more than one commit."
+  [ -n "$TARGET_DECLARED_VERSION" ] || die "a declared target needs TARGET_DECLARED_VERSION, the version in that commit's pyproject.toml: the commit is checked against the image's label, the version against what the instance reports, and neither check stands in for the other."
+  [[ "$TARGET_DECLARED_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]] || die "TARGET_DECLARED_VERSION has characters a version cannot: '$TARGET_DECLARED_VERSION'."
+  if [ -n "$TARGET_DECLARED_REF" ]; then
+    [[ "$TARGET_DECLARED_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || die "TARGET_DECLARED_REF has characters a branch name cannot: '$TARGET_DECLARED_REF'."
+  fi
+  [ "$CHECK_TARGET_VERSION" = "1" ] || die "a declared target with CHECK_TARGET_VERSION=0: the declaration is exactly what this run exists to check. Drop the declaration, or the override."
+  return 0
+}
+
+# The declared provider and model (DECLARED_MODEL_*), refused before anything runs when
+# malformed. Whether the provider is USABLE is only known after collect-models, per
+# shard; see pin_model_target.
+check_declared_model() {
+  if [ -n "$DECLARED_MODEL_ID" ] && [ -z "$DECLARED_MODEL_PROVIDER" ]; then
+    die "DECLARED_MODEL_ID needs DECLARED_MODEL_PROVIDER: a model is declared for a provider, and the catalog is read per provider."
+  fi
+  if [ -n "$DECLARED_MODEL_PROVIDER" ]; then
+    [[ "$DECLARED_MODEL_PROVIDER" =~ ^[a-z0-9-]+$ ]] || die "DECLARED_MODEL_PROVIDER has characters a provider name cannot: '$DECLARED_MODEL_PROVIDER'."
+  fi
+  if [ -n "$DECLARED_MODEL_ID" ]; then
+    [[ "$DECLARED_MODEL_ID" =~ ^[A-Za-z0-9._:/-]+$ ]] || die "DECLARED_MODEL_ID has characters a model id cannot: '$DECLARED_MODEL_ID'."
+  fi
+  return 0
+}
+
+# What the local image's `org.langflow.sha` label says about the declared commit:
+# match, mismatch, or absent. docker prints `<no value>` for a label that is not there
+# on some template paths and an empty string on others; both are absent, never a match.
+declared_image_verdict() {
+  local label="${1:-}"
+  if [ -z "$label" ] || [ "$label" = "<no value>" ]; then
+    echo "absent"
+  elif [ "$label" = "$TARGET_DECLARED_SHA" ]; then
+    echo "match"
+  else
+    echo "mismatch"
+  fi
+  return 0
+}
+
+# The declared image, checked where preflight would otherwise pull it: present on this
+# machine, and labelled with the declared commit. Sets TARGET_IMAGE_LABEL_SHA for the
+# metadata. Every other outcome is fatal before anything starts, because a run against
+# an image built from another commit produces a verdict about the wrong thing.
+verify_declared_image() {
+  run_on_target_locally "docker image inspect $(shq "$LANGFLOW_IMAGE")" > /dev/null 2>&1 \
+    || die "the declared target's image $LANGFLOW_IMAGE is not on this machine. A declared image is built here and never pulled; build it first."
+  TARGET_IMAGE_LABEL_SHA="$(run_on_target_locally "docker image inspect --format '{{index .Config.Labels \"org.langflow.sha\"}}' $(shq "$LANGFLOW_IMAGE")" 2>/dev/null || true)"
+  case "$(declared_image_verdict "$TARGET_IMAGE_LABEL_SHA")" in
+    match) info "image: $LANGFLOW_IMAGE is local and labelled with the declared commit ${TARGET_DECLARED_SHA:0:10}; not pulled" ;;
+    absent) die "the declared target's image $LANGFLOW_IMAGE carries no org.langflow.sha label, so nothing says which commit it was built from. Build it with --label org.langflow.sha=<commit>." ;;
+    *) die "the declared target's image $LANGFLOW_IMAGE was built from ${TARGET_IMAGE_LABEL_SHA}, not from the declared ${TARGET_DECLARED_SHA}. Refusing to run: every result would describe a different commit than the one asked for." ;;
+  esac
+  return 0
+}
+
+# The declared target, as the expectation the rest of the run compares against. The
+# same variables the upstream resolution fills, so the compare step, the verdict and the
+# metadata need no second path; only the strategy name tells them this was declared.
+apply_declared_target() {
+  TARGET_EXPECTED_VERSION="$TARGET_DECLARED_VERSION"
+  TARGET_EXPECTED_SHA="$TARGET_DECLARED_SHA"
+  TARGET_EXPECTED_REF="$TARGET_DECLARED_REF"
+  TARGET_EXPECTED_BRANCH="$TARGET_DECLARED_REF"
+  TARGET_RESOLUTION="declared"
+  return 0
+}
+
+# Pin the agent specs to one provider for this shard: the DECLARED one when there is a
+# declaration, the weekday rotation otherwise. Returns 1 only for a refused declaration,
+# after filing the reason where phase_verdict reads it. A rotation that fails leaves the
+# lane multi-provider, as it always has: that is its fallback, and a declaration has none.
+pin_model_target() {
+  local idx="$1" gh_env="$2" log="$3"
+  local providers_file="${4:-tests/helpers/provider-setup/data/providers.json}"
+  if [ -z "$DECLARED_MODEL_PROVIDER" ]; then
+    GITHUB_ENV="$gh_env" node scripts/select-daily-model-target.mjs --providers-file "$providers_file" >> "$log" 2>&1 \
+      || warn "shard $idx: provider rotation failed (the lane stays multi-provider)."
+    return 0
+  fi
+  local out rc=0 reason
+  out="$(GITHUB_ENV="$gh_env" node scripts/select-daily-model-target.mjs --providers-file "$providers_file" \
+      --provider "$DECLARED_MODEL_PROVIDER" ${DECLARED_MODEL_ID:+--model "$DECLARED_MODEL_ID"} 2>> "$log")" || rc=$?
+  printf '%s\n' "$out" >> "$log"
+  [ "$rc" = "0" ] && return 0
+  reason="$(node -p "try{JSON.parse(process.argv[1]).reason||''}catch{''}" "$out" 2>/dev/null || true)"
+  reason="${reason:-the selector exited $rc without a decision (see logs/shard-$idx.log)}"
+  printf '%s\n' "$reason" > "$RUN_DIR/logs/shard-$idx.model-refused"
+  err "shard $idx: the declared provider was refused: $reason"
+  return 1
+}
+
+# The refusal a shard filed for its declared provider, if any. One line: every shard
+# reads the same collect-models answer, so they refuse for the same reason.
+declared_model_refusal() {
+  cat "$RUN_DIR"/logs/shard-*.model-refused 2>/dev/null | head -n 1 || true
   return 0
 }
 
@@ -1260,6 +1394,68 @@ verify_push_credential() {
   return 0
 }
 
+# What this run's target SHOULD serve, into TARGET_EXPECTED_* and TARGET_RESOLUTION.
+# Split out of phase_preflight so the choice between a DECLARED target and upstream's
+# resolution is testable: a declared run must never ask the registry or github, and
+# that is a behaviour, not a spelling.
+resolve_expected_target() {
+  # What the CI will be testing today, resolved by upstream's own rule. Informational
+  # here and compared after the run: asking now means the operator sees the gap before
+  # spending an hour producing a comparison that a version difference already spoiled.
+  TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
+  TARGET_EXPECTED_BRANCH=""
+  if [ -n "$TARGET_DECLARED_SHA" ]; then
+    # Declared by the caller, and already checked against the image's label in
+    # preflight. Upstream's nightly is not asked: it answers what the CI tests today,
+    # which is not the branch this run was asked to measure.
+    apply_declared_target
+    info "target should be: $TARGET_EXPECTED_VERSION (ref ${TARGET_EXPECTED_REF:-<none>}, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
+  elif [ "$CHECK_TARGET_VERSION" = "1" ]; then
+    local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
+    # The registry listing is optional and its absence is survivable — the resolver
+    # falls back to the refs and says so — so a failure here warns and continues.
+    curl -sfS --max-time 20 "$NIGHTLY_TAGS_URL" -o "$RUN_DIR/nightly-tags.json" 2>> "$vlog" \
+      || warn "could not read the published nightly image listing; the expected version will come from the git refs, which can run ahead of what actually shipped."
+    # Both inputs are best-effort, and NEITHER gates the other. The registry answers
+    # the question — which version — and the refs only add which commit that version
+    # was built from. Gating the whole resolution on the git fetch (as this did) hands
+    # github.com a veto over an answer it does not provide: github unreachable at
+    # 08:00, registry fine, and the run would report an unperformed check — fatal
+    # under REQUIRE_TARGET_VERSION. github is also the flakier of the two here, since
+    # the suite's own origin is the internal mirror and this is the only reach out.
+    : > "$RUN_DIR/upstream-refs.txt"
+    git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$vlog" \
+      || warn "could not reach $UPSTREAM_REPO_URL for the ref listing; the expected VERSION can still come from the registry, but the commit behind it will be unknown."
+    local decision
+    decision="$(node scripts/resolve-target-version.mjs \
+        --refs-file "$RUN_DIR/upstream-refs.txt" \
+        --image-tags-file "$RUN_DIR/nightly-tags.json" 2> "$verr" || true)"
+    # The resolver's warnings are the difference between "same commit" and "same
+    # cycle". Shown, not just filed: a run that silently downgraded its own claim
+    # is how a comparison starts meaning less than the reader thinks.
+    if [ -s "$verr" ]; then cat "$verr" >&2; cat "$verr" >> "$vlog"; fi
+    if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
+      TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
+      TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
+      TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
+      TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
+      # Carried for the preparer, not for the report: when the nightly tag has been
+      # recreated, the commit is only reachable through the branch it lives on.
+      TARGET_EXPECTED_BRANCH="$(node -p "JSON.parse(process.argv[1]).branch||''" "$decision")"
+      info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
+    else
+      # Quote the resolver rather than inventing a reason: it distinguishes "no
+      # release branch in the listing" from "the file could not be read", and the
+      # two send the reader to different places.
+      local why
+      why="$(node -p "try{JSON.parse(process.argv[1]).error||''}catch{''}" "${decision:-}" 2>/dev/null || true)"
+      warn "could not resolve which Langflow this lane should test${why:+ — $why}"
+      warn "The comparison will not know whether both sides ran the same product."
+    fi
+  fi
+  return 0
+}
+
 phase_preflight() {
   log "Preflight"
 
@@ -1280,7 +1476,11 @@ phase_preflight() {
   # the run may never write.
   info "target env: $(mirrored_target_env)$(target_cmd_env)$(target_image_env "$BASE_PORT")"
   check_target_kind
+  check_declared_target
+  check_declared_model
   info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
+  [ -n "$TARGET_DECLARED_SHA" ] && info "target declared: ${TARGET_DECLARED_REF:-<no ref>} @ ${TARGET_DECLARED_SHA:0:10}, version $TARGET_DECLARED_VERSION"
+  [ -n "$DECLARED_MODEL_PROVIDER" ] && info "provider declared: $DECLARED_MODEL_PROVIDER${DECLARED_MODEL_ID:+ / $DECLARED_MODEL_ID} (no rotation, no fallback)"
   warn_target_cmd_conflicts
 
   [ -n "$TARGET_SSH" ] || die "TARGET_SSH is required — this script drives the target and will not guess where it is. Name an ssh alias, or 'local' for this machine."
@@ -1318,7 +1518,14 @@ phase_preflight() {
   # image at the same time inside their readiness budgets, and a registry hiccup would
   # read as four backends that never answered. Fatal, because an image run with no
   # image has nothing to measure; the pull's own output is filed, not printed.
-  if [ "$TARGET_KIND" = "image" ]; then
+  #
+  # A DECLARED image is the exception, and is never pulled: it was built on this
+  # machine, a registry holds nothing under its name, and one that did would be someone
+  # else's build. It is checked instead — present, and labelled with the declared commit.
+  TARGET_IMAGE_LABEL_SHA=""
+  if [ "$TARGET_KIND" = "image" ] && [ -n "$TARGET_DECLARED_SHA" ]; then
+    verify_declared_image
+  elif [ "$TARGET_KIND" = "image" ]; then
     local pull_log="$RUN_DIR/logs/image-pull.log" pull_start=$SECONDS
     run_on_target_locally "docker pull $(shq "$LANGFLOW_IMAGE")" > "$pull_log" 2>&1 \
       || { tail -n 20 "$pull_log" >&2; die "could not pull $LANGFLOW_IMAGE — see $pull_log."; }
@@ -1401,54 +1608,7 @@ phase_preflight() {
   behind="$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)"
   info "suite: $branch @ ${sha:0:10}${behind:+ ($behind commit(s) behind origin)}"
 
-  # What the CI will be testing today, resolved by upstream's own rule. Informational
-  # here and compared after the run: asking now means the operator sees the gap before
-  # spending an hour producing a comparison that a version difference already spoiled.
-  TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
-  TARGET_EXPECTED_BRANCH=""
-  if [ "$CHECK_TARGET_VERSION" = "1" ]; then
-    local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
-    # The registry listing is optional and its absence is survivable — the resolver
-    # falls back to the refs and says so — so a failure here warns and continues.
-    curl -sfS --max-time 20 "$NIGHTLY_TAGS_URL" -o "$RUN_DIR/nightly-tags.json" 2>> "$vlog" \
-      || warn "could not read the published nightly image listing; the expected version will come from the git refs, which can run ahead of what actually shipped."
-    # Both inputs are best-effort, and NEITHER gates the other. The registry answers
-    # the question — which version — and the refs only add which commit that version
-    # was built from. Gating the whole resolution on the git fetch (as this did) hands
-    # github.com a veto over an answer it does not provide: github unreachable at
-    # 08:00, registry fine, and the run would report an unperformed check — fatal
-    # under REQUIRE_TARGET_VERSION. github is also the flakier of the two here, since
-    # the suite's own origin is the internal mirror and this is the only reach out.
-    : > "$RUN_DIR/upstream-refs.txt"
-    git ls-remote --heads --tags "$UPSTREAM_REPO_URL" > "$RUN_DIR/upstream-refs.txt" 2>> "$vlog" \
-      || warn "could not reach $UPSTREAM_REPO_URL for the ref listing; the expected VERSION can still come from the registry, but the commit behind it will be unknown."
-    local decision
-    decision="$(node scripts/resolve-target-version.mjs \
-        --refs-file "$RUN_DIR/upstream-refs.txt" \
-        --image-tags-file "$RUN_DIR/nightly-tags.json" 2> "$verr" || true)"
-    # The resolver's warnings are the difference between "same commit" and "same
-    # cycle". Shown, not just filed: a run that silently downgraded its own claim
-    # is how a comparison starts meaning less than the reader thinks.
-    if [ -s "$verr" ]; then cat "$verr" >&2; cat "$verr" >> "$vlog"; fi
-    if [ -n "$decision" ] && [ "$(node -p "try{JSON.parse(process.argv[1]).ok===true?'true':'false'}catch{'false'}" "$decision")" = "true" ]; then
-      TARGET_EXPECTED_VERSION="$(node -p "JSON.parse(process.argv[1]).version||''" "$decision")"
-      TARGET_EXPECTED_REF="$(node -p "JSON.parse(process.argv[1]).ref||''" "$decision")"
-      TARGET_EXPECTED_SHA="$(node -p "JSON.parse(process.argv[1]).sha||''" "$decision")"
-      TARGET_RESOLUTION="$(node -p "JSON.parse(process.argv[1]).strategy||''" "$decision")"
-      # Carried for the preparer, not for the report: when the nightly tag has been
-      # recreated, the commit is only reachable through the branch it lives on.
-      TARGET_EXPECTED_BRANCH="$(node -p "JSON.parse(process.argv[1]).branch||''" "$decision")"
-      info "target should be: $TARGET_EXPECTED_VERSION (ref $TARGET_EXPECTED_REF, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
-    else
-      # Quote the resolver rather than inventing a reason: it distinguishes "no
-      # release branch in the listing" from "the file could not be read", and the
-      # two send the reader to different places.
-      local why
-      why="$(node -p "try{JSON.parse(process.argv[1]).error||''}catch{''}" "${decision:-}" 2>/dev/null || true)"
-      warn "could not resolve which Langflow this lane should test${why:+ — $why}"
-      warn "The comparison will not know whether both sides ran the same product."
-    fi
-  fi
+  resolve_expected_target
 
   # --- Obey the resolution: put the target ON that commit -------------------------
   # Failing an ATTEMPTED placement is the point. A run against the clone's old position
@@ -1956,9 +2116,11 @@ run_shard() {
   local liveness_pid=$!
   echo "$liveness_pid" >> "$pidfile"
 
-  # Provider rotation by weekday (#1185). Writes MODEL_TEST_ID/MODEL_TEST_PROVIDER.
-  GITHUB_ENV="$gh_env" node scripts/select-daily-model-target.mjs >> "$log" 2>&1 \
-    || warn "shard $idx: provider rotation failed (the lane stays multi-provider)."
+  # Provider rotation by weekday (#1185), or the DECLARED provider when there is one.
+  # Writes MODEL_TEST_ID/MODEL_TEST_PROVIDER. A refused declaration ends the shard
+  # here: running the agent specs against some other provider is the silent swap the
+  # declaration exists to rule out.
+  pin_model_target "$idx" "$gh_env" "$log" || return 1
   # shellcheck disable=SC1090
   if [ -s "$gh_env" ]; then set -a; . "$gh_env"; set +a; fi
 
@@ -2164,10 +2326,16 @@ phase_merge() {
       yes | cycle) info "target version: $TARGET_VERSION_MATCH — $TARGET_VERSION_REASON" ;;
       no)
         warn "TARGET VERSION MISMATCH (by $TARGET_RESOLUTION) — $TARGET_VERSION_REASON"
-        warn "Every product difference between those two lands in this run's verdict, and"
-        warn "the comparison with the Actions daily will read it as an environment"
-        warn "divergence. Move the clone to $TARGET_EXPECTED_REF and rebuild before"
-        warn "treating today's differences as findings."
+        if [ "$TARGET_RESOLUTION" = "declared" ]; then
+          warn "The image carries the declared commit's label but served another version, so"
+          warn "the declaration or the build is wrong. Nothing this run measured can be read"
+          warn "as a result about ${TARGET_EXPECTED_REF:-that branch}."
+        else
+          warn "Every product difference between those two lands in this run's verdict, and"
+          warn "the comparison with the Actions daily will read it as an environment"
+          warn "divergence. Move the clone to $TARGET_EXPECTED_REF and rebuild before"
+          warn "treating today's differences as findings."
+        fi
         ;;
       *) warn "target version: could not be compared — $TARGET_VERSION_REASON" ;;
     esac
@@ -2238,6 +2406,10 @@ phase_merge() {
     langflow_prepared_sha "${TARGET_PREPARED_SHA:-}" \
     langflow_prepared_rebuilt "${TARGET_REBUILT:-no}" \
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
+    langflow_declared_ref "${TARGET_DECLARED_REF:-}" \
+    langflow_image_label_sha "${TARGET_IMAGE_LABEL_SHA:-}" \
+    model_declared_provider "${DECLARED_MODEL_PROVIDER:-}" \
+    model_declared_id "${DECLARED_MODEL_ID:-}" \
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
     target_kind "$TARGET_KIND" \
@@ -3007,10 +3179,23 @@ phase_verdict() {
     warn "No coverage is lost, but the completeness check is blind to these files, so its"
     warn "missing list is a lower bound (#1812)."
   fi
+  # A declared provider that was refused: the shards ended before their round, so the
+  # verdict would otherwise read as ordinary shard failures and hide the one reason.
+  local model_refusal
+  model_refusal="$(declared_model_refusal)"
+  if [ -n "$model_refusal" ]; then
+    err "the declared provider could not be used: $model_refusal"
+    err "A declared provider is never swapped for another one, so the refused shard(s)"
+    err "ended before their round and ran none of their @stable specs. Declare a provider"
+    err "collect-models probes active, or leave it to the rotation."
+    failed=1
+  fi
   if [ "$REQUIRE_TARGET_VERSION" = "1" ]; then
     case "${TARGET_VERSION_MATCH:-unchecked}" in
       no)
-        if [ "${TARGET_RESOLUTION:-}" = "published-image" ]; then
+        if [ "${TARGET_RESOLUTION:-}" = "published-image" ] || [ "${TARGET_RESOLUTION:-}" = "declared" ]; then
+          # Both are authoritative: the registry says what shipped, and a declaration
+          # names the commit that was built and was checked against the image's label.
           err "the target served the wrong Langflow — ${TARGET_VERSION_REASON:-no reason recorded}."
           err "REQUIRE_TARGET_VERSION=1 makes that fatal: a comparison between different"
           err "products describes the changelog, not the environments."
@@ -3029,14 +3214,23 @@ phase_verdict() {
         ;;
       yes | cycle) ;;
       *)
-        # "Require" has to require. Every way the check itself can fail — the registry
-        # or github unreachable, the resolver erroring, the target reporting no version
-        # — lands here, and passing green on those is passing green precisely when
-        # nobody can tell whether the two lanes ran the same product.
-        err "the version check could not be performed (${TARGET_VERSION_MATCH:-unchecked}${TARGET_VERSION_REASON:+: $TARGET_VERSION_REASON})."
-        err "REQUIRE_TARGET_VERSION=1 asks for a guarantee, and an unperformed check is"
-        err "not a weaker guarantee — it is none. Set CHECK_TARGET_VERSION=1 and make the"
-        err "resolution work, or drop REQUIRE_TARGET_VERSION."
+        if [ -n "$model_refusal" ]; then
+          # The refused shards ended before capturing the served version, so the check
+          # had nothing to compare. Still a failure, but the remedy in the other branch
+          # (turn the check on, fix the resolution) would send the reader after a cause
+          # that is not there: the check was on and the resolution worked. (#2111 review)
+          err "the version check had no served version to compare: the shards ended at the"
+          err "declared provider's refusal above, before capturing it."
+        else
+          # "Require" has to require. Every way the check itself can fail — the registry
+          # or github unreachable, the resolver erroring, the target reporting no version
+          # — lands here, and passing green on those is passing green precisely when
+          # nobody can tell whether the two lanes ran the same product.
+          err "the version check could not be performed (${TARGET_VERSION_MATCH:-unchecked}${TARGET_VERSION_REASON:+: $TARGET_VERSION_REASON})."
+          err "REQUIRE_TARGET_VERSION=1 asks for a guarantee, and an unperformed check is"
+          err "not a weaker guarantee — it is none. Set CHECK_TARGET_VERSION=1 and make the"
+          err "resolution work, or drop REQUIRE_TARGET_VERSION."
+        fi
         failed=1
         ;;
     esac

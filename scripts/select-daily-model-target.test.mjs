@@ -24,6 +24,7 @@ import {
   rotationDisplacement,
   rotationSlot,
   selectDailyModelTarget,
+  selectDeclaredModelTarget,
 } from "./select-daily-model-target.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 
@@ -675,4 +676,102 @@ test("a multi-line reason cannot terminate the rotation table (#1801)", () => {
   assert.match(rows[0], /aria-busy stayed true/, "and keep the measured text");
   assert.equal(rows[0].split(/(?<!\\)\|/).length - 2, 5, "with its five columns");
   assert.ok(summary.trim().endsWith("(#1456)."), "and the table must not end the doc");
+});
+
+// ─── A declared provider (the on-demand run) ─────────────────────────────────
+
+/** Shaped like a real models.json: every model a provider exposes, one record each. */
+const catalog = () => [
+  { provider: "openai", model: "gpt-4o-mini" },
+  { provider: "openai", model: "gpt-4.1" },
+  { provider: "anthropic", model: "claude-sonnet-5" },
+  { provider: "google", model: "gemini-2.5-flash" },
+];
+
+test("a declared provider pins that provider and its settled model, whatever the weekday", () => {
+  // Wednesday's slot is google; the declaration must not be touched by the rotation.
+  const r = selectDeclaredModelTarget(healthy(), catalog(), { provider: "anthropic" });
+  assert.deepEqual(r, { ok: true, provider: "anthropic", model: "claude-sonnet-5", reason: null, declared: true });
+});
+
+test("a declared model is pinned when the provider exposes it", () => {
+  const r = selectDeclaredModelTarget(healthy(), catalog(), { provider: "openai", model: "gpt-4.1" });
+  assert.equal(r.ok, true);
+  assert.equal(r.model, "gpt-4.1");
+});
+
+test("a declared provider that is not active is REFUSED, never swapped for the next one", () => {
+  // The rotation advances past a dry key; a declaration must not, or a run asked for
+  // anthropic reports green over openai.
+  const dry = healthy().map((p) =>
+    p.provider === "anthropic" ? { ...p, status: "inactive", error: "credit balance too low" } : p,
+  );
+  const r = selectDeclaredModelTarget(dry, catalog(), { provider: "anthropic" });
+  assert.equal(r.ok, false);
+  assert.equal(r.provider, "anthropic");
+  assert.equal(r.model, null);
+  assert.match(r.reason, /not swapped for another provider/);
+  assert.match(r.reason, /credit balance too low/);
+
+  const absent = selectDeclaredModelTarget(healthy(), catalog(), { provider: "mistral" });
+  assert.equal(absent.ok, false);
+  assert.match(absent.reason, /absent from providers\.json/);
+});
+
+test("a declared model the provider does not expose is refused, because the specs would skip it", () => {
+  const other = selectDeclaredModelTarget(healthy(), catalog(), { provider: "openai", model: "claude-sonnet-5" });
+  assert.equal(other.ok, false);
+  assert.match(other.reason, /not one "openai" exposes/);
+  assert.match(other.reason, /gpt-4o-mini, gpt-4\.1/);
+
+  const unknowable = selectDeclaredModelTarget(healthy(), null, { provider: "openai", model: "gpt-4.1" });
+  assert.equal(unknowable.ok, false);
+  assert.match(unknowable.reason, /models\.json is missing/);
+
+  // With no model declared, a missing catalog is fine: the settled model comes from
+  // providers.json alone.
+  assert.equal(selectDeclaredModelTarget(healthy(), null, { provider: "openai" }).ok, true);
+});
+
+test("an unreadable catalog is undecidable, not a refusal", () => {
+  assert.throws(() => selectDeclaredModelTarget(healthy(), { openai: [] }, { provider: "openai", model: "gpt-4.1" }), /must be an array/);
+  assert.throws(() => selectDeclaredModelTarget(healthy(), catalog(), { provider: "" }), /needs a provider/);
+});
+
+test("the CLI's declared path: 0 and the pin written, 3 on refusal, 2 on bad flags", () => {
+  const dir = makeTempDir("select-daily-declared-");
+  const providersFile = path.join(dir, "providers.json");
+  fs.writeFileSync(
+    providersFile,
+    JSON.stringify(
+      healthy().map((p) => (p.provider === "google" ? { ...p, status: "inactive", error: "quota" } : p)),
+    ),
+  );
+  fs.writeFileSync(path.join(dir, "models.json"), JSON.stringify(catalog()));
+  const envFile = path.join(dir, "env.txt");
+  const cli = (...flags) => {
+    fs.writeFileSync(envFile, "");
+    const proc = spawnSync(process.execPath, [SCRIPT, "--providers-file", providersFile, ...flags], {
+      encoding: "utf-8",
+      env: { ...process.env, GITHUB_ENV: envFile },
+    });
+    return { status: proc.status, stdout: proc.stdout, stderr: proc.stderr, env: fs.readFileSync(envFile, "utf-8") };
+  };
+
+  const pinned = cli("--provider", "openai", "--model", "gpt-4.1", "--date", WED.toISOString());
+  assert.equal(pinned.status, 0, pinned.stderr);
+  assert.equal(pinned.env, "MODEL_TEST_ID=gpt-4.1\nMODEL_TEST_PROVIDER=openai\n");
+  assert.match(pinned.stderr, /DECLARED openai \/ gpt-4\.1/);
+  assert.doesNotMatch(pinned.stderr, /rotation advanced|displaced/i, "no rotation reporting on a declared run");
+
+  // Wednesday is google's slot, and google is down: the rotation would advance to
+  // openai. The declaration of google must be refused instead.
+  const refused = cli("--provider", "google", "--date", WED.toISOString());
+  assert.equal(refused.status, 3);
+  assert.equal(refused.env, "", "nothing is pinned on a refusal");
+  assert.match(refused.stderr, /::error::.*declared provider "google" is not usable/);
+  assert.equal(JSON.parse(refused.stdout).ok, false);
+
+  assert.equal(cli("--model", "gpt-4.1").status, 2, "a model with no provider");
+  assert.equal(cli("--provider", "").status, 2, "an empty declaration is not the rotation");
 });
