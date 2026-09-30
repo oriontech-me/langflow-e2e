@@ -288,7 +288,9 @@ test.describe("Flow Lock Feature", () => {
   // update lands mid-save: the reopened modal shows the flow unlocked, and the
   // next canvas edit sends `PATCH {locked: false}`, which the backend accepts.
   // Measured on 1.13.0.dev26: 3/3 with the overlap forced, 0/3 without it; the
-  // same forced race on 1.11.4 (before langflow#14765) keeps the lock.
+  // same forced race on 1.11.4 (before langflow#14765) keeps the lock. Fixed by
+  // langflow#15439 (first in 1.13.0.dev28), which adopts the saved settings while
+  // keeping the live graph; this test now guards that fix.
   test(
     "should keep a lock saved while a node update lands mid-save",
     { tag: ["@stable", "@regression", "@workspace", "@ui-ux"] },
@@ -320,8 +322,8 @@ test.describe("Flow Lock Feature", () => {
       });
 
       // Anchors: the race really was forced and the backend really holds the lock.
-      // Asserted BEFORE test.fail(), so a harness that could not force the
-      // overlap fails red instead of passing as the expected failure.
+      // Asserted BEFORE the contract, so a red here names a harness that could
+      // not force the overlap — not a return of LE-2785.
       expect(race.record.saveBodyLocked, "the settings Save did not send locked: true").toBe(true);
       expect(race.record.saveCommittedLocked, "the backend did not commit locked: true").toBe(true);
       expect(
@@ -333,12 +335,7 @@ test.describe("Flow Lock Feature", () => {
       const node = await page.locator(".react-flow__node").first().boundingBox();
       expect(node, "no canvas node to drag").not.toBeNull();
 
-      // The correct contract, which fails today (LE-2785, langflow#14765). The day
-      // upstream adopts the committed lock, this reports "expected to fail, but
-      // passed": delete test.fail() and this comment, flip the QA-CHECKLIST
-      // bullet, and verify the fix in the image before closing #2075.
-      test.fail();
-
+      // The contract LE-2785 broke (langflow#14765) and langflow#15439 restored.
       await test.step("reopen: the editor shows the lock it just saved", async () => {
         await openFlowSettings(page);
         await expect.soft(lockSwitch).toHaveAttribute("data-state", "checked", {
