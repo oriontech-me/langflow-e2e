@@ -1,6 +1,6 @@
 # Flow Lock — settings-modal round-trip & locked-state UI
 
-**Last validated:** Langflow 1.13.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev28`)
 
 ---
 
@@ -27,9 +27,10 @@ between unlocked and locked, and the UI reflects each state:
    per-node canvas badge).
 5. **A saved lock survives a node update landing mid-save** (#2075) — the lock
    the user just saved is the one the editor shows on reopen, and a later canvas
-   edit does not unlock the flow. **Declared failing** (`test.fail()`) against a
-   live product regression, [LE-2785](https://datastax.jira.com/browse/LE-2785) —
-   see Notes.
+   edit does not unlock the flow. Pins product regression
+   [LE-2785](https://datastax.jira.com/browse/LE-2785), fixed upstream by
+   [langflow#15439](https://github.com/langflow-ai/langflow/pull/15439) (first in
+   `1.13.0.dev28`) — see Notes.
 
 The **functional** proof that a locked flow blocks canvas edits (edge
 delete/connect) lives in the sibling `lock-flow.spec.ts` — this spec covers the
@@ -37,8 +38,8 @@ settings-UI surface; the two are complementary, not duplicates (see Notes).
 
 If Test 1 or Test 2 fails, the Flow Settings lock control no longer
 toggles/persists, or the locked flow stops disabling its own metadata inputs. If
-Test 3 reports *expected to fail, but passed*, upstream fixed the regression —
-see Notes for what to do.
+Test 3 fails **after** its anchors held, LE-2785 is back: a lock saved while a
+node update lands mid-save is lost again.
 
 ---
 
@@ -51,9 +52,11 @@ see Notes for what to do.
 on the fresh nightly (per `CONTRIBUTING.md`). `@workspace` — flow/canvas
 management; `@ui-ux` — settings-modal interaction + locked-state indicators.
 Test 1 was quarantined (`test.fixme`, `@stable` removed) by #2076 and lifted by
-#2075. Test 3 carries `@stable` **with** `test.fail()` on purpose: it runs in
-the daily so the day upstream fixes the regression surfaces as an unexpected
-pass, and `@regression` because it pins a product regression (#2075).
+#2075. Test 3 is `@regression` because it pins a product regression (#2075,
+LE-2785). It carried `@stable` **with** `test.fail()` from 2026-09-28 until the
+upstream fix reached the nightly (`1.13.0.dev28`), so the fix surfaced in the
+daily as an unexpected pass; `test.fail()` is gone and it now asserts the contract
+directly.
 
 ---
 
@@ -108,7 +111,7 @@ pass, and `@regression` because it pins a product regression (#2075).
 3. Toggle the lock switch; assert the modal now shows `icon-Lock` and hides
    `icon-Unlock`.
 
-**Test 3 — a lock saved while a node update lands mid-save is kept** *(declared failing)*
+**Test 3 — a lock saved while a node update lands mid-save is kept**
 
 1. Create an isolated Basic Prompting flow and, **before** opening it, route two
    requests of this page: every node-update response is held until the flow's
@@ -119,15 +122,14 @@ pass, and `@regression` because it pins a product regression (#2075).
    browser's view is reordered.
 2. Open the flow and Flow Settings, toggle the lock on (a single toggle sticks),
    and Save; wait for the dialog to detach.
-3. **Anchors, asserted before `test.fail()`** so a harness that cannot force the
-   overlap goes red instead of passing as the expected failure: the load issued
+3. **Anchors, asserted before the contract** so a failure names the layer that
+   broke — a harness that cannot force the overlap is not the regression: the load issued
    ≥ 1 node update; the Save sent `locked: true`; the backend committed
    `locked: true`; ≥ 1 node update was delivered while the Save was in flight;
    `GET /api/v1/flows/{id}` reads `locked: true`; a canvas node exists to drag.
-4. `test.fail()` — everything below is the correct contract, which fails today.
-5. Reopen Flow Settings: the switch reads `checked` (soft assertion, so step 6
+4. Reopen Flow Settings: the switch reads `checked` (soft assertion, so step 5
    is still evaluated).
-6. Close the modal, drag a canvas node, and assert **no**
+5. Close the modal, drag a canvas node, and assert **no**
    `PATCH /api/v1/flows/{id}` carrying `locked: false` is issued within one
    autosave debounce plus slack (`saveScheduledDeadlineMs`) — the absence is
    asserted on the request, not on a state read — and that the flow still reads
@@ -154,12 +156,11 @@ control is broken:
   and after Save `GET /api/v1/flows/{id}` → `locked: false`.
 - **Dialog icon (Test 2):** `icon-Unlock` while unlocked; `icon-Lock` visible and
   `icon-Unlock` hidden once the switch is `checked`.
-- **Lock survives a mid-save node update (Test 3, declared failing):** with the
-  anchors of step 3 holding, the reopened switch reads `checked` and a canvas
-  edit issues no `PATCH {locked: false}` — the flow still reads `locked: true`.
-  Today both fail (the switch reads `unchecked`, the edit unlocks the flow), so
-  the test passes as an expected failure; on a build without the regression
-  (`1.11.4`) it reports *expected to fail, but passed*.
+- **Lock survives a mid-save node update (Test 3):** with the anchors of step 3
+  holding, the reopened switch reads `checked` and a canvas edit issues no
+  `PATCH {locked: false}` — the flow still reads `locked: true`. On a build
+  carrying LE-2785 (`1.11.6`+ / `1.12.x` / `1.13.0.dev27` and earlier) both fail —
+  the switch reads `unchecked` and the edit unlocks the flow.
 
 The canvas `icon-lock` badge is deliberately **not** a criterion — its testid is
 reused by unrelated input-placeholder icons on an unlocked flow (dev49 note in
@@ -182,9 +183,11 @@ reused by unrelated input-placeholder icons on an unlocked flow (dev49 note in
   `input-flow-description`, and the dialog `icon-Lock` / `icon-Unlock`.
 - `src/frontend/src/components/core/flowSettingsComponent/` — owns the
   `save-flow-settings` action that commits the modal.
-- `src/frontend/src/hooks/flows/use-save-flow.ts` — adopts the Save's PATCH
-  response into the editor only when no node changed while it was in flight
-  (`graphUnchanged`, langflow#14765); the source of Test 3's defect.
+- `src/frontend/src/hooks/flows/use-save-flow.ts` — decides what of the Save's
+  PATCH response the editor adopts. langflow#14765 made it adopt the response only
+  when no node changed while it was in flight (`graphUnchanged`), the source of
+  LE-2785; langflow#15439 adopts the saved settings (`locked` included) even when
+  the graph moved (`adoptSavedSettings`). A change here is what Test 3 guards.
 - `POST /api/v1/custom_component/update` — the node updates the Basic Prompting
   starter fires on load; Test 1 waits them out, Test 3 holds them.
 - Canvas node chrome — renders the per-node `icon-lock` badge shown while the
@@ -287,11 +290,18 @@ under the same cap. 16/16 single toggles stuck under 4 workers, which is why the
 convergence re-click loops (#684) were removed: they could not have helped here,
 and a retry that turns a reset switch green would hide exactly this class.
 
-**Lifting Test 3.** When it reports *expected to fail, but passed*, verify the fix
-in the image the daily pulls (not only on a ref), delete `test.fail()` and its
-comment, flip the QA-CHECKLIST §12.5 bullet to `[x]`, update the
-[LE-2785](https://datastax.jira.com/browse/LE-2785) row in `REGRESSIONS.md` to
-`Fixed`, and close #2075. The sibling
+**Test 3 lifted (2026-09-30).** Upstream fixed LE-2785 in
+[langflow#15439](https://github.com/langflow-ai/langflow/pull/15439) ("keep flow
+lock saved during node update", `6b494eeabc`, merged to `main` and
+`release-1.13.0` on 2026-09-29): `use-save-flow.ts` now adopts the Save's
+persisted settings (`adoptSavedSettings`) while keeping the live graph. The fix
+commit is an ancestor of the `v1.13.0.dev28` tag and not of `v1.13.0.dev27`
+(GitHub compare: `behind_by=0` against dev28, diverged from dev27). On the
+`langflowai/langflow-nightly:latest` image resolving to `1.13.0.dev28`, the
+unmodified spec reported Test 3 as *expected to fail, but passed* with every
+anchor holding — the overlap was forced and the lock was kept. `test.fail()` was
+removed, the QA-CHECKLIST §12.5 bullet flipped to `[x]`, and the LE-2785 row in
+`REGRESSIONS.md` marked `Fixed`. The sibling
 `lock-flow.spec.ts` flaked on the same 2026-09-28 run with 2 edges instead of 3 —
 consistent with the same cause (an editor that believes the flow is unlocked lets
 an edge be deleted), but not measured here.
