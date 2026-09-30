@@ -1587,7 +1587,7 @@
 | `core-components/` — Core Components | 94 | 93 | 0 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 43 | 35 | 3 | 1 | 4 |
+| `core-functionality/llm-agents/` | 42 | 35 | 3 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 32 | 3 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 50 | 1 | 0 | 1 |
@@ -1606,7 +1606,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **735** | **640 (87%)** | **36 (5%)** | **14 (2%)** | **45 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **640 (87%)** | **36 (5%)** | **14 (2%)** | **44 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -2396,7 +2396,7 @@
 | `core-components/` — Component Config | 1 | 0 |
 | `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 1 | 0 |
-| `core-functionality/llm-agents/` | 3 | 4 |
+| `core-functionality/llm-agents/` | 3 | 3 |
 | `core-functionality/model-provider/` | 3 | 1 |
 | `core-functionality/playground/` | 1 | 1 |
 | `mcp/client/` | 0 | 2 |
