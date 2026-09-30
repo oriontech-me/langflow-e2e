@@ -169,9 +169,28 @@ test(
 // in the startup log, `ArXivComponent` is absent from `GET /api/v1/all`, and
 // `GET /api/v1/flows/basic_examples/` lists 26 starter projects without this one.
 //
-// Lifting the quarantine (remove test.fixme + restore @stable) is a deliverable
-// of **#1744**, and gated on the component returning to the image — not on a
-// test-side change here. #1234, which this comment used to name, was closed on
+// RETIRED rather than pending, as of 2026-09-30 — #1744 established which of its
+// two forks this is and closed. The absence is a PACKAGING decision: ArXivComponent
+// ships as the separate `lfx-arxiv` distribution (upstream `src/bundles/arxiv/`,
+// its own pyproject.toml and extension.json) and the tested image does not install
+// it, so `filter_starter_projects_by_available_components` drops the starter project
+// at startup. Measured on 1.13.0.dev26: zero occurrences of `arxiv` anywhere in
+// GET /api/v1/all, the template absent from the 26 registered projects although its
+// JSON is one of the 27 on disk, and NO `lfx/components/arxiv` directory at all —
+// under the bundle layout there is no shim, which is why this surfaced through
+// template registration instead of a ModuleNotFoundError. Recorded in
+// docs/component-distribution-policy.md and declared in
+// scripts/lib/stable-orphan-exemptions.json (#1746 verifies it in both directions).
+//
+// The lift is still gated on the image, never on a test-side change here — and the
+// signal is mechanical rather than a reminder: templates-registration.spec.ts
+// (@stable) fails the moment the template comes back, naming the declaration to
+// delete. Do not unmute this on that signal alone: it runs two real completions
+// under an 8-minute budget and needs the re-validation CONTRIBUTING.md requires.
+//
+// The file is `mode: "serial"` (line 14). Benign while this declaration is inert,
+// but a lift makes the @stable sibling below collateral of any failure here — see
+// #963 for what that masking costs. #1234, which this comment used to name, was closed on
 // 2026-08-04 by its own quarantine commit while the lift was still outstanding;
 // #1744 is the live owner (#1504).
 test.fixme(

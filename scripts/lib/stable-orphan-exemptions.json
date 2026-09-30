@@ -17,6 +17,12 @@
       "title": "the MistralAI component configures the API key and executes the flow",
       "reason": "The MistralAI components are not bundled in the tested image — the same packaging decision as Groq, recorded in docs/component-distribution-policy.md.",
       "ref": "#1039"
+    },
+    {
+      "spec": "core-components/loop-component-regression.spec.ts",
+      "title": "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
+      "reason": "The template this test loads is never registered by the tested image: ArXivComponent ships as the separate lfx-arxiv distribution (upstream src/bundles/arxiv/, its own pyproject.toml and extension.json) and the image does not install it, so filter_starter_projects_by_available_components drops the starter project at startup — \"Skipping starter project 'Research Translation Loop'; unavailable components: ArXivComponent\". Measured on 1.13.0.dev26: zero occurrences of \"arxiv\" anywhere in GET /api/v1/all (3.2 MB), the template absent from the 26 registered starter projects although its JSON is one of the 27 on disk, and no lfx/components/arxiv directory at all — under the bundle layout there is no shim to raise ModuleNotFoundError, which is why this surfaced through template registration rather than through the catalog. Same packaging decision as Groq/Mistral, recorded in docs/component-distribution-policy.md. The test keeps test.fixme rather than a gate: a gate exists to turn a deep misleading timeout into an attributed skip, and an inert declaration already prevents any run — while templates-registration.spec.ts (@stable) fails the moment the template comes back, naming the declaration to delete, which is a louder lift signal than a self-healing gate.",
+      "ref": "#1744"
     }
   ]
 }
