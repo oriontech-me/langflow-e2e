@@ -1,6 +1,6 @@
 # MCP Server — starter projects & project folder CRUD (UI)
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev20`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev27`)
 
 ---
 
@@ -31,7 +31,10 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 - `@stable` — promoted under #948 after repeated clean `--workers=1 --retries=0`
   runs on nightly 1.12.0.dev4 and a per-test force-failure check. Auto-removed
   from test 1 by the daily workflow on 2026-07-30 and restored under #1123 after
-  the positional-addressing fix (see **Notes**).
+  the positional-addressing fix (see **Notes**). Test 1 was quarantined again on
+  2026-09-29 (`@stable` removed **and** `test.fixme` added, PR #2100) as a
+  recurrent first-attempt flake, and restored under #2096 once the rename and
+  delete steps synchronized on their own writes (see **Notes**).
 - `@workspace` — project/folder management; `@components`/`@mcp` — MCP servers
   settings; `@release` — happy-path MCP-server surfacing.
 
@@ -58,10 +61,18 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 3. Add two projects (`add-project-button` ×2); back on MCP Servers, assert
    `lf-starter_project` is still listed, and `lf-new_project` / `lf-new_project_1`
    each appear exactly once.
-4. **Rename** the first "New Project" folder to `renamed_project`; on MCP Servers
-   assert `lf-renamed_project` appears exactly once (and starter still listed).
-5. **Delete** the renamed project; on MCP Servers assert `lf-renamed_project`
-   count is 0 (and starter still listed).
+4. **Rename** the first project this test created to `renamed_project` through
+   its kebab's "Rename" entry. Wait for the rename's own write —
+   `PATCH /api/v1/projects/<id>` — to answer **200 with `name: renamed_project`**,
+   then read the MCP server list back through the API
+   (`GET /api/v2/mcp/servers`) and assert it contains `lf-renamed_project`. Only
+   then open MCP Servers and assert `lf-renamed_project` appears exactly once (and
+   starter still listed). See **Notes** (#2096) for why the page is opened after
+   the write and never after a fixed sleep.
+5. **Delete** the renamed project through its kebab; wait for
+   `DELETE /api/v1/projects/<id>` to answer 2xx, read the MCP server list back
+   through the API and assert `lf-renamed_project` is gone, then on MCP Servers
+   assert its count is 0 (and starter still listed).
 
 **Test 2 — duplicate MCP server rejected**
 
@@ -80,6 +91,12 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
   step; added projects appear by name (count 1); a renamed project's server
   appears as `lf-renamed_project`; a deleted project's server disappears
   (count 0). **Row order is not part of the contract** — see **Notes**.
+  For the rename and the delete the observable is ordered, and each layer is
+  asserted on its own so a failure names the layer that broke: the write answers
+  (`PATCH` 200 carrying `name: renamed_project` / `DELETE` 2xx) → the backend's
+  MCP server list reflects it (`GET /api/v2/mcp/servers` has / lacks
+  `lf-renamed_project`) → the MCP Servers page, mounted after both, renders
+  exactly one / zero `lf-renamed_project` entries.
 - **Test 2:** re-adding an already-registered server surfaces exactly one
   "Server already exists." error (no silent success, no duplicate rows).
 
@@ -92,6 +109,15 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
   .toHaveCount(n)`, never `expect(await ....count())`. The MCP-server row is
   written by the backend as a side effect of the project write and can lag the
   navigation; a single DOM read turns that lag into a failure (#1135).
+- **Synchronize on the write, not on a sleep (#2096)** — the rename and the
+  delete wait for their own `PATCH` / `DELETE` response before the MCP Servers
+  page is opened, and the `PATCH` body's `name` is asserted, so a rename that
+  committed the wrong value fails on the write rather than as a missing row. The
+  API readback in between separates "the backend did not rename the server"
+  from "the page did not show it". The wait is for the write's **final**
+  response: a 5xx is skipped because the frontend retries it in-band
+  (`withTransientErrorRetry`) and the fixture still logs it, while a 4xx is
+  final and fails the status assert.
 - **Starter-project presence** re-checked after every mutation, so a project
   operation that silently drops the starter project's server cannot pass.
 - **Row-scoped locator** — the starter-project assert filters the
@@ -122,6 +148,14 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 - Settings → MCP Servers page (`mcp_server_name_<index>`, `add-mcp-server-button-page`,
   `add-mcp-server-button`, `json-input`) via `helpers/ui/go-to-settings.ts`
   (`navigateSettingsPages`).
+- `PATCH` / `DELETE /api/v1/projects/{id}` (the rename and delete writes) and
+  `GET /api/v2/mcp/servers` (the API readback). The rename's MCP side effect is
+  `handle_mcp_server_rename` in
+  `src/backend/base/langflow/api/v1/projects_mcp_helpers.py`, awaited inside the
+  `PATCH`; the page's list query is `useGetMCPServers` in
+  `src/frontend/src/controllers/API/queries/mcp/use-get-mcp-servers.ts`, and the
+  rename mutation is `usePatchFolders` in
+  `src/frontend/src/controllers/API/queries/folders/use-patch-folders.ts`.
 - Project folder CRUD (`add-project-button`, Rename/Delete, `input-project`, and
   the project entry plus its kebab — addressed through
   `helpers/ui/project-sidebar.ts`, which matches the id-derived testids of the
@@ -175,6 +209,23 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
   attempt never had — retries stop being independent evidence. Setup now deletes
   any leftover by id via `deleteProject` before the rename. The sweep is in
   *setup*, not teardown, so it also heals a run that was killed outright.
+- **Why the rename step waits for its `PATCH` (#2096).** Test 1 flaked on the
+  first attempt on dailies 2026-09-03 (Actions) and 2026-09-29 (VM lane), both
+  times at the `lf-renamed_project` count (received 0, 9 polls in 5 s) with
+  `lf-starter_project` found on the line before and no backend error logged. The
+  step used to press Enter, sleep a fixed `waitForTimeout(1000)`, and open MCP
+  Servers — so the page's list request raced the rename's write. The rename
+  renames the MCP server synchronously inside the `PATCH`
+  (`handle_mcp_server_rename`: delete the old row, create the new one, each
+  committed), so a list read served before that `PATCH` finishes still carries
+  `lf-new_project`. Nothing re-reads it afterwards: `useGetMCPServers` refetches
+  only on mount, the rename mutation's `onSettled` invalidates `useGetFolders`
+  and `useGetFlowsMCP` but **not** `useGetMCPServers`, and the slower
+  `action_count=true` fetch is merged with `mergeMCPServerCounts`, which maps
+  over the rows already cached and so cannot add a new one. A list fetched
+  early therefore stays stale until the page is re-mounted, which is also why a
+  longer `toHaveCount` budget would not help. The delete step had the same fixed
+  sleep in front of the same page, so it waits for its own `DELETE` too.
 - No standalone flows are created that need id-scoped cleanup — the artifacts are
   **projects/folders**, created and then renamed/deleted within the test; the
   duplicate-server test adds a server registration, not a flow.
@@ -186,11 +237,13 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
   fail the test (only `flow_error` fails; `http_error` is log-only). The test's
   assertions do not depend on that call. Import switched to `fixtures/fixtures.ts`
   under #948 to gain this monitoring; the 500 is peripheral/pre-existing.
-- **Second ambient 500 on the same endpoint (test 2, logged, not failing):**
-  re-validating on the 1.12 nightly line under #1123, the logged
-  `500 … /api/v2/mcp/servers/lf-starter_project` carried
-  `{"detail":"Server already exists."}` — i.e. test 2's duplicate-add is
-  *correctly* rejected, but the rejection answers **500 instead of 409**. That is
-  the status-code defect tracked in #991, not a failure of this test: the UI still
-  surfaces the "Server already exists." message the test asserts. Kept log-only
-  here; #991 owns the status-code contract.
+- **Test 2's duplicate-add answers 409, and that is declared (#2096).** On the
+  1.12 line under #1123 the rejection answered **500** with
+  `{"detail":"Server already exists."}` — the status-code defect #991 tracked.
+  #991 is closed and on `1.13.0.dev27` the same request answers **409**, which the
+  fixture logged as a `🚨 Backend Error` on every run although it is the very
+  rejection the test provokes. It is now declared with
+  `page.expectKnownHttpError({ pathname: "/api/v2/mcp/servers/lf-starter_project",
+  status: 409 })`, so it prints as `📌 Known backend defect` instead of
+  polluting the advisory log, and the declaration is verified in both directions:
+  a duplicate-add that stops answering exactly 409 on that path fails the test.
