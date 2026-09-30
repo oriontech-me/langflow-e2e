@@ -54,7 +54,7 @@ const okRegistry = {
   // lowercase keys, dropping `k.toLowerCase()` left the whole file green. For the
   // four live tokens that is forward protection rather than a live bug — measured
   // against the committed catalog baseline, `ollama` matches its `ext:…` keys
-  // case-sensitively too, and groq/mistral/composio have no keys at all — but 127
+  // case-sensitively too, and groq/mistral/youtube have no keys at all — but 127
   // of its 175 type keys are bare CamelCase (`CrewAIAgentComponent`,
   // `CustomComponent`), the pre-`ext:` shape a returning family would land in.
   mistral: { MistralAIModelComponent: {} },

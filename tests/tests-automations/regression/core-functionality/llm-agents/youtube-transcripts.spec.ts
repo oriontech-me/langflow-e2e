@@ -21,7 +21,7 @@ import {
 // GATE AND SKIP, replacing the bare `test.skip` this file was imported with. The
 // standing policy answers a distribution the tested image does not install with "Gate
 // and skip, with an attributed reason. Do not delete the spec, do not leave it
-// failing" — the groq/mistral/composio treatment. The bare modifier was inert,
+// failing" — the groq/mistral treatment. The bare modifier was inert,
 // unattributed and indistinguishable from a test somebody meant to come back to; the
 // gate below opens by itself the day the image installs `lfx-bundles`.
 //
