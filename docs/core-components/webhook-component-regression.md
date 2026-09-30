@@ -1,6 +1,6 @@
 # Webhook Component — Regression
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev8`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev27`)
 
 ---
 
@@ -44,6 +44,18 @@ this test's subject: test 2 asserts flow persistence and the `BACKEND_URL`
 placeholder, and reads the flow through an authenticated `request.get` instead —
 which never enters the buggy wrapper.
 
+**Tests 2, 8 and 9 were quarantined on 2026-09-29 and are no longer** (#2097).
+On `1.13.0.dev27` upstream raised the autosave debounce to 5000 ms
+(langflow-ai/langflow#14903; `GET /api/v1/config.auto_saving_interval`), and
+the tests waited a fixed 4 s after adding the Webhook before reading the flow
+back (test 2) or reloading it (tests 8–9). The read landed under a second before
+the add-node `PATCH` was issued, so the persisted flow still had no nodes: test 2
+found no `Webhook` node, and tests 8–9 reloaded an empty canvas with no
+`button_run_webhook`. Not a product regression — the component type key is still
+`Webhook` in `GET /api/v1/all` on dev27, and the same run with a 7 s wait passes.
+The fixed sleep is replaced by `watchFlowSave` (see *Setup helper*), which waits
+for the save the add actually schedules, whatever the instance's debounce is.
+
 ---
 
 ## Step by step *(required)*
@@ -52,25 +64,26 @@ which never enters the buggy wrapper.
 1. Call `awaitBootstrapTest`, then wait for the network to go idle (lets the home page's own transient-flow sweep finish before we create a flow — see Notes)
 2. Click `blank-flow`, then capture the created flow id from the `POST /api/v1/flows/` response so `afterEach` can delete only that flow (scoped teardown, #515 — never a global `cleanAllFlows`, which races concurrent workers). The canvas `/flow/{id}` URL id is a transient client-side handle here and 404s on delete; the tests still read it for their own webhook-endpoint assertions, which resolve fine by that id
 3. Search "webhook" in the sidebar and wait for `input_outputWebhook` to appear
-4. Hover over the result and click `add-component-button-webhook`
-5. Call `adjustScreenView`
-6. Wait for `input_output_webhook_draggable` to confirm the node is on the canvas
+4. When the caller asks for persistence (`{ awaitSave: true }`, tests 1, 2, 8, 9), arm `watchFlowSave(page)` right before the add click
+5. Hover over the result and click `add-component-button-webhook`
+6. Call `adjustScreenView`
+7. Wait for `input_output_webhook_draggable` to confirm the node is on the canvas
+8. With `awaitSave`, await the watch's `settled()`: it resolves only once the add-node `PATCH /api/v1/flows/{id}` issued AFTER the watch was armed has completed, and throws naming the missing save if none is issued within one debounce plus slack. No drain is needed before arming: measured on `1.13.0.dev27`, the blank flow issues no `PATCH` before the add, and the add issues exactly one, ~5 s later, already carrying the `Webhook` node. Tests 3–6 do not depend on the flow being persisted (test 4 builds the node, but from the canvas state) and skip the wait
 
 **Cleanup — `test.afterEach`** (all tests)
 1. Navigate off the editor (`page.goto("/")`) so the unmounted flow page stops polling, then delete only the captured flow id via `deleteFlow` (authenticated with `getAuthToken`), so each test removes exactly the flow it created and nothing else (#515)
 
 **Test 1 — HTTP POST accepts JSON and plain-text bodies returning 202**
-1. Run `addWebhookComponent`
+1. Run `addWebhookComponent` with `awaitSave` — returns once the add-node autosave has completed, so `POST /api/v1/webhook/{flowId}` resolves a flow that contains the Webhook node
 2. Extract `flowId` from the URL and assert it matches UUID pattern
-3. Wait 4 s for autosave to persist the flow
-4. Create a temporary API key via `POST /api/v1/api_key/` (Langflow's `WEBHOOK_AUTH_ENABLE` defaults to `True` since 1.9.2+ via PR langflow-ai/langflow#12845, so unauthenticated webhook POSTs return 403)
-5. POST `{"event": "regression-test", "value": 42}` to `/api/v1/webhook/{flowId}` with `x-api-key`; assert 202, `status === "in progress"`, `message === "Task started in the background"`
-6. POST `"regression-plain-text"` with `x-api-key` and `Content-Type: text/plain`; assert 202 and `status === "in progress"`
-7. In `finally`, delete the temporary API key so failures don't leak credentials
+3. Create a temporary API key via `POST /api/v1/api_key/` (Langflow's `WEBHOOK_AUTH_ENABLE` defaults to `True` since 1.9.2+ via PR langflow-ai/langflow#12845, so unauthenticated webhook POSTs return 403)
+4. POST `{"event": "regression-test", "value": 42}` to `/api/v1/webhook/{flowId}` with `x-api-key`; assert 202, `status === "in progress"`, `message === "Task started in the background"`
+5. POST `"regression-plain-text"` with `x-api-key` and `Content-Type: text/plain`; assert 202 and `status === "in progress"`
+6. In `finally`, delete the temporary API key so failures don't leak credentials
 
 **Test 2 — flow is saved to database and contains the Webhook node**
-1. Run `addWebhookComponent`
-2. Wait 4 s for autosave
+1. Run `addWebhookComponent` with `awaitSave` — returns once the add-node autosave has completed
+2. Extract `flowId` from the URL
 3. `GET /api/v1/flows/{flowId}` through the `request` fixture with an explicit
    `Authorization` header from `getAuthToken(request)`; treat a non-ok response
    as `null` so the assertion in step 4 reports "flow not persisted" rather than
@@ -122,7 +135,7 @@ which never enters the buggy wrapper.
 4. Call `adjustScreenView` and `page.unroute` to clean up
 
 **Test 8 — valid JSON payload is propagated as structured Data output**
-1. Run `addWebhookComponent`, extract `flowId`, wait 4 s for autosave
+1. Run `addWebhookComponent` with `awaitSave`, extract `flowId`
 2. Call `loadFlowWithDataField` with `'{"event": "regression-test", "value": 42}'`
 3. Click `button_run_webhook` and wait for "built successfully"
 4. Click `output-inspection-json-webhook`, wait for dialog, read editor content
@@ -130,7 +143,7 @@ which never enters the buggy wrapper.
 6. Press Escape
 
 **Test 9 — invalid JSON payload is encapsulated in `{payload: ...}`**
-1. Run `addWebhookComponent`, extract `flowId`, wait 4 s for autosave
+1. Run `addWebhookComponent` with `awaitSave`, extract `flowId`
 2. Call `loadFlowWithDataField` with `"not valid json {{broken"`
 3. Click `button_run_webhook` and wait for "built successfully"
 4. Click `output-inspection-json-webhook`, wait for dialog, read editor content
@@ -270,6 +283,7 @@ and the reason we walked away are all in this section.
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/` — renders `output-inspection-{name}-{component}` buttons; the `output-inspection-json-webhook` testid depends on the output `display_name` being `"JSON"` (updated in langflow-ai/langflow#11554); breaks tests 4, 8, and 9
 - `src/frontend/src/components/core/parameterRenderComponent/components/webhookFieldComponent/` — renders the cURL field (an advanced field on dev49, exposed via the inspector and read from its `text-area-modal`); changes to the rendering break test 3
 - `src/frontend/src/components/core/parameterRenderComponent/components/copyFieldAreaComponent/` — renders `btn_copy_{id}` and the "Endpoint URL copied" toast; breaks test 6
+- `src/frontend/src/hooks/flows/use-autosave-flow.ts` — the debounced autosave; tests 1, 2, 8 and 9 wait for the single `PATCH /api/v1/flows/{id}` the add schedules, one `auto_saving_interval` (`GET /api/v1/config`) after the edit. If adding a node stops scheduling a save, or the save stops carrying the node, those tests fail at `watchFlowSave`
 - `src/frontend/src/CustomNodes/GenericNode/` — resolves the `BACKEND_URL` placeholder for `str_endpoint` and `curl_webhook` fields; breaks tests 2, 3, and 5
 
 ---
@@ -288,7 +302,7 @@ and the reason we walked away are all in this section.
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - The Webhook component is a pure HTTP input with no LLM calls, but the webhook POST endpoint requires an API key whenever `WEBHOOK_AUTH_ENABLE=True` (Langflow's default since 1.9.2+ via PR langflow-ai/langflow#12845); tests 1 and 7 create a temporary key via `POST /api/v1/api_key/` and delete it in `finally`
-- Tests 1, 8, and 9 require autosave to flush within 4 s of creating the flow; environments with very high DB latency may need a longer wait
+- Tests 1, 2, 8 and 9 wait for the add-node autosave with `watchFlowSave`, whose deadline derives from the instance's `auto_saving_interval` (read once in `globalSetup`); no fixed delay is assumed
 - The `output-inspection-json-webhook` testid requires Langflow version including langflow-ai/langflow#11554, which renamed the output display name from `"Data"` to `"JSON"`
 
 ---
