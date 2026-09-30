@@ -1,5 +1,9 @@
 import type { Page } from "@playwright/test";
-import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  expect,
+  type PageWithErrorHooks,
+  test,
+} from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
@@ -61,6 +65,52 @@ const removeLeftoverRenamedProject = async (page: Page) => {
     await deleteProject(page.request, project.id);
   }
 };
+
+/**
+ * The names of the user's MCP servers, read through the API rather than the
+ * page. Test 1 asserts this between a project write and the MCP Servers page so
+ * a failure says which layer broke: the backend not renaming/removing the
+ * server, or the page not showing what the backend already has (#2096).
+ */
+const mcpServerNames = async (page: Page): Promise<string[]> => {
+  const response = await page.request.get(
+    "/api/v2/mcp/servers?action_count=false",
+  );
+  expect(response.ok(), "GET /api/v2/mcp/servers").toBe(true);
+  const servers: Array<{ name: string }> = await response.json();
+  return servers.map((server) => server.name);
+};
+
+/**
+ * Arms a wait for the project write the next UI action sends — the rename's
+ * `PATCH` or the delete's `DELETE` on `/api/v1/projects/<id>` — and resolves
+ * with its FINAL response. Call it before the click/keypress that sends it.
+ *
+ * Why the page must not be opened before this settles (#2096): the rename
+ * renames the project's MCP server synchronously inside the `PATCH`, and the
+ * MCP Servers page reads its list once, on mount. Nothing re-reads it when the
+ * write lands — `usePatchFolders`/`useDeleteFolders` do not invalidate
+ * `useGetMCPServers`, and the `action_count=true` merge only updates rows that
+ * are already cached — so a page opened while the write is in flight keeps the
+ * old list for good. The fixed `waitForTimeout(1000)` this replaces lost that
+ * race whenever the `PATCH` outlived it: 255–956 ms measured on
+ * `1.13.0.dev27` against a list read ~1.4 s after Enter, and a `PATCH` delayed
+ * 2 s reproduces the daily's exact signature.
+ *
+ * "Final" skips 5xx answers because the frontend retries those in-band
+ * (`withTransientErrorRetry`, up to 3 times) and the user-visible state settles
+ * on the last attempt; the fixture still logs every 5xx as a backend error. A
+ * 4xx is not retried, so it is final and reaches the caller's status assert.
+ */
+const projectWrite = (page: Page, method: "PATCH" | "DELETE", id: string) =>
+  page.waitForResponse(
+    (response) =>
+      response.request().method() === method &&
+      new URL(response.url()).pathname.replace(/\/$/, "") ===
+        `/api/v1/projects/${id}` &&
+      response.status() < 500,
+    { timeout: 30000 },
+  );
 
 // Ids of what a test created, deleted id-scoped in afterEach (#1376) — never a
 // global sweep, which wipes what other workers are building (#515).
@@ -143,12 +193,9 @@ test.afterEach(async ({ page, request }) => {
   }
 });
 
-// Quarantined for #2096: recurrent first-attempt flake (2026-09-03, 2026-09-29), the
-// renamed project "lf-renamed_project" is not listed within 5 s. Lifting it (drop
-// `test.fixme`, restore `@stable`) is #2096's deliverable.
-test.fixme(
+test(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 
@@ -204,8 +251,17 @@ test.fixme(
     await openProjectOptions(page, firstProject);
     await page.getByText("Rename", { exact: true }).last().click();
     await page.getByTestId("input-project").last().fill(RENAMED_PROJECT);
+    const renameWrite = projectWrite(page, "PATCH", firstProject.id);
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(1000);
+
+    // The write, then the backend, then the page — in that order (#2096). The
+    // body's name proves the typed value is what was committed.
+    const renameResponse = await renameWrite;
+    expect(renameResponse.status(), "rename PATCH status").toBe(200);
+    expect((await renameResponse.json()).name, "rename PATCH name").toBe(
+      RENAMED_PROJECT,
+    );
+    expect(await mcpServerNames(page)).toContain("lf-renamed_project");
 
     const renamedProject = { id: firstProject.id, name: RENAMED_PROJECT };
 
@@ -221,9 +277,15 @@ test.fixme(
 
     await page.getByTestId("icon-ChevronLeft").first().click();
     await openProjectOptions(page, renamedProject);
+    const deleteWrite = projectWrite(page, "DELETE", renamedProject.id);
     await page.getByText("Delete", { exact: true }).last().click();
     await page.getByText("Delete", { exact: true }).last().click();
-    await page.waitForTimeout(1000);
+
+    // Same race as the rename: the page must not read its list before the
+    // DELETE has landed (#2096).
+    const deleteResponse = await deleteWrite;
+    expect(deleteResponse.ok(), "delete DELETE status").toBe(true);
+    expect(await mcpServerNames(page)).not.toContain("lf-renamed_project");
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
@@ -254,6 +316,20 @@ test(
     await page.getByTestId("icon-copy").click();
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
+
+    // The duplicate add below is this test's own provocation, and the backend's
+    // duplicate guard answers it with 409 "Server already exists." (a 500 until
+    // #991 was fixed upstream). Declared rather than left in the advisory log,
+    // which is the fixture's only HTTP gate (#1084) — and verified both ways: if
+    // the guard stops answering exactly 409 on this path, the fixture fails
+    // naming this declaration.
+    (page as PageWithErrorHooks).expectKnownHttpError({
+      pathname: "/api/v2/mcp/servers/lf-starter_project",
+      status: 409,
+      reason:
+        "test 2 re-adds the starter project's own MCP server on purpose; 409 is " +
+        "the duplicate guard it asserts (500 before #991)",
+    });
 
     await page.getByTestId("add-mcp-server-button-page").click();
     await page.getByTestId("json-input").click();
