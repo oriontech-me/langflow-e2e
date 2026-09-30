@@ -1623,7 +1623,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 709 `test()` calls carrying the `@stable` tag, distributed across 278 spec
+> 704 `test()` calls carrying the `@stable` tag, distributed across 278 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1990,7 +1990,6 @@
 - [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
@@ -2001,11 +2000,9 @@
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] empty response does not crash the component → `agent-empty-refusal-response.spec.ts`
-- [x] input via ChatInput handle drives the agent response → `agent-input-sources.spec.ts`
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent reply renders as correct Markdown in the Playground → `agent-markdown-output.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
-- [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
@@ -2017,7 +2014,6 @@
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
 - [x] output_schema fields come back as typed JSON keys on the structured response → `agent-structured-output.spec.ts`
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
-- [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
 - [x] Playground names the tool used and captures its input/output → `agent-tool-inspection.spec.ts`
@@ -2077,7 +2073,6 @@
 
 #### core-functionality/model-provider/
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
-- [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] check-config lists exactly the completion models the local Ollama instance serves → `assistant-ollama-provider.spec.ts`
 - [x] the Assistant composer offers the local Ollama model and arms Send for it → `assistant-ollama-provider.spec.ts`
