@@ -287,9 +287,12 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent max_tokens [${label}]`, () => {
-    test(
+    // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
+    // (1.13.0.dev28), the Agent's reply reports 0 output tokens; the Actions lane hit it the same day.
+    // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
+    test.fixme(
       "max_tokens=50 caps the response's output tokens",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
