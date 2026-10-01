@@ -471,7 +471,7 @@
 > See `CLAUDE.md` in this folder for the complete guide.
 
 #### 6.1 llm-agents/agent-component-regression.spec.ts — Agent Behavior Regression `@stable`
-- [x] Agent responds without connected tools
+- [x] Agent responds without connected tools (the interaction suite's 2026-09-30 quarantine for an "empty reply", #2095, was lifted by #2046: the reply was never empty — the Playground completion wait ignored its timeout and read the bot bubble before the model wrote to it; it now waits through `helpers/ui/playground-turn.ts`)
 - [x] Agent displays valid response and optionally reasoning steps
 - [x] Stop button interrupts agent execution
 - [x] Execution duration displayed after successful run
@@ -502,7 +502,7 @@
 
 #### 6.4 Tools and Integrations
 - [ ] Agent with integrated external MCP tool executes action and returns result
-- [x] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` since #1449. All three gates it carried are settled: the clean baseline of #818/#827 closed 2026-07-30, the unbounded Web Search payload `langflow-ai/langflow#14469` closed by `#14489` on 2026-08-10 — 17.9× smaller per call from `1.12.0.dev25` — and the missing OpenAI measurement, now 4 clean whole-file runs on `gpt-4o-mini` at `dev25` plus green CI runs on google and anthropic)
+- [x] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` since #1449. All three gates it carried are settled: the clean baseline of #818/#827 closed 2026-07-30, the unbounded Web Search payload `langflow-ai/langflow#14469` closed by `#14489` on 2026-08-10 — 17.9× smaller per call from `1.12.0.dev25` — and the missing OpenAI measurement, now 4 clean whole-file runs on `gpt-4o-mini` at `dev25` plus green CI runs on google and anthropic. Since #2046 the task bounds each tool to one call: the open-ended wording let `gemini-3.5-flash` keep refining a search with no relevant result until LangGraph's `Recursion limit of 21`, 7 of 16 Google attempts from 2026-08-26 to 2026-09-16)
 - [x] Tool returns error — agent handles it and continues execution → `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`
 - [x] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`

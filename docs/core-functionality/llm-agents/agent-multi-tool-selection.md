@@ -1,6 +1,6 @@
 # Agent multi-tool selection — correct tool per prompt
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev4`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev28`)
 
 ---
 
@@ -132,8 +132,10 @@ box as the others.
 ## Step by step *(required)*
 
 The spec generates tests per active model via the `resolveTestTargets()`
-machinery (same as `agent-tool-error-handling.spec.ts`). Per model, a serial
-describe with two tests:
+machinery (same as `agent-tool-error-handling.spec.ts`). Per model, one
+describe with three tests. It is **not** serial (#2046): the tests share no state,
+and file-level `mode: "serial"` made one test's failure skip its siblings. On
+2026-08-19 a page-entry failure of test 1 removed tests 2 and 3 from the run.
 
 **Test 1 — fetch prompt selects the URL tool (§6.4 + §6.2)**
 
@@ -144,8 +146,9 @@ describe with two tests:
 3. Seed the task on the ChatInput node (`textarea_str_input_value`; prefill
    re-injection race): *"Fetch https://httpbin.org/json and tell me the
    exact slideshow title it returns. (probe `<nonce>`)"*.
-4. Open the Playground (`playground-btn-flow-io`), send, wait for the run to
-   finish (Stop button hidden).
+4. Open the Playground (`playground-btn-flow-io`), then send through
+   `sendAndAwaitPlaygroundTurn`: the turn's bot message mounts, then `button-stop`
+   clears and `button-send` returns (#2046; see Notes).
 5. **Selection assert (API):** poll `GET /api/v1/monitor/messages` — find the
    user message with the nonce, take its `session_id`, find the session's AI
    message; its **first** `tool_use` block must be `fetch_content` (first call is
@@ -178,7 +181,7 @@ describe with two tests:
 1–2. Same template load and Agent Instructions (fresh load; new nonce).
 3. Seed the task: *"Search the web for recent news about the Playwright test
    framework and summarize one headline. (probe `<nonce>`)"*.
-4. Open the Playground, send, wait for the run to finish.
+4. Open the Playground, then send through `sendAndAwaitPlaygroundTurn`.
 5. **Selection assert (API):** same nonce-keyed monitor lookup; the AI
    message's **first** `tool_use` block must be `perform_search` (first-call
    design; extra follow-up calls tolerated).
@@ -191,12 +194,15 @@ describe with two tests:
 
 1. Load the Simple Agent template (fresh load; new nonce).
 2. Set Agent Instructions that PERMIT a multi-step sequence (distinct from the
-   single-tool instruction of tests 1–2): *"Use the connected tools to
-   complete the task. You may call multiple tools in sequence as the task
-   requires; never answer from memory."*
-3. Seed a task that makes the second tool depend on the first's result:
-   *"First fetch `${FETCH_URL}` and read its exact slideshow title. Then search
-   the web for that title and summarize one result. (probe `<nonce>`)"*.
+   single-tool instruction of tests 1–2) but **bound it to one call per tool**:
+   *"Use the connected tools to complete the task. You may call multiple tools
+   in sequence as the task requires, but call each tool at most once; never
+   answer from memory and never refuse."*
+3. Seed a task that makes the second tool depend on the first's result, and that
+   states when the task is **done**: *"First fetch `${FETCH_URL}` and read its
+   exact slideshow title. Then search the web for that title once and summarize
+   the first result, whatever it is. (probe `<nonce>`)"*. See *Why the chained
+   task asks for ONE search* below.
 4. **Cap `max_iterations` at 8** on the Agent node through the shared helper
    `tests/helpers/ui/set-agent-max-iterations.ts` (advanced field, exposed via
    the inspector — the same four handles `agent-max-iterations.spec.ts` drives,
@@ -207,7 +213,7 @@ describe with two tests:
    executes — the Playground posts the client store's graph, not the persisted
    flow — and the add-then-fill sequence was measured non-racy on `1.13.0.dev4`
    (#1739). See the note below.
-5. Open the Playground, send, wait for the run to finish (Stop button hidden).
+5. Open the Playground, then send through `sendAndAwaitPlaygroundTurn`.
 6. **Sequence assert (API):** poll `GET /api/v1/monitor/messages` — nonce-keyed
    session lookup (same as tests 1–2); collect the **ordered** list of
    `tool_use` block names across the session's AI message(s). Assert the list
@@ -323,6 +329,38 @@ describe with two tests:
 >
 > The cap stays at 8 after promotion. Nothing above argues it is unnecessary;
 > it argues that the failure it bounds became far rarer.
+>
+> **Why the chained task asks for ONE search (#2046).** On Google the cap did
+> not bound a rare failure. It ended the run in **7 of 16** executed attempts of
+> this test between 2026-08-26 and 2026-09-16, against 0 on OpenAI and Anthropic
+> over ~22 days. It was 4 of this spec's 6 flakes in #2046's window, all
+> previously filed as page-entry noise.
+>
+> The mechanism is visible in the container logs:
+> - `gemini-3.5-flash` calls `fetch_content` correctly, against go-httpbin, with
+>   `status: success`.
+> - It then searches for "Sample Slide Show", a title that exists only as
+>   httpbin's fixture, so every result is unrelated (jQuery sliders, PowerPoint
+>   templates).
+> - It keeps refining the query (`"Sample Slide Show" json`, `json.org`,
+>   `"WonderWidgets"`) until LangGraph raises `Recursion limit of 21`. That limit
+>   is `max_iterations` 8, × 2, + 5.
+>
+> A run stopped that way persists **no** AI message. The sequence poll then
+> reports *"AI message for the session not persisted yet"*, even though the tool
+> order it checks was right. The v2 flow-error gate fails the test on the same
+> error.
+>
+> The old wording, *"search the web for that title and summarize one result"*,
+> had no stop condition for a search that finds nothing relevant. The task now
+> asks for **one** search and the first result *whatever it is*, and the system
+> prompt allows each tool once. That keeps the data dependency the assert relies
+> on (the title can only be searched after it is fetched) and removes the
+> open-ended loop.
+>
+> The cap stays at 8. It still bounds a model that ignores the instruction. When
+> the persisted AI message is missing, the poll's message now names the cap as
+> the likely cause, instead of reading like a persistence defect.
 
 ---
 
@@ -415,8 +453,8 @@ tools in the wrong order, fails).
   passing run would not reveal it).
 
   **Re-executed for the #1449 promotion** on `1.12.0.dev25`, each isolated with
-  `--grep` because the describe is `mode: "serial"` and the first failure would
-  otherwise skip its siblings: **M1** failed with *first tool called was
+  `--grep` because the describe was then `mode: "serial"` (removed in #2046) and
+  the first failure would otherwise have skipped its siblings: **M1** failed with *first tool called was
   "fetch_content", expected "perform_search"*; **M3** with the mirror image;
   **M4** with *tools out of order: ["fetch_content","perform_search"] (indices
   [1,0])*; **M5** with `TimeoutError` on

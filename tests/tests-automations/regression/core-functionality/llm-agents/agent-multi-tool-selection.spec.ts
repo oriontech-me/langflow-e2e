@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 import { setAgentMaxIterations } from "../../../../helpers/ui/set-agent-max-iterations";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
@@ -64,9 +65,19 @@ const SYSTEM_PROMPT =
 // Sequence test (Test 3) — must PERMIT multiple tool calls, unlike the
 // single-tool selection prompt above; the chained task's data dependency
 // (search the title only obtainable by fetching first) drives the order.
+//
+// "at most once" is the stop condition the open-ended wording lacked (#2046). The
+// search half looks up "Sample Slide Show", which exists only as httpbin's
+// fixture, so no result is relevant; gemini-3.5-flash kept refining the query
+// (four perform_search calls in the container log) until LangGraph's
+// `Recursion limit of 21` ended the run with no AI message persisted — 7 of 16
+// Google attempts between 2026-08-26 and 2026-09-16, 0 on OpenAI/Anthropic. The
+// ordered assert below needs ONE call of each, so bounding the count to one per
+// tool keeps the data dependency it relies on and removes the loop.
 const SYSTEM_PROMPT_SEQUENCE =
   "Use the connected tools to complete the task. You may call multiple tools in " +
-  "sequence as the task requires; never answer from memory and never refuse.";
+  "sequence as the task requires, but call each tool at most once; never answer " +
+  "from memory and never refuse.";
 // Iteration budget for the sequence test (Test 3) only, and the reason it exists
 // (#1378). Test 3 is the only one whose instruction permits an open-ended
 // sequence, and the agent does not reliably converge on it: when it doesn't, it
@@ -194,22 +205,13 @@ async function setChatInputText(page: Page, text: string): Promise<void> {
   await field.blur();
 }
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // Open the Playground with the pre-seeded task and send it.
 async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   await page.getByTestId("playground-btn-flow-io").click();
   const chatInput = page.getByTestId("input-chat-playground").last();
   await expect(chatInput).toBeVisible({ timeout: 30000 });
   await expect(chatInput).toHaveValue(task, { timeout: 15000 });
-  await page.getByTestId("button-send").last().click();
-  await waitForAgentToFinish(page);
+  await sendAndAwaitPlaygroundTurn(page);
 }
 
 // Monitor-API check of tool SELECTION: the FIRST tool_use block persisted
@@ -266,9 +268,10 @@ async function expectToolSelectionPersisted(
 // live playground bubble. The bubble renders the empty placeholder
 // ("Message empty.", the frontend's EMPTY_OUTPUT_SEND_MESSAGE) while the agent is
 // mid-tool-execution, and a multi-tool run can take 40s+; asserting the live
-// bubble therefore races the stream and the run's own completion signal
-// (`waitForAgentToFinish` can return between tool phases) — the #631
-// "Message empty." failure mode. The persisted messages appear only once the run
+// bubble therefore races the stream — the #631 "Message empty." failure mode.
+// (The old completion probe did not even wait — `isVisible` ignores its timeout,
+// #2046; `sendAndAwaitPlaygroundTurn` now does, but persistence is still read
+// here, not inferred from the UI.) The persisted messages appear only once the run
 // completes, so polling them is both the completion gate AND a race-free assert.
 //
 // The observable is the `fetch_content` tool_use block's OUTPUT matching
@@ -363,7 +366,15 @@ async function expectToolSequencePersisted(
           .sort((a: any, b: any) =>
             String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")),
           );
-        if (aiMsgs.length === 0) return "AI message for the session not persisted yet";
+        // A run cut short by max_iterations persists NO AI message, so this state
+        // is what a non-converging agent looks like from here (#2046) — the
+        // fixture's flow-error gate names it as `Recursion limit of N`.
+        if (aiMsgs.length === 0)
+          return (
+            "AI message for the session not persisted yet — if the run ended, a run cut by " +
+            `the max_iterations cap (${MAX_ITERATIONS_SEQUENCE}) persists none: look for ` +
+            "`Recursion limit` in the flow-error gate's report"
+          );
 
         const toolNames = aiMsgs
           .flatMap((m: any) => (m.content_blocks ?? []) as any[])
@@ -388,10 +399,11 @@ async function expectToolSequencePersisted(
 
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
-// Serial mode + --workers=1 keeps the shared instance state deterministic
-// (area rule for agent specs). Cleanup is id-scoped in afterEach — nothing
-// here wipes flows, so parallel neighbors are never victims.
-test.describe.configure({ mode: "serial" });
+// No serial mode (#2046). The three tests share no state, and file-level
+// `mode: "serial"` made one test's failure skip its siblings with an empty
+// reason (2026-08-19: a page-entry failure of test 1 removed tests 2 and 3).
+// Run the file with `--workers=1` per the area rule. Cleanup is id-scoped in
+// afterEach — nothing here wipes flows, so parallel neighbors are never victims.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
@@ -495,7 +507,8 @@ for (const { label, options, skipReason } of targets) {
         // asserting any non-deterministic content.
         const task =
           `First fetch ${FETCH_URL} and read its exact slideshow title. ` +
-          `Then search the web for that title and summarize one result. (${nonce})`;
+          `Then search the web for that title once and summarize the first result, ` +
+          `whatever it is. (${nonce})`;
 
         await loadAgent(page, options);
 

@@ -1,6 +1,6 @@
 # Agent Component Regression
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev28`)
 
 ---
 
@@ -20,6 +20,13 @@ on the stop button, two consecutive runs) and **restored in #992**: on
 1.12.0.dev7 the test finishes in ~10s and the failure no longer reproduces —
 no code change was needed, only the verification.
 
+`@stable` was removed from "agent interaction suite" and the test was
+quarantined with `test.fixme` for #2095 (empty reply on `1.13.0.dev27`/`dev28`).
+**Lifted in #2046**: the reply was never empty. The completion wait did not
+wait, and the spec read the bot bubble before the model had written to it (see
+the note on the completion gate below). Measured on `1.13.0.dev28`: 0/3 with the
+old wait, 3/3 with the gate.
+
 ---
 
 ## Step by step *(required)*
@@ -36,11 +43,11 @@ Single `load()` per model — all validations share the same Playground session 
 2. Open the Playground (`playground-btn-flow-io`) and wait for `input-chat-playground`
 
 *Step: responds without tools connected*
-3. Send "What is the capital of France?" and wait for `waitForAgentToFinish`
+3. Send "What is the capital of France?" through `sendAndAwaitPlaygroundTurn`, which waits for the turn's bot message to mount and then for `button-stop` to clear (see Notes)
 4. `expect.soft`: `div-chat-message` visible with non-empty text
 
 *Step: shows reasoning steps*
-5. Send "Who was the first astronaut to walk on the Moon?" and wait for response
+5. Send "Who was the first astronaut to walk on the Moon?" through `sendAndAwaitPlaygroundTurn`
 6. `expect.soft`: `div-chat-message` visible; conditionally check (soft) if "Finished in" appears
 
 *Step: streams response progressively and displays duration*
@@ -68,14 +75,15 @@ Kept separate from the suite because it interrupts the execution state.
 2. Open the Playground and send a long prompt (18th century explorer story)
 3. Assert the Stop button becomes visible within 30s — it is the subject of this test, so its absence is a failure, not a reason to skip (#992)
 4. Click the Stop button via `dispatchEvent("click")`
-5. Confirm that Stop button disappears and `input-chat-playground` becomes visible
+5. Assert the `Build stopped` alert is visible within 10s — raised only by the stop path, so it proves the click aborted the run (see Notes)
+6. Confirm that Stop button disappears and `input-chat-playground` becomes visible
 
 ---
 
 ## Validation criterion *(required)*
 - Agent responds with non-empty text even without connected tools
 - Reasoning steps ("Finished in Xs") appear when the model uses them (conditional check)
-- Stop button halts generation and the input returns to its normal state
+- Stop button halts generation — the frontend reports the aborted build (`Build stopped`) — and the input returns to its normal state
 - `node_duration_agent` visible on canvas after closing the Playground (canonical duration assertion — comes from the backend)
 - Playground text grows while Stop is visible during long generation (streaming confirmed via polling — not a fixed sleep)
 - Multiple consecutive messages accumulate in the Playground history
@@ -103,6 +111,7 @@ Kept separate from the suite because it interrupts the execution state.
 - `src/frontend/src/components/core/playgroundComponent/` — main Playground component; changes to `input-chat-playground`, `button-send`, `div-chat-message`, or `playground-close-button` break this spec
 - `src/frontend/src/components/core/flowToolbarComponent/` — `playground-btn-flow-io` button that opens the Playground from the editor
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeStatus/index.tsx` — renders `node_duration_agent` on the canvas after execution
+- `src/frontend/src/stores/flowStore.ts` — `stopBuilding()` aborts the build controller and raises the `alerts.buildStopped` error alert that Test 2 asserts; a change to that path, or to the string in `src/frontend/src/locales/en.json`, breaks Test 2
 - `src/lfx/src/lfx/components/models_and_agents/` — Agent execution logic; changes to streaming or duration field generation affect multiple tests
 
 ---
@@ -120,7 +129,18 @@ Kept separate from the suite because it interrupts the execution state.
 - **Streaming assertion**: waits for Stop to appear (confirms the model is actively generating), then polls `div-chat-message` text length every 100ms for up to 5s. If text grows during the polling window → streaming confirmed, loop exits early. If Stop never appears → validates final text is non-empty and returns early (step passes, remaining steps continue). If growth is not observed (Stop gone before growth, or model renders faster than the poll interval, or `div-chat-message` testid is applied only after streaming completes) → no assertion; the final-text `expect.soft` is the safety net for truly broken streaming. This replaces the previous fixed 3s sleep + conditional guard that silently passed for fast models.
 - **"Finished in Xs" in the Playground**: conditional check — the text appears in `BotMessage` based on the `isBuilding` cycle of `useFlowStore`; not guaranteed in multi-message sessions or with models that respond very quickly. The canonical duration assertion is `node_duration_agent` on the canvas.
 - **The stop test asserts the Stop button, it no longer probes for it (#992).** It used to read `isVisible({ timeout: 30000 }).catch(() => false)` and `return` early when the button was absent, on the rationale that a fast model may answer before the button renders. That rationale rested on a false premise: `locator.isVisible()` **never waits** — Playwright marks its `timeout` option `@deprecated: this option is ignored` — so the check fired instantaneously, microseconds after the send click, and any render latency at all turned the whole test into a silent no-op that asserted nothing while reporting green. As a `@stable` test that would blind the daily on this surface. The gate is now `expect(stopButton).toBeVisible({ timeout: 30000 })`, which polls for real. The prompt asks for a long story, so the button is visible for the whole stream on every model target; if some future model does finish before it renders, the failure is the correct signal — investigate then, do not restore the bypass.
-- The same `isVisible({ timeout })` shape survives inside `waitForAgentToFinish` and its siblings across the agent specs. That usage is benign and deliberate: there the button is a *completion probe* ("already gone ⇒ the run finished"), not the observable under test, and a real assertion always follows.
+- **The completion gate was not benign either (#2046).** The same `isVisible({ timeout })` shape lived on inside this file's `waitForAgentToFinish`, which an earlier version of this note called *"benign and deliberate"* because a real assertion always follows. Nothing follows that can wait for a reply. Measured on `1.13.0.dev28` by sampling the DOM every 10 ms after Send:
+  - `button-stop` renders **380–450 ms** after the click, so the probe returned `false` in 3 of 3 runs and skipped the wait.
+  - The bot `div-chat-message` mounts **empty** at the same moment and fills in 1–2 s later.
+  - The step's `toBeVisible` therefore resolved on the empty bubble, and `innerText()` read `""`.
+
+  That is #2095's signature, `toBeGreaterThan(1)` with received 0. It fails 3/3 on OpenAI, and its Actions rows (09-29 anthropic, 09-30 google) show the step at 503/510 ms against 2427/2472 ms on the passing retries. The steps now send through `tests/helpers/ui/playground-turn.ts` → `sendAndAwaitPlaygroundTurn`, the #569/#354 shape:
+  1. Count `div-chat-message` before Send.
+  2. Poll until the count rises, or an `error-card-stack` appears.
+  3. Wait for `button-stop` to be hidden, then for `button-send` to be visible.
+
+  Measured 3/3 with the step at ~2.3 s. `button-stop` and the role-`Stop` button are **different elements**: the role one lingers ~400 ms after the testid one clears. The gate keys on the testid, as `memory-history-regression` does.
+- **The stop test could not detect a Stop that does nothing (#2046).** Force-failing it by removing the Stop click left it green: on `gpt-4o-mini` the story finishes on its own well inside the 30 s `toBeHidden` budget, so "Stop disappeared and the input came back" is also what a run that was never stopped looks like. The test now asserts the `Build stopped` alert after the click. `flowStore.stopBuilding()` raises it (`alerts.buildStopped`) when it aborts the build controller, and nothing else does, so a run that completes naturally never shows it. With the assert, the same mutation fails. The text is English because the suite pins `en-US` and Langflow renders English unless `localStorage.languagePreference` says otherwise.
 - `dispatchEvent("click")` on the Stop button bypasses Playwright actionability checks — the button may be transitioning during stream teardown.
 - **Credential-settle gate (#751)**: on the 1.11 unified model selector, opening the Agent model dropdown auto-binds the node's `api_key` to the *default* credential (e.g. `ANTHROPIC_API_KEY`); selecting the target provider's model rebinds it to that provider's credential (`OPENAI_API_KEY`, …) **asynchronously**. `SimpleAgentTemplatePage.load()` now blocks until the persisted `Agent.api_key.value` equals the provider's credential (`providerConfigMap[provider].envKeys[0]`) before returning, so a spec that opens the Playground and sends a message cannot race the rebind and run the selected model with the wrong provider's key (which surfaced as `Flow build failed: Incorrect API key provided` and a `div-chat-message` that never rendered — the daily-#744 signature).
 - **Flow cleanup**: an `afterEach` deletes the flow each test created via the API (id-scoped, `getAuthToken` bearer). The suite previously relied on the removed `load()`-time global clear (#553) and leaked one Simple Agent flow per run.
