@@ -1,6 +1,6 @@
 # OpenAI Provider — configure key, select GPT, execute
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev12`, #1849)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -158,14 +158,15 @@ like a product regression and costs the tag every time the account drains.
    completion** — see Notes for why.
 4. Open the Playground (`playground-btn-flow-io`); wait for
    `input-chat-playground`.
-5. Send `Repeat this token exactly and nothing else: OPENAI-<sentinel>`; wait for
-   the agent to finish (`waitForAgentToFinish`).
+5. Send `Repeat this token exactly and nothing else: OPENAI-<sentinel>`
+   through `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop`
+   clears and `button-send` returns).
 6. **Validation (two-stage):** first gate on the **persisted** reply (monitor
    API — the token is unique per run and appears in both the user prompt and the
    echoed reply, so it keys the session lookup and is the content assert)
    **containing** `OPENAI-<sentinel>` — a race-free completion signal, because
    the live bubble shows the empty placeholder ("Message empty.") while the model
-   streams and `waitForAgentToFinish` can return before the final text lands (the
+   streams and the old Stop-button probe returned before the final text landed (the
    #634 flaky symptom). **Then**, with the run confirmed complete, re-assert the
    live bubble also echoes the token — keeping end-to-end UI coverage (a bubble
    stuck on "Message empty." while the reply persisted is a real frontend bug and

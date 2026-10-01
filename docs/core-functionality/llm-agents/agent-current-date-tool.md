@@ -1,6 +1,6 @@
 # Agent current-date tool — add_current_date_tool toggle
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev19`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -117,8 +117,9 @@ machinery (family standard). Per model, a describe with two independent tests
    date."*
 3. Seed the task on the ChatInput node (`textarea_str_input_value`):
    *"What is the current date? (probe `<nonce>`)"*.
-4. Open the Playground (`playground-btn-flow-io`), send, wait for the run to
-   finish (Stop button hidden).
+4. Open the Playground (`playground-btn-flow-io`), send through
+   `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop` clears and
+   `button-send` returns).
 5. **Tool assert (API):** poll `GET /api/v1/monitor/messages` — nonce →
    `session_id` → the session's AI message must have a `get_current_date`
    `tool_use` block whose `output` contains today's **UTC** date
@@ -195,3 +196,16 @@ exactly one of them.
 - `tests/helpers/provider-setup/data/models.json` + `providers.json`
   (collect-models).
 - No external network beyond the provider — the date tool is local.
+
+---
+
+## Notes *(optional)*
+
+- **The completion wait (#2123).** Both tests used to wait with
+  `isVisible({ timeout: 10000 })` on the Stop button. That call does not wait
+  (Playwright ignores the option), so the wait was skipped. Neither test reads
+  the reply once, so no red came from it. The exposure was in the other
+  direction: the toggle-OFF test's `zero get_current_date blocks` poll could
+  pass on the first session snapshot persisted mid-run, before a tool call it
+  is meant to rule out had landed. Both tests now send through
+  `tests/helpers/ui/playground-turn.ts`, so the poll runs after the turn ended.

@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev1`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -113,7 +113,7 @@ the geometry above was measured.
 2. Set `context_id = CTX` (unique per run, `ctx-<nonce>`) on the **Agent**,
    **Chat Input** and **Chat Output** nodes (advanced field — controls
    dialog / exposed field; real testids confirmed in PLAN).
-3. Seed the ChatInput task with a nonce; open the Playground, send, wait.
+3. Seed the ChatInput task with a nonce; open the Playground, send through `sendAndAwaitPlaygroundTurn`.
 4. **Assert (monitor API):** nonce → session; every persisted message of the
    session (user AND AI) carries `context_id === CTX`.
 5. No `allowFlowErrors`.

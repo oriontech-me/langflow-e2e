@@ -1,6 +1,6 @@
 # Agent tool inspection — Playground names the tool used and captures its input/output
 
-**Last validated:** Langflow 1.13.x (promotion measured on 1.12.1; Wave 8 T1 verdict re-measured on the nightly)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -173,8 +173,9 @@ public `httpbin.org`; the go-httpbin path is CI's (#1128).
    `<nonce>`)"* (`FETCH_URL` = `${ECHO_BASE_URL}/json`, default
    `https://httpbin.org/json` — same env convention as
    `agent-multi-tool-selection`).
-4. Open the Playground (`playground-btn-flow-io`), send, wait for the run to
-   finish (Stop button hidden), then best-effort expand the "Steps"/"Finished"
+4. Open the Playground (`playground-btn-flow-io`), send through
+   `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop` clears and
+   `button-send` returns), then best-effort expand the "Steps"/"Finished"
    accordion. That expand matches **zero rows on 1.12.1** and is kept anyway,
    because why it matches nothing is a property of the **producer**:
    `ContentBlockDisplay.tsx` renders GROUPED blocks behind an `isExpanded` gate

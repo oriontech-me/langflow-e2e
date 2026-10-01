@@ -88,7 +88,8 @@ check encodes the expected #440 state.
 5. Connect MCPTools toolset output handle → Agent tools input handle.
 6. Open Playground and send `"Use the 'echo' tool to echo: hello mcp (<nonce>)"`
    (atomic set-value + send, per the #226 prefill-race hardening).
-7. Wait for the agent to finish; poll `GET /api/v1/monitor/messages` until the
+7. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option), which
+   waits for the turn to mount and `button-stop` to clear; then poll `GET /api/v1/monitor/messages` until the
    agent turn for this session (keyed by the nonce) is persisted.
 8. Assert (pipeline ran): the final reply contains the echoed payload
    (`hello mcp`).

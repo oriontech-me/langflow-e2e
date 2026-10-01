@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts`
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev19`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -69,14 +69,14 @@ override). Skip a target if its provider is inactive or its env key is missing.
    persisted flow but the reply omits it, that is unambiguously model-side
    non-adherence, not a dropped instruction.
 3. Open the Playground (`playground-btn-flow-io`), send an unrelated message
-   ("What is the capital of France?"), wait for the run to finish (Stop button
-   appears then hides).
+   ("What is the capital of France?"), send through `sendAndAwaitPlaygroundTurn` (the turn
+   mounts, then `button-stop` clears and `button-send` returns).
 4. Assert the latest `div-chat-message` contains the sentinel (case-insensitive).
 
 **Test 2 — negative control:**
 1. Load the template.
 2. Set a neutral instruction ("You are a helpful assistant.") + autosave.
-3. Send the same unrelated message, wait for finish.
+3. Send the same unrelated message through `sendAndAwaitPlaygroundTurn`.
 4. Assert the latest `div-chat-message` does **not** contain the sentinel stem
    (`PINEAPPLE`).
 
@@ -171,7 +171,8 @@ reliable signal (fail — invalidates the positive assertion).
 - `textarea_str_system_prompt` — Agent Instructions field on the Agent node.
 - `SimpleAgentTemplatePage` / `providerSetupMap` — template load + provider config.
 - Playground testids: `playground-btn-flow-io`, `input-chat-playground`,
-  `button-send`, `div-chat-message`; Stop button (`role=button name=Stop`).
+  `button-send`, `div-chat-message`, `button-stop` (the gate keys on the testid,
+  not on `role=button name=Stop`, which lingers ~400 ms longer).
 
 ---
 
@@ -216,3 +217,15 @@ reliable signal (fail — invalidates the positive assertion).
   ("An internal error occurred while deleting flows") — a shared backend-under-load
   artifact caught by the fixture, not this spec's logic; single runs are clean and
   the config retries absorb it.
+- **The completion wait (#2123).** `askAndGetReply` waited with
+  `isVisible({ timeout: 10000 })` on the Stop button. That call does not wait,
+  so the wait was skipped, and the reply was read **once** with `innerText()`.
+  On `1.13.0.dev28` the bot bubble mounts empty ~400 ms after Send, so both tests
+  were exposed. Test 1 could read `""` and fail: this is the empty-reply shape
+  #2095 quarantined it for. Test 2 could read `""` and **pass**, because
+  `not.toContain(sentinel)` holds on an empty string. Both now send through
+  `tests/helpers/ui/playground-turn.ts`. Lifting Test 1's quarantine stays
+  #2095's call.
+  Measured on `1.13.0.dev29` with the probe put back: Test 1 failed on `""`, and
+  Test 2 passed on a reply of length 0. With the gate, both passed on real
+  replies (174 and 31 characters).

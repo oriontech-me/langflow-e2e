@@ -1,6 +1,6 @@
 # Google Provider — configure key, select Gemini
 
-**Last validated:** Langflow 1.13.x (Test 1 read through `armProviderSave` and measured on `1.13.0.dev12`, #1867; provider-row wait + Test 1 flow cleanup on `1.12.0.dev44`, #1648)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -105,8 +105,9 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
    see Notes.
 4. Open the Playground (`playground-btn-flow-io`); wait for
    `input-chat-playground`.
-5. Send `Repeat this token exactly and nothing else: GOOGLE-<sentinel>`; wait for
-   the agent to finish (`waitForAgentToFinish`).
+5. Send `Repeat this token exactly and nothing else: GOOGLE-<sentinel>`
+   through `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop`
+   clears and `button-send` returns).
 6. **Validation:** the last `div-chat-message` (AI bubble) is **non-empty** (hard
    — proves the configured Gemini model executed and returned output). The per-run
    sentinel is **logged, not asserted** (a plain `console.log`, not `expect.soft`
@@ -299,3 +300,10 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   being MCP server registration (`GET /api/v2/mcp/servers` 20 s, **#1266**), a step
   that never reaches the credential guard. No product regression, no wait-strategy
   change needed.
+- **The completion wait (#2123).** The Playground run waited with
+  `isVisible({ timeout: 10000 })` on the Stop button. That call does not wait
+  (Playwright ignores the option), so the wait was skipped, and the reply was
+  then read **once** with `innerText()`. On `1.13.0.dev28` the bot bubble
+  mounts empty ~400 ms after Send, so `reply.length > 0` could fail on a healthy
+  Google run. The run now sends through `tests/helpers/ui/playground-turn.ts`.
+  The test #2095 quarantined keeps its `test.fixme`: lifting it is #2095's call.

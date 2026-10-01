@@ -1,6 +1,6 @@
 # Agent Markdown Output — response renders as correct Markdown in the Playground
 
-**Last validated:** Langflow 1.13.x (Wave 8 T1 verdict measured on the nightly)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -138,8 +138,8 @@ provider's chat catalog rather than narrowing to one model. Use the
    `agent-multimodal-image-input.md` (Notes).
 3. Open the Playground (`playground-btn-flow-io`); wait for
    `input-chat-playground` and assert it prefilled the prompt.
-4. Send (`button-send`); wait for the agent to finish
-   (`waitForAgentToFinish` — the Stop button appears then hides).
+4. Send through `sendAndAwaitPlaygroundTurn`: the turn mounts, then
+   `button-stop` clears and `button-send` returns.
 5. **Read the reply as the run persisted it** — poll
    `GET /api/v1/monitor/messages?flow_id={id}&sender=Machine` (Bearer) until a
    message carries non-empty `text`. The row appears before the text does, so an

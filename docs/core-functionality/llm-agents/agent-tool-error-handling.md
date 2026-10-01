@@ -1,6 +1,6 @@
 # Agent tool error — handled as an observation, execution continues
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -94,7 +94,8 @@ machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.t
    race): *"Fetch http://localhost:7860/api/v1/version and tell me the exact
    version value it returns. (probe `<nonce>`)"* — the per-run nonce keys the
    monitor-API lookup to THIS run's session.
-4. Open the Playground, send, wait for the run to finish.
+4. Open the Playground and send through `sendAndAwaitPlaygroundTurn` (the turn
+   mounts, then `button-stop` clears and `button-send` returns).
 5. **Continuation assert (two-stage):** first gate on the **persisted** final
    reply (monitor API, nonce-keyed session) containing `TOOL_FAILED` — a
    race-free completion signal, because the live bubble shows the empty

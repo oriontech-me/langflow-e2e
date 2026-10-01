@@ -1,6 +1,6 @@
 # Agent Empty / Refusal Response — component does not crash
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -75,8 +75,9 @@ The spec generates **2 tests per active model** via `resolveTestTargets()` (defa
    autosave to settle (`waitForFlowSaveSettled`) so the build runs the
    instruction we set — see Notes (#608).
 3. Open the Playground and send an unrelated message
-   (`What is the capital of France?`); wait for the agent to finish
-   (`waitForAgentToFinish`).
+   (`What is the capital of France?`); send through
+   `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop` clears and
+   `button-send` returns).
 4. **Validation:**
    - **hard** — the **persisted** reply (polled from `GET
      /api/v1/monitor/messages`, not the live bubble) contains `REFUSE-<marker>`:
@@ -99,11 +100,12 @@ The spec generates **2 tests per active model** via `resolveTestTargets()` (defa
    `Reply with an empty response. Output nothing at all — no text, no
    punctuation, no whitespace.`, and wait for the debounced autosave to settle
    (`waitForFlowSaveSettled`, #608).
-3. Open the Playground and send `What is the capital of France?`; wait for the
-   agent to finish.
+3. Open the Playground and send `What is the capital of France?` through
+   `sendAndAwaitPlaygroundTurn` (same gate as Test 1).
 4. **Validation:**
    - **hard** — the run **completes**: the assistant message bubble
-     (`div-chat-message`) becomes visible and the Stop button is gone. Even an
+     (`div-chat-message`) mounts, then `button-stop` clears and `button-send`
+     returns — asserted by `sendAndAwaitPlaygroundTurn`, not probed. Even an
      empty completion renders a message row, so this is a deterministic
      completion signal independent of the reply content.
    - **hard (via fixture)** — zero `🚨 Backend Error` and zero flow errors: the
@@ -234,3 +236,11 @@ The spec generates **2 tests per active model** via `resolveTestTargets()` (defa
   Gemini flash models obeyed the empty instruction (rendered the placeholder);
   a few larger/tool variants answered the question instead — hence emptiness
   stays a logged soft signal, never a hard assertion.
+- **The completion wait (#2123).** `waitForAgentToFinish` was
+  `isVisible({ timeout: 10000 })` on the Stop button, which does not wait, so
+  the wait was skipped. Test 1 was masked: its marker is read by a 60 s poll on
+  the persisted reply. Test 2 was the exposed one, in the false-pass direction.
+  Its hard criterion is that the run **completes**, and nothing asserted that:
+  the bubble's `toBeVisible` passes on the empty bubble that mounts ~400 ms after
+  Send. Both tests now send through `tests/helpers/ui/playground-turn.ts`, which
+  asserts the turn finished.

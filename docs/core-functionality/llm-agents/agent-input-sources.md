@@ -1,6 +1,6 @@
 # Agent Input Sources — direct field vs ChatInput handle
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -63,8 +63,8 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
    `input-chat-playground`.
 3. Send a distinctive echo prompt:
    `Repeat this token exactly and nothing else: HANDLE-<sentinel>`.
-4. Wait for the agent to finish (`waitForAgentToFinish` — Stop button appears
-   then hides).
+4. Send through `sendAndAwaitPlaygroundTurn`: the turn mounts, then
+   `button-stop` clears and `button-send` returns.
 5. **Validation:** the last `div-chat-message` (AI bubble) text **contains**
    `HANDLE-<sentinel>` — proving the token typed in the Playground reached the
    agent through the `ChatInput → input` handle.
@@ -196,3 +196,11 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
   now blocks until the persisted `Agent.api_key.value` equals
   `providerConfigMap[provider].envKeys[0]`, so every agent spec starts from a
   settled, provider-matched credential.
+- **The completion wait (#2123).** Test 1 waited with
+  `isVisible({ timeout: 10000 })` on the Stop button. That call does not wait,
+  so the wait was skipped, and the reply was then read **once** with
+  `innerText()`. On `1.13.0.dev28` the bot bubble mounts empty ~400 ms after
+  Send, so that read could be `""`. This is the empty-reply shape #2095
+  quarantined the test for. It now sends through
+  `tests/helpers/ui/playground-turn.ts`. Lifting the quarantine stays #2095's
+  call. Test 2 runs on the canvas and never used the probe.
