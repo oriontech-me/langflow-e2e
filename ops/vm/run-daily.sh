@@ -109,6 +109,17 @@ main() {
       systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
       ;;
   esac
+  # The same priority over the on-demand run. That one refuses to START in the daily's
+  # window, but a run started just before it, or a slow build, can still be going at
+  # 08:00. Its wrapper cleans up on SIGTERM, on ports no other lane uses.
+  local ondemand_state
+  ondemand_state="$(systemctl show -p ActiveState --value e2e-on-demand.service 2>/dev/null || true)"
+  case "$ondemand_state" in
+    activating | active | reloading | deactivating)
+      echo "stopping the on-demand run ($ondemand_state) before this run"
+      systemctl stop e2e-on-demand.service || echo "WARNING: could not stop e2e-on-demand.service"
+      ;;
+  esac
 
   if [ -r "$SECRETS" ]; then
     # shellcheck disable=SC1090
