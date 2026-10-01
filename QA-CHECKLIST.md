@@ -1595,7 +1595,7 @@
 | `core-functionality/llm-agents/` | 42 | 35 | 3 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 32 | 3 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 56 | 55 | 0 | 0 | 1 |
+| `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
@@ -1611,7 +1611,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **739** | **648 (88%)** | **37 (5%)** | **14 (2%)** | **40 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **739** | **649 (88%)** | **37 (5%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1627,7 +1627,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 721 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 722 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2124,6 +2124,7 @@
 #### core-functionality/playground/
 - [x] approving a Human Input pause routes only the approved branch → `human-input-pause-resume.spec.ts`
 - [x] rejecting a Human Input pause routes only the reject branch → `human-input-pause-resume.spec.ts`
+- [x] a suspended Human Input run survives a page reload and completes on approval → `human-input-pause-resume.spec.ts`
 - [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
 - [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
@@ -2420,7 +2421,7 @@
 | `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 3 | 3 |
 | `core-functionality/model-provider/` | 3 | 1 |
-| `core-functionality/playground/` | 0 | 1 |
+| `core-functionality/playground/` | 0 | 0 |
 | `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
