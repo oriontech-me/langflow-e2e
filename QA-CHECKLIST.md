@@ -1622,7 +1622,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 708 `test()` calls carrying the `@stable` tag, distributed across 279 spec
+> 709 `test()` calls carrying the `@stable` tag, distributed across 279 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1989,6 +1989,7 @@
 - [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
+- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
