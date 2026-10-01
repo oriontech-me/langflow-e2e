@@ -1,6 +1,6 @@
 # Agent Multimodal Image Input — image via input handle processed
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev28`)
 
 ---
 
@@ -46,8 +46,9 @@ Playground.
   such a model per provider and skips a provider that has none.
 - Test image `tests/assets/media/chain.png` (a chain/links graphic).
 - Run with `--workers=1` (agent specs create named flows that collide in
-  parallel). The file is serial so concurrent provider blocks do not starve the
-  single backend during the Playground runs.
+  parallel). The file is **not** serial (#2046). The two tests share no state,
+  and file-level `mode: "serial"` made a failure in one skip the other, or re-run
+  it as a retry it never asked for (see Notes).
 - **Teardown:** each test's flow is deleted **by id** in `afterEach` (ids captured
   from the `POST /api/v1/flows/` 201 responses). `SimpleAgentTemplatePage.load()`
   deletes nothing (post-#553 contract — no global `cleanAllFlows`, which races
@@ -92,8 +93,8 @@ provider's vision-capable catalog rather than narrowing to one model. Use the
    the canvas and wait for autosave (`waitForFlowSaveSettled`); the Playground
    chat input pre-fills from this node value (see Notes — typing into the
    Playground races an async re-injection of the template default).
-6. Send (`button-send`); wait for the agent to finish
-   (`waitForAgentToFinish` — Stop button appears then hides).
+6. Send through `sendAndAwaitPlaygroundTurn`: the turn's bot message mounts,
+   then `button-stop` clears and `button-send` returns.
 7. **Validation:** the last rendered **AI chat bubble**
    (`[data-testid^="chat-message-AI-"]` → its `.markdown.prose`) **matches**
    `/\bchains?\b|\binkscape\b/i`, does **not** match the "no image reached the
@@ -110,7 +111,7 @@ provider's vision-capable catalog rather than narrowing to one model. Use the
 2. Open the Playground; wait for `input-chat-playground`.
 3. Type the **same** prompt `what is this image? describe it` **without attaching
    any image**.
-4. Send; wait for the agent to finish.
+4. Send through `sendAndAwaitPlaygroundTurn` (same gate as Test 1).
 5. **Validation:** the response does **not** match `/chain/i` — with no image the
    model cannot describe a chain, so the keyword only appears in Test 1 because
    the image was actually processed. This eliminates the false positive that the
@@ -233,3 +234,17 @@ provider's vision-capable catalog rather than narrowing to one model. Use the
   `general-bugs-agent-images-playground.spec.ts` (OpenAI-only bug regression).
   This spec is the named §6.5 home, is provider-parameterized (adds Gemini/active
   provider coverage), and adds the negative control.
+- **Two accounting defects fixed in #2046.** Neither has failed a run here yet.
+  - **File-level serial mode.** It had no dependency to protect, and it is the
+    shape #1690 removed elsewhere in this area. On 2026-08-05 and 2026-08-19 the
+    negative control never ran on any attempt: it was skipped with an empty
+    reason behind the image test's failure. On 2026-09-08 the image test picked
+    up a failing attempt only because the negative control had failed first, and
+    serial mode re-ran it.
+  - **The completion wait.** It was `isVisible({ timeout: 10000 })` on the Stop
+    button, and that call does not wait. On `1.13.0.dev28` the button renders
+    ~400 ms after Send, together with an **empty** bot bubble (measured in
+    `agent-component-regression`, #2095). Test 1 survived it only because its
+    `toContainText` retries for 60 s. The negative control reads the reply
+    **once**, so it could pass `not.toMatch(/chain/)` on a half-written reply. Both
+    tests now send through `tests/helpers/ui/playground-turn.ts`.

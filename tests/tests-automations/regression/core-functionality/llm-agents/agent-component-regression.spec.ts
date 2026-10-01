@@ -10,6 +10,7 @@ import {
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 // Ids of the flows created by loadAgent(), so afterEach can delete exactly
 // those via the API (id-scoped, #515) — never a global cleanAllFlows.
@@ -40,14 +41,6 @@ test.afterEach(async ({ page }) => {
     await deleteFlow(page.request, id, opts);
   }
 });
-
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
 
 // `tool-calling`, and this file is worth a note because it is the case that shows
 // why a measured pass rate is NOT the adoption criterion (#1187).
@@ -88,12 +81,11 @@ for (const { label, options, skipReason } of targets) {
 
   test.describe(`Agent Component Regression [${label}]`, () => {
 
-    // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
-    // (1.13.0.dev28), the Agent's reply is read empty; the Actions lane hit it the same day.
-    // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
-    test.fixme(
+    // Quarantine for #2095 lifted in #2046. The reply was never empty: the completion
+    // wait did not wait, and the step read the bot bubble before the model wrote to it.
+    test(
       "agent interaction suite",
-      { tag: ["@release", "@components", "@agents", "@playground"] },
+      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -107,8 +99,7 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("responds without tools connected", async () => {
           await page.getByTestId("input-chat-playground").last().fill("What is the capital of France?");
-          await page.getByTestId("button-send").last().click();
-          await waitForAgentToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
           await expect.soft(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
           const text = await page.getByTestId("div-chat-message").last().innerText();
           expect.soft(text.trim().length).toBeGreaterThan(1);
@@ -116,8 +107,7 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("shows reasoning steps", async () => {
           await page.getByTestId("input-chat-playground").last().fill("Who was the first astronaut to walk on the Moon?");
-          await page.getByTestId("button-send").last().click();
-          await waitForAgentToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
           await expect.soft(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
           const finishedText = page.getByText(/Finished in/).last();
           if (await finishedText.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -231,6 +221,10 @@ for (const { label, options, skipReason } of targets) {
 
         // dispatchEvent bypasses Playwright actionability checks — stop button may be transitioning during stream teardown
         await stopButton.dispatchEvent("click");
+        // Proof the click aborted the run (#2046). Without it a Stop that does nothing
+        // passed: the story ends on its own inside the toBeHidden budget below.
+        // `flowStore.stopBuilding()` raises this alert and nothing else does.
+        await expect(page.getByText("Build stopped", { exact: true }).first()).toBeVisible({ timeout: 10000 });
         await expect(stopButton).toBeHidden({ timeout: 30000 });
         await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({ timeout: 10000 });
       },

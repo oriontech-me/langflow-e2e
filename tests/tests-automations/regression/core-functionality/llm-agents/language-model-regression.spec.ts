@@ -7,6 +7,8 @@ import { setupGoogle } from "../../../../helpers/provider-setup/setup-google";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
+import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
@@ -140,15 +142,9 @@ test.describe("Language Model Component Regression", () => {
       });
 
       await page.getByTestId("input-chat-playground").last().fill("What is 2+2?");
-      await page.getByTestId("button-send").last().click();
-
-      const stopBtn = page.getByRole("button", { name: "Stop" });
-      if (await stopBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
-        await expect(stopBtn).toBeHidden({ timeout: 120000 });
-      }
-      await page.waitForSelector('[data-testid="div-chat-message"]', {
-        timeout: 60000,
-      });
+      // The turn mounts, then button-stop clears (#2046). The Stop-button probe this
+      // replaces ignored its timeout, so the reply was read while still empty.
+      await sendAndAwaitPlaygroundTurn(page);
 
       await expect(page.getByTestId("div-chat-message").last()).toContainText(/4/, {
         timeout: 15000,
@@ -232,15 +228,9 @@ test.describe("Language Model Component Regression", () => {
       });
 
       await page.getByTestId("input-chat-playground").last().fill("Say hello.");
-      await page.getByTestId("button-send").last().click();
-
-      const stopBtn = page.getByRole("button", { name: "Stop" });
-      if (await stopBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
-        await expect(stopBtn).toBeHidden({ timeout: 120000 });
-      }
-      await page.waitForSelector('[data-testid="div-chat-message"]', {
-        timeout: 60000,
-      });
+      // The turn mounts, then button-stop clears (#2046). The Stop-button probe this
+      // replaces ignored its timeout, so the reply was read while still empty.
+      await sendAndAwaitPlaygroundTurn(page);
 
       const responseText = await page
         .getByTestId("div-chat-message")
@@ -317,9 +307,11 @@ test.describe("Language Model Component Regression", () => {
 
       await page.getByTestId("manage-model-providers").click();
 
-      await expect(page.getByTestId("provider-item-OpenAI")).toBeVisible({
-        timeout: 10000,
-      });
+      // Through waitForProviderRow, at the SAME 10 s budget (#2046): the bare
+      // toBeVisible here was the one caller #1648 did not convert, and on 2026-09-25
+      // it failed while the modal still read `Loading providers..` — a state the
+      // bare wait threw away. A recurrence now names it (PROVIDER_LIST_STALLED, …).
+      await waitForProviderRow(page, "provider-item-OpenAI", 10000);
 
       await page.keyboard.press("Escape");
     },

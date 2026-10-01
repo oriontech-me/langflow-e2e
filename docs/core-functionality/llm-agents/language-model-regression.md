@@ -1,6 +1,6 @@
 # Language Model Component Regression
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev5`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev28`)
 
 ---
 
@@ -109,7 +109,9 @@ class, #606):** if the node's `model_model` widget does not show `/gpt/i`,
 the selection was silently reverted by a `custom_component/update` race —
 re-apply (bounded, 3 attempts), then hard-assert → run the Chat Output
 node → wait `built successfully` (30s) → Playground → send `What is 2+2?`
-→ last AI bubble contains `4`.
+through `sendAndAwaitPlaygroundTurn` (the turn's bot message mounts, then
+`button-stop` clears and `button-send` returns, #2046) → last AI bubble contains
+`4`.
 
 **Google test:** `setupGoogle(page, resolveGeminiModel())` — a deterministic
 Gemini **flash** model pinned from `models.json` (never "first gemini in the
@@ -120,7 +122,8 @@ was silently reverted to the workspace-default model by a
 attempts), then hard-assert the widget shows a Gemini model → run → wait for
 build completion on the Chat Output node's persistent `node_duration_chat
 output` badge (60s, #750 — replaces the transient `built successfully` toast)
-→ Playground → send `Say hello.` → last AI bubble non-empty.
+→ Playground → send `Say hello.` through `sendAndAwaitPlaygroundTurn` → last AI
+bubble non-empty.
 
 **Switch test:** `initialGPTsetup` + `setupGoogle` → save settle → the
 page-level `model_model` trigger shows `/gemini/i`.
@@ -128,7 +131,8 @@ page-level `model_model` trigger shows `/gemini/i`.
 **Dialog test:** select the Language Model **component** node —
 `.react-flow__node:has([data-testid="title-Language Model"])`, the only node
 carrying that title testid — → `hideInspectorPanel` → open `model_model` →
-`manage-model-providers` → `provider-item-OpenAI` visible → Escape. The node
+`manage-model-providers` → `provider-item-OpenAI` visible, waited through
+`waitForProviderRow` at the same 10 s budget (#2046) → Escape. The node
 is NOT resolved by `.filter({ hasText: "Language Model" })`: the template's
 README sticky note contains "Large **Language Model** (LLM)", so that filter
 matches two nodes and `.first()` picks the note (#1469).
@@ -145,7 +149,10 @@ matches two nodes and `.first()` picks the note (#1469).
   **component** — proven by the node it clicks carrying
   `data-testid="title-Language Model"`, which the README sticky note does not —
   and the dialog reached from its `model_model` trigger lists
-  `provider-item-OpenAI`.
+  `provider-item-OpenAI`. When the row does not render, the failure names the
+  provider list's state (`PROVIDER_LIST_STALLED` for still loading, `PROVIDER_LIST_ERROR`,
+  `PROVIDER_LIST_FILTERED`, `PROVIDER_ABSENT`, `PROVIDER_LIST_UNREACHED`) instead of a bare
+  `toBeVisible … element(s) not found`.
 - **Fix #1469 exit criterion:** (a) `openBasicPrompting()` fails at a named,
   attributed canvas seam when the canvas does not mount — the message says
   whether Langflow answered `GET /api/v1/version`, so this collateral is
@@ -311,3 +318,25 @@ matches two nodes and `.first()` picks the note (#1469).
   did answer, and reports UNKNOWN when the probe itself could not run (#1012 —
   an unevaluated probe is not a clean one). Success-path behaviour is unchanged;
   only the failure message differs.
+- **Two waits that threw away what they saw (#2046).**
+  - **Dialog test, 2026-09-25 flake.** It waited on `provider-item-OpenAI` with a
+    bare `toBeVisible` (10 s). The failure-time screenshot shows the modal on
+    `Loading providers..`. The aria snapshot taken moments later lists all nine
+    rows. That is the exact shape #1648 measured (0 of 20 bare-wait call logs got
+    past `waiting for <locator>`), and this was the one caller it did not
+    convert. The wait now goes through
+    `helpers/provider-setup/provider-list-state.ts` → `waitForProviderRow` at the
+    **same** 10 s. The budget is not raised, because #1648's point is to report
+    the stall, not to outwait it. A recurrence now says which of the list's four
+    states it was in. The run's outage recorder read `clear` (0 s down), so if it
+    recurs as `stalled` on a healthy backend, that is the configure fetch itself
+    being slow, which is a lead for upstream.
+  - **The Playground completion wait.** Both run tests probed the Stop button
+    with `isVisible({ timeout: 10000 })`, and that call does not wait. On
+    `1.13.0.dev28` the button renders ~400 ms after Send, together with an
+    **empty** bot bubble (measured in `agent-component-regression`, #2095). The
+    OpenAI test survived it only because `toContainText(/4/)` retries. The Google
+    test read the reply **once**, which matches #2095's row for it
+    (`responseText.trim().length` received 0). Both now send through
+    `helpers/ui/playground-turn.ts`. The Google test stays `test.fixme`: lifting
+    it is #2095's deliverable and needs a live Google key.

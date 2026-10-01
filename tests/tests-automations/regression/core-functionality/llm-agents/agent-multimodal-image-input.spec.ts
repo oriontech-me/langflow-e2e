@@ -4,6 +4,7 @@ import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../.
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -89,14 +90,6 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // The agent's rendered reply, anchored to the AI chat bubble.
 //
 // `.markdown.prose` alone is NOT the reply (#964): the canvas renders 6 of them
@@ -155,11 +148,11 @@ async function openPlayground(page: Page, attachImage: boolean): Promise<void> {
 
 const targets = resolveTestTargets({ tier: "tool-calling", requires: "vision" });
 
-// Serial: each provider block loads the Simple Agent template and runs it, and
-// the Playground work is heavy enough that concurrent provider blocks starve the
-// single backend. (It does NOT protect against flow wiping — load() deletes
-// nothing; teardown is the id-scoped afterEach above.)
-test.describe.configure({ mode: "serial" });
+// No serial mode (#2046). The two tests share no state, and file-level
+// `mode: "serial"` made a failure in one skip the other with an empty reason
+// (08-05, 08-19: the negative control never ran) or re-run it as a retry it never
+// asked for (09-08). Run the file with `--workers=1` per the area rule; teardown
+// is the id-scoped afterEach above.
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
@@ -180,8 +173,7 @@ for (const { label, options, skipReason } of targets) {
         await test.step("attach the image and send it through the input handle", async () => {
           await setChatInputText(page, PROMPT);
           await openPlayground(page, /* attachImage */ true);
-          await page.getByTestId("button-send").last().click();
-          await waitForAgentToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
         });
 
         await test.step("assert the vision model described the image content", async () => {
@@ -216,8 +208,7 @@ for (const { label, options, skipReason } of targets) {
         await test.step("run the same prompt with NO image attached", async () => {
           await setChatInputText(page, PROMPT);
           await openPlayground(page, /* attachImage */ false);
-          await page.getByTestId("button-send").last().click();
-          await waitForAgentToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
         });
 
         await test.step("assert the response does not describe a chain", async () => {
