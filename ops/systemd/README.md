@@ -12,6 +12,7 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-daily-watchdog.timer` | 09:00 UTC on weekdays, `Persistent=true` |
 | `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947). **Records** the answer, never posts |
 | `e2e-shadow.service` | the **image shadow** (#2093): the same suite against the published image of the version the daily served, on its own ports, worktree, ledger and logs, publishing nothing. **No timer**: `ops/vm/request-shadow.sh` starts it with `--no-block` at the end of the daily, and `After=e2e-daily.service` holds it until the daily's unit has finished |
+| `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7890-7893, echo 8100, ollama 11454), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00 |
 | `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
 
 ## Two asymmetries that look like inconsistencies and are not
@@ -54,7 +55,7 @@ cp -r ops/systemd/e2e-daily.service ops/systemd/e2e-daily.timer \
       ops/systemd/e2e-daily-watchdog.service ops/systemd/e2e-daily-watchdog.timer \
       ops/systemd/e2e-mirror-freshness.service ops/systemd/e2e-mirror-freshness.timer \
       ops/systemd/e2e-mirror-freshness-announce.service ops/systemd/e2e-mirror-freshness-announce.timer \
-      ops/systemd/e2e-shadow.service \
+      ops/systemd/e2e-shadow.service ops/systemd/e2e-on-demand.service \
       /etc/systemd/system/
 mkdir -p /etc/systemd/system/e2e-daily.service.d
 cp ops/systemd/e2e-daily.service.d/10-target-dist.conf /etc/systemd/system/e2e-daily.service.d/
@@ -67,6 +68,29 @@ The `.service` units carry no `[Install]` section by design: each is pulled by i
 timer's `Unit=`, so only the timers are enabled. `e2e-shadow.service` has no timer
 either: it is installed and never enabled, and the daily asks for it. Removing it is the
 shadow's rollback, and the daily then logs `shadow: NOT requested — … not installed`.
+`e2e-on-demand.service` is the same: installed, never enabled, started for one request.
+
+### Asking for an on-demand run by hand
+
+Write the request, then start the unit. The request is **parsed, never sourced**: five
+known keys, each checked against its shape, anything else refused (see the header of
+`ops/vm/run-on-demand.sh`).
+
+```sh
+mkdir -p /root/e2e-on-demand
+cat > /root/e2e-on-demand/request.env <<'REQ'
+ONDEMAND_ID=hand-20261001-1
+ONDEMAND_REF=release-1.13.0
+ONDEMAND_PROVIDER=anthropic
+ONDEMAND_REQUESTED_BY=victor
+REQ
+systemctl start --no-block e2e-on-demand.service
+```
+
+The answer is `/root/e2e-on-demand/results/<id>.env`: `STATUS` (`refused`,
+`build_failed`, `failed` or `done`), `VERDICT` for a run that reached one, `RUN_ID`,
+the target's ref, commit and version, the suite commit, and `CLEANUP`. The log is
+`/var/log/e2e-on-demand/latest.log`.
 
 ## Verify
 
@@ -74,7 +98,7 @@ shadow's rollback, and the daily then logs `shadow: NOT requested — … not in
 for f in e2e-daily.service e2e-daily.timer e2e-daily-watchdog.service \
          e2e-daily-watchdog.timer e2e-mirror-freshness.service e2e-mirror-freshness.timer \
          e2e-mirror-freshness-announce.service e2e-mirror-freshness-announce.timer \
-         e2e-shadow.service; do
+         e2e-shadow.service e2e-on-demand.service; do
   diff -q "ops/systemd/$f" "/etc/systemd/system/$f" || echo "$f DIFFERS"
 done
 diff -q ops/systemd/e2e-daily.service.d/10-target-dist.conf \

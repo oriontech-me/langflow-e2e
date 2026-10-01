@@ -1,0 +1,27 @@
+[Unit]
+# The on-demand run: one @stable run against one branch of upstream, built into an image
+# on this machine, answering the request in /root/e2e-on-demand/request.env. No
+# consequence: it publishes nothing (see the wrapper).
+#
+# No timer, on purpose: it runs when asked. The daily has priority over it -- the
+# wrapper refuses to start in the daily's window or beside the daily or the shadow, and
+# run-daily.sh stops it if it is still going when the daily starts.
+#
+# No Conflicts= with the daily, deliberately: Conflicts= is symmetric, so starting this
+# unit by hand during the daily would STOP THE DAILY. The priority is one-way, and so is
+# the mechanism.
+Description=E2E @stable on-demand run of an upstream branch (VM lane, no consequence)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service (#1715), and run-e2e.sh needs it.
+Environment=HOME=/root
+ExecStart=/root/e2e-qa/ops/vm/run-on-demand.sh
+# About 5 minutes of build and 18 of suite, measured 2026-09-30. Well above both, so a
+# slow run is not mistaken for a hung one.
+TimeoutStartSec=90min
+# The wrapper's cleanup runs on SIGTERM too -- containers, images, build cache,
+# worktree -- and must not be cut short by systemd's default 90 s.
+TimeoutStopSec=5min
