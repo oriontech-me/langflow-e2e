@@ -31,6 +31,10 @@ import {
  *     less: the value had already been destroyed.
  *   - delivery asserted alone passes on a build that masks nothing.
  *
+ * A SECOND HOP (#2049): the echoing node is also the relay into two more nodes
+ * that read ITS output. They sit two edges from the secret and learn it only
+ * through what the relay inherited — the one reading a single edge cannot make.
+ *
  * `security/credential-secret-exposure.spec.ts` (#7313) covers a credential
  * reaching ONE node and none of the observable surfaces; its flow is deliberately
  * independent ROOT nodes with no edges, so this mechanism is outside it.
@@ -83,7 +87,7 @@ test.describe("A credential crossing a graph edge is real to execution and maske
   test.beforeAll(async ({ request }) => {
     // The run happens HERE, once, because every test below is a reading of the
     // same response — that simultaneity is the file's claim. A broken run fails
-    // here with its cause named instead of producing four confusing reds.
+    // here with its cause named instead of producing a column of confusing reds.
     expect(
       SENTINEL.length,
       "the sentinel must not be the mask's length, or the delivery assertion cannot " +
@@ -212,6 +216,43 @@ test.describe("A credential crossing a graph edge is real to execution and maske
       const echo = readings.get(SECRET_EDGE_NODE_IDS.echo);
       expect(echo?.text).toBe(MASK);
       expect(echo?.raw ?? "").not.toContain(SENTINEL);
+    },
+  );
+
+  test(
+    "the real secret survives a second hop",
+    { tag: ["@stable", "@api", "@regression"] },
+    async () => {
+      // This node reads the RELAY — the echoing node above — not the upstream, so
+      // what it measures is what the relay forwarded out of its own `Output.value`
+      // cache: a cache whose node never declared the secret. A relay that forwarded
+      // the mask it displays reads 10 here.
+      //
+      // It is also what makes the next test non-vacuous: had the relay forwarded
+      // `**********`, the hop-2 echo would be masked on a build that propagates
+      // nothing at all.
+      const hop2Measure = readings.get(SECRET_EDGE_NODE_IDS.hop2Measure);
+      expect(hop2Measure?.text).toBe(`${RECEIVED_LEN_PREFIX}${SENTINEL.length}`);
+    },
+  );
+
+  test(
+    "a downstream two hops from the secret is masked too",
+    { tag: ["@stable", "@api", "@regression"] },
+    async () => {
+      // The reading only a second hop can make (#2049). Metadata does not ride the
+      // edge as a value: a requester copies the SOURCE component's secret set when
+      // it reads the source, and merges it into its own at build time. This node
+      // copies from the relay, which knows the secret only through that merge — so
+      // inheritance that stopped one level deep leaves every hop-1 test above green
+      // and puts the plaintext HERE. Measured on a patched 1.13.0.dev29 backend
+      // (spec doc, "Why a second hop is not a repetition of the first").
+      const hop2Echo = readings.get(SECRET_EDGE_NODE_IDS.hop2Echo);
+      expect(hop2Echo?.text).toBe(MASK);
+      expect(
+        hop2Echo?.raw ?? "",
+        "the hop-2 echo's own slice must not carry the secret anywhere",
+      ).not.toContain(SENTINEL);
     },
   );
 

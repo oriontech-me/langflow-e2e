@@ -2,7 +2,7 @@
 
 **File:** `tests/tests-automations/regression/security/credential-secret-across-edges.spec.ts`
 
-**Last validated:** Langflow 1.12.0.dev38 (`langflowai/langflow-nightly:latest`, `package: "Langflow Nightly"`)
+**Last validated:** Langflow 1.13.0.dev29 (`langflowai/langflow-nightly:latest`, `package: "Langflow Nightly"`)
 
 ---
 
@@ -39,22 +39,26 @@ run**.
 
 ### The measured contract
 
-One `POST /api/v1/run/{flow_id}?stream=false` with `output_type: "debug"`, on a three-node
-custom-component graph fed by a `Credential` global variable holding a **22-character**
-sentinel. `A` emits the resolved secret onto its single output; `B` and `C` both read that
-same output.
+One `POST /api/v1/run/{flow_id}?stream=false` with `output_type: "debug"`, on a five-node
+custom-component graph fed by a `Credential` global variable holding a **29-character**
+sentinel (`EDGE-SECRET-SENTINEL-` plus a base-36 timestamp — the spec reads the length off the
+string rather than trusting a literal). `A` emits the resolved secret onto its single output;
+`B` and `C` both read that same output; and `C` — which re-emits what it received — is also
+the **relay** into a second hop, whose `D` and `E` both read `C`'s output.
 
-| node | code | `artifacts.output.repr` text | mask | sentinel |
-|---|---|---|---|---|
-| `A` upstream | `SecretStrInput` → `Message(text=self.<field>)` | `**********` | present | absent |
-| `B` measure | `Message(text=f"received_len={len(got)}")` | `received_len=22` | absent | absent |
-| `C` echo | `Message(text=got)` | `**********` | present | absent |
+| node | hop | reads | code | `artifacts.output.repr` text | mask | sentinel |
+|---|---|---|---|---|---|---|
+| `A` upstream | 0 | the credential | `SecretStrInput` → `Message(text=self.<field>)` | `**********` | present | absent |
+| `B` measure | 1 | `A` | `Message(text=f"received_len={len(got)}")` | `received_len=29` | absent | absent |
+| `C` echo / relay | 1 | `A` | `Message(text=got)` | `**********` | present | absent |
+| `D` measure | 2 | `C` | same as `B` | `received_len=29` | absent | absent |
+| `E` echo | 2 | `C` | same as `C` | `**********` | present | absent |
 
 Plus: the sentinel literal appears **nowhere** in the whole response body.
 
-Three properties make this worth a spec rather than one assertion.
+Four properties make this worth a spec rather than one assertion.
 
-**`22`, not `10`, is the entire discriminator.** The mask is `**********` — ten characters —
+**`29`, not `10`, is the entire discriminator.** The mask is `**********` — ten characters —
 so a sentinel of length 10 makes the delivery assertion impossible to distinguish from the
 defect. With the pre-fix behaviour `B` reads `received_len=10`. The spec asserts the sentinel's
 length is not 10, in the test, so a future edit that shortens it fails loudly instead of
@@ -63,7 +67,7 @@ quietly disarming the file.
 **`B` is also the control that the credential resolved.** A length is impossible to produce
 without having resolved the credential and discloses nothing (the idea
 `credential-secret-exposure.spec.ts` established). Had the variable failed to resolve, `A`
-emits `""` and `B` reads `received_len=0` — distinguishable from both 22 and 10. So every
+emits `""` and `B` reads `received_len=0` — distinguishable from both 29 and 10. So every
 masking assertion in this file is non-vacuous by construction.
 
 **The fan-out makes simultaneity literal.** `B` and `C` read the *same* upstream output on the
@@ -71,7 +75,41 @@ masking assertion in this file is non-vacuous by construction.
 therefore one measurement rather than two runs compared after the fact — and `C` is the half
 that pins the metadata propagation: a downstream re-emitting a secret it legitimately received
 is still masked, which is exactly the exposure `_build_results()`-only masking would have left
-open.
+open. The second hop repeats the same fan-out one level down, on the same run.
+
+### Why a second hop is not a repetition of the first
+
+The metadata does not travel on the edge as a value; it travels by **inheritance between
+components**, and that is what makes the second hop a different measurement. Read in the
+image (`lfx/graph/vertex/base.py`, `1.13.0.dev29`): when a downstream asks an upstream for its
+result, `get_result()` calls `requester._inherit_secret_values(self)`, which copies the
+**source component's** `_secret_values` into the requester's `_upstream_secret_values`; when the
+requester is then built, that set is merged into its own component's `_secret_values`, which
+is what `_sanitize_secret_values()` masks display copies against.
+
+So at hop 1 every node learns the secret from `A`, whose `_secret_values` holds it because `A`
+**declared** a `password=True` input. At hop 2, `D` and `E` learn it from `C` — a node that
+declared no secret at all and knows it **only because its own build merged what it inherited**.
+A regression that kept inheritance one level deep — masking a node's display against the
+inherited set locally instead of merging it into the set the next node copies — leaves every
+hop-1 assertion green and puts the plaintext on `E`'s display. Only a node two hops from the
+secret can see that.
+
+**Measured, not argued.** On a throwaway local `1.13.0.dev29` container, `_inherit_secret_values`
+was patched to copy only the secrets the source **declared**
+(`… _secret_values - source_vertex._upstream_secret_values`) — inheritance one level deep —
+and the same graph was run: `A` and `C` still read `**********`, `B` still read
+`received_len=29`, and `E` read the **sentinel in plaintext**. Every assertion the three-node
+graph could make was green on that build. The patch was reverted and the same run read healthy
+again (all five rows as in the table above).
+
+Delivery at hop 2 is the weaker half and is stated as such: `D` reads `C`'s `Output.value`
+cache, the first cache in the graph whose node never declared the secret, so it is the reading
+that would catch an in-place sanitization keyed on *inherited* secrets — but the in-place
+sanitization #14216 removed would already redden `B` at hop 1. `D` is kept because `E`'s mask is
+only meaningful if `C` forwarded the **real** value: had `C` forwarded the mask, `E` would read
+`**********` on a build that propagates nothing, and `D`'s `received_len=29` is what rules that
+out — the same pairing hop 1 relies on, for the same reason.
 
 ---
 
@@ -94,13 +132,17 @@ so the whole file costs about what one of the `tweaks-*` siblings does), **4 for
 mutations each verified red and reverted**, and a post-revert green run (4/4, 2.4 s). 0 backend
 errors, 0 skipped.
 
+The two second-hop tests (#2049) enter with the same three tags in the PR that adds them, per
+that same `CONTRIBUTING.md` rule: they are readings of the run `beforeAll` already makes, so they
+add no run, no provider dependency and no new instance requirement to the daily.
+
 ---
 
 ## Preconditions *(required)*
 
 - `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true`. The image ships it **false** (#668/#746), and with
-  it off the custom code never executes — `B` would report nothing and the file must fail
-  loudly rather than pass vacuously. Both start scripts and every CI lane set it.
+  it off the custom code never executes — no node would report anything and the file must
+  fail loudly rather than pass vacuously. Both start scripts and every CI lane set it.
 - `auto_login`, for the bearer token and the minted API key.
 - No provider key, no model, no external network.
 
@@ -110,42 +152,55 @@ errors, 0 skipped.
 
 `beforeAll` does the setup and **the single run**, because every assertion below is a reading
 of that one response and the file's claim is that they are simultaneous. It asserts the run
-answered `200` and carried all three nodes, so a broken run fails there — with the cause named
-— instead of producing three confusing reds downstream.
+answered `200` and carried all five nodes, so a broken run fails there — with the cause named
+— instead of producing a column of confusing reds downstream.
 
 1. **Seed the credential.** `POST /api/v1/variables/` with `type: "Credential"` and a
-   22-character sentinel. Its length is asserted `!== 10` right there.
-2. **Build the graph.** Three `CustomComponent` nodes from the live catalog and two edges, both
-   from `A`'s single output: `A → B` and `A → C`.
+   29-character sentinel. Its length is asserted `!== 10` right there.
+2. **Build the graph.** Five `CustomComponent` nodes from the live catalog and four edges: two
+   from `A`'s single output (`A → B`, `A → C`) and two from `C`'s (`C → D`, `C → E`). `D` and `E`
+   carry the same code as `B` and `C`; the only thing that differs is which node they read.
 3. **Run once.** `POST /api/v1/run/{flow_id}?stream=false`, `output_type: "debug"` so every
    vertex reports. Readings are keyed by `component_id`, so each assertion names the node it
    is about rather than searching the blob.
-4. **`B` proves the edge delivered the real value** — its text is `received_len=22`. Asserted
+4. **`B` proves the edge delivered the real value** — its text is `received_len=29`. Asserted
    as the exact length, not merely "not 10": a wrong-but-plausible length would mean the value
    was transformed on the way.
 5. **`A`'s display copy is masked** — its text is exactly `**********`, and does not contain the
    sentinel.
 6. **`C` is masked too** — the propagation half. A downstream re-emitting the secret still
    shows the mask.
-7. **The sentinel appears nowhere in the response body** — asserted over the whole payload, not
+7. **`D` proves the real value survived a second hop** — its text is `received_len=29`, read
+   off `C`'s output: the relay forwarded the value it received, not the mask it displays. It is
+   also what makes the next step non-vacuous — a relay that forwarded `**********` would leave
+   `E` masked on a build that propagates nothing.
+8. **`E` is masked two hops from the secret** — its text is exactly `**********` and its slice
+   carries no sentinel. `E` learns the secret from `C`, which never declared it; this is the
+   reading that fails when inheritance stops one level deep (see *Why a second hop is not a
+   repetition of the first*).
+9. **The sentinel appears nowhere in the response body** — asserted over the whole payload, not
    one node's slice: "not in that node" says nothing about the other surfaces the same run
-   writes.
-8. **Cleanup.** `afterAll` deletes the flow, revokes the API key, and deletes the credential
+   writes. On five nodes this also spans the second hop.
+10. **Cleanup.** `afterAll` deletes the flow, revokes the API key, and deletes the credential
    variable. Ids are recorded before any assertion that can throw.
 
 ---
 
 ## Validation criterion *(required)*
 
-- On one run: `B` reads `received_len=<len(sentinel)>`, `A` and `C` both read exactly the mask,
-  and the sentinel literal is absent from the entire response.
+- On one run: `B` and `D` both read `received_len=<len(sentinel)>`, `A`, `C` and `E` all read
+  exactly the mask, and the sentinel literal is absent from the entire response.
 - The sentinel's length is not 10, asserted in the spec.
 
 **Force-fail evidence.** The two mutations that matter are opposite, and each is the reading of
 a real regression: requiring `B` to read the mask's length (`received_len=10`) is the pre-fix
 defect, and requiring `C` to contain the sentinel is the leak that `_build_results()`-only
 masking would have produced. A mutation on the "sentinel absent" assertion alone proves less —
-it reddens on a healthy build too.
+it reddens on a healthy build too. The second hop has the same pair one level down: requiring
+`D` to read `received_len=10` is a relay that forwarded the mask, and requiring `E` to contain
+the sentinel is the one-level-inheritance leak — which, unlike the hop-1 pair, was also
+reproduced against a patched backend (see the measurement above), so that FF is the reading of
+a regression observed, not only of one argued.
 
 ---
 
@@ -160,9 +215,13 @@ it reddens on a healthy build too.
   env-var-sourced value that never becomes a `SecretStrInput` is a different mechanism, and
   `credential-secret-exposure.spec.ts` already covers the type-vs-name distinction that
   #7313 was about.
-- **Multi-hop propagation.** One edge is asserted. Whether the metadata survives `A → B → C`
-  is a plausible follow-up; a single hop is what #14216's root cause describes and what a
-  regression in `Output.value` would break first.
+- **Chains longer than two hops.** Two hops is the first depth at which a node learns the secret
+  from a node that only inherited it; a third hop repeats that same merge-then-copy step with
+  nothing new behind it, so it would add a node and no discriminating power.
+- **A relay that transforms the secret.** `C` forwards the value unchanged. A downstream that
+  derives a new string *from* a secret (a hash, a substring) produces a value the sanitizer
+  matches by literal replacement and cannot recognise; whether it should is a product question,
+  not this file's.
 
 ---
 
@@ -172,7 +231,11 @@ it reddens on a healthy build too.
   `_build_results`, where the in-place sanitization was and where the masking moved to.
 - `src/lfx/src/lfx/graph/vertex/base.py` — `_get_result`, which prefers the `Output.value`
   cache for connected edges. This preference is what turned an in-place mask into a delivery
-  bug.
+  bug. Also `get_result` → `_inherit_secret_values`, which copies the source component's
+  `_secret_values` into the requester, and the build step that merges `_upstream_secret_values`
+  into the requester's own component — the two halves the second hop depends on.
+- `src/lfx/src/lfx/custom/custom_component/component.py` — `_sanitize_secret_values`, the
+  literal replacement every display copy goes through, against the merged set.
 - **Langflow API** — `GET /api/v1/auto_login`, `GET /api/v1/all` (the `CustomComponent`
   template the nodes are built from), `POST /api/v1/variables/`, `POST /api/v1/flows/`,
   `POST /api/v1/api_key/`, `POST /api/v1/run/{id}`, and the matching `DELETE`s.

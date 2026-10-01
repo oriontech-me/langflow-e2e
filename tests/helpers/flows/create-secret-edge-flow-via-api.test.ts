@@ -1,8 +1,9 @@
 // Unit tests for the secret-across-edges flow builder.
 // Run with: npm run test:units
 //
-// The builder wires a credential-fed node to two downstreams so a spec can prove
-// the edge carries the REAL value while every display copy carries the mask. Two
+// The builder wires a credential-fed node to two downstreams — and the echoing one
+// on to two more, a second hop (#2049) — so a spec can prove the edges carry the
+// REAL value while every display copy carries the mask. Two
 // traps here are silent AND indistinguishable from each other by their error
 // message — Langflow reports both as "Edge between CustomComponent and
 // CustomComponent has no matched type" — so each gets its own assertion:
@@ -61,21 +62,49 @@ function nodeById(data: ReturnType<typeof buildSecretEdgeFlowData>, id: string) 
   return n;
 }
 
-test("the graph is three nodes and two edges, both from the upstream's one output", () => {
+test("the graph is five nodes and four edges: a fan-out at each of two hops", () => {
   // The fan-out is what makes the spec's claim simultaneous: the measuring and
   // the echoing downstream read the SAME upstream output on the SAME run, so
   // "real to execution, masked to display" is one measurement rather than two.
+  // The echoing node is also the RELAY into the second hop, whose two nodes read
+  // ITS output — that is what puts a node two edges away from the secret.
   const data = buildSecretEdgeFlowData(catalogFixture(), opts());
-  assert.equal(data.nodes.length, 3);
-  assert.equal(data.edges.length, 2);
-  const { upstream, measure, echo } = SECRET_EDGE_NODE_IDS;
+  assert.equal(data.nodes.length, 5);
+  assert.equal(data.edges.length, 4);
+  const { upstream, measure, echo, hop2Measure, hop2Echo } = SECRET_EDGE_NODE_IDS;
   assert.deepEqual(
     data.edges.map((e) => [e.source, e.target]).sort(),
     [
       [upstream, echo],
       [upstream, measure],
+      [echo, hop2Measure],
+      [echo, hop2Echo],
     ].sort(),
   );
+});
+
+test("the second hop reads the relay, never the upstream", () => {
+  // If a hop-2 node were wired to the upstream it would learn the secret from a
+  // node that DECLARED it — a second hop-1 reading under a hop-2 name, green on
+  // exactly the one-level-inheritance regression the second hop exists to catch.
+  const data = buildSecretEdgeFlowData(catalogFixture(), opts());
+  const { upstream, hop2Measure, hop2Echo } = SECRET_EDGE_NODE_IDS;
+  for (const target of [hop2Measure, hop2Echo]) {
+    const incoming = data.edges.filter((e) => e.target === target);
+    assert.equal(incoming.length, 1, `${target} must have exactly one incoming edge`);
+    assert.notEqual(incoming[0].source, upstream, `${target} must not read the upstream`);
+    assert.equal(unescapeHandle(incoming[0].sourceHandle).id, incoming[0].source);
+  }
+});
+
+test("each hop-2 node runs the same code as its hop-1 counterpart", () => {
+  // The only variable between the hops is WHICH node a downstream reads. Different
+  // code would make a hop-2 difference attributable to the code instead.
+  const data = buildSecretEdgeFlowData(catalogFixture(), opts());
+  const code = (id: string) => String(nodeById(data, id).data.node.template.code.value);
+  const ids = SECRET_EDGE_NODE_IDS;
+  assert.equal(code(ids.hop2Measure), code(ids.measure));
+  assert.equal(code(ids.hop2Echo), code(ids.echo));
 });
 
 test("the upstream binds the credential by NAME with load_from_db on", () => {
@@ -164,17 +193,27 @@ test("the mask is ten characters, which is why a sentinel may not be", () => {
   assert.equal(MASK, "**********");
 });
 
-test("three nodes built from one catalog do not share mutated state", () => {
+test("nodes built from one catalog do not share mutated state", () => {
   // Every node is a deep copy: without it the upstream's secret field would
   // appear on the downstreams too, and the graph would resolve the credential
-  // three times instead of carrying it across an edge — passing for the wrong
-  // reason.
+  // once per node instead of carrying it across an edge — passing for the wrong
+  // reason. On the second hop that would be worse than vacuous: a hop-2 node
+  // declaring the secret itself learns it without any inheritance at all.
   const data = buildSecretEdgeFlowData(catalogFixture(), opts());
-  const measure = nodeById(data, SECRET_EDGE_NODE_IDS.measure).data.node.template;
-  const echo = nodeById(data, SECRET_EDGE_NODE_IDS.echo).data.node.template;
-  assert.equal(SECRET_FIELD in measure, false, "the secret field must not leak downstream");
-  assert.equal(SECRET_FIELD in echo, false);
-  assert.notEqual(measure.code.value, echo.code.value);
+  const { upstream, measure, echo } = SECRET_EDGE_NODE_IDS;
+  for (const n of data.nodes) {
+    if (n.id === upstream) continue;
+    assert.equal(
+      SECRET_FIELD in n.data.node.template,
+      false,
+      `the secret field must not leak onto ${n.id}`,
+    );
+  }
+  assert.notEqual(
+    nodeById(data, measure).data.node.template.code.value,
+    nodeById(data, echo).data.node.template.code.value,
+  );
+  assert.equal(new Set(data.nodes.map((n) => n.id)).size, data.nodes.length, "node ids are unique");
 });
 
 test("a catalog without CustomComponent throws, naming it", () => {
