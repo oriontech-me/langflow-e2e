@@ -24,9 +24,12 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-test(
+// Quarantined for #2129: recurrent flake on the VM lane (2026-09-10 on 1.13.0.dev8,
+// 2026-10-01 on 1.13.0.dev29), the image description comes back at 50 characters or fewer.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2129's deliverable.
+test.fixme(
   "user must be able to send images in the playground with the agent component",
-  { tag: ["@stable", "@release", "@components", "@agents"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     // A real multimodal completion runs below, so gate on provider HEALTH, not on
     // the env var alone — a drained key would block the backend past gunicorn's
