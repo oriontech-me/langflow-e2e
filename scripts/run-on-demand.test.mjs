@@ -49,6 +49,10 @@ function setup({
   psFails = false,
   shadowDate = null,
   leftovers = false,
+  verdict = [],
+  preError = null,
+  modelRefused = null,
+  orphans = [],
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -67,14 +71,17 @@ echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(envOut)
 echo "ledger_seen=$(cat "$LEDGER_DIR/daily-history.jsonl" 2>/dev/null | tr -d '\n')" >> ${q(envOut)}
 echo '{"row":"on-demand"}' >> "$LEDGER_DIR/daily-history.jsonl"
 sleep ${runSleep}
+${preError ? `printf '\\033[1;31m::error:: %s\\033[0m\\n' ${q(preError)} >&2` : ""}
 ${writeResults ? 'mkdir -p "$RUNS_ROOT/$RUN_ID" && echo "{}" > "$RUNS_ROOT/$RUN_ID/results.json"' : ""}
+${modelRefused ? `mkdir -p "$RUNS_ROOT/$RUN_ID/logs" && echo ${q(modelRefused)} > "$RUNS_ROOT/$RUN_ID/logs/shard-2.model-refused"` : ""}
+${verdict.length ? `printf '\\n\\033[1;36m==> %s\\033[0m\\n' Verdict\n${verdict.map((v) => `printf '\\033[1;31m::error:: %s\\033[0m\\n' ${q(v)} >&2`).join("\n")}` : ""}
 exit ${runExit}
 `,
     { mode: 0o755 },
   );
   writeFileSync(
     join(repo, "ops", "vm", "build-target-image.sh"),
-    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
+    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\necho "::error:: an error line from before the run" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
     { mode: 0o755 },
   );
   writeFileSync(join(dir, "build.out"), buildOut ? `${buildOut}\n` : "");
@@ -123,6 +130,15 @@ esac`);
   const shadowState = join(dir, "shadow-state");
   mkdirSync(shadowState);
   if (shadowRequest) writeFileSync(join(shadowState, "request.env"), `SHADOW_DATE=${shadowDate ?? new Date().toISOString().slice(0, 10)}\nSHADOW_VERSION=1\n`);
+  if (orphans.length) {
+    mkdirSync(join(state, "requests"), { recursive: true });
+    writeFileSync(join(state, "requests", "unparsed-20260101T000000Z-1.env"), "ONDEMAND_ID=../x\n");
+  }
+  for (const [id, answered] of orphans) {
+    mkdirSync(join(state, "requests"), { recursive: true });
+    writeFileSync(join(state, "requests", `${id}.env`), `ONDEMAND_ID=${id}\nONDEMAND_REF=x\n`);
+    if (answered) writeFileSync(join(state, "results", `${id}.env`), "STATUS=done\nORIGINAL=1\n");
+  }
   if (leftovers) {
     mkdirSync(join(state, "builds", "src-aaaaaaaaaaaa-XYZ"), { recursive: true });
     mkdirSync(join(state, "ledger-killed-run"), { recursive: true });
@@ -272,6 +288,59 @@ test("a red run is done/red, exit 1; a run with no results.json is failed, exit 
   assert.match(died.result["req-1"].REASON, /without a results\.json/);
 });
 
+test("the result carries run-e2e.sh's own verdict lines, and green says green", () => {
+  const green = onDemand();
+  assert.equal(green.result["req-1"].REASON, "the suite ran green");
+  const red = onDemand({ runExit: 1, preError: "a warning-level error before the verdict", verdict: ["at least one shard had a failing test."] });
+  assert.equal(red.result["req-1"].STATUS, "done");
+  assert.equal(red.result["req-1"].REASON, "the suite ran red: at least one shard had a failing test.", "only the verdict's lines, without ANSI");
+});
+
+test("a declared provider run-e2e.sh refused is the request's fault: refused, even after the build", () => {
+  // A typo passes the shape check; collect-models finds no such provider active.
+  const r = onDemand({ runExit: 1, writeResults: false, modelRefused: "antropic is not active (probed: openai, anthropic, google)", verdict: ["the declared provider could not be used: antropic is not active"] });
+  assert.equal(r.status, 2, r.log);
+  assert.equal(r.result["req-1"].STATUS, "refused");
+  assert.match(r.result["req-1"].REASON, /declared provider could not be used.*antropic is not active/);
+  // Even with a report: no agent spec ran, so it is not a product verdict.
+  const withReport = onDemand({ runExit: 1, modelRefused: "antropic is not active" });
+  assert.equal(withReport.result["req-1"].STATUS, "refused");
+});
+
+test("a run that served another version is failed, never done/red, whatever its report says", () => {
+  for (const line of ["the target served the wrong Langflow — exact: served 1.12.4, declared 1.13.0.", "the version check could not be performed (unchecked)."]) {
+    const r = onDemand({ runExit: 1, verdict: ["at least one shard had a failing test.", line] });
+    assert.equal(r.status, 3, line);
+    assert.equal(r.result["req-1"].STATUS, "failed", line);
+    assert.equal(r.result["req-1"].VERDICT, "", `${line}: a verdict was given for a target the run did not measure`);
+    assert.match(r.result["req-1"].REASON, /says nothing about release-1\.13\.0 @ bbbbbbbbbbbb/);
+  }
+});
+
+test("a run with no results.json says why in run-e2e.sh's words: the verdict's, else its last error", () => {
+  const merge = onDemand({ runExit: 1, writeResults: false, verdict: ["the shards RAN and the MERGE failed — there is no report to read, and the tests are not what broke."] });
+  assert.equal(merge.result["req-1"].STATUS, "failed");
+  assert.match(merge.result["req-1"].REASON, /the MERGE failed/);
+  const preflight = onDemand({ runExit: 1, writeResults: false, preError: "only 12 GB free here, and a run needs at least 20" });
+  assert.match(preflight.result["req-1"].REASON, /only 12 GB free here/);
+  // Only this run's lines: the build, before it, wrote one of its own to the same log.
+  const silent = onDemand({ runExit: 1, writeResults: false });
+  assert.doesNotMatch(silent.result["req-1"].REASON, /from before the run/);
+  assert.match(silent.result["req-1"].REASON, /no reason given/);
+});
+
+test("a request a killed run consumed and never answered is answered failed by the next start", () => {
+  // SIGKILL, an OOM kill or a reboot never run the EXIT trap that writes the result.
+  const r = onDemand({ orphans: [["killed-1", false], ["answered-1", true]] });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.result["killed-1"].STATUS, "failed");
+  assert.match(r.result["killed-1"].REASON, /^interrupted/);
+  assert.equal(r.result["answered-1"].ORIGINAL, "1", "an answered request was answered again");
+  assert.equal(r.result["req-1"].STATUS, "done", "the start's own request was not served");
+  // Not an orphan of its own making, and a kept unparsed copy is never one.
+  assert.ok(!Object.keys(r.result).some((k) => k.startsWith("unparsed-")));
+});
+
 // ---------------------------------------------------------------------------
 // The request is data
 // ---------------------------------------------------------------------------
@@ -400,13 +469,14 @@ test("a lock held by another run refuses without consuming the request", () => {
 // ---------------------------------------------------------------------------
 
 test("each build status maps to its own outcome, and the suite never runs after one", () => {
-  for (const [buildExit, status, exit] of [[2, "refused", 2], [3, "failed", 3], [7, "failed", 3], [4, "build_failed", 4], [5, "build_failed", 4], [6, "build_failed", 4]]) {
+  for (const [buildExit, status, exit] of [[2, "refused", 2], [3, "failed", 3], [7, "failed", 3], [4, "build_failed", 4], [5, "build_failed", 4], [6, "build_failed", 4], [1, "failed", 3], [126, "failed", 3], [127, "failed", 3]]) {
     const r = onDemand({ buildExit, buildOut: "" });
     assert.equal(r.status, exit, `build ${buildExit}: ${r.log}`);
     assert.equal(r.result["req-1"].STATUS, status, `build ${buildExit}`);
     assert.equal(r.env, null, `build ${buildExit}: run-e2e.sh ran`);
     assert.match(r.log, /some refusal line/, "the build's own reason did not reach the log");
     assert.match(r.result["req-1"].REASON, /: some refusal line$/, `build ${buildExit}: the build's own reason did not reach the result`);
+    if (buildExit === 1 || buildExit > 7) assert.match(r.result["req-1"].REASON, /not the branch/, `build ${buildExit} was charged to the branch`);
   }
 });
 

@@ -87,6 +87,9 @@ REQ
 systemctl start --no-block e2e-on-demand.service
 ```
 
+Its cleanup runs `docker builder prune -af`, which is **machine-wide**: harmless while no
+other lane builds an image on the qa, and the first thing to change when one does.
+
 There is **one request slot**. A start while a run is going is joined to that run's
 job by systemd and answers nothing, so write the next request only after the running
 one's result exists, and start the unit again.

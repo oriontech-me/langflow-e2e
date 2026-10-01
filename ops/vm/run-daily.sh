@@ -111,7 +111,9 @@ main() {
   esac
   # The same priority over the on-demand run. That one refuses to START in the daily's
   # window, but a run started just before it, or a slow build, can still be going at
-  # 08:00. Its wrapper cleans up on SIGTERM, on ports no other lane uses.
+  # 08:00. Its wrapper cleans up on SIGTERM, on ports no other lane uses. `systemctl
+  # stop` waits for that cleanup, so on such a day the daily starts late by its length:
+  # seconds as measured, at most the unit's TimeoutStopSec (5 min).
   local ondemand_state
   ondemand_state="$(systemctl show -p ActiveState --value e2e-on-demand.service 2>/dev/null || true)"
   case "$ondemand_state" in

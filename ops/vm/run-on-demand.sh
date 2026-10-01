@@ -39,24 +39,34 @@
 # values with no newline. Like the request it is meant to be parsed, not sourced.
 # STATUS is one of:
 #
-#   refused       nothing was built: a malformed request that still names a usable id,
-#                 an id already answered (answered in the log only, so the first
-#                 answer stands), the daily's window, a branch that is not upstream's
-#
-# A start that finds another run holding the lock writes no result and leaves the
-# request in place: there is one request slot, and the queue is the platform's.
+#   refused       the request cannot be served as asked: malformed (when it still
+#                 names a usable id), the daily's window, a branch that is not
+#                 upstream's, or a declared provider collect-models did not find
+#                 active -- the one refusal that comes after the build
 #   build_failed  the commit could not be built the nightly's way, or built wrong
 #   failed        the machine could not do its part (upstream unreachable, no
-#                 tomllib), or the suite did not get as far as a results.json
+#                 tomllib, a build status the script does not use), the run says
+#                 nothing about the declared target (it served another version, or
+#                 the version could not be checked), the suite never wrote a
+#                 results.json, or the run was killed before answering
 #   done          the suite ran; VERDICT says green or red, and RUN_ID finds it
 #
 # and the exit status follows it: 0 done/green, 1 done/red, 2 refused, 3 failed,
-# 4 build_failed.
+# 4 build_failed. REASON carries the words of whoever decided: the build script's
+# refusal, or run-e2e.sh's own verdict lines.
+#
+# An id already answered is refused in the log only, so the first answer stands. A
+# start that finds another run holding the lock writes no result and leaves the
+# request in place: there is one request slot, and the queue is the platform's. A
+# request consumed by a run that was killed before answering it (SIGKILL, OOM, a
+# reboot) is answered `failed` by the next start.
 #
 # ## The daily has priority, always
 #
-#   - A run does not START on a weekday from 07:30 to 08:40 UTC: it takes about 25
-#     minutes, and the daily starts at 08:00 and is followed by the shadow.
+#   - A run does not START on a weekday from 07:30 to 08:40 UTC, and the daily starts
+#     at 08:00 and is followed by the shadow. A run takes about 30 minutes (5:40 of
+#     build and 24 of suite on the qa, 2026-10-01), so one started after about 07:25
+#     will usually be stopped by the daily: the window guards the daily, not the run.
 #   - It does not start while the daily or the shadow is active, or while a shadow
 #     request is waiting to be picked up, whatever the clock says.
 #   - A run already going when the daily starts is stopped by run-daily.sh, the way the
@@ -84,9 +94,10 @@
 #
 # On every exit, including a stop by the daily: the four backend containers removed and
 # checked gone, echo and ollama stopped on this lane's ports, every langflow-ondemand
-# image removed, the build cache pruned (`docker builder prune -af`, never `docker system
-# prune`, which would take the other lanes' images), the worktree and the ledger copy
-# removed. A cleanup that could not confirm the containers gone says so in the result.
+# image removed, the build cache pruned, the worktree and the ledger copy removed.
+# `docker builder prune -af` is MACHINE-WIDE: it takes any build cache on the qa, not
+# only this lane's. No other lane builds today; one that starts to must change this.
+# Never `docker system prune`, which would take the other lanes' images. A cleanup that could not confirm the containers gone says so in the result.
 main() {
   set -uo pipefail
   export HOME="${HOME:-/root}"
@@ -131,6 +142,28 @@ main() {
   flock -n 9 || { echo "REFUSED: another on-demand run holds $STATE/lock — the request is left in place, unanswered; start the unit again once that run ends"; exit 2; }
   # Only now, so a start refused by the lock does not hide the running run's log.
   ln -sfn "$LOG" "$LOG_DIR/latest.log"
+
+  # --- requests a killed run consumed and never answered ----------------------------
+  # Under the lock, so none of them belongs to a run still going. Its EXIT trap is what
+  # writes a result, and SIGKILL, an OOM kill or a reboot never runs it.
+  local orphan oid
+  for orphan in "$STATE"/requests/*.env; do
+    [ -e "$orphan" ] || continue
+    oid="${orphan##*/}"; oid="${oid%.env}"
+    case "$oid" in unparsed-*) continue ;; esac
+    [ -e "$STATE/results/$oid.env" ] && continue
+    {
+      ondemand_kv ONDEMAND_ID "$oid"
+      ondemand_kv STATUS failed
+      ondemand_kv VERDICT ""
+      ondemand_kv REASON "interrupted: the run that took this request was killed before it could answer (SIGKILL, an OOM kill or a reboot); answered by the next start, which clears what it left"
+      ondemand_kv EXIT 3
+      ondemand_kv CLEANUP "by the next run"
+      ondemand_kv FINISHED "$STAMP"
+      ondemand_kv LOG "$LOG"
+    } > "$STATE/results/$oid.env.tmp" && mv -f "$STATE/results/$oid.env.tmp" "$STATE/results/$oid.env"
+    echo "answered orphaned request $oid: failed (interrupted)"
+  done
 
   # --- the request: parsed, consumed, checked ---------------------------------------
   local REQ="$STATE/request.env"
@@ -232,7 +265,10 @@ main() {
     0) ;;
     2) ondemand_refuse "build refused (status 2): ${said:-no reason given}" ;;
     3 | 7) ondemand_fail 3 failed "build could not do its part (status $rc), the machine or the network, not the branch: ${said:-no reason given}" ;;
-    *) ondemand_fail 4 build_failed "build failed (status $rc), not a test result: ${said:-no reason given}" ;;
+    4 | 5 | 6) ondemand_fail 4 build_failed "build failed (status $rc), not a test result: ${said:-no reason given}" ;;
+    # 1, 126, 127, a signal: statuses the script does not use, so the script itself
+    # broke or is missing from the suite commit -- never the branch's doing.
+    *) ondemand_fail 3 failed "build-target-image.sh ended with status $rc, which it does not use: the machine or the suite, not the branch${said:+: $said}" ;;
   esac
   # Read by name, never evaluated: the script's output is the one thing here that came
   # from somewhere a request can influence.
@@ -287,18 +323,34 @@ main() {
   unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR TARGET_VENV PREPARE_TARGET
   mkdir -p "$RUNS_ROOT"
 
+  echo "=== run start $OD_RUN_ID ==="
   ( cd "$OD_WT" && ./scripts/run-e2e.sh ) 9>&-
   rc=$?
   echo "=== run end, exit=$rc ==="
-  # The suite reached a verdict only if it wrote one. run-e2e.sh exits 1 for a red day
-  # and for a run that died in preflight alike; the file is what tells them apart.
-  if [ -f "$RUNS_ROOT/$OD_RUN_ID/results.json" ]; then
+  # run-e2e.sh exits 1 for a red day, for a provider it refused, for a target that
+  # served another version and for a run that died in preflight alike. What tells them
+  # apart is what it left and what its verdict said, so the result says that, in its
+  # words: "red" alone read as product failures for a run that measured nothing.
+  local verdict_errs last_err model_refused
+  verdict_errs="$(ondemand_run_errors verdict)"
+  last_err="$(ondemand_run_errors last)"
+  model_refused="$(cat "$RUNS_ROOT/$OD_RUN_ID"/logs/shard-*.model-refused 2>/dev/null | head -n 1)"
+  if [ -n "$model_refused" ]; then
+    OD_STATUS=refused; OD_EXIT=2
+    OD_REASON="the declared provider could not be used, so the agent specs did not run: $model_refused"
+  elif printf '%s\n' "$verdict_errs" | grep -qE 'served the wrong Langflow|version check (could not|had no)'; then
+    OD_STATUS=failed; OD_EXIT=3
+    OD_REASON="the run says nothing about $OD_REF @ ${OD_TARGET_SHA:0:12}: $verdict_errs"
+  elif [ -f "$RUNS_ROOT/$OD_RUN_ID/results.json" ]; then
     OD_STATUS=done
-    if [ "$rc" = "0" ]; then OD_VERDICT=green; OD_EXIT=0; else OD_VERDICT=red; OD_EXIT=1; fi
-    OD_REASON="the suite ran (run-e2e.sh exit $rc)"
+    if [ "$rc" = "0" ]; then
+      OD_VERDICT=green; OD_EXIT=0; OD_REASON="the suite ran green"
+    else
+      OD_VERDICT=red; OD_EXIT=1; OD_REASON="the suite ran red: ${verdict_errs:-run-e2e.sh exit $rc, no verdict line}"
+    fi
   else
     OD_STATUS=failed; OD_EXIT=3
-    OD_REASON="run-e2e.sh exited $rc without a results.json — the suite never reached a verdict; see $OD_LOG"
+    OD_REASON="run-e2e.sh exited $rc without a results.json, so the suite reached no verdict: ${verdict_errs:-${last_err:-no reason given; see $OD_LOG}}"
   fi
   exit "$OD_EXIT"
 }
@@ -342,6 +394,21 @@ ondemand_parse_request() {
     OD_PARSE_ERR="ONDEMAND_MODEL needs ONDEMAND_PROVIDER: a model is declared for a provider"; return 1
   fi
   return 0
+}
+
+# run-e2e.sh's own ::error:: lines from this run, from this lane's log, ANSI removed.
+# `verdict`: every one its verdict printed, joined; `last`: the last one anywhere in
+# the run, for a run that died before its verdict. At most 600 characters either way.
+ondemand_run_errors() {
+  local section
+  section="$(awk -v m="=== run start $OD_RUN_ID ===" 'f; $0 == m { f = 1 }' "$OD_LOG" 2>/dev/null \
+    | sed $'s/\033\\[[0-9;]*m//g')"
+  if [ "$1" = verdict ]; then
+    section="$(printf '%s\n' "$section" | awk '/^==> Verdict$/ { f = 1; next } f')"
+    printf '%s\n' "$section" | sed -n 's/^::error:: //p' | tr '\n' ' ' | sed 's/  */ /g; s/ $//' | cut -c1-600
+  else
+    printf '%s\n' "$section" | sed -n 's/^::error:: //p' | tail -n 1 | cut -c1-600
+  fi
 }
 
 # A refusal: nothing ran, or nothing more will. Before the request has an id there is
