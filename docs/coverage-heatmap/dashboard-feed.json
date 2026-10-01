@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-09-30",
+ "refreshed": "2026-10-01",
  "refreshWindow": {
-  "testHealthSince": "2026-08-16",
+  "testHealthSince": "2026-08-17",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,21 +38,21 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 811,
-  "bulletsAutomatedUnwatched": 120,
-  "residualRiskTotal": 104.7
+  "bullets": 810,
+  "bulletsAutomatedUnwatched": 122,
+  "residualRiskTotal": 102.6
  },
  "areas": [
   {
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 1,
-   "residualRisk": 9.8,
+   "residualRisk": 9.3,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.61,
-   "mitigationBulletDerived": 0.69,
+   "mitigation": 0.63,
+   "mitigationBulletDerived": 0.71,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
@@ -62,22 +62,22 @@
     "weightedChurn": 2.95
    },
    "bullets": {
-    "total": 47,
+    "total": 46,
     "validated": 39,
     "automatedUnwatched": 3,
     "partial": 1,
     "flaky": 0,
-    "empty": 4
+    "empty": 3
    },
    "specs": {
-    "specs": 38,
+    "specs": 37,
     "stable": 36
    },
    "testHealth": {
     "chronicHardFailures": 1,
     "chronicFlaky": 7,
     "stableSpecs": 36,
-    "penalty": 0.077
+    "penalty": 0.079
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -91,7 +91,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": 2.4,
+    "residualRisk": 1.9,
     "rank": 3,
     "direction": "worsened"
    },
@@ -375,69 +375,9 @@
    "rationale": "If a run fails nothing else in the product matters; async graph execution"
   },
   {
-   "key": "memory-base",
-   "label": "20 Memory Base",
-   "rank": 7,
-   "residualRisk": 5.3,
-   "inherentRisk": 16,
-   "probability": 4,
-   "impact": 4,
-   "mitigation": 0.67,
-   "mitigationBulletDerived": 0.67,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 9.3,
-    "weightedChurn": 1.74
-   },
-   "bullets": {
-    "total": 16,
-    "validated": 13,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 1,
-    "empty": 2
-   },
-   "specs": {
-    "specs": 3,
-    "stable": 3
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 3,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 2,
-    "2026": 6
-   },
-   "previous": {
-    "rank": 3,
-    "residualRisk": 8,
-    "inherentRisk": 8,
-    "mitigation": 0
-   },
-   "delta": {
-    "residualRisk": -2.7,
-    "rank": -4,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [
-    2832
-   ],
-   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
-  },
-  {
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
-   "rank": 8,
+   "rank": 7,
    "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
@@ -484,7 +424,7 @@
    },
    "delta": {
     "residualRisk": -0.1,
-    "rank": 2,
+    "rank": 3,
     "direction": "improved"
    },
    "isNew": false,
@@ -496,7 +436,7 @@
   {
    "key": "a2a",
    "label": "16 A2A",
-   "rank": 9,
+   "rank": 8,
    "residualRisk": 4.9,
    "inherentRisk": 12,
    "probability": 3,
@@ -540,7 +480,7 @@
    },
    "delta": {
     "residualRisk": -1.4,
-    "rank": -3,
+    "rank": -2,
     "direction": "improved"
    },
    "isNew": false,
@@ -555,7 +495,7 @@
   {
    "key": "playground",
    "label": "9 Playground / chat",
-   "rank": 10,
+   "rank": 9,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
@@ -602,7 +542,7 @@
    },
    "delta": {
     "residualRisk": -0.3,
-    "rank": 2,
+    "rank": 3,
     "direction": "improved"
    },
    "isNew": false,
@@ -614,7 +554,7 @@
   {
    "key": "component-config",
    "label": "2 Component config",
-   "rank": 11,
+   "rank": 10,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
@@ -661,7 +601,7 @@
    },
    "delta": {
     "residualRisk": -0.2,
-    "rank": 2,
+    "rank": 3,
     "direction": "improved"
    },
    "isNew": false,
@@ -673,7 +613,7 @@
   {
    "key": "flow-lifecycle",
    "label": "12 Flow lifecycle",
-   "rank": 12,
+   "rank": 11,
    "residualRisk": 4,
    "inherentRisk": 20,
    "probability": 4,
@@ -697,7 +637,7 @@
     "empty": 0
    },
    "specs": {
-    "specs": 39,
+    "specs": 38,
     "stable": 38
    },
    "testHealth": {
@@ -720,7 +660,7 @@
    },
    "delta": {
     "residualRisk": -0.8,
-    "rank": -1,
+    "rank": 0,
     "direction": "improved"
    },
    "isNew": false,
@@ -732,7 +672,7 @@
   {
    "key": "model-providers",
    "label": "7 Model providers",
-   "rank": 13,
+   "rank": 12,
    "residualRisk": 4,
    "inherentRisk": 16,
    "probability": 4,
@@ -779,7 +719,7 @@
    },
    "delta": {
     "residualRisk": 0.1,
-    "rank": 2,
+    "rank": 3,
     "direction": "worsened"
    },
    "isNew": false,
@@ -791,13 +731,13 @@
   {
    "key": "governance-policy",
    "label": "21 Governance / policy",
-   "rank": 14,
-   "residualRisk": 4,
+   "rank": 13,
+   "residualRisk": 3.8,
    "inherentRisk": 6,
    "probability": 2,
    "impact": 3,
-   "mitigation": 0.34,
-   "mitigationBulletDerived": 0.34,
+   "mitigation": 0.37,
+   "mitigationBulletDerived": 0.37,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 1,
@@ -809,13 +749,13 @@
    "bullets": {
     "total": 14,
     "validated": 0,
-    "automatedUnwatched": 12,
+    "automatedUnwatched": 13,
     "partial": 0,
     "flaky": 0,
-    "empty": 2
+    "empty": 1
    },
    "specs": {
-    "specs": 7,
+    "specs": 8,
     "stable": 0
    },
    "testHealth": {
@@ -836,7 +776,7 @@
   {
    "key": "rest-api",
    "label": "1 REST API / endpoints",
-   "rank": 15,
+   "rank": 14,
    "residualRisk": 3.8,
    "inherentRisk": 15,
    "probability": 3,
@@ -882,7 +822,7 @@
    },
    "delta": {
     "residualRisk": -0.6,
-    "rank": -1,
+    "rank": 0,
     "direction": "improved"
    },
    "isNew": false,
@@ -890,6 +830,66 @@
    "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
    "platformItems": [],
    "rationale": "'Flow as an API' is the advertised deploy path"
+  },
+  {
+   "key": "memory-base",
+   "label": "20 Memory Base",
+   "rank": 15,
+   "residualRisk": 3.7,
+   "inherentRisk": 16,
+   "probability": 4,
+   "impact": 4,
+   "mitigation": 0.77,
+   "mitigationBulletDerived": 0.77,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
+   },
+   "bullets": {
+    "total": 16,
+    "validated": 15,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 1,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 4,
+    "stable": 4
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 4,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 3,
+    "residualRisk": 8,
+    "inherentRisk": 8,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -4.3,
+    "rank": -12,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2832
+   ],
+   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
   },
   {
    "key": "auth",
@@ -1182,12 +1182,12 @@
    "key": "loop-control-flow",
    "label": "3.6 Loop / control flow",
    "rank": 21,
-   "residualRisk": 2.2,
+   "residualRisk": 2.4,
    "inherentRisk": 9,
    "probability": 3,
    "impact": 3,
-   "mitigation": 0.76,
-   "mitigationBulletDerived": 0.76,
+   "mitigation": 0.73,
+   "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 4,
@@ -1198,8 +1198,8 @@
    },
    "bullets": {
     "total": 18,
-    "validated": 17,
-    "automatedUnwatched": 0,
+    "validated": 16,
+    "automatedUnwatched": 1,
     "partial": 0,
     "flaky": 0,
     "empty": 1
@@ -1223,9 +1223,9 @@
     "mitigation": 0.75
    },
    "delta": {
-    "residualRisk": -0.1,
+    "residualRisk": 0.1,
     "rank": 0,
-    "direction": "improved"
+    "direction": "worsened"
    },
    "isNew": false,
    "cappedByProduct": false,

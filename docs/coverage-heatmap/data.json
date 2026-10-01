@@ -86,7 +86,7 @@
  "areas": [
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 9.8,
+   "residualRisk": 9.3,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -97,19 +97,19 @@
     "weightedBugs": 57.6,
     "weightedChurn": 2.95
    },
-   "mitigationBulletDerived": 0.69,
+   "mitigationBulletDerived": 0.71,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 1,
     "chronicFlaky": 7,
     "stableSpecs": 36,
-    "penalty": 0.077
+    "penalty": 0.079
    },
-   "mitigation": 0.61,
-   "checklistBullets": 47,
+   "mitigation": 0.63,
+   "checklistBullets": 46,
    "bulletStates": {
     "x": 39,
-    " ": 4,
+    " ": 3,
     "-": 3,
     "~": 1
    },
@@ -127,7 +127,7 @@
    },
    "upstreamBugCount": 90,
    "specCounts": {
-    "specs": 38,
+    "specs": 37,
     "stable": 36
    }
   },
@@ -340,52 +340,6 @@
    },
    "upstreamBugCount": 31,
    "specCounts": null
-  },
-  {
-   "area": "20 Memory Base",
-   "residualRisk": 5.3,
-   "inherentRisk": 16,
-   "probability": 4,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 9.3,
-    "weightedChurn": 1.74
-   },
-   "mitigationBulletDerived": 0.67,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 3,
-    "penalty": 0
-   },
-   "mitigation": 0.67,
-   "checklistBullets": 16,
-   "bulletStates": {
-    "x": 13,
-    "!": 1,
-    " ": 2
-   },
-   "previous": {
-    "residualRisk": 8,
-    "inherentRisk": 8,
-    "mitigation": 0,
-    "checklistBullets": 15
-   },
-   "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12",
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 2,
-    "2026": 6
-   },
-   "upstreamBugCount": 10,
-   "specCounts": {
-    "specs": 3,
-    "stable": 3
-   }
   },
   {
    "area": "15 Canvas / UI",
@@ -611,7 +565,7 @@
    },
    "upstreamBugCount": 74,
    "specCounts": {
-    "specs": 39,
+    "specs": 38,
     "stable": 38
    }
   },
@@ -664,7 +618,7 @@
   },
   {
    "area": "21 Governance / policy",
-   "residualRisk": 4,
+   "residualRisk": 3.8,
    "inherentRisk": 6,
    "probability": 2,
    "impact": 3,
@@ -675,7 +629,7 @@
     "weightedBugs": 0,
     "weightedChurn": 0.21
    },
-   "mitigationBulletDerived": 0.34,
+   "mitigationBulletDerived": 0.37,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
@@ -683,18 +637,18 @@
     "stableSpecs": 0,
     "penalty": 0
    },
-   "mitigation": 0.34,
+   "mitigation": 0.37,
    "checklistBullets": 14,
    "bulletStates": {
-    "-": 12,
-    " ": 2
+    "-": 13,
+    " ": 1
    },
    "previous": null,
    "judgementRationale": "OSS operator surface, instance-global: a policy that fails open makes a blocked component placeable. Not an advertised promise, so impact is blast radius only.",
    "upstreamBugsByYear": {},
    "upstreamBugCount": 0,
    "specCounts": {
-    "specs": 7,
+    "specs": 8,
     "stable": 0
    }
   },
@@ -744,6 +698,51 @@
    "specCounts": {
     "specs": 38,
     "stable": 38
+   }
+  },
+  {
+   "area": "20 Memory Base",
+   "residualRisk": 3.7,
+   "inherentRisk": 16,
+   "probability": 4,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
+   },
+   "mitigationBulletDerived": 0.77,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 4,
+    "penalty": 0
+   },
+   "mitigation": 0.77,
+   "checklistBullets": 16,
+   "bulletStates": {
+    "x": 15,
+    "!": 1
+   },
+   "previous": {
+    "residualRisk": 8,
+    "inherentRisk": 8,
+    "mitigation": 0,
+    "checklistBullets": 15
+   },
+   "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12",
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
+   },
+   "upstreamBugCount": 10,
+   "specCounts": {
+    "specs": 4,
+    "stable": 4
    }
   },
   {
@@ -968,7 +967,7 @@
   },
   {
    "area": "3.6 Loop / control flow",
-   "residualRisk": 2.2,
+   "residualRisk": 2.4,
    "inherentRisk": 9,
    "probability": 3,
    "impact": 3,
@@ -979,7 +978,7 @@
     "weightedBugs": 21.8,
     "weightedChurn": 0.36
    },
-   "mitigationBulletDerived": 0.76,
+   "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
@@ -987,10 +986,11 @@
     "stableSpecs": 0,
     "penalty": 0
    },
-   "mitigation": 0.76,
+   "mitigation": 0.73,
    "checklistBullets": 18,
    "bulletStates": {
-    "x": 17,
+    "x": 16,
+    "-": 1,
     " ": 1
    },
    "previous": {
@@ -1220,9 +1220,9 @@
    }
   }
  ],
- "refreshed": "2026-09-30",
+ "refreshed": "2026-10-01",
  "refreshWindow": {
-  "testHealthSince": "2026-08-16",
+  "testHealthSince": "2026-08-17",
   "days": 45
  }
 }
