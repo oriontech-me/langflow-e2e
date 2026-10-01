@@ -366,24 +366,16 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
 
   test(
     "should store exactly the chunks preview-chunks promised when a line is longer than the chunk size",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@regression", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
-      // DECLARED FAILING — LE-2771, a product defect and not a regression (both code
-      // paths have diverged since langflow-ai/langflow#11541). The dialog sends the same separator to both endpoints, but
-      // preview-chunks splits on [sep, "\n\n", "\n", " ", ""] while ingestion's
-      // chunk_text_for_ingestion splits on [sep] alone, so a line longer than the chunk
-      // size is stored whole: measured 7 previewed chunks (all <= 200) against 4 stored
-      // (540 and 240 characters among them). The assertions below are the CORRECT
-      // contract. `test.fail()` cannot hide an unrelated breakage here, because test 2
-      // runs the same helpers, endpoints and settings on a document that differs only
-      // in this one line, and is NOT declared failing. The day upstream fixes it, this
-      // reports "expected to fail, but passed": delete test.fail() and this comment,
-      // flip the QA-CHECKLIST §20.4 bullet, and verify LE-2771's fix in the image.
-      test.fail();
+      // LE-2771, fixed by langflow-ai/langflow#15421 (1.13.0.dev28): ingestion used to
+      // split on the separator alone and store this line whole. See the spec doc's Notes.
       apiCoverage.declare(PARITY_OPS);
+      expect(LONG_LINE.length, "the line fits the chunk size, so this is test 2").toBeGreaterThan(PARITY_SETTINGS.chunkSize);
 
       const lines = [...FITTING_LINES.slice(0, 6), LONG_LINE, ...FITTING_LINES.slice(6)];
       const { previewed, stored } = await previewAndIngest(request, `${lines.join("\n")}\n`);
+      expect(stored.join("\n"), "the long line reached the stored chunks").toContain("alpha059");
       for (const [i, content] of stored.entries()) {
         expect(content.length, `stored chunk ${i}`).toBeLessThanOrEqual(PARITY_SETTINGS.chunkSize);
       }
