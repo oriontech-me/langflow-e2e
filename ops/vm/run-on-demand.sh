@@ -165,40 +165,44 @@ main() {
     echo "answered orphaned request $oid: failed (interrupted)"
   done
 
-  # --- the request: parsed, consumed, checked ---------------------------------------
+  # --- the request: judged in the slot, consumed only once it can be answered ------
+  # Signals are caught from here on. Under bash's default action a SIGTERM -- the
+  # daily's `systemctl stop` -- ends the script with no trap at all, and a request
+  # already moved out of the slot was left with no answer (#2127 review). So the
+  # request is parsed WHERE IT IS, and the EXIT trap that answers it is armed before it
+  # moves: an exit before the move leaves it in the slot for the next start, and every
+  # exit after it writes the result.
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
   local REQ="$STATE/request.env"
   [ -r "$REQ" ] || { echo "REFUSED: no request at $REQ"; exit 2; }
-  local raw
+  local raw parsed=1
   raw="$(cat "$REQ")" || { echo "FATAL: cannot read $REQ"; exit 3; }
-  # Consumed before it is judged, so a malformed request is not met again by the next
-  # start. Kept under a name of its own for whoever asks why it was refused -- with the
-  # PID in it: two refusals in the same second shared the stamp on the qa (2026-10-01),
-  # and the second one's copy replaced the first's.
-  local KEPT="$STATE/requests/unparsed-$STAMP-$$.env"
-  mv -f "$REQ" "$KEPT"
-
-  if ! ondemand_parse_request "$raw"; then
+  ondemand_parse_request "$raw" || parsed=0
+  if [ "$parsed" = "0" ]; then
     # Whoever asked polls results/<id>.env, so a malformed request that still names a
     # usable id, once, is answered there. One that names none has no result to poll.
     OD_ID="$(printf '%s\n' "$raw" | tr -d '\r' | grep -E '^ONDEMAND_ID=' | sed 's/^ONDEMAND_ID=//')"
-    if [[ "$OD_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ ! -e "$STATE/results/$OD_ID.env" ]; then
-      mv -f "$KEPT" "$STATE/requests/$OD_ID.env"
-      KEPT="$STATE/requests/$OD_ID.env"
-      trap ondemand_finish EXIT
-    else
-      OD_ID=""
-    fi
+    [[ "$OD_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || OD_ID=""
+  fi
+  # Requests with no result to write are consumed into a copy of their own, kept for
+  # whoever asks why -- with the PID in the name: two refusals in the same second
+  # shared the stamp on the qa (2026-10-01), and the second copy replaced the first.
+  local KEPT="$STATE/requests/unparsed-$STAMP-$$.env"
+  if [ -n "$OD_ID" ] && [ -e "$STATE/results/$OD_ID.env" ]; then
+    # Refused in the log only, so the first answer stands.
+    mv -f "$REQ" "$KEPT"
+    local answered="$OD_ID"; OD_ID=""
+    ondemand_refuse "request $answered was already answered — an id names one run" "$KEPT"
+  fi
+  if [ -z "$OD_ID" ]; then
+    mv -f "$REQ" "$KEPT"
     ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$KEPT"
   fi
-  # Before anything is written under the id: a second request with it must not replace
-  # the first one's request or result.
-  [ ! -e "$STATE/results/$OD_ID.env" ] || ondemand_refuse "request $OD_ID was already answered — an id names one run" "$KEPT"
-  mv -f "$KEPT" "$STATE/requests/$OD_ID.env"
-  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} by=${OD_BY:-<unnamed>}"
-  # From here on every exit writes the result for this id.
   trap ondemand_finish EXIT
-  trap 'exit 143' TERM
-  trap 'exit 130' INT
+  mv -f "$REQ" "$STATE/requests/$OD_ID.env"
+  [ "$parsed" = "1" ] || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$STATE/requests/$OD_ID.env"
+  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} by=${OD_BY:-<unnamed>}"
 
   # --- the daily's window -----------------------------------------------------------
   local dow="${NOW%% *}" hm="${NOW##* }"

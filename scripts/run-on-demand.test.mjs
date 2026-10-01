@@ -53,6 +53,7 @@ function setup({
   preError = null,
   modelRefused = null,
   orphans = [],
+  termOnConsume = false,
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -114,6 +115,9 @@ ${stateCases}
   *) echo inactive ;;
 esac`);
   stub(bin, "flock", lockBusy ? "exit 1" : "exit 0");
+  // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
+  // does the move, then signals the script that ran it.
+  if (termOnConsume) stub(bin, "mv", `/bin/mv "$@"; rc=$?\ncase "$*" in *"/request.env "*) kill -TERM $PPID ;; esac\nexit $rc`);
 
   const secrets = join(dir, "secrets.env");
   writeFileSync(secrets, [...PUBLISHING.map((n) => `export ${n}=secret-${n}`), "export GH_ENTERPRISE_TOKEN=ghe", "export OPENAI_API_KEY=provider-key"].join("\n") + "\n");
@@ -327,6 +331,17 @@ test("a run with no results.json says why in run-e2e.sh's words: the verdict's, 
   const silent = onDemand({ runExit: 1, writeResults: false });
   assert.doesNotMatch(silent.result["req-1"].REASON, /from before the run/);
   assert.match(silent.result["req-1"].REASON, /no reason given/);
+});
+
+test("a SIGTERM the instant the request leaves the slot still answers it", () => {
+  // #2127 review: the request used to move before any trap existed, and bash's default
+  // action for SIGTERM ends the script without running one.
+  for (const request of [GOOD_REQUEST, "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nPATH=/evil\n"]) {
+    const r = onDemand({ termOnConsume: true, request });
+    assert.equal(r.requestLeft, false, "the request was not consumed, so the stub never fired");
+    assert.ok(r.result["req-1"], `${request}: consumed, signalled, and never answered:\n${r.log}`);
+    assert.equal(r.status, r.result["req-1"].STATUS === "refused" ? 2 : 3, r.log);
+  }
 });
 
 test("a request a killed run consumed and never answered is answered failed by the next start", () => {
@@ -600,7 +615,12 @@ test("the on-demand lane's ports and workflow are disjoint from the official lan
     num(text, "OLLAMA_PORT"),
   ];
   const lanes = { official: ports(read("ops/vm/run-daily.sh")), shadow: ports(read("ops/vm/run-shadow.sh")), ondemand: ports(read("ops/vm/run-on-demand.sh")) };
-  for (const other of ["official", "shadow"]) {
+  // And every default port a starter in this repository binds: 7890-7893 were this
+  // lane's first choice and are the Enterprise and serving-identity defaults (#2127).
+  const starters = readdirSync(join(ROOT, "scripts")).filter((f) => /^start-.*\.sh$/.test(f));
+  lanes.starters = starters.flatMap((f) => [...read(join("scripts", f)).matchAll(/PORT:-(\d+)\}/g)].map((m) => Number(m[1])));
+  assert.ok(lanes.starters.includes(7890) && lanes.starters.includes(7893), `the starters' defaults were not read: ${lanes.starters}`);
+  for (const other of ["official", "shadow", "starters"]) {
     assert.deepEqual(lanes.ondemand.filter((p) => lanes[other].includes(p)), [], `on-demand shares ports with ${other}: ${lanes.ondemand} / ${lanes[other]}`);
   }
   // The cleanup names the containers by port; it must name exactly the ones this lane uses.
