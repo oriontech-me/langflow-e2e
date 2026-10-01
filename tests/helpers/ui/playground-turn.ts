@@ -40,14 +40,24 @@ import { expect, type Page } from "@playwright/test";
  * The budgets are the ones the replaced probe and its callers already used —
  * 60 s for the reply to mount (what `div-chat-message` waits used), 120 s for
  * generation — so no failure is outwaited that used to surface.
+ *
+ * `send` replaces the default `button-send` click for a caller that has to send
+ * some other way (#2123): the MCP client specs set the textarea value and click
+ * Send inside one `page.evaluate`, so the #226 prefill cannot reset the prompt
+ * between fill and click. The counts are still taken BEFORE `send` runs, which
+ * is the whole reason it is a callback and not a separate "await the turn" call.
  */
-export async function sendAndAwaitPlaygroundTurn(page: Page): Promise<void> {
+export async function sendAndAwaitPlaygroundTurn(
+  page: Page,
+  options: { send?: () => Promise<void> } = {},
+): Promise<void> {
   const messages = page.getByTestId("div-chat-message");
   const errorCards = page.getByTestId("error-card-stack");
   const messagesBefore = await messages.count();
   const errorsBefore = await errorCards.count();
 
-  await page.getByTestId("button-send").last().click();
+  if (options.send) await options.send();
+  else await page.getByTestId("button-send").last().click();
 
   await expect
     .poll(
