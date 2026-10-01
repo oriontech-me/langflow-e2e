@@ -3,6 +3,7 @@ import { SimpleAgentTemplatePage } from "../../../../pages";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 // Id of the flow created by the template load, so afterEach deletes exactly
 // that one via the API (id-scoped, #515) — never a global cleanAllFlows.
@@ -24,12 +25,9 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-// Quarantined for #2129: recurrent flake on the VM lane (2026-09-10 on 1.13.0.dev8,
-// 2026-10-01 on 1.13.0.dev29), the image description comes back at 50 characters or fewer.
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2129's deliverable.
-test.fixme(
+test(
   "user must be able to send images in the playground with the agent component",
-  { tag: ["@release", "@components", "@agents"] },
+  { tag: ["@stable", "@release", "@components", "@agents"] },
   async ({ page }) => {
     // A real multimodal completion runs below, so gate on provider HEALTH, not on
     // the env var alone — a drained key would block the backend past gunicorn's
@@ -108,11 +106,17 @@ test.fixme(
       timeout: 100000,
     });
 
-    await page.getByTestId("button-send").click();
+    // Send and wait until THIS turn has finished (button-stop cleared), not just
+    // until the reply contains a keyword (#2129). The reply streams into its
+    // bubble token by token, and toContainText resolves on the first poll whose
+    // text holds the keyword — which can land mid-stream, so the length guard
+    // below measured how far the stream had got. Measured on 1.13.0.dev29: the
+    // read was a strict prefix of the final reply on 4 of 10 attempts, with
+    // button-stop still visible each time, while every final reply was 155–259
+    // characters; the VM lane's failed attempts read 28 and 42.
+    await sendAndAwaitPlaygroundTurn(page);
 
-    // Wait for the streamed response to actually describe the image instead of
-    // sleeping a fixed interval: toContainText retries until the markdown
-    // renders, adapting to however long the model takes. This regex is the real
+    // The reply must actually describe the image: this regex is the real
     // signal that the model saw and described the image. The fixture is a flat
     // illustration of two chains, so it widens the previous `chain|inkscape|logo`
     // set to the descriptors a vision model reliably uses for it — "chain",
@@ -127,6 +131,7 @@ test.fixme(
 
     // Secondary guard against a one-word answer; kept modest since gpt-4o-mini
     // replies are terser than the Anthropic model this test was first calibrated for.
+    // Read on the finished turn, so it measures the answer, not a streamed prefix.
     const textFromLlm = await llmResponse.textContent();
     expect(textFromLlm?.length).toBeGreaterThan(50);
   },
