@@ -1604,14 +1604,14 @@
 | `mcp/server/` | 18 | 15 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 30 | 25 | 0 | 0 | 5 |
+| `security/` — Validation, SSRF, Secrets | 30 | 26 | 0 | 0 | 4 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 15 | 0 | 1 | 0 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **739** | **647 (88%)** | **37 (5%)** | **14 (2%)** | **41 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **739** | **648 (88%)** | **37 (5%)** | **14 (2%)** | **40 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1627,7 +1627,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 719 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 721 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2324,6 +2324,8 @@
 - [x] the edge delivers the real secret, not the mask → `credential-secret-across-edges.spec.ts`
 - [x] the upstream's own display copy is masked on that same run → `credential-secret-across-edges.spec.ts`
 - [x] a downstream that re-emits the secret is masked too → `credential-secret-across-edges.spec.ts`
+- [x] the real secret survives a second hop → `credential-secret-across-edges.spec.ts`
+- [x] a downstream two hops from the secret is masked too → `credential-secret-across-edges.spec.ts`
 - [x] the secret appears nowhere in the run response → `credential-secret-across-edges.spec.ts`
 - [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
 - [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
