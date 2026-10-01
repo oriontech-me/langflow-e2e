@@ -303,7 +303,7 @@ test.describe("Anthropic Provider", () => {
 
   test(
     "switches between Claude model families (Haiku → Sonnet → Opus)",
-    { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
+    { tag: ["@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
       // Same live-completion gate as Test 2 — the switch is proven by executing
       // on the switched-to Sonnet model, so a dead key wedges this one too.

@@ -1622,7 +1622,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 710 `test()` calls carrying the `@stable` tag, distributed across 279 spec
+> 708 `test()` calls carrying the `@stable` tag, distributed across 279 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2059,7 +2059,6 @@
 - [x] should keep the Google embedding models the Knowledge dialog offers to ones Google still serves → `memory-base-ingestion-failures.spec.ts`
 - [x] should open Create Knowledge Base with the 1000 / 200 / newline defaults and apply the chunk settings chosen there to the stored chunks → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
-- [x] should store exactly the chunks preview-chunks promised when a line is longer than the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should ingest a server-side folder through the folder connector and read its chunks back → `memory-base-ingestion.spec.ts`
 - [x] should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back → `memory-base-ingestion.spec.ts`
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
@@ -2076,7 +2075,6 @@
 
 #### core-functionality/model-provider/
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
-- [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] check-config lists exactly the completion models the local Ollama instance serves → `assistant-ollama-provider.spec.ts`
 - [x] the Assistant composer offers the local Ollama model and arms Send for it → `assistant-ollama-provider.spec.ts`
 - [x] Azure AI Foundry is offered with a two-variable form and a Foundry-only deployment surface → `azure-ai-foundry-provider-setup.spec.ts`

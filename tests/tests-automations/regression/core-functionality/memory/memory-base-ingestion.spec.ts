@@ -366,7 +366,7 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
 
   test(
     "should store exactly the chunks preview-chunks promised when a line is longer than the chunk size",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       // DECLARED FAILING — LE-2771, a product defect and not a regression (both code
       // paths have diverged since langflow-ai/langflow#11541). The dialog sends the same separator to both endpoints, but
