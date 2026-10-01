@@ -1,6 +1,6 @@
 # Agent context_id — switching isolates history between contexts
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`, #1743)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -126,9 +126,9 @@ the geometry above was measured.
    and **Chat Output** nodes (same advanced-field path as #487), and **confirm
    the write survived** before running the turn (see the confirmed-write note
    below).
-3. Seed the ChatInput with nonce N1; open the Playground, send, wait.
+3. Seed the ChatInput with nonce N1; open the Playground, send through `sendAndAwaitPlaygroundTurn`.
 4. Switch `context_id` to `CTX-B` on the same three nodes — again **confirmed**
-   — seed nonce N2; send a second turn in the same playground session.
+   — seed nonce N2; send a second turn in the same playground session (same gate).
 5. **Assert (monitor API):** N1 → its session's turn-1 messages ALL carry
    `context_id === CTX-A` and none carry `CTX-B`; N2 → turn-2 messages ALL
    carry `CTX-B` and none carry `CTX-A`. Message sets are keyed by nonce, so

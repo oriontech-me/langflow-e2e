@@ -1,6 +1,6 @@
 # Anthropic Provider — configure key, select Claude, switch models
 
-**Last validated:** Langflow 1.13.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -107,8 +107,9 @@ key replaced (the CI secret was rotated 2026-09-13) and the assertion fixed
    call — same rationale as the OpenAI/Google siblings).
 4. Open the Playground (`playground-btn-flow-io`); wait for
    `input-chat-playground`.
-5. Send `Repeat this token exactly and nothing else: ANTHROPIC-<sentinel>`;
-   wait for the agent to finish (`waitForAgentToFinish`).
+5. Send `Repeat this token exactly and nothing else: ANTHROPIC-<sentinel>`
+   through `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop`
+   clears and `button-send` returns).
 6. **Validation:** the last `div-chat-message` (AI bubble) is **non-empty**
    (hard — proves the configured Claude model executed and returned output).
    The per-run sentinel echo is **logged, not asserted** — family convention
@@ -329,3 +330,10 @@ key replaced (the CI secret was rotated 2026-09-13) and the assertion fixed
   top-up, not by a second credential — so the standing remedies are the daily's
   provider rotation (**#1185**) and the keyless `any-completion` routing
   (**#1187**).
+- **The completion wait (#2123).** The Playground run waited with
+  `isVisible({ timeout: 10000 })` on the Stop button. That call does not wait
+  (Playwright ignores the option), so the wait was skipped, and the reply was
+  then read **once** with `innerText()`. On `1.13.0.dev28` the bot bubble
+  mounts empty ~400 ms after Send, so `reply.length > 0` could fail on a healthy
+  Anthropic run. The run now sends through `tests/helpers/ui/playground-turn.ts`.
+  The test #2095 quarantined keeps its `test.fixme`: lifting it is #2095's call.

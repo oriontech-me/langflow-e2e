@@ -6,6 +6,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 import {
   probeProviderComponent,
   undecidedProbeMessage,
@@ -73,14 +74,6 @@ async function probeMistral(request: APIRequestContext): Promise<MistralProbe> {
     return { reachable: true, reason: "" };
   } catch {
     return { reachable: false, reason: "Mistral API not reachable from the test host" };
-  }
-}
-
-async function waitForRunToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
   }
 }
 
@@ -198,8 +191,7 @@ test.describe("Mistral Provider", () => {
           const chatInput = page.getByTestId("input-chat-playground").last();
           await expect(chatInput).toBeVisible({ timeout: 30000 });
           await chatInput.fill(`Repeat this token exactly and nothing else: ${token}`);
-          await page.getByTestId("button-send").last().click();
-          await waitForRunToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
 
           const aiMessage = page.getByTestId("div-chat-message").last();
           await expect(aiMessage).toBeVisible({ timeout: 60000 });

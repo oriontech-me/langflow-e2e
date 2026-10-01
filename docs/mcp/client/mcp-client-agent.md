@@ -1,6 +1,6 @@
 # MCP Client – Agent Using MCPTools
 
-**Last validated:** Langflow 1.12.x (1.12.0.dev19)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -58,7 +58,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 5. Enable tool mode on MCPTools (`tool-mode-button`) — verify "toolset" label appears
 6. Connect MCPTools toolset output handle → Agent tools input handle
 7. Open Playground and send: `"Use the 'echo' tool to echo: hello mcp"`
-8. Wait for agent to finish (Stop button disappears)
+8. The atomic send runs inside `sendAndAwaitPlaygroundTurn` (`send` option): the turn mounts, then `button-stop` clears and `button-send` returns
 9. **Proof #1** — the Playground shows a **completed tool step** (`tool-status-done`): the agent actually called a tool, it did not hallucinate a text-only answer
 10. **Proof #2** — the row carrying that step names `echo`
 11. **Proof #3** — the last AI chat message (`[data-testid^="chat-message-AI-"]`) contains `"hello mcp"` — the echoed payload made the full round-trip and was surfaced to the user

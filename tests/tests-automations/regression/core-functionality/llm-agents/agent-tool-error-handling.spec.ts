@@ -12,6 +12,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Agent tool error handling (QA-CHECKLIST §6.4 "Tool returns error — agent
@@ -92,22 +93,13 @@ async function setChatInputText(page: Page, text: string): Promise<void> {
   await field.blur();
 }
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // Open the Playground with the pre-seeded task and send it.
 async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   await page.getByTestId("playground-btn-flow-io").click();
   const chatInput = page.getByTestId("input-chat-playground").last();
   await expect(chatInput).toBeVisible({ timeout: 30000 });
   await expect(chatInput).toHaveValue(task, { timeout: 15000 });
-  await page.getByTestId("button-send").last().click();
-  await waitForAgentToFinish(page);
+  await sendAndAwaitPlaygroundTurn(page);
 }
 
 // Monitor-API check that the fetch tool's persisted output carries the SSRF

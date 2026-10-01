@@ -1,6 +1,6 @@
 # Agent tool name — invalid name blocks execution with a clear error
 
-**Last validated:** Langflow 1.13.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
 
 ---
 
@@ -93,7 +93,8 @@ Shared setup per test:
    NOT assume anything about other flows on the instance (#632: a global
    "exactly 1 URLComponent flow" invariant broke under the daily run, where
    sibling specs leave their own template flows).
-5. Open the Playground and send a fixed message.
+5. Open the Playground and send a fixed message through
+   `sendAndAwaitPlaygroundTurn` (the error card counts as a started turn).
 
 ---
 

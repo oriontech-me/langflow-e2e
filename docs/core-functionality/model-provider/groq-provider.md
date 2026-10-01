@@ -141,8 +141,9 @@ the Anthropic sibling, #503).
    autosave to settle (`waitForFlowSaveSettled`) so the Playground builds the
    persisted flow.
 5. Open the Playground; send
-   `Repeat this token exactly and nothing else: GROQ-<per-run sentinel>`;
-   wait for the run to finish.
+   `Repeat this token exactly and nothing else: GROQ-<per-run sentinel>`
+   through `sendAndAwaitPlaygroundTurn` (the turn mounts, then `button-stop`
+   clears and `button-send` returns).
 6. **Validation:** the last `div-chat-message` (AI bubble) is **non-empty**
    (hard — the Groq cloud inference executed with the configured key; there
    is no keyless path to a reply). The sentinel echo is **logged, not
@@ -270,3 +271,9 @@ valid key.
 - **Per-run sentinel** logged, not asserted (family convention).
 - **`.env.example`** gains `GROQ_API_KEY` (+ optional `GROQ_TEST_MODEL`)
   alongside the existing provider keys.
+- **The completion wait (#2123).** The Playground run waited with
+  `isVisible({ timeout: 10000 })` on the Stop button. That call does not wait
+  (Playwright ignores the option), so the wait was skipped, and the reply was
+  then read **once** with `innerText()`. On `1.13.0.dev28` the bot bubble
+  mounts empty ~400 ms after Send, so `reply.length > 0` could fail on a healthy
+  Groq run. The run now sends through `tests/helpers/ui/playground-turn.ts`.

@@ -20,6 +20,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Agent context_id isolation (QA-CHECKLIST §6.3 "Switching context_id
@@ -229,14 +230,6 @@ async function prepareTurn(
   );
 }
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   await page.getByTestId("playground-btn-flow-io").click();
   const chatInput = page.getByTestId("input-chat-playground").last();
@@ -246,8 +239,7 @@ async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
   // string, so a late default re-injection converges on the same value.
   await chatInput.fill(task);
   await expect(chatInput).toHaveValue(task, { timeout: 15000 });
-  await page.getByTestId("button-send").last().click();
-  await waitForAgentToFinish(page);
+  await sendAndAwaitPlaygroundTurn(page);
 }
 
 interface MonitorMessage {

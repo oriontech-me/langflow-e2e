@@ -15,6 +15,7 @@ import {
 import { selectPinnedModelOption } from "../../../../helpers/provider-setup/model-option";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Anthropic (Claude) provider path (QA-CHECKLIST §7.3) as a provider-centric journey:
@@ -100,14 +101,6 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // The template's Web Search + URL tool orchestration transiently fails
 // (backend ComponentBuildError) — incidental to §7.3. A tool-free agent is a
 // single deterministic LLM call; tool execution is covered by
@@ -141,8 +134,7 @@ async function runPlaygroundSentinel(page: Page, token: string): Promise<void> {
     .getByTestId("input-chat-playground")
     .last()
     .fill(`Repeat this token exactly and nothing else: ${token}`);
-  await page.getByTestId("button-send").last().click();
-  await waitForAgentToFinish(page);
+  await sendAndAwaitPlaygroundTurn(page);
 
   const aiMessage = page.getByTestId("div-chat-message").last();
   await expect(aiMessage).toBeVisible({ timeout: 30000 });
