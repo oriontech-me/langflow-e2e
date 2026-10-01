@@ -368,14 +368,16 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     "should store exactly the chunks preview-chunks promised when a line is longer than the chunk size",
     { tag: ["@stable", "@regression", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
-      // LE-2771, fixed by langflow-ai/langflow#15421 (1.13.0.dev28): ingestion used to
+      // LE-2771, fixed by langflow-ai/langflow#15421 (1.12.4; first nightly 1.13.0.dev28): ingestion used to
       // split on the separator alone and store this line whole. See the spec doc's Notes.
       apiCoverage.declare(PARITY_OPS);
       expect(LONG_LINE.length, "the line fits the chunk size, so this is test 2").toBeGreaterThan(PARITY_SETTINGS.chunkSize);
 
       const lines = [...FITTING_LINES.slice(0, 6), LONG_LINE, ...FITTING_LINES.slice(6)];
       const { previewed, stored } = await previewAndIngest(request, `${lines.join("\n")}\n`);
-      expect(stored.join("\n"), "the long line reached the stored chunks").toContain("alpha059");
+      expect(stored.join(" ").match(/alpha\d{3}/g), "every word of the long line, once and in order").toEqual(
+        LONG_LINE.split(" "),
+      );
       for (const [i, content] of stored.entries()) {
         expect(content.length, `stored chunk ${i}`).toBeLessThanOrEqual(PARITY_SETTINGS.chunkSize);
       }
