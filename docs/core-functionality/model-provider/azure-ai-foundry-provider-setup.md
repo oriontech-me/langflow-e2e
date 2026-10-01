@@ -1,6 +1,6 @@
 # Azure AI Foundry — unified provider setup (deployment names, not catalog IDs)
 
-**Last validated:** Langflow 1.13.x (1.13.0.dev12, #1849: tests 1–4, and test 5's refusal path only — tests 5–6 skipped, the local Foundry credential answered `401`)
+**Last validated:** Langflow 1.13.x (nightly `latest`, 2026-10-01, #1480: all six tests on a real Azure AI Foundry resource via `manual.yml`)
 
 ---
 
@@ -76,6 +76,16 @@ the `400` on the credential write was traced to the write-time live validation
 of the Foundry endpoint (see step 3). The other five tests kept `@stable`
 throughout: they cover the unconfigured panel and a deployment path that does
 not depend on that write.
+
+**Tests 5 and 6** lost `@stable` again in #1590 (2026-08-25) and were restored
+in #1480. That removal was a different kind from #1433's: the two tests had never
+asserted anything in the daily, because the stored `AZURE_AI_FOUNDRY_ENDPOINT`
+was a placeholder host (`langflow-test-123`, NXDOMAIN by 2026-09-30) whose probe
+answered `401`, so they skipped on every run while counting as validated
+coverage. No `test.fixme` was added, since a test that already skips gains
+nothing from it. The secrets were re-set on 2026-09-13 to a real resource, and
+the first dispatch against it then failed test 5 on the listed-deployment path
+described in its step 6.
 
 **Why `@stable` on the credential-gated tests too.** Issue #1194 assumed the
 whole spec needed Azure credentials and therefore shipped untagged. The surface
@@ -318,19 +328,35 @@ Live-scouted testids (1.12.0.dev14, re-checked on dev15 where the run is green, 
    > The pair is the backend fact this step is about; how many requests the
    > frontend chose to make is not.
 5. Type `AZURE_AI_FOUNDRY_TEST_DEPLOYMENT` into `model-search-input`.
-6. **Assert (add-deployment control):** the `add-custom-*deployment-button` for
-   language models is now visible — the exact control test 2 proved absent while
-   unconfigured. Arm a waiter on `POST /api/v1/models/enabled_models` **before**
-   clicking it, and assert that write is 2xx with the identity in its body: the
-   row and its toggle render **optimistically**, so the UI alone cannot tell an
+6. **Assert (enable control):** wait for whichever enable control the panel
+   offers for that name — and it offers exactly one, decided by the deployment
+   (#1480). A name the provider's model list does **not** carry gets the
+   `add-custom-*deployment-button` for language models — the exact control test 2
+   proved absent while unconfigured. A name the list **already carries as an LLM**
+   gets only its row: upstream `ModelSelection` offers the add control for the
+   *missing* types only (its own unit test, *"offers only the missing type when a
+   deployment name exists as an LLM"*), so the LLM button never renders and the
+   row's `llm-toggle-<deployment>` is the enable control; it must read
+   `data-state="unchecked"` before the click, or the click would disable it. The
+   first real-resource run (2026-10-01, deployment `gpt-5.6-sol`) hit this second
+   path — the test had been written against a resource whose deployment name no
+   list carried, and died waiting 15 s for a button the panel is designed not to
+   show. The path taken is logged. Arm a waiter on `POST
+   /api/v1/models/enabled_models` **before** clicking, and assert that write is
+   2xx with the identity `Azure AI Foundry::llm::<deployment>` in its body: the row
+   and its toggle render **optimistically**, so the UI alone cannot tell an
    accepted deployment from a write that never landed. Measured while authoring —
    reloading right after the click cancelled the in-flight POST and the
    deployment was gone afterwards while the panel still showed it.
-7. **Assert (enabled + persisted):** the deployment row renders a real toggle
-   (`llm-toggle-<deployment>`) and the add left it `data-state="checked"` — the
-   half test 4 cannot reach, since an unconfigured provider renders no toggle at
-   all — and after a page reload `GET /api/v1/models/enabled_models` still carries
-   the deployment as a registered Foundry identity.
+7. **Assert (enabled + persisted):** the deployment row's `llm-toggle-<deployment>`
+   reads `data-state="checked"` — the half test 4 cannot reach, since an
+   unconfigured provider renders no toggle at all — and after a page reload
+   `GET /api/v1/models/enabled_models` still carries the deployment as a
+   registered Foundry identity **and** reports it `true` under
+   `enabled_models_by_type["Azure AI Foundry"].llm`. Key presence alone was enough
+   while the only path was a free-text name; for a name the model list already
+   carries the key is there whether or not it is enabled, so on a configured
+   provider the boolean is the persisted enablement.
 8. Cleanup (restores the pre-test account state): disable the deployment, then
    `DELETE /api/v1/variables/{id}` for both Foundry variables, asserting each
    delete is 2xx and that `GET /api/v1/variables/` no longer lists them.
