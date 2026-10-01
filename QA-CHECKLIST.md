@@ -1622,7 +1622,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 709 `test()` calls carrying the `@stable` tag, distributed across 279 spec
+> 708 `test()` calls carrying the `@stable` tag, distributed across 278 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2022,7 +2022,6 @@
 - [x] user must be able to send an image on chat → `chatInputOutputUser-shard-0.spec.ts`
 - [x] user must be able to see output inspection using 'o' shortcut → `chatInputOutputUser-shard-1.spec.ts`
 - [x] user must interact with chat with Input/Output → `chatInputOutputUser-shard-2.spec.ts`
-- [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] user must not experience message duplication in mathematical expressions with agent component → `general-bugs-agent-sum-duplicate-message-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
