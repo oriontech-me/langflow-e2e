@@ -14,6 +14,7 @@ import {
   gitDiffNames, gitDiffOf, enumerateTests, enumerateTestEntries, enumerateRunnableTests,
   enumerateUnenumerableTests,
   getInstanceVersion, getLatestNightlyTag, sh, classifyRun, classOf, countsAsClean,
+  describeProviderHealthSkips,
   gitChangedVsBase, gitIsDirty, ghRunArtifactName, ghRunDownload,
 } from './runners.ts'
 import {
@@ -111,6 +112,24 @@ function forceFailRequired(): Array<{ file: string; titles: string[]; unenumerab
 }
 
 /**
+ * Why a green-looking run is not a green run (#2034): the tests it names never
+ * executed, because their provider's health record is inactive or stale.
+ */
+function providerUnevaluatedMessage(what: string, stats: PwStats | undefined): string {
+  const skips = stats?.providerHealthSkips ?? []
+  return `${what} is NOT a clean run: ${skips.length} test(s) skipped on a provider-health record, `
+    + `so the green says nothing about them (#2034). `
+    + `executed=${(stats?.expected ?? 0) + (stats?.unexpected ?? 0) + (stats?.flaky ?? 0)} skipped=${stats?.skipped ?? 0}\n`
+    + describeProviderHealthSkips(stats ?? ({} as PwStats)).join('\n')
+}
+
+/** Names the provider-health skips of an all-skipped run, when there are any. */
+function providerSkipSuffix(stats: PwStats | undefined): string {
+  const lines = stats ? describeProviderHealthSkips(stats) : []
+  return lines.length ? `\nOf those, skipped on a provider-health record:\n${lines.join('\n')}` : ''
+}
+
+/**
  * Run a spec, classifying infra aborts as void and retrying them, so a wedged
  * backend never masquerades as a spec verdict. Returns the classified runs;
  * the caller decides what a clean/failed run means for its phase.
@@ -118,7 +137,10 @@ function forceFailRequired(): Array<{ file: string; titles: string[]; unenumerab
 function runUntilClean(
   args: string[], target: string, needed: number, existing: RunRecord[], notes: string[],
   ambient?: BackendAmbient,
-): { records: RunRecord[]; voids: number; realFailure: boolean; noEvidence: boolean } {
+): {
+  records: RunRecord[]; voids: number; realFailure: boolean; noEvidence: boolean
+  providerUnevaluated: boolean
+} {
   const records: RunRecord[] = []
   let voids = existing.filter(r => r.target === target && classOf(r) === 'infra-void').length
   let clean = existing.filter(r => r.target === target && countsAsClean(r)).length
@@ -130,7 +152,12 @@ function runUntilClean(
     notes.push(`run ${clean + 1}/${needed} ${target}: ${cls} expected=${run.stats.expected} unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} backendErrors=${run.stats.backendErrors} skipped=${run.stats.skipped}`)
     // Deterministic, so retrying is pointless: return and let the caller name
     // the cause. Counting it clean is the #1593 trap; retrying it would spin.
-    if (cls === 'no-evidence') return { records, voids, realFailure: false, noEvidence: true }
+    if (cls === 'no-evidence') return { records, voids, realFailure: false, noEvidence: true, providerUnevaluated: false }
+    // Same reasoning (#2034): the health record does not change between runs,
+    // so a re-run would skip the same tests again.
+    if (cls === 'provider-unevaluated') {
+      return { records, voids, realFailure: false, noEvidence: false, providerUnevaluated: true }
+    }
     if (cls === 'clean') { clean++; continue }
     if (cls === 'clean-ambient') {
       clean++
@@ -140,12 +167,12 @@ function runUntilClean(
     if (cls === 'infra-void') {
       voids++
       notes.push(`  ↳ voided: every failure carries an environment signature (auto_login/socket hang up/connection) — not counted, re-running`)
-      if (voids >= MAX_INFRA_VOIDS) return { records, voids, realFailure: false, noEvidence: false }
+      if (voids >= MAX_INFRA_VOIDS) return { records, voids, realFailure: false, noEvidence: false, providerUnevaluated: false }
       continue
     }
-    return { records, voids, realFailure: true, noEvidence: false }
+    return { records, voids, realFailure: true, noEvidence: false, providerUnevaluated: false }
   }
-  return { records, voids, realFailure: false, noEvidence: false }
+  return { records, voids, realFailure: false, noEvidence: false, providerUnevaluated: false }
 }
 
 function guardBranchOwnership(s: PipelineState): void {
@@ -303,7 +330,13 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
         fail(`${t} executed NOTHING (expected=0 unexpected=0 flaky=0 skipped=${last?.skipped ?? 0}) — that is not a clean run, it is no run at all (#1593). `
           + (last?.skipped
             ? `Every test skipped: a runtime test.skip() gate is unmet (missing provider key, unmet lane precondition).`
-            : `Zero tests were selected: a lane-selected spec needs its lane flag (PW_SERVING_IDENTITY / PW_ENTERPRISE / PW_DESTRUCTIVE — playwright.config.ts grepInverts them and a CLI --grep cannot widen it), or the --grep matched nothing.`))
+            : `Zero tests were selected: a lane-selected spec needs its lane flag (PW_SERVING_IDENTITY / PW_ENTERPRISE / PW_DESTRUCTIVE — playwright.config.ts grepInverts them and a CLI --grep cannot widen it), or the --grep matched nothing.`)
+          + providerSkipSuffix(last))
+      }
+      if (outcome.providerUnevaluated) {
+        saveState(s)
+        const last = outcome.records[outcome.records.length - 1]?.stats
+        fail(providerUnevaluatedMessage(t, last))
       }
       if (outcome.voids >= MAX_INFRA_VOIDS) {
         saveState(s)
@@ -372,8 +405,10 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
         if (outcome.noEvidence) {
           fail(`final green run for ${file} executed NOTHING (expected=0, skipped=${last?.skipped ?? 0}) — not a green run (#1593). `
             + `A lane-selected spec needs its lane flag set (PW_SERVING_IDENTITY / PW_ENTERPRISE / PW_DESTRUCTIVE); `
-            + `playwright.config.ts grepInverts those tags and a CLI --grep cannot widen it.`)
+            + `playwright.config.ts grepInverts those tags and a CLI --grep cannot widen it.`
+            + providerSkipSuffix(last))
         }
+        if (outcome.providerUnevaluated) fail(providerUnevaluatedMessage(`final green run for ${file}`, last))
         if (outcome.voids >= MAX_INFRA_VOIDS) {
           fail(`final green run for ${file} kept aborting on environment signatures — restart the instance and run next again`)
         }
@@ -635,6 +670,13 @@ async function main() {
     const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const run = runPlaywright([file, '--grep', escapedTitle, '--retries=0', '--workers=1'])
     if (!run.stats) fail('could not parse playwright JSON')
+    // A test that skipped on a provider-health record never ran the mutation,
+    // so "did NOT make it fail" would blame the assert for a run that never
+    // happened (#2034).
+    if (run.stats.unexpected === 0 && (run.stats.providerHealthSkips?.length ?? 0) > 0) {
+      fail(`"${title}" did not RUN — it skipped on a provider-health record, so the mutation was never exercised:\n`
+        + describeProviderHealthSkips(run.stats).join('\n'))
+    }
     if (run.stats.unexpected === 0) {
       fail(`mutation did NOT make "${title}" fail (unexpected=0) — the test cannot detect it; strengthen the assert or pick a real mutation`)
     }

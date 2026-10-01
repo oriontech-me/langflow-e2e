@@ -61,6 +61,23 @@ export interface PwStats {
   backendErrorLines: string[]
   /** Error messages of every non-passing result — the input to classifyRun. */
   failureMessages: string[]
+  /**
+   * Tests that skipped because of a provider-HEALTH record (#2034): `inactive`,
+   * or an `active` record older than the gate's window (`stale`, #1904). Read
+   * from each skipped test's `skip` annotation through the one shared parser.
+   * Optional because state files written before #2034 do not carry it.
+   */
+  providerHealthSkips?: ProviderHealthSkip[]
+}
+
+export interface ProviderHealthSkip {
+  file: string
+  /** Describe chain + test title, joined with ` › `. */
+  title: string
+  provider: string
+  /** What the sweep recorded (inactive) or why the record expired (stale). */
+  reason: string
+  stale: boolean
 }
 
 /**
@@ -76,9 +93,16 @@ export interface PwStats {
  * selects zero tests) and a spec whose every test hit a runtime `test.skip`.
  * Unlike an infra void it is deterministic, so re-running is pointless — the
  * caller reports the cause instead of looping.
+ *
+ * `provider-unevaluated` is the same silence in a MIXED spec (#2034): the run
+ * is otherwise green, but some tests skipped on a provider-health record, so
+ * the green says nothing about them. Counting it clean would let a burst
+ * certify tests that never ran. Also deterministic — the record does not
+ * change between runs — so the caller names the tests instead of looping.
  */
 export type RunClass =
   | 'clean' | 'clean-ambient' | 'infra-void' | 'real-failure' | 'no-evidence'
+  | 'provider-unevaluated'
 
 /**
  * A declared-ambient backend error: substrings that may appear in a run's

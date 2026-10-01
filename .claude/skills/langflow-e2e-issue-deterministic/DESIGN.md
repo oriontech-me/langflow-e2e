@@ -158,6 +158,10 @@ prose skill / `langflow-e2e` references instead.
    `socket hang up`, connection refused) is re-run and counted as neither; past
    `PIPELINE_MAX_INFRA_VOIDS` (3) the phase stops naming the instance. A failure
    the classifier cannot read stays a real failure — it can never silence a red.
+   Two further classes withhold a green that the predicates above would grant:
+   `no-evidence` (nothing executed, #1593) and `provider-unevaluated` (otherwise
+   green, but some tests skipped on a provider-health record, #2034). Both are
+   deterministic, so neither is re-run; the phase stops and names the cause.
 8. **Pre-fix flake rate** (#1082): for a flake-shaped issue, DEBUG completes only
    with a `repro-run` baseline (≥5 runs on the unmodified spec) — or, when the
    defect never reproduced, an explicit `evidence.mechanismProof`. Three clean
