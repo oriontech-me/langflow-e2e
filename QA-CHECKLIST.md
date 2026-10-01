@@ -645,6 +645,10 @@
 - [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] Audio input button is disabled, with a "not supported" label, in a browser without speech recognition → `core-functionality/playground/playground-audio-input.spec.ts`
+- [x] Audio input button starts speech recognition on click and stops it on a second click → `core-functionality/playground/playground-audio-input.spec.ts`
+- [x] Dictated final transcript is appended to the text already in the input; interim results are not (browser speech recognition stubbed — #2132) → `core-functionality/playground/playground-audio-input.spec.ts`
+- [x] Stopping dictation with no speech shows the "Voice Input Error" alert and leaves the input unchanged → `core-functionality/playground/playground-audio-input.spec.ts`
 - [x] Attach and send an image on a live LLM flow (Basic Prompting) — the image renders in the chat messages → `core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts`
 - [x] Custom `sender_name` on Chat Input/Output is applied to a live LLM turn — messages render as `chat-message-<custom name>` after a default-label turn → `core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
 
