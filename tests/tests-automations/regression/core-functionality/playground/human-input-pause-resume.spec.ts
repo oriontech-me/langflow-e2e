@@ -10,13 +10,20 @@
  * only ever approves cannot distinguish exclusive routing from "the approve
  * branch is the only one wired".
  *
+ * A third test (issue #2050) reloads the page while the run is suspended and
+ * claims the run outlives the tab: the same job is still parked, the decision is
+ * re-offered from both stores that hold it, approving it completes that job, and
+ * a second reload renders the answer as resolved. It lives in this file on
+ * purpose — tests 1–2 run the identical pause/resume WITHOUT a reload in the same
+ * shard against the same instance, so a red in test 3 carries its own control
+ * (the spec doc's "rule out #1921 first" section).
+ *
  * Sibling coverage — do not duplicate here:
  * - The node's configuration surface (default handles, adding a choice live,
  *   persistence across reload) is `core-components/human-input-node-config.spec.ts`
  *   (issue #1190). This spec never edits the node.
- * - `Enable Fallback` / `Timeout`, recovering a suspended run after a reload
- *   (`GET /api/v2/workflows/pending`) and the resume API's 409/422 guards are
- *   listed as out of scope in the spec doc.
+ * - `Enable Fallback` / `Timeout` and the resume API's 409/422 guards are listed
+ *   as out of scope in the spec doc.
  *
  * Spec doc: `docs/core-functionality/playground/human-input-pause-resume.md`.
  * No provider credentials — `route_branch()` returns the prompt text itself.
@@ -39,6 +46,15 @@ import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-edito
 // attaches when its `sourceHandle` matches the handle's own `data-handleid`
 // verbatim.
 const FIXTURE_PATH = "tests/assets/flows/human-input-branching-fixture.json";
+
+// The fixture's Human Input node id. `POST /api/v1/flows/` keeps node ids as
+// sent (the pending request's `request_id` is `<this id>:<job_id>`), so the
+// canvas pause badge can be scoped to this node's own `rf__node-<id>` wrapper.
+const HUMAN_INPUT_NODE_ID: string = JSON.parse(
+  readFileSync(FIXTURE_PATH, "utf-8"),
+).data.nodes.find(
+  (node: { data?: { type?: string } }) => node.data?.type === "HumanInput",
+).id;
 
 // The Chat Input's stored value. The Playground pre-fills from the node, so this
 // is also the text of the user bubble, of the card's prompt, and of whichever
@@ -153,6 +169,19 @@ async function openHitlPlayground(page: Page): Promise<string> {
  * longer suspended".
  */
 async function pendingHitlCount(page: Page, flowId: string): Promise<number> {
+  const rows = await pendingHitlRequests(page, flowId);
+  return rows === null ? -1 : rows.length;
+}
+
+/**
+ * The suspended HITL requests the backend holds for this flow, one row per
+ * suspended job — `null` when the body is not a list. Test 3 reads `job_id` to
+ * prove the request recovered after a reload is the SAME run, not a new one.
+ */
+async function pendingHitlRequests(
+  page: Page,
+  flowId: string,
+): Promise<Array<{ job_id: string }> | null> {
   const authHeader = await getAuthToken(page.request);
   const res = await page.request.get(
     `/api/v2/workflows/pending?flow_id=${flowId}`,
@@ -160,8 +189,46 @@ async function pendingHitlCount(page: Page, flowId: string): Promise<number> {
   );
   if (!res.ok()) throw new Error(`GET /workflows/pending → ${res.status()}`);
   const body = await res.json();
-  return Array.isArray(body) ? body.length : -1;
+  return Array.isArray(body) ? body : null;
 }
+
+/**
+ * The job's status as `GET /api/v2/workflows?job_id=` reports it —
+ * `"suspended"` while parked, `"completed"` once the resumed run reaches its
+ * terminal state. Only `status` is read: the response's `outputs` map has
+ * regressed to `{}` on a sibling path before (#1575), and the UI bubbles already
+ * pin routing.
+ */
+async function workflowStatus(page: Page, jobId: string): Promise<string> {
+  const authHeader = await getAuthToken(page.request);
+  const res = await page.request.get(
+    `/api/v2/workflows?job_id=${jobId}`,
+    authHeader ? { headers: { Authorization: authHeader } } : undefined,
+  );
+  if (!res.ok()) throw new Error(`GET /workflows?job_id → ${res.status()}`);
+  const body = await res.json();
+  return String(body?.status);
+}
+
+/**
+ * Reload the editor and wait for the canvas. After a reload the Playground is
+ * closed, which is what lets the canvas pause badge render at all
+ * (`useAwaitingHumanInput()` hides it while the Playground is open).
+ */
+async function reloadEditor(page: Page): Promise<void> {
+  await page.reload();
+  await expect(page.getByTestId("title-Human Input")).toBeVisible({
+    timeout: 30000,
+  });
+}
+
+/**
+ * The Playground transcript. Scoping to it keeps the canvas popover's card —
+ * which carries the same `human-input-card` testid — from standing in for the
+ * Playground's.
+ */
+const transcript = (page: Page) =>
+  page.getByRole("log", { name: "Chat messages" });
 
 /** Send the pre-filled prompt and wait for the run to park on the decision card. */
 async function sendAndExpectPause(page: Page, flowId: string): Promise<void> {
@@ -283,6 +350,115 @@ test.describe("Human Input pause/resume in the Playground", () => {
 
       await test.step("Rejecting resumes the run through the reject branch only", async () => {
         await answerAndExpectExclusiveRouting(page, flowId, "reject");
+      });
+    },
+  );
+
+  test("a suspended Human Input run survives a page reload and completes on approval",
+    { tag: ["@stable", "@database", "@playground"] },
+    async ({ page }) => {
+      let flowId = "";
+      let jobId = "";
+
+      await test.step("Open the pre-wired HITL flow in the Playground", async () => {
+        flowId = await openHitlPlayground(page);
+      });
+
+      await test.step("Sending the prompt suspends the run on the decision card", async () => {
+        await sendAndExpectPause(page, flowId);
+
+        const rows = await pendingHitlRequests(page, flowId);
+        expect(rows).toHaveLength(1);
+        jobId = rows![0].job_id;
+        expect(jobId).toBeTruthy();
+        expect(await workflowStatus(page, jobId)).toBe("suspended");
+      });
+
+      await test.step("Reloading the page leaves the same run parked server-side", async () => {
+        await reloadEditor(page);
+
+        // Exactly one suspended request, and it is the run started before the
+        // reload — a reload that started a fresh run, or lost the job, fails here.
+        const rows = await pendingHitlRequests(page, flowId);
+        expect(rows).toHaveLength(1);
+        expect(rows![0].job_id).toBe(jobId);
+        expect(await workflowStatus(page, jobId)).toBe("suspended");
+      });
+
+      await test.step("The canvas re-offers the decision on the Human Input node", async () => {
+        // Derived from the pending-job list, not from the chat history.
+        const node = page.getByTestId(`rf__node-${HUMAN_INPUT_NODE_ID}`);
+        await expect(node.getByTestId("human-input-node-badge")).toBeVisible({
+          timeout: 30000,
+        });
+        const card = node.getByTestId("human-input-card");
+        await expect(card).toBeVisible({ timeout: 15000 });
+        await expect(card).toContainText(SENTINEL_PROMPT);
+        await expect(card.getByTestId(BRANCHES.approve.decision)).toBeEnabled();
+        await expect(card.getByTestId(BRANCHES.reject.decision)).toBeEnabled();
+      });
+
+      await test.step("The Playground transcript is restored with the open decision card", async () => {
+        await page.getByTestId("playground-btn-flow-io").click();
+
+        // Derived from the persisted chat message — the second store.
+        const log = transcript(page);
+        await expect(
+          log.getByTestId(`chat-message-User-${SENTINEL_PROMPT}`),
+        ).toBeVisible({ timeout: 30000 });
+        const card = log.getByTestId("human-input-card");
+        await expect(card).toBeVisible({ timeout: 30000 });
+        await expect(card).toContainText(SENTINEL_PROMPT);
+        await expect(card.getByTestId(BRANCHES.approve.decision)).toBeEnabled({
+          timeout: 15000,
+        });
+        await expect(card.getByTestId(BRANCHES.reject.decision)).toBeEnabled({
+          timeout: 15000,
+        });
+
+        // The reload neither completed nor replayed the run.
+        await expect(bubble(page, BRANCHES.approve.sender)).toHaveCount(0);
+        await expect(bubble(page, BRANCHES.reject.sender)).toHaveCount(0);
+      });
+
+      await test.step("Approving the recovered card completes the original run", async () => {
+        await transcript(page)
+          .getByTestId("human-input-card")
+          .getByTestId(BRANCHES.approve.decision)
+          .click();
+
+        await expect(bubble(page, BRANCHES.approve.sender)).toBeVisible({
+          timeout: 30000,
+        });
+        await expect(bubble(page, BRANCHES.reject.sender)).toHaveCount(0);
+
+        await expect
+          .poll(() => pendingHitlCount(page, flowId), { timeout: 30000 })
+          .toBe(0);
+        // The terminal state, on the job started before the reload.
+        await expect
+          .poll(() => workflowStatus(page, jobId), { timeout: 30000 })
+          .toBe("completed");
+      });
+
+      await test.step("A second reload renders the answered card as resolved", async () => {
+        await reloadEditor(page);
+        await page.getByTestId("playground-btn-flow-io").click();
+
+        const log = transcript(page);
+        // The approved bubble is the positive anchor: it proves the transcript
+        // loaded, so the decision assertions below cannot pass on an empty log.
+        await expect(
+          log.getByTestId(`chat-message-${BRANCHES.approve.sender}-${SENTINEL_PROMPT}`),
+        ).toBeVisible({ timeout: 30000 });
+        await expect(bubble(page, BRANCHES.reject.sender)).toHaveCount(0);
+
+        // No local state survives the reload, so this rendering can only come from
+        // the `submitted_action` the resume persisted on the card message.
+        const card = log.getByTestId("human-input-card");
+        await expect(card).toBeVisible({ timeout: 30000 });
+        await expect(card.getByTestId(BRANCHES.reject.decision)).toHaveCount(0);
+        await expect(card.getByTestId(BRANCHES.approve.decision)).toBeDisabled();
       });
     },
   );

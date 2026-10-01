@@ -689,7 +689,7 @@
 
 #### 9.6 Human-in-the-Loop (1.11.0)
 - [x] Human Input suspends the run server-side, decision card renders in the Playground, Approve routes only the approved branch and the run leaves the suspended state; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
-- [ ] A suspended Human Input run is recoverable after a page reload (durable execution outliving the tab)
+- [x] A suspended Human Input run is recoverable after a page reload (durable execution outliving the tab): the same `job_id` stays suspended, the canvas badge and the Playground transcript both re-offer the decision, approving it completes that job, and a second reload renders the card resolved (#2050) → `core-functionality/playground/human-input-pause-resume.spec.ts`
 
 ---
 
