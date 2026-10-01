@@ -1590,7 +1590,7 @@
 | `core-functionality/llm-agents/` | 42 | 35 | 3 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 32 | 3 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 52 | 50 | 1 | 0 | 1 |
+| `core-functionality/playground/` | 52 | 51 | 0 | 0 | 1 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
@@ -1606,7 +1606,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **641 (87%)** | **38 (5%)** | **14 (2%)** | **41 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **642 (87%)** | **37 (5%)** | **14 (2%)** | **41 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1622,7 +1622,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 708 `test()` calls carrying the `@stable` tag, distributed across 278 spec
+> 711 `test()` calls carrying the `@stable` tag, distributed across 279 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2387,6 +2387,9 @@
 - [x] should see shortcuts → `userSettings.spec.ts`
 - [x] should interact with API Keys → `userSettings.spec.ts`
 - [x] should navigate back to flow from global variables → `userSettings.spec.ts`
+- [x] should able to see and interact with voice assistant → `voice-assistant.spec.ts`
+- [x] user should not be able to see voice button if voice mode is not available → `voice-assistant.spec.ts`
+- [x] user should be able to see voice button if voice mode is available → `voice-assistant.spec.ts`
 
 ---
 
@@ -2402,7 +2405,7 @@
 | `core-functionality/auth/` | 1 | 0 |
 | `core-functionality/llm-agents/` | 3 | 3 |
 | `core-functionality/model-provider/` | 3 | 1 |
-| `core-functionality/playground/` | 1 | 1 |
+| `core-functionality/playground/` | 0 | 1 |
 | `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
