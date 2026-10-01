@@ -236,6 +236,27 @@ async function registeredFoundryDeployments(request: APIRequestContext): Promise
   return [...names];
 }
 
+/**
+ * The boolean `GET /api/v1/models/enabled_models` reports for one Foundry LLM
+ * deployment — "enabled AND usable", which on a CONFIGURED provider is the
+ * enablement itself. Key presence is not enough on that path (#1480): a name the
+ * provider's model list already carries is known whether or not it is enabled.
+ */
+async function foundryDeploymentEnabled(
+  request: APIRequestContext,
+  deployment: string,
+): Promise<boolean | undefined> {
+  const bearer = await getAuthToken(request);
+  const res = await request.get("/api/v1/models/enabled_models", {
+    headers: { Authorization: bearer },
+  });
+  expect(res.status()).toBe(200);
+  const body = (await res.json()) as {
+    enabled_models_by_type?: Record<string, Record<string, Record<string, boolean>>>;
+  };
+  return body.enabled_models_by_type?.[PROVIDER_NAME]?.llm?.[deployment];
+}
+
 /** Settings → Model Providers → <provider>, with the detail panel open. */
 async function openProviderPanel(page: Page, providerItemTestId: string): Promise<void> {
   await new SettingsPage(page).navigate();
@@ -515,7 +536,7 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
   // then timed out on. The poll was never the problem, and it is kept.
   test(
     "real credentials configure the provider and enable a portal deployment through the UI",
-    { tag: ["@model-provider", "@settings"] },
+    { tag: ["@stable", "@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeFoundry(request);
       test.skip(!probe.usable, `Azure AI Foundry not usable: ${probe.reason}`);
@@ -661,16 +682,35 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
           });
         });
 
-        await test.step("the add-deployment control appears and enables the portal deployment", async () => {
+        await test.step("the portal deployment is enabled through the panel", async () => {
           await page.getByTestId("model-search-input").fill(FOUNDRY_DEPLOYMENT);
-          // The exact control test 2 proved absent while unconfigured. Both
-          // testids exist upstream: the all-types panel renders
-          // `add-custom-llm-deployment-button`, a type-filtered one
-          // `add-custom-deployment-button`.
-          const addButton = page.locator(
-            '[data-testid="add-custom-llm-deployment-button"], [data-testid="add-custom-deployment-button"]',
+          // Two operator paths, and the deployment decides which one the panel
+          // offers (#1480). A name the provider's model list does not carry gets
+          // the add control test 2 proved absent while unconfigured — both testids
+          // exist upstream: `add-custom-llm-deployment-button` (all-types panel)
+          // and `add-custom-deployment-button` (type-filtered). A name the list
+          // already carries as an LLM gets only its row: ModelSelection offers the
+          // add control for MISSING types only, so the LLM button never renders
+          // (measured with a real resource on 1.13 nightly: `gpt-5.6-sol` listed,
+          // only "Add … as embedding model" offered).
+          const addButton = page
+            .locator(
+              '[data-testid="add-custom-llm-deployment-button"], [data-testid="add-custom-deployment-button"]',
+            )
+            .first();
+          const listedToggle = page.getByTestId(`llm-toggle-${FOUNDRY_DEPLOYMENT}`);
+          await expect(addButton.or(listedToggle)).toBeVisible({ timeout: 15000 });
+          const enableControl = (await addButton.isVisible()) ? addButton : listedToggle;
+          console.log(
+            `[azure-ai-foundry] enabling "${FOUNDRY_DEPLOYMENT}" via ${
+              enableControl === addButton ? "the add-deployment control" : "its listed row toggle"
+            }`,
           );
-          await expect(addButton.first()).toBeVisible({ timeout: 15000 });
+          if (enableControl === listedToggle) {
+            // Unchecked first, or the click below would DISABLE it and the enable
+            // write asserted next would not have been caused by this test.
+            await expect(listedToggle).toHaveAttribute("data-state", "unchecked");
+          }
 
           // Armed BEFORE the click, and asserted on the BODY: the row and its
           // toggle render optimistically, so the UI alone cannot tell an accepted
@@ -683,7 +723,7 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
               r.request().method() === "POST",
             { timeout: 30000 },
           );
-          await addButton.first().click();
+          await enableControl.click();
           const enableResp = await enablePromise;
           expect(enableResp.ok()).toBe(true);
           const enableBody = (await enableResp.json()) as EnabledModelsWrite;
@@ -709,6 +749,7 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
           await page.reload();
           await expect(page.getByTestId("provider-list")).toBeVisible({ timeout: 30000 });
           expect(await registeredFoundryDeployments(request)).toContain(FOUNDRY_DEPLOYMENT);
+          expect(await foundryDeploymentEnabled(request, FOUNDRY_DEPLOYMENT)).toBe(true);
         });
       } finally {
         // Restore the pre-test account state: deployment disabled, credentials
@@ -722,7 +763,7 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
 
   test(
     "the configured deployment answers a real inference through the Language Model component",
-    { tag: ["@model-provider", "@components", "@playground"] },
+    { tag: ["@stable", "@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
       const probe = await probeFoundry(request);
       test.skip(!probe.usable, `Azure AI Foundry not usable: ${probe.reason}`);
