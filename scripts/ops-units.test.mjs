@@ -85,7 +85,7 @@ test("every service declares HOME, because systemd sets none (#1715)", () => {
   // cron does, systemd does not, and run-e2e.sh builds the uv PATH out of $HOME under
   // `set -u` -- so the run dies before doing anything. Found by running a unit, not by
   // reading one.
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service"]) {
     assert.ok(
       directives(read(unit), "Environment").some((v) => v === "HOME=/root"),
       `${unit} does not declare HOME`,
@@ -130,7 +130,7 @@ test("the timers are enablable and the services are not, by design", () => {
   for (const unit of ["e2e-daily.timer", "e2e-daily-watchdog.timer", "e2e-mirror-freshness.timer", "e2e-mirror-freshness-announce.timer"]) {
     assert.deepEqual(directives(read(unit), "WantedBy"), ["timers.target"], `${unit}`);
   }
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service"]) {
     assert.doesNotMatch(read(unit), /^\[Install\]/m, `${unit} carries an [Install] section`);
   }
 });
@@ -206,4 +206,20 @@ test("the shadow has no timer and starts only after the daily's unit has finishe
   assert.deepEqual(directives(unit, "After"), ["network-online.target e2e-daily.service"]);
   assert.deepEqual(directives(unit, "ExecStart"), ["/root/e2e-qa/ops/vm/run-shadow.sh"]);
   assert.ok(!readdirSync(OPS).includes("e2e-shadow.timer"), "the shadow must not have a schedule of its own");
+});
+
+test("the on-demand run has no timer, no Conflicts= with the daily, and room to clean up", () => {
+  // Conflicts= is symmetric: starting the on-demand run by hand during the daily would
+  // stop the DAILY. The priority is one-way -- the wrapper refuses the window and
+  // run-daily.sh stops this unit -- so the mechanism is one-way too.
+  const unit = read("e2e-on-demand.service");
+  assert.deepEqual(directives(unit, "Type"), ["oneshot"]);
+  assert.deepEqual(directives(unit, "ExecStart"), ["/root/e2e-qa/ops/vm/run-on-demand.sh"]);
+  assert.deepEqual(directives(unit, "Conflicts"), [], "Conflicts= would let this unit stop the daily");
+  assert.ok(!readdirSync(OPS).includes("e2e-on-demand.timer"), "the on-demand run must not have a schedule");
+  // The wrapper cleans up on SIGTERM; systemd's default 90 s would cut it short.
+  const stop = directives(unit, "TimeoutStopSec");
+  assert.equal(stop.length, 1, "TimeoutStopSec is not set");
+  assert.match(stop[0], /^\d+min$/);
+  assert.ok(Number(stop[0].slice(0, -3)) >= 3, "too little time for the cleanup");
 });

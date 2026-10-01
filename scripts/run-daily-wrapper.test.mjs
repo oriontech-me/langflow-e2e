@@ -253,6 +253,43 @@ test("a running shadow is stopped before the official run, whatever state system
   }
 });
 
+test("a running on-demand run is stopped before the official run, and only a running one", () => {
+  // It refuses to START in the daily's window, but one started just before, or a slow
+  // build, can still be going at 08:00; the daily's priority is the same as over the
+  // shadow, and so is the check, state by state.
+  for (const [state, stops] of [["activating", true], ["active", true], ["deactivating", true], ["reloading", true], ["inactive", false], ["failed", false], ["", false]]) {
+    const dir = makeTempDir("run-daily-ondemand-");
+    try {
+      const calls = join(dir, "systemctl.calls");
+      const systemctl = `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\ncase "$*" in *e2e-on-demand*) [ "$1" = show ] && echo ${JSON.stringify(state)} ;; *) [ "$1" = show ] && echo inactive ;; esac\nexit 0\n`;
+      const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
+      const log = readFileSync(calls, "utf8");
+      assert.match(log, /show -p ActiveState --value e2e-on-demand\.service/, `${state}: the state was not asked`);
+      if (stops) {
+        assert.match(log, /^stop e2e-on-demand\.service$/m, `${state}: a running on-demand run was not stopped`);
+        assert.match(r.log, new RegExp(`stopping the on-demand run \\(${state}\\) before this run`));
+      } else {
+        assert.doesNotMatch(log, /^stop /m, `${state || "(none)"}: an on-demand run that is not running was stopped`);
+      }
+      assert.match(r.log, /could not resolve the version/, `${state}: the daily did not continue past the guard`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a failed stop of the on-demand run is said and does not end the daily", () => {
+  const dir = makeTempDir("run-daily-ondemand-");
+  try {
+    const systemctl = `#!/bin/sh\ncase "$*" in "show "*e2e-on-demand*) echo active; exit 0 ;; "stop e2e-on-demand.service") exit 1 ;; show*) echo inactive ;; esac\nexit 0\n`;
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
+    assert.match(r.log, /WARNING: could not stop e2e-on-demand\.service/);
+    assert.match(r.log, /could not resolve the version/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failed stop is said and does not end the daily (#2094)", () => {
   const dir = makeTempDir("run-daily-shadow-");
   try {
