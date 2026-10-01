@@ -401,6 +401,9 @@ ondemand_finish() {
     echo "result: $res (status=$OD_STATUS${OD_VERDICT:+ verdict=$OD_VERDICT})"
   fi
   find "$OD_LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +30 -delete 2>/dev/null || true
+  # build-target-image.sh keeps each build's log beside the source tree it removes; a
+  # month of them is the same retention as this lane's own logs.
+  find "$OD_STATE/builds" -maxdepth 1 -name 'build-*.log' -type f -mtime +30 -delete 2>/dev/null || true
   echo "=== on-demand end, exit=$OD_EXIT ==="
   exit "$OD_EXIT"
 }

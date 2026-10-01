@@ -420,6 +420,20 @@ test("cleanup removes this lane's containers, images and build cache, and only t
   }
 });
 
+test("build logs older than a month are removed, and recent ones kept", () => {
+  const { env, collect } = setup();
+  const builds = join(env.E2E_ONDEMAND_STATE, "builds");
+  mkdirSync(builds, { recursive: true });
+  writeFileSync(join(builds, "build-old.log"), "x");
+  writeFileSync(join(builds, "build-new.log"), "x");
+  execFileSync("touch", ["-t", "202001010000", join(builds, "build-old.log")]);
+  spawnSync("bash", [ONDEMAND], { encoding: "utf8", env });
+  const r = collect(0);
+  assert.equal(existsSync(join(builds, "build-old.log")), false, "a build log older than a month was kept");
+  assert.equal(existsSync(join(builds, "build-new.log")), true, "a recent build log was removed");
+  assert.ok(r.result["req-1"]);
+});
+
 test("a container that survives removal is reported in the result, not hidden", () => {
   const r = onDemand({ leftover: "langflow-e2e-lane-7891\n" });
   assert.equal(r.result["req-1"].CLEANUP, "incomplete");
