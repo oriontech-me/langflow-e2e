@@ -188,9 +188,23 @@ function bestHit(item, candidates) {
   return best;
 }
 
+/**
+ * The number the mass-failure guard compares against its threshold: `totals.failed`
+ * minus the unexpected passes in `failures[]` (#2116), the same subtraction
+ * `remove-stable-from-failures.ts` makes over the report. The appender pushes one
+ * `failures[]` row per `totals.failed` increment, so the raw (undeduped) rows are
+ * the right ones to subtract. Rows written before #2009 record an unexpected pass
+ * as `"unknown"` and are counted, as the guard counted them then.
+ */
+export function guardCount(row) {
+  const failed = row.totals?.failed || 0;
+  const passes = (row.failures || []).filter(isUnexpectedPassEntry).length;
+  return Math.max(0, failed - passes);
+}
+
 /** True when the run had more hard failures than the auto-remove guard allows. */
 export function detectGuard(row, maxAutoRemove = 5) {
-  return (row.totals?.failed || 0) > maxAutoRemove;
+  return guardCount(row) > maxAutoRemove;
 }
 
 /** Provider tokens we recognise in labels, filenames, and titles. */
@@ -884,6 +898,7 @@ export function buildDataset(rows, issues, opts = {}) {
     // repository than the dedicated issues (the VM lane); null otherwise.
     umbrella_url: (issues || []).find((i) => i.number === umbrellaIssue)?.url || null,
     guard_tripped: detectGuard(run, maxAutoRemove),
+    guard_count: guardCount(run),
     stale_history,
     infra_classification_gap,
     totals: run.totals,

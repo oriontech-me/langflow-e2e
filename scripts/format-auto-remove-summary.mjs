@@ -33,6 +33,11 @@ const exempt = Array.isArray(r.exempt) ? r.exempt : [];
 const attributable = Number.isFinite(r.attributableFailures)
   ? r.attributableFailures
   : r.hardFailures;
+// What the guard compared against the threshold (#2116): every hard failure except
+// the unexpected passes. Absent on output produced before #2116, when the guard
+// counted every hard failure — so the fallback is the truthful number for it.
+const guardCount = Number.isFinite(r.guardCount) ? r.guardCount : r.hardFailures;
+const unexpectedPasses = Number.isFinite(r.unexpectedPasses) ? r.unexpectedPasses : 0;
 
 if (exempt.length) {
   // The liveness verdict (#1030) only strengthens or weakens the wording — the
@@ -97,9 +102,12 @@ if (disagreements.length) {
   lines.push("");
 }
 
+// The guard's "every hard failure" stopped being literal at #2116; say what it skips.
+const exceptPasses = unexpectedPasses > 0 ? " except unexpected passes (below)" : "";
+
 if (r.status === "guard_tripped") {
   lines.push(
-    `⚠️ **Mass-failure guard tripped** — ${r.hardFailures} hard failures exceed the ` +
+    `⚠️ **Mass-failure guard tripped** — ${guardCount} hard failures exceed the ` +
       `threshold of ${r.threshold}, so \`@stable\` was **left untouched**. A run where ` +
       `this many stable tests fail at once is almost always infra (Langflow didn't boot, ` +
       `network/model outage), not per-test rot. Triage manually.`,
@@ -108,10 +116,10 @@ if (r.status === "guard_tripped") {
     lines.push("");
     lines.push(
       attributable === 0
-        ? `The guard counts **every** hard failure, so it never removes more than it would have before ` +
+        ? `The guard counts **every** hard failure${exceptPasses}, so it never removes more than it would have before ` +
             `#1031 — but here **all ${r.hardFailures} were collateral** (above). There is no per-spec ` +
             `evidence to triage on this run.`
-        : `The guard counts **every** hard failure, collateral included (${exempt.length} of ${r.hardFailures} ` +
+        : `The guard counts **every** hard failure${exceptPasses}, collateral included (${exempt.length} of ${r.hardFailures} ` +
             `here), so it never removes more than it would have before #1031 — the ${attributable} attributable ` +
             `failure(s) above are for manual triage.`,
     );
@@ -134,6 +142,20 @@ if (r.status === "guard_tripped") {
   );
 } else {
   lines.push("No per-test `@stable` hard failures were auto-removed.");
+}
+
+// Whenever the two numbers differ, say so in every branch (#2116): on a guard day
+// the reader needs to know the count was not inflated by declared bugs being fixed,
+// and on a removal day why a run with more hard failures than the threshold still
+// removed tags.
+if (unexpectedPasses > 0) {
+  lines.push("");
+  lines.push(
+    `🎯 **Guard count ${guardCount} of ${r.hardFailures} hard failures** — ` +
+      `${unexpectedPasses} unexpected pass(es) (a \`test.fail()\` body that passed, #2009) ` +
+      `are not counted by the mass-failure guard: a declared upstream bug being fixed is the ` +
+      `opposite of an infra day (#2116). They are still hard failures for their own \`@stable\` tag (#2027).`,
+  );
 }
 
 if (r.skipped && r.skipped.length) {

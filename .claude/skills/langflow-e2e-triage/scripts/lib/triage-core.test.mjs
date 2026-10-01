@@ -10,6 +10,7 @@ import {
   computeRecurrence,
   rowsWithinDays,
   detectGuard,
+  guardCount,
   matchUmbrella,
   buildDataset,
   dedupeEntries,
@@ -134,6 +135,29 @@ test('computeRecurrence reads the item\'s own row as a match, never as unverifie
 test('detectGuard trips above the threshold', () => {
   assert.equal(detectGuard({ totals: { failed: 6 } }, 5), true);
   assert.equal(detectGuard({ totals: { failed: 5 } }, 5), false);
+});
+
+test('detectGuard does not count unexpected passes, matching remove-stable-from-failures.ts (#2116)', () => {
+  // 2026-09-30 VM run: 7 failed, 2 of them test.fail() bodies that passed.
+  const row = {
+    totals: { failed: 7 },
+    failures: [
+      ...['r1', 'r2', 'r3', 'r4', 'r5'].map((test) => ({ test, line: 1, error_signature: 'locator.click timeout' })),
+      { test: 'memory-base-ingestion', line: 367, error_signature: 'expected to fail but passed' },
+      { test: 'flow-lock', line: 292, error_signature: 'expected to fail but passed' },
+    ],
+  };
+  assert.equal(guardCount(row), 5);
+  assert.equal(detectGuard(row, 5), false);
+  // A sixth real failure still trips it.
+  const worse = {
+    totals: { failed: 8 },
+    failures: [...row.failures, { test: 'r6', line: 1, error_signature: 'locator.click timeout' }],
+  };
+  assert.equal(detectGuard(worse, 5), true);
+  // Pre-#2009 rows recorded the same case as "unknown" and are counted, as then.
+  assert.equal(guardCount({ totals: { failed: 2 }, failures: [{ error_signature: 'unknown' }] }), 2);
+  assert.equal(buildDataset([{ ...row, run_id: '1', date: '2026-09-30' }], []).guard_count, 5);
 });
 
 test('matchUmbrella finds the daily-failure issue by run id in the body', () => {

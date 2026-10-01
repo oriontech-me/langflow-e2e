@@ -119,7 +119,7 @@ It auto-discovers the latest red daily-stable run from
 detects the mass-failure guard, matches the umbrella `[Daily Failure]` issue
 via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
-`umbrella_issue`, `umbrella_url`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
+`umbrella_issue`, `umbrella_url`, `guard_tripped`, `guard_count` (`totals.failed` minus unexpected passes — what the guard compares, #2116), `totals`, `hard_failures[]`, `flakes[]`
 (each carrying `provider`/`model`, `recurrence`, and an `actionable` flag),
 `declared_fix_candidates[]` (see Phase 3), `provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
 past run; `--results <json>` backfills provider labels + per-skip reasons.
