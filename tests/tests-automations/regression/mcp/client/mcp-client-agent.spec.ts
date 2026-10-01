@@ -21,6 +21,7 @@ import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-n
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 // Worker- and timestamp-suffixed name prevents cross-file races with
 // mcp-client-regression.spec.ts (which also registers an "everything" MCP server).
@@ -190,14 +191,6 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
-  }
-}
-
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
   }
 }
 
@@ -384,26 +377,30 @@ for (const { label, options, skipReason } of targets) {
           await playgroundInput.clear();
           await playgroundInput.fill(echoPrompt);
           await expect(playgroundInput).toHaveValue(echoPrompt);
-          await page.evaluate((value: string) => {
-            const inputs = document.querySelectorAll<HTMLTextAreaElement>(
-              '[data-testid="input-chat-playground"]',
-            );
-            const input = inputs[inputs.length - 1];
-            const sends = document.querySelectorAll<HTMLButtonElement>(
-              '[data-testid="button-send"]',
-            );
-            const send = sends[sends.length - 1];
-            const setter = Object.getOwnPropertyDescriptor(
-              HTMLTextAreaElement.prototype,
-              "value",
-            )?.set;
-            if (!setter || !input || !send) {
-              throw new Error("Playground input or send button not found in DOM");
-            }
-            setter.call(input, value);
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            send.click();
-          }, echoPrompt);
+          // Counts are taken before the atomic send, then the turn is awaited (#2123).
+          await sendAndAwaitPlaygroundTurn(page, {
+            send: () =>
+              page.evaluate((value: string) => {
+                const inputs = document.querySelectorAll<HTMLTextAreaElement>(
+                  '[data-testid="input-chat-playground"]',
+                );
+                const input = inputs[inputs.length - 1];
+                const sends = document.querySelectorAll<HTMLButtonElement>(
+                  '[data-testid="button-send"]',
+                );
+                const send = sends[sends.length - 1];
+                const setter = Object.getOwnPropertyDescriptor(
+                  HTMLTextAreaElement.prototype,
+                  "value",
+                )?.set;
+                if (!setter || !input || !send) {
+                  throw new Error("Playground input or send button not found in DOM");
+                }
+                setter.call(input, value);
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                send.click();
+              }, echoPrompt),
+          });
           // Verify the user message that reached the chat history is the echo prompt
           // (not the Chat Input template default). Catches any residual race loudly.
           await expect(
@@ -413,8 +410,6 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("Verify agent invoked the echo MCP tool and returned echoed text", async () => {
-          await waitForAgentToFinish(page);
-
           // Proof #1: the agent actually INVOKED a tool.
           //
           // `tool-status-done` (`chatComponents/ToolCallCard.tsx`) is rendered

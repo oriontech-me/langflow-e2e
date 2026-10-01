@@ -11,6 +11,7 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Agent robustness on a degenerate model output (QA-CHECKLIST §6.5,
@@ -69,14 +70,6 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
   }
 }
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // Fill the Agent Instructions (system prompt) and make sure the debounced
 // autosave has settled before the build, so the run uses the prompt we set, not
 // the template default.
@@ -108,9 +101,7 @@ async function askAndGetReplyBubble(page: Page, message: string) {
   });
 
   await page.getByTestId("input-chat-playground").last().fill(message);
-  await page.getByTestId("button-send").last().click();
-
-  await waitForAgentToFinish(page);
+  await sendAndAwaitPlaygroundTurn(page);
 
   const bubble = page.getByTestId("div-chat-message").last();
   await expect(bubble).toBeVisible({ timeout: 30000 });

@@ -13,6 +13,7 @@ import { providerSkipGate } from "../../../../helpers/provider-setup/provider-he
 import { waitForProviderRow } from "../../../../helpers/provider-setup/provider-list-state";
 import { armProviderSave } from "../../../../helpers/provider-setup/provider-panel-save";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Google (Gemini) provider path (QA-CHECKLIST §7.4) as a provider-centric journey:
@@ -82,14 +83,6 @@ test.afterEach(async ({ request }) => {
     await deleteFlow(request, id, { headers: { Authorization: bearer } });
   }
 });
-
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
 
 // Serial mode + --workers=1 keeps the shared instance state deterministic
 // (agent-family convention — named template loads collide under parallelism).
@@ -260,8 +253,7 @@ test.describe("Google Provider", () => {
           .getByTestId("input-chat-playground")
           .last()
           .fill(`Repeat this token exactly and nothing else: ${token}`);
-        await page.getByTestId("button-send").last().click();
-        await waitForAgentToFinish(page);
+        await sendAndAwaitPlaygroundTurn(page);
 
         const aiMessage = page.getByTestId("div-chat-message").last();
         await expect(aiMessage).toBeVisible({ timeout: 30000 });

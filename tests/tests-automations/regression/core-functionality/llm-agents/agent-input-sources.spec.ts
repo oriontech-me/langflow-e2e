@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Validates that the Agent component accepts its `input_value` from either of
@@ -114,14 +115,6 @@ async function expectSentinelPersistedInFlows(
     .toBe("persisted");
 }
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // SimpleAgentTemplatePage.load() deletes all flows before loading the template.
@@ -159,8 +152,7 @@ for (const { label, options, skipReason } of targets) {
             .getByTestId("input-chat-playground")
             .last()
             .fill(`Repeat this token exactly and nothing else: ${token}`);
-          await page.getByTestId("button-send").last().click();
-          await waitForAgentToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
         });
 
         await test.step("agent response echoes the token routed through the handle", async () => {

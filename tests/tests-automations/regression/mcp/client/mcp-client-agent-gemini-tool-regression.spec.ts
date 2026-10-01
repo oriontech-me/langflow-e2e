@@ -7,6 +7,7 @@ import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-g
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * MCP Client – Gemini tool-calling regression (upstream Langflow #440).
@@ -62,14 +63,6 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
-  }
-}
-
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
   }
 }
 
@@ -278,26 +271,30 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
         await playgroundInput.clear();
         await playgroundInput.fill(echoPrompt);
         await expect(playgroundInput).toHaveValue(echoPrompt);
-        await page.evaluate((value: string) => {
-          const inputs = document.querySelectorAll<HTMLTextAreaElement>(
-            '[data-testid="input-chat-playground"]',
-          );
-          const input = inputs[inputs.length - 1];
-          const sends = document.querySelectorAll<HTMLButtonElement>(
-            '[data-testid="button-send"]',
-          );
-          const send = sends[sends.length - 1];
-          const setter = Object.getOwnPropertyDescriptor(
-            HTMLTextAreaElement.prototype,
-            "value",
-          )?.set;
-          if (!setter || !input || !send) {
-            throw new Error("Playground input or send button not found in DOM");
-          }
-          setter.call(input, value);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          send.click();
-        }, echoPrompt);
+        // Counts are taken before the atomic send, then the turn is awaited (#2123).
+        await sendAndAwaitPlaygroundTurn(page, {
+          send: () =>
+            page.evaluate((value: string) => {
+              const inputs = document.querySelectorAll<HTMLTextAreaElement>(
+                '[data-testid="input-chat-playground"]',
+              );
+              const input = inputs[inputs.length - 1];
+              const sends = document.querySelectorAll<HTMLButtonElement>(
+                '[data-testid="button-send"]',
+              );
+              const send = sends[sends.length - 1];
+              const setter = Object.getOwnPropertyDescriptor(
+                HTMLTextAreaElement.prototype,
+                "value",
+              )?.set;
+              if (!setter || !input || !send) {
+                throw new Error("Playground input or send button not found in DOM");
+              }
+              setter.call(input, value);
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              send.click();
+            }, echoPrompt),
+        });
         await expect(
           page.getByText(echoPrompt, { exact: true }).first(),
           "User message in chat must match the echo prompt (not the Chat Input template default)",
@@ -305,8 +302,6 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
       });
 
       await test.step("#440 (fixed): agent completes a turn and invokes the echo MCP tool", async () => {
-        await waitForAgentToFinish(page);
-
         // Poll the monitor until the agent turn for this session is persisted —
         // this is both the completion gate and a race-free source of truth.
         let turn: { replyText: string; echoToolUseCount: number } | null = null;

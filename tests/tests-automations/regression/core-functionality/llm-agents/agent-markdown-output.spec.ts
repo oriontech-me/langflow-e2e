@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * Agent Markdown output (QA-CHECKLIST §6.5, "Agent returns output in correctly
@@ -132,14 +133,6 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // Set the ChatInput node's "Input Text" on the canvas. The Playground chat input
 // pre-fills from this node value, so setting it here makes the Playground prompt
 // deterministic — typing into the Playground races an async re-injection of the
@@ -246,8 +239,7 @@ for (const { label, options, skipReason } of targets) {
         await test.step("send a Markdown-only prompt and wait for the reply", async () => {
           await setChatInputText(page, PROMPT);
           await openPlayground(page);
-          await page.getByTestId("button-send").last().click();
-          await waitForAgentToFinish(page);
+          await sendAndAwaitPlaygroundTurn(page);
         });
 
         await test.step("read the reply as the run persisted it", async () => {

@@ -22,6 +22,7 @@ import {
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-model";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 /**
  * OpenAI provider happy path (QA-CHECKLIST §7.2) as a provider-centric journey:
@@ -93,14 +94,6 @@ test.afterEach(async ({ request }) => {
     await deleteFlow(request, id, { headers: { Authorization: bearer } });
   }
 });
-
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
 
 // Assert the echoed sentinel on the PERSISTED reply (monitor API), NOT the live
 // playground bubble. The bubble renders the empty placeholder ("Message empty.",
@@ -365,8 +358,7 @@ test.describe("OpenAI Provider", () => {
           .getByTestId("input-chat-playground")
           .last()
           .fill(`Repeat this token exactly and nothing else: ${token}`);
-        await page.getByTestId("button-send").last().click();
-        await waitForAgentToFinish(page);
+        await sendAndAwaitPlaygroundTurn(page);
 
         const aiMessage = page.getByTestId("div-chat-message").last();
         await expect(aiMessage).toBeVisible({ timeout: 30000 });

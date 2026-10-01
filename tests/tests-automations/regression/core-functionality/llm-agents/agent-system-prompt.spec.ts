@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
+import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
 
 // Distinctive stem for the sentinel code word. A model would never emit it on
 // its own for an unrelated question (the negative-control test asserts exactly
@@ -78,14 +79,6 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-async function waitForAgentToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
-}
-
 // Fill the Agent Instructions (system prompt) and make sure it is COMMITTED and
 // PERSISTED before the build, so the run uses the prompt we set, not the
 // template default.
@@ -145,9 +138,7 @@ async function askAndGetReply(page: Page, message: string): Promise<string> {
   });
 
   await page.getByTestId("input-chat-playground").last().fill(message);
-  await page.getByTestId("button-send").last().click();
-
-  await waitForAgentToFinish(page);
+  await sendAndAwaitPlaygroundTurn(page);
 
   const chatMessage = page.getByTestId("div-chat-message").last();
   await expect(chatMessage).toBeVisible({ timeout: 30000 });
