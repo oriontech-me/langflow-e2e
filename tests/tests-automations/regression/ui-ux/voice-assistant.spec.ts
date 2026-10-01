@@ -1,160 +1,112 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
-// PARKED — all three tests, #1915. The surface they assert is not in the image this
-// suite tests: measured on the nightly `1.13.0.dev15`, the served bundle carries ZERO
-// occurrences of `voice-button`, `voice_mode_available` or `voice-assistant`, and the
-// open playground reports `voice-button` 0 / `audio-button` 1 with
-// `voice_mode_available: true` mocked and the route confirmed to fire. The cause is a
-// component swap rather than a feature flag: `ENABLE_VOICE_ASSISTANT` is still `true`
-// and the OLD chat input still gates a `VoiceButton` on it, but the shipped playground
-// renders `components/core/playgroundComponent/chat-view/chat-input`, whose button row
-// holds an `AudioButton` and no voice button at all.
-//
-// The TODO this replaces ("review the voice assistant vs text to voice") is answered:
-// the product chose text-to-voice. See docs/ui-ux/voice-assistant.md.
-//
-// `test.fixme`, not `test.skip`: the modifier now carries an owner (#1915) instead of a
-// note. Nothing here runs in any lane either way — the difference is that a fixme is
-// reconciled against an open issue and a bare skip is not (#1568/#1569).
-test.fixme(
+// The voice button lives on the PUBLIC playground (`/playground/:id`), which still
+// mounts the older IOModal chat input; the editor playground renders the new chat
+// input, which has an `audio-button` and no voice button. Measured on
+// 1.13.0.dev29 — see docs/ui-ux/voice-assistant.md (#1915).
+
+let flowId: string | null = null;
+
+test.afterEach(async ({ page, request }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  if (flowId) {
+    const auth = await getAuthToken(request);
+    await deleteFlow(request, flowId, auth ? { headers: { Authorization: auth } } : undefined);
+  }
+  flowId = null;
+});
+
+/**
+ * Opens a fresh public playground with `voice_mode_available` overridden, and
+ * fails unless the config mock fired. The real config is fetched and
+ * merged, never replaced: the nightly reports `false` because it does not ship
+ * `webrtcvad`, so this is a test of the frontend gate.
+ */
+async function openPublicPlayground(
+  page: Page,
+  voiceModeAvailable: boolean,
+): Promise<void> {
+  const request = page.request;
+  flowId = await createFlowFromStarter(request, "Basic Prompting", `voice-assistant-${Date.now()}`);
+  const auth = await getAuthToken(request);
+  const publish = await request.patch(`/api/v1/flows/${flowId}`, {
+    headers: auth ? { Authorization: auth } : undefined,
+    data: { access_type: "PUBLIC" },
+  });
+  expect(publish.ok(), `PATCH access_type=PUBLIC answered ${publish.status()}`).toBe(true);
+
+  let fired = 0;
+  await page.route("**/api/v1/config", async (route) => {
+    fired++;
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      json: { ...(await response.json()), voice_mode_available: voiceModeAvailable },
+    });
+  });
+
+  await page.goto(`/playground/${flowId}/`);
+  await expect(page.getByTestId("input-wrapper")).toBeVisible({ timeout: 30000 });
+  await expect(page.getByTestId("button-send").last()).toBeVisible();
+  expect(fired, "the config mock never fired, so the flag under test was not applied").toBeGreaterThan(0);
+}
+
+test(
   "should able to see and interact with voice assistant",
-  { tag: ["@release", "@workspace", "@api"] },
-
+  { tag: ["@stable", "@release", "@playground"] },
   async ({ page }) => {
-    // Left on env-var presence (#1029 audit): the `test.fixme` above makes this body
-    // unreachable, so it can never reach a provider call and cannot wedge a shard.
-    // Whoever lifts the park must swap this for `providerSkipGate("openai")` — a key
-    // that EXISTS but is dead is what #1029 is about, and presence does not answer it.
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
-    await page.route("**/api/v1/config", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          voice_mode_available: true,
-        }),
-        headers: {
-          "content-type": "application/json",
-          ...route.request().headers(),
-        },
-      });
+    await test.step("open the public playground with voice mode available", async () => {
+      await openPublicPlayground(page, true);
     });
 
-    await awaitBootstrapTest(page);
+    await test.step("the voice button opens the assistant with its settings popover", async () => {
+      await page.getByTestId("voice-button").click();
+      await expect(page.getByTestId("voice-assistant-container")).toBeVisible();
+      await expect(page.getByTestId("voice-assistant-settings-modal-header")).toBeVisible();
+      await expect(page.getByTestId("popover-anchor-openai-api-key")).toBeVisible();
+    });
 
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-    await page.getByTestId("playground-btn-flow-io").click();
+    await test.step("dismissing the popover and closing the assistant restores the chat input", async () => {
+      // Escape, not the popover's Cancel: Cancel only leaves key-editing mode and
+      // the popover stays open while no key is stored (audio-settings-dialog.tsx).
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("voice-assistant-settings-modal-header")).toBeHidden();
 
-    await expect(page.getByTestId("voice-button")).toBeVisible();
-
-    await page.getByTestId("voice-button").click();
-
-    try {
-      const apiKeyInput = page.getByTestId("popover-anchor-openai-api-key");
-
-      const isVisible = await apiKeyInput
-        .isVisible({ timeout: 2000 })
-        .catch(() => false);
-
-      if (isVisible) {
-        await apiKeyInput.fill(process.env.OPENAI_API_KEY || "");
-        await page
-          .getByTestId("voice-assistant-settings-modal-save-button")
-          .click();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-
-    await expect(page.getByTestId("voice-assistant-container")).toBeVisible();
-    await page.getByTestId("voice-assistant-settings-icon").click();
-    await expect(
-      page.getByTestId("voice-assistant-settings-modal-microphone-select"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("voice-assistant-settings-modal-header"),
-    ).toBeVisible();
-
-    await page.keyboard.press("Escape");
-
-    await page.getByTestId("voice-assistant-close-button").click();
-
-    await expect(
-      page.getByTestId("voice-assistant-settings-modal-microphone-select"),
-    ).not.toBeVisible();
-
-    await expect(page.getByTestId("input-wrapper")).toBeVisible();
+      await page.getByTestId("voice-assistant-close-button").click();
+      await expect(page.getByTestId("voice-assistant-container")).toBeHidden();
+      await expect(page.getByTestId("input-wrapper")).toBeVisible();
+    });
   },
 );
 
-// Measured `3/3 green` in the #1784 dispatches, and parked anyway — this is the finding
-// #1913 was filed to look for, arriving from the opposite direction. The assertion is
-// `not.toBeVisible()` on an element that cannot exist under ANY config value, so the
-// test passes for a reason unrelated to its subject. Both mutations were RUN, not
-// argued: with the mock inverted to `true` it passes (5.2 s), and with the route mock
-// deleted outright it passes (5.0 s). Green here measures the absence of a
-// component, not the behaviour of a flag, so promoting it would put a test that cannot
-// fail into the daily.
-test.fixme(
+test(
   "user should not be able to see voice button if voice mode is not available",
-  { tag: ["@release", "@workspace", "@api"] },
-  async ({ page, request }) => {
-    await page.route("**/api/v1/config", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          voice_mode_available: false,
-        }),
-        headers: {
-          "content-type": "application/json",
-          ...route.request().headers(),
-        },
-      });
+  { tag: ["@stable", "@release", "@playground"] },
+  async ({ page }) => {
+    await test.step("open the public playground with voice mode unavailable", async () => {
+      await openPublicPlayground(page, false);
     });
 
-    await awaitBootstrapTest(page);
-
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-    await page.getByTestId("playground-btn-flow-io").click();
-
-    await expect(page.getByTestId("voice-button")).not.toBeVisible();
+    await test.step("no voice button is rendered once the chat input has loaded", async () => {
+      await expect(page.getByTestId("voice-button")).toHaveCount(0);
+    });
   },
 );
 
-test.fixme(
+test(
   "user should be able to see voice button if voice mode is available",
-  { tag: ["@release", "@workspace", "@api"] },
-  async ({ page, request }) => {
-    await page.route("**/api/v1/config", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          voice_mode_available: true,
-        }),
-        headers: {
-          "content-type": "application/json",
-          ...route.request().headers(),
-        },
-      });
+  { tag: ["@stable", "@release", "@playground"] },
+  async ({ page }) => {
+    await test.step("open the public playground with voice mode available", async () => {
+      await openPublicPlayground(page, true);
     });
 
-    await awaitBootstrapTest(page);
-
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-    await page.getByTestId("playground-btn-flow-io").click();
-
-    await expect(page.getByTestId("voice-button")).toBeVisible();
-
-    await page.getByTestId("voice-button").click();
+    await test.step("the voice button is rendered", async () => {
+      await expect(page.getByTestId("voice-button")).toBeVisible();
+    });
   },
 );
