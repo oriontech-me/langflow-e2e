@@ -272,14 +272,15 @@ project). Teardown deletes the flow and then the project.
   `1.12.0.dev20` — an `E2E-Probe-…` name comes back from `GET` lowercased and
   underscored, not as sent. The action name is now ~21 characters and a `beforeAll`
   guard asserts **both** the cap and the character class.
-- **A truncated tool name is not merely renamed — it is uninvocable.** `tools/call`
-  with the exact name `tools/list` itself served for a 37-character action
-  (`e2e_probe_action_name_that_is_`) answers
-  `isError: true, "Flow with name 'e2e_probe_action_name_that_is_' not found"`: the
-  listing truncates while the lookup does not, so the server advertises a tool no
-  client can call. Measured on `1.12.0.dev20`. Not asserted here — this spec's subject
-  is the selection, and MCP tool naming deserves a spec of its own — but it is why the
-  guard above is a hard failure rather than a comment.
+- **A truncated tool name used to be uninvocable, and no longer is.** On `1.12.0.dev20`
+  (and every release through `1.12.2`), `tools/call` with the exact name `tools/list`
+  served for a 37-character action (`e2e_probe_action_name_that_is_`) answered
+  `isError: true, "Flow with name '…' not found"`: the listing truncated while the
+  lookup did not (#1411, upstream LE-2657). Fixed by `langflow-ai/langflow#15179`
+  (in `v1.12.3` and `1.13.0`), which keeps the published name and makes the call path
+  accept it — asserted in `mcp/server/mcp-server-tool-naming.spec.ts`. The guard above
+  stays: the published name is still truncated, so this spec's equality assertions
+  still need a name under 30 characters.
 - **The prefix length used to be load-bearing, and since #1883 it is not.** Creating a
   project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}` — upstream
   slices at `MAX_MCP_SERVER_NAME_LENGTH - 4`, and `MAX_MCP_SERVER_NAME_LENGTH` is 30, so
