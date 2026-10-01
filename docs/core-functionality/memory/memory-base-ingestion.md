@@ -33,9 +33,10 @@ the only way a caller can reach it.
    contents, ordered by `chunk_index`, equal the previewed ones, one for one.
 3. **should store exactly the chunks `preview-chunks` promised when a line is longer
    than the chunk size** — the same test with one line longer than the chunk size,
-   which it asserts before ingesting. Every stored chunk is at most `chunk_size` and
-   the stored chunks equal the previewed ones. `@regression` for LE-2771, fixed in
-   `1.13.0.dev28` (see Notes). Until then the test was declared failing.
+   which it asserts before ingesting. Every word of that line is stored once and in
+   order, every stored chunk is at most `chunk_size`, and the stored chunks equal the
+   previewed ones. `@regression` for LE-2771, fixed in 1.12.4 and first in the nightly
+   at `1.13.0.dev28` (see Notes). The test was declared failing until #2115 lifted it.
 4. **should ingest a server-side folder through the `folder` connector and read its
    chunks back** — two files are placed in a folder only this test owns, ingested with
    `POST /{kb}/ingest/connector` (`source_type: "folder"`), and read back through
@@ -210,8 +211,9 @@ the lift (#2115).
 
 ### The defect test 3 guards — preview and ingestion split differently (fixed)
 
-**Fixed in `1.13.0.dev28`** by `langflow-ai/langflow#15421` (commit `63736e741`,
-merged 2026-09-28). `chunk_text_for_ingestion` is now the single splitter for both
+**Fixed in 1.12.4** by `langflow-ai/langflow#15421` (commit `63736e741`, merged into
+`release-1.12.4` on 2026-09-28; `v1.12.4` contains it and `v1.12.3` does not). The first
+nightly with it is `1.13.0.dev28`, and `v1.13.0.dev27` does not have it. `chunk_text_for_ingestion` is now the single splitter for both
 endpoints. It places the user's separator before the splitter's own fallbacks,
 `[sep, "\n\n", "\n", " ", ""]` (read in the `1.13.0.dev29` image). Test 3 was
 declared failing until the fix showed up as an unexpected pass on two dailies
