@@ -46,6 +46,9 @@ function setup({
   leftover = "",
   shadowRequest = false,
   answered = null,
+  psFails = false,
+  shadowDate = null,
+  leftovers = false,
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -93,7 +96,8 @@ exit ${runExit}
   stub(bin, "docker", `echo "$*" >> ${q(dockerLog)}
 case "$1" in
   images) echo img-old ;;
-  ps) cat ${q(join(dir, "leftover"))} ;;
+  ps) ${psFails ? "exit 1" : `cat ${q(join(dir, "leftover"))}`} ;;
+  builder) cp "$E2E_ONDEMAND_STATE"/results/*.env ${q(dir)}/at-prune.env 2>/dev/null ;;
 esac
 exit 0`);
   const stateCases = Object.entries(states).map(([u, s]) => `  *${u}*) echo ${q(s)} ;;`).join("\n");
@@ -118,7 +122,11 @@ esac`);
   if (answered) writeFileSync(join(state, "results", `${answered}.env`), "STATUS=done\nORIGINAL=1\n");
   const shadowState = join(dir, "shadow-state");
   mkdirSync(shadowState);
-  if (shadowRequest) writeFileSync(join(shadowState, "request.env"), "SHADOW_DATE=x\n");
+  if (shadowRequest) writeFileSync(join(shadowState, "request.env"), `SHADOW_DATE=${shadowDate ?? new Date().toISOString().slice(0, 10)}\nSHADOW_VERSION=1\n`);
+  if (leftovers) {
+    mkdirSync(join(state, "builds", "src-aaaaaaaaaaaa-XYZ"), { recursive: true });
+    mkdirSync(join(state, "ledger-killed-run"), { recursive: true });
+  }
 
   const env = {
     PATH: process.env.PATH,
@@ -139,6 +147,8 @@ esac`);
       head,
       repo,
       state,
+      atPrune: readIf(join(dir, "at-prune.env")),
+      allLogs: existsSync(join(dir, "logs")) ? readdirSync(join(dir, "logs")).filter((f) => f !== "latest.log").map((f) => readFileSync(join(dir, "logs", f), "utf8")).join("") : "",
       official,
       log: readIf(join(dir, "logs", "latest.log")) ?? "",
       env: readIf(envOut),
@@ -285,9 +295,17 @@ test("a malformed request is refused before anything runs, and its contents neve
     assert.match(r.log, why, request);
     assert.equal(r.build, null, `${request}: a build ran`);
     assert.equal(r.env, null, `${request}: run-e2e.sh ran`);
-    assert.deepEqual(r.result, {}, `${request}: a result was written for a request with no trustworthy id`);
     assert.equal(r.requestLeft, false, `${request}: the request was not consumed`);
-    assert.ok(r.requests.some((f) => f.startsWith("unparsed-")), `${request}: the refused request was not kept`);
+    // Answered under its id when it names a usable one, once; kept unparsed otherwise.
+    const id = (request.match(/^ONDEMAND_ID=([A-Za-z0-9._-]{1,64})$/m) || [])[1];
+    if (id && (request.match(/^ONDEMAND_ID=/gm) || []).length === 1) {
+      assert.equal(r.result[id]?.STATUS, "refused", `${request}: no result for a usable id`);
+      assert.match(r.result[id].REASON, why);
+      assert.ok(r.requests.includes(`${id}.env`), request);
+    } else {
+      assert.deepEqual(r.result, {}, `${request}: a result was written for a request with no usable id`);
+      assert.ok(r.requests.some((f) => f.startsWith("unparsed-")), `${request}: the refused request was not kept`);
+    }
   }
   assert.equal(existsSync(pwned), false, "a value from the request was executed");
 });
@@ -295,16 +313,16 @@ test("a malformed request is refused before anything runs, and its contents neve
 test("two refusals in the same second keep both refused requests", () => {
   // Found on the qa (2026-10-01): the kept copy was named by the second-resolution
   // stamp alone, and the second refusal replaced the first's.
-  const { env, collect } = setup({ request: "ONDEMAND_ID=a\nONDEMAND_REF=$(x)\n" });
+  const { env, collect } = setup({ request: "ONDEMAND_ID=../a\nONDEMAND_REF=x\n" });
   spawnSync("bash", [ONDEMAND], { encoding: "utf8", env });
-  writeFileSync(join(env.E2E_ONDEMAND_STATE, "request.env"), "ONDEMAND_ID=b\nONDEMAND_REF=a:b\n");
+  writeFileSync(join(env.E2E_ONDEMAND_STATE, "request.env"), "ONDEMAND_ID=../b\nONDEMAND_REF=x\n");
   spawnSync("bash", [ONDEMAND], { encoding: "utf8", env });
   const r = collect(2);
   const kept = r.requests.filter((f) => f.startsWith("unparsed-"));
   assert.equal(kept.length, 2, `kept: ${kept}`);
   const bodies = kept.map((f) => readFileSync(join(r.state, "requests", f), "utf8")).sort();
-  assert.match(bodies[0], /ONDEMAND_ID=a/);
-  assert.match(bodies[1], /ONDEMAND_ID=b/);
+  assert.match(bodies[0], /ONDEMAND_ID=\.\.\/a/);
+  assert.match(bodies[1], /ONDEMAND_ID=\.\.\/b/);
 });
 
 test("comments, blank lines and CRLF line ends are accepted", () => {
@@ -358,16 +376,21 @@ test("no run starts beside the daily or the shadow, whatever state systemd names
   }
 });
 
-test("a shadow request waiting to be picked up refuses the run", () => {
+test("today's shadow request waiting to be picked up refuses the run; a stale one does not", () => {
   const r = onDemand({ shadowRequest: true });
   assert.equal(r.status, 2);
-  assert.match(r.result["req-1"].REASON, /shadow request is waiting/);
+  assert.match(r.result["req-1"].REASON, /shadow request for today is waiting/);
+  // The shadow refuses another day's request itself; one left by a start that failed
+  // must not block this lane until the next daily.
+  const stale = onDemand({ shadowRequest: true, shadowDate: "2026-01-02" });
+  assert.equal(stale.status, 0, stale.log);
 });
 
 test("a lock held by another run refuses without consuming the request", () => {
   const r = onDemand({ lockBusy: true });
   assert.equal(r.status, 2);
-  assert.match(r.log, /another on-demand run holds/);
+  // Its own log, not latest.log: that one stays with the run holding the lock.
+  assert.match(r.allLogs, /another on-demand run holds/);
   assert.equal(r.requestLeft, true, "the next request was consumed by a start that could not run it");
   assert.deepEqual(r.result, {});
 });
@@ -406,7 +429,7 @@ test("the build's output is read by name, never evaluated, and an answer for ano
 test("cleanup removes this lane's containers, images and build cache, and only those", () => {
   for (const opts of [{}, { runExit: 1 }, { buildExit: 5, buildOut: "" }]) {
     const r = onDemand(opts);
-    for (const port of [7890, 7891, 7892, 7893]) {
+    for (const port of [7910, 7911, 7912, 7913]) {
       assert.match(r.docker, new RegExp(`^rm -f langflow-e2e-lane-${port}$`, "m"), `${JSON.stringify(opts)}: ${port}`);
     }
     assert.doesNotMatch(r.docker, /langflow-e2e-lane-78[78]\d/, "another lane's container was touched");
@@ -435,9 +458,9 @@ test("build logs older than a month are removed, and recent ones kept", () => {
 });
 
 test("a container that survives removal is reported in the result, not hidden", () => {
-  const r = onDemand({ leftover: "langflow-e2e-lane-7891\n" });
+  const r = onDemand({ leftover: "langflow-e2e-lane-7911\n" });
   assert.equal(r.result["req-1"].CLEANUP, "incomplete");
-  assert.match(r.log, /still present after removal: langflow-e2e-lane-7891/);
+  assert.match(r.log, /still present after removal: langflow-e2e-lane-7911/);
 });
 
 test("a run stopped by SIGTERM -- the daily starting -- still cleans up and answers failed", async () => {
@@ -452,6 +475,39 @@ test("a run stopped by SIGTERM -- the daily starting -- still cleans up and answ
   assert.match(r.result["req-1"].REASON, /SIGTERM/);
   assert.match(r.docker, /^builder prune -af$/m);
   assert.equal(r.wtLeft, false);
+});
+
+test("the result is on disk, cleanup pending, before the cleanup starts", () => {
+  // systemd SIGKILLs at TimeoutStopSec; a cleanup cut short must not leave the request
+  // unanswered.
+  const r = onDemand();
+  assert.ok(r.atPrune, "no result existed while the cleanup ran");
+  assert.match(r.atPrune, /^STATUS=done$/m);
+  assert.match(r.atPrune, /^CLEANUP=pending$/m);
+  assert.equal(r.result["req-1"].CLEANUP, "ok");
+});
+
+test("a docker that cannot list containers is an unconfirmed cleanup, not an ok one", () => {
+  const r = onDemand({ psFails: true });
+  assert.equal(r.result["req-1"].CLEANUP, "unconfirmed");
+  assert.match(r.log, /docker ps failed/);
+});
+
+test("what a SIGKILLed run left -- its source tree, its ledger copy -- is cleared by the next", () => {
+  const r = onDemand({ leftovers: true });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(existsSync(join(r.state, "builds", "src-aaaaaaaaaaaa-XYZ")), false);
+  assert.deepEqual(r.ledgers, []);
+});
+
+test("a start refused by the lock does not take latest.log from the running run", () => {
+  const { env, collect } = setup({ lockBusy: true });
+  mkdirSync(env.E2E_ONDEMAND_LOG_DIR, { recursive: true });
+  writeFileSync(join(env.E2E_ONDEMAND_LOG_DIR, "running.log"), "the running run\n");
+  execFileSync("ln", ["-sfn", join(env.E2E_ONDEMAND_LOG_DIR, "running.log"), join(env.E2E_ONDEMAND_LOG_DIR, "latest.log")]);
+  spawnSync("bash", [ONDEMAND], { encoding: "utf8", env });
+  const r = collect(2);
+  assert.equal(r.log, "the running run\n");
 });
 
 // ---------------------------------------------------------------------------

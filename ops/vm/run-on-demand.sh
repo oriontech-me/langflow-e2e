@@ -39,8 +39,12 @@
 # values with no newline. Like the request it is meant to be parsed, not sourced.
 # STATUS is one of:
 #
-#   refused       nothing was built: a malformed request, the daily's window, a branch
-#                 that is not upstream's, another run holding the lock
+#   refused       nothing was built: a malformed request that still names a usable id,
+#                 an id already answered (answered in the log only, so the first
+#                 answer stands), the daily's window, a branch that is not upstream's
+#
+# A start that finds another run holding the lock writes no result and leaves the
+# request in place: there is one request slot, and the queue is the platform's.
 #   build_failed  the commit could not be built the nightly's way, or built wrong
 #   failed        the machine could not do its part (upstream unreachable, no
 #                 tomllib), or the suite did not get as far as a results.json
@@ -64,8 +68,10 @@
 # hygiene clears only its own ports and the backend containers are named by port alone
 # (langflow-e2e-lane-<port>):
 #
-#   ports     7890-7893, echo 8100, ollama 11454  (official 7870-7873/8080/11434,
+#   ports     7910-7913, echo 8100, ollama 11454  (official 7870-7873/8080/11434,
 #                                                  shadow   7880-7883/8090/11444)
+#             Not 7890-7893: those are the Enterprise scripts' and serving-identity's
+#             defaults in this repository, and the machine has an Enterprise image.
 #   suite     its own worktree, detached at the commit the clone holds, removed after
 #   image     langflow-ondemand:<commit>, removed after, with the build cache
 #   ledger    a fresh COPY of the official ledger per run, removed after: the triage
@@ -102,7 +108,6 @@ main() {
   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
   LOG="$LOG_DIR/$STAMP.log"
   exec >>"$LOG" 2>&1
-  ln -sfn "$LOG" "$LOG_DIR/latest.log"
   echo "=== on-demand start $STAMP ==="
 
   # Globals, not locals: the EXIT trap runs after main has returned, when a local is out
@@ -120,7 +125,12 @@ main() {
   # oneshot to the running job; this covers the script run by hand.
   command -v flock > /dev/null 2>&1 || { echo "FATAL: flock is not on this machine, and without it two runs could share it"; exit 3; }
   exec 9> "$STATE/lock"
-  flock -n 9 || { echo "REFUSED: another on-demand run holds $STATE/lock — the request is left for when it ends"; exit 2; }
+  # The request is left where it is, and nothing picks it up by itself: systemd joins a
+  # start of a running oneshot to its job, so it is answered by the next start after
+  # this run ends. One slot, on purpose -- the queue is the platform's (phase 5).
+  flock -n 9 || { echo "REFUSED: another on-demand run holds $STATE/lock — the request is left in place, unanswered; start the unit again once that run ends"; exit 2; }
+  # Only now, so a start refused by the lock does not hide the running run's log.
+  ln -sfn "$LOG" "$LOG_DIR/latest.log"
 
   # --- the request: parsed, consumed, checked ---------------------------------------
   local REQ="$STATE/request.env"
@@ -134,7 +144,19 @@ main() {
   local KEPT="$STATE/requests/unparsed-$STAMP-$$.env"
   mv -f "$REQ" "$KEPT"
 
-  ondemand_parse_request "$raw" || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$KEPT"
+  if ! ondemand_parse_request "$raw"; then
+    # Whoever asked polls results/<id>.env, so a malformed request that still names a
+    # usable id, once, is answered there. One that names none has no result to poll.
+    OD_ID="$(printf '%s\n' "$raw" | tr -d '\r' | grep -E '^ONDEMAND_ID=' | sed 's/^ONDEMAND_ID=//')"
+    if [[ "$OD_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ ! -e "$STATE/results/$OD_ID.env" ]; then
+      mv -f "$KEPT" "$STATE/requests/$OD_ID.env"
+      KEPT="$STATE/requests/$OD_ID.env"
+      trap ondemand_finish EXIT
+    else
+      OD_ID=""
+    fi
+    ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$KEPT"
+  fi
   # Before anything is written under the id: a second request with it must not replace
   # the first one's request or result.
   [ ! -e "$STATE/results/$OD_ID.env" ] || ondemand_refuse "request $OD_ID was already answered — an id names one run" "$KEPT"
@@ -157,16 +179,27 @@ main() {
       activating | active | reloading | deactivating) ondemand_refuse "$unit is $st — the daily lane has priority" ;;
     esac
   done
-  [ ! -e "$SHADOW_STATE/request.env" ] || ondemand_refuse "a shadow request is waiting at $SHADOW_STATE/request.env — the shadow is about to start"
+  # Only today's: the shadow itself refuses a request from another day, so one left
+  # behind by a start that failed would otherwise block this lane until the next daily.
+  if [ -r "$SHADOW_STATE/request.env" ] \
+     && grep -qx "SHADOW_DATE=$(date -u +%Y-%m-%d)" "$SHADOW_STATE/request.env"; then
+    ondemand_refuse "a shadow request for today is waiting at $SHADOW_STATE/request.env — the shadow is about to start"
+  fi
 
   # --- leftovers of a run that was killed rather than finished ----------------------
   # Past every refusal: a request refused while the daily runs must not touch docker.
+  # Under the lock, so nothing here belongs to a run still going. A run SIGKILLed past
+  # TimeoutStopSec leaves what its traps never removed: the build's source tree
+  # (build-target-image.sh's own trap did not run either) and its ledger copy.
   OD_TOUCHED=1
   ondemand_clear_images
+  rm -rf "$STATE"/builds/src-* "$STATE"/ledger-*
 
   # --- the suite: the clone's commit, in a worktree of its own ----------------------
-  # The commit the last daily left the clone on, so the comparison with the daily reads
-  # the same suite. Not pulled: the clone is the daily's, and its pull is the daily's.
+  # The commit the daily left the clone on: on a green day the suite it ran, on a red
+  # day that suite minus the @stable it removed, which is the suite the next daily runs.
+  # Either way SUITE_SHA in the result names it, and a comparison with a daily has to
+  # match on it rather than assume. Not pulled: the clone and its pull are the daily's.
   OD_SUITE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || OD_SUITE_SHA=""
   [[ "$OD_SUITE_SHA" =~ ^[0-9a-f]{40}$ ]] || ondemand_fail 3 failed "the clone at $REPO has no commit to run"
   OD_WT="$STATE/wt"
@@ -245,7 +278,7 @@ main() {
   export LANGFLOW_IMAGE="$OD_IMAGE"
   export TARGET_DECLARED_SHA="$OD_TARGET_SHA" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION" TARGET_DECLARED_REF="$OD_REF"
   export DECLARED_MODEL_PROVIDER="$OD_PROVIDER" DECLARED_MODEL_ID="$OD_MODEL"
-  export BASE_PORT=7890 SHARDS=4 ECHO_PORT=8100 OLLAMA_PORT=11454
+  export BASE_PORT=7910 SHARDS=4 ECHO_PORT=8100 OLLAMA_PORT=11454
   export WORKFLOW_ID=on-demand-stable
   export LEDGER_DIR="$OD_LEDGER"
   export RUNS_ROOT="$STATE/runs"
@@ -344,20 +377,28 @@ ondemand_finish() {
     # An exit nobody classified: a signal (the daily stopping this run), or a bug.
     OD_STATUS=failed; OD_EXIT=3
     case "$code" in
-      143) OD_REASON="stopped by SIGTERM — the daily lane starting, or systemctl stop" ;;
+      143) OD_REASON="stopped by SIGTERM — the daily starting, systemctl stop, or the unit's TimeoutStartSec" ;;
       130) OD_REASON="interrupted" ;;
       *) OD_REASON="ended with status $code before a verdict" ;;
     esac
   fi
 
   local cleanup=ok
+  # Written first with the cleanup pending, and again after it: a cleanup cut short by
+  # systemd's SIGKILL at TimeoutStopSec must not leave the request without an answer.
+  [ "$OD_TOUCHED" = "1" ] && ondemand_write_result pending
   if [ "$OD_TOUCHED" = "1" ]; then
   echo "--- cleanup ---"
   local port left
-  for port in 7890 7891 7892 7893; do
+  for port in 7910 7911 7912 7913; do
     docker rm -f "langflow-e2e-lane-$port" > /dev/null 2>&1 || true
   done
-  left="$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E '^langflow-e2e-lane-789[0-3]$' || true)"
+  local names
+  if ! names="$(docker ps -a --format '{{.Names}}' 2>/dev/null)"; then
+    cleanup=unconfirmed
+    echo "ERROR: docker ps failed — the backend containers could not be checked gone"
+  fi
+  left="$(printf '%s\n' "$names" | grep -E '^langflow-e2e-lane-791[0-3]$' || true)"
   if [ -n "$left" ]; then
     cleanup=incomplete
     echo "ERROR: container(s) still present after removal: $(echo "$left" | tr '\n' ' ')"
@@ -375,37 +416,42 @@ ondemand_finish() {
   echo "cleanup: $cleanup"
   fi
 
-  if [ -n "$OD_ID" ]; then
-    local res="$OD_STATE/results/$OD_ID.env" tmp
-    tmp="$res.tmp"
-    {
-      ondemand_kv ONDEMAND_ID "$OD_ID"
-      ondemand_kv STATUS "$OD_STATUS"
-      ondemand_kv VERDICT "$OD_VERDICT"
-      ondemand_kv REASON "$OD_REASON"
-      ondemand_kv EXIT "$OD_EXIT"
-      ondemand_kv RUN_ID "$OD_RUN_ID"
-      ondemand_kv TARGET_REF "$OD_REF"
-      ondemand_kv TARGET_SHA "$OD_TARGET_SHA"
-      ondemand_kv TARGET_VERSION "$OD_TARGET_VERSION"
-      ondemand_kv BUILD_S "$OD_BUILD_S"
-      ondemand_kv SUITE_SHA "$OD_SUITE_SHA"
-      ondemand_kv PROVIDER "$OD_PROVIDER"
-      ondemand_kv MODEL "$OD_MODEL"
-      ondemand_kv REQUESTED_BY "$OD_BY"
-      ondemand_kv CLEANUP "$cleanup"
-      ondemand_kv STARTED "$OD_STARTED"
-      ondemand_kv FINISHED "$(date -u +%Y%m%dT%H%M%SZ)"
-      ondemand_kv LOG "$OD_LOG"
-    } > "$tmp" && mv -f "$tmp" "$res"
-    echo "result: $res (status=$OD_STATUS${OD_VERDICT:+ verdict=$OD_VERDICT})"
-  fi
+  ondemand_write_result "$cleanup"
   find "$OD_LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +30 -delete 2>/dev/null || true
   # build-target-image.sh keeps each build's log beside the source tree it removes; a
   # month of them is the same retention as this lane's own logs.
   find "$OD_STATE/builds" -maxdepth 1 -name 'build-*.log' -type f -mtime +30 -delete 2>/dev/null || true
   echo "=== on-demand end, exit=$OD_EXIT ==="
   exit "$OD_EXIT"
+}
+
+# results/<id>.env, written whole and then renamed, so a reader never sees half of it.
+# Its one argument is the cleanup's state: pending, ok, incomplete or unconfirmed.
+ondemand_write_result() {
+  [ -n "$OD_ID" ] || return 0
+  local res="$OD_STATE/results/$OD_ID.env" tmp
+  tmp="$res.tmp"
+  {
+    ondemand_kv ONDEMAND_ID "$OD_ID"
+    ondemand_kv STATUS "$OD_STATUS"
+    ondemand_kv VERDICT "$OD_VERDICT"
+    ondemand_kv REASON "$OD_REASON"
+    ondemand_kv EXIT "$OD_EXIT"
+    ondemand_kv RUN_ID "$OD_RUN_ID"
+    ondemand_kv TARGET_REF "$OD_REF"
+    ondemand_kv TARGET_SHA "$OD_TARGET_SHA"
+    ondemand_kv TARGET_VERSION "$OD_TARGET_VERSION"
+    ondemand_kv BUILD_S "$OD_BUILD_S"
+    ondemand_kv SUITE_SHA "$OD_SUITE_SHA"
+    ondemand_kv PROVIDER "$OD_PROVIDER"
+    ondemand_kv MODEL "$OD_MODEL"
+    ondemand_kv REQUESTED_BY "$OD_BY"
+    ondemand_kv CLEANUP "$1"
+    ondemand_kv STARTED "$OD_STARTED"
+    ondemand_kv FINISHED "$(date -u +%Y%m%dT%H%M%SZ)"
+    ondemand_kv LOG "$OD_LOG"
+  } > "$tmp" && mv -f "$tmp" "$res"
+  echo "result: $res (status=$OD_STATUS${OD_VERDICT:+ verdict=$OD_VERDICT}, cleanup=$1)"
 }
 
 # One KEY=VALUE line, the value on one line whatever it held.

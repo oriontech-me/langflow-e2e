@@ -12,7 +12,7 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-daily-watchdog.timer` | 09:00 UTC on weekdays, `Persistent=true` |
 | `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947). **Records** the answer, never posts |
 | `e2e-shadow.service` | the **image shadow** (#2093): the same suite against the published image of the version the daily served, on its own ports, worktree, ledger and logs, publishing nothing. **No timer**: `ops/vm/request-shadow.sh` starts it with `--no-block` at the end of the daily, and `After=e2e-daily.service` holds it until the daily's unit has finished |
-| `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7890-7893, echo 8100, ollama 11454), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00 |
+| `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7910-7913, echo 8100, ollama 11454; not 7890-7893, the Enterprise and serving-identity defaults), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00 |
 | `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
 
 ## Two asymmetries that look like inconsistencies and are not
@@ -87,9 +87,14 @@ REQ
 systemctl start --no-block e2e-on-demand.service
 ```
 
+There is **one request slot**. A start while a run is going is joined to that run's
+job by systemd and answers nothing, so write the next request only after the running
+one's result exists, and start the unit again.
+
 The answer is `/root/e2e-on-demand/results/<id>.env`: `STATUS` (`refused`,
 `build_failed`, `failed` or `done`), `VERDICT` for a run that reached one, `RUN_ID`,
-the target's ref, commit and version, the suite commit, and `CLEANUP`. The log is
+the target's ref, commit and version, the suite commit, and `CLEANUP` (`pending` if the
+cleanup was cut short, then `ok`, `incomplete` or `unconfirmed`). The log is
 `/var/log/e2e-on-demand/latest.log`.
 
 ## Verify
