@@ -1,6 +1,6 @@
 # Agent Component — Image Input in Playground
 
-**Last validated:** Langflow 1.13.x (re-run twice on `1.13.0.dev8` for the scoped toggle write, #1679 — once with `gpt-4o-mini` deliberately disabled, to exercise the enable path the ladder decides. Earlier: 1.12.x)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29` for the #2129 turn-completion wait; re-run twice on `1.13.0.dev8` for the scoped toggle write, #1679 — once with `gpt-4o-mini` deliberately disabled, to exercise the enable path the ladder decides. Earlier: 1.12.x)
 
 ---
 
@@ -19,6 +19,11 @@ had no quota, not the test — and **restored in #992** once a direct probe of
 `api.openai.com/v1/chat/completions` with the CI/local key returned HTTP 200
 and the spec ran clean at `--retries=0`.
 
+Quarantined again at triage for **#2129** (PR #2131: `@stable` removed and
+`test.fixme` added) after the length guard failed on two VM-lane dailies
+(2026-09-10 on `1.13.0.dev8`, 2026-10-01 on `1.13.0.dev29`), and **restored in
+the #2129 fix** once the reply is read on the finished turn.
+
 ---
 
 ## Step by step *(required)*
@@ -31,9 +36,9 @@ Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`) **and** OpenAI recorded
 2. (Provider setup is part of step 1's `load()` — the centralized path: open `model_model` → `manage-model-providers` → select `provider-item-OpenAI` → fill the `sk-...` key → save → enable the **one** model this setup will pick → select it. Since #1679 that enable is scoped, and this spec is the reason it is not simply *nothing*: OpenAI's five `default: true` models are `gpt-6-astra` and four `gpt-5.6-*`, none of which the setup's `OPENAI_MODEL_PREFERENCES` ladder accepts, so with no pinned model the plan enables `gpt-4o-mini` — and it is that ladder, not the old whole-panel sweep, that keeps this test's multimodal assertion on a fast vision model)
 3. Open the Playground (`playground-btn-flow-io`) and wait for `input-chat-playground`
 4. Attach `tests/assets/media/chain.png` via the Playground file input (`[data-testid="input-wrapper"] input[type="file"]`) and confirm the `img[alt="chain.png"]` preview
-5. Clear the input and type `"what is this image?"` with real keystrokes (`pressSequentially`), retrying the clear+type until the value sticks so a late async pre-fill cannot clobber the prompt, then click `button-send`
-6. Wait for the streamed model reply (web-first `toContainText`, no fixed sleep)
-7. Read the last `.markdown.prose` block (the model reply) and assert it matches `/\b(chains?|links?|inkscape|logos?|icons?)\b/i` and is longer than 50 characters
+5. Clear the input and type `"what is this image?"` with real keystrokes (`pressSequentially`), retrying the clear+type until the value sticks so a late async pre-fill cannot clobber the prompt
+6. Send through `sendAndAwaitPlaygroundTurn` (`tests/helpers/ui/playground-turn.ts`, #2046), which clicks `button-send` and waits until **this** turn has finished: a new `div-chat-message` (or an `error-card-stack`) has mounted, then `button-stop` is hidden and `button-send` is back. The reply streams into its bubble token by token, so nothing below reads it before the stream has ended
+7. Read the last `.markdown.prose` block (the model reply) — now the **final** reply, not a streamed prefix — and assert it matches `/\b(chains?|links?|inkscape|logos?|icons?)\b/i` and is longer than 50 characters
 8. **Teardown:** `afterEach` deletes the flow created in step 1 by id via `DELETE /api/v1/flows/{id}` (id-scoped, #515 — never a global `cleanAllFlows`). Added in #992: the spec previously discarded `load()`'s return value and had no teardown at all, leaking one Simple Agent flow per run
 
 ---
@@ -42,7 +47,7 @@ Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`) **and** OpenAI recorded
 
 - The dropped image (`chain.png`) is attached and rendered as an `img[alt="chain.png"]` preview before sending
 - The model reply references the image content (matches `chain(s)`, `link(s)`, `inkscape`, `logo(s)`, or `icon(s)` as whole words)
-- The reply is a substantive description (> 50 characters)
+- The reply is a substantive description (> 50 characters), measured on the **finished** turn (`button-stop` hidden, `button-send` back) — a length read while tokens are still streaming measures how far the stream got, not what the model answered (#2129)
 
 ---
 
@@ -87,3 +92,4 @@ Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`) **and** OpenAI recorded
 - **1.11.0 template-load fix**: the test previously loaded the template with a manual `awaitBootstrapTest` + `side_nav_options_all-templates` + heading click. On Langflow 1.11.0 that path landed on the projects list instead of the flow canvas (post-create navigation race), so the provider entry point never appeared and the test failed at the 30s `model_model`/`Setup Provider` wait. It now uses the canonical `SimpleAgentTemplatePage.load()` (same helper as the other agent/memory specs), which waits for `canvas_controls_dropdown` before returning.
 - **1.10.x quirks handled**: (1) the image is attached via `setInputFiles` because the old manual `DataTransfer` drop no longer renders the attachment; (2) the chat input is pre-filled with a sample prompt and the send action reads the component's internal state, so the prompt is typed with `pressSequentially` (a programmatic `.fill()` is ignored).
 - **Flake fix (issue #411, item 3)**: the pre-fill in (2) lands asynchronously and could clobber the typed prompt after a one-shot clear+type, and the earlier wait was swallowed by a silent `.catch(() => {})`. The clear+type is now wrapped in `expect(async () => {...}).toPass()` — with a short stability re-check inside the callback so it only succeeds once the value proves it stays put (a late pre-fill landing after a fast first pass would otherwise clobber it before the send click). The response regex was also widened from `chain|inkscape|logo` to `\b(chains?|links?|inkscape|logos?|icons?)\b` to match the descriptors a vision model reliably uses for the flat chain illustration, using whole-word (plural-aware) boundaries to avoid accidental substring matches. Product side was confirmed healthy on nightly `1.11.0.dev34` (image upload + agent response) before landing this test-only fix.
+- **Flake fix (issue #2129) — the length guard read a streamed prefix**: the 50-character guard failed on two VM-lane dailies (`Received: 28` on `1.13.0.dev29`, run `20261001T080029Z`; `Received: 42` on `1.13.0.dev8`, run `20260910T080013Z`), both passing on retry. The reply streams into its bubble token by token, and `toContainText` resolves on the first poll whose text holds the keyword — so `textContent()` could read the reply mid-stream. Measured on `1.13.0.dev29` by reading, on the same attempt, at the instant `toContainText` resolved and again after the turn finished: the first read was a strict prefix of the final reply on **4 of 10** attempts (1/5 unthrottled, 3/5 at 4× CPU throttling, mirroring the VM's four shards on one box), with `button-stop` still visible each time — while every final reply was **155–259 characters**, so the threshold was never the problem. The send now goes through `sendAndAwaitPlaygroundTurn` (#2046), and both assertions run on the finished turn. The local pre-fix baseline was 0/10, which is why the mechanism was measured directly rather than inferred from a red run.
