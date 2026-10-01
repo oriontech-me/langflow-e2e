@@ -1601,7 +1601,7 @@
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 37 | 34 | 0 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
-| `mcp/server/` | 17 | 14 | 1 | 1 | 1 |
+| `mcp/server/` | 18 | 15 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 25 | 0 | 0 | 5 |
@@ -1611,7 +1611,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **738** | **646 (88%)** | **37 (5%)** | **14 (2%)** | **41 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **739** | **647 (88%)** | **37 (5%)** | **14 (2%)** | **41 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1627,7 +1627,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 715 `test()` calls carrying the `@stable` tag, distributed across 280 spec
+> 719 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2027,6 +2027,7 @@
 - [x] user must be able to send an image on chat → `chatInputOutputUser-shard-0.spec.ts`
 - [x] user must be able to see output inspection using 'o' shortcut → `chatInputOutputUser-shard-1.spec.ts`
 - [x] user must interact with chat with Input/Output → `chatInputOutputUser-shard-2.spec.ts`
+- [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] user must not experience message duplication in mathematical expressions with agent component → `general-bugs-agent-sum-duplicate-message-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
@@ -2303,6 +2304,9 @@
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
+- [x] a tool whose action name exceeds 30 characters is published truncated and can be called → `mcp-server-tool-naming.spec.ts`
+- [x] a tool named after a long flow name is published truncated and can be called → `mcp-server-tool-naming.spec.ts`
+- [x] two tools with the same action name are both callable and each runs its own flow → `mcp-server-tool-naming.spec.ts`
 - [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
