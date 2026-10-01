@@ -77,6 +77,15 @@ rate of a flake on the unmodified spec (it refuses a dirty spec file).
   `PW_SERVING_IDENTITY` / `PW_ENTERPRISE` / `PW_DESTRUCTIVE`; never drop the flag
   to make a gate pass. (A `playwright.config.ts` `grepInvert` cannot be widened
   by a CLI `--grep`.)
+- **A provider-health skip is not a pass, even beside tests that ran** (#2034).
+  In a mixed spec, tests gated on a provider whose `providers.json` record is
+  `inactive` — or `active` but older than 12 h, the normal state of a dev box,
+  since the file is gitignored and survives for days — skip while the rest go
+  green. Such a run is `provider-unevaluated`: VALIDATE, the final green run and
+  `ff-run` stop and name each skipped test with its recorded reason. Re-run
+  `npx playwright test tests/collect-models.spec.ts` to refresh the record (or
+  `IGNORE_PROVIDER_HEALTH=1` to run them anyway); never drop the gated tests
+  from the burst to make it pass.
 - **Multi-instance issues close one FILE at a time, not one PHASE at a time.**
   When the touched specs need different Langflow configurations — a lane
   variant, an `@enterprise`/`@governance` matrix, a fail-closed row — point

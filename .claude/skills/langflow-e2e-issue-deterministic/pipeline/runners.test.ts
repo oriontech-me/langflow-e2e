@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { PwStats } from './types.ts'
-import { parsePwJson, pwRunResult, enumerateTests, enumerateTestEntries, enumerateRunnableTests, enumerateUnenumerableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs } from './runners.ts'
+import { parsePwJson, pwRunResult, enumerateTests, enumerateTestEntries, enumerateRunnableTests, enumerateUnenumerableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs, describeProviderHealthSkips } from './runners.ts'
+import { formatProviderInactiveReason, formatProviderStaleReason } from '../../../../scripts/lib/provider-health-reason.mjs'
 
 test('filterScoutSpecs drops throwaway scout/tmp specs, keeps real ones', () => {
   const kept = filterScoutSpecs([
@@ -634,4 +635,105 @@ test('countsAsClean rejects a no-evidence record, and classOf derives it for leg
   // more run, never one fewer.
   assert.equal(classOf({ target: 'a.spec.ts', stats: noRun }), 'no-evidence')
   assert.equal(classOf({ target: 'a.spec.ts', stats: { ...noRun, expected: 2 } }), 'clean')
+})
+
+// ---------- provider-health skips in a mixed spec (#2034) ----------
+
+// The descriptions come from the PRODUCER's own formatter, so a change to the
+// wording fails here instead of silently turning these into ordinary skips.
+const STALE_DESC = formatProviderStaleReason('openai', '2026-09-24T10:00:00.000Z', 12)
+const INACTIVE_DESC = formatProviderInactiveReason('anthropic', 'credit balance is too low')
+
+function mixedReport(): string {
+  return JSON.stringify({
+    stats: { expected: 2, unexpected: 0, flaky: 0, skipped: 3, duration: 100 },
+    suites: [{
+      title: 'core-functionality/model-provider/x.spec.ts',
+      file: 'core-functionality/model-provider/x.spec.ts',
+      specs: [{ title: 'renders the panel without a provider', file: 'core-functionality/model-provider/x.spec.ts',
+        tests: [{ status: 'expected', annotations: [], results: [{ status: 'passed' }] }] }],
+      suites: [{
+        title: 'Agent [openai / gpt-4o-mini]',
+        file: 'core-functionality/model-provider/x.spec.ts',
+        specs: [
+          { title: 'answers through the agent', file: 'core-functionality/model-provider/x.spec.ts',
+            tests: [{ status: 'skipped', annotations: [{ type: 'skip', description: STALE_DESC }], results: [{ status: 'skipped' }] }] },
+          { title: 'is parked', file: 'core-functionality/model-provider/x.spec.ts',
+            tests: [{ status: 'skipped', annotations: [{ type: 'fixme', description: 'LE-1234' }], results: [{ status: 'skipped' }] }] },
+          { title: 'stores the key', file: 'core-functionality/model-provider/x.spec.ts',
+            tests: [{ status: 'expected', annotations: [], results: [{ status: 'passed' }] }] },
+        ],
+      }, {
+        title: 'Agent [anthropic / claude-haiku-4-5]',
+        file: 'core-functionality/model-provider/x.spec.ts',
+        specs: [{ title: 'answers through the agent', file: 'core-functionality/model-provider/x.spec.ts',
+          tests: [{ status: 'skipped', annotations: [{ type: 'skip', description: INACTIVE_DESC }], results: [{ status: 'skipped' }] }] }],
+      }],
+    }],
+  })
+}
+
+test('parsePwJson names each provider-health skip, with its describe chain, and ignores other skips', () => {
+  const s = parsePwJson(mixedReport())!
+  assert.deepEqual(s.providerHealthSkips, [
+    {
+      file: 'core-functionality/model-provider/x.spec.ts',
+      title: 'Agent [openai / gpt-4o-mini] › answers through the agent',
+      provider: 'openai',
+      reason: STALE_DESC.split(' — ').slice(1).join(' — '),
+      stale: true,
+    },
+    {
+      file: 'core-functionality/model-provider/x.spec.ts',
+      title: 'Agent [anthropic / claude-haiku-4-5] › answers through the agent',
+      provider: 'anthropic',
+      reason: 'credit balance is too low',
+      stale: false,
+    },
+  ])
+})
+
+test('a mixed spec whose provider tests skipped on a stale record is NOT a clean run (#2034)', () => {
+  const s = parsePwJson(mixedReport())!
+  assert.equal(s.expected, 2, 'precondition: other tests did execute, so this is not no-evidence')
+  assert.equal(classifyRun(s), 'provider-unevaluated')
+  assert.equal(countsAsClean({ target: 'x.spec.ts', stats: s, class: classifyRun(s) }), false)
+})
+
+test('an ambient-excused green run with a provider-health skip is still unevaluated', () => {
+  const line = '🚨 Backend Error: 500 /api/v1/flows/'
+  const s = statsWith({
+    expected: 3, backendErrors: true, backendErrorLines: [line],
+    providerHealthSkips: [{ file: 'f', title: 't', provider: 'openai', reason: 'r', stale: true }],
+  })
+  assert.equal(classifyRun(s, { patterns: ['/api/v1/flows/'], reason: 'ambient' }), 'provider-unevaluated')
+})
+
+test('a provider-health skip never downgrades a real failure or an infra void', () => {
+  const skip = [{ file: 'f', title: 't', provider: 'openai', reason: 'r', stale: true }]
+  assert.equal(
+    classifyRun(statsWith({ expected: 1, unexpected: 1, failureMessages: ['Error: expect(x).toBe(y)'], providerHealthSkips: skip })),
+    'real-failure')
+  assert.equal(
+    classifyRun(statsWith({ unexpected: 1, failureMessages: [AUTO_LOGIN_ERR], providerHealthSkips: skip })),
+    'infra-void')
+})
+
+test('a run where EVERY test skipped on provider health stays no-evidence', () => {
+  const s = statsWith({ skipped: 2, providerHealthSkips: [{ file: 'f', title: 't', provider: 'openai', reason: 'r', stale: false }] })
+  assert.equal(classifyRun(s), 'no-evidence')
+})
+
+test('a run with no provider-health skip, or a pre-#2034 record without the field, is unchanged', () => {
+  assert.equal(classifyRun(statsWith({ expected: 2, skipped: 1, providerHealthSkips: [] })), 'clean')
+  assert.equal(classifyRun(statsWith({ expected: 2, skipped: 1 })), 'clean')
+})
+
+test('describeProviderHealthSkips names the test, the provider state and the matching remedy', () => {
+  const lines = describeProviderHealthSkips(parsePwJson(mixedReport())!)
+  assert.match(lines[0], /Agent \[openai \/ gpt-4o-mini\] › answers through the agent — provider "openai" stale: checked 2026-09-24/)
+  assert.match(lines[1], /provider "anthropic" inactive: credit balance is too low/)
+  assert.match(lines.at(-1)!, /collect-models\.spec\.ts/)
+  assert.match(lines.at(-1)!, /IGNORE_PROVIDER_HEALTH=1/)
+  assert.deepEqual(describeProviderHealthSkips(statsWith({ expected: 1 })), [])
 })

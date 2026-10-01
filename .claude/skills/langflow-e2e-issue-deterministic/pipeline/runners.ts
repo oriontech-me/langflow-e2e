@@ -1,6 +1,9 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { BackendAmbient, PwStats, RunClass, RunRecord, TestEntry } from './types.ts'
+import { parseProviderInactiveReason } from '../../../../scripts/lib/provider-health-reason.mjs'
+import type {
+  BackendAmbient, ProviderHealthSkip, PwStats, RunClass, RunRecord, TestEntry,
+} from './types.ts'
 
 // ---------- pure, unit-tested ----------
 
@@ -45,6 +48,62 @@ function collectFailureMessages(node: unknown, out: string[]): void {
       }
     }
   }
+}
+
+/**
+ * Every skipped test whose `skip` annotation is a provider-health reason
+ * (#2034), with the describe chain in its title so parametrized specs stay
+ * distinguishable. Same walk as `flattenSpecs` in
+ * `scripts/lane-coverage-verdict.mjs`; the wording is read only through
+ * `parseProviderInactiveReason`, so a change to it cannot silently turn these
+ * back into ordinary skips here while the lane verdict still sees them.
+ */
+export function collectProviderHealthSkips(suites: unknown): ProviderHealthSkip[] {
+  const out: ProviderHealthSkip[] = []
+  const walk = (suite: unknown, chain: string[]): void => {
+    if (!suite || typeof suite !== 'object') return
+    const n = suite as Record<string, unknown>
+    const file = typeof n.file === 'string' ? n.file : ''
+    const here = typeof n.title === 'string' && n.title !== '' && n.title !== file
+      ? [...chain, n.title] : chain
+    for (const spec of (Array.isArray(n.specs) ? n.specs : []) as Array<Record<string, unknown>>) {
+      for (const t of (Array.isArray(spec.tests) ? spec.tests : []) as Array<Record<string, unknown>>) {
+        if (t.status !== 'skipped') continue
+        for (const a of (Array.isArray(t.annotations) ? t.annotations : []) as Array<Record<string, unknown>>) {
+          if (a?.type !== 'skip') continue
+          const parsed = parseProviderInactiveReason(a.description)
+          if (!parsed) continue
+          out.push({
+            file: typeof spec.file === 'string' ? spec.file : file,
+            title: [...here, String(spec.title ?? '')].filter(Boolean).join(' › '),
+            provider: parsed.provider,
+            reason: parsed.error,
+            stale: parsed.stale === true,
+          })
+          break
+        }
+      }
+    }
+    for (const child of (Array.isArray(n.suites) ? n.suites : [])) walk(child, here)
+  }
+  for (const suite of (Array.isArray(suites) ? suites : [])) walk(suite, [])
+  return out
+}
+
+/**
+ * The provider-health skips of a run as lines a phase can print or fail with,
+ * plus the remedy. Empty when there are none.
+ */
+export function describeProviderHealthSkips(stats: PwStats): string[] {
+  const skips = stats.providerHealthSkips ?? []
+  if (skips.length === 0) return []
+  const lines = skips.map(k =>
+    `  - ${k.file} › ${k.title} — provider "${k.provider}" ${k.stale ? 'stale' : 'inactive'}: ${k.reason}`)
+  const anyStale = skips.some(k => k.stale)
+  lines.push(anyStale
+    ? '  remedy: re-run `npx playwright test tests/collect-models.spec.ts` to refresh providers.json (a stale record is an OLD file, not a dead key), or set IGNORE_PROVIDER_HEALTH=1 to run them anyway'
+    : '  remedy: the recorded key is dead or unimported — fix it and re-run collect-models, or set IGNORE_PROVIDER_HEALTH=1 to run them anyway')
+  return lines
 }
 
 /**
@@ -118,6 +177,7 @@ export function parsePwJson(reportOut: string, fullOutput: string = reportOut): 
       .filter(l => l.includes('🚨 Backend Error'))
       .map(l => l.trim()),
     failureMessages,
+    providerHealthSkips: collectProviderHealthSkips(data.suites),
   }
 }
 
@@ -131,6 +191,17 @@ export function parsePwJson(reportOut: string, fullOutput: string = reportOut): 
  * silence a genuine red.
  */
 export function classifyRun(stats: PwStats, ambient?: BackendAmbient): RunClass {
+  const base = classifyAnswered(stats, ambient)
+  // Only a GREEN verdict is withheld (#2034): a real failure or an infra void
+  // beside a provider-health skip is still exactly that, and an all-skipped run
+  // is already `no-evidence`.
+  if ((base === 'clean' || base === 'clean-ambient') && (stats.providerHealthSkips?.length ?? 0) > 0) {
+    return 'provider-unevaluated'
+  }
+  return base
+}
+
+function classifyAnswered(stats: PwStats, ambient?: BackendAmbient): RunClass {
   // Checked FIRST, and ahead of the ambient declaration: an empty run satisfies
   // every green predicate below, so any ordering that reaches them turns
   // "nothing ran" into "nothing failed" (#1593). A declaration excuses a
