@@ -4,9 +4,10 @@ import { deleteFlow } from "./delete-flow";
 import { escapeHandle } from "./create-python-interpreter-flow-via-api";
 
 /**
- * Builds the three-node chain that makes `langflow-ai/langflow#14216` assertable:
+ * Builds the five-node graph that makes `langflow-ai/langflow#14216` assertable:
  * a credential-fed node whose single output feeds two downstreams — one that
- * MEASURES what arrived and one that RE-EMITS it.
+ * MEASURES what arrived and one that RE-EMITS it — and the re-emitting one feeds
+ * the same pair again, one hop further from the secret.
  *
  * Why a chain at all: #14216's root cause is that
  * `Component._get_output_result()` sanitized its return value in place before
@@ -21,6 +22,15 @@ import { escapeHandle } from "./create-python-interpreter-flow-via-api";
  * metadata propagation — a downstream re-emitting a secret it legitimately
  * received must still be masked, which is the exposure that masking in
  * `_build_results()` alone would have left open.
+ *
+ * Why a second hop (#2049): the secret metadata does not ride the edge as a
+ * value — a requester copies the SOURCE component's `_secret_values` when it reads
+ * the source's result (`Vertex.get_result` → `_inherit_secret_values`), and merges
+ * them into its own at build time. A hop-1 node copies from the upstream, which
+ * DECLARED the secret; a hop-2 node copies from the relay, which knows it only
+ * through that merge. Inheritance that stopped one level deep leaves every hop-1
+ * reading green and the hop-2 echo in plaintext — measured on a patched
+ * `1.13.0.dev29` backend (spec doc: `docs/security/credential-secret-across-edges.md`).
  *
  * Why custom components: no shipped component gives "reads a secret and reports
  * something that proves it without disclosing it" offline. A length does — it is
@@ -47,11 +57,18 @@ export const MASK = "**********";
 /** Prefix of the measuring downstream's output; the suffix is what it received. */
 export const RECEIVED_LEN_PREFIX = "received_len=";
 
-/** Node ids, fixed so a spec can key its readings by `component_id`. */
+/**
+ * Node ids, fixed so a spec can key its readings by `component_id`.
+ *
+ * `echo` is also the RELAY: the two `hop2*` nodes read its output, not the
+ * upstream's, so they sit two edges from the secret (#2049).
+ */
 export const SECRET_EDGE_NODE_IDS = {
   upstream: "SecretEdgeUpstream",
   measure: "SecretEdgeMeasure",
   echo: "SecretEdgeEcho",
+  hop2Measure: "SecretEdgeHop2Measure",
+  hop2Echo: "SecretEdgeHop2Echo",
 } as const;
 
 /** Input name every downstream receives the edge on. */
@@ -184,9 +201,9 @@ function findComponentTemplate(catalog: Record<string, unknown>): ComponentTempl
     if (!category || typeof category !== "object") continue;
     const entry = (category as Record<string, unknown>)[CUSTOM_COMPONENT_TYPE];
     if (entry && typeof entry === "object" && "template" in entry) {
-      // Deep copy per node: three nodes are built from one catalog and each
+      // Deep copy per node: every node is built from one catalog and each
       // mutates its own fields. Sharing would put the upstream's secret field on
-      // the downstreams, making the graph resolve the credential three times
+      // the downstreams, making the graph resolve the credential once per node
       // instead of carrying it across an edge — passing for the wrong reason.
       return JSON.parse(JSON.stringify(entry)) as ComponentTemplate;
     }
@@ -282,7 +299,7 @@ export function buildSecretEdgeFlowData(
   catalog: Record<string, unknown>,
   { secretFieldName, credentialVariableName }: BuildSecretEdgeFlowOptions,
 ): FlowData {
-  const { upstream, measure, echo } = SECRET_EDGE_NODE_IDS;
+  const { upstream, measure, echo, hop2Measure, hop2Echo } = SECRET_EDGE_NODE_IDS;
 
   const secretField: TemplateField = {
     type: "str",
@@ -315,8 +332,20 @@ export function buildSecretEdgeFlowData(
       }),
       makeNode(catalog, measure, downstreamCode("measure"), { [DOWNSTREAM_INPUT]: incomingField }),
       makeNode(catalog, echo, downstreamCode("echo"), { [DOWNSTREAM_INPUT]: incomingField }),
+      // The second hop: the same two codes, reading the relay instead of the
+      // upstream. The relay never declared the secret, so these nodes can only
+      // learn it through what the relay inherited and merged (#2049).
+      makeNode(catalog, hop2Measure, downstreamCode("measure"), {
+        [DOWNSTREAM_INPUT]: incomingField,
+      }),
+      makeNode(catalog, hop2Echo, downstreamCode("echo"), { [DOWNSTREAM_INPUT]: incomingField }),
     ],
-    edges: [makeEdge(upstream, measure), makeEdge(upstream, echo)],
+    edges: [
+      makeEdge(upstream, measure),
+      makeEdge(upstream, echo),
+      makeEdge(echo, hop2Measure),
+      makeEdge(echo, hop2Echo),
+    ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
 }
@@ -353,7 +382,8 @@ export async function createSecretEdgeFlowViaApi(
     request,
     {
       name: `Secret Edge ${suffix}`,
-      description: "Credential-fed node feeding a measuring and an echoing downstream",
+      description:
+        "Credential-fed node feeding a measuring and an echoing downstream, over two hops",
       data,
       is_component: false,
     },
