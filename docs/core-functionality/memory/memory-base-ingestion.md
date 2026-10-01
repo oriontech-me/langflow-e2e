@@ -1,6 +1,6 @@
 # Memory Base — ingestion: chunk settings, preview, folder connector, runs and cancel
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev22`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev29`)
 
 ---
 
@@ -32,10 +32,10 @@ the only way a caller can reach it.
    `POST /{kb}/ingest` with the same file and the same settings; the stored chunk
    contents, ordered by `chunk_index`, equal the previewed ones, one for one.
 3. **should store exactly the chunks `preview-chunks` promised when a line is longer
-   than the chunk size** — the same test with one line longer than the chunk size.
-   **Declared failing (`test.fail()`)**: this is a product defect present since at
-   least 1.11.6 (see Notes). The day upstream fixes it, it reports *"expected to fail,
-   but passed"*.
+   than the chunk size** — the same test with one line longer than the chunk size,
+   which it asserts before ingesting. Every stored chunk is at most `chunk_size` and
+   the stored chunks equal the previewed ones. `@regression` for LE-2771, fixed in
+   `1.13.0.dev28` (see Notes). Until then the test was declared failing.
 4. **should ingest a server-side folder through the `folder` connector and read its
    chunks back** — two files are placed in a folder only this test owns, ingested with
    `POST /{kb}/ingest/connector` (`source_type: "folder"`), and read back through
@@ -57,18 +57,20 @@ the only way a caller can reach it.
 | Test | Tags |
 |---|---|
 | 1 | `@stable` `@regression` `@files` `@ui-ux` |
-| 2–5 | `@stable` `@api` `@files` |
+| 2, 4, 5 | `@stable` `@api` `@files` |
+| 3 | `@stable` `@regression` `@api` `@files` |
 
 `@files` is the functional area (upload and ingestion, the same tag the
 `knowledge-ingestion-management` specs and `memory-base-registration.spec.ts`'s API
 test use); `@ui-ux` marks test 1 as the only one that drives the Knowledge page.
-Test 1 carries `@regression` for #13884.
+Test 1 carries `@regression` for #13884, and test 3 for LE-2771.
 
 `@stable` from the first PR — `CONTRIBUTING.md` → *Tag @stable*: every new test enters
 with the tag, and none of its four exceptions applies here (the file carries no lane
-selector: the folder allow-list is set on every lane, not on a variant instance). Test 3 keeps it while declared failing, the same shape
-as `graph-execution-contract.spec.ts`: a `test.fail()` in the daily is green while the
-defect lives and turns red the day it is fixed, which is the signal to lift it.
+selector: the folder allow-list is set on every lane, not on a variant instance). Test 3
+kept it while declared failing. The daily's auto-removal stripped it on 2026-10-01
+(`c8cce0d2`), when the fix made the declared failure pass. It was restored together with
+the lift (#2115).
 
 ---
 
@@ -105,12 +107,11 @@ defect lives and turns red the day it is fixed, which is the signal to lift it.
   `50 * chunk_size * 3` characters), which the test asserts before comparing. The settings are
   the ones the UI sends by default for the separator (`\n`), with `chunk_size: 200`,
   `chunk_overlap: 0`. Test 3 also asserts no stored chunk exceeds `chunk_size`.
-- **Test 3 is declared failing only because test 2 is not.** The two run the same
-  helpers against the same endpoints with the same settings; they differ only in one
-  line's length. A dead instance, a missing credential or a broken helper therefore
-  reddens test 2 (and 1, 4, 5) instead of hiding inside test 3's expected failure —
-  the objection `mcp-client-agent-gemini-tool-regression.spec.ts` records against
-  `test.fail()`, answered by construction as in `workflows-v2-job-lifecycle.spec.ts`.
+- **Test 3 differs from test 2 only by one line's length.** The two run the same
+  helpers against the same endpoints with the same settings. So a red test 3 with a
+  green test 2 points at the oversized line, which is LE-2771's shape. Test 3 asserts
+  the line is longer than `chunk_size`. Without that check, a shortened constant would
+  turn it into a second copy of test 2.
 - **Tests 4 and 5 own their folder.** `POST /api/v1/files/upload/{flow_id}` stores an
   upload in `<config_dir>/<flow_id>/` (measured: `~/.cache/langflow/<flow_id>/…` in
   the nightly image), a directory keyed by a flow the test creates, so nothing another
@@ -207,12 +208,20 @@ defect lives and turns red the day it is fixed, which is the signal to lift it.
 
 ## Notes
 
-### The defect test 3 declares — preview and ingestion split differently
+### The defect test 3 guards — preview and ingestion split differently (fixed)
+
+**Fixed in `1.13.0.dev28`** by `langflow-ai/langflow#15421` (commit `63736e741`,
+merged 2026-09-28). `chunk_text_for_ingestion` is now the single splitter for both
+endpoints. It places the user's separator before the splitter's own fallbacks,
+`[sep, "\n\n", "\n", " ", ""]` (read in the `1.13.0.dev29` image). Test 3 was
+declared failing until the fix showed up as an unexpected pass on two dailies
+(2026-09-30 on `dev28` and 2026-10-01 on `dev29`). It was then lifted to a normal
+passing test (#2115). The rest of this section records the defect as it was.
 
 Filed as **LE-2771**. Measured on `1.13.0.dev22` and re-measured on `1.13.0.dev25`;
 both code paths have diverged since they were introduced together in
 `langflow-ai/langflow#11541` (February 2026, release 1.8.0), with the dialog's `\n`
-default in place from the start, so it has never worked and is not a regression. The dialog sends the same `separator` (`\n`, its
+default in place from the start, so it had never worked before the fix and was not a regression. The dialog sends the same `separator` (`\n`, its
 default) to both endpoints, and the backend builds two different splitters from it:
 
 | | separators handed to `RecursiveCharacterTextSplitter` |
@@ -230,7 +239,7 @@ hard line breaks hit this routinely: with the dialog's untouched defaults
 chunks (the table reads Avg Chunk Size ≈ 1505), and a single 60,000-character line as
 **one** 60,010-character chunk, where the preview showed ~75. Any non-empty separator
 diverges — `\n\n` and `.`, the tooltip's own examples, included; a blank separator
-does not, which is the only workaround today. Test 3's `test.fail()` cites LE-2771.
+does not, which was the only workaround before the fix. Test 3 cites LE-2771.
 Not a regression, so it owes no `REGRESSIONS.md` row.
 
 ### The `finished_at` window (worked around, not asserted)
