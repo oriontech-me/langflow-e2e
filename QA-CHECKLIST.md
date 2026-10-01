@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-09-30
+> **Last updated:** 2026-10-01
 
 ---
 
@@ -1602,11 +1602,11 @@
 | `security/` — Validation, SSRF, Secrets | 30 | 25 | 0 | 0 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 15 | 0 | 1 | 0 |
-| `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
+| `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **641 (87%)** | **37 (5%)** | **14 (2%)** | **42 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **641 (87%)** | **38 (5%)** | **14 (2%)** | **41 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
