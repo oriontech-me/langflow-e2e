@@ -159,6 +159,10 @@ function runScript({
   const envLog = join(dir, "env.log");
   const curlCount = join(dir, "curl.count");
   const cwdLog = join(dir, "cwd.log");
+  // The handshake `runCmdForwardsArgv` needs (#2113): the readiness probe marks
+  // that it has been reached, and the dying stub marks that it has died.
+  const probeReached = join(dir, "probe.reached");
+  const stubDied = join(dir, "stub.died");
 
   // Logs its arguments, plus the Langflow variables the run inherits — the run
   // command is what carries them, so they are only observable from inside it. Then
@@ -188,6 +192,15 @@ exit 0
   // Call 1 is the pre-start "is this port free?" probe; every later call is the
   // readiness poll. They need opposite answers in the ordinary case, so the stub
   // counts rather than guessing from its arguments.
+  // Under `runCmdForwardsArgv` the readiness poll also HOLDS until the stub has
+  // died — see the fake-server comment below for why the order has to be forced.
+  // Bounded (200 × 50 ms) so a broken handshake is a failed assertion inside
+  // `execFileSync`'s timeout, never a hang.
+  const handshake = runCmdForwardsArgv
+    ? `touch "${probeReached}"
+i=0; while [ ! -f "${stubDied}" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+`
+    : "";
   writeFileSync(
     join(bin, "curl"),
     `#!/usr/bin/env bash
@@ -195,7 +208,7 @@ N=$(cat "${curlCount}" 2>/dev/null || echo 0)
 N=$((N + 1))
 echo "$N" > "${curlCount}"
 if [ "$N" -eq 1 ]; then exit ${portBusy ? 0 : 1}; fi
-exit ${healthy ? 0 : 1}
+${handshake}exit ${healthy ? 0 : 1}
 `,
   );
   // The override stub for `LANGFLOW_SRC_RUN_CMD`. It must not NEED quoting, and
@@ -214,12 +227,30 @@ exit ${healthy ? 0 : 1}
   // `pwd` before the exec: the working directory is a property of the launch that
   // is invisible from outside it, and #1927 made it depend on whether a clone was
   // given at all.
+  //
+  // `runCmdForwardsArgv` is the dying stub, and its death is SEQUENCED rather
+  // than raced (#2113). The guard it exists to pin is reachable only when the
+  // stub is alive at the starter's `kill -0` (else the starter exits 1 and the
+  // guard never runs) and already dead, with its error in the log, when the
+  // guard reads the process table (else the log is empty, or the dying `sleep`
+  // is caught in the table). An `exec sleep … "$@"` left both to the scheduler
+  // and lost 19 runs in 40 under the full suite's load, one way or the other.
+  // So the stub waits for the readiness probe — which the starter only reaches
+  // AFTER `kill -0` — dies, and signals it; the probe waits for that signal
+  // before answering. No `exec`: the `sleep` has to be gone before the signal,
+  // and a bash process under the stub's own name never matches `sleep <marker>`.
+  const fakeServerBody = runCmdForwardsArgv
+    ? `i=0; while [ ! -f "${probeReached}" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+sleep ${marker} "$@"
+touch "${stubDied}"
+`
+    : `exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}
+`;
   writeFileSync(
     join(bin, "fake-server"),
     `#!/usr/bin/env bash
 pwd > "${cwdLog}"
-exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArgv ? ' "$@"' : ""}
-`,
+${fakeServerBody}`,
   );
   chmodSync(join(uvBin, "uv"), 0o755);
   for (const f of ["git", "curl", "fake-server"]) chmodSync(join(bin, f), 0o755);
@@ -232,6 +263,7 @@ exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArg
     : `${bin}:/usr/bin:/bin`;
   let stdout = "";
   let status = 0;
+  let timedOut = false;
   try {
     const childEnv = {
       ...process.env,
@@ -266,7 +298,10 @@ exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArg
   } catch (e) {
     status = e.status ?? 1;
     stdout = `${e.stdout ?? ""}${e.stderr ?? ""}`;
-    if (e.code === "ETIMEDOUT") stdout += "\nTIMED OUT: the starter did not return";
+    if (e.code === "ETIMEDOUT") {
+      timedOut = true;
+      stdout += "\nTIMED OUT: the starter did not return";
+    }
   }
 
   const port = env.LANGFLOW_PORT ?? "7860";
@@ -332,6 +367,7 @@ exec sleep ${runCmdDecoyMarker ? `8.${process.pid}` : marker}${runCmdForwardsArg
 
   return {
     status,
+    timedOut,
     stdout,
     marker,
     uv: read(uvLog),
@@ -396,7 +432,8 @@ function runStop(r, extraEnv = {}) {
  * TIMEOUT into it: `execFileSync` killing the child at `timeout: 12000` throws
  * with `status: null` and `signal: SIGTERM`, and `e.status ?? 1` turns that
  * `null` into `1`, indistinguishable from a real `exit 1` (`status: 1`,
- * `signal: null`). A SPAWN failure collapses the same way — measured for
+ * `signal: null`) — which is why `runScript` also records `timedOut` and this
+ * helper refuses it outright, whatever `expected` is (#2113). A SPAWN failure collapses the same way — measured for
  * `ENOENT`: `status: null`, `signal: null`, and `stdout` EMPTY, which is what
  * the `(nothing captured)` fallback below distinguishes. (Any other spawn errno
  * would take the same route; only `ENOENT` was measured.) And the script's own
@@ -452,6 +489,17 @@ function runStop(r, extraEnv = {}) {
  * the branch.
  */
 function assertExit(result, expected) {
+  // A timeout is never the exit code a test asked for, even when it coerces to
+  // one (#2113). The two tests that EXPECT `1` both walk the deadline path, the
+  // slowest one here, so a starter killed at `timeout: 12000` passed this line
+  // and failed three lines later on `pidFileExists`, as `true !== false` with no
+  // output attached — the PID file survives because the kill lands mid-teardown.
+  assert.ok(
+    !result.timedOut,
+    `the starter was killed at runScript's timeout, so exit ${result.status} is ` +
+      `runScript's normalisation, not the script's (expected ${expected})\n` +
+      `--- script output ---\n${result.stdout || "(nothing captured)"}`,
+  );
   assert.equal(
     result.status,
     expected,
@@ -480,6 +528,13 @@ test("assertExit puts the script's own output in the failure message", () => {
     () => assertExit({ status: 1, stdout: "" }, 0),
     /\(nothing captured\)/,
     "an empty capture must say so rather than render as a blank section",
+  );
+  // A timeout coerces to `1`, so it must be refused BEFORE the codes are compared,
+  // or it passes every call site that expects `1` (#2113).
+  assert.throws(
+    () => assertExit({ status: 1, timedOut: true, stdout: "TIMED OUT: the starter did not return" }, 1),
+    (e) => /killed at runScript's timeout/.test(e.message) && /TIMED OUT/.test(e.message),
+    "a timeout must fail even when its coerced code equals the expected one",
   );
   // A passing exit code must not throw, or the 30 call sites below would all be
   // vacuous.
