@@ -71,7 +71,7 @@ exit ${runExit}
   );
   writeFileSync(
     join(repo, "ops", "vm", "build-target-image.sh"),
-    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: some refusal line" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
+    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
     { mode: 0o755 },
   );
   writeFileSync(join(dir, "build.out"), buildOut ? `${buildOut}\n` : "");
@@ -292,6 +292,21 @@ test("a malformed request is refused before anything runs, and its contents neve
   assert.equal(existsSync(pwned), false, "a value from the request was executed");
 });
 
+test("two refusals in the same second keep both refused requests", () => {
+  // Found on the qa (2026-10-01): the kept copy was named by the second-resolution
+  // stamp alone, and the second refusal replaced the first's.
+  const { env, collect } = setup({ request: "ONDEMAND_ID=a\nONDEMAND_REF=$(x)\n" });
+  spawnSync("bash", [ONDEMAND], { encoding: "utf8", env });
+  writeFileSync(join(env.E2E_ONDEMAND_STATE, "request.env"), "ONDEMAND_ID=b\nONDEMAND_REF=a:b\n");
+  spawnSync("bash", [ONDEMAND], { encoding: "utf8", env });
+  const r = collect(2);
+  const kept = r.requests.filter((f) => f.startsWith("unparsed-"));
+  assert.equal(kept.length, 2, `kept: ${kept}`);
+  const bodies = kept.map((f) => readFileSync(join(r.state, "requests", f), "utf8")).sort();
+  assert.match(bodies[0], /ONDEMAND_ID=a/);
+  assert.match(bodies[1], /ONDEMAND_ID=b/);
+});
+
 test("comments, blank lines and CRLF line ends are accepted", () => {
   const r = onDemand({ request: "# by hand\r\n\r\nONDEMAND_ID=req-1\r\nONDEMAND_REF=release-1.13.0\r\n" });
   assert.equal(r.status, 0, r.log);
@@ -368,6 +383,7 @@ test("each build status maps to its own outcome, and the suite never runs after 
     assert.equal(r.result["req-1"].STATUS, status, `build ${buildExit}`);
     assert.equal(r.env, null, `build ${buildExit}: run-e2e.sh ran`);
     assert.match(r.log, /some refusal line/, "the build's own reason did not reach the log");
+    assert.match(r.result["req-1"].REASON, /: some refusal line$/, `build ${buildExit}: the build's own reason did not reach the result`);
   }
 });
 

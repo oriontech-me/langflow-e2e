@@ -128,14 +128,17 @@ main() {
   local raw
   raw="$(cat "$REQ")" || { echo "FATAL: cannot read $REQ"; exit 3; }
   # Consumed before it is judged, so a malformed request is not met again by the next
-  # start. Kept under a name of its own for whoever asks why it was refused.
-  mv -f "$REQ" "$STATE/requests/unparsed-$STAMP.env"
+  # start. Kept under a name of its own for whoever asks why it was refused -- with the
+  # PID in it: two refusals in the same second shared the stamp on the qa (2026-10-01),
+  # and the second one's copy replaced the first's.
+  local KEPT="$STATE/requests/unparsed-$STAMP-$$.env"
+  mv -f "$REQ" "$KEPT"
 
-  ondemand_parse_request "$raw" || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$STATE/requests/unparsed-$STAMP.env"
+  ondemand_parse_request "$raw" || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$KEPT"
   # Before anything is written under the id: a second request with it must not replace
   # the first one's request or result.
-  [ ! -e "$STATE/results/$OD_ID.env" ] || ondemand_refuse "request $OD_ID was already answered — an id names one run" "$STATE/requests/unparsed-$STAMP.env"
-  mv -f "$STATE/requests/unparsed-$STAMP.env" "$STATE/requests/$OD_ID.env"
+  [ ! -e "$STATE/results/$OD_ID.env" ] || ondemand_refuse "request $OD_ID was already answered — an id names one run" "$KEPT"
+  mv -f "$KEPT" "$STATE/requests/$OD_ID.env"
   echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} by=${OD_BY:-<unnamed>}"
   # From here on every exit writes the result for this id.
   trap ondemand_finish EXIT
@@ -179,15 +182,24 @@ main() {
   [ -f "$REPO/.env" ] && ln -sfn "$REPO/.env" "$OD_WT/.env"
 
   # --- the image of the branch's commit ---------------------------------------------
-  local built rc=0
+  local built rc=0 build_err="$STATE/build-stderr.$$" said
   # 9>&- on everything that can leave a process behind: a daemon that inherited the
   # lock's descriptor would hold the lock after this run, and refuse every next one.
-  built="$(BUILD_ROOT="$STATE/builds" "$OD_WT/ops/vm/build-target-image.sh" "$OD_REF" 9>&-)" || rc=$?
+  #
+  # Its stderr is kept apart and then copied to the log: the script's own reason is its
+  # last `build-target-image:` line, and the RESULT has to carry it. "See the line above"
+  # pointed at a line only the log had (qa, 2026-10-01), and the result is what the
+  # platform will show.
+  built="$(BUILD_ROOT="$STATE/builds" "$OD_WT/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 2> "$build_err")" || rc=$?
+  cat "$build_err" 2>/dev/null
+  said="$(grep '^build-target-image: ' "$build_err" 2>/dev/null | tail -n 1)"
+  said="${said#build-target-image: }"
+  rm -f "$build_err"
   case "$rc" in
     0) ;;
-    2) ondemand_refuse "build-target-image.sh refused the branch (status 2) — see the line above" ;;
-    3 | 7) ondemand_fail 3 failed "build-target-image.sh could not do its part (status $rc) — see the line above. This is the machine or the network, not the branch" ;;
-    *) ondemand_fail 4 build_failed "build-target-image.sh failed with status $rc — see the line above. This is not a test result" ;;
+    2) ondemand_refuse "build refused (status 2): ${said:-no reason given}" ;;
+    3 | 7) ondemand_fail 3 failed "build could not do its part (status $rc), the machine or the network, not the branch: ${said:-no reason given}" ;;
+    *) ondemand_fail 4 build_failed "build failed (status $rc), not a test result: ${said:-no reason given}" ;;
   esac
   # Read by name, never evaluated: the script's output is the one thing here that came
   # from somewhere a request can influence.
