@@ -1594,7 +1594,7 @@
 | `core-functionality/llm-agents/` | 42 | 35 | 3 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 32 | 3 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 52 | 51 | 0 | 0 | 1 |
+| `core-functionality/playground/` | 56 | 55 | 0 | 0 | 1 |
 | `core-functionality/project-management/` | 16 | 13 | 3 | 0 | 0 |
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
@@ -1610,7 +1610,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **734** | **642 (87%)** | **37 (5%)** | **14 (2%)** | **41 (6%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **738** | **646 (88%)** | **37 (5%)** | **14 (2%)** | **41 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1626,7 +1626,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 711 `test()` calls carrying the `@stable` tag, distributed across 279 spec
+> 715 `test()` calls carrying the `@stable` tag, distributed across 280 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2128,6 +2128,10 @@
 - [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
 - [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
 - [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
+- [x] the audio button is disabled in a browser without speech recognition → `playground-audio-input.spec.ts`
+- [x] a click starts speech recognition and a second click stops it → `playground-audio-input.spec.ts`
+- [x] the final transcript is appended to the text already in the input → `playground-audio-input.spec.ts`
+- [x] stopping with no speech shows the voice input error and leaves the input alone → `playground-audio-input.spec.ts`
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
 - [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
 - [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
