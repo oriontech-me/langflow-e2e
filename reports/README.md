@@ -306,6 +306,7 @@ The series is **not continuous**. Document any missing weeks here rather than ba
   - **The per-shard totals plus `unassigned` sum to the line's run-level `totals`, always.** That is enforced, not hoped for: every spec file is counted exactly once across the whole run. A file no shard listed lands in `unassigned`; a file **two** shards listed is attributed to the first and named in `double_claimed` rather than counted twice — `unassigned` can only ever detect the under-count, so without that rule the sum would break in the one direction nothing checks. `double_claimed` is empty and omitted in practice, because `partition-shards.mjs` emits disjoint lists; its presence means the partition itself is wrong.
   - A file under the liveness directory that is **not** a shard summary is ignored rather than counted as a shard, with the number ignored printed. Left in, it produces a phantom `{shard: "?"}` record that inflates `shards_reported` — filling exactly the gap against `shard_total` that a shard whose job died is supposed to show.
   - Absent from history written before #1077.
+- `skips` (optional, additive to schema v1, #2125) names **every skipped test and why**: `[{ test, file, line, param?, kind, reason?, provider?, stale?, caused_by? }]`, with `totals.skipped` its count. Until it existed a skip was a number, so a test could sit out the daily for weeks counted and unnamed — #1480 could not establish its own recurrence because its two Azure tests had skipped on every daily since 2026-08-04 and the only per-skip record, `results.json`, expires. `kind` is one of `provider-health` (the reason is a provider-health record, read through `scripts/lib/provider-health-reason.mjs`; `provider` and `stale` say which and whether the key is dead or the record merely old, #1904), `annotated` (`test.skip(cond, "<reason>")` with any other reason), `fixme`, `serial-cascade` and `unannotated`. **`serial-cascade` is most of them, and the annotation alone would have missed it:** on the two dailies measured before this shipped (runs 36730351768 and 36583902805) only 1 of 4 and 1 of 3 skips carried an annotation — the rest were the remainder of a `mode: "serial"` group after an earlier test failed, skipped on every attempt with no annotation and a 0 ms duration. Such a skip is attributed through `caused_by: { line, test }` to the **nearest earlier failure of the same describe group** (same file, same describe chain, so one provider variant never blames another's failure); one with no annotation and no such failure is `unannotated` with `reason: null`, which is not the same as an empty reason. `reason` is recorded **verbatim**, capped at 300 characters — the text is written by our own specs, and the host or key it names is usually the diagnosis (#1480's was a placeholder endpoint). Logic in `scripts/lib/skip-reasons.mjs`, unit-tested in `skip-reasons.test.mjs`. `[]` means the run was read and nothing skipped; the field is **absent** on a `report_missing` line, where the skips are unknown, and on history written before #2125.
 - `param` (optional, additive to schema v1) is the parameterization label a model-parameterized spec carries on its `describe` title — e.g. `"google / gemini-2.5-flash"` or `"model:gpt-4o-mini"`. The triage dataset builder uses it to group failures by provider variant and surface **provider-wide** clusters (same provider failing across ≥2 spec files → likely an environment/package cause, not per-test rot; #899). Absent for non-parameterized specs and for history written before #899.
 
 ---
@@ -358,6 +359,12 @@ jq -r 'select(.backend) | . as $row | .backend.shards[]
 jq -r --arg t "Webhook component — flow is saved to database and contains the Webhook node" \
   '. as $row | .failures[] | select(.test == $t) | "\($row.date)  \(.error_signature)"' \
   reports/weekly-history.jsonl
+
+# How often did a test SKIP, and why (#2125)? Rows before #2125 lack `.skips`;
+# `select(.skips)` keeps them out rather than reading them as days nothing skipped.
+jq -r 'select(.skips) | . as $row | .skips[]
+  | "\($row.date)  \(.kind)  \(.file):\(.line)  \(.test)  \(.reason // (.caused_by | if . then "after \(.line) failed" else "no reason recorded" end))"' \
+  reports/daily-history.jsonl
 ```
 
 ---
@@ -410,7 +417,7 @@ The following require either a future v2 schema or a separate data source:
 
 - **"Is this test *actually* stable?"** — without a recorded pass list, you can only say "it never appeared as a failure in the captured window." That is necessary but not sufficient: the test may have been removed from `@stable`, renamed, or skipped silently. A v2 schema with `passed_tests: []` (names + file:line) is the cheapest fix; it would grow each line from ~2 KB to ~10–15 KB but make "stability rate per test" a one-line `jq` query.
 - **Per-test duration trends.** `totals.duration_ms` is run-level only. Detecting "test X used to take 8 s and now takes 35 s" requires storing per-test `duration_ms` (also a v2 addition).
-- **Diff between the @stable set in run A and run B.** No nominal list of which tests ran exists.
+- **Diff between the @stable set in run A and run B.** No nominal list of which tests ran exists. (Which tests *skipped* is recorded since #2125 — `skips[]` — but a skip list is not a run list.)
 - **Who fixed what, and when a flake stopped flaking.** That information lives in PRs and the spec docs — the history file is intentionally not the source of truth for *resolution*, only for *occurrence*.
 
 If a recurring need for one of these answers emerges, **do not patch the schema reactively** — evaluate whether v2 (adding `passed_tests` / per-test duration) makes sense or whether the question is better answered by a derived script that reads the JSONL plus the current repo state. See `Schema evolution` above for the bump rules.

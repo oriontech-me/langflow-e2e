@@ -68,6 +68,9 @@
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
 //   "failures": [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
 //   "flaky":    [ { test, file, line, tags, attempts, error_signature, infra_signature, param? } ],
+//   "skips":    [ { test, file, line, param?, kind, reason?, provider?, stale?, caused_by? } ],
+//                                                 // optional, additive (#2125) — see
+//                                                 // scripts/lib/skip-reasons.mjs
 //   "run_errors": [ "..." ]                     // optional, see below
 //   "report_missing": true                      // optional, see below
 //   `recurrence_keys` + `recurrence_key_version` (additive to schema v1, #1626)
@@ -177,6 +180,7 @@ import { dirname, relative, resolve } from "node:path";
 import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 import { paramFromSuitePath } from "./lib/spec-param.mjs";
+import { collectSkips } from "./lib/skip-reasons.mjs";
 import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
 import { RECURRENCE_KEY_VERSION, recurrenceKeysForTest } from "./lib/recurrence-key.mjs";
 
@@ -482,6 +486,10 @@ function visit(node, suitePath = []) {
 
 for (const suite of report?.suites || []) visit(suite);
 
+// Which tests skipped, and why (#2125). Absent when there is no report: an
+// unread run's skips are unknown, and `[]` would claim "none skipped".
+const skips = report ? collectSkips(report, { relFile: specRelFile }) : null;
+
 const runId = process.env.GITHUB_RUN_ID || "local";
 const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
 const repo = process.env.GITHUB_REPOSITORY || "";
@@ -662,6 +670,7 @@ const entry = {
   totals,
   failures,
   flaky,
+  ...(skips ? { skips } : {}),
   ...(runErrors.length ? { run_errors: runErrors } : {}),
   ...(reportMissing ? { report_missing: true } : {}),
   ...(backend ? { backend } : {}),

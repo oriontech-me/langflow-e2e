@@ -990,3 +990,35 @@ test("a revision of the wrong shape is recorded as sent, for the comparator to c
   // Dropping it would make a wiring break look like a lane that never sent anything.
   assert.equal(append(report([]), { SUITE_SHA: "abc1234" }).suite_sha, "abc1234");
 });
+
+// ---------- skips[] (#2125) ----------
+
+test("#2125 every skipped test is named with its kind, and a cascade with its cause", () => {
+  const rep = report([
+    { title: "first", status: "unexpected", results: [result("failed", SPEC_ERROR)] },
+    { title: "second", status: "skipped", results: [{ status: "skipped", duration: 0 }] },
+  ]);
+  rep.suites[0].specs[1].tests[0].annotations = [];
+  const gated = { title: "gated", file: rep.suites[0].specs[0].file, line: 30, tags: ["@stable"],
+    tests: [{ status: "skipped", annotations: [{ type: "skip", description: "needs GOOGLE_API_KEY" }],
+      results: [{ status: "skipped", duration: 0 }] }] };
+  rep.suites[0].specs.push(gated);
+  const entry = append(rep);
+  assert.equal(entry.totals.skipped, 2);
+  assert.deepEqual(entry.skips.map((s) => [s.test, s.kind]), [["second", "serial-cascade"], ["gated", "annotated"]]);
+  assert.deepEqual(entry.skips[0].caused_by, { line: 10, test: "first" });
+  assert.equal(entry.skips[1].reason, "needs GOOGLE_API_KEY");
+  assert.equal(entry.skips[0].file, entry.failures[0].file, "skips and failures spell a file the same way");
+  assert.equal(entry.version, 1, "an additive optional field does not bump the schema version");
+});
+
+test("#2125 a run that skipped nothing records an EMPTY list, not an absent one", () => {
+  const entry = append(report([{ title: "t", status: "expected", results: [result("passed")] }]));
+  assert.deepEqual(entry.skips, []);
+});
+
+test("#2125 a run with no report carries no skips field — unknown is not 'none skipped'", () => {
+  const entry = appendWithNoReport();
+  assert.equal(entry.report_missing, true);
+  assert.equal(entry.skips, undefined);
+});
