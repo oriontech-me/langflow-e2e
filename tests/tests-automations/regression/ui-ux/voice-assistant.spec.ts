@@ -57,29 +57,33 @@ async function openPublicPlayground(
   expect(fired, "the config mock never fired, so the flag under test was not applied").toBeGreaterThan(0);
 }
 
+// A RegExp rather than a predicate, so the browser filters it and only the variables
+// list round-trips to the test; the query string carries the flow scope.
+const VARIABLES_URL = /\/api\/v1\/variables\/?(?:\?|$)/;
+
 /**
  * Makes the voice assistant see no stored OpenAI key, whatever the lane holds.
- * `hasOpenAIAPIKey` is "a global variable named OPENAI_API_KEY exists", and every
- * lane's collect-models pre-flight stores one under that name, so the popover would
- * otherwise open in the stored-key state (#2149). The real list is fetched and only
- * that entry dropped; the shared variable itself is never touched, because the
- * provider specs running alongside depend on it. Returns the hit count.
+ * `hasOpenAIAPIKey` is "a global variable named OPENAI_API_KEY exists", and a lane
+ * gets one from the collect-models pre-flight or from Langflow importing its own
+ * environment, so the popover would otherwise open in the stored-key state (#2149).
+ * The real list is fetched and only that entry dropped; the shared variable itself is
+ * never touched, because the provider specs running alongside depend on it. A body
+ * that is not a list (an error) is passed through so its real status stays visible.
+ * Returns the hit count.
  */
 async function hideStoredOpenAIKey(page: Page): Promise<() => number> {
   let fired = 0;
-  await page.route(
-    (url) => /^\/api\/v1\/variables\/?$/.test(url.pathname),
-    async (route) => {
-      if (route.request().method() !== "GET") return route.continue();
-      fired++;
-      const response = await route.fetch();
-      const variables: Array<{ name?: string }> = await response.json();
-      await route.fulfill({
-        response,
-        json: variables.filter((variable) => variable.name !== "OPENAI_API_KEY"),
-      });
-    },
-  );
+  await page.route(VARIABLES_URL, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    fired++;
+    const response = await route.fetch();
+    const variables: unknown = await response.json().catch(() => null);
+    if (!Array.isArray(variables)) return route.fulfill({ response });
+    await route.fulfill({
+      response,
+      json: variables.filter((variable: { name?: string }) => variable.name !== "OPENAI_API_KEY"),
+    });
+  });
   return () => fired;
 }
 
@@ -96,13 +100,26 @@ test(
     });
 
     await test.step("the voice button opens the assistant with its settings popover", async () => {
-      await page.getByTestId("voice-button").click();
+      // The key field also renders while the variables list is still in flight, so
+      // a key that was not hidden would pass the assertion below in that window.
+      // Waiting for the list narrows it from a network round trip to one render. The
+      // wait matches the pathname on its own, not VARIABLES_URL, so a route that stops
+      // matching still reaches the named assertion below instead of timing out here.
+      await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            /^\/api\/v1\/variables\/?$/.test(new URL(response.url()).pathname) &&
+            response.request().method() === "GET",
+        ),
+        page.getByTestId("voice-button").click(),
+      ]);
       await expect(page.getByTestId("voice-assistant-container")).toBeVisible();
       await expect(page.getByTestId("voice-assistant-settings-modal-header")).toBeVisible();
-      expect(
-        variablesFired(),
-        "the variables mock never fired, so a key stored on this instance decides the popover's state",
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(variablesFired, {
+          message: "the variables mock never fired, so a key stored on this instance decides the popover's state",
+        })
+        .toBeGreaterThan(0);
       await expect(page.getByTestId("popover-anchor-openai-api-key")).toBeVisible();
     });
 
