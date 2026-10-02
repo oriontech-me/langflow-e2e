@@ -57,7 +57,7 @@
 //   78  the configuration is wrong: a variable is missing, or the platform answered 401
 //       to the worker secret. The unit does not restart on it (RestartPreventExitStatus),
 //       because retrying a wrong secret every 30 seconds fixes nothing.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, openSync, fsyncSync, closeSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, openSync, fsyncSync, closeSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -253,9 +253,11 @@ export class Worker {
   load() {
     try {
       const s = JSON.parse(readFileSync(this.file, "utf8"));
-      if (s && typeof s === "object" && SHAPES.claimToken.test(s.claim_token ?? "")) return { claim_token: s.claim_token, held: s.held ?? null };
+      if (s && typeof s === "object" && SHAPES.claimToken.test(s.claim_token ?? "")) {
+        return { claim_token: s.claim_token, claim_unanswered: s.claim_unanswered === true, held: s.held ?? null };
+      }
     } catch { /* first start, or a state file that cannot be read: start clean */ }
-    return { claim_token: null, held: null };
+    return { claim_token: null, claim_unanswered: false, held: null };
   }
 
   /** Written whole, synced, then renamed, so a crash never leaves half a token. */
@@ -317,8 +319,12 @@ export class Worker {
     const now = this.cfg.now();
     if (now >= this.next.heartbeat) await this.heartbeat();
     if (!this.state.held) {
+      // A claim sent just before the pause whose answer was lost may hold a request on
+      // the platform. Retrying it with the same token is idempotent, so it goes on
+      // through the pause; a request it turns out to hold waits for the pause to end,
+      // on busy heartbeats. Without it the lease would lapse unseen during the window.
       const paused = this.pause();
-      if (paused) return this.sayOnce(`paused, not claiming: ${paused}`);
+      if (paused && !this.state.claim_unanswered) return this.sayOnce(`paused, not claiming: ${paused}`);
       if (now >= this.next.claim) await this.claim();
     }
     if (this.state.held) await this.tend();
@@ -339,15 +345,20 @@ export class Worker {
   }
 
   async claim() {
-    if (!this.state.claim_token) {
-      this.state.claim_token = randomUUID();
-      this.save(); // before the call: a lost answer is recovered with the same token
+    if (!this.state.claim_token || !this.state.claim_unanswered) {
+      // Before the call: a lost answer is recovered with the same token, even by a
+      // worker restarted in between, and even inside the daily's pause.
+      this.state.claim_token ||= randomUUID();
+      this.state.claim_unanswered = true;
+      this.save();
     }
     const r = await this.post(ENDPOINTS.claim, { contract_version: CONTRACT_VERSION, worker_id: this.cfg.workerId, claim_token: this.state.claim_token });
     if (r.network || r.status >= 500) {
       this.later("claim", 30_000);
       return this.sayOnce(`claim not answered (${r.network ?? `HTTP ${r.status}`}); retrying with the same token`);
     }
+    this.state.claim_unanswered = false;
+    this.save();
     this.backoff.claim = 0;
     this.next.claim = this.cfg.now() + POLL_SECONDS * 1000;
     if (r.ok) {
@@ -375,6 +386,10 @@ export class Worker {
       // platform abandons it when the lease lapses.
       return this.log(`::error:: ${how} a request that cannot even be answered (${err}); left to lapse`);
     }
+    // The executor would refuse it too; the refusal is written as its answer, BEFORE
+    // the hold is saved, and forwarded like one, so the request ends with the reason
+    // instead of lapsing. start() checks again, for a state file from elsewhere.
+    if (err) this.refuse(req.id, err);
     this.state.claim_token = req.claim_token;
     this.state.held = {
       id: req.id, ref: req.ref, provider: req.provider, model: req.model, requested_by: req.requested_by,
@@ -383,16 +398,16 @@ export class Worker {
     };
     this.save();
     this.said = "";
-    if (err) {
-      // The executor would refuse it too; the refusal is written as its answer and
-      // forwarded like one, so the request ends with the reason instead of lapsing.
-      const res = join(this.cfg.state, "results", `${req.id}.env`);
-      mkdirSync(join(this.cfg.state, "results"), { recursive: true });
-      writeFileSync(`${res}.tmp`, refusalResult(req.id, `the worker refused the request before the executor saw it: ${err}`, this.cfg.now()));
-      renameSync(`${res}.tmp`, res);
-      return this.log(`${how} ${req.id}, and refused it: ${err}`);
-    }
+    if (err) return this.log(`${how} ${req.id}, and refused it: ${err}`);
     this.log(`${how} ${req.id}: ref=${req.ref} provider=${req.provider || "<rotation>"} model=${req.model || "<default>"} by=${req.requested_by || "<unnamed>"}`);
+  }
+
+  /** results/<id>.env in the executor's format: the worker's own refusal. */
+  refuse(id, err) {
+    const res = join(this.cfg.state, "results", `${id}.env`);
+    mkdirSync(join(this.cfg.state, "results"), { recursive: true });
+    writeFileSync(`${res}.tmp`, refusalResult(id, `the worker refused the request before the executor saw it: ${err}`, this.cfg.now()));
+    renameSync(`${res}.tmp`, res);
   }
 
   /** The held request: forward its result, report its progress, or start it. */
@@ -414,6 +429,13 @@ export class Worker {
     // (the executor's lock held by a run by hand) is retried 1, 2, 4 ... 15 minutes apart.
     const wait = h.starts === 0 ? 0 : Math.min(60_000 * 2 ** (h.starts - 1), 900_000);
     if (now < h.last_start_ms + wait) return;
+    if (h.progress_lost && !existsSync(join(this.cfg.state, "requests", `${h.id}.env`))) {
+      // Abandoned before any run took it: whoever asked was told so, and starting it
+      // now would spend half an hour on a request nobody waits for. A consumed one is
+      // still started, because its start only writes the orphan's answer.
+      this.log(`${h.id}: the lease was lost before a run took the request; released without starting it`);
+      return this.release();
+    }
     if (h.progress_lost && now - Date.parse(h.held_since) > MAX_HOLD_SECONDS * 1000) {
       this.log(`::error:: ${h.id}: lease lost, held past ${MAX_HOLD_SECONDS}s, and no run or result to show for it; released`);
       return this.release();
@@ -426,6 +448,11 @@ export class Worker {
   /** Recovery and the first start alike: the contract's three cases. */
   start() {
     const h = this.state.held;
+    const err = claimedRequestError(h);
+    if (err) {
+      this.refuse(h.id, err);
+      return this.log(`${h.id}: refused before the slot: ${err}`);
+    }
     const slot = join(this.cfg.state, "request.env");
     const consumed = join(this.cfg.state, "requests", `${h.id}.env`);
     let inSlot = null;
@@ -515,8 +542,20 @@ export class Worker {
     return this.release();
   }
 
-  /** Done with the held request: a fresh token for the next claim. */
+  /**
+   * Done with the held request: a fresh token for the next claim. Its request goes
+   * from the slot if it is still there (never taken, or taken by an executor killed
+   * before the move): left behind, it would block every later start as "another
+   * request" for good.
+   */
   release() {
+    const slot = join(this.cfg.state, "request.env");
+    try {
+      if (slotId(readFileSync(slot, "utf8")) === this.state.held.id) {
+        rmSync(slot);
+        this.log(`${this.state.held.id}: removed from the executor's slot`);
+      }
+    } catch { /* empty slot */ }
     this.state.held = null;
     this.state.claim_token = randomUUID();
     this.save();

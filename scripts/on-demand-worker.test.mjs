@@ -40,6 +40,21 @@ function reportOutcome(current, reported) {
   return RANK[reported] > RANK[current] ? "applied" : "stale";
 }
 
+// ExecutorResult's rules (contract.ts), the ones a result from the executor could break.
+const RESULT_KEYS = ["ONDEMAND_ID", "STATUS", "VERDICT", "REASON", "EXIT", "RUN_ID", "TARGET_REF", "TARGET_SHA", "TARGET_VERSION", "BUILD_S", "SUITE_SHA", "PROVIDER", "MODEL", "REQUESTED_BY", "CLEANUP", "STARTED", "FINISHED", "LOG"];
+const EXPECTED_EXIT = { "done/green": "0", "done/red": "1", "refused/": "2", "failed/": "3", "build_failed/": "4" };
+function resultError(r) {
+  const unknown = Object.keys(r).filter((k) => !RESULT_KEYS.includes(k));
+  if (unknown.length) return `unknown keys ${unknown}`;
+  for (const k of ["ONDEMAND_ID", "STATUS", "VERDICT", "REASON", "EXIT", "CLEANUP", "FINISHED"]) if (typeof r[k] !== "string") return `${k} missing`;
+  if (Object.values(r).some((v) => typeof v !== "string")) return "a value is not a string";
+  if ((r.STATUS === "done") !== (r.VERDICT !== "")) return "VERDICT is green or red exactly when STATUS is done";
+  if (EXPECTED_EXIT[`${r.STATUS}/${r.VERDICT}`] !== r.EXIT) return `EXIT ${r.EXIT} for ${r.STATUS}/${r.VERDICT}`;
+  if (!["ok", "pending", "incomplete", "unconfirmed", "by the next run"].includes(r.CLEANUP)) return "CLEANUP";
+  if (!/^\d{8}T\d{6}Z$/.test(r.FINISHED)) return "FINISHED";
+  return null;
+}
+
 async function fakePlatform() {
   const requests = [];
   const calls = [];
@@ -58,6 +73,11 @@ async function fakePlatform() {
       return { status: 200, json: { request: view(next) } };
     },
     report(b) {
+      if (b.result) {
+        const bad = resultError(b.result);
+        if (bad) return refuse(400, "invalid_body", { error: `result: ${bad}` });
+        if (b.result.STATUS !== b.status || b.result.ONDEMAND_ID !== b.id) return refuse(400, "invalid_body");
+      }
       const r = requests.find((x) => x.id === b.id);
       if (!r) return refuse(404, "unknown_request");
       if (r.claim_token !== b.claim_token) return refuse(409, "not_held");
@@ -248,7 +268,7 @@ test("a result on disk is not forwarded while the unit is in any running state",
     assert.ok(p.requests[0].claim_token, "not claimed");
     mkdirSync(join(m.env.E2E_ONDEMAND_STATE, "results"), { recursive: true });
     writeFileSync(join(m.env.E2E_ONDEMAND_STATE, "results", `${REQ().id}.env`), `ONDEMAND_ID=${REQ().id}\nSTATUS=failed\nVERDICT=\nREASON=x\nEXIT=3\nCLEANUP=pending\nFINISHED=20260930T150500Z\n`);
-    for (const st of UNIT_RUNNING_STATES) {
+    for (const st of [...UNIT_RUNNING_STATES, "unknown"]) {
       m.setUnit("e2e-on-demand.service", st);
       await w.step();
       assert.equal(p.of("report").filter((b) => b.result).length, 0, `forwarded while ${st}`);
@@ -672,6 +692,102 @@ test("the service stops on SIGTERM, and a 401 is exit 78", async () => {
     assert.doesNotMatch(ok.out, /worker-secret/, "the secret reached the log");
     const bad = await run({ ...env, QA_ON_DEMAND_WORKER_TOKEN: "wrong" });
     assert.equal(bad.code, 78, bad.out);
+  } finally {
+    await p.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Found in review
+// ---------------------------------------------------------------------------
+
+test("a claim answer lost just before the pause is claimed again through it, and waits for its end", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ());
+    p.overrides.claim.push("drop");
+    let t = at(3, 7, 24) + 50_000;
+    const w = worker(m, p, { clock: () => t });
+    await w.step();
+    assert.equal(w.state.held, null);
+    assert.ok(p.requests[0].claim_token, "the platform did not hold it");
+    t = at(3, 7, 26);
+    await w.step();
+    assert.equal(w.state.held?.id, REQ().id, "the lost claim was not retried inside the pause, so its lease would lapse unseen");
+    assert.equal(p.of("heartbeat").at(-1).state, "paused_for_daily");
+    assert.equal(m.starts().length, 0, "started inside the daily's window");
+    w.next.heartbeat = 0;
+    await w.step();
+    assert.equal(p.of("heartbeat").at(-1).state, "busy");
+    // An answered claim does not claim inside the pause.
+    const p2 = await fakePlatform();
+    try {
+      let t2 = WED_1500;
+      const w2 = worker(machine({ run: false }), p2, { clock: () => t2 });
+      await w2.step();
+      assert.equal(p2.of("claim").length, 1);
+      t2 = at(3, 7, 30);
+      w2.next.claim = 0;
+      await w2.step();
+      assert.equal(p2.of("claim").length, 1, "an answered claim kept claiming inside the pause");
+    } finally {
+      await p2.close();
+    }
+    t = at(3, 8, 41);
+    await w.step();
+    assert.equal(m.starts().length, 1);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a lease lost before a run took the request releases it unstarted, and empties the slot it wrote", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ());
+    let t = WED_1500;
+    const w = worker(m, p, { clock: () => t });
+    await w.step();
+    assert.equal(m.starts().length, 1);
+    const slot = join(m.env.E2E_ONDEMAND_STATE, "request.env");
+    assert.ok(existsSync(slot));
+    m.setUnit("e2e-on-demand.service", "failed"); // the lock refused it; the request stayed
+    p.requests[0].status = "abandoned";
+    t += 16 * 60_000;
+    w.next.heartbeat = 0;
+    await w.step();
+    assert.equal(w.state.held, null, w.lines.join("\n"));
+    assert.equal(m.starts().length, 1, "an abandoned request was started");
+    assert.equal(existsSync(slot), false, "left in the slot, it blocks every later start as another request's");
+    // The next request is not wedged behind it.
+    p.enqueue({ ...REQ(), id: "od-20260930-00000002" });
+    w.next.claim = 0;
+    await w.step();
+    assert.equal(w.state.held?.id, "od-20260930-00000002");
+    assert.equal(m.starts().length, 2);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a held request from the state file is checked again before it reaches the slot", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ({ ref: "a..b" }));
+    p.requests[0].status = "claimed";
+    p.requests[0].claim_token = TOKEN;
+    mkdirSync(join(m.env.E2E_ONDEMAND_STATE, "worker"), { recursive: true });
+    // A crash between saving the hold and writing the refusal, in an older order.
+    writeFileSync(join(m.env.E2E_ONDEMAND_STATE, "worker", "state.json"), JSON.stringify({ claim_token: TOKEN, held: { ...REQ({ ref: "a..b" }), claim_token: TOKEN, held_since: "2026-09-30T14:59:00Z", reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0 } }));
+    const w = worker(m, p);
+    await w.step();
+    await w.step();
+    assert.equal(m.starts().length, 0);
+    assert.equal(existsSync(join(m.env.E2E_ONDEMAND_STATE, "request.env")), false);
+    assert.equal(p.requests[0].status, "refused");
   } finally {
     await p.close();
   }
