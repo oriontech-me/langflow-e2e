@@ -52,7 +52,7 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * step SEPARATELY so model non-compliance cannot masquerade as a broken cap.
  * The cap itself is enforced — measured on 1.12.0.dev39, see the spec doc. Losing the
  * limit message when the model writes text alongside its tool call is a separate
- * product regression, LE-2728 (#1991), and Test 1 is quarantined for it below.
+ * product regression, LE-2728 (#1991), fixed upstream in 1.13.0.dev28.
  */
 
 // Data the model CANNOT fabricate, so calling the URL tool is the only way to
@@ -401,8 +401,9 @@ async function readModelCalls(
 }
 
 // Did the model emit text BEFORE its first tool call? That ordering is the shape
-// that takes the message away from the cap (#1991), and it is visible in the
-// persisted content blocks — so the diagnosis reads it instead of assuming it.
+// that took the message away from the cap before langflow#15369 (#1991), and it
+// is visible in the persisted content blocks — so the diagnosis reads it instead
+// of assuming it.
 //
 // `undefined` when the blocks are not readable: "could not look" must never render
 // as "looked and found none". Also `undefined` when the blocks hold no `tool_use` at
@@ -490,21 +491,19 @@ for (const { label, options, skipReason } of targets) {
     // This is the half of the pair whose assertion depends on the model electing
     // to call a tool (see the header), so its `@stable` follows a measured rate,
     // not the fix landing — #1187's rule. See the spec doc's Tags section for the
-    // numbers behind the tag this test carried before the quarantine below.
+    // numbers behind this test's tag.
     //
-    // Quarantined (2026-09-23, #1991): a confirmed product regression, LE-2728.
-    // When the model writes text alongside its tool call, the cap still fires but
-    // the limit message is lost, and the run's final message is the model's
-    // preamble. Sampling decides which case a run hits: 5 of 10 attempts lost
-    // the message on 1.13.0.dev19 / claude-haiku-4-5. Recurrent: flaky on the
-    // 2026-09-18 daily and hard-failed 3/3 on 2026-09-22, same signature.
-    // Lifting the quarantine (remove test.fixme + restore @stable) is a
-    // deliverable of #1991, once the upstream fix lands in the nightly and is
-    // re-validated there. The causal control below is unaffected and keeps
-    // @stable; in serial mode a fixme'd test does not skip the tests after it.
-    test.fixme(
+    // Quarantine lifted (2026-10-02, #1991). LE-2728: when the model wrote text
+    // alongside its tool call, the cap fired but the limit message was lost and
+    // the run's final message was the model's preamble (5 of 10 attempts on
+    // 1.13.0.dev19 / claude-haiku-4-5). Fixed by langflow#15369, in the nightly
+    // from 1.13.0.dev28: the notice is now appended after the preamble. Measured
+    // on 1.13.0.dev30 / claude-haiku-4-5 at --retries=0: 30/30 clean, including a
+    // preambled run that rendered "I'll fetch that URL for you.Model call limits
+    // exceeded: run limit (1/1)".
+    test(
       "agent stops when max iterations is reached",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
