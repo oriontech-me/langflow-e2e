@@ -399,9 +399,14 @@ export interface LivenessSampler {
  * be exactly the unproven claim #1012 forbids.
  *
  * `maxMs` bounds it even if nobody calls `stop()`: a forgotten stop must cost a
- * few samples, not an unbounded stream of requests for the rest of the test. The
- * timer is also `unref`'d, so a sampler can never be what keeps a process alive —
- * without both, that mutation HANGS the unit lane instead of failing it.
+ * few samples, not an unbounded stream of requests for the rest of the test —
+ * and, without the bound, that mutation HANGS the unit lane instead of failing
+ * it. The pause timer is deliberately NOT `unref`'d: a caller awaiting a sample
+ * (or `done`) with nothing else pending would see Node drain the event loop
+ * under it. On Node 20 — the PR lane's — that cancels the awaiting test and
+ * every test after it ("Promise resolution is still pending but the event loop
+ * has already resolved"); Node 26 happens to keep the loop alive, which is how
+ * the first version passed locally.
  */
 export function startLivenessSampler(
   sample: () => Promise<LivenessSample | null>,
@@ -416,7 +421,6 @@ export function startLivenessSampler(
   const pause = (ms: number) =>
     new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, ms);
-      timer.unref?.();
       wake = () => {
         clearTimeout(timer);
         resolve();
