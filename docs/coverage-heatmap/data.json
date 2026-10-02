@@ -86,7 +86,7 @@
  "areas": [
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 9.3,
+   "residualRisk": 9,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -100,12 +100,12 @@
    "mitigationBulletDerived": 0.71,
    "mitigationOverride": null,
    "testHealth": {
-    "chronicHardFailures": 1,
+    "chronicHardFailures": 0,
     "chronicFlaky": 7,
     "stableSpecs": 36,
-    "penalty": 0.079
+    "penalty": 0.069
    },
-   "mitigation": 0.63,
+   "mitigation": 0.64,
    "checklistBullets": 46,
    "bulletStates": {
     "x": 39,
@@ -149,13 +149,13 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 11,
+    "stableSpecs": 12,
     "penalty": 0
    },
    "mitigation": 0.7,
-   "checklistBullets": 32,
+   "checklistBullets": 34,
    "bulletStates": {
-    "x": 27,
+    "x": 29,
     " ": 3,
     "-": 1,
     "~": 1
@@ -173,8 +173,8 @@
    },
    "upstreamBugCount": 69,
    "specCounts": {
-    "specs": 12,
-    "stable": 11
+    "specs": 13,
+    "stable": 12
    }
   },
   {
@@ -254,51 +254,6 @@
    }
   },
   {
-   "area": "NEW security",
-   "residualRisk": 5.7,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "inputs": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
-   },
-   "mitigationBulletDerived": 0.67,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 1,
-    "chronicFlaky": 0,
-    "stableSpecs": 7,
-    "penalty": 0.048
-   },
-   "mitigation": 0.62,
-   "checklistBullets": 30,
-   "bulletStates": {
-    "x": 25,
-    " ": 5
-   },
-   "previous": {
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0,
-    "checklistBullets": 11
-   },
-   "judgementRationale": "SSRF/secret exposure; not a checklist area at all",
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
-   },
-   "upstreamBugCount": 10,
-   "specCounts": {
-    "specs": 7,
-    "stable": 7
-   }
-  },
-  {
    "area": "12.6 Build / graph engine",
    "residualRisk": 5.6,
    "inherentRisk": 20,
@@ -342,6 +297,51 @@
    "specCounts": null
   },
   {
+   "area": "NEW security",
+   "residualRisk": 5.4,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "inputs": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "mitigationBulletDerived": 0.69,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 0,
+    "stableSpecs": 7,
+    "penalty": 0.049
+   },
+   "mitigation": 0.64,
+   "checklistBullets": 30,
+   "bulletStates": {
+    "x": 26,
+    " ": 4
+   },
+   "previous": {
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0,
+    "checklistBullets": 11
+   },
+   "judgementRationale": "SSRF/secret exposure; not a checklist area at all",
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "upstreamBugCount": 10,
+   "specCounts": {
+    "specs": 7,
+    "stable": 7
+   }
+  },
+  {
    "area": "15 Canvas / UI",
    "residualRisk": 5,
    "inherentRisk": 20,
@@ -359,7 +359,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 26,
+    "stableSpecs": 27,
     "penalty": 0
    },
    "mitigation": 0.75,
@@ -384,7 +384,7 @@
    "upstreamBugCount": 54,
    "specCounts": {
     "specs": 27,
-    "stable": 26
+    "stable": 27
    }
   },
   {
@@ -432,53 +432,6 @@
    }
   },
   {
-   "area": "9 Playground / chat",
-   "residualRisk": 4.4,
-   "inherentRisk": 20,
-   "probability": 5,
-   "impact": 4,
-   "inputs": {
-    "bugQuintile": 5,
-    "churnQuintile": 5,
-    "fragility": 4,
-    "weightedBugs": 60.9,
-    "weightedChurn": 2.88
-   },
-   "mitigationBulletDerived": 0.78,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 23,
-    "penalty": 0
-   },
-   "mitigation": 0.78,
-   "checklistBullets": 66,
-   "bulletStates": {
-    "x": 64,
-    "-": 1,
-    " ": 1
-   },
-   "previous": {
-    "residualRisk": 4.7,
-    "inherentRisk": 20,
-    "mitigation": 0.77,
-    "checklistBullets": 66
-   },
-   "judgementRationale": "The user's main verification loop; SSE streaming",
-   "upstreamBugsByYear": {
-    "2023": 2,
-    "2024": 40,
-    "2025": 49,
-    "2026": 13
-   },
-   "upstreamBugCount": 104,
-   "specCounts": {
-    "specs": 23,
-    "stable": 23
-   }
-  },
-  {
    "area": "2 Component config",
    "residualRisk": 4.4,
    "inherentRisk": 20,
@@ -522,6 +475,51 @@
    "specCounts": {
     "specs": 38,
     "stable": 38
+   }
+  },
+  {
+   "area": "9 Playground / chat",
+   "residualRisk": 4,
+   "inherentRisk": 20,
+   "probability": 5,
+   "impact": 4,
+   "inputs": {
+    "bugQuintile": 5,
+    "churnQuintile": 5,
+    "fragility": 4,
+    "weightedBugs": 60.9,
+    "weightedChurn": 2.88
+   },
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 24,
+    "penalty": 0
+   },
+   "mitigation": 0.8,
+   "checklistBullets": 70,
+   "bulletStates": {
+    "x": 70
+   },
+   "previous": {
+    "residualRisk": 4.7,
+    "inherentRisk": 20,
+    "mitigation": 0.77,
+    "checklistBullets": 66
+   },
+   "judgementRationale": "The user's main verification loop; SSE streaming",
+   "upstreamBugsByYear": {
+    "2023": 2,
+    "2024": 40,
+    "2025": 49,
+    "2026": 13
+   },
+   "upstreamBugCount": 104,
+   "specCounts": {
+    "specs": 24,
+    "stable": 24
    }
   },
   {
@@ -836,46 +834,6 @@
    }
   },
   {
-   "area": "3.9 HITL",
-   "residualRisk": 2.4,
-   "inherentRisk": 6,
-   "probability": 2,
-   "impact": 3,
-   "inputs": {
-    "bugQuintile": 1,
-    "churnQuintile": 1,
-    "fragility": 4,
-    "weightedBugs": 2.5,
-    "weightedChurn": 0.12
-   },
-   "mitigationBulletDerived": 0.6,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 0,
-    "penalty": 0
-   },
-   "mitigation": 0.6,
-   "checklistBullets": 4,
-   "bulletStates": {
-    "x": 3,
-    " ": 1
-   },
-   "previous": {
-    "residualRisk": 2.8,
-    "inherentRisk": 6,
-    "mitigation": 0.53,
-    "checklistBullets": 3
-   },
-   "judgementRationale": "New in 1.11; async wait on human action",
-   "upstreamBugsByYear": {
-    "2026": 2
-   },
-   "upstreamBugCount": 2,
-   "specCounts": null
-  },
-  {
    "area": "8 Observability",
    "residualRisk": 2.4,
    "inherentRisk": 12,
@@ -1132,6 +1090,45 @@
    "specCounts": null
   },
   {
+   "area": "3.9 HITL",
+   "residualRisk": 1.2,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "inputs": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 4,
+    "weightedBugs": 2.5,
+    "weightedChurn": 0.12
+   },
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "mitigation": 0.8,
+   "checklistBullets": 4,
+   "bulletStates": {
+    "x": 4
+   },
+   "previous": {
+    "residualRisk": 2.8,
+    "inherentRisk": 6,
+    "mitigation": 0.53,
+    "checklistBullets": 3
+   },
+   "judgementRationale": "New in 1.11; async wait on human action",
+   "upstreamBugsByYear": {
+    "2026": 2
+   },
+   "upstreamBugCount": 2,
+   "specCounts": null
+  },
+  {
    "area": "NEW i18n / localization",
    "residualRisk": 1.2,
    "inherentRisk": 6,
@@ -1220,9 +1217,9 @@
    }
   }
  ],
- "refreshed": "2026-10-01",
+ "refreshed": "2026-10-02",
  "refreshWindow": {
-  "testHealthSince": "2026-08-17",
+  "testHealthSince": "2026-08-18",
   "days": 45
  }
 }
