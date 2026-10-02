@@ -272,13 +272,13 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`A2A Client — A2AAgent as an Agent tool [${label}]`, () => {
     // `@stable` restored (2026-10-02, #1921). LE-2684: `lfx/graph/checkpoint/schema.py`
     // inferred "this field is opaque" from `model_dump(mode="json")` raising, and
-    // langchain-core >= 1.6 stopped it raising, so the Agent toolset's `coroutine` was
+    // langchain-core >= 1.6.1 stopped it raising, so the Agent toolset's `coroutine` was
     // checkpointed as a `repr` string and the resumed run died in `model_validate`. The
-    // nightly image pins langchain-core 1.5.1 and masked it; the VM lane (published dist,
+    // nightly image pinned langchain-core 1.5.1 and masked it; the VM lane (published dist,
     // current dependencies) failed 10/10. Fixed by langflow#15241, in the nightly from
     // 1.13.0.dev21: a model is checkpointed only when its dump validates back. Measured
     // on the published 1.13.0.dev30 dist in a fresh venv (langchain-core 1.6.6), the VM
-    // lane's shape: 5/5 at --retries=0, openai / gpt-4o-mini, no `Input should be
+    // lane's deployment shape: 5/5 at --retries=0, openai / gpt-4o-mini, no `Input should be
     // callable` in the backend log.
     test("an approved send_to_agent call resumes the run and executes the published agent",
       { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a", "@agents"] },

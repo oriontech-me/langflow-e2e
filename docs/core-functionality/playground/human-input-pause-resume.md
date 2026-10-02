@@ -355,9 +355,11 @@ job status endpoint.
 
 ## Reading a red in test 3 — rule out #1921 first
 
-#1921 (open) records the VM lane failing a **different** resume path. On the VM, the
-approved `send_to_agent` tool call of `a2a-client-agent-as-tool` never completes after
-approval (9/9 attempts), while Actions passes it. That path is an Agent's tool-approval
+#1921 recorded the VM lane failing a **different** resume path. On the VM, the
+approved `send_to_agent` tool call of `a2a-client-agent-as-tool` never completed after
+approval (9/9 attempts), while Actions passed it. It was LE-2684, fixed by
+[langflow#15241](https://github.com/langflow-ai/langflow/pull/15241) from `1.13.0.dev21`;
+the class is kept here because a recurrence would look the same. That path is an Agent's tool-approval
 pause in A2A Internal mode. Test 3 has no Agent, no A2A, and no provider. On the same VM
 runs, tests 1–2 of this file pass.
 

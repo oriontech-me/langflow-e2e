@@ -53,12 +53,12 @@ covers that half).
 - `@stable` — enters with the tag per `CONTRIBUTING.md`; parametrized by the shared
   resolver with `tier: "tool-calling"`, because it depends on the model choosing to
   call the tool.
-- **`@stable` removed and restored, LE-2684 (#1921).** From 2026-09-16 to 2026-10-02
+- **`@stable` removed and restored, LE-2684 (#1921).** From 2026-09-19 (PR #1926) to 2026-10-02
   the test ran without `@stable` for a confirmed product defect: approving the tool
   call killed the run on resume (`Input should be callable`), because the checkpoint
   stored the Agent toolset's `coroutine` as a `repr` string. It showed only on
-  installs resolving langchain-core >= 1.6 — the VM lane's published dist, not the
-  nightly image, which pins 1.5.1. The fix,
+  installs resolving langchain-core >= 1.6.1 — the VM lane's published dist, not the
+  nightly image, which pinned 1.5.1 at the time. The fix,
   [langflow#15241](https://github.com/langflow-ai/langflow/pull/15241), is in the
   nightly from `1.13.0.dev21`. Re-validated on the published `1.13.0.dev30` dist in a
   fresh venv (langchain-core 1.6.6): 5/5 at `--retries=0`, `openai` / `gpt-4o-mini`,
