@@ -1,9 +1,9 @@
 # OpenAI Compatible — unified provider setup (base URL + optional key, live-only catalog)
 
-**Last validated:** Langflow 1.13.x (1.13.0.dev19, #1678)
+**Last validated:** Langflow 1.13.x (1.13.0.dev29, #1678 — LE-2710 lift)
 **Spec file:** `tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
 **Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below); #1678 (test 5 gates on the run request — the finding below)
-**Upstream:** langflow-ai/langflow#13940, #14199, #14311; [LE-2710](https://datastax.jira.com/browse/LE-2710) (the run executes a model the flow does not name — #1678)
+**Upstream:** langflow-ai/langflow#13940, #14199, #14311; [LE-2710](https://datastax.jira.com/browse/LE-2710) (the run executes a model the flow does not name — #1678; fixed by [langflow#15367](https://github.com/langflow-ai/langflow/pull/15367), first in 1.13.0.dev28, validated on dev29)
 
 ---
 
@@ -257,7 +257,7 @@ request. Two things follow for anyone editing this spec: the pre-send read stays
 attribution line and must not grow into a gate that pretends to prevent this, and a future
 guard that genuinely covers it belongs on the run request, not on the flow row.
 
-### The run request IS the gate now — and the substitution survived #14465 (#1678, LE-2710)
+### The run request IS the gate now — and the substitution survived #14465 (#1678, LE-2710, FIXED on 1.13.0.dev29)
 
 The guard the paragraph above asks for is installed: test 5 captures the body of
 `POST /api/v2/workflows` and fails unless its Language Model node carries
@@ -308,6 +308,27 @@ true positive, not a flake, and it is why `@stable` stays off this test until th
 ships in the nightly (#1678). Do not "stabilise" it by waiting longer before sending, by
 re-selecting the model, or by softening the assert — each of those hides the defect the
 gate exists to surface.
+
+**Fixed upstream, and the lift is measured rather than taken from the ticket.**
+[langflow#15367](https://github.com/langflow-ai/langflow/pull/15367) (*keep model picked
+during a model refresh*, merged 2026-09-28; an ancestor of `v1.13.0.dev28` and not of
+`dev27`) makes `refreshSingleNode` drop a
+`custom_component/update` response when the node's model value changed while the request
+was in flight — the flow-open refresh was the stale response. The guard is read out of the
+shipped frontend bundle, not inferred from the merge: present in `1.13.0.dev29`
+(`…nodes.find(…)?.data?.node?.template?.[field]?.value; if (!same(live, sent)) return`),
+absent in `1.13.0.dev27`. Measured on the two images with the committed spec (the delay row adds one
+`waitForTimeout` before the send, nothing else):
+
+| Image | Condition | Result |
+|---|---|---|
+| `1.13.0.dev29` (fix present) | full file, `--workers=1 --retries=0` | **6/6 runs green, 36/36 tests**, run request `gpt-4o-mini` / OpenAI Compatible every time |
+| `1.13.0.dev29` | test 5 with the send delayed 4 s (the amplifier that substituted 3/3 on dev19) | **3/3 green** |
+| `1.13.0.dev27` (fix absent, control) | test 5 | **3/3 red** at the post-pick binding poll — the row reads `chat-latest` / OpenAI Compatible — the fallback an emptied selection is refilled with — over `gpt-4o-mini` |
+
+The control is what makes the green rows evidence: on the build two nightlies earlier the
+same spec still sees the substitution every time. `@stable` is restored on test 5, and
+the run-request gate stays as the regression guard for it.
 
 **Filed as [LE-2710](https://datastax.jira.com/browse/LE-2710), and it is a class, not a
 one-off.** The same ordering defect was fixed twice for other fields —
@@ -366,6 +387,14 @@ failed the 2026-08-05 and 2026-08-06 dailies on the credential assertion. #1334 
 it: the assertion moved onto the axis the runtime actually uses, and the ambient
 model-status dependency that made the selection work on one instance and not another is
 now declared by the test itself.
+
+**Test 5's `@stable` was auto-removed a second time (commit `310aebd`)** after the
+2026-09-02 daily (#1676), on the run executing Anthropic's mount default instead of the
+selected model. That was a live product defect, not a test defect — LE-2710, which the
+run-request gate #1678 installed now names — so the tag stayed off until the fix reached the
+nightly. Restored on `1.13.0.dev29` with the upstream fix present in the image (6/6
+full-file runs at `--retries=0`, 3/3 with the send delayed, the pre-fix `dev27` control
+red 3/3 — see the LE-2710 finding above).
 
 ---
 
@@ -708,8 +737,9 @@ healthy they run.
   model the flow does not name — step 6 asserts the run request — and it names the model
   that was sent. It cannot prevent it: the cause is upstream (a stale build-config
   response blanks the canvas field, the frontend refills it from the default /
-  `options[0]`), it is still open on 1.13.0.dev19, and no test-side wait or re-selection
-  closes it without hiding it. Tracked in #1678.
+  `options[0]`), and no test-side wait or re-selection closes it without hiding it. Fixed
+  upstream by langflow#15367 (LE-2710, since 1.13.0.dev28) — so a red on step 6 now means
+  the substitution is back, not that it is still open (#1678).
 
 ---
 

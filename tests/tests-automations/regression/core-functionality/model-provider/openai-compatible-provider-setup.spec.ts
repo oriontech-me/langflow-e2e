@@ -846,7 +846,7 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
 
   test(
     "a discovered model runs a flow through the OpenAI Compatible provider",
-    { tag: ["@model-provider", "@components", "@playground"] },
+    { tag: ["@stable", "@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
       const probe = await probeEndpoint(request);
       test.skip(!probe.usable, `OpenAI-compatible endpoint not usable: ${probe.reason}`);
@@ -1038,8 +1038,10 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
         // canvas field after the pick, the frontend refills it from the user default or
         // `options[0]`, and the run sends THAT. With the send delayed 4 s — CI is slower
         // than a dev box — 3/3 runs carried `gpt-6-astra` / OpenAI here while this spec
-        // reported a PASS, because OpenAI answered and echoed the sentinel. Armed before
-        // the click so the capture cannot race the request it reads.
+        // reported a PASS, because OpenAI answered and echoed the sentinel. Fixed upstream
+        // by langflow#15367 (LE-2710), since 1.13.0.dev28 — so a red here means the
+        // substitution is back. Armed before the click so the capture cannot race the
+        // request it reads.
         const runBinding = armRunModelBinding(page);
         await page.getByTestId("button-send").last().click();
         const sent = await runBinding.read();
