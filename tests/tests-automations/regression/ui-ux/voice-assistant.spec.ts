@@ -29,6 +29,7 @@ test.afterEach(async ({ page, request }) => {
 async function openPublicPlayground(
   page: Page,
   voiceModeAvailable: boolean,
+  beforeNavigate?: () => Promise<void>,
 ): Promise<void> {
   const request = page.request;
   flowId = await createFlowFromStarter(request, "Basic Prompting", `voice-assistant-${Date.now()}`);
@@ -49,24 +50,59 @@ async function openPublicPlayground(
     });
   });
 
+  await beforeNavigate?.();
   await page.goto(`/playground/${flowId}/`);
   await expect(page.getByTestId("input-wrapper")).toBeVisible({ timeout: 30000 });
   await expect(page.getByTestId("button-send").last()).toBeVisible();
   expect(fired, "the config mock never fired, so the flag under test was not applied").toBeGreaterThan(0);
 }
 
+/**
+ * Makes the voice assistant see no stored OpenAI key, whatever the lane holds.
+ * `hasOpenAIAPIKey` is "a global variable named OPENAI_API_KEY exists", and every
+ * lane's collect-models pre-flight stores one under that name, so the popover would
+ * otherwise open in the stored-key state (#2149). The real list is fetched and only
+ * that entry dropped; the shared variable itself is never touched, because the
+ * provider specs running alongside depend on it. Returns the hit count.
+ */
+async function hideStoredOpenAIKey(page: Page): Promise<() => number> {
+  let fired = 0;
+  await page.route(
+    (url) => /^\/api\/v1\/variables\/?$/.test(url.pathname),
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      fired++;
+      const response = await route.fetch();
+      const variables: Array<{ name?: string }> = await response.json();
+      await route.fulfill({
+        response,
+        json: variables.filter((variable) => variable.name !== "OPENAI_API_KEY"),
+      });
+    },
+  );
+  return () => fired;
+}
+
 test(
   "should able to see and interact with voice assistant",
-  { tag: ["@release", "@playground"] },
+  { tag: ["@stable", "@release", "@playground"] },
   async ({ page }) => {
-    await test.step("open the public playground with voice mode available", async () => {
-      await openPublicPlayground(page, true);
+    let variablesFired = () => 0;
+
+    await test.step("open the public playground with voice mode available and no OpenAI key stored", async () => {
+      await openPublicPlayground(page, true, async () => {
+        variablesFired = await hideStoredOpenAIKey(page);
+      });
     });
 
     await test.step("the voice button opens the assistant with its settings popover", async () => {
       await page.getByTestId("voice-button").click();
       await expect(page.getByTestId("voice-assistant-container")).toBeVisible();
       await expect(page.getByTestId("voice-assistant-settings-modal-header")).toBeVisible();
+      expect(
+        variablesFired(),
+        "the variables mock never fired, so a key stored on this instance decides the popover's state",
+      ).toBeGreaterThan(0);
       await expect(page.getByTestId("popover-anchor-openai-api-key")).toBeVisible();
     });
 
