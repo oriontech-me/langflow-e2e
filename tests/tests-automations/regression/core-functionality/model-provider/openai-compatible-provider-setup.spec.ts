@@ -58,9 +58,10 @@ import { armProviderSave } from "../../../../helpers/provider-setup/provider-pan
  * if the second registration ever really stops.
  *
  * False-positive guards that shape the asserts:
- * - the empty live-only catalog is asserted differentially against Azure AI
- *   Foundry's seed catalog on the SAME instance and run, so a catalog-wide or
- *   page-wide regression cannot pass test 1;
+ * - the empty live-only catalog is asserted differentially against another
+ *   UNCONFIGURED provider's static catalog in the SAME response, so a catalog-wide
+ *   or page-wide regression cannot pass test 1 — and no provider is named, because
+ *   credentials are account-wide and other specs configure them in parallel (#2146);
  * - `POST /api/v1/models/validate-provider` answers HTTP **200** with
  *   `{"valid": false, "error": …}` for a credential it rejected, so every
  *   validation assert reads the BODY (the trap `ollama-provider.spec.ts` M1 and
@@ -85,12 +86,17 @@ const BASE_URL_INPUT = `provider-variable-input-${BASE_URL_VAR}`;
 const KEY_INPUT = `provider-variable-input-${KEY_VAR}`;
 
 /**
- * The provider whose seed catalog makes test 1's empty list differential. Azure
- * AI Foundry ships 5 suggestion models with no credentials configured
- * (`lfx/base/models/azure_ai_foundry_constants.py`), asserted as a FLOOR — a
- * catalog addition is not a regression (#993's count rule).
+ * The static-catalog size that makes test 1's empty list differential: some OTHER
+ * provider, unconfigured, must still list at least this many models in the same
+ * response. Asserted as a FLOOR — a catalog addition is not a regression (#993's
+ * count rule). Measured on 1.13.0.dev29, seven providers clear it unconfigured
+ * (the smallest is Azure AI Foundry's 5 seeds).
+ *
+ * No provider is named on purpose (#2146): the step used to require Azure AI Foundry
+ * to be unconfigured, which held only while its credential tests skipped. Once they
+ * ran (#2124), another worker configured Foundry on the shared backend inside test
+ * 1's window, and `mode: "serial"` took the whole file down with it.
  */
-const CATALOGED_PROVIDER = "Azure AI Foundry";
 const CATALOGED_FLOOR = 3;
 
 // The endpoint under test. Defaults to OpenAI itself — the issue's own "can be
@@ -302,6 +308,16 @@ interface ProviderEntry {
   num_models: number;
   is_configured: boolean;
   models: Array<{ model_name?: string; metadata?: { model_type?: string } }>;
+}
+
+/** `GET /api/v1/models` — the unified catalog entry of every provider, in one response. */
+async function allProviderCatalogs(request: APIRequestContext): Promise<ProviderEntry[]> {
+  const bearer = await getAuthToken(request);
+  const res = await request.get("/api/v1/models", { headers: { Authorization: bearer } });
+  expect(res.status()).toBe(200);
+  const body = (await res.json()) as ProviderEntry[];
+  expect(Array.isArray(body), "GET /api/v1/models must answer a list of providers").toBe(true);
+  return body;
 }
 
 /** `GET /api/v1/models?provider=<name>` — the unified catalog entry for one provider. */
@@ -610,13 +626,32 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
       });
 
       await test.step("the empty catalog is live-only, not a page-wide failure", async () => {
-        // Same instance, same run: a provider WITH a static catalog still lists
-        // its seed models. Empty-here / non-empty-there is the live-only
-        // property; a catalog-wide regression fails this step instead of passing
-        // the one above.
-        const cataloged = await providerCatalog(request, CATALOGED_PROVIDER);
-        expect(cataloged.is_configured).toBe(false);
-        expect(cataloged.num_models).toBeGreaterThanOrEqual(CATALOGED_FLOOR);
+        // Same instance, same response: a provider WITH a static catalog still lists
+        // its models with no credential. Empty-here / non-empty-there is the live-only
+        // property; a catalog-wide regression fails this step instead of passing the
+        // one above. ANY unconfigured provider qualifies — naming one let a parallel
+        // worker configuring it fail this step (#2146).
+        const others = (await allProviderCatalogs(request)).filter(
+          (p) => p.provider !== PROVIDER_NAME,
+        );
+        const cataloged = others.filter(
+          (p) => p.is_configured === false && p.num_models >= CATALOGED_FLOOR,
+        );
+        expect(
+          cataloged.length,
+          `no other unconfigured provider lists a static catalog of >= ${CATALOGED_FLOOR} models: ${JSON.stringify(
+            others.map(({ provider, is_configured, num_models }) => ({
+              provider,
+              is_configured,
+              num_models,
+            })),
+          )}`,
+        ).toBeGreaterThan(0);
+        console.log(
+          `[openai-compatible] differential: ${cataloged
+            .map((p) => `${p.provider} (${p.num_models})`)
+            .join(", ")} list a static catalog unconfigured`,
+        );
       });
     },
   );

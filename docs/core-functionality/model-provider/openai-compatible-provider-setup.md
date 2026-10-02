@@ -1,8 +1,8 @@
 # OpenAI Compatible — unified provider setup (base URL + optional key, live-only catalog)
 
-**Last validated:** Langflow 1.13.x (1.13.0.dev29, #1678 — LE-2710 lift)
+**Last validated:** Langflow 1.13.x (1.13.0.dev29, #1678 — LE-2710 lift; #2146 — test 1's differential)
 **Spec file:** `tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
-**Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below); #1678 (test 5 gates on the run request — the finding below)
+**Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below); #1678 (test 5 gates on the run request — the finding below); #2146 (test 1's differential names no provider — the finding below)
 **Upstream:** langflow-ai/langflow#13940, #14199, #14311; [LE-2710](https://datastax.jira.com/browse/LE-2710) (the run executes a model the flow does not name — #1678; fixed by [langflow#15367](https://github.com/langflow-ai/langflow/pull/15367), first in 1.13.0.dev28, validated on dev29)
 
 ---
@@ -351,6 +351,29 @@ carried `gpt-6-astra` / OpenAI; the persisted reply recorded
 `GET /api/v1/flows/{id}` afterwards read `gpt-6-astra` / OpenAI — the user's selection is
 gone from the database too.
 
+### Test 1's differential must not name a provider another worker configures (#2146)
+
+Test 1 used to compare against **Azure AI Foundry** specifically and assert it
+`is_configured: false`. That premise held only because nothing ever configured Foundry:
+its credential tests skipped on every lane while the endpoint was dead (#1480). #2124
+made them run for real, and on the first daily after it (run 36881428262, 2026-10-01,
+shard 4) all three attempts of test 1 landed inside the ~30 s window in which
+`azure-ai-foundry-provider-setup.spec.ts`, on another worker against the same backend,
+held real credentials. The read was `is_configured: true`, and `mode: "serial"` then
+skipped the other five tests of this file on every attempt.
+
+Credentials are account-wide, so any provider the step names is one some other `@stable`
+spec may be configuring at that moment. The step therefore names none. It reads every
+provider in one response and requires **one** other provider that is unconfigured and
+still lists a static catalog (≥ 3 models). Measured on a fresh `1.13.0.dev29`, seven
+providers satisfy that (Anthropic 16, Azure AI Foundry 5, Google 38, IBM WatsonX 12,
+Ollama 37, OpenAI 50, OpenRouter 7); OpenAI Compatible and vLLM list 0. The guarantee
+the step exists for is unchanged — a catalog-wide regression, or one that empties every
+static catalog, still fails it. **Reproduced deterministically**: with Azure AI Foundry
+configured over the API on that instance (`is_configured: true`, still 5 models), the
+previous step fails at `expect(cataloged.is_configured).toBe(false)` exactly as in the
+daily, and the current one passes.
+
 ---
 
 ## Tags *(required)*
@@ -453,8 +476,12 @@ both OpenAI and OpenAI Compatible is unambiguous); playground
 3. `GET /api/v1/models?provider=OpenAI Compatible` returns the provider with
    `num_models === 0`, `is_configured === false`, `models: []`.
 4. **Differential, so a page-wide or catalog-wide regression cannot pass it:**
-   the same query for `Azure AI Foundry` returns a **non-empty** seed catalog on
-   the same instance. Empty-here / non-empty-there is the live-only property.
+   in one `GET /api/v1/models` response, **at least one other provider** is
+   `is_configured: false` with `num_models >= 3` — a static catalog listed with no
+   credential, on the same instance and in the same run. Empty-here / non-empty-there
+   is the live-only property. The provider that satisfied it is printed. No provider
+   is named in advance: credentials are account-wide and other `@stable` specs
+   configure providers in parallel (#2146).
 
 **Test 2 — an unreachable base URL is rejected and nothing is persisted**
 1. Fill the base URL with `https://e2e-openai-compatible-does-not-exist.invalid/v1`
@@ -616,8 +643,9 @@ stored:
 
 - the provider is offered in Settings with **two** inputs — a required base URL
   and an optional API key — and contributes **zero** models while unconfigured,
-  on an instance where Azure AI Foundry contributes a non-empty seed catalog
-  (live-only property, no credential needed);
+  in a `GET /api/v1/models` response where at least one other, unconfigured
+  provider contributes a static catalog of 3 or more models (live-only property, no
+  credential needed — whichever provider that is on the day, #2146);
 - an unresolvable base URL and a valid-URL/invalid-key pair are both rejected via
   `validate-provider` **body** (`valid: false`, with the DNS and the
   `Authentication failed for the OpenAI-compatible endpoint` messages
@@ -662,8 +690,9 @@ healthy they run.
 ## Guarding against false positives *(how)*
 
 - **Every "it appeared" assertion has a matching "it was absent"**: the empty
-  live-only catalog is asserted against Foundry's non-empty one on the same
-  instance and in the same run; the configured-state markers
+  live-only catalog is asserted against another unconfigured provider's non-empty
+  static catalog in the same response — so a catalog-wide regression, or one that
+  empties every static catalog, fails test 1 rather than passing it; the configured-state markers
   (`provider-disconnect-button`, the `N models` suffix, `llm-toggle-*`) are
   asserted **absent** while unconfigured, so their later presence is a real state
   change.
