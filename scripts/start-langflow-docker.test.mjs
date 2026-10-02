@@ -31,8 +31,14 @@ const STOP_SCRIPT = fileURLToPath(new URL("./stop-langflow-docker.sh", import.me
  * deny that a local copy exists, which is how the two refresh-failure branches
  * are reached. The curl stub answers the health check immediately so the run
  * does not sit through the 120 s readiness loop.
+ *
+ * `container` is what `docker container inspect` answers for the stopper:
+ * "present", "absent" (docker's "No such container" error), "absent-podman"
+ * (podman's lowercase "no such container") or "daemon-down".
+ * `rm -f` exits 0 in every state, as docker 29 does for a missing container
+ * (#2090) — so only the inspect can tell the stopper what happened.
  */
-function runScript({ args = [], env = {}, pullFails = false, localCopy = true, healthy = true, script = SCRIPT } = {}) {
+function runScript({ args = [], env = {}, pullFails = false, localCopy = true, healthy = true, container = "present", script = SCRIPT } = {}) {
   const dir = makeTempDir("start-langflow-test-");
   const log = join(dir, "docker.log");
   const curlLog = join(dir, "curl.log");
@@ -44,6 +50,16 @@ echo "$*" >> "${log}"
 case "$1" in
   pull) [ "\${FAKE_PULL_FAILS}" = "1" ] && exit 1 ;;
   image) [ "$2" = "inspect" ] && [ "\${FAKE_LOCAL_COPY}" = "0" ] && exit 1 ;;
+  container)
+    if [ "$2" = "inspect" ]; then
+      case "\${FAKE_CONTAINER}" in
+        absent) echo "Error response from daemon: No such container: $3" >&2; exit 1 ;;
+        absent-podman) echo "Error: no such container $3" >&2; exit 1 ;;
+        daemon-down) echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1 ;;
+        *) echo '[{"Name":"/'"$3"'"}]' ;;
+      esac
+    fi ;;
+  rm) echo "$3" ;;
 esac
 exit 0
 `,
@@ -78,6 +94,7 @@ exit 7
         PATH: `${dir}:${process.env.PATH}`,
         FAKE_PULL_FAILS: pullFails ? "1" : "0",
         FAKE_LOCAL_COPY: localCopy ? "1" : "0",
+        FAKE_CONTAINER: container,
       },
     });
   } catch (err) {
@@ -308,7 +325,33 @@ test("a readiness budget that is not a positive integer is refused before anythi
 });
 
 test("stop removes the named container, and the documented one by default", () => {
-  assert.deepEqual(runScript({ script: STOP_SCRIPT }).calls, ["rm -f langflow-e2e-runner"]);
+  assert.deepEqual(runScript({ script: STOP_SCRIPT }).calls, [
+    "container inspect langflow-e2e-runner",
+    "rm -f langflow-e2e-runner",
+  ]);
   const r = runScript({ script: STOP_SCRIPT, env: { LANGFLOW_CONTAINER_NAME: "langflow-e2e-runner-7873" } });
-  assert.deepEqual(r.calls, ["rm -f langflow-e2e-runner-7873"]);
+  assert.deepEqual(r.calls, ["container inspect langflow-e2e-runner-7873", "rm -f langflow-e2e-runner-7873"]);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^Container stopped\.$/m);
+  assert.doesNotMatch(r.stdout, /No container to stop/);
+});
+
+test("stop with no container says so, even though rm -f would have exited 0 (#2090)", () => {
+  // Both wordings: docker capitalises "No such", podman (and the QA VMs' podman
+  // shim) does not, so a case-sensitive match would break only there.
+  for (const container of ["absent", "absent-podman"]) {
+    const r = runScript({ script: STOP_SCRIPT, container });
+    assert.equal(r.status, 0, container);
+    assert.match(r.stdout, /^No container to stop\.$/m, container);
+    assert.doesNotMatch(r.stdout, /Container stopped/, container);
+    assert.deepEqual(r.calls, ["container inspect langflow-e2e-runner"], `${container}: nothing to remove, so no rm`);
+  }
+});
+
+test("stop that cannot ask docker fails naming why, never as 'no container'", () => {
+  const r = runScript({ script: STOP_SCRIPT, container: "daemon-down" });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /Could not check for container langflow-e2e-runner: Cannot connect to the Docker daemon/);
+  assert.doesNotMatch(r.stdout, /No container to stop|Container stopped/);
+  assert.ok(!r.calls.some((c) => c.startsWith("rm ")), "nothing may be removed blind");
 });
