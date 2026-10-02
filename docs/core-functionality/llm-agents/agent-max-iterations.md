@@ -1,6 +1,6 @@
 # Agent Max Iterations — agent stops at the configured limit
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev9`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev30`)
 
 ---
 
@@ -123,6 +123,26 @@ re-ran the pair once on `1.13.0.dev4` / `openai` / `gpt-4o-mini` — 2/2 clean,
 pure-refactor smoke run, not a compliance measurement and not on `manual.yml`,
 and its force-fails live on that PR. Folding it into the count would inflate the
 evidence that justifies the `@stable` restoration with a run of a different kind.
+
+**Quarantine and lift, LE-2728 (#1991).** From 2026-09-23 to 2026-10-02 Test 1 was
+`test.fixme` without `@stable` for a confirmed product regression: when the model
+wrote text alongside its tool call, the cap fired but the final message was the
+model's preamble (`"I'll fetch that URL for you."`) instead of the limit message.
+That happened in 5 of 10 attempts on `1.13.0.dev19` / `claude-haiku-4-5`. The fix,
+[langflow#15369](https://github.com/langflow-ai/langflow/pull/15369), is in the
+nightly from `1.13.0.dev28`. It appends the limit notice after the preamble.
+Measured before restoring the tag, locally, Test 1 only:
+
+| When | Provider / model | Runs | Result |
+|---|---|---|---|
+| Post-fix, local `1.13.0.dev30`, `--retries=0` | `anthropic` / `claude-haiku-4-5` | 30 | 30/30 clean |
+
+In 10 of those 30 the persisted content blocks were logged. 9 had no text before
+the tool call. 1 had the preamble, and the bubble read `I'll fetch that URL for
+you.Model call limits exceeded: run limit (1/1)`. So the fixed path was exercised
+once. The preamble rate in this sample (1/10) is lower than the 5/10 measured on
+`dev19`, so this is thin evidence for that path specifically. If Test 1 reds again
+with a preamble in the failure text, it is LE-2728 back, not model non-compliance.
 
 **Residual risk, stated rather than implied.** `daily-stable.yml`'s weekday
 rotation advances past an inactive provider, so anthropic (Tue/Fri) does not run
