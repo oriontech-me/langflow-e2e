@@ -2886,12 +2886,22 @@ phase_publish() {
     elif [ -z "${QA_PLATFORM_ENDPOINT:-}" ] || [ -z "${QA_E2E_AUTOMATION_TOKEN:-}" ]; then
       warn "QA_PLATFORM_ENDPOINT/QA_E2E_AUTOMATION_TOKEN are not set — POST skipped."
     else
+      # `|| true` because curl exits non-zero when nothing answers (DNS, refused,
+      # timeout), and under `set -e` that assignment aborted phase_publish — taking the
+      # token POST, the history, the @stable removal, the issue, Slack and the verdict
+      # with it, under a warning promising the POST "does not fail the run" (#2020).
+      # The status curl printed is kept (a 201 whose body stalled is still a recorded
+      # run); only an absent one — curl missing or killed before `-w` ran — becomes 000.
+      # --max-time because a platform that accepts and never answers would otherwise
+      # hold the run with no bound; 60 s is a generous bound for one JSON POST, not a
+      # measured one.
       local code
-      code="$(curl -s -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
+      code="$(curl -s --max-time 60 -o "$RUN_DIR/logs/qa-platform-response.json" -w '%{http_code}' \
         -X POST "$QA_PLATFORM_ENDPOINT" \
         -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" \
         -H "Content-Type: application/json" \
-        --data @"$RUN_DIR/payload.json")"
+        --data @"$RUN_DIR/payload.json")" || true
+      code="${code:-000}"
       case "$code" in
         200 | 201) info "QA Platform: recorded (HTTP $code)" ;;
         *) warn "the QA Platform POST failed (HTTP $code) — this does not fail the run." ;;
@@ -2927,18 +2937,48 @@ phase_publish() {
   #
   # The summariser has always run here, for the LEDGER. Two consumers, one pass: the
   # history row it already wrote, and now the block the platform ingests.
-  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" \
+  #
+  # LANGFLOW_IMAGE and TESTS_TOTAL are the other two values the workflow passes the same
+  # script (#2020). The image labels the spend line, through target_artifact like the
+  # payload and the history row, so the three records of one run name one build;
+  # without it the line read `langflow_image: null`. TESTS_TOTAL is how the summariser
+  # tells a zero-test abort from a run that spent nothing — without it an abort was
+  # priced and its line entered the anomaly baseline.
+  #
+  # But a report the guards could not READ is UNKNOWN, never zero (#1012), so it is
+  # passed EMPTY there. check-run-integrity answers `tests_total: 0` for a missing
+  # results.json, and that is the #1726 day: every shard ran and spent, only the merge
+  # failed. Passed through, the "0" sends the summariser down its infra-abort branch and
+  # the spend line and the block are lost under a message saying no test ran. The cost
+  # is intended: the ledger can hold a spend line for a run the history records as
+  # `report_missing`, because the spend was real.
+  #
+  # GITHUB_STEP_SUMMARY is cleared for resolve_served_version's reason: this lane has no
+  # step summary, but the unit lane sources this file under Actions, where the token
+  # tables would land on the PR's run page and read as a real spend report.
+  local tests_total="${RUN_TESTS:-}"
+  if [ "${MERGE_OK:-true}" = "false" ] || [ "${RUN_UNREADABLE:-false}" = "true" ]; then
+    tests_total=""
+  fi
+  env "${tokens_env[@]}" TOKENS_DIR="$RUN_DIR/all-tokens" GITHUB_STEP_SUMMARY="" \
     TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
+    LANGFLOW_IMAGE="$(target_artifact)" \
+    TESTS_TOTAL="$tests_total" \
     node scripts/watch-tokens.mjs --summarize \
     > "$RUN_DIR/logs/token-summary.log" 2>&1 || warn "the token summary failed (not blocking)."
 
+  # TOKENS_SHARD_TOTAL is SHARD_TOTAL — what the partitioner produced — and never SHARDS,
+  # which is only what was asked for. The merge counts every expected shard without a
+  # provider file as "never reported", so a matrix smaller than the request read as a
+  # partial run and dropped the provider label of a run whose every shard pinned one
+  # (#2020).
   if [ "$POST_QA_PLATFORM" = "1" ] && [ "$PAYLOAD_BUILT" = "true" ]; then
     log "Posting the token consumption"
     TOKENS_DIR="$RUN_DIR/all-tokens" \
     TOKENS_SUMMARY_OUT="$RUN_DIR/tokens-block.json" \
     PAYLOAD_IN="$RUN_DIR/payload.json" \
     PAYLOAD_OUT="$RUN_DIR/payload-with-tokens.json" \
-    TOKENS_SHARD_TOTAL="${SHARDS:-}" \
+    TOKENS_SHARD_TOTAL="${SHARD_TOTAL:-}" \
       node scripts/post-token-payload.mjs || true
   fi
 
