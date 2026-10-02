@@ -344,6 +344,46 @@ test("a SIGTERM the instant the request leaves the slot still answers it", () =>
   }
 });
 
+test("a SIGTERM right after STATUS is decided still answers a result the platform accepts", () => {
+  // ondemand_finish classifies only an exit with no STATUS, so a STATUS set before its
+  // EXIT, VERDICT or REASON left the result with them empty, and the platform refuses
+  // a result whose EXIT does not match its STATUS. A DEBUG trap sends the signal after
+  // the first command that sets STATUS in each outcome, whatever follows it.
+  const EXPECTED_EXIT = { "done/green": "0", "done/red": "1", "refused/": "2", "failed/": "3", "build_failed/": "4" };
+  const cases = {
+    "done/green": {},
+    "done/red": { runExit: 1 },
+    "refused (window)": { now: "3 0800" },
+    "refused (provider)": { runExit: 1, writeResults: false, modelRefused: "antropic is not active" },
+    "failed (build)": { buildExit: 3, buildOut: "" },
+    "build_failed": { buildExit: 5, buildOut: "" },
+    "failed (wrong version)": { runExit: 1, verdict: ["the target served the wrong Langflow — exact: served 1.12.4, declared 1.13.0."] },
+    "failed (no results.json)": { runExit: 1, writeResults: false },
+  };
+  for (const [name, opts] of Object.entries(cases)) {
+    const { env, collect } = setup(opts);
+    // The initial `OD_STATUS=""` is not a decision, and comes before any trap exists.
+    const harness = join(env.E2E_ONDEMAND_STATE, "..", "term-after-status.sh");
+    writeFileSync(harness, [
+      "od_term() {",
+      '  case "$od_prev" in',
+      "    'OD_STATUS=\"\"') ;;",
+      "    OD_STATUS=*) kill -TERM $$ ;;",
+      "  esac",
+      '  od_prev="$BASH_COMMAND"',
+      "}",
+      'set -T; od_prev=""; trap od_term DEBUG',
+      `source ${q(ONDEMAND)}`,
+    ].join("\n") + "\n");
+    const r = collect(spawnSync("bash", [harness], { encoding: "utf8", env }).status);
+    const res = r.result["req-1"];
+    assert.ok(res, `${name}: no result:\n${r.log}`);
+    assert.equal(res.EXIT, EXPECTED_EXIT[`${res.STATUS}/${res.VERDICT}`], `${name}: ${res.STATUS}/${res.VERDICT} answered EXIT='${res.EXIT}'`);
+    assert.notEqual(res.REASON, "", `${name}: no REASON`);
+    assert.equal(String(r.status), res.EXIT, `${name}: the exit status does not follow the result`);
+  }
+});
+
 test("a request a killed run consumed and never answered is answered failed by the next start", () => {
   // SIGKILL, an OOM kill or a reboot never run the EXIT trap that writes the result.
   const r = onDemand({ orphans: [["killed-1", false], ["answered-1", true]] });
