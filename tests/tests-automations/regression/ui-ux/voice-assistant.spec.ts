@@ -57,7 +57,7 @@ async function openPublicPlayground(
 
 test(
   "should able to see and interact with voice assistant",
-  { tag: ["@stable", "@release", "@playground"] },
+  { tag: ["@release", "@playground"] },
   async ({ page }) => {
     await test.step("open the public playground with voice mode available", async () => {
       await openPublicPlayground(page, true);
