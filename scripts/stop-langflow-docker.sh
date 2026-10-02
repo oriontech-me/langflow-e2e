@@ -12,8 +12,10 @@ echo "Stopping Langflow container ${CONTAINER_NAME}..."
 # there and "No container to stop." could not appear at all (#2090).
 # An inspect that fails for any other reason (daemon down, permission denied) is
 # not an absent container, so it is named and fails rather than reading as one.
+# The match is the whole phrase: a missing engine socket also says "no such"
+# ("dial unix /var/run/docker.sock: connect: no such file or directory").
 if ! inspect_err="$(docker container inspect "${CONTAINER_NAME}" 2>&1 > /dev/null)"; then
-  if printf '%s' "${inspect_err}" | grep -qi "no such"; then
+  if printf '%s' "${inspect_err}" | grep -qi "no such container"; then
     echo "No container to stop."
     exit 0
   fi

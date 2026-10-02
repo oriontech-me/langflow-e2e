@@ -34,7 +34,8 @@ const STOP_SCRIPT = fileURLToPath(new URL("./stop-langflow-docker.sh", import.me
  *
  * `container` is what `docker container inspect` answers for the stopper:
  * "present", "absent" (docker's "No such container" error), "absent-podman"
- * (podman's lowercase "no such container") or "daemon-down".
+ * (podman's lowercase "no such container"), "daemon-down" or "socket-missing"
+ * (a missing engine socket, whose error also contains "no such").
  * `rm -f` exits 0 in every state, as docker 29 does for a missing container
  * (#2090) — so only the inspect can tell the stopper what happened.
  */
@@ -55,6 +56,7 @@ case "$1" in
       case "\${FAKE_CONTAINER}" in
         absent) echo "Error response from daemon: No such container: $3" >&2; exit 1 ;;
         absent-podman) echo "Error: no such container $3" >&2; exit 1 ;;
+        socket-missing) echo "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory" >&2; exit 1 ;;
         daemon-down) echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1 ;;
         *) echo '[{"Name":"/'"$3"'"}]' ;;
       esac
@@ -349,9 +351,17 @@ test("stop with no container says so, even though rm -f would have exited 0 (#20
 });
 
 test("stop that cannot ask docker fails naming why, never as 'no container'", () => {
-  const r = runScript({ script: STOP_SCRIPT, container: "daemon-down" });
-  assert.equal(r.status, 1);
-  assert.match(r.stdout, /Could not check for container langflow-e2e-runner: Cannot connect to the Docker daemon/);
-  assert.doesNotMatch(r.stdout, /No container to stop|Container stopped/);
-  assert.ok(!r.calls.some((c) => c.startsWith("rm ")), "nothing may be removed blind");
+  // socket-missing carries "no such" too ("no such file or directory"), which a
+  // match on "no such" alone read as an absent container (#2144 review).
+  for (const [container, cause] of [
+    ["daemon-down", /Cannot connect to the Docker daemon/],
+    ["socket-missing", /dial unix \/var\/run\/docker\.sock: connect: no such file or directory/],
+  ]) {
+    const r = runScript({ script: STOP_SCRIPT, container });
+    assert.equal(r.status, 1, container);
+    assert.match(r.stdout, /Could not check for container langflow-e2e-runner: /, container);
+    assert.match(r.stdout, cause, container);
+    assert.doesNotMatch(r.stdout, /No container to stop|Container stopped/, container);
+    assert.ok(!r.calls.some((c) => c.startsWith("rm ")), `${container}: nothing may be removed blind`);
+  }
 });
