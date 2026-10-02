@@ -86,7 +86,10 @@ variables twice: once unscoped (`GET /api/v1/variables/`) while the page loads, 
 flow (`?flow_id=<id>`) when the assistant mounts on the click — the assistant and its
 settings popover share that one request — measured on `1.13.0.dev30`. Only the scoped
 list decides `hasOpenAIAPIKey`, so the route rewrites both but counts only the requests
-carrying this flow's `flow_id`. Rewriting the unscoped one too means the synthetic entry
+carrying this flow's `flow_id`, and only once a rewritten list was served: an error
+body is passed through untouched, and counting it would let test 1 pass on a
+key-holding lane with the no-key state coming from the error rather than the filter.
+Rewriting the unscoped one too means the synthetic entry
 (or test 1's removal) also reaches the store; nothing on this page reads it from there. The first version of test 1 (#2149)
 counted every request, so the unscoped load had already satisfied its "the mock fired"
 check before the voice button was clicked.
@@ -96,10 +99,12 @@ while `hasOpenAIAPIKey` is false (`audio-settings-dialog.tsx`), and on the click
 scoped list has not landed yet, so the popover always opens; once the list lands it
 stays open, now showing the stored-key settings. Test 4 therefore never closes it:
 closing it in the stored-key state starts audio initialisation, which opens the voice
-websocket (`/api/v1/voice/ws/flow_tts/...`, measured), a backend this image cannot
-serve. Rendering the stored-key settings already asks for the microphone — the
-microphone selector enumerates devices on mount, and logs `Error accessing media
-devices` where the browser has none — which is a console error, not a test failure.
+websocket (`/api/v1/voice/ws/flow_tts/...` — measured in a scout that closed it; the
+test's traces cannot show it, since Playwright traces do not record websockets), a
+backend this image cannot serve. Rendering the stored-key settings already requests
+microphone access (the microphone selector calls `getUserMedia` on mount); the same
+scout saw `Error accessing media devices` logged a few seconds later, after test 4 has
+already ended — its traces carry no console message at all.
 
 ### What `voice_mode_available` really reports
 
@@ -145,7 +150,8 @@ to this flow (`flow_id=<id>`). A body that is not a list (an error response) is 
 through unchanged, so its real status still reaches the HTTP monitor. After the click
 below, wait for the variables response that follows it (matched by path alone, so a
 list that stops carrying `flow_id` still reaches the named check), then poll until the
-scoped count is at least one.
+scoped list has been served rewritten at least once — which is what orders the key-field
+assertion after the pinned data reached the page.
 
 6. Click `voice-button`
 7. Assert `voice-assistant-container` is visible, together with the settings popover:
@@ -159,12 +165,12 @@ scoped count is at least one.
 9. Click `voice-assistant-close-button`; assert the container is gone and
    `input-wrapper` is visible again
 
-**Test 2 — the voice button is shown when voice mode is available**
-(`voice_mode_available: true`): assert `voice-button` is visible.
-
-**Test 3 — the voice button is absent when voice mode is not available**
+**Test 2 — the voice button is absent when voice mode is not available**
 (`voice_mode_available: false`): after the load signal, assert `voice-button` has
 count 0.
+
+**Test 3 — the voice button is shown when voice mode is available**
+(`voice_mode_available: true`): assert `voice-button` is visible.
 
 **Test 4 — the settings popover shows the voice settings when an OpenAI key is stored**
 (`voice_mode_available: true`, OpenAI key stored)
@@ -205,11 +211,11 @@ closing page.
 
 ## Guarding against false positives *(how)*
 
-- Test 3 asserts absence **only after** `input-wrapper` and `button-send` render, so
+- Test 2 asserts absence **only after** `input-wrapper` and `button-send` render, so
   an unloaded page cannot pass it, and on the public surface — where the button does
   render under `true` — inverting the mock turns it red. Both are force-failed.
 - Every test asserts the config route fired, so a mock that silently stopped
-  matching cannot leave the real `false` doing the work for test 3.
+  matching cannot leave the real `false` doing the work for test 2.
 - Tests 1 and 4 assert the variables route fired **for this flow's scoped list** —
   the request that decides `hasOpenAIAPIKey` — so a route that stopped matching it
   fails with that cause named instead of letting the lane's stored key decide the
