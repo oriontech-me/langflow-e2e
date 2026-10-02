@@ -200,6 +200,17 @@ main() {
   export TARGET_SSH=local
   export BASE_PORT=7870   # what the rehearsal measured; 7860-7863 were the tunnel's
   export SHARDS=4         # peak load 16.8 on 16 vCPU, 12 Langflow processes — measured
+  # Adopted 2026-10-02 (#2159). The matrix balances on this lane's own timings, from the
+  # ledger, not on reports/spec-durations.json: the Actions daily was its only writer and
+  # it was switched off that day, so the tracked table is frozen and every spec added
+  # after it would be weighted at the p75 fallback. The switch was held back only while
+  # both dailies ran, so that a failure's shard neighbours matched the Actions lane's.
+  #
+  # Only this lane: run-e2e.sh keeps the default at 0 for the shadow and on-demand runs.
+  # A ledger with no table yet falls back to the tracked one and says so in the log.
+  #
+  # Rollback: drop this line.
+  export USE_LEDGER_DURATIONS=1
   export NOTIFY_SLACK="${NOTIFY_SLACK:-1}"   # overridable so the wrapper can be rehearsed without paging the channel
   # Adopted 2026-09-22 (#1981, PR #1982). Announce the CLEAN days too, which this lane
   # asks for and the Actions lane does not: there the run list answers "did it run

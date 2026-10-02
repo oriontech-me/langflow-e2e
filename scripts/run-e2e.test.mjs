@@ -1684,11 +1684,10 @@ test("nothing in the publish phase writes into the tracked series", () => {
   assert.match(publish, /mv "\$next" "\$LEDGER_DURATIONS"/);
 });
 
-test("the matrix still balances on the tracked durations while both dailies run", () => {
-  // Turning this on early would move specs onto different shards than the Actions lane
-  // puts them, so a failure's neighbours — and the load its backend was under —
-  // would differ for a reason that has nothing to do with the product. The comparison
-  // is the product of this etapa; the switch belongs to the one after it.
+test("the orchestrator's default still balances on the tracked durations", () => {
+  // The default stays 0 for every caller but the VM daily, which turns it on in
+  // ops/vm/run-daily.sh since the Actions daily was switched off (#2159); that wrapper
+  // test pins the daily side. The shadow and on-demand runs keep the tracked table.
   const r = sourced(`echo "$USE_LEDGER_DURATIONS"`);
   assert.equal(r.stdout.trim(), "0");
 });
