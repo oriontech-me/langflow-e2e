@@ -498,39 +498,53 @@ test("the liveness thresholds agree with the in-run recorder's defaults", () => 
 });
 
 // --- the sampler and its wiring ---------------------------------------------
+//
+// None of these may depend on how fast the event loop runs. The first version
+// slept 40 ms and expected three samples in it: green on a dev box, red on the
+// PR lane, where 1773 unit tests share the runner, and 20 of 24 runs red here
+// with 24 copies running at once. Each test now waits for an EVENT — the
+// sampler ending, a sample starting, the N-th probe settling — and uses a
+// timer only as a cap that turns a broken sampler into a failure, never a hang.
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * `promise`, or `"timed out"` once `ms` elapse — so a sampler that never ends
+ * fails the test instead of hanging the lane. Generous on purpose: it is a cap
+ * on a broken sampler, never a budget for a correct one. 2 s was not — with 48
+ * copies of this file on 6 CPUs a 40 ms timer fired after 2.5 s.
+ */
+async function within<T>(promise: Promise<T>, ms = 20_000): Promise<T | "timed out"> {
+  let cap: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timed out">((r) => (cap = setTimeout(() => r("timed out"), ms)));
+  try {
+    return await Promise.race([promise, timedOut]);
+  } finally {
+    clearTimeout(cap);
+  }
+}
 
 test("the sampler stops at a probe that could not run and keeps what it had", async () => {
   const script: (LivenessSample | null)[] = [ok(5), down(), null, ok(5)];
   let calls = 0;
   const sampler = startLivenessSampler(async () => script[calls++] ?? null, { intervalMs: 1 });
-  await sleep(40);
-  const samples = await sampler.stop();
-  // `null` is "the page or its context is gone" — sampling past it would record
-  // a closed browser as an outage.
-  assert.deepEqual(samples, [ok(5), down()]);
-  assert.equal(calls, 3);
+  try {
+    // `null` is "the page or its context is gone" — sampling past it would record
+    // a closed browser as an outage. Nothing but the null may end it here.
+    assert.deepEqual(await within(sampler.done), [ok(5), down()]);
+    assert.equal(calls, 3);
+  } finally {
+    await sampler.stop();
+  }
 });
 
 test("a sampler nobody stops ends at its bound instead of probing forever", async () => {
   // A forgotten `stop()` must not turn into an unbounded stream of requests for
   // the rest of the test — nor into a unit lane that hangs instead of failing,
   // which is what this mutation did before the bound existed.
-  let calls = 0;
-  const sampler = startLivenessSampler(
-    async () => {
-      calls++;
-      return ok(1);
-    },
-    { intervalMs: 1, maxMs: 30 },
-  );
+  const sampler = startLivenessSampler(async () => ok(1), { intervalMs: 1, maxMs: 30 });
   try {
-    await sleep(60);
-    const atBound = calls;
-    assert.ok(atBound > 0, "the sampler never sampled");
-    await sleep(40);
-    assert.equal(calls, atBound, "the sampler kept probing past its bound");
+    assert.notEqual(await within(sampler.done), "timed out", "the sampler kept probing past its bound");
   } finally {
     await sampler.stop();
   }
@@ -539,13 +553,17 @@ test("a sampler nobody stops ends at its bound instead of probing forever", asyn
 test("the probe in flight when the wait ends is counted", async () => {
   // The last sample is the one taken as the budget ran out — dropping it would
   // discard the most relevant observation of all.
+  let begun!: () => void;
+  const inFlight = new Promise<void>((r) => (begun = r));
   const sampler = startLivenessSampler(
-    () => new Promise<LivenessSample>((r) => setTimeout(() => r(down()), 40)),
+    () => {
+      begun();
+      return new Promise<LivenessSample>((r) => setTimeout(() => r(down()), 40));
+    },
     { intervalMs: 1 },
   );
-  await sleep(15);
-  const samples = await sampler.stop();
-  assert.deepEqual(samples, [down()]);
+  await inFlight;
+  assert.deepEqual(await sampler.stop(), [down()]);
 });
 
 type FakeAnswer = { ok(): boolean; status(): number };
@@ -555,27 +573,55 @@ const answer = (status: number): Promise<FakeAnswer> =>
 const wedged = (): Promise<FakeAnswer> =>
   Promise.reject(new Error("apiRequestContext.get: Timeout 4000ms exceeded."));
 
-function fakePage(opts: { renderAfterMs?: number; get: (call: number) => Promise<FakeAnswer> }) {
+/**
+ * A page whose selector never renders and whose wait gives up once the
+ * `failAfterProbes`-th liveness probe has settled — so the samples a test sees
+ * are exactly the ones it scripted, however slowly the runner schedules them.
+ * The real wait's `timeout` survives only as a cap.
+ */
+function fakePage(opts: {
+  renderAfterMs?: number;
+  failAfterProbes?: number;
+  get: (call: number) => Promise<FakeAnswer>;
+}) {
   const counter = { calls: 0 };
+  let settled = 0;
+  let onSettle = () => {};
   const page = {
     url: () => "http://127.0.0.1:7860/",
     waitForSelector: (_selector: string, { timeout }: { timeout: number }) =>
       new Promise<void>((resolve, reject) => {
-        if (opts.renderAfterMs !== undefined) setTimeout(resolve, opts.renderAfterMs);
-        else
-          setTimeout(
-            () => reject(new Error(`TimeoutError: page.waitForSelector: Timeout ${timeout}ms exceeded.`)),
-            timeout,
-          );
+        if (opts.renderAfterMs !== undefined) {
+          setTimeout(resolve, opts.renderAfterMs);
+          return;
+        }
+        const giveUp = () =>
+          reject(new Error(`TimeoutError: page.waitForSelector: Timeout ${timeout}ms exceeded.`));
+        const cap = setTimeout(giveUp, timeout);
+        onSettle = () => {
+          if (settled < (opts.failAfterProbes ?? Number.POSITIVE_INFINITY)) return;
+          clearTimeout(cap);
+          giveUp();
+        };
       }),
-    request: { get: () => opts.get(++counter.calls) },
+    request: {
+      get: () => {
+        const pending = opts.get(++counter.calls);
+        const tick = () => {
+          settled++;
+          onSettle();
+        };
+        pending.then(tick, tick);
+        return pending;
+      },
+    },
   };
   return { page: page as unknown as Page, counter };
 }
 
-async function barrierError(page: Page, timeoutMs: number): Promise<string> {
+async function barrierError(page: Page): Promise<string> {
   try {
-    await waitForAttributedSelector(page, SELECTOR, timeoutMs, { sampleIntervalMs: 10 });
+    await waitForAttributedSelector(page, SELECTOR, 5000, { sampleIntervalMs: 1 });
   } catch (error: unknown) {
     return String((error as Error)?.message ?? error);
   }
@@ -584,36 +630,45 @@ async function barrierError(page: Page, timeoutMs: number): Promise<string> {
 
 test("a barrier timing out behind a wedge that cleared is reported as degraded", async () => {
   // Wedged for the first three samples, then back — exactly the shape the
-  // after-the-fact probe cannot see.
-  const { page } = fakePage({ get: (n) => (n <= 3 ? wedged() : answer(200)) });
-  const msg = await barrierError(page, 250);
+  // after-the-fact probe cannot see. Probe 6 is the final one, and it answers.
+  const { page, counter } = fakePage({
+    failAfterProbes: 5,
+    get: (n) => (n <= 3 ? wedged() : answer(200)),
+  });
+  const msg = await barrierError(page);
 
+  assert.equal(counter.calls, 6, "five samples and one final probe");
   assert.ok(!msg.startsWith(INFRA_PREFIX), `degraded must not claim the infra prefix, got: ${msg}`);
   assert.match(lineOne(msg), /DEGRADED during the wait/);
+  assert.match(msg, /3 of 5 liveness probe\(s\) during the wait failed \(longest run 3;/);
   assert.doesNotMatch(msg, /IS a product/);
   assert.equal(classifyInfraError(msg), null);
 });
 
 test("a barrier timing out on a backend that answered throughout blames the UI", async () => {
-  const { page } = fakePage({ get: () => answer(200) });
-  const msg = await barrierError(page, 150);
+  const { page } = fakePage({ failAfterProbes: 3, get: () => answer(200) });
+  const msg = await barrierError(page);
 
   assert.ok(!msg.startsWith(INFRA_PREFIX));
   assert.match(lineOne(msg), /this IS a product\/UI failure at the page-entry entry point/);
+  assert.match(msg, /0 of 3 liveness probe\(s\) during the wait failed/);
 });
 
 test("a barrier timing out on a dead backend still gets the infra prefix", async () => {
   // Invariant 1 through the real wiring, samples and all: the final probe decides
   // the prefix, and the message for it is unchanged.
-  const { page } = fakePage({ get: () => wedged() });
-  const msg = await barrierError(page, 100);
+  const { page } = fakePage({ failAfterProbes: 2, get: () => wedged() });
+  const msg = await barrierError(page);
   assert.ok(msg.startsWith(INFRA_PREFIX), `expected the infra prefix, got: ${msg}`);
   assert.equal(classifyInfraError(msg)?.id, "api-request-timeout");
 });
 
 test("a barrier that renders stops sampling — no probe outlives the wait", async () => {
+  // Safe in the direction that matters: correct code issues no probe after the
+  // barrier passes however slow the runner is; only a sampler left running can
+  // add one in the window below.
   const { page, counter } = fakePage({ renderAfterMs: 60, get: () => answer(200) });
-  await waitForAttributedSelector(page, SELECTOR, 1000, { sampleIntervalMs: 10 });
+  await waitForAttributedSelector(page, SELECTOR, 1000, { sampleIntervalMs: 1 });
   const atRender = counter.calls;
   await sleep(80);
   assert.equal(counter.calls, atRender, "the sampler kept probing after the barrier passed");

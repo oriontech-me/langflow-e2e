@@ -378,6 +378,11 @@ export async function probeBackend(
 
 export interface LivenessSampler {
   /**
+   * Resolves with every sample taken once sampling has ended for any reason —
+   * `stop()`, the `maxMs` bound, or a probe that could not run. Never rejects.
+   */
+  readonly done: Promise<LivenessSample[]>;
+  /**
    * Stop sampling. Resolves with every sample taken — including one still in
    * flight, which is the observation closest to the moment the wait gave up.
    * Never rejects.
@@ -436,14 +441,16 @@ export function startLivenessSampler(
     }
   })();
 
+  const done = loop.then(
+    () => samples,
+    () => samples,
+  );
   return {
+    done,
     stop() {
       stopped = true;
       wake?.();
-      return loop.then(
-        () => samples,
-        () => samples,
-      );
+      return done;
     },
   };
 }
