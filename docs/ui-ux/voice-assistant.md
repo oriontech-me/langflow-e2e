@@ -81,11 +81,13 @@ synthetic `OPENAI_API_KEY` entry instead of removing one, so the two tests are a
 pair — the same page, only the variable differs — and nothing is ever persisted.
 
 **Which variables request the route counts.** The public playground lists the
-variables twice: once unscoped (`GET /api/v1/variables/`) while the page loads, from a
-caller outside the voice assistant, and once scoped to the flow
-(`?flow_id=<id>`) when the assistant mounts on the click — measured on `1.13.0.dev30`.
-Only the scoped list decides `hasOpenAIAPIKey`, so the route rewrites both but counts
-only the requests carrying this flow's `flow_id`. The first version of test 1 (#2149)
+variables twice: once unscoped (`GET /api/v1/variables/`) while the page loads, from
+`AppInitPage`, which mirrors it into the global variables store, and once scoped to the
+flow (`?flow_id=<id>`) when the assistant mounts on the click — the assistant and its
+settings popover share that one request — measured on `1.13.0.dev30`. Only the scoped
+list decides `hasOpenAIAPIKey`, so the route rewrites both but counts only the requests
+carrying this flow's `flow_id`. Rewriting the unscoped one too means the synthetic entry
+(or test 1's removal) also reaches the store; nothing on this page reads it from there. The first version of test 1 (#2149)
 counted every request, so the unscoped load had already satisfied its "the mock fired"
 check before the voice button was clicked.
 
@@ -93,9 +95,11 @@ check before the voice button was clicked.
 while `hasOpenAIAPIKey` is false (`audio-settings-dialog.tsx`), and on the click the
 scoped list has not landed yet, so the popover always opens; once the list lands it
 stays open, now showing the stored-key settings. Test 4 therefore never closes it:
-closing it in the stored-key state starts audio initialisation, which requests the
-microphone and opens the voice websocket (`/api/v1/voice/ws/flow_tts/...`, measured),
-a backend this image cannot serve.
+closing it in the stored-key state starts audio initialisation, which opens the voice
+websocket (`/api/v1/voice/ws/flow_tts/...`, measured), a backend this image cannot
+serve. Rendering the stored-key settings already asks for the microphone — the
+microphone selector enumerates devices on mount, and logs `Error accessing media
+devices` where the browser has none — which is a console error, not a test failure.
 
 ### What `voice_mode_available` really reports
 
@@ -139,7 +143,9 @@ Before step 4, route `GET /api/v1/variables/` (any query string): fetch the real
 response and fulfill it without the `OPENAI_API_KEY` entry, counting the requests scoped
 to this flow (`flow_id=<id>`). A body that is not a list (an error response) is passed
 through unchanged, so its real status still reaches the HTTP monitor. After the click
-below, wait for the scoped response, then poll until the scoped count is at least one.
+below, wait for the variables response that follows it (matched by path alone, so a
+list that stops carrying `flow_id` still reaches the named check), then poll until the
+scoped count is at least one.
 
 6. Click `voice-button`
 7. Assert `voice-assistant-container` is visible, together with the settings popover:
@@ -167,7 +173,7 @@ Before step 4, route `GET /api/v1/variables/` the same way as test 1, but fulfil
 with the real list **plus** a synthetic `OPENAI_API_KEY` entry (`type: "Credential"`,
 no value), counting the scoped requests.
 
-6. Click `voice-button`, waiting for the scoped variables response
+6. Click `voice-button`, waiting for the variables response that follows it
 7. Assert `voice-assistant-container` and `voice-assistant-settings-modal-header` are
    visible, and poll until the scoped count is at least one
 8. Assert the microphone selector `voice-assistant-settings-modal-microphone-select`
@@ -260,7 +266,7 @@ closing page.
   then disappear from it too, and these tests go red by design
 - The image starts shipping `webrtcvad` (real `voice_mode_available` becomes `true`)
 - The voice assistant stops deriving its key state from a global variable named
-  `OPENAI_API_KEY`, or from the flow-scoped list — tests 1 and 4's variables route
-  would then pin nothing
+  `OPENAI_API_KEY`, or from the flow-scoped list — tests 1 and 4 then fail on "the
+  variables mock never served the flow-scoped list", and the route needs re-scoping
 - The popover stops opening itself on the click (it would then be closed in test 4,
   whose header assertion goes red by design)
