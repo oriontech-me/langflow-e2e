@@ -85,7 +85,7 @@ test("every service declares HOME, because systemd sets none (#1715)", () => {
   // cron does, systemd does not, and run-e2e.sh builds the uv PATH out of $HOME under
   // `set -u` -- so the run dies before doing anything. Found by running a unit, not by
   // reading one.
-  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service"]) {
+  for (const unit of ["e2e-daily.service", "e2e-daily-watchdog.service", "e2e-mirror-freshness.service", "e2e-mirror-freshness-announce.service", "e2e-shadow.service", "e2e-on-demand.service", "e2e-on-demand-worker.service"]) {
     assert.ok(
       directives(read(unit), "Environment").some((v) => v === "HOME=/root"),
       `${unit} does not declare HOME`,
@@ -222,4 +222,24 @@ test("the on-demand run has no timer, no Conflicts= with the daily, and room to 
   assert.equal(stop.length, 1, "TimeoutStopSec is not set");
   assert.match(stop[0], /^\d+min$/);
   assert.ok(Number(stop[0].slice(0, -3)) >= 3, "too little time for the cleanup");
+});
+
+test("the on-demand worker comes back by itself, except from a wrong configuration", async () => {
+  // The one long-running unit: without [Install] a reboot leaves the queue with nobody
+  // polling it, and without Restart= a crash does. The exit that means "the secret or
+  // the URL is wrong" must not restart every 30 seconds -- and must be the exit the
+  // script uses for it, or the unit restarts on it anyway.
+  const { EXIT_CONFIG } = await import("../ops/vm/on-demand-worker.mjs");
+  const unit = read("e2e-on-demand-worker.service");
+  assert.deepEqual(directives(unit, "Type"), ["simple"]);
+  assert.deepEqual(directives(unit, "ExecStart"), ["/root/e2e-qa/ops/vm/on-demand-worker.mjs"]);
+  assert.deepEqual(directives(unit, "Restart"), ["always"]);
+  assert.deepEqual(directives(unit, "RestartPreventExitStatus"), [String(EXIT_CONFIG)]);
+  assert.deepEqual(directives(unit, "WantedBy"), ["multi-user.target"]);
+  assert.deepEqual(directives(unit, "Conflicts"), [], "Conflicts= would let this unit stop the daily");
+  // The secret lives outside the clone, which is public and mirrors to the destination.
+  const [envFile, ...more] = directives(unit, "EnvironmentFile");
+  assert.equal(more.length, 0);
+  assert.match(envFile, /^\/root\/\.[^/]+$/);
+  assert.ok(!readdirSync(OPS).includes("e2e-on-demand-worker.timer"));
 });
