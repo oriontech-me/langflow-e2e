@@ -48,6 +48,40 @@ export function missingMcpServerEntryMessage(d: {
   );
 }
 
+/** Dropdown clicks the node entry point makes before it reports a dropped click. */
+export const NODE_LIST_DIALOG_ATTEMPTS = 3;
+
+/** Per-attempt budget for the node's server-list dialog to paint. */
+export const NODE_LIST_DIALOG_ATTEMPT_MS = 5000;
+
+/**
+ * Names the cause when the node's `mcp-server-dropdown` never opens its
+ * server-list dialog — issue #1447.
+ *
+ * Before #1447 this state did not fail at all. The helper clicked
+ * `getByText("Add MCP Server").last()` page-wide, and with the MCP sidebar tab
+ * open that text has exactly one match until the dialog renders: the SIDEBAR's
+ * `sidebar-add-mcp-server-button` (measured on 1.13.0.dev30 — one match before
+ * the dropdown click, two after). So a dropped dropdown click opened the
+ * sidebar's modal instead, the server was created, and the node stayed bound to
+ * whatever it held before, with no error anywhere. The message names that
+ * fallback as wrong, so the next reader does not "fix" this by clicking it.
+ */
+export function nodeListDialogNeverOpenedMessage(d: {
+  attempts: number;
+  perAttemptMs: number;
+}): string {
+  return (
+    `[openAddMcpServerModal] the node's server-list dialog never opened after ` +
+    `${d.attempts} click(s) on "mcp-server-dropdown" (${d.perAttemptMs}ms each). ` +
+    `A dropped click on this node is the #1304/#1335 class and is repaired by ` +
+    `another click, so ${d.attempts} failed attempts mean the dropdown no longer ` +
+    `opens that dialog. The sidebar's "sidebar-add-mcp-server-button" carries ` +
+    `the same "Add MCP Server" text but is NOT a fallback: its modal registers ` +
+    `the server and never binds the node (#1447).`
+  );
+}
+
 /** Attempts the sidebar entry point makes before it reports a swallowed click. */
 export const SIDEBAR_MODAL_ATTEMPTS = 3;
 
@@ -155,6 +189,14 @@ export async function openAddMcpServerModalFromSidebar(page: Page) {
  * widget had not painted yet — then spent its whole 3 s budget on a locator that
  * in the empty-list case would never appear at all. Waiting for either entry
  * point FIRST and branching on the settled state removes both halves of that.
+ *
+ * In the dropdown branch the "Add MCP Server" button is addressed INSIDE the
+ * server-list dialog the dropdown opens (#1447). The footer button has no
+ * testid, and a page-wide text match is not the node's: with the MCP sidebar tab
+ * open the sidebar's `sidebar-add-mcp-server-button` carries the same text and
+ * is the only match until the dialog renders, so a dropdown click that did not
+ * open the dialog used to open the SIDEBAR's modal — which registers the server
+ * and never binds the node. The dropdown is re-clicked instead.
  */
 export async function openAddMcpServerModal(page: Page) {
   const simpleButton = page.getByTestId("add-mcp-server-simple-button");
@@ -186,10 +228,34 @@ export async function openAddMcpServerModal(page: Page) {
     await expect(dropdown).toBeEnabled({
       timeout: MCP_SERVER_ENTRY_TIMEOUT_MS,
     });
-    await dropdown.click();
-    await page.getByText("Add MCP Server", { exact: true }).last().click({
-      timeout: 5000,
-    });
+    const dialogAddButton = page
+      .getByRole("dialog")
+      .getByText("Add MCP Server", { exact: true });
+
+    let opened = false;
+    for (let attempt = 1; attempt <= NODE_LIST_DIALOG_ATTEMPTS; attempt++) {
+      await dropdown.click();
+      opened = await dialogAddButton
+        .waitFor({ state: "visible", timeout: NODE_LIST_DIALOG_ATTEMPT_MS })
+        .then(() => true)
+        .catch(() => false);
+      if (opened) break;
+
+      // eslint-disable-next-line no-console
+      console.warn(
+        `⚠️  mcp-server-dropdown click did not open the server list — retrying ` +
+          `(${attempt}/${NODE_LIST_DIALOG_ATTEMPTS}, #1447/#1335 class)`,
+      );
+    }
+    if (!opened) {
+      throw new Error(
+        nodeListDialogNeverOpenedMessage({
+          attempts: NODE_LIST_DIALOG_ATTEMPTS,
+          perAttemptMs: NODE_LIST_DIALOG_ATTEMPT_MS,
+        }),
+      );
+    }
+    await dialogAddButton.click({ timeout: 5000 });
   }
 
   await page.waitForSelector('[data-testid="add-mcp-server-button"]', {

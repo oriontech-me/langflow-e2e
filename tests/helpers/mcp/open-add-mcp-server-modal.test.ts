@@ -16,9 +16,12 @@ import assert from "node:assert/strict";
 import { classifyInfraError } from "../../../scripts/lib/infra-signatures";
 import {
   MCP_SERVER_ENTRY_TIMEOUT_MS,
+  NODE_LIST_DIALOG_ATTEMPTS,
+  NODE_LIST_DIALOG_ATTEMPT_MS,
   SIDEBAR_MODAL_ATTEMPTS,
   SIDEBAR_MODAL_ATTEMPT_MS,
   missingMcpServerEntryMessage,
+  nodeListDialogNeverOpenedMessage,
   sidebarModalNeverOpenedMessage,
 } from "./open-add-mcp-server-modal";
 
@@ -106,4 +109,46 @@ test("the message names WHICH of the two triggers was clicked", () => {
 
   assert.match(msg, /add-mcp-server-button-sidebar/);
   assert.doesNotMatch(msg, /sidebar-add-mcp-server-button"/);
+});
+
+// ---- node entry point: the server-list dialog (#1447) ----
+
+test("a node list dialog that never opens is reported as a dropped dropdown click", () => {
+  // Before #1447 this state produced no failure at all: the helper's page-wide
+  // `getByText("Add MCP Server").last()` resolved to the SIDEBAR's button — the
+  // only match until the dialog renders (measured on 1.13.0.dev30) — and opened
+  // the sidebar's modal, which never binds the node. Failing here, naming the
+  // dropdown, is what replaces that silent detour.
+  const msg = nodeListDialogNeverOpenedMessage({
+    attempts: NODE_LIST_DIALOG_ATTEMPTS,
+    perAttemptMs: NODE_LIST_DIALOG_ATTEMPT_MS,
+  });
+
+  assert.match(msg, /mcp-server-dropdown/);
+  assert.match(msg, new RegExp(`${NODE_LIST_DIALOG_ATTEMPTS} click\\(s\\)`));
+  assert.match(msg, new RegExp(`${NODE_LIST_DIALOG_ATTEMPT_MS}ms each`));
+  assert.match(msg, /dropped/i);
+});
+
+test("the message says why the sidebar button is not an acceptable fallback", () => {
+  // The next reader's first instinct is "just click whichever Add MCP Server is
+  // visible". The message has to carry the reason that is wrong: the sidebar's
+  // modal registers the server but never binds the node, so the test would go on
+  // asserting against the previously selected server with no error (#1447).
+  const msg = nodeListDialogNeverOpenedMessage({ attempts: 3, perAttemptMs: 5000 });
+
+  assert.match(msg, /sidebar-add-mcp-server-button/);
+  assert.match(msg, /never binds the node/i);
+  assert.match(msg, /#1447/);
+});
+
+test("a dropped dropdown click is not classifiable as an infra failure", () => {
+  // Same rule as the other two messages (#1262): an infra verdict would exempt
+  // the failure from @stable auto-removal and hide a genuine MCP regression.
+  assert.equal(
+    classifyInfraError(
+      nodeListDialogNeverOpenedMessage({ attempts: 3, perAttemptMs: 5000 }),
+    ),
+    null,
+  );
 });

@@ -104,9 +104,10 @@ function mcpServerRow(page: Page, name: string) {
 
 /**
  * Selects `name` as the MCP server on the component currently open in the
- * inspector — the gesture this file already performed inline after each re-open
- * ("Re-select the server after returning to flow"), now shared so the
- * precondition reads the same in all three places (#1422).
+ * inspector — the gesture this file performs after each re-open from Settings
+ * ("Re-select the server after returning to flow"), shared so it reads the same
+ * in both places (#1422). Never used right after the NODE's own modal: that
+ * modal binds the node itself, and test 5 asserts it instead (#1447).
  */
 async function selectMcpServerOnNode(page: Page, name: string) {
   await page.waitForSelector('[data-testid="mcp-server-dropdown"]', {
@@ -928,17 +929,21 @@ test("mcp server tools should be refreshed when editing a server",
       timeout: 30000,
     });
 
-    // Select server A on the node explicitly, exactly as the two re-opens
-    // further down already do. Whether the modal's own creation ALSO leaves the
-    // node bound to it is a separate behaviour, and an unreliable one: in a
-    // full-file run on 1.12.0.dev25 the component was measured back on
-    // `lf-starter_project` after creating `test_server_26480` (1 of 4 full-file
-    // runs; 0 of 6 with this test run alone), which made the tool list resolve
-    // — correctly — for the wrong server. That is filed on its own; this test's
-    // subject is the REFRESH on edit, so it states its precondition instead of
-    // inheriting it. The helper still fails naming the binding if it is ever
-    // wrong from here on, so this is a precondition, not a mute.
-    await selectMcpServerOnNode(page, testName);
+    // The modal was opened FROM this node, and that modal binds the node to the
+    // server it creates (`McpComponent` passes `handleSuccess` as the modal's
+    // `onSuccess`) — so the binding is asserted here, never performed. #1422
+    // selected the server explicitly after measuring the node back on
+    // `lf-starter_project` (1 of 4 full-file runs on 1.12.0.dev25); #1447 traced
+    // that to the helper, not the product: its page-wide "Add MCP Server" click
+    // fell through to the SIDEBAR's button when the dropdown click was dropped,
+    // and the sidebar's modal never binds a node. With the helper scoped to the
+    // node's dialog, a node left on another server here is a Langflow change.
+    await expect(
+      page.getByTestId("mcp-server-dropdown"),
+      `the node's own Add MCP Server modal created "${testName}" but did not ` +
+        `bind the node to it (#1447) — McpComponent.handleSuccess no longer ` +
+        `binds, or the modal that opened was not the node's`,
+    ).toHaveText(testName, { timeout: 10000 });
 
     // Server A's tool list, waited for on the option itself — never on
     // `dropdown_str_tool:not([disabled])`, which is satisfied 113-145 ms after
