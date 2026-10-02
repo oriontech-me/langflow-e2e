@@ -1602,7 +1602,7 @@
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 37 | 34 | 0 | 2 | 1 |
 | `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
-| `mcp/server/` | 18 | 15 | 1 | 1 | 1 |
+| `mcp/server/` | 19 | 16 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 26 | 0 | 0 | 4 |
@@ -1612,7 +1612,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **739** | **649 (88%)** | **37 (5%)** | **14 (2%)** | **39 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **740** | **650 (88%)** | **37 (5%)** | **14 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
