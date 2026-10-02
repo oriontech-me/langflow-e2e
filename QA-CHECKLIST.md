@@ -1627,7 +1627,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 722 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 723 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2404,6 +2404,7 @@
 - [x] should see shortcuts → `userSettings.spec.ts`
 - [x] should interact with API Keys → `userSettings.spec.ts`
 - [x] should navigate back to flow from global variables → `userSettings.spec.ts`
+- [x] should able to see and interact with voice assistant → `voice-assistant.spec.ts`
 - [x] user should not be able to see voice button if voice mode is not available → `voice-assistant.spec.ts`
 - [x] user should be able to see voice button if voice mode is available → `voice-assistant.spec.ts`
 
