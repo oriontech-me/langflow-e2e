@@ -72,13 +72,48 @@ import type { Page } from "@playwright/test";
  * classifier. So the barrier is generic in the observable and carries a `surface`
  * label naming which entry point failed.
  *
- * KNOWN LIMITATION, stated rather than papered over: the probe runs AFTER the
- * wait's budget is spent, so it reports the backend's state then — not during.
- * #1265's outages were 76s and 92s, comfortably longer than the 30s wait, but a
- * shorter wedge that clears inside the budget reads `healthy` and the message
- * then blames the UI. That asymmetry is deliberate and inherited from #1262:
- * over-claiming an outage would let a real entry-point regression through
- * unquarantined, which costs more than a wedge that has to be recognised by hand.
+ * WHY IT SAMPLES DURING THE WAIT (#1549)
+ *
+ * The probe above runs AFTER the wait's budget is spent, so on its own it reports
+ * the backend's state then — not during. That used to be stated here as a known
+ * limitation, and measured against the in-run liveness recorder (#1030) it was
+ * not an edge case: 23 healthy-probe verdicts over 8 dailies (2026-08-05 →
+ * 09-03), every one on a day with a measured mid-run wedge, and attempts sitting
+ * 72–93 % inside an outage window still wrote "the backend was reachable and this
+ * IS a product/UI failure", because gunicorn had restarted the worker by the time
+ * the probe ran. On 2026-09-03 7 of the 9 recorder probes inside the failing
+ * attempt's window failed, and the barrier's single probe answered 200 in 93 ms.
+ *
+ * So the barrier samples `/api/v1/version` WHILE it waits, using the recorder's
+ * own definitions (a probe is down past `LIVENESS_DOWN_MS`, an outage is
+ * `LIVENESS_MIN_OUTAGE_PROBES` consecutive downs, a lone one is a blip), and a
+ * healthy final probe now yields one of three verdicts:
+ *
+ *  - corroborated — every sample answered: the settled "IS a product/UI failure";
+ *  - degraded     — the samples saw an outage, or the final 200 was itself slower
+ *                   than the recorder's threshold: NOT shown to be a UI failure;
+ *  - unsampled    — nothing was sampled: NOT shown either (#1012).
+ *
+ * Its resolution is the recorder's too, by construction: during an outage each
+ * sample burns `LIVENESS_DOWN_MS` before it fails, so a wedge shorter than two
+ * deadlines (~8 s) yields one failed sample — a blip — and stays corroborated.
+ * Line 2 still prints the failed count and the slowest answer, so a reader sees
+ * it. Measured with `docker pause` on 1.13.0.dev30: a 10 s wedge inside a 20 s
+ * wait gave 2 failed of 11 samples and DEGRADED; the old message called it a
+ * UI failure on the strength of an 18 ms answer afterwards.
+ *
+ * The asymmetry inherited from #1262 is kept exactly: none of the three carries
+ * `INFRA_PREFIX`, and the degraded message carries sample COUNTS, never the
+ * samples' transport errors — those would match `infra-signatures.ts` and exempt
+ * the failure by the back door. A degraded barrier is a doubt for a human, not a
+ * proven outage, so the exemption's scope is unchanged. What changed is that the
+ * message stops asserting a verdict its evidence does not reach.
+ *
+ * Line 1 is also kept free of anything that varies by run (latency, URL, sample
+ * counts): it is what `reports/daily-history.jsonl` stores as `error_signature`,
+ * cut at 240 characters before the recurrence key masks digits, so a latency of
+ * 347 ms against 1023 ms shifted the cut and one message read as 4 distinct
+ * heads over 23 occurrences. The figures are on line 2.
  */
 
 /**
@@ -90,6 +125,30 @@ export const INFRA_PREFIX = "[backend-unreachable]";
 
 /** Endpoint used as the liveness probe — unauthenticated and cheap. */
 export const PROBE_PATH = "/api/v1/version";
+
+/**
+ * A liveness sample slower than this is DOWN — the in-run recorder's per-probe
+ * deadline (`scripts/watch-backend.mjs`, `WATCH_TIMEOUT_MS`), where an answer
+ * past it is aborted and logged as `timeout>4000ms`. Pinned to the recorder's
+ * default by a unit test, so the two cannot disagree about "up" again.
+ */
+export const LIVENESS_DOWN_MS = 4000;
+
+/**
+ * Consecutive down samples that make an outage rather than a blip — the
+ * recorder's `WATCH_MIN_PROBES`. A lone failed probe is a floor of the runner
+ * (~24 a day on the daily, #1686), not evidence that the backend stopped serving.
+ */
+export const LIVENESS_MIN_OUTAGE_PROBES = 2;
+
+/**
+ * Sampling period while a barrier waits. Under 2 s on purpose: Playwright's
+ * request context reusing a socket idle for ~2 s against the Langflow server
+ * drops it with `socket hang up` on alternate calls (measured locally,
+ * 2026-09-14), which would read as a failed sample. The first sample is taken
+ * one period in, so a barrier that renders within it costs no request at all.
+ */
+export const SAMPLE_INTERVAL_MS = 1000;
 
 export type ProbeState = "healthy" | "http_error" | "unreachable" | "unknown";
 
@@ -108,6 +167,57 @@ export interface BackendProbe {
   status?: number;
   /** Transport error, or why the probe itself could not run. */
   detail?: string;
+}
+
+/** One liveness sample taken during a wait — up or down, as the recorder counts it. */
+export interface LivenessSample {
+  ok: boolean;
+  ms: number;
+}
+
+/** What the samples taken during one wait add up to. */
+export interface WaitLiveness {
+  samples: number;
+  failed: number;
+  /** Longest run of consecutive failed samples — an outage at `LIVENESS_MIN_OUTAGE_PROBES`. */
+  longestFailedRun: number;
+  /** Slowest sample that still answered in time, 0 when none did. */
+  slowestOkMs: number;
+}
+
+/** Pure — the unit tests drive it directly. */
+export function summarizeWaitLiveness(samples: LivenessSample[]): WaitLiveness {
+  let failed = 0;
+  let run = 0;
+  let longestFailedRun = 0;
+  let slowestOkMs = 0;
+  for (const s of samples) {
+    if (s.ok) {
+      run = 0;
+      slowestOkMs = Math.max(slowestOkMs, s.ms);
+    } else {
+      failed++;
+      run++;
+      longestFailedRun = Math.max(longestFailedRun, run);
+    }
+  }
+  return { samples: samples.length, failed, longestFailedRun, slowestOkMs };
+}
+
+export type HealthyVerdict = "corroborated" | "degraded" | "unsampled";
+
+/**
+ * What a HEALTHY final probe is worth, given the samples taken during the wait.
+ * Pure. A final answer the recorder would itself have counted as down outranks
+ * the samples; otherwise an outage in the samples does; otherwise the absence of
+ * samples does — and only a wait that was sampled and answered throughout is
+ * `corroborated`.
+ */
+export function healthyVerdict(probe: BackendProbe, during?: WaitLiveness): HealthyVerdict {
+  if (probe.ms >= LIVENESS_DOWN_MS) return "degraded";
+  if (!during || during.samples === 0) return "unsampled";
+  if (during.longestFailedRun >= LIVENESS_MIN_OUTAGE_PROBES) return "degraded";
+  return "corroborated";
 }
 
 /**
@@ -131,6 +241,12 @@ export interface EntryBarrierContext {
    * `PAGE_ENTRY_SURFACE`).
    */
   surface?: string;
+  /**
+   * Liveness sampled while the barrier waited (#1549). Read only when the final
+   * probe is healthy — it decides whether that answer is worth a verdict. Absent
+   * means nothing sampled, which is never read as corroboration.
+   */
+  during?: WaitLiveness;
 }
 
 /**
@@ -159,10 +275,7 @@ export function entryBarrierMessage(ctx: EntryBarrierContext): string {
         `failing to serve, so this is NOT an entry-point regression in the app.`;
       break;
     case "healthy":
-      head =
-        `${barrier} — the backend answered GET ${PROBE_PATH} with HTTP ` +
-        `${probe.status} in ${probe.ms}ms (${url}), so the backend was reachable ` +
-        `and this IS a product/UI failure at the ${surface} entry point.`;
+      head = healthyHead(barrier, surface, probe, ctx.during);
       break;
     default:
       head =
@@ -172,6 +285,50 @@ export function entryBarrierMessage(ctx: EntryBarrierContext): string {
   }
 
   return `${head}\n\nOriginal error:\n${cause}`;
+}
+
+/**
+ * The healthy-probe message. Line 1 is the verdict and nothing that varies by
+ * run; line 2 carries the figures. Counts only — never a sample's transport
+ * error, which `infra-signatures.ts` would match.
+ */
+function healthyHead(
+  barrier: string,
+  surface: string,
+  probe: BackendProbe,
+  during?: WaitLiveness,
+): string {
+  const verdict = healthyVerdict(probe, during);
+  const line1 =
+    verdict === "corroborated"
+      ? `${barrier} — the backend answered throughout the wait, so this IS a ` +
+        `product/UI failure at the ${surface} entry point.`
+      : verdict === "degraded"
+        ? `${barrier} — the backend was DEGRADED during the wait, so this is NOT ` +
+          `shown to be a product/UI failure at the ${surface} entry point.`
+        : `${barrier} — the backend was NOT sampled during the wait, so this is ` +
+          `NOT shown to be a product/UI failure at the ${surface} entry point.`;
+
+  const slowest =
+    during && during.failed < during.samples
+      ? `the slowest answer took ${during.slowestOkMs}ms`
+      : `none answered in time`;
+  const sampled =
+    during && during.samples > 0
+      ? `${during.failed} of ${during.samples} liveness probe(s) during the wait ` +
+        `failed (longest run ${during.longestFailedRun}; a probe counts as failed ` +
+        `past ${LIVENESS_DOWN_MS}ms, as the in-run recorder counts it), ${slowest}`
+      : `no liveness probe was taken during the wait`;
+  const after =
+    `the backend answered GET ${PROBE_PATH} with HTTP ${probe.status} in ` +
+    `${probe.ms}ms (${probe.url}) when probed afterwards`;
+  const advice =
+    verdict === "degraded"
+      ? ` A wedge that clears inside the budget reads exactly like this (#1549) — ` +
+        `check the shard's backend liveness before treating it as a UI regression.`
+      : "";
+
+  return `${line1}\nLiveness: ${sampled}; ${after}.${advice}`;
 }
 
 /**
@@ -219,6 +376,89 @@ export async function probeBackend(
   }
 }
 
+export interface LivenessSampler {
+  /**
+   * Stop sampling. Resolves with every sample taken — including one still in
+   * flight, which is the observation closest to the moment the wait gave up.
+   * Never rejects.
+   */
+  stop(): Promise<LivenessSample[]>;
+}
+
+/**
+ * Take one liveness sample every `intervalMs` until stopped. The period is
+ * measured start to start, so a sample that burns its whole deadline is followed
+ * at once — the same pacing as the in-run recorder. A `sample` that resolves to
+ * `null` (or throws) means it could not run at all — the page or its context is
+ * gone — and ends the sampling: recording a closed browser as an outage would
+ * be exactly the unproven claim #1012 forbids.
+ *
+ * `maxMs` bounds it even if nobody calls `stop()`: a forgotten stop must cost a
+ * few samples, not an unbounded stream of requests for the rest of the test. The
+ * timer is also `unref`'d, so a sampler can never be what keeps a process alive —
+ * without both, that mutation HANGS the unit lane instead of failing it.
+ */
+export function startLivenessSampler(
+  sample: () => Promise<LivenessSample | null>,
+  options?: { intervalMs?: number; maxMs?: number },
+): LivenessSampler {
+  const intervalMs = options?.intervalMs ?? SAMPLE_INTERVAL_MS;
+  const maxMs = options?.maxMs ?? Number.POSITIVE_INFINITY;
+  const samples: LivenessSample[] = [];
+  const startedAt = Date.now();
+  let stopped = false;
+  let wake: (() => void) | undefined;
+  const pause = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+      wake = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+
+  const loop = (async () => {
+    let lastMs = 0;
+    while (!stopped) {
+      await pause(Math.max(0, intervalMs - lastMs));
+      if (stopped || Date.now() - startedAt >= maxMs) return;
+      const started = Date.now();
+      let taken: LivenessSample | null;
+      try {
+        taken = await sample();
+      } catch {
+        taken = null;
+      }
+      if (taken === null) return;
+      samples.push(taken);
+      lastMs = Date.now() - started;
+    }
+  })();
+
+  return {
+    stop() {
+      stopped = true;
+      wake?.();
+      return loop.then(
+        () => samples,
+        () => samples,
+      );
+    },
+  };
+}
+
+/**
+ * One liveness sample through the page's request context, judged as the in-run
+ * recorder judges its own: up only when it answered 2xx inside
+ * `LIVENESS_DOWN_MS`. `null` when the probe could not run at all.
+ */
+async function sampleBackend(page: Page, baseURL?: string): Promise<LivenessSample | null> {
+  const probe = await probeBackend(page, { baseURL, timeoutMs: LIVENESS_DOWN_MS });
+  if (probe.state === "unknown") return null;
+  return { ok: probe.state === "healthy" && probe.ms < LIVENESS_DOWN_MS, ms: probe.ms };
+}
+
 /**
  * `waitForSelector` for ANY entry observable, with the timeout attributed.
  *
@@ -227,29 +467,45 @@ export async function probeBackend(
  * changes, and it never loosens the budget: a barrier that masked a slow surface
  * would defeat the point of measuring it (#1265).
  *
+ * While it waits it samples backend liveness (#1549), so a healthy probe at the
+ * end can be told apart from a wedge that cleared just before it. On success the
+ * sampler is stopped without waiting for a sample in flight, so the happy path
+ * pays nothing for it; on failure the attribution waits for that sample (at most
+ * `LIVENESS_DOWN_MS`) before the final probe.
+ *
  * `surface` names the entry point in the message. Pass it whenever the barrier is
- * not the home page, so the failure says which one broke.
+ * not the home page, so the failure says which one broke. `sampleIntervalMs`
+ * exists for the unit tests, which cannot spend a real second per sample.
  */
 export async function waitForAttributedSelector(
   page: Page,
   selector: string,
   timeoutMs: number,
-  options?: { baseURL?: string; surface?: string },
+  options?: { baseURL?: string; surface?: string; sampleIntervalMs?: number },
 ): Promise<void> {
+  // Bounded by the wait's own budget: the failure path stops it there anyway, and
+  // a sample past it would describe the backend after the wait, not during.
+  const sampler = startLivenessSampler(() => sampleBackend(page, options?.baseURL), {
+    intervalMs: options?.sampleIntervalMs,
+    maxMs: timeoutMs,
+  });
   try {
     await page.waitForSelector(selector, { timeout: timeoutMs });
   } catch (error: any) {
+    const during = summarizeWaitLiveness(await sampler.stop());
     const probe = await probeBackend(page, { baseURL: options?.baseURL });
     throw new Error(
       entryBarrierMessage({
         selector,
         timeoutMs,
         probe,
+        during,
         surface: options?.surface,
         cause: String(error?.message ?? error),
       }),
     );
   }
+  void sampler.stop();
 }
 
 /**
