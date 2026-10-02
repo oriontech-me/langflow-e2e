@@ -1,6 +1,6 @@
 # A2A Client — the `A2AAgent` as an Agent tool, through a tool-call approval
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`)
 
 **Issue:** #1855 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C3**) ·
 **Follows:** #1354 (C1) · **Jira:** epic `LE-1588`, regression `LE-1963`, tool-call
@@ -53,6 +53,18 @@ covers that half).
 - `@stable` — enters with the tag per `CONTRIBUTING.md`; parametrized by the shared
   resolver with `tier: "tool-calling"`, because it depends on the model choosing to
   call the tool.
+- **`@stable` removed and restored, LE-2684 (#1921).** From 2026-09-16 to 2026-10-02
+  the test ran without `@stable` for a confirmed product defect: approving the tool
+  call killed the run on resume (`Input should be callable`), because the checkpoint
+  stored the Agent toolset's `coroutine` as a `repr` string. It showed only on
+  installs resolving langchain-core >= 1.6 — the VM lane's published dist, not the
+  nightly image, which pins 1.5.1. The fix,
+  [langflow#15241](https://github.com/langflow-ai/langflow/pull/15241), is in the
+  nightly from `1.13.0.dev21`. Re-validated on the published `1.13.0.dev30` dist in a
+  fresh venv (langchain-core 1.6.6): 5/5 at `--retries=0`, `openai` / `gpt-4o-mini`,
+  with no `Input should be callable` in the backend log. A pre-fix dist was not
+  re-run as a negative control on this setup; the VM lane's 10/10 failure on
+  `1.13.0.dev16` is the pre-fix evidence.
 
 ---
 

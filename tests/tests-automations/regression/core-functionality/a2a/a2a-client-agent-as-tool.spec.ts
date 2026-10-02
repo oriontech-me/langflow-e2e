@@ -270,22 +270,18 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`A2A Client — A2AAgent as an Agent tool [${label}]`, () => {
-    // `@stable` removed for #1921 — a confirmed product defect in `lfx`, not a test
-    // or wait-strategy problem. `lfx/graph/checkpoint/schema.py` infers "this field is
-    // opaque" from `model_dump(mode="json")` raising; langchain-core >= 1.6 made
-    // `args_schema` serializable, so the guard stopped firing and the Agent toolset's
-    // `coroutine` is now checkpointed as a `repr` string. The resumed run then dies in
-    // `model_validate`, and this is the only `@stable` spec that pauses a run holding
-    // an agent's toolset. The nightly IMAGE still pins langchain-core 1.5.1 and masks
-    // it, which is why the Actions lane passes while the VM lane (published dist in a
-    // venv, current dependencies) fails 10/10 — so the tag comes off ahead of the VM
-    // lane becoming the source of truth, instead of the VM gate opening red or
-    // `auto-remove-stable` filing the finding away as triage. No `test.fixme`: the
-    // spec is green on the impacted-specs lane, which runs the masked image, so #871
-    // does not apply and that lane keeps the signal for when the image picks the
-    // dependency up. Restoring the tag is a deliverable of #1921.
+    // `@stable` restored (2026-10-02, #1921). LE-2684: `lfx/graph/checkpoint/schema.py`
+    // inferred "this field is opaque" from `model_dump(mode="json")` raising, and
+    // langchain-core >= 1.6 stopped it raising, so the Agent toolset's `coroutine` was
+    // checkpointed as a `repr` string and the resumed run died in `model_validate`. The
+    // nightly image pins langchain-core 1.5.1 and masked it; the VM lane (published dist,
+    // current dependencies) failed 10/10. Fixed by langflow#15241, in the nightly from
+    // 1.13.0.dev21: a model is checkpointed only when its dump validates back. Measured
+    // on the published 1.13.0.dev30 dist in a fresh venv (langchain-core 1.6.6), the VM
+    // lane's shape: 5/5 at --retries=0, openai / gpt-4o-mini, no `Input should be
+    // callable` in the backend log.
     test("an approved send_to_agent call resumes the run and executes the published agent",
-      { tag: ["@regression", "@components", "@workspace", "@a2a", "@agents"] },
+      { tag: ["@stable", "@regression", "@components", "@workspace", "@a2a", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
