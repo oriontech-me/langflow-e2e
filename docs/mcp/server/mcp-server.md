@@ -1,7 +1,9 @@
 # MCP Server — add-server modal: stdio / HTTP registration, field persistence & tool refresh
 
-**Last validated:** Langflow 1.12.x (tests 1–7 on nightly `1.12.0.dev9`; tests 8–9 on
-`1.12.0.dev20`; tests 1 and 6 re-validated on `1.12.0.dev39` under #1266)
+**Last validated:** Langflow 1.13.x (tests 1–7 on nightly `1.12.0.dev9`; tests 8–9 on
+`1.12.0.dev20`; tests 1 and 6 re-validated on `1.12.0.dev39` under #1266; test 5's
+auto-binding assertion and the node-scoped `openAddMcpServerModal` on `1.13.0.dev30`
+under #1447)
 
 ---
 
@@ -147,21 +149,30 @@ round-tripped; then deletes it.
 1. Bootstrap; add the `lf-starter_project` MCP component; `adjustScreenView`
    and assert the canvas-controls menu is closed (`zoom_out` hidden) — the
    postcondition gate kept from #1053/#997.
-2. Register server **A**: `command: npx`,
+2. Register server **A** through the **node's own** Add MCP Server modal
+   (`openAddMcpServerModal`, see below): `command: npx`,
    `args[0]: @modelcontextprotocol/server-sequential-thinking`.
-3. Assert the node's tool dropdown exposes `sequentialthinking-0-option`
+3. Assert the node is **bound to A without being re-selected**:
+   `mcp-server-dropdown` reads A's name once the modal closes. A modal opened
+   from a node binds that node to the server it creates
+   (`McpComponent.handleSuccess`, #1447), so this is asserted, never performed.
+4. Assert the node's tool dropdown exposes `sequentialthinking-0-option`
    (through `waitForMcpToolOption`, see below); select it and assert the tool's
    own inputs render on the node (`anchor-popover-anchor-input-thought` and
    `int_int_thoughtnumber`).
-4. Settings → MCP Servers → Edit: assert `command` is `npx` and `args[0]` is the
+5. Settings → MCP Servers → Edit: assert `command` is `npx` and `args[0]` is the
    sequential-thinking package, then **edit `args[0]`** to
    `@modelcontextprotocol/server-everything` (server **B**) and save.
-5. Return to the flow **by id** (`openFlowById`), re-select the server on the
+6. Return to the flow **by id** (`openFlowById`), re-select the server on the
    node, and assert the tool list now exposes `echo-0-option` — the refresh, not
    the cached A list.
-6. Delete the server; assert it is gone; re-register it as **A** again, return to
+7. Delete the server; assert it is gone; re-register it as **A** again, return to
    the flow by id, and assert the node's tool list is back to
    `sequentialthinking-0-option`.
+
+The two re-selections in steps 6 and 7 stay: those servers are edited or
+re-registered from **Settings**, not from the node, so nothing promises the node
+a binding there — only the node's own modal does (step 3).
 
 Both re-opens address the flow by **id**, never by the card whose name contains
 "New Flow" (#1340) — see the note below.
@@ -188,6 +199,19 @@ by a 10 s wait for the option — put the whole budget on a control that is
 enabled **113–145 ms** after the modal closes (measured, 1.12.0.dev24) and is
 enabled in the error state too, leaving the tool list a 10 s wait and the
 failure unattributed. See the note below.
+
+**Every node-side registration opens the node's modal, never the sidebar's**
+(#1447). Tests 1, 3, 4 and 5 — and `mcp-server-tab.spec.ts` — go through
+`helpers/mcp/open-add-mcp-server-modal.ts` → `openAddMcpServerModal`, which
+clicks the node's `mcp-server-dropdown` and then the "Add MCP Server" button
+**inside the server-list dialog it opens** (`role="dialog"`), never a page-wide
+`getByText("Add MCP Server")`. With the MCP sidebar tab open, the sidebar's
+`sidebar-add-mcp-server-button` carries the same text and is the **only** match
+until the list dialog renders, so a dropdown click that did not open the dialog
+used to fall through to it: the SIDEBAR's modal opened, with the same testids,
+the server was created, and the node was never bound — with no error anywhere.
+When the dialog does not open, the helper re-clicks the dropdown (at most
+`NODE_LIST_DIALOG_ATTEMPTS` times) and otherwise fails naming the dropped click.
 
 ### 6 — `Streamable HTTP MCP server with server-everything should load tools correctly`
 
@@ -273,6 +297,10 @@ and nothing is fetched from the npm registry.
   (sequentialthinking).
 - **Every modal field round-trips** save → edit: stdio name/command/`args_0..3`
   + 2 env pairs; HTTP name/URL + 2 headers + 2 env pairs.
+- **The node's own modal binds the node.** When the Add MCP Server modal opened
+  from the MCP Tools node closes, `mcp-server-dropdown` reads the name of the
+  server that modal just created — asserted before the test touches the server
+  field at all, so the binding is Langflow's, not the test's (#1447).
 - **The tool list refreshes on edit**: after changing `args[0]` from
   sequential-thinking to server-everything, the node exposes `echo-0-option`;
   after reverting, `sequentialthinking-0-option`. Each of those three waits is
@@ -311,6 +339,13 @@ and nothing is fetched from the npm registry.
   half proves the validation is discriminating, not blanket.
 - **The contract test checks the API, not only the UI** — a modal that stays
   open while the server is created anyway would pass a UI-only assert.
+- **The binding assertion cannot be satisfied through the wrong modal.** The
+  sidebar's Add MCP Server modal never binds a node, so a misrouted open — the
+  #1447 mechanism — fails test 5 at the binding instead of passing on a server
+  selection the test performed itself, which is what the precondition it
+  replaces did. Measured on `1.13.0.dev30`: with the node's dropdown click
+  swallowed, the unscoped helper opened the sidebar's modal and the node stayed on
+  `lf-starter_project`; the scoped helper re-clicks instead.
 - **Canvas-controls postcondition gate** (`zoom_out` hidden) in test 5 fails at
   the canvas controls instead of ~60 lines later as `<html> intercepts pointer
   events` (#576/#997/#1053).
@@ -372,6 +407,18 @@ and nothing is fetched from the npm registry.
   `add-mcp-server-button-page`, `mcp-server-menu-button-<name>`,
   `btn_delete_delete_confirmation_modal`).
 - MCPTools node (`dropdown_str_tool`, `mcp-server-dropdown`, `list_item_<name>`).
+- `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx`
+  — `McpComponent`: `handleSuccess`, passed to `AddMcpServerModal` as
+  `onSuccess`, is what binds the node to the server its modal created (test 5's
+  step 3); its `[name, options]` effect clears the binding when the server list
+  does not contain the bound name (see the #1447 note).
+- `src/frontend/src/CustomNodes/GenericNode/components/ListSelectionComponent/index.tsx`
+  — the node's server-list dialog; its footer button (no testid, text
+  "Add MCP Server") is the one `openAddMcpServerModal` clicks, scoped to the
+  dialog.
+- `src/frontend/src/modals/addMcpServerModal/index.tsx` — the modal both entry
+  points open; it writes the new server into the `useGetMCPServers` cache before
+  calling `onSuccess`.
 - `src/backend/base/langflow/api/v2/mcp.py` — the MCP v2 server API behind tests
   8 and 9: `get_server_endpoint` (the single read, which returns the *decrypted*
   config), `update_server(..., merge_existing=True)` (the PATCH merge and its
@@ -402,6 +449,13 @@ and nothing is fetched from the npm registry.
 - If the MCPTools node's tool-input testid derivation changes (integers are
   lowercased into `int_int_<name>`; strings keep their case in
   `popover-anchor-input-<name>`).
+- If `McpComponent` stops binding the node to the server its own modal created
+  (`handleSuccess` no longer wired as the modal's `onSuccess`): test 5's step 3
+  is the assertion that will say so, and it must be triaged as a product change,
+  not re-written into a selection.
+- If the node's server-list dialog stops rendering an "Add MCP Server" button
+  inside `role="dialog"`, or gains a testid for it — `openAddMcpServerModal`
+  should then address it by that testid.
 - If the dropdown stops rendering `refresh-dropdown-list-tool`, or the node's
   failure label stops matching `/Error loading (server|tools)/` — the first is
   the only way `waitForMcpToolOption` can re-query, the second is the only way
@@ -478,6 +532,49 @@ and nothing is fetched from the npm registry.
   `Error loading server: Connection closed` and never recovering. That belongs
   upstream, not in a wait strategy.
 
+- **#1447 — the node "lost" the server its modal created because the modal was
+  not the node's.** On `1.12.0.dev25` test 5 found the node back on
+  `lf-starter_project` after creating `test_server_26480` (1 of 4 full-file runs,
+  0 of 6 alone), its tool list correct for that project and no error anywhere;
+  #1422 worked around it by selecting the server explicitly. The auto-binding is
+  an explicit product contract — `McpComponent` passes `handleSuccess` to
+  `AddMcpServerModal` as `onSuccess`, and `handleSuccess` sets the node's
+  `mcp_server` to the created name — so the question was what undid it.
+  **Not the stale refresh it looks like.** Adding the starter component fires a
+  mount refresh (`POST /api/v1/custom_component/update`, `mcp_server=lf-starter_project`)
+  that answers slowly — 22.98 s in a plain run on `1.13.0.dev30`, *after* the new
+  server's own update (22.29 s) — and the binding held. Forcing the other two
+  orderings with a routed delay changed nothing either: the stale response landing
+  **between** the binding and the new server's response (6.96 s vs 33.0 s) and
+  landing **last** (46.7 s) both left the node on the new server, on `1.13.0.dev30`
+  and — for the in-between case — on `langflowai/langflow:1.12.0`, which predates
+  `keepUserEdits` (upstream #14741). Which guard absorbs the stale response on
+  each build was not isolated — the outcome was measured, and the outcome is what
+  test 5 asserts.
+  **The helper opened the sidebar's modal.** `openAddMcpServerModal` clicked
+  `mcp-server-dropdown` and then `getByText("Add MCP Server", { exact: true }).last()`.
+  Measured on `1.13.0.dev30` with the MCP sidebar tab open, that text has exactly
+  **one** match before the list dialog renders — `sidebar-add-mcp-server-button`
+  — and two after, the dialog's footer button being the last. So a dropdown click
+  that did not open the dialog fell through to the sidebar button: swallowing that
+  click once (a capture-phase listener) made the helper open the sidebar's modal
+  (one dialog open, no server list), the server was created, and the node stayed on
+  `lf-starter_project` with that project's tool list and no error — the dev25
+  symptom exactly. Dropped clicks on this node's controls are a measured class
+  here (#1304/#1335, and the `mcp-server-dropdown` flake noted below), and they
+  concentrate under load, which is why only the full-file run hit it. The helper
+  now scopes the click to the dialog and re-clicks the dropdown when the dialog
+  does not open, and test 5 asserts the binding instead of performing it. Nothing
+  was filed upstream: the product binds correctly; the test opened the wrong modal.
+  **One product fragility measured on the way, recorded and not asserted.**
+  `McpComponent`'s `[name, options]` effect resets `mcp_server` to empty whenever
+  the server list it holds lacks the bound name. Answering the first post-create
+  `GET /api/v2/mcp/servers?action_count=false` with the new server removed (a
+  routed response) left the node on `Select a server...` on both `1.13.0.dev30` and
+  `1.12.0`. The only natural trigger this repo has measured for such a list is a
+  write answering 2xx before its commit, fixed upstream before `1.13.0.dev14`; a
+  list that legitimately lacks the name is the reset doing its job. It is a
+  different symptom from #1447's and is not what dev25 recorded.
 - **#1422 — the 120 s tool-list budget was hanging on a control that is ready in
   140 ms, and the failure blamed the UI for a dead subprocess.** Test 5 waited
   for `dropdown_str_tool:not([disabled])` under `TOOL_LIST_TIMEOUT` (120 s) and
