@@ -1607,12 +1607,12 @@
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 26 | 0 | 0 | 4 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
-| `memory/` — Memory Base Registration | 16 | 15 | 0 | 1 | 0 |
+| `memory/` — Memory Base Registration | 16 | 16 | 0 | 0 | 0 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **740** | **650 (88%)** | **37 (5%)** | **14 (2%)** | **39 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **740** | **651 (88%)** | **37 (5%)** | **13 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 724 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 725 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2066,6 +2066,7 @@
 - [x] should keep the Google embedding models the Knowledge dialog offers to ones Google still serves → `memory-base-ingestion-failures.spec.ts`
 - [x] should open Create Knowledge Base with the 1000 / 200 / newline defaults and apply the chunk settings chosen there to the stored chunks → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
+- [x] should store exactly the chunks preview-chunks promised when a line is longer than the chunk size → `memory-base-ingestion.spec.ts`
 - [x] should ingest a server-side folder through the folder connector and read its chunks back → `memory-base-ingestion.spec.ts`
 - [x] should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back → `memory-base-ingestion.spec.ts`
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
