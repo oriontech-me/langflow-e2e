@@ -1,6 +1,6 @@
 # Language Model Component Regression
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev28`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
 
 ---
 
@@ -65,6 +65,15 @@ the orphaned-removal class #1504 audits. Re-validated on `1.13.0.dev5`: 4/4 at
 `--retries=0`, and the force-fail call log reads `unexpected value
 "gemini-flash-latest"` — the very model that could not be resolved on 08-14 now
 lands in the widget.
+
+`@stable` was removed from the **Google** test a fourth time, together with a
+`test.fixme`, by #2095's quarantine (PR #2101, the guard-tripped VM daily of
+2026-09-29, `1.13.0.dev27`: `responseText.trim().length` received `0` on every
+attempt), and both are **restored by #2095**. The reply was not empty: the
+Playground completion wait did not wait, and the test read the bot bubble before
+the model wrote to it — see Notes, *The Playground completion wait*. #2046
+replaced the wait; #2095 re-measured the test on `1.13.0.dev30` with a live
+Google key before lifting it.
 
 ---
 
@@ -340,5 +349,6 @@ matches two nodes and `.first()` picks the note (#1469).
     OpenAI test survived it only because `toContainText(/4/)` retries. The Google
     test read the reply **once**, which matches #2095's row for it
     (`responseText.trim().length` received 0). Both now send through
-    `helpers/ui/playground-turn.ts`. The Google test stays `test.fixme`: lifting
-    it is #2095's deliverable and needs a live Google key.
+    `helpers/ui/playground-turn.ts`. The Google test's quarantine was lifted by
+    #2095, after clean `--retries=0` runs on `1.13.0.dev30` with a live Google
+    key.

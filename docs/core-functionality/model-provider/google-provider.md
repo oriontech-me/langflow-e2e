@@ -1,6 +1,6 @@
 # Google Provider — configure key, select Gemini
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
 
 ---
 
@@ -32,6 +32,11 @@ Mirrors `openai-provider.spec.ts` (§7.2) for the Google provider.
 `@stable` added only after multiple clean `--retries=0` runs on the fresh
 nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 `@agents` + `@playground` (Test 2 selects a model and executes).
+
+Test 2 lost `@stable` and gained `test.fixme` in #2095's quarantine (PR #2101,
+the guard-tripped VM daily of 2026-09-29, `1.13.0.dev27`: `reply.length` received
+`0` on every attempt), and both are **restored by #2095**. The reply was read
+before the model wrote it — see Notes, *The completion wait (#2123)*.
 
 ---
 
@@ -306,4 +311,5 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   then read **once** with `innerText()`. On `1.13.0.dev28` the bot bubble
   mounts empty ~400 ms after Send, so `reply.length > 0` could fail on a healthy
   Google run. The run now sends through `tests/helpers/ui/playground-turn.ts`.
-  The test #2095 quarantined keeps its `test.fixme`: lifting it is #2095's call.
+  #2095 lifted the quarantine on Test 2 after clean `--retries=0` runs on
+  `1.13.0.dev30` with a live Google key.

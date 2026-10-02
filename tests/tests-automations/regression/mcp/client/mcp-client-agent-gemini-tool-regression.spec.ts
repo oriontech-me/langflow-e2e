@@ -123,10 +123,12 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
     }
   });
 
-  // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-29
-  // (1.13.0.dev27), the Gemini turn returns an empty reply. Lifting it (drop
-  // `test.fixme`, restore `@stable`) is #2095's deliverable.
-  test.fixme(
+  // Quarantine for #2095 lifted in #2095. The VM daily of 2026-09-29 (1.13.0.dev27)
+  // read `turn.replyText` as "" on every attempt: the Stop probe before the monitor
+  // poll ignored its timeout, so the poll started mid-run and accepted the session's
+  // AI row while its text was still empty. The send now goes through
+  // `sendAndAwaitPlaygroundTurn` (#2123), so the poll starts after the turn ends.
+  test(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
     // `@stable` was auto-removed by the daily of 2026-08-10 (commit c954cd9, run
     // 31373880200) on a failure that never ran this test: the shard's own
@@ -136,7 +138,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
     // the source — the catalog is now frozen per run, see
     // `helpers/provider-setup/catalog-snapshot.ts` (#1386) — and the assertion itself
     // re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with google configured.
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
+    { tag: ["@mcp", "@agents", "@regression", "@model-provider", "@stable"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(

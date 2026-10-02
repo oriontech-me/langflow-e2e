@@ -126,12 +126,13 @@ for (const { label, options, skipReason } of targets) {
 
   test.describe(`Agent Input Sources [${label}]`, () => {
 
-    // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
-    // (1.13.0.dev28), the Agent's reply is read empty; the Actions lane hit it the same day.
-    // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
-    test.fixme(
+    // Quarantine for #2095 lifted in #2095. The VM and Actions dailies of 2026-09-30
+    // (1.13.0.dev28) read the reply as "" on every attempt, because the Stop probe
+    // this test used ignored its timeout and the bubble was read before the model
+    // wrote to it. The send now goes through `sendAndAwaitPlaygroundTurn` (#2123).
+    test(
       "input via ChatInput handle drives the agent response",
-      { tag: ["@components", "@agents", "@playground"] },
+      { tag: ["@stable", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

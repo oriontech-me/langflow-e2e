@@ -1,6 +1,6 @@
 # MCP Client – Gemini Tool-Calling Regression (#440)
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
 **Tracking issue:** oriontech-me/langflow-e2e #858 · **Upstream bug:** langflow-ai/langflow #440
 
 ---
@@ -70,6 +70,17 @@ check encodes the expected #440 state.
 > at the source (the catalog is frozen for the whole run —
 > `tests/helpers/provider-setup/catalog-snapshot.ts`), and the assertion itself
 > was re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with Google configured.
+>
+> **Quarantined and restored under #2095.** The guard-tripped VM daily of
+> 2026-09-29 (`1.13.0.dev27`) failed step 8 on every attempt with
+> `turn.replyText` received `""`, and PR #2101 removed `@stable` and added
+> `test.fixme`. The run had not finished when the reply was read. The Stop-button
+> probe that preceded the monitor poll ignored its timeout (`locator.isVisible()`
+> does not wait), so the poll started while the turn was still in flight and
+> accepted the first AI row of the session, whose text was still empty. #2123
+> moved the send into `sendAndAwaitPlaygroundTurn` (step 7), so the poll now
+> starts only after the turn has finished. #2095 re-measured the test on
+> `1.13.0.dev30` with a live Google key and lifted the quarantine.
 
 ---
 
@@ -116,6 +127,7 @@ check encodes the expected #440 state.
 - `tests/pages/SimpleAgentTemplatePage.ts` — loads Simple Agent template with configured provider/model
 - `tests/helpers/provider-setup/resolve-gemini-model.ts` — pins a deterministic Gemini flash model
 - `tests/helpers/provider-setup/` — provider env-key validation (`hasProviderEnvKeys`)
+- `tests/helpers/ui/playground-turn.ts` — `sendAndAwaitPlaygroundTurn`, the completion gate before the monitor poll
 - `src/frontend/src/modals/addMcpServerModal/index.tsx` — JSON tab; testids `json-tab`, `json-input`, `add-mcp-server-button`
 - `src/backend/base/langflow/api/v2/mcp.py` — `GET /api/v2/mcp/servers?action_count=true`, `DELETE /api/v2/mcp/servers/{name}`
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle

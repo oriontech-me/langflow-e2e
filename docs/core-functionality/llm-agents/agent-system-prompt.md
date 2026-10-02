@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts`
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
 
 ---
 
@@ -39,6 +39,12 @@ un-steer every agent flow while still returning plausible text.
 `@stable` `@release` `@agents` `@playground` — on both tests (positive +
 negative control). Validated against collected provider data (see the area
 `CLAUDE.md`).
+
+Test 1 lost `@stable` and gained `test.fixme` in #2095's quarantine (PR #2117,
+the VM and Actions dailies of 2026-09-30, `1.13.0.dev28`: the reply was read as
+`""`, so `toContain(sentinel)` failed), and both are **restored by #2095**. The
+reply was read before the model wrote it — see Notes, *The completion wait
+(#2123)*.
 
 ---
 
@@ -224,8 +230,8 @@ reliable signal (fail — invalidates the positive assertion).
   were exposed. Test 1 could read `""` and fail: this is the empty-reply shape
   #2095 quarantined it for. Test 2 could read `""` and **pass**, because
   `not.toContain(sentinel)` holds on an empty string. Both now send through
-  `tests/helpers/ui/playground-turn.ts`. Lifting Test 1's quarantine stays
-  #2095's call.
+  `tests/helpers/ui/playground-turn.ts`. #2095 lifted Test 1's quarantine
+  after clean `--retries=0` runs on `1.13.0.dev30`.
   Measured on `1.13.0.dev29` with the probe put back: Test 1 failed on `""`, and
   Test 2 passed on a reply of length 0. With the gate, both passed on real
   replies (174 and 31 characters).
