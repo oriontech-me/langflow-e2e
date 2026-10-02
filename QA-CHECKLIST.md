@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 727 `test()` calls carrying the `@stable` tag, distributed across 283 spec
+> 733 `test()` calls carrying the `@stable` tag, distributed across 284 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2007,10 +2007,12 @@
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] empty response does not crash the component → `agent-empty-refusal-response.spec.ts`
+- [x] input via ChatInput handle drives the agent response → `agent-input-sources.spec.ts`
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent reply renders as correct Markdown in the Playground → `agent-markdown-output.spec.ts`
 - [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
+- [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
@@ -2022,6 +2024,7 @@
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
 - [x] output_schema fields come back as typed JSON keys on the structured response → `agent-structured-output.spec.ts`
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
+- [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
 - [x] Playground names the tool used and captures its input/output → `agent-tool-inspection.spec.ts`
@@ -2033,6 +2036,7 @@
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] user must not experience message duplication in mathematical expressions with agent component → `general-bugs-agent-sum-duplicate-message-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
+- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
@@ -2094,6 +2098,7 @@
 - [x] real credentials configure the provider and enable a portal deployment through the UI → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] the configured deployment answers a real inference through the Language Model component → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
+- [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
@@ -2287,6 +2292,7 @@
 - [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
+- [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
