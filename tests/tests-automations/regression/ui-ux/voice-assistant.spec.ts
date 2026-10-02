@@ -29,6 +29,7 @@ test.afterEach(async ({ page, request }) => {
 async function openPublicPlayground(
   page: Page,
   voiceModeAvailable: boolean,
+  beforeNavigate?: () => Promise<void>,
 ): Promise<void> {
   const request = page.request;
   flowId = await createFlowFromStarter(request, "Basic Prompting", `voice-assistant-${Date.now()}`);
@@ -49,24 +50,76 @@ async function openPublicPlayground(
     });
   });
 
+  await beforeNavigate?.();
   await page.goto(`/playground/${flowId}/`);
   await expect(page.getByTestId("input-wrapper")).toBeVisible({ timeout: 30000 });
   await expect(page.getByTestId("button-send").last()).toBeVisible();
   expect(fired, "the config mock never fired, so the flag under test was not applied").toBeGreaterThan(0);
 }
 
+// A RegExp rather than a predicate, so the browser filters it and only the variables
+// list round-trips to the test; the query string carries the flow scope.
+const VARIABLES_URL = /\/api\/v1\/variables\/?(?:\?|$)/;
+
+/**
+ * Makes the voice assistant see no stored OpenAI key, whatever the lane holds.
+ * `hasOpenAIAPIKey` is "a global variable named OPENAI_API_KEY exists", and a lane
+ * gets one from the collect-models pre-flight or from Langflow importing its own
+ * environment, so the popover would otherwise open in the stored-key state (#2149).
+ * The real list is fetched and only that entry dropped; the shared variable itself is
+ * never touched, because the provider specs running alongside depend on it. A body
+ * that is not a list (an error) is passed through so its real status stays visible.
+ * Returns the hit count.
+ */
+async function hideStoredOpenAIKey(page: Page): Promise<() => number> {
+  let fired = 0;
+  await page.route(VARIABLES_URL, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    fired++;
+    const response = await route.fetch();
+    const variables: unknown = await response.json().catch(() => null);
+    if (!Array.isArray(variables)) return route.fulfill({ response });
+    await route.fulfill({
+      response,
+      json: variables.filter((variable: { name?: string }) => variable.name !== "OPENAI_API_KEY"),
+    });
+  });
+  return () => fired;
+}
+
 test(
   "should able to see and interact with voice assistant",
-  { tag: ["@release", "@playground"] },
+  { tag: ["@stable", "@release", "@playground"] },
   async ({ page }) => {
-    await test.step("open the public playground with voice mode available", async () => {
-      await openPublicPlayground(page, true);
+    let variablesFired = () => 0;
+
+    await test.step("open the public playground with voice mode available and no OpenAI key stored", async () => {
+      await openPublicPlayground(page, true, async () => {
+        variablesFired = await hideStoredOpenAIKey(page);
+      });
     });
 
     await test.step("the voice button opens the assistant with its settings popover", async () => {
-      await page.getByTestId("voice-button").click();
+      // The key field also renders while the variables list is still in flight, so
+      // a key that was not hidden would pass the assertion below in that window.
+      // Waiting for the list narrows it from a network round trip to one render. The
+      // wait matches the pathname on its own, not VARIABLES_URL, so a route that stops
+      // matching still reaches the named assertion below instead of timing out here.
+      await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            /^\/api\/v1\/variables\/?$/.test(new URL(response.url()).pathname) &&
+            response.request().method() === "GET",
+        ),
+        page.getByTestId("voice-button").click(),
+      ]);
       await expect(page.getByTestId("voice-assistant-container")).toBeVisible();
       await expect(page.getByTestId("voice-assistant-settings-modal-header")).toBeVisible();
+      await expect
+        .poll(variablesFired, {
+          message: "the variables mock never fired, so a key stored on this instance decides the popover's state",
+        })
+        .toBeGreaterThan(0);
       await expect(page.getByTestId("popover-anchor-openai-api-key")).toBeVisible();
     });
 
