@@ -48,12 +48,18 @@ page is a `lazy()` route, so its chunk is loaded dynamically and never named in
 
 The voice assistant decides whether an OpenAI key is stored from the user's **global
 variables**: `hasOpenAIAPIKey` is true when `GET /api/v1/variables/` lists a variable
-named `OPENAI_API_KEY` (`voice-assistant.tsx`). That is the name under which Langflow
-stores an OpenAI key saved from the model-provider settings — which is what every
-lane's `collect-models` pre-flight does — so on a lane the variable is normally
+named `OPENAI_API_KEY` (`voice-assistant.tsx`). A lane gets that variable by either of
+two routes: Langflow stores an OpenAI key saved from the model-provider settings under
+that name, which is what the `collect-models` pre-flight does (the PR lane runs it only
+when a selected spec needs models), and Langflow also imports `OPENAI_API_KEY` from its
+own process environment into every user's variables at startup
+(`store_environment_variables`, on by default). So on a lane the variable is normally
 present. Without it the popover opens in
 key-editing mode with the `popover-anchor-openai-api-key` input; with it the key field
-is an **Edit** button and the voice, microphone and language selectors render instead.
+is an **Edit** button and the voice, microphone and language selectors render instead —
+and once that popover closes the assistant starts initialising audio (microphone and
+the voice websocket, `use-scoped-voice-initialization.ts`, gated on the key and on the
+popover being closed), which hiding the key avoids as well.
 
 #1915 was validated on a local instance with no key configured, so the first daily
 after it (VM lane, `1.13.0.dev30`) failed on the missing input 3/3. Measured on a
@@ -64,9 +70,11 @@ the cause.
 The test therefore **pins the no-key state** instead of assuming it: it routes
 `GET /api/v1/variables/` and removes `OPENAI_API_KEY` from the real response. Deleting
 the variable instead is not an option — it is shared by every worker of the superuser,
-and the provider specs running alongside depend on it. The backend also refuses to
-store an invalid OpenAI key (`400 Invalid API key for OpenAI`), so the variable on a
-lane always holds a real one.
+and the provider specs running alongside depend on it. Storing a made-up key to reach
+the other state is not one either: the backend refuses a key the provider rejects as
+unauthenticated (`400 Invalid API key for OpenAI`) — though it does save one that fails
+for another reason, such as a quota. Adding a synthetic entry to the routed list is
+the way to the stored-key state, and is what #2150 proposes.
 
 ### What `voice_mode_available` really reports
 
@@ -108,7 +116,9 @@ Common setup, per test:
 
 Before step 4, route `GET /api/v1/variables/` (any query string): fetch the real
 response and fulfill it without the `OPENAI_API_KEY` entry, counting how many times it
-fired; after the click below, assert it fired at least once.
+fired. A body that is not a list (an error response) is passed through unchanged, so
+its real status still reaches the HTTP monitor. After the click below, wait for that
+response, then poll until the route has fired at least once.
 
 6. Click `voice-button`
 7. Assert `voice-assistant-container` is visible, together with the settings popover:
@@ -154,9 +164,17 @@ closing page.
   render under `true` — inverting the mock turns it red. Both are force-failed.
 - Every test asserts the config route fired, so a mock that silently stopped
   matching cannot leave the real `false` doing the work for test 3.
-- Test 1 asserts the variables route fired, so a mock that stopped matching cannot
-  leave the lane's stored key deciding the popover's state — the failure #2149 was
-  raised about would then return with its cause named.
+- Test 1 asserts the variables route fired, so a route that stopped matching every
+  variables request fails with that cause named instead of letting the lane's stored
+  key decide the popover's state. It proves the route matched *a* variables list,
+  not the voice assistant's own: if upstream moved that fetch to another endpoint,
+  the counter could still be satisfied by a different caller and the test would fail
+  on the key field again, unnamed. On the public playground today the only callers
+  are the voice assistant and its settings popover.
+- The key field also renders while the variables list is still in flight, so test 1
+  waits for the list before asserting it. That narrows the window in which a key that
+  was not hidden could pass to one render, rather than closing it; the force-fail with
+  the filter disabled goes red.
 - The flow is the test's own (created per test, id-scoped delete); a neighbour
   worker's flow can neither be shown nor removed.
 
@@ -192,7 +210,8 @@ closing page.
 
 ## Preconditions *(optional)*
 
-- No provider key: nothing here calls a model.
+- No provider key is needed: nothing here calls a model. A stored `OPENAI_API_KEY` is
+  tolerated — test 1 hides it from the page rather than requiring its absence.
 
 ---
 
@@ -201,3 +220,5 @@ closing page.
 - The public playground is moved onto the new chat input — the voice button would
   then disappear from it too, and these tests go red by design
 - The image starts shipping `webrtcvad` (real `voice_mode_available` becomes `true`)
+- The voice assistant stops deriving its key state from a global variable named
+  `OPENAI_API_KEY` — test 1's variables route would then pin nothing
