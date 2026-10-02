@@ -401,8 +401,9 @@ async function readModelCalls(
 }
 
 // Did the model emit text BEFORE its first tool call? That ordering is the shape
-// that takes the message away from the cap (#1991), and it is visible in the
-// persisted content blocks — so the diagnosis reads it instead of assuming it.
+// that took the message away from the cap before langflow#15369 (#1991), and it
+// is visible in the persisted content blocks — so the diagnosis reads it instead
+// of assuming it.
 //
 // `undefined` when the blocks are not readable: "could not look" must never render
 // as "looked and found none". Also `undefined` when the blocks hold no `tool_use` at
