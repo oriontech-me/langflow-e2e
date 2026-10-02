@@ -1,6 +1,6 @@
 # Agent max_tokens — caps generated output as configured
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
 
 ---
 
@@ -47,6 +47,14 @@ provider's `max_tokens_field_name`, e.g. Google's `max_output_tokens`) from
 regressing; `@agents` — Agent parameter behavior; `@playground` — the runs and
 the token-usage observable live in the Playground.
 
+Test 1 lost `@stable` and gained `test.fixme` in #2095's quarantine (PR #2117,
+VM and Actions dailies of 2026-09-30, `1.13.0.dev28`), and both are **restored by
+#2095**. The quarantine was filed under that issue's "empty reply" cluster, but
+this test never read a reply: it failed in setup, on the saved-value check
+(`toBe(50)`, received `0`). The cause was the autosave debounce moving under the
+setter, not the model — see *Notes* → *The saved-value check reads after the
+save, not after a fixed delay*.
+
 ---
 
 ## Preconditions *(optional)*
@@ -70,16 +78,22 @@ The spec generates **2 tests per active model** via `resolveTestTargets()`
 
 Shared setup per test:
 1. Load the Simple Agent template.
-2. Set **Max Tokens** in the Agent node inspector
-   (`parameters-button` → `int_int_max_tokens` → `inspection-panel-close`).
-   **The int field rejects Playwright's `fill()`** (the controlled input keeps
-   an empty DOM value) and swallows the first keystroke of an immediate
-   `pressSequentially` (a typed "50" becomes a clamped "1") — the setter must
-   click, let the field settle, type slowly, and **verify the DOM value**,
-   retrying once if it diverges.
-3. **Verify the saved value via the API** (`GET /api/v1/flows/{id}` →
-   Agent node → `template.max_tokens.value`) before running — a silently
-   unsaved value must fail the setup step, not corrupt the causal pair.
+2. Set **Max Tokens** on the Agent node. `max_tokens` is an advanced field, so
+   it is first exposed on the node body from the inspector's advanced options
+   (`inspector-add-max_tokens`), and that exposure's own autosave is drained
+   with a window longer than one debounce, so the editor is quiet before the
+   edit. Then a save watch is armed, the value is typed into `int_int_max_tokens`,
+   and the field is blurred (`Tab`). **The int field rejects Playwright's
+   `fill()`** (the controlled input keeps an empty DOM value) and swallows the
+   first keystroke of an immediate `pressSequentially` (a typed "50" becomes a
+   clamped "1"), so the setter clicks, lets the field settle, types slowly, and
+   **verifies the DOM value**, retyping if it diverges.
+3. **Wait for the edit's own save, then verify the saved value via the API**
+   (`GET /api/v1/flows/{id}` → Agent node → `template.max_tokens.value`) before
+   running. The wait is the armed watch resolving on a completed
+   `PATCH /api/v1/flows/{id}`, so it fails naming the cause when no save is
+   issued. The value is read **once**: a save that landed without `50` fails the
+   setup step, and is never retried into a pass.
 4. Seed the prompt on the **ChatInput node** (Playground prefill re-injection
    race — see `agent-multimodal-image-input.md`): *"Write a detailed 500-word
    essay about the history of the ocean. Do not use any tools — answer
@@ -137,7 +151,9 @@ Shared setup per test:
   a silent `0` (no limit) possible; verifying
   `template.max_tokens.value === 50` via the API makes Test 1's setup
   trustworthy (and a saved `0` in Test 1 would also fail its `≤ 50` assertion
-  — the guard is double).
+  — the guard is double). The check runs after the edit's own save has
+  completed, never after a fixed delay, so a red here means the save carried
+  the wrong value, not that it had not happened yet.
 - **Token-level assertion, not text-length:** reply text length varies with
   model verbosity; the provider-enforced output-token cap does not.
 - **Causal pair:** identical prompt, only `max_tokens` differs.
@@ -179,6 +195,9 @@ Shared setup per test:
   mapping via `max_tokens_field_name` (Google ⇒ `max_output_tokens`).
 - `src/frontend/src/CustomNodes/GenericNode/` — the Agent node inspector
   (`int_int_max_tokens`) and its int-field input handling.
+- `tests/helpers/flows/watch-flow-save.ts` and `tests/helpers/flows/autosave-interval.ts`
+  — the save watch that gates the saved-value read, and the instance's
+  `auto_saving_interval` it derives its budgets from.
 - `src/frontend/src/components/core/playgroundComponent/` — the
   `chat-message-token-usage` badge and its Input/Output tooltip.
 - Provider LLM API — a live key; real model calls.
@@ -206,12 +225,25 @@ Shared setup per test:
   the remainder is clamped to the field's `range_spec` min (typed "50" →
   saved "1"). Slow `pressSequentially` after click + settle, with DOM-value
   verification and one retry, is reliable (scouted on dev33).
-- **Closing the dialog can race the field's commit debounce** — even with the
-  DOM showing "50", the persisted value came out `0` in ~half the burst runs.
-  The setter blurs the field (`Tab` + settle) before closing AND verifies the
-  persisted value via the flows API, reopening the dialog and retrying the
-  whole cycle when the save was lost (observed: 3/5 burst failures before the
-  persist-retry; 5/5 green after).
+- **The saved-value check reads after the save, not after a fixed delay
+  (#2095).** The setter used to blur the field, wait 800 ms, drain with
+  `waitForFlowSaveSettled` (700 ms quiet window), read the flow, and retry the
+  whole cycle up to three times when it read `0`. That drain does not wait for a
+  save that has not been issued yet (#1741), so the read landed roughly 1.5 s
+  after the last keystroke. The autosave is a trailing debounce of
+  `GET /api/v1/config.auto_saving_interval`, and that went from 2000 ms to
+  **5000 ms** in `1.13.0.dev27` (upstream #14903). At 2000 ms the first read
+  could miss, and a retry's re-read could still catch the previous attempt's save,
+  which fits the 3/5 burst failures seen on dev33 before the persist-retry. At
+  5000 ms every read is early, and each retry's `Ctrl+A` / `Backspace` re-arms
+  the debounce. Measured on `1.13.0.dev30` with the unchanged setter: **2/2 runs
+  red**, all three attempts logging `value did not persist`. A diagnostic run on
+  the same build read `0` right after the drain and `50` four seconds later, from
+  a single PATCH, so the save was correct and only late. The setter now drains
+  the exposure's save first, arms `watchFlowSave` before typing, and awaits it
+  after the blur (`tests/helpers/flows/watch-flow-save.ts`), then reads the
+  value once. The persistence retry is gone: with the wait proven, a `0` in the
+  database is a defect to report, not a timing to retry.
 - **Tooltip Output may be empty** when the whole budget is consumed by
   reasoning before any visible token (observed with `max_tokens=1`); the
   parser treats missing/empty as `0`, which still satisfies `≤ 50`.

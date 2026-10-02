@@ -1,6 +1,6 @@
 # Agent Input Sources — direct field vs ChatInput handle
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev29`, #2123)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
 
 ---
 
@@ -32,6 +32,12 @@ canonical authoring patterns — a core regression for anyone building agent flo
 `--retries=0` on the fresh nightly (per `CONTRIBUTING.md`). `@components` — Agent
 node input configuration; `@agents` — agent execution; `@playground` — Test 1
 drives input through the Playground.
+
+Test 1 lost `@stable` and gained `test.fixme` in #2095's quarantine (PR #2117,
+the VM and Actions dailies of 2026-09-30, `1.13.0.dev28`: the reply was read as
+`""`, so `toContain(token)` failed), and both are **restored by #2095**. The
+reply was read before the model wrote it — see Notes, *The completion wait
+(#2123)*.
 
 ---
 
@@ -202,5 +208,6 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
   `innerText()`. On `1.13.0.dev28` the bot bubble mounts empty ~400 ms after
   Send, so that read could be `""`. This is the empty-reply shape #2095
   quarantined the test for. It now sends through
-  `tests/helpers/ui/playground-turn.ts`. Lifting the quarantine stays #2095's
-  call. Test 2 runs on the canvas and never used the probe.
+  `tests/helpers/ui/playground-turn.ts`. #2095 lifted the quarantine after
+  clean `--retries=0` runs on `1.13.0.dev30`. Test 2 runs on the canvas and
+  never used the probe.

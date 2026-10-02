@@ -3,6 +3,8 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { watchFlowSave } from "../../../../helpers/flows/watch-flow-save";
+import { pendingSaveQuietMs } from "../../../../helpers/flows/autosave-interval";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import {
   closeAdvancedOptions,
@@ -79,27 +81,37 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
   }
 }
 
-// Set the Agent's max_tokens in the Controls dialog. Two scouted quirks
-// (dev33): (a) the int field rejects Playwright's fill() outright and swallows
-// the first keystroke of an immediate pressSequentially — a typed "50" becomes
-// a range_spec-clamped "1"; (b) closing the dialog can race the field's commit
-// debounce, persisting 0 even though the DOM showed the typed value. So: type
-// slowly and verify the DOM, blur to force the commit, and verify the value
-// actually PERSISTED via the flows API — reopening the dialog and retrying the
-// whole cycle when it did not.
+// Set the Agent's max_tokens on the node body and wait for THAT edit's save.
+// The int field rejects Playwright's fill() outright and swallows the first
+// keystroke of an immediate pressSequentially — a typed "50" becomes a
+// range_spec-clamped "1" (scouted on dev33) — so type slowly and verify the DOM.
+//
+// The save is waited for, never assumed (#2095). The setter used to blur, drain
+// with `waitForFlowSaveSettled`, read the flow and retry up to three times on a
+// `0`. That drain does not wait for a save that has not been issued yet (#1741),
+// and the autosave is a trailing debounce of `auto_saving_interval`, which went
+// 2000 -> 5000 ms in 1.13.0.dev27 (upstream #14903): every read landed ~1.5 s
+// after the last keystroke, before the save, and each retry's Ctrl+A/Backspace
+// re-armed the debounce. Measured on 1.13.0.dev30: 2/2 red, while the database
+// held 50 four seconds later. Now the field's exposure is drained first, so the
+// editor is quiet when the watch is armed, and the value is read once after the
+// watched PATCH completes — a `0` there is a defect, not a timing to retry.
 async function setMaxTokens(page: Page, value: string): Promise<void> {
   // dev49: max_tokens is an advanced field — expose it on the node body via the
-  // inspector once (replaces the old Controls dialog / edit-button-modal), then
-  // fill it on the body. The int field still rejects fill() and swallows a fast
-  // first keystroke, so keep the slow-type + DOM-verify + persistence retry.
+  // inspector once (replaces the old Controls dialog / edit-button-modal).
   await page.locator('[data-testid^="rf__node-Agent"]').first().click();
   await openAdvancedOptions(page);
   await page.getByTestId("inspector-add-max_tokens").click();
   await closeAdvancedOptions(page);
+  // The exposure is itself a flow mutation with its own pending save; a watch
+  // armed on top of it would resolve on that save, which carries no value.
+  await waitForFlowSaveSettled(page, { quietMs: pendingSaveQuietMs() });
+
   const field = page.getByTestId("int_int_max_tokens");
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    await expect(field).toBeVisible({ timeout: 15000 });
-    await field.scrollIntoViewIfNeeded();
+  await expect(field).toBeVisible({ timeout: 15000 });
+  await field.scrollIntoViewIfNeeded();
+  const save = watchFlowSave(page);
+  try {
     for (let typeTry = 0; typeTry < 3; typeTry++) {
       await field.click();
       await page.waitForTimeout(600);
@@ -110,12 +122,15 @@ async function setMaxTokens(page: Page, value: string): Promise<void> {
     }
     await expect(field).toHaveValue(value);
     await field.press("Tab");
-    await page.waitForTimeout(800);
-    await waitForFlowSaveSettled(page);
-    if ((await getSavedMaxTokens(page)) === Number(value)) return;
-    console.warn(`setMaxTokens: value did not persist (attempt ${attempt}) — retrying`);
+  } catch (e) {
+    save.dispose();
+    throw e;
   }
-  expect(await getSavedMaxTokens(page)).toBe(Number(value));
+  await save.settled();
+  expect(
+    await getSavedMaxTokens(page),
+    "the save the max_tokens edit triggered completed without the typed value",
+  ).toBe(Number(value));
 }
 
 // Read the Agent node's persisted max_tokens straight from the flows API. The
@@ -287,12 +302,14 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent max_tokens [${label}]`, () => {
-    // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-30
-    // (1.13.0.dev28), the Agent's reply reports 0 output tokens; the Actions lane hit it the same day.
-    // Lifting it (drop `test.fixme`, restore `@stable`) is #2095's deliverable.
-    test.fixme(
+    // Quarantine for #2095 lifted in #2095. Filed under that issue's "empty reply"
+    // cluster, but this test failed in setup: the saved-value check read 0 (`toBe(50)`)
+    // on every attempt of the VM and Actions dailies of 2026-09-30 (1.13.0.dev28),
+    // because `setMaxTokens` read the flow before the 5000 ms autosave fired. See the
+    // comment on `setMaxTokens`.
+    test(
       "max_tokens=50 caps the response's output tokens",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

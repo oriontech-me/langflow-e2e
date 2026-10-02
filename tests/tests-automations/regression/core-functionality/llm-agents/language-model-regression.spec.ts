@@ -162,12 +162,14 @@ test.describe("Language Model Component Regression", () => {
   // 4/4 clean at `--retries=0`, and the force-fail call log reads
   // `unexpected value "gemini-flash-latest"` — the very model that could not be
   // resolved on 08-14 now lands in the widget.
-  // Quarantined for #2095: hard failure on the guard-tripped VM daily of 2026-09-29
-  // (1.13.0.dev27), the Gemini turn returns an empty reply. Lifting it (drop
-  // `test.fixme`, restore `@stable`) is #2095's deliverable.
-  test.fixme(
+  // Quarantine for #2095 lifted in #2095. The VM daily of 2026-09-29 (1.13.0.dev27)
+  // read the reply as "" on every attempt, but the reply was never empty: the Stop
+  // probe this test used ignored its timeout, so the bubble was read before the
+  // model wrote to it (pre-#2130 source on 1.13.0.dev30: 5/5 red, same signature).
+  // The send now goes through `sendAndAwaitPlaygroundTurn` (#2046).
+  test(
     "language model must respond with Google provider",
-    { tag: ["@release", "@components", "@model-provider"] },
+    { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
       const gate = providerSkipGate("google");
       test.skip(gate.skip, gate.reason);
