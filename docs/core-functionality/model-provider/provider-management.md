@@ -239,8 +239,11 @@ sidebar entry to the canonical **Language Model** component:
 > wedge already matches the existing `api-request-timeout` signature while a
 > healthy probe stays unclassified — both pinned in
 > `tests/helpers/other/page-entry-barrier.test.ts` against the real classifier.
-> The residual limitation is stated in that helper's header: the probe runs
-> after the budget is spent, so a wedge shorter than the wait reads healthy.
+> The limitation that header used to state — the probe runs after the budget is
+> spent, so a wedge shorter than the wait read healthy — is closed by #1549: the
+> barrier also samples liveness during the wait, and a healthy final probe after
+> an outage in those samples reads DEGRADED (still with no prefix) instead of
+> claiming a product/UI failure.
 
 > **Verdict on the no-node hard failure (issue #1304).** Test 4 hard-failed on the
 > 2026-08-05 daily (run 30997773754, all 3 attempts) waiting for

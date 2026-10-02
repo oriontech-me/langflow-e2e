@@ -85,7 +85,10 @@ Four things that make this a comparison rather than a coincidence:
 **What is left is not the wedge, and reading it as one sends the next person after the
 wrong lever.** `blips_total` did not move (23 / 31 / 23 before → 24 / 27 / 24 after):
 single-probe failures below the 2-probe window threshold are a floor of the runner,
-present on the 2026-08-27 near-control too (19), and #1549 owns them. And `wedged: true`
+present on the 2026-08-27 near-control too (19). #1549 settled what they mean for
+attribution: the page-entry barrier now samples liveness during its wait with the
+recorder's own definitions (`tests/helpers/other/page-entry-barrier.ts`), so a lone
+failed probe is a blip there too and only an outage marks the verdict DEGRADED. And `wedged: true`
 still renders on a day whose only window is 8 s long with `reason: "timeout>4000ms"` and
 no kill behind it — the flag is a threshold on the probe, not a synonym for a worker
 kill, so read `down_seconds_total` and the kill count rather than the boolean.

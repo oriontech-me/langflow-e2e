@@ -314,9 +314,11 @@ matches two nodes and `.first()` picks the note (#1469).
   `MainPage.waitForLoad`, `loadTemplateByName` and
   `addFlowToTestOnEmptyLangflow`. On timeout it probes `/api/v1/version` and
   prefixes the failure with `[backend-unreachable]` when the backend did not
-  answer (or answered non-2xx), keeps the failure attributed to the UI when it
-  did answer, and reports UNKNOWN when the probe itself could not run (#1012 —
-  an unevaluated probe is not a clean one). Success-path behaviour is unchanged;
+  answer (or answered non-2xx), keeps the failure attributed to the UI only when
+  the backend also answered the liveness samples taken during the wait (#1549 —
+  an outage in those samples reads DEGRADED, still with no prefix), and reports
+  UNKNOWN when the probe itself could not run (#1012 — an unevaluated probe is
+  not a clean one). Success-path behaviour is unchanged;
   only the failure message differs.
 - **Two waits that threw away what they saw (#2046).**
   - **Dialog test, 2026-09-25 flake.** It waited on `provider-item-OpenAI` with a
