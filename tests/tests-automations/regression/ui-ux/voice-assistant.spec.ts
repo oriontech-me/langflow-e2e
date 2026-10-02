@@ -61,15 +61,29 @@ async function openPublicPlayground(
 // list round-trips to the test; the query string carries the flow scope.
 const VARIABLES_URL = /\/api\/v1\/variables\/?(?:\?|$)/;
 
+/** Any read of the variables list, scoped or not. */
+function isVariablesList(url: string, method: string): boolean {
+  return method === "GET" && /^\/api\/v1\/variables\/?$/.test(new URL(url).pathname);
+}
+
 /** The request that decides `hasOpenAIAPIKey`: the list scoped to this test's flow. */
 function isScopedVariablesList(url: string, method: string): boolean {
-  const parsed = new URL(url);
   return (
-    method === "GET" &&
-    /^\/api\/v1\/variables\/?$/.test(parsed.pathname) &&
-    parsed.searchParams.get("flow_id") === flowId
+    flowId !== null &&
+    isVariablesList(url, method) &&
+    new URL(url).searchParams.get("flow_id") === flowId
   );
 }
+
+// Fields beyond `name` are read only on paths the tests never take (editing or
+// deleting the key); nothing is persisted.
+const SYNTHETIC_OPENAI_KEY = {
+  id: "00000000-0000-4000-8000-000000002150",
+  name: "OPENAI_API_KEY",
+  type: "Credential",
+  value: null,
+  default_fields: [],
+};
 
 /**
  * Pins whether the voice assistant sees a stored OpenAI key, whatever the lane holds.
@@ -95,9 +109,7 @@ async function routeStoredOpenAIKey(page: Page, stored: boolean): Promise<() => 
     const others = variables.filter((variable: { name?: string }) => variable.name !== "OPENAI_API_KEY");
     await route.fulfill({
       response,
-      json: stored
-        ? [...others, { id: "00000000-0000-4000-8000-000000002150", name: "OPENAI_API_KEY", type: "Credential", value: null, default_fields: [] }]
-        : others,
+      json: stored ? [...others, SYNTHETIC_OPENAI_KEY] : others,
     });
   });
   return () => scoped;
@@ -110,10 +122,12 @@ async function routeStoredOpenAIKey(page: Page, stored: boolean): Promise<() => 
  * case at the click because the scoped list has not landed yet.
  */
 async function openVoiceAssistant(page: Page, scopedFired: () => number): Promise<void> {
-  // The wait matches on its own, not through VARIABLES_URL, so a route that stops
-  // matching still reaches the named assertion below instead of timing out here.
+  // The wait takes any variables read after the click, not only the scoped one and
+  // not through VARIABLES_URL, so a route that stops matching — or a list that stops
+  // carrying `flow_id` — still reaches the named assertion below instead of timing
+  // out here. The unscoped page-load read has already happened by the click.
   await Promise.all([
-    page.waitForResponse((response) => isScopedVariablesList(response.url(), response.request().method())),
+    page.waitForResponse((response) => isVariablesList(response.url(), response.request().method())),
     page.getByTestId("voice-button").click(),
   ]);
   await expect(page.getByTestId("voice-assistant-container")).toBeVisible();
@@ -159,31 +173,6 @@ test(
 );
 
 test(
-  "should show the voice settings when an OpenAI key is stored",
-  { tag: ["@stable", "@release", "@playground"] },
-  async ({ page }) => {
-    let scopedFired = () => 0;
-
-    await test.step("open the public playground with voice mode available and an OpenAI key stored", async () => {
-      await openPublicPlayground(page, true, async () => {
-        scopedFired = await routeStoredOpenAIKey(page, true);
-      });
-    });
-
-    await test.step("the settings popover offers the voice settings instead of asking for the key", async () => {
-      await openVoiceAssistant(page, scopedFired);
-      // Both render only once a list reporting a key has landed, so unlike test 1's
-      // key field they cannot pass in the window before it.
-      await expect(page.getByTestId("voice-assistant-settings-modal-microphone-select")).toBeVisible();
-      await expect(page.getByRole("menu").getByRole("button", { name: "Edit", exact: true })).toBeVisible();
-      await expect(page.getByTestId("popover-anchor-openai-api-key")).toHaveCount(0);
-      // The popover is left open: closing it with a key stored starts audio
-      // initialisation, which opens the voice websocket this image cannot serve.
-    });
-  },
-);
-
-test(
   "user should not be able to see voice button if voice mode is not available",
   { tag: ["@stable", "@release", "@playground"] },
   async ({ page }) => {
@@ -207,6 +196,33 @@ test(
 
     await test.step("the voice button is rendered", async () => {
       await expect(page.getByTestId("voice-button")).toBeVisible();
+    });
+  },
+);
+
+test(
+  "should show the voice settings when an OpenAI key is stored",
+  { tag: ["@stable", "@release", "@playground"] },
+  async ({ page }) => {
+    let scopedFired = () => 0;
+
+    await test.step("open the public playground with voice mode available and an OpenAI key stored", async () => {
+      await openPublicPlayground(page, true, async () => {
+        scopedFired = await routeStoredOpenAIKey(page, true);
+      });
+    });
+
+    await test.step("the settings popover offers the voice settings instead of asking for the key", async () => {
+      await openVoiceAssistant(page, scopedFired);
+      // Both render only once a list reporting a key has landed, so unlike test 1's
+      // key field they cannot pass in the window before it.
+      await expect(page.getByTestId("voice-assistant-settings-modal-microphone-select")).toBeVisible();
+      await expect(page.getByRole("menu").getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+      await expect(page.getByTestId("popover-anchor-openai-api-key")).toHaveCount(0);
+      // The popover is left open: closing it with a key stored starts audio
+      // initialisation, which opens the voice websocket this image cannot serve.
+      // (Rendering it already asks for the microphone: MicrophoneSelect enumerates
+      // devices on mount, and logs a console error where none are available.)
     });
   },
 );
