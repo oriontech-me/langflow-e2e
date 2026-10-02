@@ -122,8 +122,9 @@ async function routeStoredOpenAIKey(page: Page, stored: boolean): Promise<() => 
 /**
  * Clicks the voice button and waits for the variables list, then asserts the
  * assistant and its settings popover are open and polls until the flow-scoped list
- * has been served rewritten — so any assertion after this sees the pinned state's
- * data on the wire, whichever variables response the wait itself resolved on. The popover opens itself while no key is known, which is always the
+ * has been served rewritten — so any assertion after this runs once the pinned
+ * state's data was handed to the page, whichever variables response the wait itself
+ * resolved on. The popover opens itself while no key is known, which is always the
  * case at the click because the scoped list has not landed yet.
  */
 async function openVoiceAssistant(page: Page, scopedFired: () => number): Promise<void> {
@@ -139,7 +140,7 @@ async function openVoiceAssistant(page: Page, scopedFired: () => number): Promis
   await expect(page.getByTestId("voice-assistant-settings-modal-header")).toBeVisible();
   await expect
     .poll(scopedFired, {
-      message: "the variables mock never served the flow-scoped list, so a key stored on this instance decides the popover's state",
+      message: "the variables mock never served a rewritten flow-scoped list (the route stopped matching it, or it answered an error), so a key stored on this instance decides the popover's state",
     })
     .toBeGreaterThan(0);
 }

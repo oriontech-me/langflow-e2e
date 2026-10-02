@@ -145,13 +145,14 @@ Common setup, per test:
 (`voice_mode_available: true`, no OpenAI key stored)
 
 Before step 4, route `GET /api/v1/variables/` (any query string): fetch the real
-response and fulfill it without the `OPENAI_API_KEY` entry, counting the requests scoped
+response and fulfill it without the `OPENAI_API_KEY` entry, counting the rewritten lists served for the requests scoped
 to this flow (`flow_id=<id>`). A body that is not a list (an error response) is passed
 through unchanged, so its real status still reaches the HTTP monitor. After the click
 below, wait for the variables response that follows it (matched by path alone, so a
 list that stops carrying `flow_id` still reaches the named check), then poll until the
 scoped list has been served rewritten at least once — which is what orders the key-field
-assertion after the pinned data reached the page.
+assertion after the pinned data was handed to the page (it still has to render it — the
+window described under *Guarding against false positives*).
 
 6. Click `voice-button`
 7. Assert `voice-assistant-container` is visible, together with the settings popover:
@@ -177,11 +178,11 @@ count 0.
 
 Before step 4, route `GET /api/v1/variables/` the same way as test 1, but fulfill it
 with the real list **plus** a synthetic `OPENAI_API_KEY` entry (`type: "Credential"`,
-no value), counting the scoped requests.
+no value), counting the rewritten lists served for this flow's scoped requests.
 
 6. Click `voice-button`, waiting for the variables response that follows it
 7. Assert `voice-assistant-container` and `voice-assistant-settings-modal-header` are
-   visible, and poll until the scoped count is at least one
+   visible, and poll until a rewritten scoped list has been served
 8. Assert the microphone selector `voice-assistant-settings-modal-microphone-select`
    and the popover's **Edit** button (role `button`, exact name `Edit`, inside the
    popover's `menu`) are visible — both render only once the list reporting a key
@@ -273,6 +274,8 @@ closing page.
 - The image starts shipping `webrtcvad` (real `voice_mode_available` becomes `true`)
 - The voice assistant stops deriving its key state from a global variable named
   `OPENAI_API_KEY`, or from the flow-scoped list — tests 1 and 4 then fail on "the
-  variables mock never served the flow-scoped list", and the route needs re-scoping
+  variables mock never served a rewritten flow-scoped list", and the route needs
+  re-scoping (the same message also fires when that list answers an error, which the
+  HTTP monitor logs alongside it)
 - The popover stops opening itself on the click (it would then be closed in test 4,
   whose header assertion goes red by design)
