@@ -23,7 +23,8 @@
 // for: no machines, no ssh, no real run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { userInfo } from "node:os";
@@ -3622,4 +3623,282 @@ test("a refused provider does not add a false second cause when the version went
   assert.equal(Number(plain.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
   assert.match(plain.stderr, /the version check could not be performed/);
   assert.match(plain.stderr, /Set CHECK_TARGET_VERSION=1/);
+});
+
+// ---------------------------------------------------------------------------
+// The token rows, driven for real (#2020)
+//
+// The structural tests above pin the token POST's POSITION, and every one of them
+// passed on a phase that sent nothing: until #2040 the POST ran before the summary that
+// writes the block, and the summary was never asked to write one. These run the real
+// phase_publish against a local platform and assert on what it RECEIVED, which no
+// ordering or wiring slip survives.
+//
+// Adapted from @Victor-w-Madeira's harness in #2021 (closed unmerged), which measured
+// the defect this section closes.
+// ---------------------------------------------------------------------------
+
+const REAL_CURL = execFileSync("/usr/bin/env", ["bash", "-c", "command -v curl"], { encoding: "utf8" }).trim();
+
+/**
+ * phase_publish, run for real, against a local platform that records what it got.
+ *
+ * `curl` picks what answers for curl on PATH: the real one, a wrapper that records its
+ * argv before handing over, or one that dies without printing anything — the shape a
+ * missing binary or a crash produces, and the only one where `%{http_code}` is absent.
+ */
+async function publishTokens({
+  post = "1",
+  probes = true,
+  providers = [],
+  state = "RUN_TESTS=1",
+  shardTotal = 1,
+  endpoint,
+  ledger = false,
+  curl = "real",
+  env = {},
+} = {}) {
+  const dir = makeTempDir("publish-tokens-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  mkdirSync(join(dir, "all-tokens"), { recursive: true });
+  if (ledger) mkdirSync(join(dir, "ledger"), { recursive: true });
+  writeFileSync(join(dir, "results.json"), JSON.stringify({ stats: { expected: 1 }, suites: [] }));
+  if (probes) {
+    writeFileSync(
+      join(dir, "all-tokens", "token-probes-1.jsonl"),
+      JSON.stringify({
+        trace_id: "t1",
+        flow_id: "f1",
+        start_time: "2026-09-23T07:00:00Z",
+        status: "ok",
+        total_tokens: 88,
+        models: [{ model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
+      }) + "\n",
+    );
+  }
+  providers.forEach((p, i) => writeFileSync(join(dir, "all-tokens", `token-provider-${i + 1}.txt`), p));
+  const summary = join(dir, "step-summary.md");
+  writeFileSync(summary, "");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  // The coverage counts come from ts-node; stubbed so the test does not pay for it.
+  writeFileSync(join(bin, "npx"), "#!/usr/bin/env bash\necho 7\n", { mode: 0o755 });
+  const curlArgs = join(dir, "curl-args");
+  if (curl === "record") {
+    writeFileSync(
+      join(bin, "curl"),
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(curlArgs)}\nexec ${JSON.stringify(REAL_CURL)} "$@"\n`,
+      { mode: 0o755 },
+    );
+  } else if (curl === "silent") {
+    writeFileSync(join(bin, "curl"), "#!/usr/bin/env bash\nexit 6\n", { mode: 0o755 });
+  }
+
+  const received = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const json = JSON.parse(body);
+      received.push(json);
+      res.writeHead(json.tokens ? 200 : 201, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify(
+          json.tokens
+            ? { status: "exists", tokens_status: "ingested", tokens_dropped: 0, tokens_received: json.tokens.rows.length }
+            : { status: "created" },
+        ),
+      );
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address();
+  try {
+    const r = await new Promise((resolveRun) => {
+      const child = spawn(
+        BASH,
+        [
+          "-c",
+          [
+            `source ${JSON.stringify(SCRIPT)}`,
+            `RUN_DIR=${JSON.stringify(dir)} SHARD_TOTAL=${shardTotal} TEST_JOB_FAILED=0 ${state} LANGFLOW_VERSION=1.13.0.dev21`,
+            "phase_publish",
+            "echo REACHED_AFTER_PUBLISH",
+          ].join("\n"),
+        ],
+        {
+          cwd: REPO_ROOT,
+          // A hung publish fails the test instead of the lane's whole time budget.
+          timeout: 60_000,
+          env: {
+            ...process.env,
+            TARGET_SSH: "unused-in-sourced-tests",
+            PATH: `${bin}:${process.env.PATH}`,
+            // The caller's own values must not reach the run: an exported LANGFLOW_IMAGE
+            // or TARGET_KIND changes the artifact the rows name, a TARGET_VENV sends
+            // build_target_drift to `uv`, and under Actions the unit lane's step summary
+            // is a real file the PR's run page shows.
+            TARGET_KIND: "source",
+            TARGET_VENV: "",
+            LANGFLOW_IMAGE: "",
+            EVIDENCE_UPLOAD_BASE: "",
+            RUN_DATE: "",
+            GITHUB_STEP_SUMMARY: summary,
+            KEEP_LEDGER: "0",
+            CREATE_ISSUE: "0",
+            NOTIFY_SLACK: "0",
+            AUTO_REMOVE: "0",
+            POST_QA_PLATFORM: post,
+            QA_PLATFORM_ENDPOINT: endpoint ?? `http://127.0.0.1:${port}/runs`,
+            QA_E2E_AUTOMATION_TOKEN: "tok",
+            ...(ledger ? { KEEP_LEDGER: "1", EVENT_NAME: "schedule", LEDGER_DIR: join(dir, "ledger") } : {}),
+            ...env,
+          },
+        },
+      );
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => resolveRun({ code, out }));
+    });
+    return {
+      ...r,
+      dir,
+      received,
+      summary: readFileSync(summary, "utf8"),
+      curlArgs: existsSync(curlArgs) ? readFileSync(curlArgs, "utf8").split("\n") : null,
+    };
+  } finally {
+    server.close();
+  }
+}
+
+const tokenSummaryLog = (dir) => readFileSync(join(dir, "logs", "token-summary.log"), "utf8");
+
+test("phase_publish sends the token rows as a second POST of the same run (#2020)", async () => {
+  const r = await publishTokens();
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.code, 0, "phase_publish must exit 0");
+  assert.equal(r.received.length, 2, `expected the run POST and the token POST:\n${r.out}`);
+  const [run, tokens] = r.received;
+  assert.equal(run.tokens, undefined, "the run's own POST must not wait for, or carry, the tokens");
+  const rest = { ...tokens };
+  delete rest.tokens;
+  assert.deepEqual(rest, run, "the token POST re-sends the SAME run payload, so only the token rows land");
+  assert.equal(tokens.tokens.total_tokens, 88);
+  assert.match(r.out, /\[tokens\] Token rows delivered/);
+});
+
+test("the token summary never reaches a caller's GITHUB_STEP_SUMMARY (#2020)", async () => {
+  // resolve_served_version's reason: this lane has no step summary, but the unit lane
+  // sources this script under Actions, where the table would sit on the PR's run page
+  // reading as a real spend report.
+  const r = await publishTokens();
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(tokenSummaryLog(r.dir), /token summary/i, "the summariser must have run for this to mean anything");
+  assert.equal(r.summary, "", "the token tables were appended to the caller's step summary");
+});
+
+test("the token POST is behind POST_QA_PLATFORM, like the run POST (#2020)", async () => {
+  const r = await publishTokens({ post: "0" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 0);
+  assert.doesNotMatch(r.out, /\[tokens\]/);
+});
+
+test("a run that captured no tokens POSTs the run only, and says why (#2020)", async () => {
+  const r = await publishTokens({ probes: false });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 1, "no token block means no token POST — never a zeroed one");
+  assert.match(r.out, /No token block for this run/);
+});
+
+test("a READABLE zero-test run reaches the summariser as the abort it is, and POSTs no tokens (#2020)", async () => {
+  // TESTS_TOTAL is how the summariser tells an infra abort from a run that spent
+  // nothing. Not passed, it reads UNKNOWN, prices whatever traces exist and adds the
+  // abort's line to the anomaly baseline — the thing the Actions lane passes it to stop.
+  const r = await publishTokens({ state: "RUN_TESTS=0" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(tokenSummaryLog(r.dir), /zero tests/, "the summariser was not told the run executed zero tests");
+  assert.equal(r.received.length, 1, "an abort has no spend to post");
+});
+
+test("a report the guards could not read keeps its token block — UNKNOWN is not a zero-test abort (#2020)", async () => {
+  // check-run-integrity answers tests_total=0 for a missing results.json (#1726).
+  // Passed through, that "0" sends the summariser down its infra-abort branch and the
+  // spend is lost under "the run executed zero tests" on a day every shard ran.
+  for (const state of ["RUN_TESTS=0 MERGE_OK=false RUN_UNREADABLE=true", "RUN_TESTS=0 MERGE_OK=true RUN_UNREADABLE=true"]) {
+    const r = await publishTokens({ state });
+    assert.match(r.out, /REACHED_AFTER_PUBLISH/, `${state}:\n${r.out}`);
+    assert.ok(existsSync(join(r.dir, "tokens-block.json")), `${state}: the block must be written:\n${r.out}`);
+    assert.doesNotMatch(tokenSummaryLog(r.dir), /zero tests/, state);
+    assert.equal(r.received.length, 0, `${state}: no payload was built, so nothing is POSTed`);
+  }
+});
+
+test("the ledger's spend line names the artifact that ran, as the payload does (#2020)", async () => {
+  // Without LANGFLOW_IMAGE the line reads `langflow_image: null`, and the two rows this
+  // lane writes for one run would disagree about which build it was. Same derivation as
+  // the payload, so both kinds are checked against what the platform received.
+  for (const kind of [
+    { env: {}, expected: "pypi:langflow==1.13.0.dev21" },
+    {
+      env: { TARGET_KIND: "image", LANGFLOW_IMAGE: "langflowai/langflow-nightly:1.13.0.dev21" },
+      expected: "langflowai/langflow-nightly:1.13.0.dev21",
+    },
+  ]) {
+    const r = await publishTokens({
+      ledger: true,
+      state: "RUN_TESTS=1 RUN_EMPTY=false RUN_PARTIAL=false",
+      env: kind.env,
+    });
+    assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+    const lines = readFileSync(join(r.dir, "ledger", "token-history.jsonl"), "utf8").trim().split("\n");
+    const line = JSON.parse(lines.at(-1));
+    assert.equal(line.workflow, "daily-stable-vm", "the last line must be this run's");
+    assert.equal(line.langflow_image, kind.expected);
+    assert.equal(line.langflow_image, r.received[0].langflow_image, "the spend line and the run record must name one build");
+  }
+});
+
+test("the token POST reads the matrix's shard count, not the requested one (#2020)", async () => {
+  // SHARDS is what was asked for; SHARD_TOTAL is what the partitioner produced. Two
+  // shards that both pinned openai are the whole run — read against a request for four,
+  // two of them "never reported" and the run's provider is dropped as partial.
+  const r = await publishTokens({ providers: ["openai", "openai"], shardTotal: 2, env: { SHARDS: "4" } });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.equal(r.received.length, 2, r.out);
+  const { tokens } = r.received[1];
+  assert.equal(tokens.target_provider_shards.expected, 2);
+  assert.equal(tokens.target_provider, "openai");
+});
+
+test("a platform that does not answer cannot abort publish — neither POST fails the run (#2020)", async () => {
+  // Port 9 on loopback: nothing listens, so both requests are refused. Before this the
+  // run POST's curl exited 7 under `set -e` and phase_publish died on the spot, taking
+  // the token POST, the history, the removal, the issue, Slack and the verdict with it.
+  const r = await publishTokens({ endpoint: "http://127.0.0.1:9/runs" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(r.out, /the QA Platform POST failed \(HTTP 000\)/);
+  assert.match(r.out, /the token POST could not be sent/);
+});
+
+test("a curl that prints no status is reported as 000, not as an empty code (#2020)", async () => {
+  const r = await publishTokens({ curl: "silent" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.match(r.out, /the QA Platform POST failed \(HTTP 000\)/);
+});
+
+test("the run POST is bounded in time (#2020)", async () => {
+  // A platform that accepts and never answers would otherwise hold the run with no
+  // bound — and everything downstream of publish with it. Read off the argv curl was
+  // actually started with, since waiting the bound out is a minute per test.
+  const r = await publishTokens({ curl: "record" });
+  assert.match(r.out, /REACHED_AFTER_PUBLISH/, r.out);
+  assert.ok(r.curlArgs, "curl was never called");
+  const at = r.curlArgs.findIndex((a) => a === "--max-time" || a === "-m");
+  assert.ok(at >= 0, `the run POST has no time bound: ${r.curlArgs.join(" ")}`);
+  const seconds = Number(r.curlArgs[at + 1]);
+  assert.ok(seconds > 0 && seconds <= 300, `unexpected bound: ${r.curlArgs[at + 1]}`);
+  assert.equal(r.received.length, 2, "the wrapper must still deliver the POST");
 });
