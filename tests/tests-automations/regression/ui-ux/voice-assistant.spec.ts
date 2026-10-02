@@ -94,15 +94,15 @@ const SYNTHETIC_OPENAI_KEY = {
  * provider specs depend on is never touched. A body that is not a list (an error) is
  * passed through so its real status stays visible.
  *
- * Every list is rewritten, but only the flow-scoped one is counted: the page also
- * loads an unscoped list before the click, which would satisfy the count on its own.
+ * Every list is rewritten, but only the flow-scoped one is counted, and only once it
+ * was served rewritten: the page also loads an unscoped list before the click, which
+ * would satisfy the count on its own.
  */
 async function routeStoredOpenAIKey(page: Page, stored: boolean): Promise<() => number> {
   let scoped = 0;
   await page.route(VARIABLES_URL, async (route) => {
     const request = route.request();
     if (request.method() !== "GET") return route.continue();
-    if (isScopedVariablesList(request.url(), request.method())) scoped++;
     const response = await route.fetch();
     const variables: unknown = await response.json().catch(() => null);
     if (!Array.isArray(variables)) return route.fulfill({ response });
@@ -111,14 +111,19 @@ async function routeStoredOpenAIKey(page: Page, stored: boolean): Promise<() => 
       response,
       json: stored ? [...others, SYNTHETIC_OPENAI_KEY] : others,
     });
+    // Counted only once a rewritten list was served: an error body passes through
+    // untouched, and on a key-holding lane it would leave test 1 in the no-key
+    // state without the filter ever acting.
+    if (isScopedVariablesList(request.url(), request.method())) scoped++;
   });
   return () => scoped;
 }
 
 /**
- * Clicks the voice button and waits for the flow-scoped variables list, then asserts
- * the assistant and its settings popover are open and that the routed list was the
- * one served. The popover opens itself while no key is known, which is always the
+ * Clicks the voice button and waits for the variables list, then asserts the
+ * assistant and its settings popover are open and polls until the flow-scoped list
+ * has been served rewritten — so any assertion after this sees the pinned state's
+ * data on the wire, whichever variables response the wait itself resolved on. The popover opens itself while no key is known, which is always the
  * case at the click because the scoped list has not landed yet.
  */
 async function openVoiceAssistant(page: Page, scopedFired: () => number): Promise<void> {
@@ -221,8 +226,9 @@ test(
       await expect(page.getByTestId("popover-anchor-openai-api-key")).toHaveCount(0);
       // The popover is left open: closing it with a key stored starts audio
       // initialisation, which opens the voice websocket this image cannot serve.
-      // (Rendering it already asks for the microphone: MicrophoneSelect enumerates
-      // devices on mount, and logs a console error where none are available.)
+      // (Rendering it already requests microphone access: MicrophoneSelect calls
+      // getUserMedia on mount. A scout measured the resulting console error a few
+      // seconds later; the test ends before it.)
     });
   },
 );
