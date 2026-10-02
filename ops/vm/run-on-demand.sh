@@ -452,8 +452,9 @@ ondemand_finish() {
   OD_CLEANING=1
   trap '' TERM INT
   if [ -z "$OD_STATUS" ]; then
-    # An exit nobody classified: a signal (the daily stopping this run), or a bug.
-    OD_STATUS=failed; OD_EXIT=3
+    # An exit nobody classified: a signal (the daily stopping this run), or a bug. A
+    # VERDICT set just before the signal goes too: VERDICT belongs to done alone.
+    OD_STATUS=failed; OD_EXIT=3; OD_VERDICT=""
     case "$code" in
       143) OD_REASON="stopped by SIGTERM — the daily starting, systemctl stop, or the unit's TimeoutStartSec" ;;
       130) OD_REASON="interrupted" ;;

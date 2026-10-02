@@ -170,11 +170,13 @@ test("a SIGTERM the instant the request leaves the slot still answers it", () =>
   }
 });
 
-test("a SIGTERM right after STATUS is decided still answers a result the platform accepts", () => {
-  // ondemand_finish classifies only an exit with no STATUS, so a STATUS set before its
-  // EXIT, VERDICT or REASON left the result with them empty, and the platform refuses
-  // a result whose EXIT does not match its STATUS. A DEBUG trap sends the signal after
-  // the first command that sets STATUS in each outcome, whatever follows it.
+test("a SIGTERM between any two parts of an outcome still answers a result the platform accepts", () => {
+  // ondemand_finish classifies only an exit with no STATUS. A STATUS set before its
+  // EXIT left EXIT empty; a VERDICT set before a STATUS that never came left
+  // failed/green. The platform refuses both (EXIT must match STATUS, and VERDICT is
+  // set exactly when STATUS is done), and the request is never answered. A DEBUG trap
+  // sends the signal right after the k-th assignment of STATUS, VERDICT, EXIT or
+  // REASON once signals are caught, for every k an outcome has.
   const EXPECTED_EXIT = { "done/green": "0", "done/red": "1", "refused/": "2", "failed/": "3", "build_failed/": "4" };
   const cases = {
     "done/green": {},
@@ -187,26 +189,31 @@ test("a SIGTERM right after STATUS is decided still answers a result the platfor
     "failed (no results.json)": { runExit: 1, writeResults: false },
   };
   for (const [name, opts] of Object.entries(cases)) {
-    const { env, collect } = setup(opts);
-    // The initial `OD_STATUS=""` is not a decision, and comes before any trap exists.
-    const harness = join(env.E2E_ONDEMAND_STATE, "..", "term-after-status.sh");
-    writeFileSync(harness, [
-      "od_term() {",
-      '  case "$od_prev" in',
-      "    'OD_STATUS=\"\"') ;;",
-      "    OD_STATUS=*) kill -TERM $$ ;;",
-      "  esac",
-      '  od_prev="$BASH_COMMAND"',
-      "}",
-      'set -T; od_prev=""; trap od_term DEBUG',
-      `source ${q(ONDEMAND)}`,
-    ].join("\n") + "\n");
-    const r = collect(spawnSync("bash", [harness], { encoding: "utf8", env }).status);
-    const res = r.result["req-1"];
-    assert.ok(res, `${name}: no result:\n${r.log}`);
-    assert.equal(res.EXIT, EXPECTED_EXIT[`${res.STATUS}/${res.VERDICT}`], `${name}: ${res.STATUS}/${res.VERDICT} answered EXIT='${res.EXIT}'`);
-    assert.notEqual(res.REASON, "", `${name}: no REASON`);
-    assert.equal(String(r.status), res.EXIT, `${name}: the exit status does not follow the result`);
+    for (const k of [1, 2, 3, 4]) {
+      const { env, collect } = setup(opts);
+      const harness = join(env.E2E_ONDEMAND_STATE, "..", "term-after-assignment.sh");
+      writeFileSync(harness, [
+        "od_term() {",
+        '  case "$od_prev" in',
+        "    \"trap 'exit 143' TERM\") od_armed=1 ;;",
+        "    *'=\"\"') ;;",
+        '    OD_STATUS=* | OD_VERDICT=* | OD_EXIT=* | OD_REASON=*)',
+        `      if [ "$od_armed" = 1 ]; then od_n=$((od_n + 1)); [ "$od_n" = ${k} ] && kill -TERM $$; fi ;;`,
+        "  esac",
+        '  od_prev="$BASH_COMMAND"',
+        "}",
+        'set -T; od_prev=""; od_armed=0; od_n=0; trap od_term DEBUG',
+        `source ${q(ONDEMAND)}`,
+      ].join("\n") + "\n");
+      const r = collect(spawnSync("bash", [harness], { encoding: "utf8", env }).status);
+      const res = r.result["req-1"];
+      const at = `${name}, signal after assignment ${k}`;
+      assert.ok(res, `${at}: no result:\n${r.log}`);
+      assert.equal(res.STATUS === "done", res.VERDICT !== "", `${at}: ${res.STATUS} with VERDICT='${res.VERDICT}'`);
+      assert.equal(res.EXIT, EXPECTED_EXIT[`${res.STATUS}/${res.VERDICT}`], `${at}: ${res.STATUS}/${res.VERDICT} answered EXIT='${res.EXIT}'`);
+      assert.notEqual(res.REASON, "", `${at}: no REASON`);
+      assert.equal(String(r.status), res.EXIT, `${at}: the exit status does not follow the result`);
+    }
   }
 });
 
