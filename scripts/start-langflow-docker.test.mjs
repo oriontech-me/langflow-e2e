@@ -266,6 +266,28 @@ test("the container listens on the port it is published on, so Langflow reaches 
   assert.match(runCallOf(r0), / -e LANGFLOW_PORT=7860 /);
 });
 
+test("/etc/hosts is docker's unless a hosts file is given, and then it is mounted read-only (#2159)", () => {
+  assert.doesNotMatch(runCallOf(runScript()), /\/etc\/hosts/);
+  const dir = makeTempDir("hosts-file-");
+  const hosts = join(dir, "hosts");
+  writeFileSync(hosts, "127.0.0.1\tlocalhost\n::1\tlocalhost\n");
+  const r = runScript({ env: { LANGFLOW_HOSTS_FILE: hosts } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(runCallOf(r).includes(` -v ${hosts}:/etc/hosts:ro `), runCallOf(r));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a hosts file that is not there is refused before any container starts", () => {
+  // A snap docker hands an unreadable bind source over as nothing; starting anyway
+  // would serve a container whose resolution is not the one asked for.
+  for (const path of ["/no/such/hosts", "/"]) {
+    const r = runScript({ env: { LANGFLOW_HOSTS_FILE: path } });
+    assert.notEqual(r.status, 0, path);
+    assert.match(r.stdout, /LANGFLOW_HOSTS_FILE is set but not a readable file/, path);
+    assert.equal(runCallOf(r), undefined, `no container may start for '${path}'`);
+  }
+});
+
 test("readiness asks the address the port is published on", () => {
   // Bound to one non-loopback address, `localhost` is refused: a healthy container
   // would wait out the whole budget and the start would fail (#2086 review).

@@ -159,6 +159,7 @@ function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest 
     compare: readIf(cmpOut),
     backup: readIf(bakOut),
     requestLeft: existsSync(join(state, "request.env")),
+    hosts: readIf(join(state, "hosts")),
     repo,
   };
   rmSync(dir, { recursive: true, force: true });
@@ -166,6 +167,15 @@ function shadow({ date = TODAY, sha = null, version = "1.13.0.dev26", noRequest 
 }
 
 const envOf = (text) => Object.fromEntries(text.split("\n").filter((l) => l.includes("=")).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+
+test("the shadow's containers resolve localhost to both loopbacks, as on a host with IPv6 (#2159)", () => {
+  const r = shadow();
+  assert.ok(r.env, `run-e2e.sh was not reached:\n${r.log}`);
+  const e = envOf(r.env);
+  assert.equal(e.LANGFLOW_HOSTS_FILE, join(r.state, "hosts"));
+  assert.match(r.hosts, /^127\.0\.0\.1\tlocalhost$/m);
+  assert.match(r.hosts, /^::1\tlocalhost( |$)/m);
+});
 
 test("the shadow runs the image of the requested version, isolated, with every publisher off", () => {
   const r = shadow();

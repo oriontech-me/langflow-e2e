@@ -701,6 +701,8 @@ target_image_env() {
   printf 'LANGFLOW_CONTAINER_NAME=%s ' "$(backend_container_name "$1")"
   printf 'LANGFLOW_BIND_HOST=127.0.0.1 '
   printf 'LANGFLOW_READY_TIMEOUT_S=%s ' "$BACKEND_START_TIMEOUT_S"
+  # Only when the caller set it: unset, docker writes /etc/hosts as it always did.
+  [ -z "${LANGFLOW_HOSTS_FILE:-}" ] || printf 'LANGFLOW_HOSTS_FILE=%s ' "$(shq "$LANGFLOW_HOSTS_FILE")"
 }
 
 # The artifact that ran, as the payload and the history row name it. ONE expression for

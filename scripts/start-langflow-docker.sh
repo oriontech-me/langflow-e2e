@@ -18,6 +18,16 @@
 #                             (e.g. 127.0.0.1) on a machine others can reach.
 #   LANGFLOW_READY_TIMEOUT_S  default 120. A caller with its own, longer budget raises
 #                             it, or this loop fails a cold start first.
+#   LANGFLOW_HOSTS_FILE       unset leaves /etc/hosts to docker, as before. A path is
+#                             mounted read-only as the container's /etc/hosts (#2159).
+#                             On a host booted with ipv6.disable=1, docker writes no
+#                             `::1 localhost` line and drops an IPv6 --add-host, so
+#                             `localhost` resolves to 127.0.0.1 alone in the container.
+#                             A caller that needs the resolution a host with IPv6 gives
+#                             passes a file that has the line. It must be a regular
+#                             file that exists; anything else is refused here rather
+#                             than started blind. This cannot see what a snap docker
+#                             cannot read (/tmp, say), so keep it under $HOME.
 #
 # Nightly and released builds live in DIFFERENT Docker repositories
 # (langflowai/langflow-nightly vs langflowai/langflow), and the nightly repo keeps
@@ -76,6 +86,15 @@ if [ -n "${BIND_HOST}" ]; then
   esac
 fi
 
+HOSTS_MOUNT=()
+if [ -n "${LANGFLOW_HOSTS_FILE:-}" ]; then
+  if [ ! -f "${LANGFLOW_HOSTS_FILE}" ] || [ ! -r "${LANGFLOW_HOSTS_FILE}" ]; then
+    echo "LANGFLOW_HOSTS_FILE is set but not a readable file: '${LANGFLOW_HOSTS_FILE}'" >&2
+    exit 1
+  fi
+  HOSTS_MOUNT=(-v "${LANGFLOW_HOSTS_FILE}:/etc/hosts:ro")
+fi
+
 echo "Starting Langflow: ${IMAGE} on port ${PORT}..."
 
 # `latest` is a moving tag, so a local copy pulled days ago is silently stale —
@@ -122,6 +141,7 @@ docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
   -p "${PUBLISH}" \
+  ${HOSTS_MOUNT[@]+"${HOSTS_MOUNT[@]}"} \
   -e LANGFLOW_PORT="${PORT}" \
   -e LANGFLOW_AUTO_LOGIN=true \
   -e LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
