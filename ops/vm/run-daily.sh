@@ -342,7 +342,7 @@ main() {
   fi
   # The image shadow (#2093): the same suite against the published image of $WANT, as
   # its own unit, after this one. Asked for on a red day too -- a red day is when the
-  # machine-or-artifact question is worth the most. It cannot fail or delay this run:
+  # image-or-pip question is worth the most. It cannot fail or delay this run:
   # the status is ignored, and --no-block returns before the shadow starts.
   #
   # Rollback: IMAGE_SHADOW=0 on this line, or remove e2e-shadow.service; the request

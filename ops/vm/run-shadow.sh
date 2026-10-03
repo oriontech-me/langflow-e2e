@@ -170,7 +170,6 @@ main() {
     ( cd "$WT" && node scripts/compare-lane-verdicts.mjs \
         --history "$LEDGER/daily-history.jsonl" \
         --history "$OFFICIAL_LEDGER/daily-history.jsonl" \
-        --history "$REPO/reports/daily-history.jsonl" \
         --date "$SHADOW_DATE" \
         --ci-workflow "$2" --ci-label "$3" \
         --vm-workflow daily-stable-vm-image --vm-label VM+image ) \
