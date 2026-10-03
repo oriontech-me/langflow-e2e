@@ -203,12 +203,12 @@ test("the shadow runs the official run's commit, in its own worktree, and keeps 
   assert.ok(e);
 });
 
-test("both comparisons are recorded, with the pairs named for what they compare", () => {
+test("the artifact comparison is recorded, and the machine pair is gone with the Actions daily (#2159)", () => {
   const r = shadow();
   const lines = r.compare.trim().split("\n");
-  assert.equal(lines.length, 2);
+  assert.equal(lines.length, 1);
   assert.match(lines[0], new RegExp(`--date ${TODAY} --ci-workflow daily-stable-vm --ci-label VM\\+wheel --vm-workflow daily-stable-vm-image --vm-label VM\\+image`));
-  assert.match(lines[1], /--ci-workflow daily-stable --ci-label Actions\+image --vm-workflow daily-stable-vm-image --vm-label VM\+image/);
+  assert.doesNotMatch(r.compare, /--ci-workflow daily-stable /);
   assert.match(lines[0], new RegExp(`--history ${r.ledger}/daily-history\\.jsonl`));
 });
 
