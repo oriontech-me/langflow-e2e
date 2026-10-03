@@ -436,8 +436,12 @@ export class Worker {
       this.log(`${h.id}: the lease was lost before a run took the request; released without starting it`);
       return this.release();
     }
-    if (h.progress_lost && now - Date.parse(h.held_since) > MAX_HOLD_SECONDS * 1000) {
-      this.log(`::error:: ${h.id}: lease lost, held past ${MAX_HOLD_SECONDS}s, and no run or result to show for it; released`);
+    // Consumed, the request is still started past the hold limit: that start writes the
+    // orphan's answer, which the platform takes over abandoned. Only a start tried past
+    // the limit that came to nothing (the executor's lock held) lets it go.
+    const deadline = Date.parse(h.held_since) + MAX_HOLD_SECONDS * 1000;
+    if (h.progress_lost && now > deadline && h.last_start_ms > deadline) {
+      this.log(`::error:: ${h.id}: lease lost, held past ${MAX_HOLD_SECONDS}s, and a start since then left no result; released`);
       return this.release();
     }
     const paused = this.pause();

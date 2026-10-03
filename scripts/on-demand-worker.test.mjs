@@ -772,6 +772,51 @@ test("a lease lost before a run took the request releases it unstarted, and empt
   }
 });
 
+test("a consumed request past the hold limit is still started, and released only when that start leaves nothing", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ orphans: [[REQ().id, false]] });
+    p.enqueue(REQ());
+    p.requests[0].status = "abandoned";
+    p.requests[0].claim_token = TOKEN;
+    mkdirSync(join(m.env.E2E_ONDEMAND_STATE, "worker"), { recursive: true });
+    // Claimed three hours ago, lease lost, the run killed without its cleanup.
+    const held = { ...REQ(), claim_token: TOKEN, held_since: "2026-09-30T12:00:00Z", reported: "running", progress_lost: true, starts: 1, last_start_ms: 0 };
+    writeFileSync(join(m.env.E2E_ONDEMAND_STATE, "worker", "state.json"), JSON.stringify({ claim_token: TOKEN, held }));
+    const w = worker(m, p);
+    await until(w, () => p.requests[0].status === "failed", "the orphan's answer over abandoned");
+    assert.match(p.requests[0].result.REASON, /^interrupted/);
+    assert.equal(w.state.held, null);
+  } finally {
+    await p.close();
+  }
+  // The start past the limit came to nothing (the executor's lock held): released then.
+  const p2 = await fakePlatform();
+  try {
+    const m = machine({ run: false, orphans: [[REQ().id, false]] });
+    p2.enqueue(REQ());
+    p2.requests[0].status = "abandoned";
+    p2.requests[0].claim_token = TOKEN;
+    mkdirSync(join(m.env.E2E_ONDEMAND_STATE, "worker"), { recursive: true });
+    const held = { ...REQ(), claim_token: TOKEN, held_since: "2026-09-30T12:00:00Z", reported: "running", progress_lost: true, starts: 1, last_start_ms: 0 };
+    writeFileSync(join(m.env.E2E_ONDEMAND_STATE, "worker", "state.json"), JSON.stringify({ claim_token: TOKEN, held }));
+    let t = WED_1500;
+    const w = worker(m, p2, { clock: () => t });
+    await w.step();
+    assert.equal(m.starts().length, 1, "a consumed request past the limit was released without a start");
+    m.setUnit("e2e-on-demand.service", "failed");
+    t += 119_000; // the second start's backoff is two minutes
+    await w.step();
+    assert.notEqual(w.state.held, null, "released before the start had its time");
+    t += 2_000;
+    await w.step();
+    assert.equal(w.state.held, null, w.lines.join("\n"));
+    assert.equal(m.starts().length, 1);
+  } finally {
+    await p2.close();
+  }
+});
+
 test("a held request from the state file is checked again before it reaches the slot", async () => {
   const p = await fakePlatform();
   try {
