@@ -2662,6 +2662,39 @@ test("a row already on main is not written twice", () => {
   rmSync(lane.dir, { recursive: true, force: true });
 });
 
+test("a push refused because main moved is retried once from the new tip (#2168 review)", () => {
+  // A pre-receive hook refuses the first push only, the way a commit landing between
+  // the fetch and the push would make the source refuse a non-fast-forward.
+  const lane = historyPair("history-retry");
+  const hook = join(lane.source, "hooks", "pre-receive");
+  writeFileSync(hook, `#!/bin/sh\nf=${JSON.stringify(join(lane.dir, "refused-once"))}\n[ -e "$f" ] && exit 0\ntouch "$f"; echo refused >&2; exit 1\n`, { mode: 0o755 });
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.match(lane.git(lane.source, "show", "main:reports/daily-history.jsonl"), /20261005T080000Z/);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a day with no token row sends the daily row alone", () => {
+  const lane = historyPair("history-daily-only");
+  writeFileSync(join(lane.ledger, "daily-history.jsonl"), readFileSync(join(lane.ledger, "daily-history.jsonl"), "utf8") + ROW("20261005T080000Z") + "\n");
+  const r = sendHistory(lane, { append: false });
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /sent: 1 file\(s\)/);
+  assert.doesNotMatch(lane.git(lane.source, "show", "main:reports/token-history.jsonl"), /20261005T080000Z/);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a row followed by a blank line is refused: only exactly one new line is published (#2168 review)", () => {
+  const lane = historyPair("history-blank");
+  writeFileSync(join(lane.ledger, "daily-history.jsonl"), readFileSync(join(lane.ledger, "daily-history.jsonl"), "utf8") + ROW("20261005T080000Z") + "\n\n");
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane, { append: false });
+  assert.match(r.stdout, /EXIT=1/);
+  assert.match(r.stdout, /not exactly one row/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
 test("a ledger addition that is not exactly this run's row is refused, and nothing is pushed", () => {
   const lane = historyPair("history-foreign");
   writeFileSync(join(lane.ledger, "daily-history.jsonl"), readFileSync(join(lane.ledger, "daily-history.jsonl"), "utf8") + ROW("someone-else") + "\n");
@@ -2683,7 +2716,7 @@ test("off by default and off unless strictly 1: nothing is fetched or pushed", (
   rmSync(lane.dir, { recursive: true, force: true });
 });
 
-test("a refused push says so, keeps the rows in the ledger, and leaves the clone as it was", () => {
+test("a source it cannot read says so, keeps the rows in the ledger, and leaves the clone as it was", () => {
   const lane = historyPair("history-refused");
   const before = cloneState(lane);
   const r = sendHistory(lane, { url: join(lane.dir, "no-such-source.git") });
@@ -3147,7 +3180,7 @@ test("the push credential warns on every answer and never stops the run (#2028)"
   const refused = run(3, "REFUSED: SOURCE_PUSH_TOKEN is unset");
   assert.match(refused.stdout, /EXIT=0/, "a refused push credential stopped the run");
   assert.doesNotMatch(refused.stderr, /::error::/, "a refused push credential was raised as an error");
-  assert.match(refused.stderr, /::warning::.*pushes @stable removals was refused/);
+  assert.match(refused.stderr, /::warning::.*pushes to the source \(@stable removals, history rows\) was refused/);
 
   for (const code of [2, 1]) {
     const soft = run(code, "UNKNOWN: no answer");

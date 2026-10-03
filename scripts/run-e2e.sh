@@ -1392,10 +1392,10 @@ verify_push_credential() {
   case "$rc" in
     0) return 0 ;;
     3)
-      warn "the credential that pushes @stable removals was refused — see the line above. The run goes on; a removal today would be reported as made and not pushed (#2028)."
+      warn "the credential that pushes to the source (@stable removals, history rows) was refused — see the line above. The run goes on; a removal today would be reported as made and not pushed (#2028), and the history rows stay in the ledger (#2164)."
       ;;
     *)
-      warn "the push credential for @stable removals could not be confirmed (exit $rc) — see $log (#2028)."
+      warn "the push credential (@stable removals, history rows) could not be confirmed (exit $rc) — see $log (#2028, #2164)."
       ;;
   esac
   return 0
@@ -2714,6 +2714,12 @@ history_to_source_body() {
     if [ -z "$before" ] || [ ! -f "$ledger" ]; then continue; fi
     lines="$(wc -l < "$ledger" | tr -d ' ')"
     [ "$lines" -gt "$before" ] || continue
+    # Exactly one new line per file, or nothing is sent: the appenders write one row,
+    # and anything else (a second row, a blank line) is not this run's row to publish.
+    if [ "$((lines - before))" != "1" ]; then
+      history_say "NOT SENT: the ledger gained $((lines - before)) lines in ${pair%%:*}, not exactly one row for run $RUN_ID"
+      return 1
+    fi
     tail -n "+$((before + 1))" "$ledger" > "$tmp/${pair%%:*}.add"
     # Each line must be this run's own row, or something else wrote to the ledger.
     if ! node -e '
@@ -2750,6 +2756,8 @@ history_to_source_body() {
     while IFS= read -r path; do
       local base add
       add="$tmp/$(basename "$path" .jsonl).add"
+      # Fail-closed for both files: a missing tracked file means the source is not the
+      # repository this lane writes to, and half a write would be harder to read.
       if ! git -C "$REPO_DIR" cat-file -e "$target_sha:$path" 2>/dev/null; then
         history_say "NOT SENT: $path does not exist on the source's $SOURCE_PUSH_BRANCH"; return 1
       fi
