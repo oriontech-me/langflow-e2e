@@ -95,7 +95,7 @@ function fullRun({ runExit = 0, warn = true } = {}) {
       'process.stdout.write(JSON.stringify({ ok: true, version: "1.2.3", warnings: ["no v1.2.3 tag"] }) + "\\n");',
     ].join("\n"),
     "scripts/prepare-target-dist.sh": "#!/bin/sh\necho frontend_dir=/nowhere/frontend\n",
-    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\necho "run-e2e got AUTO_REMOVE=[$AUTO_REMOVE] CREATE_ISSUE=[$CREATE_ISSUE]"\nexit ${runExit}\n`,
+    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\necho "run-e2e got AUTO_REMOVE=[$AUTO_REMOVE] CREATE_ISSUE=[$CREATE_ISSUE]"\necho "run-e2e got USE_LEDGER_DURATIONS=[$USE_LEDGER_DURATIONS]"\nexit ${runExit}\n`,
     "scripts/backup-ledger.sh": "#!/bin/sh\necho backup ran\n",
   };
 }
@@ -224,6 +224,16 @@ test("the lane turns the @stable removal on, and run-e2e.sh receives it (#1945)"
   const dir = makeTempDir("wrapper-auto-remove");
   const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
   assert.match(r.log, /run-e2e got AUTO_REMOVE=\[1\] CREATE_ISSUE=\[1\]/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the lane balances on its own ledger timings, and run-e2e.sh receives the switch (#2159)", () => {
+  // The Actions daily, the only writer of reports/spec-durations.json, is off since
+  // 2026-10-02. Read from what the orchestrator saw: run-e2e.sh compares the switch
+  // strictly against "1", and an unexported assignment would leave it at 0.
+  const dir = makeTempDir("wrapper-ledger-durations");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
+  assert.match(r.log, /run-e2e got USE_LEDGER_DURATIONS=\[1\]/);
   rmSync(dir, { recursive: true, force: true });
 });
 

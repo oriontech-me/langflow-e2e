@@ -252,21 +252,32 @@ test("the port is published as before unless a bind host is given", () => {
   assert.match(runCallOf(r0), / -p 7860:7860 /);
   assert.deepEqual(r0.urls, ["http://localhost:7860/health_check", "http://localhost:7860/api/v1/version"]);
   const r = runScript({ env: { LANGFLOW_BIND_HOST: "127.0.0.1", LANGFLOW_PORT: "7870" } });
-  assert.match(runCallOf(r), / -p 127\.0\.0\.1:7870:7860 /);
+  assert.match(runCallOf(r), / -p 127\.0\.0\.1:7870:7870 /);
+});
+
+test("the container listens on the port it is published on, so Langflow reaches itself there (#2159)", () => {
+  // Remapped, localhost:<port> does not exist inside the container: the A2A self-card
+  // fetch and the Streamable HTTP MCP self-registration failed on every shard but none.
+  const r = runScript({ env: { LANGFLOW_BIND_HOST: "127.0.0.1", LANGFLOW_PORT: "7881" } });
+  assert.match(runCallOf(r), / -p 127\.0\.0\.1:7881:7881 /);
+  assert.match(runCallOf(r), / -e LANGFLOW_PORT=7881 /);
+  const r0 = runScript();
+  assert.match(runCallOf(r0), / -p 7860:7860 /);
+  assert.match(runCallOf(r0), / -e LANGFLOW_PORT=7860 /);
 });
 
 test("readiness asks the address the port is published on", () => {
   // Bound to one non-loopback address, `localhost` is refused: a healthy container
   // would wait out the whole budget and the start would fail (#2086 review).
   const r = runScript({ env: { LANGFLOW_BIND_HOST: "10.23.12.107", LANGFLOW_PORT: "7870" } });
-  assert.match(runCallOf(r), / -p 10\.23\.12\.107:7870:7860 /);
+  assert.match(runCallOf(r), / -p 10\.23\.12\.107:7870:7870 /);
   assert.deepEqual(r.urls, ["http://10.23.12.107:7870/health_check", "http://10.23.12.107:7870/api/v1/version"]);
 });
 
 test("a wildcard bind is published as given and still probed on localhost", () => {
   for (const [host, spec] of [["0.0.0.0", "0\\.0\\.0\\.0"], ["::", "\\[::\\]"]]) {
     const r = runScript({ env: { LANGFLOW_BIND_HOST: host, LANGFLOW_PORT: "7870" } });
-    assert.match(runCallOf(r), new RegExp(` -p ${spec}:7870:7860 `));
+    assert.match(runCallOf(r), new RegExp(` -p ${spec}:7870:7870 `));
     assert.equal(r.urls[0], "http://localhost:7870/health_check", `${host} answers on localhost`);
   }
 });
@@ -274,7 +285,7 @@ test("a wildcard bind is published as given and still probed on localhost", () =
 test("an IPv6 bind takes brackets in the publish spec and the probe, given with or without them", () => {
   for (const host of ["::1", "[::1]"]) {
     const r = runScript({ env: { LANGFLOW_BIND_HOST: host, LANGFLOW_PORT: "7870" } });
-    assert.match(runCallOf(r), / -p \[::1\]:7870:7860 /, `from '${host}'`);
+    assert.match(runCallOf(r), / -p \[::1\]:7870:7870 /, `from '${host}'`);
     assert.equal(r.urls[0], "http://[::1]:7870/health_check", `from '${host}'`);
   }
 });

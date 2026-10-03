@@ -241,13 +241,10 @@ LEDGER_DIR="${LEDGER_DIR:-${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}}"
 LEDGER_HISTORY="${LEDGER_DIR:+$LEDGER_DIR/daily-history.jsonl}"
 LEDGER_TOKENS="${LEDGER_DIR:+$LEDGER_DIR/token-history.jsonl}"
 LEDGER_DURATIONS="${LEDGER_DIR:+$LEDGER_DIR/spec-durations.json}"
-# The READ side, and it stays off here on purpose. While both dailies run, the product
-# is a comparison, and a matrix balanced by VM-measured durations puts specs on
-# different shards than the Actions lane does — so a failure's neighbours differ for a
-# reason that has nothing to do with the product. It turns on when the Actions daily
-# stops and the comparison is over. (Step 11 may want it earlier, with SHARDS above 1
-# and the comparison narrowed on purpose; that is a measurement decision, not a
-# default.)
+# The READ side, off by default. It was held off while both dailies ran, so that a
+# failure's shard neighbours matched the Actions lane's. The Actions daily stopped on
+# 2026-10-02, and the VM daily turns it on in ops/vm/run-daily.sh (#2159); the shadow
+# and on-demand runs keep the tracked table.
 USE_LEDGER_DURATIONS="${USE_LEDGER_DURATIONS:-0}"
 
 # ---------------------------------------------------------------------------
@@ -1869,12 +1866,8 @@ phase_prep() {
   # stderr precisely because of this (#1024).
   npx playwright test --grep "@stable" --list --reporter=json > "$RUN_DIR/stable-list.json"
 
-  # Which timings balance the matrix. The TRACKED file while both dailies run: the
-  # product of this etapa is a comparison, and a matrix balanced by VM-measured
-  # durations puts specs on different shards than the Actions lane does, so a failure's
-  # neighbours — and the load its backend was under — differ for a reason that has
-  # nothing to do with the product. The ledger's own timings take over with
-  # USE_LEDGER_DURATIONS, which is the next etapa's switch to throw.
+  # Which timings balance the matrix: the ledger's own with USE_LEDGER_DURATIONS=1
+  # (the VM daily, since the Actions daily stopped, #2159), the tracked file otherwise.
   local durations
   durations="$(durations_table)"
   info "durations: $durations"
