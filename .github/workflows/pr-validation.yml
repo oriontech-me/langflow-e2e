@@ -666,12 +666,14 @@ jobs:
           EXCLUDED_ONLY=false
           DESTRUCTIVE_ONLY=false
           ENTERPRISE_SPECS=""
+          SERVING_SPECS=""
           if [ "$HAS_SPECS" = "true" ]; then
             VERDICT=$(node scripts/destructive-only-selection.mjs --specs "$SPECS" --format=json) \
               || { echo "::error::lane classification failed — a spec in the selection could not be read"; exit 1; }
             EXCLUDED_ONLY=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["excludedOnly"]).lower())')
             DESTRUCTIVE_ONLY=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["destructiveOnly"]).lower())')
             ENTERPRISE_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enterprise"]))')
+            SERVING_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["serving"]))')
           fi
           if [ "$DESTRUCTIVE_ONLY" = "true" ]; then
             echo "::warning::Every impacted spec is @destructive, so the normal lane is skipped for this PR — the destructive lane below is what runs them (workers=1). Read its result, not the normal run's absence (#1010)."
@@ -698,6 +700,11 @@ jobs:
 
           if [ -n "$ENTERPRISE_SPECS" ]; then
             echo "::warning::@enterprise specs in this PR are NOT executed by CI (no Enterprise instance on the runner): $ENTERPRISE_SPECS — run them locally with PW_ENTERPRISE=1 against one, and record the result in the PR."
+          fi
+          # `@serving` (#2047): the same "executed by nobody" case — those specs need
+          # the serving-identity container variant, which this runner never starts.
+          if [ -n "$SERVING_SPECS" ]; then
+            echo "::warning::@serving specs in this PR are NOT executed by CI (no serving-identity container on the runner): $SERVING_SPECS — run them locally against ./scripts/start-langflow-serving-identity.sh with PW_SERVING_IDENTITY=1, and record the result in the PR."
           fi
 
           {
