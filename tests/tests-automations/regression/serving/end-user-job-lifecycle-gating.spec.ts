@@ -58,7 +58,10 @@ const REFUSED_CALLERS: ReadonlyArray<{ label: string; identity: string | undefin
   { label: "an anonymous caller", identity: undefined },
 ];
 
-const TAGS = { tag: ["@api", "@regression", "@serving"] };
+// Each test writes its `tag` array LITERALLY, never through a shared constant:
+// the repo's guards read tags from the AST, and a tag behind an identifier is
+// invisible to them — the @stable ownership guard then cannot see `@serving` and
+// reports this lane-only spec as one nobody owns.
 
 function unique(label: string): string {
   return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -187,7 +190,7 @@ test.describe("Serving end-user identity gates another end user's job on a trust
     expect((await alicePendingRows(request, job.flowId)).map((r) => r.job_id)).toEqual([job.jobId]);
   }
 
-  test("another end user can neither read nor enumerate a suspended job", TAGS, async ({
+  test("another end user can neither read nor enumerate a suspended job", { tag: ["@api", "@regression", "@serving"] }, async ({
     request,
     apiCoverage,
   }) => {
@@ -227,7 +230,7 @@ test.describe("Serving end-user identity gates another end user's job on a trust
     }
   });
 
-  test("another end user cannot stop a job, and the refused stop leaves it running", TAGS, async ({
+  test("another end user cannot stop a job, and the refused stop leaves it running", { tag: ["@api", "@regression", "@serving"] }, async ({
     request,
     apiCoverage,
   }) => {
@@ -266,7 +269,7 @@ test.describe("Serving end-user identity gates another end user's job on a trust
     });
   });
 
-  test("another end user cannot resume a job, and the refused resume consumes nothing", TAGS, async ({
+  test("another end user cannot resume a job, and the refused resume consumes nothing", { tag: ["@api", "@regression", "@serving"] }, async ({
     request,
     apiCoverage,
   }) => {
@@ -312,7 +315,7 @@ test.describe("Serving end-user identity gates another end user's job on a trust
     });
   });
 
-  test("another end user cannot re-attach to a job's event stream", TAGS, async ({
+  test("another end user cannot re-attach to a job's event stream", { tag: ["@api", "@regression", "@serving"] }, async ({
     request,
     apiCoverage,
   }) => {
