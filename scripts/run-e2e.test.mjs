@@ -3259,6 +3259,14 @@ test("an image launch carries the image, its container, a loopback publish and t
   assert.match(r.stdout, /LANGFLOW_PORT=7872$/);
 });
 
+test("an image launch carries the hosts file only when the caller set one (#2159)", () => {
+  const base = { ...BLANKED, STAMP_REQUIRED: "0", BACKEND_START_TIMEOUT_S: "300" };
+  const without = sourced("backend_launch_env 7872", imageEnv(base));
+  assert.doesNotMatch(without.stdout, /LANGFLOW_HOSTS_FILE/);
+  const withFile = sourced("backend_launch_env 7872", imageEnv({ ...base, LANGFLOW_HOSTS_FILE: "/root/e2e-shadow/hosts" }));
+  assert.match(withFile.stdout, / LANGFLOW_HOSTS_FILE='\/root\/e2e-shadow\/hosts' /);
+});
+
 test("a source launch carries none of the image's variables", () => {
   const r = sourced("backend_launch_env 7872", { ...BLANKED, STAMP_REQUIRED: "0", LANGFLOW_IMAGE: IMAGE });
   for (const name of ["LANGFLOW_IMAGE", "LANGFLOW_CONTAINER_NAME", "LANGFLOW_READY_TIMEOUT_S"]) {

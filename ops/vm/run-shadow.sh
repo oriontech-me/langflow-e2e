@@ -152,6 +152,15 @@ main() {
   unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR TARGET_VENV PREPARE_TARGET
   mkdir -p "$RUNS_ROOT" "$LEDGER_DIR"
 
+  # localhost resolves to both loopbacks in the container, as on a host with IPv6 and as
+  # on the Actions service container. The QA VM boots with ipv6.disable=1, so docker
+  # writes 127.0.0.1 alone, and the SSRF spec that requires the refusal to name `::1`
+  # failed on every shadow run -- with the five tests serial after it skipped (#2159).
+  # The pip lane resolves both from the host's own /etc/hosts. Under $STATE, because a
+  # snap docker cannot read /tmp.
+  printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$STATE/hosts"
+  export LANGFLOW_HOSTS_FILE="$STATE/hosts"
+
   ( cd "$WT" && ./scripts/run-e2e.sh )
   local code=$?
   echo "=== shadow end, exit=$code ==="
