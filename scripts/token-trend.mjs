@@ -273,7 +273,21 @@ export function render(trend) {
 }
 
 export function main(argv = process.argv.slice(2), { readFile = fs.readFileSync, log = console.log } = {}) {
-  const file = argv.find((a) => !a.startsWith("--")) ?? "reports/token-history.jsonl";
+  // One lane at a time (#2159): the tracked series holds the Actions and the VM rows side
+  // by side, and the two lanes run different provider scopes, so a window mixing them
+  // is a rate of neither. The newest line's lane by default; `--workflow <id>` picks.
+  if (argv.some((a) => a.startsWith("--workflow="))) {
+    log("token-trend: write --workflow <id> with a space; the --workflow=<id> form is not read");
+    return 1;
+  }
+  const wfAt = argv.indexOf("--workflow");
+  const wfArg = wfAt === -1 ? null : argv[wfAt + 1];
+  if (wfAt !== -1 && (!wfArg || wfArg.startsWith("--"))) {
+    log("token-trend: --workflow needs a workflow id (e.g. daily-stable-vm)");
+    return 1;
+  }
+  const wfValueAt = wfAt === -1 ? -1 : wfAt + 1;
+  const file = argv.find((a, i) => !a.startsWith("--") && i !== wfValueAt) ?? "reports/token-history.jsonl";
   const pricesStable = argv.includes("--prices-stable");
   const measurementStable = argv.includes("--measurement-stable");
   let raw;
@@ -302,7 +316,14 @@ export function main(argv = process.argv.slice(2), { readFile = fs.readFileSync,
     log(`token-trend: ${file} has no lines — nothing to read`);
     return 1;
   }
-  log(render(readTrend(lines, { pricesStable, measurementStable })));
+  const workflow = wfArg ?? lines[lines.length - 1].workflow ?? null;
+  const laneLines = workflow ? lines.filter((l) => l.workflow === workflow) : lines;
+  if (!laneLines.length) {
+    log(`token-trend: ${file} has no lines for workflow '${workflow}' — nothing to read`);
+    return 1;
+  }
+  if (workflow) log(`_Lane: \`${workflow}\` (${laneLines.length} of ${lines.length} lines)._`);
+  log(render(readTrend(laneLines, { pricesStable, measurementStable })));
   return 0;
 }
 
