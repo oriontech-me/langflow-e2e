@@ -59,7 +59,14 @@ case "${BIND_HOST}" in
   *:*) BIND_ADDR="[${BIND_HOST}]" ;;
   *) BIND_ADDR="${BIND_HOST}" ;;
 esac
-PUBLISH="${PORT}:7860"
+# The container listens on the SAME port it is published on, not on the image's 7860.
+# Langflow calls itself at the address the tests use: the A2A node fetches its own card
+# and the Streamable HTTP MCP test registers this instance's own endpoint, both at
+# localhost:<port>. Remapped (7881->7860), that address does not exist inside the
+# container and the call fails without a word; this is what the Actions service
+# container never hit, because it serves on 7860 and is addressed on 7860 (#2159).
+# The default port is unchanged: 7860:7860, as before.
+PUBLISH="${PORT}:${PORT}"
 PROBE_HOST="localhost"
 if [ -n "${BIND_HOST}" ]; then
   PUBLISH="${BIND_ADDR}:${PUBLISH}"
@@ -115,6 +122,7 @@ docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
   -p "${PUBLISH}" \
+  -e LANGFLOW_PORT="${PORT}" \
   -e LANGFLOW_AUTO_LOGIN=true \
   -e LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
   -e LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
