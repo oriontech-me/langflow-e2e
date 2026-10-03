@@ -1,3 +1,10 @@
+# DISABLED since 2026-10-02 (`gh workflow disable`, state disabled_manually), #2159.
+# The `schedule` below does not run. The VM lane (ops/vm/run-daily.sh) is the only
+# scheduled daily, and the only source of the verdict, the history and the @stable
+# removals. The block stays so that reverting is one command:
+#   gh workflow enable daily-stable.yml -R oriontech-me/langflow-e2e
+# Ask `gh workflow list --all` whether this runs, not this file.
+#
 # Daily Stable E2E — daily successor to weekly-stable.yml.
 # Same machinery (@stable suite, QA Platform POST, failure issue) but runs every
 # day at 05:00 BRT and writes its own history to reports/daily-history.jsonl
