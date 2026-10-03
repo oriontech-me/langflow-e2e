@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync, symlinkSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { ROOT, ONDEMAND, setup, q, kv } from "./lib/on-demand-machine.mjs";
@@ -483,6 +483,27 @@ test("a slot holding somebody else's request is never started over", async () =>
     assert.equal(w.state.held?.id, REQ().id);
     assert.equal(m.starts().length, 0);
     assert.equal(kv(readFileSync(join(m.env.E2E_ONDEMAND_STATE, "request.env"), "utf8")).ONDEMAND_ID, "hand-1");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a slot written by somebody else between the check and the write is not replaced", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    // A dangling link reads as an empty slot to the check and as taken to the write:
+    // the same two answers a request written by hand in between gives.
+    const slot = join(m.env.E2E_ONDEMAND_STATE, "request.env");
+    symlinkSync("hand-written-later.env", slot);
+    p.enqueue(REQ());
+    const w = worker(m, p);
+    await w.step();
+    await w.step();
+    assert.equal(w.state.held?.id, REQ().id);
+    assert.equal(m.starts().length, 0, "the unit was started over somebody else's slot");
+    assert.equal(readlinkSync(slot), "hand-written-later.env", "the slot was replaced");
+    assert.equal(existsSync(`${slot}.tmp`), false);
   } finally {
     await p.close();
   }

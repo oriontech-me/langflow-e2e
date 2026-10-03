@@ -57,7 +57,7 @@
 //   78  the configuration is wrong: a variable is missing, or the platform answered 401
 //       to the worker secret. The unit does not restart on it (RestartPreventExitStatus),
 //       because retrying a wrong secret every 30 seconds fixes nothing.
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, rmSync, openSync, fsyncSync, closeSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, linkSync, existsSync, mkdirSync, rmSync, openSync, fsyncSync, closeSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -471,8 +471,17 @@ export class Worker {
     else if (slotTaken) why = "still in the slot: starting again";
     else {
       mkdirSync(this.cfg.state, { recursive: true });
+      // A link, not a rename: a request written by hand since the check above makes it
+      // fail instead of being replaced.
       writeFileSync(`${slot}.tmp`, requestEnv(h));
-      renameSync(`${slot}.tmp`, slot);
+      try {
+        linkSync(`${slot}.tmp`, slot);
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        return this.sayOnce(`${h.id}: the executor's slot was written by somebody else just now; waiting for it to be served`);
+      } finally {
+        rmSync(`${slot}.tmp`, { force: true });
+      }
       why = h.starts === 0 ? "written to the slot" : "neither in the slot nor consumed: written again";
     }
     try {
@@ -554,12 +563,25 @@ export class Worker {
    */
   release() {
     const slot = join(this.cfg.state, "request.env");
+    const aside = `${slot}.release`;
     try {
+      // Moved aside and read again before it is removed, so what goes is what was read:
+      // a request written by hand in between is put back, never deleted.
       if (slotId(readFileSync(slot, "utf8")) === this.state.held.id) {
-        rmSync(slot);
-        this.log(`${this.state.held.id}: removed from the executor's slot`);
+        renameSync(slot, aside);
+        if (slotId(readFileSync(aside, "utf8")) === this.state.held.id) {
+          rmSync(aside);
+          this.log(`${this.state.held.id}: removed from the executor's slot`);
+        } else {
+          try {
+            linkSync(aside, slot);
+            rmSync(aside);
+          } catch (e) {
+            this.log(`::error:: ${this.state.held.id}: a request taken from the slot by mistake could not go back (${e.code}); it is kept at ${aside}`);
+          }
+        }
       }
-    } catch { /* empty slot */ }
+    } catch { /* empty slot, or the executor took it first */ }
     this.state.held = null;
     this.state.claim_token = randomUUID();
     this.save();
