@@ -213,7 +213,7 @@ test("a request becomes a declared image run of that branch's commit, isolated, 
   assert.equal(e.DECLARED_MODEL_ID, "");
   assert.equal(e.WORKFLOW_ID, "on-demand-stable");
   assert.equal(e.RUNS_ROOT, join(r.state, "runs"));
-  for (const k of ["CREATE_ISSUE", "AUTO_REMOVE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "CHECK_MIRROR"]) {
+  for (const k of ["CREATE_ISSUE", "AUTO_REMOVE", "HISTORY_TO_SOURCE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "CHECK_MIRROR"]) {
     assert.equal(e[k], "0", `${k} is not off`);
   }
   for (const k of ["LANGFLOW_SRC_RUN_CMD", "LANGFLOW_SRC_FRONTEND_DIR", "TARGET_VENV", "PREPARE_TARGET"]) {

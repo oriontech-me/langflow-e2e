@@ -175,6 +175,12 @@ CHECK_MIRROR="${CHECK_MIRROR:-1}"
 # switch that commits to `main` (#1725).
 AUTO_REMOVE="${AUTO_REMOVE:-0}"
 MAX_AUTO_REMOVE="${MAX_AUTO_REMOVE:-5}"
+# The history write (#2164): the run's ledger rows also go to the tracked
+# reports/daily-history.jsonl and token-history.jsonl on the source's main, which is
+# what the Actions daily did until it was switched off on 2026-10-02 (#2159). The
+# second writer this lane ever has, and the same contract as the first: strict "1",
+# the VM daily turns it on and no other lane does, and it never changes the verdict.
+HISTORY_TO_SOURCE="${HISTORY_TO_SOURCE:-0}"
 # Can this run still push the removal it may make? Asked only when AUTO_REMOVE=1, and
 # unlike CHECK_ISSUE_CREDENTIAL it never stops the run: a refused push still leaves an
 # umbrella that names the removal it could not push (#2028).
@@ -481,6 +487,7 @@ require_flag() {
 # Validated here rather than beside the assignments, which run before this function
 # exists.
 require_flag KEEP_LEDGER "$KEEP_LEDGER"
+require_flag HISTORY_TO_SOURCE "$HISTORY_TO_SOURCE"
 require_flag USE_LEDGER_DURATIONS "$USE_LEDGER_DURATIONS"
 require_flag DRY_RUN "$DRY_RUN"
 require_flag REQUIRE_TARGET_VERSION "$REQUIRE_TARGET_VERSION"
@@ -1385,10 +1392,10 @@ verify_push_credential() {
   case "$rc" in
     0) return 0 ;;
     3)
-      warn "the credential that pushes @stable removals was refused — see the line above. The run goes on; a removal today would be reported as made and not pushed (#2028)."
+      warn "the credential that pushes to the source (@stable removals, history rows) was refused — see the line above. The run goes on; a removal today would be reported as made and not pushed (#2028), and the history rows stay in the ledger (#2164)."
       ;;
     *)
-      warn "the push credential for @stable removals could not be confirmed (exit $rc) — see $log (#2028)."
+      warn "the push credential (@stable removals, history rows) could not be confirmed (exit $rc) — see $log (#2028, #2164)."
       ;;
   esac
   return 0
@@ -1556,7 +1563,7 @@ phase_preflight() {
   # The same question about the credential that pushes a removal to the source, which
   # also dies on a known date (2026-12-20). After the umbrella's, because that one can
   # stop the run and this one only warns (#2028).
-  if [ "$CHECK_PUSH_CREDENTIAL" = "1" ] && [ "$AUTO_REMOVE" = "1" ]; then
+  if [ "$CHECK_PUSH_CREDENTIAL" = "1" ] && { [ "$AUTO_REMOVE" = "1" ] || [ "$HISTORY_TO_SOURCE" = "1" ]; }; then
     verify_push_credential
   fi
 
@@ -2666,6 +2673,127 @@ auto_remove_commit() {
   return 0
 }
 
+# The run's ledger rows, appended to the tracked history on the source's main (#2164).
+#
+# Built with plumbing on top of the source's main as it is NOW, never on this clone:
+# a temporary index read from the fetched commit, the new file contents hashed in, a
+# commit whose parent is that commit, and a plain push. HEAD, the branch and the
+# working tree of this clone are never touched, so tomorrow's `git pull --ff-only` has
+# nothing to refuse, and there is no rebase. That matters here more than for a
+# removal: an append at the end of a file replayed onto a main whose file ends
+# differently is a conflict, and that is exactly the state a lagging mirror produces
+# (the clone misses yesterday's row; the source has it).
+#
+# The lines are the ones the ledger gained during this run, byte for byte, so the
+# comparator's dedup on workflow|date|run_id holds and the exclusions are the ledger's.
+# A row already on main (a rerun) is not written twice.
+#
+# Never changes the verdict: every outcome is one line in the log and in
+# $RUN_DIR/logs/history-to-source.log, and the caller ignores the status. Checked one
+# by one for the reason auto_remove_commit gives: it runs on the left of `||`.
+history_to_source() {
+  local rc=0
+  history_to_source_body || rc=$?
+  # The private ref is this function's scratch, whatever the outcome.
+  git -C "$REPO_DIR" update-ref -d refs/e2e-history/target 2>/dev/null || true
+  return "$rc"
+}
+history_to_source_body() {
+  local log="$RUN_DIR/logs/history-to-source.log"
+  history_say() { info "history: $*"; printf '%s\n' "$*" >> "$log"; }
+  mkdir -p "$RUN_DIR/logs" 2>/dev/null || true
+  [ "$HISTORY_TO_SOURCE" = "1" ] || return 0
+  if ! ledger_active; then history_say "skipped: no ledger, so no row to send"; return 0; fi
+  if [ -z "${SOURCE_PUSH_TOKEN:-}" ]; then history_say "NOT SENT: SOURCE_PUSH_TOKEN is unset; the rows stay in the ledger"; return 1; fi
+
+  # What this run added, by the counts taken at the top of phase_publish.
+  local pair path ledger before lines n_files=0 tmp="$RUN_DIR/history-to-source"
+  rm -rf "$tmp" && mkdir -p "$tmp" || { history_say "NOT SENT: could not prepare $tmp"; return 1; }
+  for pair in "daily-history:$LEDGER_HISTORY:${HISTORY_LINES_BEFORE:-}" "token-history:$LEDGER_TOKENS:${TOKENS_LINES_BEFORE:-}"; do
+    path="reports/${pair%%:*}.jsonl"; ledger="${pair#*:}"; before="${ledger##*:}"; ledger="${ledger%:*}"
+    if [ -z "$before" ] || [ ! -f "$ledger" ]; then continue; fi
+    lines="$(wc -l < "$ledger" | tr -d ' ')"
+    [ "$lines" -gt "$before" ] || continue
+    # Exactly one new line per file, or nothing is sent: the appenders write one row,
+    # and anything else (a second row, a blank line) is not this run's row to publish.
+    if [ "$((lines - before))" != "1" ]; then
+      history_say "NOT SENT: the ledger gained $((lines - before)) lines in ${pair%%:*}, not exactly one row for run $RUN_ID"
+      return 1
+    fi
+    tail -n "+$((before + 1))" "$ledger" > "$tmp/${pair%%:*}.add"
+    # Each line must be this run's own row, or something else wrote to the ledger.
+    if ! node -e '
+      const [file, wf, run] = process.argv.slice(1);
+      const rows = require("fs").readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      if (rows.length !== 1 || rows[0].workflow !== wf || String(rows[0].run_id) !== run) process.exit(1);
+    ' "$tmp/${pair%%:*}.add" "$WORKFLOW_ID" "$RUN_ID" 2>/dev/null; then
+      history_say "NOT SENT: the ledger gained something other than exactly one ${pair%%:*} row for run $RUN_ID"
+      return 1
+    fi
+    printf '%s\n' "$path" >> "$tmp/paths"
+    n_files=$((n_files + 1))
+  done
+  if [ "$n_files" = "0" ]; then history_say "nothing to send: this run added no ledger row"; return 0; fi
+
+  local auth attempt target_sha new_tree commit ref="refs/e2e-history/target" idx="$tmp/index" blob msg
+  auth="Authorization: Basic $(printf 'x-access-token:%s' "$SOURCE_PUSH_TOKEN" | base64 | tr -d '\n')"
+  msg="chore(history): record vm daily ${RUN_ID} [skip ci]"
+  for attempt in 1 2; do
+    # Into a private ref, not FETCH_HEAD: the mirror-freshness timer fetches into this
+    # clone on its own schedule (#1972), and nothing below reads shared state.
+    if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$auth" \
+         git -C "$REPO_DIR" fetch -q --no-write-fetch-head "$SOURCE_REMOTE_URL" "+refs/heads/$SOURCE_PUSH_BRANCH:$ref"; then
+      history_say "NOT SENT: could not read $SOURCE_PUSH_BRANCH on the source"; return 1
+    fi
+    if ! target_sha="$(git -C "$REPO_DIR" rev-parse --verify -q "$ref^{commit}")" || [ -z "$target_sha" ]; then
+      history_say "NOT SENT: could not resolve the fetched $SOURCE_PUSH_BRANCH"; return 1
+    fi
+    rm -f "$idx"
+    if ! GIT_INDEX_FILE="$idx" git -C "$REPO_DIR" read-tree "$target_sha"; then
+      history_say "NOT SENT: could not read the tree of $target_sha"; return 1
+    fi
+    local wrote=0
+    while IFS= read -r path; do
+      local base add
+      add="$tmp/$(basename "$path" .jsonl).add"
+      # Fail-closed for both files: a missing tracked file means the source is not the
+      # repository this lane writes to, and half a write would be harder to read.
+      if ! git -C "$REPO_DIR" cat-file -e "$target_sha:$path" 2>/dev/null; then
+        history_say "NOT SENT: $path does not exist on the source's $SOURCE_PUSH_BRANCH"; return 1
+      fi
+      base="$tmp/$(basename "$path").base"
+      git -C "$REPO_DIR" cat-file -p "$target_sha:$path" > "$base" || { history_say "NOT SENT: could not read $path"; return 1; }
+      if grep -qxFf "$add" "$base"; then continue; fi
+      # The tracked file always ends in a newline; a file that does not gets one, so
+      # the row never fuses with the line before it.
+      [ ! -s "$base" ] || [ -z "$(tail -c 1 "$base")" ] || printf '\n' >> "$base"
+      cat "$add" >> "$base"
+      if ! blob="$(git -C "$REPO_DIR" hash-object -w "$base")" \
+         || ! GIT_INDEX_FILE="$idx" git -C "$REPO_DIR" update-index --cacheinfo "100644,$blob,$path"; then
+        history_say "NOT SENT: could not stage $path"; return 1
+      fi
+      wrote=$((wrote + 1))
+    done < "$tmp/paths"
+    if [ "$wrote" = "0" ]; then
+      history_say "already on $SOURCE_PUSH_BRANCH: run $RUN_ID's rows were written before"; return 0
+    fi
+    if ! new_tree="$(GIT_INDEX_FILE="$idx" git -C "$REPO_DIR" write-tree)" \
+       || ! commit="$(GIT_AUTHOR_NAME="$AUTO_REMOVE_COMMITTER_NAME" GIT_AUTHOR_EMAIL="$AUTO_REMOVE_COMMITTER_EMAIL" \
+                       GIT_COMMITTER_NAME="$AUTO_REMOVE_COMMITTER_NAME" GIT_COMMITTER_EMAIL="$AUTO_REMOVE_COMMITTER_EMAIL" \
+                       git -C "$REPO_DIR" commit-tree "$new_tree" -p "$target_sha" -m "$msg")"; then
+      history_say "NOT SENT: could not build the commit"; return 1
+    fi
+    if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="$auth" \
+         git -C "$REPO_DIR" push -q "$SOURCE_REMOTE_URL" "$commit:refs/heads/$SOURCE_PUSH_BRANCH"; then
+      history_say "sent: $wrote file(s) to $SOURCE_PUSH_BRANCH as ${commit:0:12} on top of ${target_sha:0:12}"
+      return 0
+    fi
+    # Refused: main moved between the fetch and the push. Once more, from the new tip.
+  done
+  history_say "NOT SENT: the push to the source was refused twice; the rows stay in the ledger"
+  return 1
+}
+
 # The machine the umbrella names as holding the evidence (#2036). The issue creator
 # reads VM_HOSTNAME || HOSTNAME, and HOSTNAME is a bash variable that is NOT exported,
 # so every VM umbrella said "on the QA VM" — the one line that exists to say where the
@@ -2770,6 +2898,15 @@ build_target_drift() {
 
 phase_publish() {
   cd "$REPO_DIR"
+
+  # What the ledger holds before this run writes to it, so history_to_source sends
+  # exactly the rows this run added (#2164). Empty when the file is absent: a ledger
+  # seeded during this run is not this run's row to send.
+  HISTORY_LINES_BEFORE="" TOKENS_LINES_BEFORE=""
+  if ledger_active; then
+    [ ! -f "$LEDGER_HISTORY" ] || HISTORY_LINES_BEFORE="$(wc -l < "$LEDGER_HISTORY" | tr -d ' ')"
+    [ ! -f "$LEDGER_TOKENS" ] || TOKENS_LINES_BEFORE="$(wc -l < "$LEDGER_TOKENS" | tr -d ' ')"
+  fi
 
   # Built ALWAYS, even with every POST disabled: it is the only analysis of the merged
   # report into totals and failures, and the Slack notifier reads it rather than
@@ -3009,12 +3146,9 @@ phase_publish() {
     ledger_seed "$LEDGER_TOKENS" reports/token-history.jsonl
   fi
 
-  # The run series — one line per scheduled sweep, and the switch that used to gate it
-  # was named for something this script does not do. COMMIT_HISTORY implied a commit;
-  # the code under it only ever wrote a file, so the append was being held back by a
-  # decision that belonged to a later etapa, and the series it feeds would have had a
-  # hole exactly as wide as the wait. Committing is what stays behind, and it stays
-  # behind as absent code rather than as a switch set to zero.
+  # The run series — one line per scheduled sweep, into the ledger. The old switch here
+  # implied a commit and only ever wrote a file; it is gone, and the commit it implied
+  # now exists as its own path, history_to_source, behind HISTORY_TO_SOURCE (#2164).
   #
   # LIVENESS_DIR and SHARD_TOTAL are passed for the same reason the workflow passes
   # them: without the expected count a shard that died before writing its summary
@@ -3062,6 +3196,10 @@ phase_publish() {
   # removal has to have happened by the time the body is built. The same ordering the
   # Actions lane had between its step and its issue step.
   auto_remove_stable
+
+  # After the removal, so the history commit sits on top of it on main rather than
+  # racing it. Never the verdict: the status is ignored, the log says what happened.
+  history_to_source || true
 
   # Off in this etapa, by design: while the VM daily runs beside the Actions one, only
   # the Actions verdict has consequence. Two issues for one day would be worse than

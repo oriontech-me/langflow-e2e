@@ -95,7 +95,7 @@ function fullRun({ runExit = 0, warn = true } = {}) {
       'process.stdout.write(JSON.stringify({ ok: true, version: "1.2.3", warnings: ["no v1.2.3 tag"] }) + "\\n");',
     ].join("\n"),
     "scripts/prepare-target-dist.sh": "#!/bin/sh\necho frontend_dir=/nowhere/frontend\n",
-    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\necho "run-e2e got AUTO_REMOVE=[$AUTO_REMOVE] CREATE_ISSUE=[$CREATE_ISSUE]"\necho "run-e2e got USE_LEDGER_DURATIONS=[$USE_LEDGER_DURATIONS]"\nexit ${runExit}\n`,
+    "scripts/run-e2e.sh": `#!/bin/sh\necho run-e2e ran\necho "run-e2e got AUTO_REMOVE=[$AUTO_REMOVE] CREATE_ISSUE=[$CREATE_ISSUE]"\necho "run-e2e got USE_LEDGER_DURATIONS=[$USE_LEDGER_DURATIONS]"\necho "run-e2e got HISTORY_TO_SOURCE=[$HISTORY_TO_SOURCE]"\nexit ${runExit}\n`,
     "scripts/backup-ledger.sh": "#!/bin/sh\necho backup ran\n",
   };
 }
@@ -234,6 +234,14 @@ test("the lane balances on its own ledger timings, and run-e2e.sh receives the s
   const dir = makeTempDir("wrapper-ledger-durations");
   const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
   assert.match(r.log, /run-e2e got USE_LEDGER_DURATIONS=\[1\]/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the lane writes its history rows to the source, and run-e2e.sh receives the switch (#2164)", () => {
+  // Read from what the orchestrator saw: an unexported assignment would leave it at 0.
+  const dir = makeTempDir("wrapper-history-to-source");
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, fullRun({ warn: false }));
+  assert.match(r.log, /run-e2e got HISTORY_TO_SOURCE=\[1\]/);
   rmSync(dir, { recursive: true, force: true });
 });
 
