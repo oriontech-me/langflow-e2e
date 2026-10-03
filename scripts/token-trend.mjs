@@ -276,6 +276,10 @@ export function main(argv = process.argv.slice(2), { readFile = fs.readFileSync,
   // One lane at a time (#2159): the tracked series holds the Actions and the VM rows side
   // by side, and the two lanes run different provider scopes, so a window mixing them
   // is a rate of neither. The newest line's lane by default; `--workflow <id>` picks.
+  if (argv.some((a) => a.startsWith("--workflow="))) {
+    log("token-trend: write --workflow <id> with a space; the --workflow=<id> form is not read");
+    return 1;
+  }
   const wfAt = argv.indexOf("--workflow");
   const wfArg = wfAt === -1 ? null : argv[wfAt + 1];
   if (wfAt !== -1 && (!wfArg || wfArg.startsWith("--"))) {

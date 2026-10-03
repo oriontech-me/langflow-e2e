@@ -114,8 +114,12 @@ Run the deterministic dataset builder:
 node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs
 ```
 
-It auto-discovers the latest red daily-stable run from
-`reports/daily-history.jsonl`, cross-references 30-day flake recurrence,
+It auto-discovers the latest red run from `reports/daily-history.jsonl`, of
+whichever lane wrote it. Since the Actions daily was switched off on 2026-10-02
+(#2159), that is a VM run (`daily-stable-vm`), and the file holds both lanes'
+rows for 2026-09-07 to 2026-10-02. To triage a specific run, such as an Actions
+umbrella's, pass `--run <run_id>`. It cross-references 30-day flake recurrence
+within the run's own machine (Actions or VM),
 detects the mass-failure guard, matches the umbrella `[Daily Failure]` issue
 via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,

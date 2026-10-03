@@ -173,6 +173,26 @@ test('buildDataset counts recurrence within the run\'s own lane, never across la
   assert.equal(ds.flakes[0].actionable, false);
 });
 
+test('an on-demand or shadow run still counts recurrence against the VM daily\'s history (#2159 review)', () => {
+  // They write their own workflow id into a copy of the daily's ledger on purpose; an
+  // exact-id filter left them a window of one row, so nothing could ever recur.
+  const sig = 'Error: timed out waiting for widget';
+  const flake = { test: 'widget B renders', file: 'w.spec.ts', line: 7, error_signature: sig };
+  const row = (workflow, run_id, date) => ({
+    version: 1, date, workflow, run_id,
+    totals: { passed: 9, failed: 0, flaky: 1, skipped: 0 }, failures: [], flaky: [flake],
+  });
+  for (const lane of ['on-demand-stable', 'daily-stable-vm-image']) {
+    const rows = [
+      row('daily-stable', '111', '2026-09-14'),
+      row('daily-stable-vm', '20260914T080000Z', '2026-09-14'),
+      row(lane, '20260915T130000Z', '2026-09-15'),
+    ];
+    const ds = buildDataset(rows, [], { runId: '20260915T130000Z' });
+    assert.equal(ds.flakes[0].recurrence.count, 2, lane);
+  }
+});
+
 test('dedupeEntries removes same test+line, keeps first occurrence', () => {
   const input = [
     { test: 'a', line: 1, tag: 'first' },

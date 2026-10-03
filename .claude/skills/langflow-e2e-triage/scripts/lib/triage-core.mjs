@@ -16,6 +16,12 @@ export function parseHistory(text) {
     .map((l) => JSON.parse(l));
 }
 
+/** The workflow ids the Actions lane wrote; every other id ran on the VM. */
+const ACTIONS_WORKFLOWS = new Set(['daily-stable']);
+function machineOf(workflow) {
+  return ACTIONS_WORKFLOWS.has(workflow) ? 'actions' : 'vm';
+}
+
 /** Last run row that had at least one hard failure or flake; null if all green. */
 export function findLatestRedRun(rows) {
   for (let i = rows.length - 1; i >= 0; i--) {
@@ -740,14 +746,17 @@ export function buildDataset(rows, issues, opts = {}) {
   // to the latest red run.
   const run = runId ? rows.find((r) => r.run_id === runId) || null : findLatestRedRun(rows);
   if (!run) return null;
-  // Recurrence is counted within the run's own lane. Since #2159 the tracked history
+  // Recurrence is counted on the run's own MACHINE. Since #2159 the tracked history
   // holds the Actions and the VM rows side by side — one of each on most days from
   // 2026-09-07 to 2026-10-02 — and the VM ledger keeps the Actions rows it was seeded
-  // with. Counted across lanes, a test that failed once on each lane on one day read
-  // as recurring and was sent to a dedicated issue and quarantine on one day's
-  // evidence. A row with no workflow (none exist; kept for hand-made fixtures)
-  // filters nothing.
-  const laneRows = run.workflow ? rows.filter((r) => r.workflow === run.workflow) : rows;
+  // with. Counted across the two, a test that failed once on each on one day read as
+  // recurring and was sent to a dedicated issue and quarantine on one day's evidence.
+  // By machine, not by workflow id: the on-demand and shadow runs write their own ids
+  // into a copy of the daily's ledger precisely so that their recurrence is read
+  // against the VM daily's history (run-on-demand.sh), and an exact-id filter left
+  // them a window of one row. A row with no workflow (none exist; kept for hand-made
+  // fixtures) filters nothing.
+  const laneRows = run.workflow ? rows.filter((r) => machineOf(r.workflow) === machineOf(run.workflow)) : rows;
   const window = rowsWithinDays(laneRows, run.date, windowDays);
 
   const withRecurrence = (e) => {

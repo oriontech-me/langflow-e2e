@@ -47,6 +47,8 @@ test("the window reads one lane: the newest line's by default, or the one --work
   assert.match(out2.join("\n"), /Lane: `daily-stable` \(5 of 10 lines\)/);
   assert.match(out2.join("\n"), /Tokens per LLM call:\*\* 100\b/);
   assert.equal(main(["x.jsonl", "--workflow"], { readFile: () => raw, log: () => {} }), 1);
+  // The `=` form is refused, not silently read as the default lane.
+  assert.equal(main(["x.jsonl", "--workflow=daily-stable"], { readFile: () => raw, log: () => {} }), 1);
 });
 
 test("the rate is per LLM call, because the raw total measures how much of the suite ran", () => {
