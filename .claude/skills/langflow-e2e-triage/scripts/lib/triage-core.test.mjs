@@ -157,6 +157,22 @@ test('buildDataset assembles run, flags actionable flake, marks umbrella', () =>
   assert.equal(flowA.recurrence.same_signature, false);
 });
 
+test('buildDataset counts recurrence within the run\'s own lane, never across lanes (#2159)', () => {
+  // One flake on each lane on the same day is one day's evidence, not a recurrence:
+  // counted across lanes it read as same-signature x2 and became actionable.
+  const sig = 'Error: timed out waiting for widget';
+  const flake = { test: 'widget B renders', file: 'w.spec.ts', line: 7, error_signature: sig };
+  const row = (workflow, run_id) => ({
+    version: 1, date: '2026-09-15', workflow, run_id,
+    totals: { passed: 9, failed: 0, flaky: 1, skipped: 0 }, failures: [], flaky: [flake],
+  });
+  const rows = [row('daily-stable', '111'), row('daily-stable-vm', '20260915T080000Z')];
+  const ds = buildDataset(rows, [], { runId: '20260915T080000Z' });
+  assert.equal(ds.flakes.length, 1);
+  assert.equal(ds.flakes[0].recurrence.count, 1);
+  assert.equal(ds.flakes[0].actionable, false);
+});
+
 test('dedupeEntries removes same test+line, keeps first occurrence', () => {
   const input = [
     { test: 'a', line: 1, tag: 'first' },

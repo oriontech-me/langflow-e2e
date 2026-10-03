@@ -740,7 +740,15 @@ export function buildDataset(rows, issues, opts = {}) {
   // to the latest red run.
   const run = runId ? rows.find((r) => r.run_id === runId) || null : findLatestRedRun(rows);
   if (!run) return null;
-  const window = rowsWithinDays(rows, run.date, windowDays);
+  // Recurrence is counted within the run's own lane. Since #2159 the tracked history
+  // holds the Actions and the VM rows side by side — one of each on most days from
+  // 2026-09-07 to 2026-10-02 — and the VM ledger keeps the Actions rows it was seeded
+  // with. Counted across lanes, a test that failed once on each lane on one day read
+  // as recurring and was sent to a dedicated issue and quarantine on one day's
+  // evidence. A row with no workflow (none exist; kept for hand-made fixtures)
+  // filters nothing.
+  const laneRows = run.workflow ? rows.filter((r) => r.workflow === run.workflow) : rows;
+  const window = rowsWithinDays(laneRows, run.date, windowDays);
 
   const withRecurrence = (e) => {
     const { provider, model } = parseProviderModel(e);
