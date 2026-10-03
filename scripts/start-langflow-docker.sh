@@ -24,9 +24,10 @@
 #                             `::1 localhost` line and drops an IPv6 --add-host, so
 #                             `localhost` resolves to 127.0.0.1 alone in the container.
 #                             A caller that needs the resolution a host with IPv6 gives
-#                             passes a file that has the line. The file must exist: a
-#                             snap docker hands an unreadable path over as nothing, so
-#                             a missing one is refused here rather than started blind.
+#                             passes a file that has the line. It must be a regular
+#                             file that exists; anything else is refused here rather
+#                             than started blind. This cannot see what a snap docker
+#                             cannot read (/tmp, say), so keep it under $HOME.
 #
 # Nightly and released builds live in DIFFERENT Docker repositories
 # (langflowai/langflow-nightly vs langflowai/langflow), and the nightly repo keeps
@@ -87,7 +88,7 @@ fi
 
 HOSTS_MOUNT=()
 if [ -n "${LANGFLOW_HOSTS_FILE:-}" ]; then
-  if [ ! -r "${LANGFLOW_HOSTS_FILE}" ]; then
+  if [ ! -f "${LANGFLOW_HOSTS_FILE}" ] || [ ! -r "${LANGFLOW_HOSTS_FILE}" ]; then
     echo "LANGFLOW_HOSTS_FILE is set but not a readable file: '${LANGFLOW_HOSTS_FILE}'" >&2
     exit 1
   fi

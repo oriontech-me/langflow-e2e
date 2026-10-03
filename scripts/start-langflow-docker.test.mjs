@@ -280,10 +280,12 @@ test("/etc/hosts is docker's unless a hosts file is given, and then it is mounte
 test("a hosts file that is not there is refused before any container starts", () => {
   // A snap docker hands an unreadable bind source over as nothing; starting anyway
   // would serve a container whose resolution is not the one asked for.
-  const r = runScript({ env: { LANGFLOW_HOSTS_FILE: "/no/such/hosts" } });
-  assert.notEqual(r.status, 0);
-  assert.match(r.stdout, /LANGFLOW_HOSTS_FILE is set but not a readable file/);
-  assert.equal(runCallOf(r), undefined, "no container may start");
+  for (const path of ["/no/such/hosts", "/"]) {
+    const r = runScript({ env: { LANGFLOW_HOSTS_FILE: path } });
+    assert.notEqual(r.status, 0, path);
+    assert.match(r.stdout, /LANGFLOW_HOSTS_FILE is set but not a readable file/, path);
+    assert.equal(runCallOf(r), undefined, `no container may start for '${path}'`);
+  }
 });
 
 test("readiness asks the address the port is published on", () => {
