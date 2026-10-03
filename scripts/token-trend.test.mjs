@@ -32,6 +32,23 @@ const five = (over = {}) =>
     line({ date, tokens: 1000, calls: 10, ...over }),
   );
 
+test("the window reads one lane: the newest line's by default, or the one --workflow names (#2159)", () => {
+  // Interleaved as the tracked file is from 2026-09-07: one Actions and one VM line a day.
+  const raw = five()
+    .flatMap((l) => [l, { ...l, workflow: "daily-stable-vm", run_id: `vm-${l.date}`, totals: { ...l.totals, total_tokens: 9000 }, by_model: [{ model: "gpt-4o-mini", calls: 10, total_tokens: 9000 }] }])
+    .map((l) => JSON.stringify(l))
+    .join("\n");
+  const out = [];
+  assert.equal(main(["x.jsonl", "--measurement-stable"], { readFile: () => raw, log: (m) => out.push(m) }), 0);
+  assert.match(out.join("\n"), /Lane: `daily-stable-vm` \(5 of 10 lines\)/);
+  assert.match(out.join("\n"), /Tokens per LLM call:\*\* 900\b/);
+  const out2 = [];
+  assert.equal(main(["--workflow", "daily-stable", "x.jsonl", "--measurement-stable"], { readFile: () => raw, log: (m) => out2.push(m) }), 0);
+  assert.match(out2.join("\n"), /Lane: `daily-stable` \(5 of 10 lines\)/);
+  assert.match(out2.join("\n"), /Tokens per LLM call:\*\* 100\b/);
+  assert.equal(main(["x.jsonl", "--workflow"], { readFile: () => raw, log: () => {} }), 1);
+});
+
 test("the rate is per LLM call, because the raw total measures how much of the suite ran", () => {
   // The real 2026-08-05 shape: a degraded run, 4 calls, a small total. Raw, it
   // reads as a 26x cheaper day than its neighbour; per call it is comparable.
