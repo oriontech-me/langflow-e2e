@@ -46,9 +46,10 @@ export const DEFAULT_VM_WORKFLOW = "daily-stable-vm";
  * The names the report gives the two lanes (#2091). The defaults are the two lanes this
  * comparator was written for, so a default run prints exactly what it always printed.
  * A lane selected by another workflow id is named by that id unless a label is given:
- * the image shadow compares VM+image with VM+wheel and with Actions+image, and a
- * report that called one of those "Actions" or "the VM" would be describing a pair of
- * lanes other than the one it compared. `ciThe`/`vmThe` are the prose forms — "the VM
+ * the image shadow compares VM+image with VM+wheel (and with Actions+image until the
+ * Actions daily was switched off, #2159), and a report that called one of those
+ * "Actions" or "the VM" would be describing a pair of lanes other than the one it
+ * compared. `ciThe`/`vmThe` are the prose forms — "the VM
  * served …", "Actions served …" — kept separate so the defaults' wording survives.
  */
 export function laneLabels({ ciWorkflow = DEFAULT_CI_WORKFLOW, vmWorkflow = DEFAULT_VM_WORKFLOW, ciLabel, vmLabel } = {}) {

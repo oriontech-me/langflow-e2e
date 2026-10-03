@@ -114,8 +114,9 @@ TARGET_SSH_OPTS="${TARGET_SSH_OPTS:-}"
 # scripts/start-langflow-source.sh. `image` serves LANGFLOW_IMAGE — an exact reference,
 # never a default — through scripts/start-langflow-docker.sh, one container per shard.
 # It exists for the image shadow lane: the same suite on the same machine against the
-# artifact the Actions lane runs, so a VM-only failure can be attributed to the machine
-# or to the artifact instead of to both at once.
+# published image, so a failure only one artifact shows is attributed to the artifact.
+# It also isolated the machine, against the Actions lane, until that daily was switched
+# off on 2026-10-02 (#2159).
 #
 # The image target is LOCAL only. The remote path holds one ssh session per shard
 # because a process dies with its session; a container does not, and nothing on the

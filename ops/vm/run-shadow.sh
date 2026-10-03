@@ -4,11 +4,16 @@
 # ## What it is
 #
 # A second, sequential pass of the same @stable suite on the same machine, against the
-# published IMAGE of the version the official run served from the venv. It exists so a
-# failure only this machine sees can be attributed to the machine or to the artifact:
+# published IMAGE of the version the official run served from the venv. It holds the
+# machine and isolates the artifact:
 #
-#   VM+image x Actions+image   holds the artifact, isolates the machine
 #   VM+image x VM+wheel        holds the machine, isolates the artifact
+#
+# It also compared VM+image x Actions+image, which held the artifact and isolated the
+# machine, until the Actions daily was switched off on 2026-10-02 (#2159). That pair
+# produced two comparisons, both computed after the fact, because the Actions row
+# landed hours after this lane compared. With no Actions row it can only report a
+# missing lane, so it is gone.
 #
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
 # to the platform. The switches being off is the mechanism. Behind it, the six
@@ -156,17 +161,15 @@ main() {
   local code=$?
   echo "=== shadow end, exit=$code ==="
 
-  # --- the two comparisons this lane exists for ------------------------------------
-  # A record, never a gate: the Actions row reaches the tracked file only when that
-  # lane's commit has been mirrored, so on some days the machine pair is not yet
-  # comparable here. The comparator says so, and it says so in the file.
+  # --- the comparison this lane exists for -----------------------------------------
+  # A record, never a gate. The file keeps its -artifact suffix, so the days before
+  # #2159 and after it sort and read the same.
   local c
-  for c in "artifact daily-stable-vm VM+wheel" "machine daily-stable Actions+image"; do
+  for c in "artifact daily-stable-vm VM+wheel"; do
     set -- $c
     ( cd "$WT" && node scripts/compare-lane-verdicts.mjs \
         --history "$LEDGER/daily-history.jsonl" \
         --history "$OFFICIAL_LEDGER/daily-history.jsonl" \
-        --history "$REPO/reports/daily-history.jsonl" \
         --date "$SHADOW_DATE" \
         --ci-workflow "$2" --ci-label "$3" \
         --vm-workflow daily-stable-vm-image --vm-label VM+image ) \
