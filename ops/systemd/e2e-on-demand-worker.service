@@ -1,0 +1,32 @@
+[Unit]
+# The on-demand worker: polls the platform's on-demand queue over outbound HTTPS,
+# claims one request at a time, hands it to e2e-on-demand.service and forwards the
+# executor's result. The contract is the platform's (see the script's header).
+#
+# The one long-running unit here, so the one service with an [Install] section: it
+# must come back after a reboot by itself, or a queued request waits for nobody. It
+# starts the executor through systemctl, so the run lives in the executor's own unit:
+# stopping or restarting the worker never stops a run.
+#
+# No Conflicts= with the daily, for the reason the executor has none: the priority is
+# one-way, and the worker keeps it by not claiming (paused_for_daily).
+Description=E2E @stable on-demand worker (polls the platform's queue)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# systemd sets no HOME for a system service (#1715).
+Environment=HOME=/root
+# QA_ON_DEMAND_API_BASE and QA_ON_DEMAND_WORKER_TOKEN, the same secret the platform's
+# api service holds. Root-only, outside the clone.
+EnvironmentFile=/root/.e2e-on-demand-worker.env
+ExecStart=/root/e2e-qa/ops/vm/on-demand-worker.mjs
+Restart=always
+RestartSec=30
+# 78: the configuration is wrong (a variable missing, or a 401 to the secret).
+# Restarting every 30 seconds would not fix it; the unit stays failed until someone does.
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=multi-user.target
