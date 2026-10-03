@@ -252,6 +252,14 @@ main() {
   # the lane goes back to removing nothing, and the removal is done by hand again from
   # this run's results.json.
   export AUTO_REMOVE=1
+  # And from 2026-10-05 this lane is also the writer of the tracked history (#2164): the
+  # row it adds to its ledger goes to reports/daily-history.jsonl and token-history.jsonl
+  # on the source's main, as the Actions daily's did until it was switched off on
+  # 2026-10-02 (#2159). Built on the source's main with plumbing, so this clone is never
+  # touched, and it cannot change the verdict. Same token as the removal.
+  #
+  # Rollback: drop this line. The rows keep landing in the ledger either way.
+  export HISTORY_TO_SOURCE=1
   export CREATE_ISSUE=1
   export ISSUE_HOST ISSUE_REPO ISSUE_CC
 

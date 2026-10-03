@@ -187,7 +187,7 @@ test("the shadow runs the image of the requested version, isolated, with every p
   assert.equal(e.WORKFLOW_ID, "daily-stable-vm-image");
   assert.equal(e.LEDGER_DIR, r.ledger);
   assert.equal(e.RUNS_ROOT, join(r.state, "runs"));
-  for (const k of ["CREATE_ISSUE", "AUTO_REMOVE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "CHECK_MIRROR"]) {
+  for (const k of ["CREATE_ISSUE", "AUTO_REMOVE", "HISTORY_TO_SOURCE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "CHECK_MIRROR"]) {
     assert.equal(e[k], "0", `${k} is not off`);
   }
   for (const k of ["LANGFLOW_SRC_RUN_CMD", "LANGFLOW_SRC_FRONTEND_DIR", "TARGET_VENV", "PREPARE_TARGET"]) {
