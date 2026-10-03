@@ -133,8 +133,9 @@ proves less, since a broken instance would fail it either way.
 - **`serving_trace_end_user`** and the span link (#14616) — need an OTLP collector this repo
   does not have.
 - **Job-lifecycle gating by end user** (#14550 phase 3 — `GET /workflows`, `/stop`,
-  `/resume` refusing another end user's run). Real, and the natural follow-up now that the
-  lane exists; kept out so this issue lands the memory boundary first.
+  `/resume` refusing another end user's run). Kept out so this issue landed the memory
+  boundary first; now covered on the same container by
+  [`end-user-job-lifecycle-gating.md`](end-user-job-lifecycle-gating.md) (#2047).
 - **A scheduled lane.** None exists for `@serving`; adding one is a separate CI-spend
   decision.
 
