@@ -25,7 +25,11 @@
 //
 // The result goes VERBATIM: the keys and string values of results/<id>.env, as the
 // executor wrote them. A green, a red and a refusal are the executor's words; the
-// worker only carries them. The one judgement it makes is WHEN: only once the unit is
+// worker only carries them. Beside it goes the suite summary (phase 7): the run's
+// results.json counted the way the daily's payload counts it
+// (scripts/lib/on-demand-summary.mjs). Counting is not judging: the verdict stays
+// the executor's, and a summary that cannot be built goes as null, never in place
+// of the result. The one judgement it makes is WHEN: only once the unit is
 // not running, because a result read during the cleanup says CLEANUP=pending and the
 // platform keeps the first terminal body it gets.
 //
@@ -62,6 +66,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { summaryFromFile } from "../../scripts/lib/on-demand-summary.mjs";
 
 // --- the contract's constants (contract.ts) -----------------------------------------
 
@@ -420,7 +425,8 @@ export class Worker {
     if (existsSync(resultFile)) {
       if (running) return this.sayOnce(`${h.id}: result on disk, waiting for ${EXECUTOR_UNIT} (${unit}) to finish its cleanup`);
       if (this.cfg.now() < this.next.report) return;
-      return this.deliver(readFileSync(resultFile, "utf8"));
+      const text = readFileSync(resultFile, "utf8");
+      return this.deliver(text, { summary: this.summaryOf(parseResult(text)) });
     }
     if (running) return this.progress();
 
@@ -527,6 +533,18 @@ export class Worker {
     h.progress_lost = true;
     this.save();
     this.log(`${h.id}: ${body.status} answered HTTP ${r.status}${r.code ? ` ${r.code}` : ""}; no more progress reports, the result still goes`);
+  }
+
+  /**
+   * The suite summary of a result's run: $STATE/runs/<RUN_ID>/results.json, counted.
+   * null when the result names no run (a refusal, a failed build, an orphan's
+   * answer), the run left no results.json, or it does not parse.
+   */
+  summaryOf(result) {
+    const runId = result.RUN_ID ?? "";
+    if (!/^\d{8}T\d{6}Z$/.test(runId)) return null;
+    // The suite runs in $STATE/wt (run-on-demand.sh), not in this checkout.
+    return summaryFromFile(join(this.cfg.state, "runs", runId, "results.json"), { root: join(this.cfg.state, "wt") });
   }
 
   async deliver(text, { summary = null } = {}) {
