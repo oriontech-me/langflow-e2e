@@ -105,7 +105,7 @@ function compareTriples(a, b) {
  *
  * Docker Hub returns one entry per platform variant and `:latest` shares its digest
  * with the version tag built in the same run — the same rule the retired
- * check-nightly-delta.ts used. amd64 is preferred because that is what both lanes run; without pinning a
+ * check-nightly-delta.ts used. amd64 is preferred because that is what the lanes run; without pinning a
  * platform, an arm64 digest can match nothing and the whole resolution silently
  * falls back.
  */

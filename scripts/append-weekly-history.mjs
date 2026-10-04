@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Append one JSON line to reports/weekly-history.jsonl from a Playwright
-// JSON report. Designed to run inside weekly-stable.yml after the test step.
+// JSON report. Designed for weekly-stable.yml (retired in #2171); the daily lanes run
+// it today through the HISTORY_FILE override.
 //
 // Inputs (env vars):
 //   PLAYWRIGHT_JSON           Path to Playwright JSON output (default: results.json)
@@ -312,7 +313,7 @@ for (const line of outageOmissionNotice(process.env, outagePayload)) console.err
  * The distinction this exists for is the one an absent field cannot carry.
  * Absence is this schema's word for "this lane does not measure it"
  * (`collection_gate_keys`, `listing_completeness`), and `weekly-stable.yml`
- * really is such a lane — it has no liveness recorder at all. But a lane that
+ * (retired in #2171) was such a lane — it had no liveness recorder at all. But a lane that
  * DOES record liveness and passes no `OUTAGE_ATTEMPTS` is not that: it is a
  * broken wiring, and the row it writes is indistinguishable from the weekly's.
  * Losing the daily's `OUTAGE_ATTEMPTS` — a rename, a reordered step, an edit to
@@ -323,7 +324,7 @@ for (const line of outageOmissionNotice(process.env, outagePayload)) console.err
  * the appender reads it to build the row's `backend` block (#1077), and the two
  * lanes that set it (`daily-stable.yml`'s merge job, `run-e2e.sh`'s publish
  * phase) are precisely the two that produce `outage-attempts.json` a step
- * earlier. `weekly-stable.yml` sets neither, so it stays silent.
+ * earlier. A lane that sets neither stays silent.
  *
  * Not exported: importing this module runs the whole script (it reads env and
  * appends a line), which is why every test here drives it as a subprocess. The

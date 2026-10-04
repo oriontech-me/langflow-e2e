@@ -3,8 +3,8 @@
  * The file-watcher's monitored-area table, its existence guard, and its change
  * sweep (issue #1092).
  *
- * `file-watcher.yml`, the workflow that ran `--mode=check` and `--mode=detect` and
- * opened the issue, never ran and was retired in #2171. `pr-validation.yml` still
+ * `file-watcher.yml`, the workflow wired to run `--mode=check` and `--mode=detect`
+ * and open the issue, never ran and was retired in #2171. `pr-validation.yml` still
  * calls this script's other modes; the sweep and the issue renderers below keep their
  * tests and have no scheduled caller today.
  *

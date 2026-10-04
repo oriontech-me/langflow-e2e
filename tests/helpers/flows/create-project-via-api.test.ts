@@ -212,8 +212,8 @@ test("a non-201 creation throws instead of returning an unusable project", async
 // these tests pin is the helper against a second copy of 26, so an edit to the
 // helper's constant fails here (measured: 26 -> 27 is caught) while a change to
 // Langflow's `MAX_MCP_SERVER_NAME_LENGTH` is caught by nothing and comes back as
-// a 409 in the daily. The only mechanism that would watch `base/mcp` is
-// `file-watcher.yml`, which is disabled and has no run history.
+// a 409 in the daily. The only mechanism that would have watched `base/mcp`
+// was `file-watcher.yml`, which never ran and was retired in #2171.
 //
 // Two divergences, both unreachable for a generated name, and the SECOND one is
 // worth knowing because it decides what these tests can prove:

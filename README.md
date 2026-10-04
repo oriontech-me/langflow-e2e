@@ -225,7 +225,7 @@ tests/
 
 ## Retired workflows
 
-`nightly.yml`, `weekly-stable.yml`, `adaptive-impacted.yml` and `file-watcher.yml` were deleted in #2171. All four were disabled in Actions, none had run since June, and two never ran at all. The `@stable` removal they shared now lives in the VM lane (`scripts/run-e2e.sh`). Their history, including `reports/weekly-history.jsonl`, stays in the repository.
+`nightly.yml`, `weekly-stable.yml`, `adaptive-impacted.yml` and `file-watcher.yml` were deleted in #2171. All four were disabled in Actions, none had run since June, and two never ran at all. The `@stable` removal the weekly ran now lives in the VM lane (`scripts/run-e2e.sh`). Their history, including `reports/weekly-history.jsonl`, stays in the repository.
 
 To inspect which specs have or lack a populated **External dependencies** section, run `npm run validate:specs`.
 

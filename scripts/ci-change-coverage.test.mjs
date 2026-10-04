@@ -404,8 +404,8 @@ test("against the live repo, a module reached ONLY by import is not silence", ()
   assert.deepEqual(result.ciFiles, ["scripts/lib/spec-path.mjs"]);
   assert.match(result.reasons.join(" "), /reached through /, "the indirection must be named, not implied");
   // The premise, asserted over EVERY workflow rather than the one the verdict happens
-  // to name first: the result names daily-stable AND weekly-stable, so checking one of
-  // them established a fraction of the claim it was written to establish.
+  // to name first: when this was written the result named daily-stable AND weekly-stable
+  // (retired in #2171), so checking one of them established a fraction of the claim.
   // Actions too, not just workflows: `workflowScripts` folds an action's own `scripts/`
   // references into every workflow that `uses:` it, so a path spelled only in an action
   // is still "named" and the premise would be false by a route this never looked down.
@@ -618,8 +618,8 @@ test("the flow-list and scalar forms are read too", () => {
 });
 
 test("a commented-out trigger is not a trigger, and a comment naming one is not either", () => {
-  // Both shapes are live in this repo, and a grep for the token gets both wrong in
-  // opposite directions: `nightly.yml` has its `schedule:` commented out, and
+  // Both shapes were live in this repo, and a grep for the token gets both wrong in
+  // opposite directions: `nightly.yml` (retired in #2171) had its `schedule:` commented out, and
   // `issue-contract-guard.yml`'s `on:` block explains `workflow_dispatch` in prose
   // eleven lines before declaring it.
   assert.deepEqual(
@@ -680,8 +680,8 @@ test("a workflow with no workflow_dispatch is never told to be dispatched", () =
 
 test("a mixed diff dispatches what it can and is honest about the rest", () => {
   // Not hypothetical: `scripts/stable-tests.ts` is run by daily-stable, which is
-  // dispatchable, AND by update-coverage-summary, which has no trigger (and by
-  // weekly-stable, which carries the trigger but is disabled, so it 422s too).
+  // dispatchable, AND by update-coverage-summary, which has no trigger (and was run by
+  // weekly-stable, which carried the trigger but was disabled, so it 422'd too).
   // Flipping the whole message on the worst member would withhold the one dispatch
   // that does work; leaving it alone loses the correction.
   const { annotation } = adviceFor("scripts/partition-shards.mjs", "scripts/coverage-summary.ts");
@@ -758,8 +758,8 @@ test("workflow states are read from the Actions API's own TSV, junk rows ignored
 });
 
 test("a workflow disabled in Actions is not told to be dispatched, however good its YAML", () => {
-  // `weekly-stable.yml` really is `disabled_manually` and really is named by this
-  // verdict (it runs `scripts/stable-tests.ts`), so a YAML-only answer would have
+  // `weekly-stable.yml` really was `disabled_manually` and really was named by this
+  // verdict (it ran `scripts/stable-tests.ts`), so a YAML-only answer would have
   // closed #1609 while still prescribing a 422 by the other route.
   const states = new Map([[".github/workflows/daily-stable.yml", false]]);
   const r = classifyCiChange({ changed: ["scripts/partition-shards.mjs"], refs, states });

@@ -42,7 +42,6 @@ import {
   CC_DEFAULT,
 } from "./create-failure-issue.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 import {
   COMMITTED_FOOTER,
   PENDING_HEADLINE_PREFIX,

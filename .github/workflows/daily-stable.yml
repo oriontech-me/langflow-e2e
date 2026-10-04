@@ -377,7 +377,7 @@ jobs:
 
     # This job runs INSIDE the Playwright container, so both the test process
     # and Langflow reach Ollama via the job network's service hostname (no
-    # localhost port mapping in here — unlike manual.yml/nightly.yml).
+    # localhost port mapping in here — unlike manual.yml).
     env:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_BASE_URL_FROM_LANGFLOW: http://ollama:11434

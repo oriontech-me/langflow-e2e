@@ -3,8 +3,8 @@
 #
 # Image selection:
 #   (no argument)   langflowai/langflow-nightly:latest — the reference image this
-#                   suite validates against (CONTRIBUTING.md, daily-stable.yml and
-#                   nightly.yml all run on it).
+#                   suite validates against (CONTRIBUTING.md and daily-stable.yml
+#                   run on it).
 #   <version>       langflowai/langflow:<version> — a published build.
 #                   Example: ./scripts/start-langflow-docker.sh 1.5.1
 #   LANGFLOW_IMAGE  An exact image reference, which wins over both. Example:

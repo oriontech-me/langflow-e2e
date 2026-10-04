@@ -1525,8 +1525,9 @@ test("whoever reads the corroboration file is in the lane that writes it", () =>
   // Scoped by mechanism rather than by file since #1943: the daily stopped calling the
   // auto-remove action when the VM took the verdict, so on that lane the reader is now
   // the history appender (#1763), which asks the same per-attempt question. The
-  // coupling is asserted wherever a reader exists, so a lane that gains one later —
-  // the VM's, once it removes tags — is covered by the same rule.
+  // coupling is asserted wherever a reader exists. The VM lane, which removes tags
+  // since #1945, writes and reads the file inside `scripts/run-e2e.sh`, and is checked
+  // below by the same rule.
   const wfDir = path.join(__dirname, "..", ".github", "workflows");
   const lanes = ["daily-stable.yml"];
   let readersFound = 0;
@@ -1553,6 +1554,19 @@ test("whoever reads the corroboration file is in the lane that writes it", () =>
       );
     }
   }
+  // The VM lane: one writer, then every reader (the remover and the history appender),
+  // all naming the same file, and none of them before the writer.
+  const sh = fs.readFileSync(path.join(__dirname, "run-e2e.sh"), "utf-8");
+  const writer = /OUTAGE_ATTEMPTS_OUT="([^"]+)"/.exec(sh);
+  assert.ok(writer, "run-e2e.sh: nothing writes the corroboration file");
+  const vmReaders = [...sh.matchAll(/(?<![A-Z_])OUTAGE_ATTEMPTS="([^"]+)"/g)];
+  assert.ok(vmReaders.length > 0, "run-e2e.sh: nothing reads the corroboration file");
+  for (const r of vmReaders) {
+    readersFound += 1;
+    assert.equal(r[1], writer[1], "run-e2e.sh: a reader names a different file than the writer");
+    assert.ok(writer.index < (r.index ?? -1), "run-e2e.sh: a reader comes before the step that writes the file");
+  }
+
   // The guard against this test quietly protecting nothing, which is what it would do
   // if both readers were renamed at once.
   assert.ok(readersFound > 0, "no lane reads the corroboration file any more");

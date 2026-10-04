@@ -214,7 +214,8 @@ export const DISPATCH_TRIGGER = "workflow_dispatch";
  * Not cosmetic: `issue-contract-guard.yml`'s `on:` block is mostly comment, and one
  * of those lines contains the token `workflow_dispatch` in prose. A grep for the
  * token would read that as a live trigger — and the same grep over `nightly.yml`,
- * whose `schedule:` is commented out, would read a dead trigger as live. Both are
+ * whose `schedule:` was commented out until #2171 retired it, would read a dead
+ * trigger as live. Both are
  * answers this must not give.
  */
 function stripComment(line) {
