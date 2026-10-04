@@ -8,8 +8,8 @@
 // read 14 collateral specs as 14 broken specs and paid a full cycle for it.
 //
 // The script is a plain stdout filter, so drive it as one rather than importing:
-// the argv-in/stdout-out contract is what `.github/actions/auto-remove-stable`
-// actually uses.
+// the argv-in/stdout-out contract is what `scripts/run-e2e.sh` actually uses (and
+// what the retired `.github/actions/auto-remove-stable` used before #2171).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

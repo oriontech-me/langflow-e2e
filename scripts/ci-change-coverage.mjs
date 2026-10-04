@@ -58,7 +58,7 @@
  * So the triggers are read from the YAML the reference graph already comes from, and
  * the advice is rendered HERE rather than composed in the workflow. Six answers,
  * worded separately because ONE diff mixes them — a change to
- * `scripts/stable-tests.ts` names daily-stable (dispatchable), weekly-stable
+ * `scripts/stable-tests.ts` named daily-stable (dispatchable), weekly-stable
  * (disabled) and update-coverage-summary (no trigger) at once, so flipping the whole
  * message on its worst member would withhold the one dispatch that does work:
  *
@@ -89,8 +89,10 @@
  *
  * A workflow turned off in the Actions tab answers `HTTP 422: Cannot trigger a
  * workflow_dispatch on a disabled workflow` however good its YAML is, and FOUR of
- * this repo's workflows are `disabled_manually` today — `weekly-stable.yml` among
- * them, which the verdict really does name (it runs `scripts/stable-tests.ts`).
+ * this repo's workflows were `disabled_manually` when this was written —
+ * `weekly-stable.yml` among them, which the verdict really did name (it ran
+ * `scripts/stable-tests.ts`). Those four were retired in #2171; `daily-stable.yml`
+ * has been disabled since 2026-10-02.
  * A YAML-only answer would have closed #1609 while still prescribing a 422 by the
  * other route.
  *
@@ -212,7 +214,8 @@ export const DISPATCH_TRIGGER = "workflow_dispatch";
  * Not cosmetic: `issue-contract-guard.yml`'s `on:` block is mostly comment, and one
  * of those lines contains the token `workflow_dispatch` in prose. A grep for the
  * token would read that as a live trigger — and the same grep over `nightly.yml`,
- * whose `schedule:` is commented out, would read a dead trigger as live. Both are
+ * whose `schedule:` was commented out until #2171 retired it, would read a dead
+ * trigger as live. Both are
  * answers this must not give.
  */
 function stripComment(line) {
@@ -607,8 +610,8 @@ export function classifyCiChange({ changed, refs, states = null }) {
     users.forEach((w) => dispatch.add(w));
     // `also` rather than a bare "reached through": the import route explains SOME of
     // the list, not necessarily all of it, and this clause is attached to the whole
-    // sentence. `report-backend-outages.mjs` is named outright by daily-stable and
-    // reached by import only from weekly-stable, so anything implying exclusivity is
+    // sentence. `report-backend-outages.mjs` was named outright by daily-stable and
+    // reached by import only from weekly-stable, so anything implying exclusivity was
     // false for one of the two.
     const route = viaImport.length > 0 ? ` (also reached through ${viaImport.sort().join(", ")})` : "";
     const alsoDispatch = users.length > 0 ? `, and by ${users.join(", ")}` : "";

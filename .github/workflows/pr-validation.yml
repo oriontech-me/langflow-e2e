@@ -1060,8 +1060,8 @@ jobs:
       #
       # Shared implementation since #1045 (`.github/actions/wait-for-backend`) —
       # the deadline, the heartbeat and the curl-exit-code decoding this copy
-      # pioneered now apply to the daily and manual lanes too, and weekly-stable
-      # finally has a gate at all. Runs only when Collect models ran: with no sweep
+      # pioneered now apply to the daily and manual lanes too (and gave weekly-stable,
+      # retired in #2171, its first gate). Runs only when Collect models ran: with no sweep
       # there is no wedge to wait out, an unrelated startup failure is
       # globalSetup's to report, and an LLM-free PR must not be billed for the wait.
       - name: Wait for the backend to recover from the collect-models load

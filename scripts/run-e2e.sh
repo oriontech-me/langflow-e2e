@@ -2522,11 +2522,12 @@ auto_remove_stable() {
   return 0
 }
 
-# Everything up to `git commit` is the composite action's, for its reasons. The PUSH
-# is where the two lanes genuinely differ, and the difference is structural.
+# Everything up to `git commit` follows the Actions composite action this was ported
+# from (retired with its last caller in #2171), for its reasons. The PUSH is where the
+# two lanes differed, and the difference was structural.
 #
-# The action pushes bare and says why: its sibling history step has just pushed, so
-# `main` hardly moves inside that window. Here the window is a whole MIRROR CYCLE —
+# The action pushed bare and said why: its sibling history step had just pushed, so
+# `main` hardly moved inside that window. Here the window is a whole MIRROR CYCLE —
 # this clone reads from the destination, which trails the source by up to an hour — so
 # the commit is replayed onto the source's `main` before it is sent.
 #

@@ -14,9 +14,9 @@
  * import graph puts it at 112: the grep missed one direct importer and counted
  * testid strings like "add-component-button-prompt-template" as reach.)
  *
- * Not to be confused with `scripts/impacted-tests.ts`, whose input is a
- * *Langflow source path* resolved through the `External dependencies` prose of
- * the spec docs (it serves `file-watcher.yml`). This script resolves imports
+ * Not to be confused with the retired `scripts/impacted-tests.ts` (#2171),
+ * whose input was a *Langflow source path* resolved through the `External
+ * dependencies` prose of the spec docs. This script resolves imports
  * over this repo's own TypeScript — a different question, deliberately a
  * different script.
  *

@@ -307,7 +307,7 @@ test("... title ...", { tag: ["@stable", "@components"] }, async ({ page }) => {
 test.fixme("... title ...", { tag: ["@components"] }, async ({ page }) => { ... });
 ```
 
-**Why both — `@stable` removal alone is incomplete.** Removing `@stable` only stops the **daily** (`daily-stable.yml` runs `@stable` only). The test keeps running — and going red — in every other context: the `pr-validation.yml` **impacted-specs gate** (selects specs by *file diff*, not by tag, so any PR touching the file runs the broken test), `test:features`, `adaptive-impacted.yml`, and manual full runs. This is why a `@stable`-removal-only quarantine PR itself goes red on the impacted-specs gate (#871, seen on PR #870, merged red). `test.fixme` skips the test in **all** contexts, so the quarantine PR merges green and the noise stops everywhere.
+**Why both — `@stable` removal alone is incomplete.** Removing `@stable` only stops the **daily** (`daily-stable.yml` runs `@stable` only). The test keeps running — and going red — in every other context: the `pr-validation.yml` **impacted-specs gate** (selects specs by *file diff*, not by tag, so any PR touching the file runs the broken test), `test:features`, and manual full runs. This is why a `@stable`-removal-only quarantine PR itself goes red on the impacted-specs gate (#871, seen on PR #870, merged red). `test.fixme` skips the test in **all** contexts, so the quarantine PR merges green and the noise stops everywhere.
 
 **Restoration** (the dedicated issue's deliverable) is the exact inverse, in one PR after the fix: remove `test.fixme`, restore `@stable`, re-validate per `CONTRIBUTING.md`.
 

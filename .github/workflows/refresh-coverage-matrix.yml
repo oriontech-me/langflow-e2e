@@ -34,7 +34,7 @@ on:
 
   schedule:
     # Fallback only, for the case this repo has hit twice: a scheduled lane going dormant
-    # (nightly.yml, weekly-stable.yml). Without it, a disabled daily would silently freeze the
+    # (nightly.yml and weekly-stable.yml, both retired since). Without it, a disabled daily would silently freeze the
     # feed with nothing saying so. Monday, off the :00 mark.
     - cron: "43 11 * * 1"
 
