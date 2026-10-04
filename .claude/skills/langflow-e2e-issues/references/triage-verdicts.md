@@ -34,8 +34,8 @@ spec starts failing — run this split before "fixing" anything:
    expected contract? A field/validation/endpoint that no longer exists is a
    product change, not a selector to "heal".
 3. **Correlate with the nightly delta** — did the failure start with an image
-   bump? (`reports/daily-history.jsonl`, `npm run check:nightly-delta`,
-   upstream commits from `file-watcher` issues.)
+   bump? (`reports/daily-history.jsonl`, the version each run records, and the
+   upstream commits between the two versions.)
 
 Route by the verdict:
 

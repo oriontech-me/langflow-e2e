@@ -218,58 +218,16 @@ tests/
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `pr-validation.yml` | Every PR to `main` | TypeScript check (`tsc --noEmit`) + ESLint in parallel — both must pass before merge |
-| `nightly.yml` | **Disabled** (`disabled_manually` in Actions, and its cron is commented out) | When revived, runs everything against `langflow-nightly:latest` and opens an issue on failure |
 | `daily-stable.yml` | Mon–Fri 05:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report. **Active stable workflow.** |
-| `weekly-stable.yml` | Disabled (fallback) | Superseded by `daily-stable.yml`; kept in the repo, disabled. Same `@stable` machinery on a weekly cron when enabled |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag. Carries the `provider` input (`auto` / `openai` / `anthropic` / `google` / `all-models`) — **the only lane that still runs multi-provider**, since `pr-validation` pins one provider and `daily-stable` rotates by weekday (#1186) |
-| `file-watcher.yml` | **Disabled in Actions** — cannot even be dispatched | Monitors changes in Langflow source and opens a review issue. Accepts a `since` window; guards its monitored paths against the checkout first (`scripts/watch-upstream-areas.mjs`). Re-enabling needs the Actions toggle **and** a cron (removed in `9da85fa`) |
-| `adaptive-impacted.yml` | **Disabled in Actions** (was daily 04:00 BRT) | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
 
 ---
 
-## Adaptive impacted-tests subset
+## Retired workflows
 
-The `adaptive-impacted.yml` workflow narrows each daily run to the spec files whose docs reference the Langflow source paths changed in the latest nightly. The mapping comes from the **External dependencies** section in each `docs/**/*.md` spec doc.
+`nightly.yml`, `weekly-stable.yml`, `adaptive-impacted.yml` and `file-watcher.yml` were deleted in #2171. All four were disabled in Actions, none had run since June, and two never ran at all. The `@stable` removal they shared now lives in the VM lane (`scripts/run-e2e.sh`). Their history, including `reports/weekly-history.jsonl`, stays in the repository.
 
-CLI usage:
-
-```bash
-# Map changed paths to spec files (default output: file paths)
-npm run impacted -- src/lfx/src/lfx/components/input_output/webhook.py
-
-# Read paths from stdin (e.g. piped from `git diff --name-only`)
-git diff --name-only main..HEAD | npm run impacted -- --stdin
-
-# Structured output
-npm run impacted -- --format=json src/foo.py
-
-# Inspect which specs have/lack a populated External dependencies section
-npm run validate:specs
-
-# Decide whether the workflow would skip or run (queries Docker Hub)
-npm run check:nightly-delta
-```
-
-Behavior:
-- **File-level matching.** A bullet `src/backend/.../webhook.py` matches the exact file; a bullet ending in `/` matches anything inside the directory.
-- **Catch-all paths** (routes, feature flags) trigger the full suite.
-- **Unmapped paths** are skipped with a warning — the daily nightly still covers them.
-- **State** is persisted in repository variable `LAST_TESTED_NIGHTLY_SHA`; updating it requires the `GH_PAT_VARIABLES` secret (PAT with `Variables: read & write`). Without it the workflow still runs but does not advance the cursor.
-
-### Debugging a weekly failure
-
-When the weekly `@stable` run fails, the auto-opened triage issue links to the GitHub Actions run. Open the run page and download the `playwright-report-weekly-<run-id>` artifact (retained for 14 days).
-
-The artifact unzips into a self-contained HTML report — open `index.html` to inspect:
-
-- **Failed tests** — file path, test title, and error stack
-- **Screenshots** — automatic on every failure
-- **Video** — captured on the first retry, useful when the failure only reproduces under timing pressure
-- **Trace** — captured on the first retry; click "Trace" in the report to step through the run in Playwright's trace viewer
-
-No local merge step is required: the report works offline once unzipped.
-
-If the failure is a Langflow regression, flag it to the team and keep `@stable` on the test. If it is a test bug, remove `@stable`, open a fix PR, and the next weekly run will be unblocked.
+To inspect which specs have or lack a populated **External dependencies** section, run `npm run validate:specs`.
 
 ---
 
@@ -289,6 +247,6 @@ See [`QA_CHECKLIST.md`](./QA_CHECKLIST.md) for the full coverage map.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the complete guide on how to create tests, validate coverage and respond to file-watcher issues.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the complete guide on how to create tests and validate coverage.
 
 See [`REGRESSIONS.md`](./REGRESSIONS.md) for the ledger of real Langflow regressions this suite has caught — each one adversarially validated and tracked upstream.

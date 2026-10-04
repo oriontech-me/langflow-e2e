@@ -24,7 +24,7 @@ closing issues, and when finishing a branch.
   a self-review to confirm the test is sound; request another person's review
   when you judge it useful. **After merge, delete the branch** (clean up).
 
-## Daily-failure workflow (from `weekly-stable.yml` / nightly triage)
+## Daily-failure workflow (from the `@stable` daily)
 
 Expect issues most days from the CI workflow. Triage procedure (Rafael owns the
 first triage for now):

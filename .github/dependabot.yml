@@ -77,12 +77,11 @@ updates:
       #
       # @playwright/test and playwright are pinned to an EXACT version on purpose,
       # and the pin is load-bearing across files Dependabot cannot edit. Bumping
-      # the runner means 8 coordinated edits across 3 files:
+      # the runner means 6 coordinated edits across 2 files:
       #
       #   package.json          @playwright/test + playwright            (2)
       #   daily-stable.yml      3x `image: mcr.microsoft.com/playwright:vX-noble`
       #                         + 1x PLAYWRIGHT_VERSION env             (4)
-      #   weekly-stable.yml     1x image tag + 1x PLAYWRIGHT_VERSION env (2)
       #
       # Dependabot only touches package.json and the lockfile, so its PR would
       # leave every workflow behind. daily-stable.yml then fails at its

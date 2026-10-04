@@ -3,10 +3,15 @@
  * The file-watcher's monitored-area table, its existence guard, and its change
  * sweep (issue #1092).
  *
+ * `file-watcher.yml`, the workflow that ran `--mode=check` and `--mode=detect` and
+ * opened the issue, never ran and was retired in #2171. `pr-validation.yml` still
+ * calls this script's other modes; the sweep and the issue renderers below keep their
+ * tests and have no scheduled caller today.
+ *
  * WHY THIS EXISTS
  *
- * `file-watcher.yml` opens a revalidation issue when upstream Langflow touches a
- * path one of our areas depends on, and prints the `--grep` to revalidate. It
+ * `file-watcher.yml` opened a revalidation issue when upstream Langflow touched a
+ * path one of our areas depends on, and printed the `--grep` to revalidate. It
  * carried two defects that made its output untrustworthy:
  *
  *   1. `src/lfx/` was watched by ZERO of the areas as they then stood (13; #1581
@@ -608,10 +613,10 @@ export function findLfxDrift({ classification = LFX_CLASSIFICATION, listChildren
  * *feat: introduce lfx package* (#9133, 2025-09-02); ~20 under `src/frontend/`
  * whose directory was reorganised; 7 missing the real `src/lfx/src/lfx/` prefix.
  *
- * The cost is not only a dead end for a reviewer. `scripts/impacted-tests.ts`
- * maps a changed Langflow path to the specs whose docs name it, by PREFIX — so a
- * path that resolves to nothing makes that spec unselectable by
- * `adaptive-impacted.yml`. A wrong path there is silent in exactly the way a
+ * The cost was not only a dead end for a reviewer. `scripts/impacted-tests.ts`
+ * (retired in #2171) mapped a changed Langflow path to the specs whose docs name
+ * it, by PREFIX — so a path that resolved to nothing made that spec unselectable by
+ * `adaptive-impacted.yml`. A wrong path there was silent in exactly the way a
  * missing one is.
  *
  * WHY THIS LIVES HERE, AND WHY IT RESOLVES VIA `git ls-tree`

@@ -44,7 +44,7 @@
  *
  * So the published image decides, and the git refs only say WHICH COMMIT that
  * version was built from — which is what a checkout needs. scripts/check-nightly-delta.ts
- * reached the same conclusion for its own lane and says so in its header; the two
+ * (retired in #2171, in git history) reached the same conclusion for its own lane; the two
  * resolutions are close enough that consolidating them is worth doing once this one
  * has a second consumer.
  *
@@ -104,8 +104,8 @@ function compareTriples(a, b) {
  * The version `:latest` currently points at, by manifest digest.
  *
  * Docker Hub returns one entry per platform variant and `:latest` shares its digest
- * with the version tag built in the same run — the same rule check-nightly-delta.ts
- * uses. amd64 is preferred because that is what both lanes run; without pinning a
+ * with the version tag built in the same run — the same rule the retired
+ * check-nightly-delta.ts used. amd64 is preferred because that is what both lanes run; without pinning a
  * platform, an arm64 digest can match nothing and the whole resolution silently
  * falls back.
  */

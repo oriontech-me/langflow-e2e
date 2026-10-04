@@ -9,13 +9,9 @@ before acting; this list drifts.
 
 | Workflow | Role | Notes / owner doc |
 |---|---|---|
-| `nightly.yml` | Daily 03:00 BRT full run vs `langflow-nightly:latest`; opens issue on failure | `CLAUDE.md` → CI/CD |
 | `daily-stable.yml` | **Active stable workflow.** Weekdays 05:00 BRT, `@stable` only; opens `daily-failure` issue; appends `reports/daily-history.jsonl` | consumed by `langflow-e2e-triage` |
-| `weekly-stable.yml` | **Disabled** fallback (superseded by daily-stable); writes `reports/weekly-history.jsonl` | frozen history |
 | `pr-validation.yml` | Every PR: `tsc --noEmit` + ESLint + QA-CHECKLIST guard + impacted-specs gate | `#741`, `#873`, `#892` |
-| `adaptive-impacted.yml` | Runs the impacted-tests subset for a PR. **`disabled_manually`** | `scripts/impacted-tests.ts`; `CONTRIBUTING.md` → Adaptive impacted-tests |
 | `manual.yml` | Parameterized manual run (Docker tag / URL, suite, grep) | use to dry-run a workflow-adjacent change |
-| `file-watcher.yml` | Detects upstream Langflow changes in monitored paths; opens revalidation issue. **`disabled_manually` in Actions + no cron (9da85fa) ⇒ no run history at all**; a dispatch 422s | `scripts/watch-upstream-areas.mjs` (area table + `lfx` decision record + fail-closed guard, `#1092`) |
 | `triage-dispatch.yml` | Automates daily-failure triage dispatch behind an approval gate | `#785/#786/#787`, `#819` |
 | `update-coverage-summary.yml` | Regenerates QA-CHECKLIST generated blocks on merge to `main` | `scripts/coverage-summary.ts`, `stable-tests.ts` |
 | `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | Langflow version-migration checks (latest → nightly) | `migration-test` label |
@@ -30,10 +26,11 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 |---|---|---|
 | `setup-playwright` | Node + deps + browser install for a lane | — |
 | `run-e2e` | Runs a suite and uploads the report | used by `manual.yml` |
-| `wait-for-backend` | Post-collect-models health gate: waits out the wedge, else fails naming the state | `scripts/wait-for-backend.mjs`; `#1011/#1019/#1044/#1045` — adopted by daily/pr/manual/weekly |
+| `wait-for-backend` | Post-collect-models health gate: waits out the wedge, else fails naming the state | `scripts/wait-for-backend.mjs`; `#1011/#1019/#1044/#1045` — adopted by daily/pr/manual |
 | `resolve-echo-endpoint` | Points `ECHO_BASE_URL` at the lane's `go-httpbin` service (`--topology native` decides it for the VMs' container-less endpoint instead) | `scripts/resolve-echo-endpoint.mjs`; `#1128` |
 | `guard-dedicated-issue` | Validates a `daily-failure` issue against the dedicated-issue contract | `#1035/#1037` |
-| `auto-remove-stable` | Auto-removes `@stable` from hard failures | `scripts/remove-stable-from-failures.ts`, `#476` |
+
+Retired in #2171, all disabled and without runs since June: `nightly.yml`, `weekly-stable.yml`, `adaptive-impacted.yml`, `file-watcher.yml`, the composite action `auto-remove-stable` (the VM lane removes `@stable` inline in `scripts/run-e2e.sh`), and the adaptive lane's `impacted-tests.ts` and `check-nightly-delta.ts`.
 
 ## Scripts (`scripts/`)
 
@@ -47,15 +44,13 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 | `coverage-summary.ts` | Regenerates the QA-CHECKLIST Coverage Summary table (bullet markers → table) |
 | `stable-tests.ts` | Regenerates the `Phase 0 — Validated` block from `@stable` `test()` calls |
 | `check-checklist-guard.mjs` | PR guard: fails a PR that edits a generated QA-CHECKLIST block (`#741`) |
-| `impacted-tests.ts` | Computes the impacted-specs subset for a PR |
 | `append-weekly-history.mjs` | Shared run-history appender (daily via `HISTORY_FILE` override) |
 | `backfill-runs.mjs` | Backfills missing run-history lines (`#849`) |
 | `build-run-payload.mjs` | Builds the run-history JSONL payload for a CI run |
-| `check-nightly-delta.ts` | Compares nightly versions to isolate product-vs-infra regressions (`#816`) |
 | `remove-stable-from-failures.ts` | Auto-removes `@stable` from hard failures (`#476`) |
 | `format-auto-remove-summary.mjs` | Formats the auto-remove summary comment |
 | `validate-spec-deps.ts` | Reports which spec docs have a POPULATED `## External dependencies` section. Never resolves the paths, always exits 0, and runs only under `npm run validate:specs` — nothing under `.github/` calls it. The adjacent name is a trap: the resolution is the row below (`#1573`) |
-| `watch-upstream-areas.mjs` | `--mode=detect` opens the file-watcher issue; `--mode=check` guards the area table and the `lfx` classification; `--mode=check-docs` RESOLVES every backticked `src/…` token in a spec doc's `## External dependencies` against upstream via `git ls-tree` — the `Spec-doc dependency paths` PR job. Fails on docs the PR changed, `::warning::` on the rest; resolves against `origin/main` plus the two release lines `--mode=release-ref` derives (`#1298/#1574`) |
+| `watch-upstream-areas.mjs` | `--mode=detect` sweeps upstream for the retired `file-watcher.yml` (no caller since #2171); `--mode=check` guards the area table and the `lfx` classification; `--mode=check-docs` RESOLVES every backticked `src/…` token in a spec doc's `## External dependencies` against upstream via `git ls-tree` — the `Spec-doc dependency paths` PR job. Fails on docs the PR changed, `::warning::` on the rest; resolves against `origin/main` plus the two release lines `--mode=release-ref` derives (`#1298/#1574`) |
 | `wait-for-backend.mjs` | The post-collect-models health gate's polling loop, behind `.github/actions/wait-for-backend`. Classifies the failure (dead / wedged / HTTP / wiring) instead of hedging (`#1045`) |
 | `watch-backend.mjs` | In-run backend liveness recorder + `--summarize` (diagnostic only, never fails a shard) (`#1030/#1048`) |
 | `provider-dependent-specs.mjs` | Two verdicts for the PR lane: does the impacted set need the `Collect models` sweep, and would any spec run WITHOUT a provider it needs. Provider-dependence is read from `@agents`/`@model-provider` tags, not only from model-resolver references — the gap that let a helper-only PR (#1152) run `agent-component-regression` bare. Changed-itself ⇒ sweep; only-imported ⇒ excluded and announced (`#1216`) |
