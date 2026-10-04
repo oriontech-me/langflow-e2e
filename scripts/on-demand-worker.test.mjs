@@ -207,7 +207,10 @@ test("a queued request is claimed, run by the executor, and its result forwarded
     assert.equal(terminal.status, "done");
     assert.equal(terminal.claim_token, p.requests[0].claim_token);
     assert.equal(terminal.at, stampToIso(terminal.result.FINISHED));
-    assert.equal(terminal.summary, null);
+    // The fake run leaves an empty results.json: a summary of nothing, counted.
+    assert.deepEqual(terminal.summary, {
+      totals: { passed: 0, failed: 0, flaky: 0, skipped: 0 }, duration_ms: 0, failures_by_spec: [], tests_by_spec: [],
+    });
     // The executor ran the request as the platform handed it over.
     assert.equal(terminal.result.TARGET_REF, "release-1.13.0");
     assert.equal(terminal.result.PROVIDER, "anthropic");
@@ -857,4 +860,31 @@ test("a held request from the state file is checked again before it reaches the 
   } finally {
     await p.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// The suite summary goes with the result (phase 7)
+// ---------------------------------------------------------------------------
+
+const ok1 = [{ status: "passed", duration: 900, steps: [] }];
+const specOf = (file, line, title, status, results) => ({ title, file, line, tags: ["@stable"], tests: [{ status, results }] });
+const SUMMARY_REPORT = { stats: { duration: 1800 }, suites: [{ specs: [
+  specOf("tests/a.spec.ts", 3, "passes", "expected", ok1),
+  specOf("tests/a.spec.ts", 9, "fails", "unexpected", [{ status: "failed", duration: 900, steps: [], error: { message: "Error: boom" } }]),
+] }] };
+
+test("the worker counts the run its result names, and nothing else", () => {
+  const state = makeTempDir("od-state-");
+  const run = "20261004T133844Z";
+  mkdirSync(join(state, "runs", run), { recursive: true });
+  writeFileSync(join(state, "runs", run, "results.json"), JSON.stringify(SUMMARY_REPORT));
+  const w = new Worker({ apiBase: "http://127.0.0.1:1", token: "t", workerId: "qa", state, logDir: state, shadowState: state, log: () => {} });
+  assert.deepEqual(w.summaryOf({ RUN_ID: run }).totals, { passed: 1, failed: 1, flaky: 0, skipped: 0 });
+  assert.equal(w.summaryOf({ STATUS: "refused" }), null, "a result with no run has no summary");
+  assert.equal(w.summaryOf({ RUN_ID: "20261004T000000Z" }), null, "a run that left no results.json has none");
+  assert.equal(w.summaryOf({ RUN_ID: "../../etc" }), null, "a RUN_ID outside its shape reads no file");
+  // The suite runs in $STATE/wt: an absolute path there comes out as the daily writes it.
+  const abs = { suites: [{ specs: [specOf(join(state, "wt", "tests", "a.spec.ts"), 3, "t", "expected", ok1)] }] };
+  writeFileSync(join(state, "runs", run, "results.json"), JSON.stringify(abs));
+  assert.equal(w.summaryOf({ RUN_ID: run }).tests_by_spec[0].spec, "tests/a.spec.ts");
 });
