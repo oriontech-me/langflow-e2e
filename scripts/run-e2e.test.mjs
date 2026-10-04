@@ -2386,9 +2386,19 @@ test("the tag follows the verdict: this lane no longer removes @stable (#1942)",
   // The mechanism itself survives on the lane that owns the verdict: the VM calls the
   // same three scripts inline (#1945). The composite action that wrapped them left
   // with its last caller, the retired weekly lane (#2171).
-  const sh = readFileSync(SCRIPT, "utf8");
-  for (const s of ["remove-stable-from-failures.ts", "format-auto-remove-summary.mjs", "auto-remove-commit-paths.mjs"]) {
-    assert.ok(sh.includes(`scripts/${s}`), `the VM lane stopped calling ${s}`);
+  // Matched on the CALL, over non-comment lines: a comment naming a script would
+  // otherwise keep this green after the call itself was deleted.
+  const code = readFileSync(SCRIPT, "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  for (const call of [
+    /npx ts-node scripts\/remove-stable-from-failures\.ts/,
+    /node scripts\/format-auto-remove-summary\.mjs/,
+    /node scripts\/auto-remove-commit-paths\.mjs paths/,
+    /node scripts\/auto-remove-commit-paths\.mjs verify/,
+  ]) {
+    assert.match(code, call, `the VM lane stopped calling ${call.source}`);
   }
 });
 

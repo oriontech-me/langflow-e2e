@@ -649,7 +649,7 @@ export const DOC_DEPS_EXEMPT_FILES = ["docs/TEST-SPEC-TEMPLATE.md"];
  *
  * A bullet routinely names a second file mid-sentence, and a multi-file
  * dependency is written as continuation lines; checking only the first token per
- * bullet (what `impacted-tests.ts` consumes) would leave those unverified, which
+ * bullet (what the retired `impacted-tests.ts` consumed) would leave those unverified, which
  * is the silence this guard exists to remove.
  *
  * @param {string} markdown
@@ -1582,7 +1582,7 @@ export function renderGuardSection(guard) {
  *
  * A guard failure SUPPRESSES commits — a sweep over a path that is not there
  * finds nothing — so the run it caveats can legitimately report zero areas, and
- * `file-watcher.yml` therefore opens the issue on the guard's verdict as well as
+ * `file-watcher.yml` therefore opened the issue on the guard's verdict as well as
  * on `has_changes`. "Langflow source changed" would then be the one sentence on
  * the issue that is not true, on the issue whose entire subject is that the sweep
  * was incomplete.

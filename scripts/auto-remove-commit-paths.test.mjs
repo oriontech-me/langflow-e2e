@@ -341,7 +341,11 @@ function runCommitStep(ws) {
     // Any non-empty value: the local remote ignores the header the token becomes.
     "SOURCE_PUSH_TOKEN=not-a-real-token",
     "RUN_ID=test-run",
-    `auto_remove_commit ${JSON.stringify(ws.result)}`,
+    // Called the way the lane calls it, on the left of `||`: bash disables errexit
+    // for the whole function body there, and the function is written for that. A
+    // bare call would let `set -e` abort on a failure the function itself does not
+    // handle, and a test could pass on the abort instead of on the function.
+    `auto_remove_commit ${JSON.stringify(ws.result)} || exit 1`,
   ].join("\n");
   const run = spawnSync(BASH, ["-c", body], {
     // The lane runs its helpers as `node scripts/...` from the checkout it lives in,

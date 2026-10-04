@@ -1208,8 +1208,12 @@ test("the daily stopped removing the tag, and stopped claiming it did (#1943)", 
   // The mechanism outlived the composite action that used to wrap it: the VM lane
   // calls the same scripts inline (#1945), and the action went with its last
   // caller, the retired weekly lane (#2171).
-  const runner = readFileSync(join(REPO, "scripts/run-e2e.sh"), "utf8");
-  assert.match(runner, /scripts\/remove-stable-from-failures\.ts/, "the VM lane no longer removes @stable");
+  // On the call, over non-comment lines, so a comment cannot stand in for it.
+  const runner = readFileSync(join(REPO, "scripts/run-e2e.sh"), "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  assert.match(runner, /npx ts-node scripts\/remove-stable-from-failures\.ts/, "the VM lane no longer removes @stable");
 });
 
 test("a lost removal points the reader at a place that exists on ITS lane (#1945)", () => {

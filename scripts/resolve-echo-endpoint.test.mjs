@@ -462,7 +462,7 @@ test("the CLI refuses an unknown --topology instead of defaulting to container",
 // here or it is only ever discovered by a lost day of @stable coverage.
 //
 // The convention already held everywhere else — every `jq` call site in the repo
-// (pr-validation, adaptive-impacted, migration-test, guard-dedicated-issue) sits in
+// (pr-validation, migration-test, guard-dedicated-issue; adaptive-impacted until #2171) sits in
 // a host-based job, and daily-stable's own three container jobs use `node -e`
 // instead — it was simply never written down.
 

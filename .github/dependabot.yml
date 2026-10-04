@@ -100,7 +100,7 @@ updates:
       #   1. It has no JS compiler API (`ts.transpileModule` and `ts.createProgram`
       #      are `undefined`), so ts-node@10 throws on load. That is the
       #      `test:units` PR gate, `regressions:check`, `check:checklist-coverage`,
-      #      `coverage:summary`, `regressions:summary`, `impacted`,
+      #      `coverage:summary`, `regressions:summary`,
       #      `validate:specs` — and `update-coverage-summary.yml` on `main`, which
       #      is what keeps the QA-CHECKLIST generated blocks in sync.
       #   2. `tsconfig.json` stops compiling: `TS5108: Option
