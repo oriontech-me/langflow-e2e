@@ -1,4 +1,4 @@
-// Unit tests for the file-watcher's area table and its guards (issue #1092).
+// Unit tests for the upstream-area table and its guards (issue #1092).
 //
 // Two halves. The synthetic ones pin the fail-closed rules — a missing monitored
 // path and an unclassified `lfx` subtree must both be reported, because the bug
@@ -482,48 +482,6 @@ test("area names and paths are unique, and every area keeps tags plus a checklis
       assert.ok(p.startsWith("src/"), `${area.area} watches a non-source path: ${p}`);
     }
   }
-});
-
-test("file-watcher.yml runs both modes and consumes every output this script emits", () => {
-  // A table nothing reads, or an output name that drifted on one side only,
-  // would restore the silence this issue is about.
-  const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/file-watcher.yml"), "utf8");
-  assert.match(yml, /watch-upstream-areas\.mjs --mode=check/);
-  assert.match(yml, /watch-upstream-areas\.mjs --mode=detect/);
-  assert.match(yml, /steps\.detect\.outputs\.title/);
-  assert.match(yml, /steps\.detect\.outputs\.body/);
-  // The output that GATES issue creation. Renaming it on either side would leave
-  // a green job that never opens an issue — a silent fail-open.
-  assert.match(yml, /steps\.detect\.outputs\.has_changes == 'true'/);
-  // The body reaches github-script through the environment. Interpolating it
-  // into the script body would put an upstream commit subject inside a JS
-  // template literal.
-  assert.match(yml, /body: process\.env\.ISSUE_BODY/);
-  // Issue creation needs an explicit grant; every other issue-opening workflow
-  // in the repo declares one.
-  assert.match(yml, /permissions:\s*\n\s*contents: read\s*\n\s*issues: write/);
-  // Labels must exist in the repo — GitHub silently creates unknown ones.
-  assert.match(yml, /labels: \['needs-triage', 'automated'\]/);
-  // The guard runs first for early annotations, but must not suppress the report
-  // for the healthy areas; the job is failed afterwards instead.
-  assert.ok(
-    yml.indexOf("--mode=check") < yml.indexOf("--mode=detect"),
-    "the existence guard must precede the change sweep",
-  );
-  assert.match(yml, /id: guard\s*\n\s*continue-on-error: true/);
-  assert.match(yml, /steps\.guard\.outcome == 'failure'/);
-  // The guard's verdict has to reach the sweep, or the issue body is written
-  // without it and the caveat #1182 adds can never fire (both sides, same file).
-  assert.match(yml, /--mode=check[^\n]*--verdict guard-verdict\.json/);
-  assert.equal((yml.match(/--verdict guard-verdict\.json/g) || []).length, 2, "both modes must name the same file");
-  // A deleted path suppresses its own area's commits, so the guard can fail on a
-  // day the sweep honestly reports zero areas. Gating issue creation on
-  // `has_changes` alone drops the caveat in exactly that case.
-  assert.match(yml, /has_changes == 'true' \|\| steps\.guard\.outcome == 'failure'/);
-  // `window_commits` was an output nothing read. An unread output is where a
-  // rename goes unnoticed, so the summary consumes it.
-  assert.match(yml, /steps\.detect\.outputs\.window_commits/);
-  assert.match(yml, /steps\.detect\.outputs\.areas_changed/);
 });
 
 // ---------- the window ----------
@@ -1068,8 +1026,8 @@ test("the Tracing & Monitoring command reaches every spec in the observability d
 
 test("the seven subtrees #1581 classified are still classified", () => {
   // A decision record can lose an entry silently: the guard that would catch it
-  // (`--mode=check`) needs an upstream checkout and runs only in
-  // `file-watcher.yml`, which is disabled — so the record itself is pinned here,
+  // (`--mode=check`) needs an upstream checkout and ran only in `file-watcher.yml`,
+  // which never ran and was retired in #2171 — so the record itself is pinned here,
   // in the lane that runs on every PR. Dropping any of the seven reopens #1581.
   const classified = {
     "observability.py": "Tracing & Monitoring",

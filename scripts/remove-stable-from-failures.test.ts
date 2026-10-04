@@ -8,7 +8,7 @@
 // at once, and until now nothing asserted that the guard fires.
 //
 // The tests drive the REAL script as a subprocess, through the contract
-// `.github/actions/auto-remove-stable/action.yml` uses (`PLAYWRIGHT_JSON` +
+// `scripts/run-e2e.sh` uses (`PLAYWRIGHT_JSON` +
 // `MAX_AUTO_REMOVE` in, one JSON object on stdout), against throwaway spec
 // files in a temp dir. Anything less would test a reimplementation of the guard
 // rather than the guard: `main()` reads its threshold at module scope and writes
@@ -1191,8 +1191,8 @@ test("an attempt with a PRODUCT error is not exempted however well corroborated"
 });
 
 test("the LAST-attempt exemption never depends on corroboration", () => {
-  // #1031's rule is untouched: a caller with no liveness step (weekly-stable)
-  // still gets it, on the very run where the backend state is least known.
+  // #1031's rule is untouched: a caller with no liveness data still gets it, on the
+  // very run where the backend state is least known.
   const { result, after } = runScript({
     specs: { "fixture-1589-f.spec.ts": ["sustained"] },
     failures: [
@@ -1528,7 +1528,7 @@ test("whoever reads the corroboration file is in the lane that writes it", () =>
   // coupling is asserted wherever a reader exists, so a lane that gains one later —
   // the VM's, once it removes tags — is covered by the same rule.
   const wfDir = path.join(__dirname, "..", ".github", "workflows");
-  const lanes = ["daily-stable.yml", "weekly-stable.yml"];
+  const lanes = ["daily-stable.yml"];
   let readersFound = 0;
 
   for (const lane of lanes) {
