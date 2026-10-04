@@ -122,6 +122,70 @@ test("a guard-tripped run still names its collateral and explains the count", ()
   assert.match(md, /the 5 attributable/);
 });
 
+// ─── The guard count beside hardFailures (#2116) ──────────────────────────────
+
+test("2026-09-30: a removal day with unexpected passes shows the guard count beside hardFailures", () => {
+  const md = render({
+    status: "removed",
+    threshold: 5,
+    hardFailures: 7,
+    attributableFailures: 7,
+    unexpectedPasses: 2,
+    guardCount: 5,
+    removed: Array.from({ length: 7 }, (_, i) => ({
+      file: `tests/x/t${i}.spec.ts`,
+      title: `t${i}`,
+      line: 4,
+      soleTag: false,
+    })),
+    skipped: [],
+    exempt: [],
+    backendWedged: "",
+  });
+
+  assert.match(md, /Guard count 5 of 7 hard failures/);
+  assert.match(md, /2 unexpected pass\(es\)/);
+});
+
+test("a guard-tripped day names the GUARD count, not hardFailures", () => {
+  const md = render({
+    status: "guard_tripped",
+    threshold: 5,
+    hardFailures: 9,
+    attributableFailures: 9,
+    unexpectedPasses: 2,
+    guardCount: 7,
+    removed: [],
+    skipped: [],
+    exempt: [collateral("c0")],
+    backendWedged: "",
+  });
+
+  assert.match(md, /Mass-failure guard tripped\*\* — 7 hard failures exceed the threshold of 5/);
+  assert.match(md, /Guard count 7 of 9 hard failures/);
+  assert.match(md, /counts \*\*every\*\* hard failure except unexpected passes/);
+  // The pre-#1031 subset promise is gone since #2116 widened the guard; the
+  // exemption's own promise is what still holds.
+  assert.doesNotMatch(md, /before #1031/);
+  assert.match(md, /the collateral exemption never adds to what it removes/);
+});
+
+test("output from before #2116 (no guardCount) still renders the number the guard used then", () => {
+  const md = render({
+    status: "guard_tripped",
+    threshold: 5,
+    hardFailures: 7,
+    attributableFailures: 7,
+    removed: [],
+    skipped: [],
+    exempt: [],
+    backendWedged: "",
+  });
+
+  assert.match(md, /— 7 hard failures exceed/);
+  assert.doesNotMatch(md, /Guard count/);
+});
+
 test("a guard-tripped run that is ALL collateral does not promise attributable triage", () => {
   // The 0-attributable wording matters: "the 0 attributable failure(s) above are
   // for manual triage" would send the analyst looking for evidence that is not

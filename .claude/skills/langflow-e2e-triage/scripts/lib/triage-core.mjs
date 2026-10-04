@@ -194,9 +194,23 @@ function bestHit(item, candidates) {
   return best;
 }
 
+/**
+ * The number the mass-failure guard compared against its threshold on this run:
+ * the row's own `guard_count`, which the appender records since #2116 (`totals.failed`
+ * minus the unexpected passes, the subtraction `remove-stable-from-failures.ts` makes
+ * over the report). A row without it was judged by the guard before #2116, which
+ * counted every hard failure — unexpected passes included, even the ones #2009 had
+ * already signed — so `totals.failed` is the truthful number for it. Recomputing the
+ * new rule over those rows would report the 2026-09-30 runs as not tripped, when
+ * their tags were in fact left in place.
+ */
+export function guardCount(row) {
+  return Number.isFinite(row.guard_count) ? row.guard_count : row.totals?.failed || 0;
+}
+
 /** True when the run had more hard failures than the auto-remove guard allows. */
 export function detectGuard(row, maxAutoRemove = 5) {
-  return (row.totals?.failed || 0) > maxAutoRemove;
+  return guardCount(row) > maxAutoRemove;
 }
 
 /** Provider tokens we recognise in labels, filenames, and titles. */
@@ -901,6 +915,7 @@ export function buildDataset(rows, issues, opts = {}) {
     // repository than the dedicated issues (the VM lane); null otherwise.
     umbrella_url: (issues || []).find((i) => i.number === umbrellaIssue)?.url || null,
     guard_tripped: detectGuard(run, maxAutoRemove),
+    guard_count: guardCount(run),
     stale_history,
     infra_classification_gap,
     totals: run.totals,

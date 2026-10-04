@@ -10,8 +10,8 @@
  *
  * WHY THE LIST IS DELIBERATELY NARROW
  *
- * The mass-failure guard already covers the WIDE wedge (>5 hard failures =>
- * remove nothing). The hole #1031 closes is the NARROW one: a wedge that costs
+ * The mass-failure guard already covers the WIDE wedge (>5 hard failures,
+ * unexpected passes excluded since #2116 => remove nothing). The hole #1031 closes is the NARROW one: a wedge that costs
  * ≤5 tests silently strips their tags. Closing it means turning off auto-removal
  * for whatever matches here — so a pattern that also fires on a real product
  * regression would quietly disable the mechanism instead of protecting it.

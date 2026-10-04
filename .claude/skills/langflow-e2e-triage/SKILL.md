@@ -123,7 +123,7 @@ within the run's own machine (Actions or VM),
 detects the mass-failure guard, matches the umbrella `[Daily Failure]` issue
 via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
-`umbrella_issue`, `umbrella_url`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
+`umbrella_issue`, `umbrella_url`, `guard_tripped`, `guard_count` (what the guard compared: the row's recorded `guard_count`, `totals.failed` minus unexpected passes since #2116; `totals.failed` on older rows), `totals`, `hard_failures[]`, `flakes[]`
 (each carrying `provider`/`model`, `recurrence`, and an `actionable` flag),
 `declared_fix_candidates[]` (see Phase 3), `provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
 past run; `--results <json>` backfills provider labels + per-skip reasons.

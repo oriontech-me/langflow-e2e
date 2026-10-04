@@ -11,7 +11,8 @@
  * Safety:
  *  - Only `failures[]` (status "unexpected" = failed every retry) are targeted;
  *    flaky tests (passed on a retry) keep `@stable`, per the triage policy.
- *  - Mass-failure guard: if the number of hard failures exceeds MAX_AUTO_REMOVE
+ *  - Mass-failure guard: if the number of hard failures — unexpected passes
+ *    (`test.fail()` bodies that passed) excluded, #2116 — exceeds MAX_AUTO_REMOVE
  *    (or the report is missing/empty — the suite never really ran), NOTHING is
  *    removed. A red day where everything fails is almost always infra (Langflow
  *    container didn't boot, network/model outage), not per-test rot, and must
@@ -52,8 +53,10 @@
  *     shard and an unreviewed tag removal.
  *
  * The invariant #1031 pins is unchanged in every branch: nothing here can add a
- * test to the removal set, only take one out, so the set stays a subset of what
- * the pre-#1031 script would have produced. Every corroboration failure mode —
+ * test to the removal set, only take one out. (The removal set as a whole is no
+ * longer a subset of the pre-#1031 script's since #2116, which stopped counting
+ * unexpected passes toward the mass-failure guard — that widening is the guard's,
+ * not the exemption's; see the guard in `main()`.) Every corroboration failure mode —
  * absent file, unreadable file, malformed payload, unmeasured run — degrades to
  * exactly the last-attempt rule.
  *
@@ -73,6 +76,9 @@ import { classifyInfraError, stripAnsi } from "./lib/infra-signatures";
 // The join key against the corroboration file is a string compare across this
 // script and `report-backend-outages.mjs`; both read the ONE normaliser (#1589).
 import { normalizeSpecPath } from "./lib/spec-path.mjs";
+// The guard excludes unexpected passes by the shared predicate, never by a copy of
+// the signature string (#2116).
+import { isUnexpectedPass } from "./lib/unexpected-pass.mjs";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const STABLE_TAG = "@stable";
@@ -123,6 +129,12 @@ interface Failure {
    * `Exempt.attempt` promises a retry index, not a count.
    */
   lastAttemptRetry: number;
+  /**
+   * A `test.fail()` whose body passed (#2009). Still a hard failure for its OWN
+   * tag — #2027 kept that on purpose — but not counted by the mass-failure guard
+   * (#2116): a fix day is the opposite of an infra day.
+   */
+  unexpectedPass: boolean;
 }
 
 /** One failed attempt of a test: which retry it was, and its full error text. */
@@ -367,6 +379,7 @@ export function collectHardFailures(reportFile: string): Failure[] {
             error: lastFailureError(t),
             earlierAttempts: earlierFailedAttempts(t),
             lastAttemptRetry: lastFailedAttemptRetry(t),
+            unexpectedPass: isUnexpectedPass(t),
           });
         }
       }
@@ -715,6 +728,17 @@ function main(): void {
     hardFailures: number;
     /** Hard failures the run CAN attribute to their spec — the removal candidates. */
     attributableFailures: number;
+    /**
+     * Unexpected passes among `hardFailures` (#2009) — `test.fail()` bodies that
+     * passed. Removal candidates like any other hard failure (#2027).
+     */
+    unexpectedPasses: number;
+    /**
+     * What the mass-failure guard compares against `threshold`:
+     * `hardFailures - unexpectedPasses` (#2116). Reported beside `hardFailures`
+     * so the umbrella can say which number tripped.
+     */
+    guardCount: number;
     removed: Removed[];
     skipped: Skipped[];
     exempt: Exempt[];
@@ -739,6 +763,8 @@ function main(): void {
     threshold: MAX_AUTO_REMOVE,
     hardFailures: allFailures.length,
     attributableFailures: failures.length,
+    unexpectedPasses: allFailures.filter((f) => f.unexpectedPass).length,
+    guardCount: allFailures.filter((f) => !f.unexpectedPass).length,
     removed: [],
     skipped: [],
     exempt,
@@ -752,20 +778,42 @@ function main(): void {
 
   // Mass-failure guard: too many hard failures => treat as infra, remove nothing.
   //
-  // Counts EVERY hard failure, not just the attributable ones. Netting the
-  // exempt ones out would make the mechanism strictly more aggressive than it
+  // Counts every hard failure, not just the attributable ones (unexpected
+  // passes aside — see below). Netting the exempt ones out would make the mechanism strictly more aggressive than it
   // is today: on run 30374528125 (19 failures, 14 with an infra signature) the
   // guard trips and removes nothing, while an attributable-only count would
   // remove 5 tags with no review. #1031 asks to protect innocent specs, not to
-  // widen auto-removal's reach — so the removal set here is always a subset of
-  // what the pre-#1031 script would have produced.
+  // widen auto-removal's reach — so the EXEMPTIONS never add to the removal
+  // set. (#2116 is the one deliberate exception to the subset property, below.)
   //
   // Evaluated BEFORE the "nothing attributable" exit so `status` keeps meaning
   // "would the guard have tripped": a wide wedge whose every failure is
   // collateral is still a mass-failure day, and the triage skill's own
-  // `detectGuard` (which recomputes from `totals.failed`) would otherwise
+  // `detectGuard` (which reads the history row's `guard_count`) would otherwise
   // disagree with this field.
-  if (allFailures.length > MAX_AUTO_REMOVE) {
+  //
+  // The one thing it does NOT count is an unexpected pass (#2116). The guard
+  // exists to recognise an infra day, and a `test.fail()` body passing is the
+  // fix-day signal of a declared upstream bug — the opposite reading. On the VM
+  // run of 2026-09-30, two of them took a five-failure day to seven, tripped the
+  // guard, and turned five automatic removals into a manual quarantine. This
+  // DOES widen auto-removal, and deliberately: it lets a day of ≤ threshold real
+  // failures proceed however many declared bugs were fixed upstream that day.
+  // It does not touch the protection the paragraph above argues for: a test
+  // whose FINAL attempt failed is never an unexpected pass, so every failure
+  // still failing when the run ended is counted in full. An unexpected pass can
+  // carry a transport error on an EARLIER attempt (`[timedOut, passed]`) and be
+  // exempt as collateral too; leaving it out of the guard is still right,
+  // because its final attempt reached a backend that answered.
+  //
+  // The cost is that nothing now bounds how many unexpected-pass removals land
+  // in one unreviewed commit. A suite-side change that made many `test.fail()`
+  // bodies vacuous would strip that many tags at once — accepted, because each
+  // such removal is exactly the #2027 rule applied to its own test, and the
+  // umbrella names every one of them.
+  // Its own tag handling is unchanged (#2027) — it stays in `failures` below.
+  // The history row records the same count as `guard_count`, which `detectGuard` reads.
+  if (result.guardCount > MAX_AUTO_REMOVE) {
     result.status = "guard_tripped";
     process.stdout.write(JSON.stringify(result));
     return;
