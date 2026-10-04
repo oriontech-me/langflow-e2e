@@ -137,8 +137,27 @@ test('detectGuard trips above the threshold', () => {
   assert.equal(detectGuard({ totals: { failed: 5 } }, 5), false);
 });
 
-test('detectGuard does not count unexpected passes, matching remove-stable-from-failures.ts (#2116)', () => {
-  // 2026-09-30 VM run: 7 failed, 2 of them test.fail() bodies that passed.
+test('detectGuard reads the guard count the row recorded, matching remove-stable-from-failures.ts (#2116)', () => {
+  // A post-#2116 row: 7 failed, 2 of them test.fail() bodies that passed, and the
+  // appender recorded the 5 the guard compared.
+  const failures = [
+    ...['r1', 'r2', 'r3', 'r4', 'r5'].map((test) => ({ test, line: 1, error_signature: 'locator.click timeout' })),
+    { test: 'memory-base-ingestion', line: 367, error_signature: 'expected to fail but passed' },
+    { test: 'flow-lock', line: 292, error_signature: 'expected to fail but passed' },
+  ];
+  const row = { totals: { failed: 7 }, guard_count: 5, failures };
+  assert.equal(guardCount(row), 5);
+  assert.equal(detectGuard(row, 5), false);
+  // A sixth real failure still trips it.
+  assert.equal(detectGuard({ totals: { failed: 8 }, guard_count: 6, failures }, 5), true);
+  assert.equal(buildDataset([{ ...row, run_id: '1', date: '2026-10-04' }], []).guard_count, 5);
+});
+
+test('detectGuard does not apply #2116 to rows written before it: 2026-09-30 tripped', () => {
+  // The VM run 20260930T080030Z as the ledger holds it: no guard_count, and the two
+  // unexpected passes already signed by #2009. The guard of that day counted all
+  // seven and left every tag in place; re-reading it under the new rule would tell
+  // a `--run` triage that the tags were removed.
   const row = {
     totals: { failed: 7 },
     failures: [
@@ -147,17 +166,11 @@ test('detectGuard does not count unexpected passes, matching remove-stable-from-
       { test: 'flow-lock', line: 292, error_signature: 'expected to fail but passed' },
     ],
   };
-  assert.equal(guardCount(row), 5);
-  assert.equal(detectGuard(row, 5), false);
-  // A sixth real failure still trips it.
-  const worse = {
-    totals: { failed: 8 },
-    failures: [...row.failures, { test: 'r6', line: 1, error_signature: 'locator.click timeout' }],
-  };
-  assert.equal(detectGuard(worse, 5), true);
-  // Pre-#2009 rows recorded the same case as "unknown" and are counted, as then.
-  assert.equal(guardCount({ totals: { failed: 2 }, failures: [{ error_signature: 'unknown' }] }), 2);
-  assert.equal(buildDataset([{ ...row, run_id: '1', date: '2026-09-30' }], []).guard_count, 5);
+  assert.equal(guardCount(row), 7);
+  assert.equal(detectGuard(row, 5), true);
+  const dataset = buildDataset([{ ...row, run_id: '20260930T080030Z', date: '2026-09-30' }], []);
+  assert.equal(dataset.guard_tripped, true);
+  assert.equal(dataset.guard_count, 7);
 });
 
 test('matchUmbrella finds the daily-failure issue by run id in the body', () => {

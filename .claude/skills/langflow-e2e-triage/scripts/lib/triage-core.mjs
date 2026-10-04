@@ -189,17 +189,17 @@ function bestHit(item, candidates) {
 }
 
 /**
- * The number the mass-failure guard compares against its threshold: `totals.failed`
- * minus the unexpected passes in `failures[]` (#2116), the same subtraction
- * `remove-stable-from-failures.ts` makes over the report. The appender pushes one
- * `failures[]` row per `totals.failed` increment, so the raw (undeduped) rows are
- * the right ones to subtract. Rows written before #2009 record an unexpected pass
- * as `"unknown"` and are counted, as the guard counted them then.
+ * The number the mass-failure guard compared against its threshold on this run:
+ * the row's own `guard_count`, which the appender records since #2116 (`totals.failed`
+ * minus the unexpected passes, the subtraction `remove-stable-from-failures.ts` makes
+ * over the report). A row without it was judged by the guard before #2116, which
+ * counted every hard failure — unexpected passes included, even the ones #2009 had
+ * already signed — so `totals.failed` is the truthful number for it. Recomputing the
+ * new rule over those rows would report the 2026-09-30 runs as not tripped, when
+ * their tags were in fact left in place.
  */
 export function guardCount(row) {
-  const failed = row.totals?.failed || 0;
-  const passes = (row.failures || []).filter(isUnexpectedPassEntry).length;
-  return Math.max(0, failed - passes);
+  return Number.isFinite(row.guard_count) ? row.guard_count : row.totals?.failed || 0;
 }
 
 /** True when the run had more hard failures than the auto-remove guard allows. */

@@ -941,6 +941,24 @@ test("#2009 an unexpected pass records its own signature, not \"unknown\"", () =
   assert.equal(lost.error_signature, "unknown", "the genuine no-message failure is unchanged");
 });
 
+test("#2116 the row records the guard count: failed minus unexpected passes", () => {
+  // The triage reads this field instead of recomputing, so rows written before
+  // #2116 keep the verdict their own guard reached.
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("passed")],
+      },
+      { title: "real", status: "unexpected", results: [result("failed", "boom")] },
+      { title: "late", status: "unexpected", results: [result("passed"), result("failed", "boom")] },
+    ]),
+  );
+  assert.equal(entry.totals.failed, 3);
+  assert.equal(entry.guard_count, 2);
+});
+
 test("#2009 the pass is read off the LAST attempt: an earlier timeout does not mask it", () => {
   const entry = append(
     report([

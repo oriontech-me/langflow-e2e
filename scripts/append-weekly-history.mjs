@@ -181,7 +181,7 @@ import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 import { paramFromSuitePath } from "./lib/spec-param.mjs";
 import { collectSkips } from "./lib/skip-reasons.mjs";
-import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
+import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass, isUnexpectedPassEntry } from "./lib/unexpected-pass.mjs";
 import { RECURRENCE_KEY_VERSION, recurrenceKeysForTest } from "./lib/recurrence-key.mjs";
 
 const SCHEMA_VERSION = 1;
@@ -657,6 +657,14 @@ const listingCompleteness =
 // unreadable, rather than being dropped as if it had never been sent.
 const suiteSha = String(process.env.SUITE_SHA ?? "").trim() || null;
 
+// What the mass-failure guard compared on this run (#2116): `totals.failed` minus
+// the unexpected passes, the subtraction `remove-stable-from-failures.ts` makes over
+// the same report. Recorded rather than recomputed by the triage, because rows
+// written before #2116 were judged by a guard that counted every failure, and the
+// row is the only place that can say which rule the run's own suite applied. Rows
+// without the field fall back to `totals.failed` in `detectGuard`.
+const guardCount = totals.failed - failures.filter(isUnexpectedPassEntry).length;
+
 const entry = {
   version: SCHEMA_VERSION,
   date: new Date().toISOString().split("T")[0],
@@ -668,6 +676,7 @@ const entry = {
   ...(suiteSha ? { suite_sha: suiteSha } : {}),
   duration_ms: Math.round(report?.stats?.duration ?? 0),
   totals,
+  guard_count: guardCount,
   failures,
   flaky,
   ...(skips ? { skips } : {}),

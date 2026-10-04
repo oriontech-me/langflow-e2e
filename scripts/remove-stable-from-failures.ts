@@ -789,7 +789,7 @@ function main(): void {
   // Evaluated BEFORE the "nothing attributable" exit so `status` keeps meaning
   // "would the guard have tripped": a wide wedge whose every failure is
   // collateral is still a mass-failure day, and the triage skill's own
-  // `detectGuard` (which recomputes from `totals.failed`) would otherwise
+  // `detectGuard` (which reads the history row's `guard_count`) would otherwise
   // disagree with this field.
   //
   // The one thing it does NOT count is an unexpected pass (#2116). The guard
@@ -812,7 +812,7 @@ function main(): void {
   // such removal is exactly the #2027 rule applied to its own test, and the
   // umbrella names every one of them.
   // Its own tag handling is unchanged (#2027) — it stays in `failures` below.
-  // `detectGuard` in the triage dataset subtracts the same rows.
+  // The history row records the same count as `guard_count`, which `detectGuard` reads.
   if (result.guardCount > MAX_AUTO_REMOVE) {
     result.status = "guard_tripped";
     process.stdout.write(JSON.stringify(result));
