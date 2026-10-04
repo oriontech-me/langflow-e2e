@@ -116,11 +116,11 @@ if (r.status === "guard_tripped") {
     lines.push("");
     lines.push(
       attributable === 0
-        ? `The guard counts **every** hard failure${exceptPasses}, so it never removes more than it would have before ` +
-            `#1031 — but here **all ${r.hardFailures} were collateral** (above). There is no per-spec ` +
+        ? `The guard counts **every** hard failure${exceptPasses}, collateral included, so the collateral ` +
+            `exemption never adds to what it removes — but here **all ${r.hardFailures} were collateral** (above). There is no per-spec ` +
             `evidence to triage on this run.`
         : `The guard counts **every** hard failure${exceptPasses}, collateral included (${exempt.length} of ${r.hardFailures} ` +
-            `here), so it never removes more than it would have before #1031 — the ${attributable} attributable ` +
+            `here), so the collateral exemption never adds to what it removes — the ${attributable} attributable ` +
             `failure(s) above are for manual triage.`,
     );
   }
