@@ -174,6 +174,7 @@ esac`);
       requestLeft: existsSync(join(state, "request.env")),
       requests: existsSync(join(state, "requests")) ? readdirSync(join(state, "requests")) : [],
       wtLeft: existsSync(join(state, "wt")),
+      hosts: readIf(join(state, "hosts")),
       ledgers: readdirSync(state).filter((f) => f.startsWith("ledger-")),
       worktrees: git("worktree", "list"),
     };
