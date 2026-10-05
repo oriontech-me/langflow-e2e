@@ -2692,11 +2692,18 @@ auto_remove_commit() {
 # Never changes the verdict: every outcome is one line in the log and in
 # $RUN_DIR/logs/history-to-source.log, and the caller ignores the status. Checked one
 # by one for the reason auto_remove_commit gives: it runs on the left of `||`.
+# The private ref is per LANE, not shared: the shadow and on-demand runs work in
+# worktrees of this same clone, so they share its refs, and on-demand holds its own lock,
+# not the daily's. One name for all of them would let one lane's cleanup delete the ref
+# another is between fetching and resolving (#2168 review). Per lane rather than per run
+# so a ref a killed run left behind is overwritten by that lane's next fetch (`+`
+# refspec) instead of piling up.
+history_ref() { printf 'refs/e2e-history/%s' "$(printf '%s' "$WORKFLOW_ID" | tr -c 'A-Za-z0-9._-' '_')"; }
 history_to_source() {
   local rc=0
   history_to_source_body || rc=$?
   # The private ref is this function's scratch, whatever the outcome.
-  git -C "$REPO_DIR" update-ref -d refs/e2e-history/target 2>/dev/null || true
+  git -C "$REPO_DIR" update-ref -d "$(history_ref)" 2>/dev/null || true
   return "$rc"
 }
 history_to_source_body() {
@@ -2736,7 +2743,7 @@ history_to_source_body() {
   done
   if [ "$n_files" = "0" ]; then history_say "nothing to send: this run added no ledger row"; return 0; fi
 
-  local auth attempt target_sha new_tree commit ref="refs/e2e-history/target" idx="$tmp/index" blob msg
+  local auth attempt target_sha new_tree commit ref="$(history_ref)" idx="$tmp/index" blob msg
   auth="Authorization: Basic $(printf 'x-access-token:%s' "$SOURCE_PUSH_TOKEN" | base64 | tr -d '\n')"
   msg="chore(history): record vm daily ${RUN_ID} [skip ci]"
   for attempt in 1 2; do

@@ -2575,7 +2575,7 @@ test("a removal that cannot replay leaves the clone exactly as it was", () => {
  * the run has just appended to — the shape history_to_source works on (#2164).
  */
 const ROW = (run, date = "2026-10-05", workflow = "daily-stable-vm") => JSON.stringify({ version: 1, date, workflow, run_id: run, totals: { passed: 1 } });
-function historyPair(label, { sourceExtra = "" } = {}) {
+function historyPair(label, { sourceExtra = "", sourceTweak = null } = {}) {
   const dir = makeTempDir(label);
   const source = join(dir, "source.git");
   const work = join(dir, "work");
@@ -2602,6 +2602,17 @@ function historyPair(label, { sourceExtra = "" } = {}) {
     git(other, "commit", "-aqm", "yesterday");
     git(other, "push", "-q", "origin", "HEAD:main");
   }
+  if (sourceTweak) {
+    // A change on the source the clone does not have, made by someone else's commit.
+    const other = join(dir, "tweak");
+    execFileSync("git", ["clone", "-q", source, other], { env });
+    sourceTweak(other);
+    git(other, "add", "-A");
+    git(other, "commit", "-qm", "tweak");
+    git(other, "push", "-q", "origin", "HEAD:main");
+  }
+  // The mirror-freshness timer's FETCH_HEAD (#1972): the send must not overwrite it.
+  writeFileSync(join(work, ".git", "FETCH_HEAD"), "sentinel-from-the-freshness-timer\n");
   const ledger = join(dir, "ledger");
   mkdirSync(ledger);
   writeFileSync(join(ledger, "daily-history.jsonl"), ROW("old-1", "2026-09-30") + "\n");
@@ -2632,7 +2643,12 @@ function sendHistory({ work, source, ledger, env, dir }, { run = "20261005T08000
   );
 }
 
-const cloneState = (lane) => [lane.git(lane.work, "rev-parse", "HEAD").trim(), lane.git(lane.work, "status", "--porcelain").trim(), lane.git(lane.work, "for-each-ref", "refs/e2e-history").trim()];
+const cloneState = (lane) => [
+  lane.git(lane.work, "rev-parse", "HEAD").trim(),
+  lane.git(lane.work, "status", "--porcelain").trim(),
+  lane.git(lane.work, "for-each-ref", "refs/e2e-history").trim(),
+  readFileSync(join(lane.work, ".git", "FETCH_HEAD"), "utf8"),
+];
 
 test("the run's ledger rows reach the source's main, and the clone is not touched (#2164)", () => {
   const lane = historyPair("history-ok");
@@ -2736,6 +2752,45 @@ test("a source it cannot read says so, keeps the rows in the ledger, and leaves 
   assert.match(r.stdout, /EXIT=1/);
   assert.match(r.stdout, /NOT SENT: could not read main on the source/);
   assert.deepEqual(cloneState(lane), before, "a failed send left something behind in the clone");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a file on main that ends without a newline gets one, so the row never fuses with its last line (#2168 review)", () => {
+  const lane = historyPair("history-no-eol", {
+    sourceTweak: (other) => writeFileSync(join(other, "reports/daily-history.jsonl"), ROW("100", "2026-10-01", "daily-stable")),
+  });
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    lane.git(lane.source, "show", "main:reports/daily-history.jsonl"),
+    ROW("100", "2026-10-01", "daily-stable") + "\n" + ROW("20261005T080000Z") + "\n",
+  );
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a tracked file missing on main fails closed and pushes nothing, not half the write (#2168 review)", () => {
+  const lane = historyPair("history-missing-file", {
+    sourceTweak: (other) => rmSync(join(other, "reports/token-history.jsonl")),
+  });
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=1/);
+  assert.match(r.stdout, /NOT SENT: reports\/token-history\.jsonl does not exist on the source's main/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip, "half the write was pushed");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("the private ref is the lane's own: another lane's ref in the shared clone survives the send (#2168 review)", () => {
+  // The shadow and on-demand runs share this clone's refs and do not hold the daily's
+  // lock; a cleanup of one shared name would pull the ref out from under them.
+  const lane = historyPair("history-other-lane");
+  // The name the on-demand lane itself would use, from the function, not spelled here.
+  const otherRef = sourced("WORKFLOW_ID=on-demand-stable; history_ref", lane.env).stdout.trim();
+  assert.match(otherRef, /^refs\/e2e-history\/./);
+  lane.git(lane.work, "update-ref", otherRef, lane.git(lane.work, "rev-parse", "HEAD").trim());
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.equal(lane.git(lane.work, "for-each-ref", "--format=%(refname)", "refs/e2e-history").trim(), otherRef);
   rmSync(lane.dir, { recursive: true, force: true });
 });
 
