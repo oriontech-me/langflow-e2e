@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 719 `test()` calls carrying the `@stable` tag, distributed across 281 spec
+> 717 `test()` calls carrying the `@stable` tag, distributed across 280 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2019,7 +2019,6 @@
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
-- [x] output_schema fields come back as typed JSON keys on the structured response → `agent-structured-output.spec.ts`
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
@@ -2278,7 +2277,6 @@
 - [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
-- [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
