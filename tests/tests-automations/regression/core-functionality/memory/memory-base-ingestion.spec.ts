@@ -353,9 +353,12 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     `GET ${KB_API}/{kb_name}/chunks`,
   ];
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should store exactly the chunks preview-chunks promised when every line fits the chunk size",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(PARITY_OPS);
       const { previewed, stored } = await previewAndIngest(request, `${FITTING_LINES.join("\n")}\n`);
@@ -364,9 +367,12 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should store exactly the chunks preview-chunks promised when a line is longer than the chunk size",
-    { tag: ["@stable", "@regression", "@api", "@files"] },
+    { tag: ["@regression", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       // LE-2771, fixed by langflow-ai/langflow#15421 (1.12.4; first nightly 1.13.0.dev28): ingestion used to
       // split on the separator alone and store this line whole. See the spec doc's Notes.
@@ -408,9 +414,12 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     return runId;
   }
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should ingest a server-side folder through the folder connector and read its chunks back",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",
@@ -480,9 +489,12 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",

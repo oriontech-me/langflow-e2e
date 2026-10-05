@@ -223,9 +223,12 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-test(
+// Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+// day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+// spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+test.fixme(
   "Knowledge Base indexes the ingested document chunks (available for query)",
-  { tag: ["@stable", "@release", "@components", "@files"] },
+  { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);
@@ -246,9 +249,13 @@ test(
   },
 );
 
-test(
+// Quarantined for #2175 with its serial sibling above: it was skipped, not failed, on the VM daily
+// of 2026-10-05 (1.13.0.dev33), but it creates its own Knowledge Base through the same Chroma helper,
+// so with the sibling in `test.fixme` it would run and hit the same 422. Upstream
+// langflow-ai/langflow#15509 removed Chroma. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+test.fixme(
   "Knowledge Base query returns the relevant chunk for the prompt",
-  { tag: ["@stable", "@release", "@components", "@files"] },
+  { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);
