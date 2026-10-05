@@ -48,6 +48,17 @@ test("a request becomes a declared image run of that branch's commit, isolated, 
   assert.equal(r.build.split("\n")[0], `release-1.13.0 BUILD_ROOT=${join(r.state, "builds")}`);
 });
 
+test("the run's containers resolve localhost to both loopbacks, as the shadow's do (#2181)", () => {
+  // The QA VM boots with ipv6.disable=1, so docker writes 127.0.0.1 alone into each
+  // container's /etc/hosts, and model-provider-base-url-ssrf, which requires the
+  // loopback refusal to name ::1 too, failed on every on-demand run.
+  const r = onDemand();
+  assert.ok(r.env, `run-e2e.sh was not reached:\n${r.log}`);
+  assert.equal(kv(r.env).LANGFLOW_HOSTS_FILE, join(r.state, "hosts"));
+  assert.match(r.hosts, /^127\.0\.0\.1\tlocalhost$/m);
+  assert.match(r.hosts, /^::1\tlocalhost( |$)/m);
+});
+
 test("the publishing credentials and gh's login never reach the run, and the provider keys do", () => {
   const r = onDemand();
   const e = kv(r.env);
