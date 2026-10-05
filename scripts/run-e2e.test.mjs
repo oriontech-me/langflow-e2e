@@ -480,12 +480,17 @@ test("the only write back to the repository is the @stable removal, behind its g
   const EMITS_ONLY = /^(warn|info|die|err|echo|printf)\b/;
   const lines = readFileSync(SCRIPT, "utf8").split("\n");
 
-  // The sanctioned region, found by name rather than by line number so it moves with
-  // the file: everything from the function header to its closing brace in column 0.
-  const open = lines.findIndex((l) => l.startsWith("auto_remove_commit() {"));
-  assert.ok(open >= 0, "the one sanctioned write path is gone; this pin is now vacuous");
-  const close = lines.findIndex((l, i) => i > open && l === "}");
-  assert.ok(close > open, "auto_remove_commit has no closing brace in column 0");
+  // The sanctioned regions, found by name rather than by line number so they move with
+  // the file: everything from a function header to its closing brace in column 0. Two
+  // since #2164: the removal, and the history rows the Actions daily used to commit.
+  const region = (name) => {
+    const open = lines.findIndex((l) => l.startsWith(`${name}() {`));
+    assert.ok(open >= 0, `the sanctioned write path ${name} is gone; this pin is now vacuous`);
+    const close = lines.findIndex((l, i) => i > open && l === "}");
+    assert.ok(close > open, `${name} has no closing brace in column 0`);
+    return [open, close];
+  };
+  const regions = [region("auto_remove_commit"), region("history_to_source_body")];
 
   const offending = lines
     .map((line, index) => ({ line, index }))
@@ -495,9 +500,9 @@ test("the only write back to the repository is the @stable removal, behind its g
     // not exotic here — it is how a script that operates on a clone BY PATH is
     // written. `git -C "$REPO_DIR" add -A` passed the old pattern untouched.
     .filter(({ line }) => /\bgit\b[^\n]*\b(commit|push|add)\b/.test(line))
-    .filter(({ index }) => index < open || index > close)
+    .filter(({ index }) => regions.every(([open, close]) => index < open || index > close))
     .map(({ line }) => line);
-  assert.deepEqual(offending, [], "a write to the repository escaped auto_remove_commit");
+  assert.deepEqual(offending, [], "a write to the repository escaped the two sanctioned paths");
 
   // And the one path is reachable only through the switch and only on a reported
   // removal — a write that runs on a green day would be the same defect as a second
@@ -512,6 +517,12 @@ test("the only write back to the repository is the @stable removal, behind its g
     1,
     "auto_remove_commit has more than one caller, so the guards above are not the only door",
   );
+
+  // The history path has the same shape: one caller, and behind its own switch.
+  assert.equal((sh.match(/^\s*history_to_source(?:_body)? /gm) || []).length, 2,
+    "history_to_source_body is called from history_to_source only, and that from phase_publish only");
+  const body = sh.slice(sh.indexOf("history_to_source_body() {"));
+  assert.match(body, /\[ "\$HISTORY_TO_SOURCE" = "1" \] \|\| return 0/, "the history write is not behind its switch");
 
   // Against the code, not the file: the header paragraph explaining why the switch
   // was removed spells it, and that comment is correct — #1716 again.
@@ -2559,6 +2570,230 @@ test("a removal that cannot replay leaves the clone exactly as it was", () => {
   rmSync(lane.dir, { recursive: true, force: true });
 });
 
+/**
+ * A source (bare) holding the two tracked history files, a clone of it, and a ledger
+ * the run has just appended to — the shape history_to_source works on (#2164).
+ */
+const ROW = (run, date = "2026-10-05", workflow = "daily-stable-vm") => JSON.stringify({ version: 1, date, workflow, run_id: run, totals: { passed: 1 } });
+function historyPair(label, { sourceExtra = "", sourceTweak = null } = {}) {
+  const dir = makeTempDir(label);
+  const source = join(dir, "source.git");
+  const work = join(dir, "work");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env });
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", source], { env });
+  execFileSync("git", ["clone", "-q", source, work], { env });
+  mkdirSync(join(work, "reports"), { recursive: true });
+  writeFileSync(join(work, "reports/daily-history.jsonl"), ROW("100", "2026-10-01", "daily-stable") + "\n");
+  writeFileSync(join(work, "reports/token-history.jsonl"), ROW("100", "2026-10-01", "daily-stable") + "\n");
+  git(work, "add", "-A");
+  git(work, "commit", "-qm", "init");
+  git(work, "push", "-q", "origin", "HEAD:main");
+  if (sourceExtra) {
+    // Yesterday's row reached the source and not this clone: a lagging mirror.
+    const other = join(dir, "other");
+    execFileSync("git", ["clone", "-q", source, other], { env });
+    writeFileSync(join(other, "reports/daily-history.jsonl"), readFileSync(join(other, "reports/daily-history.jsonl"), "utf8") + sourceExtra + "\n");
+    git(other, "commit", "-aqm", "yesterday");
+    git(other, "push", "-q", "origin", "HEAD:main");
+  }
+  if (sourceTweak) {
+    // A change on the source the clone does not have, made by someone else's commit.
+    const other = join(dir, "tweak");
+    execFileSync("git", ["clone", "-q", source, other], { env });
+    sourceTweak(other);
+    git(other, "add", "-A");
+    git(other, "commit", "-qm", "tweak");
+    git(other, "push", "-q", "origin", "HEAD:main");
+  }
+  // The mirror-freshness timer's FETCH_HEAD (#1972): the send must not overwrite it.
+  writeFileSync(join(work, ".git", "FETCH_HEAD"), "sentinel-from-the-freshness-timer\n");
+  const ledger = join(dir, "ledger");
+  mkdirSync(ledger);
+  writeFileSync(join(ledger, "daily-history.jsonl"), ROW("old-1", "2026-09-30") + "\n");
+  writeFileSync(join(ledger, "token-history.jsonl"), ROW("old-1", "2026-09-30") + "\n");
+  return { dir, source, work, ledger, git, env };
+}
+
+function sendHistory({ work, source, ledger, env, dir }, { run = "20261005T080000Z", sw = "1", url = null, append = true } = {}) {
+  if (append) {
+    for (const f of ["daily-history.jsonl", "token-history.jsonl"]) {
+      writeFileSync(join(ledger, f), readFileSync(join(ledger, f), "utf8") + ROW(run) + "\n");
+    }
+  }
+  const runDir = join(dir, "run");
+  mkdirSync(runDir, { recursive: true });
+  return sourced(
+    [
+      `REPO_DIR=${JSON.stringify(work)}`,
+      `SOURCE_REMOTE_URL=${JSON.stringify(url ?? source)}`,
+      `SOURCE_PUSH_TOKEN=not-a-real-token`,
+      `RUN_ID=${run} RUN_DIR=${JSON.stringify(runDir)} WORKFLOW_ID=daily-stable-vm`,
+      `KEEP_LEDGER=1 EVENT_NAME=schedule LEDGER_DIR=${JSON.stringify(ledger)}`,
+      `LEDGER_HISTORY=${JSON.stringify(join(ledger, "daily-history.jsonl"))} LEDGER_TOKENS=${JSON.stringify(join(ledger, "token-history.jsonl"))}`,
+      `HISTORY_LINES_BEFORE=1 TOKENS_LINES_BEFORE=1 HISTORY_TO_SOURCE=${sw}`,
+      `set +e; history_to_source; echo "EXIT=$?"`,
+    ].join("\n"),
+    env,
+  );
+}
+
+const cloneState = (lane) => [
+  lane.git(lane.work, "rev-parse", "HEAD").trim(),
+  lane.git(lane.work, "status", "--porcelain").trim(),
+  lane.git(lane.work, "for-each-ref", "refs/e2e-history").trim(),
+  readFileSync(join(lane.work, ".git", "FETCH_HEAD"), "utf8"),
+];
+
+test("the run's ledger rows reach the source's main, and the clone is not touched (#2164)", () => {
+  const lane = historyPair("history-ok");
+  const before = cloneState(lane);
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /history: sent: 2 file\(s\)/);
+  for (const f of ["daily-history", "token-history"]) {
+    const onMain = lane.git(lane.source, "show", `main:reports/${f}.jsonl`);
+    assert.equal(onMain, ROW("100", "2026-10-01", "daily-stable") + "\n" + ROW("20261005T080000Z") + "\n", `${f} on main`);
+  }
+  const subject = lane.git(lane.source, "log", "-1", "--format=%s|%an", "main").trim();
+  assert.match(subject, /^chore\(history\): record vm daily 20261005T080000Z \[skip ci\]\|langflow-e2e vm daily$/);
+  assert.deepEqual(cloneState(lane), before, "the clone's HEAD, tree or refs changed");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a lagging mirror does not conflict: the row lands after the source's own last row", () => {
+  // The clone lacks yesterday's row and the source has it. A rebased append would
+  // conflict here; a commit built on the source's main cannot.
+  const lane = historyPair("history-lag", { sourceExtra: ROW("20261002T080000Z", "2026-10-02") });
+  // Here the clone's HEAD is NOT the source's main, so a checkout or a reset would show.
+  const before = cloneState(lane);
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  const rows = lane.git(lane.source, "show", "main:reports/daily-history.jsonl").trim().split("\n").map((l) => JSON.parse(l).run_id);
+  assert.deepEqual(rows, ["100", "20261002T080000Z", "20261005T080000Z"]);
+  assert.deepEqual(cloneState(lane), before, "the clone's HEAD, tree or refs changed");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a row already on main is not written twice", () => {
+  const lane = historyPair("history-rerun");
+  assert.match(sendHistory(lane).stdout, /EXIT=0/);
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane, { append: false });
+  assert.match(r.stdout, /EXIT=0/);
+  assert.match(r.stdout, /already on main/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip, "a second commit was pushed");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a push refused because main moved is retried once from the new tip (#2168 review)", () => {
+  // A pre-receive hook refuses the first push only, the way a commit landing between
+  // the fetch and the push would make the source refuse a non-fast-forward.
+  const lane = historyPair("history-retry");
+  const hook = join(lane.source, "hooks", "pre-receive");
+  writeFileSync(hook, `#!/bin/sh\nf=${JSON.stringify(join(lane.dir, "refused-once"))}\n[ -e "$f" ] && exit 0\ntouch "$f"; echo refused >&2; exit 1\n`, { mode: 0o755 });
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.match(lane.git(lane.source, "show", "main:reports/daily-history.jsonl"), /20261005T080000Z/);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a day with no token row sends the daily row alone", () => {
+  const lane = historyPair("history-daily-only");
+  writeFileSync(join(lane.ledger, "daily-history.jsonl"), readFileSync(join(lane.ledger, "daily-history.jsonl"), "utf8") + ROW("20261005T080000Z") + "\n");
+  const r = sendHistory(lane, { append: false });
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /sent: 1 file\(s\)/);
+  assert.doesNotMatch(lane.git(lane.source, "show", "main:reports/token-history.jsonl"), /20261005T080000Z/);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a row followed by a blank line is refused: only exactly one new line is published (#2168 review)", () => {
+  const lane = historyPair("history-blank");
+  writeFileSync(join(lane.ledger, "daily-history.jsonl"), readFileSync(join(lane.ledger, "daily-history.jsonl"), "utf8") + ROW("20261005T080000Z") + "\n\n");
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane, { append: false });
+  assert.match(r.stdout, /EXIT=1/);
+  assert.match(r.stdout, /not exactly one row/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a ledger addition that is not exactly this run's row is refused, and nothing is pushed", () => {
+  const lane = historyPair("history-foreign");
+  writeFileSync(join(lane.ledger, "daily-history.jsonl"), readFileSync(join(lane.ledger, "daily-history.jsonl"), "utf8") + ROW("someone-else") + "\n");
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane, { append: false });
+  assert.match(r.stdout, /EXIT=1/);
+  assert.match(r.stdout, /NOT SENT: the ledger gained something other than exactly one daily-history row/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("off by default and off unless strictly 1: nothing is fetched or pushed", () => {
+  const lane = historyPair("history-off");
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane, { sw: "0" });
+  assert.match(r.stdout, /EXIT=0/);
+  assert.doesNotMatch(r.stdout, /history:/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a source it cannot read says so, keeps the rows in the ledger, and leaves the clone as it was", () => {
+  const lane = historyPair("history-refused");
+  const before = cloneState(lane);
+  const r = sendHistory(lane, { url: join(lane.dir, "no-such-source.git") });
+  assert.match(r.stdout, /EXIT=1/);
+  assert.match(r.stdout, /NOT SENT: could not read main on the source/);
+  assert.deepEqual(cloneState(lane), before, "a failed send left something behind in the clone");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a file on main that ends without a newline gets one, so the row never fuses with its last line (#2168 review)", () => {
+  const lane = historyPair("history-no-eol", {
+    sourceTweak: (other) => writeFileSync(join(other, "reports/daily-history.jsonl"), ROW("100", "2026-10-01", "daily-stable")),
+  });
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    lane.git(lane.source, "show", "main:reports/daily-history.jsonl"),
+    ROW("100", "2026-10-01", "daily-stable") + "\n" + ROW("20261005T080000Z") + "\n",
+  );
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("a tracked file missing on main fails closed and pushes nothing, not half the write (#2168 review)", () => {
+  const lane = historyPair("history-missing-file", {
+    sourceTweak: (other) => rmSync(join(other, "reports/token-history.jsonl")),
+  });
+  const tip = lane.git(lane.source, "rev-parse", "main").trim();
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=1/);
+  assert.match(r.stdout, /NOT SENT: reports\/token-history\.jsonl does not exist on the source's main/);
+  assert.equal(lane.git(lane.source, "rev-parse", "main").trim(), tip, "half the write was pushed");
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
+test("the private ref is the lane's own: another lane's ref in the shared clone survives the send (#2168 review)", () => {
+  // The shadow and on-demand runs share this clone's refs and do not hold the daily's
+  // lock; a cleanup of one shared name would pull the ref out from under them.
+  const lane = historyPair("history-other-lane");
+  // The name the on-demand lane itself would use, from the function, not spelled here.
+  const otherRef = sourced("WORKFLOW_ID=on-demand-stable; history_ref", lane.env).stdout.trim();
+  assert.match(otherRef, /^refs\/e2e-history\/./);
+  lane.git(lane.work, "update-ref", otherRef, lane.git(lane.work, "rev-parse", "HEAD").trim());
+  const r = sendHistory(lane);
+  assert.match(r.stdout, /EXIT=0/, `${r.stdout}\n${r.stderr}`);
+  assert.equal(lane.git(lane.work, "for-each-ref", "--format=%(refname)", "refs/e2e-history").trim(), otherRef);
+  rmSync(lane.dir, { recursive: true, force: true });
+});
+
 test("an unmeasured day still produces a state the umbrella can say", () => {
   // The ordinary day: nothing measured, nothing to remove. It has to come out of the
   // function as `none`/`success` — a PAIR — because an empty status means "not
@@ -3013,7 +3248,7 @@ test("the push credential warns on every answer and never stops the run (#2028)"
   const refused = run(3, "REFUSED: SOURCE_PUSH_TOKEN is unset");
   assert.match(refused.stdout, /EXIT=0/, "a refused push credential stopped the run");
   assert.doesNotMatch(refused.stderr, /::error::/, "a refused push credential was raised as an error");
-  assert.match(refused.stderr, /::warning::.*pushes @stable removals was refused/);
+  assert.match(refused.stderr, /::warning::.*pushes to the source \(@stable removals, history rows\) was refused/);
 
   for (const code of [2, 1]) {
     const soft = run(code, "UNKNOWN: no answer");
