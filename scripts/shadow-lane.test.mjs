@@ -136,8 +136,20 @@ test("a cadence or a clock that cannot be read asks for nothing and says why", (
 });
 
 test("the daily passes the cadence decided on 2026-10-05", () => {
+  // Runs the daily's own shadow block against a request script that records what it
+  // was given: a knob line commented out or moved off the call fails here, not on
+  // the first Tuesday that still has a shadow.
   const daily = readFileSync(DAILY, "utf8");
-  assert.match(daily, /SHADOW_DAILY_UNTIL=2026-10-09 SHADOW_WEEKDAY=1 \\\n\s+SHADOW_VERSION="\$WANT"/);
+  const start = daily.indexOf('  if [ "${IMAGE_SHADOW:-1}" = "1" ]');
+  assert.ok(start >= 0, "the shadow block is missing");
+  const block = daily.slice(start, daily.indexOf("\n  fi\n", start) + "\n  fi\n".length);
+  const dir = makeTempDir("shadow-daily-");
+  mkdirSync(join(dir, "ops", "vm"), { recursive: true });
+  stub(join(dir, "ops", "vm"), "request-shadow.sh", 'echo "until=${SHADOW_DAILY_UNTIL:-} on=${SHADOW_WEEKDAY:-} version=$SHADOW_VERSION sha=$SHADOW_SUITE_SHA"');
+  const r = spawnSync("bash", ["-c", `WANT=1.13.0.dev26 SUITE_SHA=${SHA}\n${block}`], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+  rmSync(dir, { recursive: true, force: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), `until=2026-10-09 on=1 version=1.13.0.dev26 sha=${SHA}`);
 });
 
 // ---------------------------------------------------------------------------

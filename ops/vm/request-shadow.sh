@@ -9,7 +9,7 @@
 #
 # The cadence (#2184) is optional, and with neither knob set every run asks:
 #   SHADOW_DAILY_UNTIL=YYYY-MM-DD  ask on every run through this UTC day
-#   SHADOW_WEEKDAY=1..7            and on this ISO weekday (1 = Monday) after it
+#   SHADOW_WEEKDAY=1..7            and on every run on this ISO weekday (1 = Monday)
 # The weekday alone means weekly from the start; the date alone means nothing after it.
 #
 # Usage (from run-daily.sh):
