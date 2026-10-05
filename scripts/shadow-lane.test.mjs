@@ -29,7 +29,7 @@ const stub = (dir, name, body) => writeFileSync(join(dir, name), `#!/usr/bin/env
 // request-shadow.sh
 // ---------------------------------------------------------------------------
 
-function request({ version = "1.13.0.dev26", sha = SHA, installed = true, startFails = false } = {}) {
+function request({ version = "1.13.0.dev26", sha = SHA, installed = true, startFails = false, clock = null, cadence = {} } = {}) {
   const dir = makeTempDir("shadow-request-");
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -39,10 +39,12 @@ case "$1" in
   cat) ${installed ? "exit 0" : "exit 1"} ;;
   start) ${startFails ? "exit 1" : "exit 0"} ;;
 esac`);
+  // "YYYY-MM-DD N": the UTC day and its ISO weekday, as the script reads them in one call.
+  if (clock !== null) stub(bin, "date", `echo ${JSON.stringify(clock)}`);
   const state = join(dir, "state");
   const r = spawnSync("bash", [REQUEST], {
     encoding: "utf8",
-    env: { PATH: `${bin}:${process.env.PATH}`, E2E_SHADOW_STATE: state, SHADOW_VERSION: version, SHADOW_SUITE_SHA: sha },
+    env: { PATH: `${bin}:${process.env.PATH}`, E2E_SHADOW_STATE: state, SHADOW_VERSION: version, SHADOW_SUITE_SHA: sha, ...cadence },
   });
   const out = {
     status: r.status,
@@ -83,6 +85,59 @@ test("a unit that does not start is said, and the daily is still not failed", ()
   const r = request({ startFails: true });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /did not start/);
+});
+
+test("the cadence asks every run through its last daily day, then only on its weekday (#2184)", () => {
+  const cadence = { SHADOW_DAILY_UNTIL: "2026-10-09", SHADOW_WEEKDAY: "1" };
+  for (const [clock, asked] of [
+    ["2026-10-05 1", true], // a Monday inside the daily stretch
+    ["2026-10-07 3", true],
+    ["2026-10-09 5", true], // the last daily day is still daily
+    ["2026-10-12 1", true], // the first Monday after it
+    ["2026-10-13 2", false],
+    ["2026-10-16 5", false],
+    ["2026-10-19 1", true],
+  ]) {
+    const r = request({ clock, cadence });
+    assert.equal(r.status, 0, clock);
+    assert.equal(r.calls.some((c) => c.startsWith("start")), asked, `${clock}: ${r.stdout}`);
+    if (asked) {
+      assert.equal(r.request.split("\n")[0], `SHADOW_DATE=${clock.slice(0, 10)}`, "the request carries the day the cadence judged");
+    } else {
+      assert.equal(r.request, null, `${clock}: a request was written`);
+      assert.match(r.stdout, /NOT requested — weekly on ISO weekday 1 since 2026-10-09, and today is weekday [2-7]/);
+    }
+  }
+});
+
+test("without a cadence every run asks, and each knob alone means what it says", () => {
+  assert.ok(request({ clock: "2026-10-13 2" }).calls.includes("start --no-block e2e-shadow.service"));
+  const weekly = request({ clock: "2026-10-13 2", cadence: { SHADOW_WEEKDAY: "2" } });
+  assert.ok(weekly.calls.includes("start --no-block e2e-shadow.service"), weekly.stdout);
+  assert.equal(request({ clock: "2026-10-14 3", cadence: { SHADOW_WEEKDAY: "2" } }).request, null);
+  const ended = request({ clock: "2026-10-12 1", cadence: { SHADOW_DAILY_UNTIL: "2026-10-09" } });
+  assert.equal(ended.request, null);
+  assert.match(ended.stdout, /the daily shadow ended on 2026-10-09/);
+});
+
+test("a cadence or a clock that cannot be read asks for nothing and says why", () => {
+  for (const [opts, why] of [
+    [{ cadence: { SHADOW_DAILY_UNTIL: "09/10/2026" } }, /SHADOW_DAILY_UNTIL is not a date/],
+    [{ cadence: { SHADOW_WEEKDAY: "Mon" } }, /SHADOW_WEEKDAY is not 1 to 7/],
+    [{ cadence: { SHADOW_WEEKDAY: "0" } }, /SHADOW_WEEKDAY is not 1 to 7/],
+    [{ clock: "" }, /could not read today's date/],
+  ]) {
+    const r = request(opts);
+    assert.equal(r.status, 0, JSON.stringify(opts));
+    assert.equal(r.request, null, `${JSON.stringify(opts)}: a request was written`);
+    assert.ok(!r.calls.some((c) => c.startsWith("start")), `${JSON.stringify(opts)}: the unit was started`);
+    assert.match(r.stdout, why);
+  }
+});
+
+test("the daily passes the cadence decided on 2026-10-05", () => {
+  const daily = readFileSync(DAILY, "utf8");
+  assert.match(daily, /SHADOW_DAILY_UNTIL=2026-10-09 SHADOW_WEEKDAY=1 \\\n\s+SHADOW_VERSION="\$WANT"/);
 });
 
 // ---------------------------------------------------------------------------
