@@ -290,9 +290,12 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Structured Output [${label}]`, () => {
-    test(
+    // Quarantined for #2177: recurrent flake on the VM lane (2026-10-01 on 1.13.0.dev29, 2026-10-05 on
+    // 1.13.0.dev33), the inspector payload reads "Try the new Langflow Assistant!" instead of the JSON.
+    // Lifting it (drop `test.fixme`, restore `@stable`) is #2177's deliverable.
+    test.fixme(
       "output_schema fields come back as typed JSON keys on the structured response",
-      { tag: ["@stable", "@regression", "@agents", "@components"] },
+      { tag: ["@regression", "@agents", "@components"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

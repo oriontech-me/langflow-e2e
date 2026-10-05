@@ -128,7 +128,10 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
   // poll ignored its timeout, so the poll started mid-run and accepted the session's
   // AI row while its text was still empty. The send now goes through
   // `sendAndAwaitPlaygroundTurn` (#2123), so the poll starts after the turn ends.
-  test(
+  // Quarantined for #2176: recurrent flake on the VM lane (2026-09-10 on 1.13.0.dev8,
+  // 2026-10-05 on 1.13.0.dev33), the final reply comes back truncated as "Echo: hello m".
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2176's deliverable.
+  test.fixme(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
     // `@stable` was auto-removed by the daily of 2026-08-10 (commit c954cd9, run
     // 31373880200) on a failure that never ran this test: the shard's own
@@ -138,7 +141,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
     // the source — the catalog is now frozen per run, see
     // `helpers/provider-setup/catalog-snapshot.ts` (#1386) — and the assertion itself
     // re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with google configured.
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider", "@stable"] },
+    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(
