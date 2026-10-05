@@ -16,8 +16,8 @@
 //
 // So the flag's presence is asserted structurally, per lane, rather than reviewed.
 // The list below is every workflow that starts a Langflow service container for a
-// spec run — including `adaptive-impacted.yml`, which #1240's body omitted because
-// CLAUDE.md does not mention it.
+// spec run. `adaptive-impacted.yml`, `nightly.yml` and `weekly-stable.yml` were on it
+// until #2171 retired them.
 //
 // Deliberately NOT covered: the two `migration-*.yml` workflows, which run their
 // own `docker run` for upgrade-path specs that never touch A2A (they do not set
@@ -33,12 +33,9 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const SPEC_RUNNING_LANES = [
-  "adaptive-impacted.yml",
   "daily-stable.yml",
   "manual.yml",
-  "nightly.yml",
   "pr-validation.yml",
-  "weekly-stable.yml",
 ];
 
 function workflow(name) {

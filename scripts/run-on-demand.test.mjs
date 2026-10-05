@@ -10,182 +10,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const ONDEMAND = join(ROOT, "ops", "vm", "run-on-demand.sh");
-const REAL_GIT = execFileSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).trim();
-const TARGET_SHA = "b".repeat(40);
-const IMAGE = `langflow-ondemand:${"b".repeat(12)}`;
-const PUBLISHING = ["SOURCE_PUSH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "QA_E2E_AUTOMATION_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "SLACK_WEBHOOK_URL"];
-const GOOD_REQUEST = "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=anthropic\nONDEMAND_REQUESTED_BY=victor\n";
-// A Wednesday afternoon: outside the daily's window.
-const OPEN = "3 1500";
-
-const stub = (dir, name, body) => writeFileSync(join(dir, name), `#!/usr/bin/env bash\n${body}\n`, { mode: 0o755 });
-const q = JSON.stringify;
-
-/**
- * A clone whose one commit carries stub build, run-e2e and stop scripts, and a HOME
- * whose ~/.local/bin shadows docker, systemctl and flock. The run-e2e stub records the
- * environment it was given and appends a row to the ledger it was pointed at; the build
- * stub prints what the real one prints. Each knob is one way the machine can answer.
- */
-function setup({
-  request = GOOD_REQUEST,
-  now = OPEN,
-  states = {},
-  lockBusy = false,
-  buildExit = 0,
-  buildOut = `target_ref=release-1.13.0\ntarget_sha=${TARGET_SHA}\ntarget_version=1.13.0\nimage=${IMAGE}\nbuild_s=300`,
-  runExit = 0,
-  writeResults = true,
-  runSleep = 0,
-  leftover = "",
-  shadowRequest = false,
-  answered = null,
-  psFails = false,
-  shadowDate = null,
-  leftovers = false,
-  verdict = [],
-  preError = null,
-  modelRefused = null,
-  orphans = [],
-  termOnConsume = false,
-} = {}) {
-  const dir = makeTempDir("on-demand-");
-  const repo = join(dir, "repo");
-  mkdirSync(join(repo, "scripts"), { recursive: true });
-  mkdirSync(join(repo, "ops", "vm"), { recursive: true });
-  const envOut = join(dir, "run-e2e.env");
-  const buildArgs = join(dir, "build.args");
-  const stopLog = join(dir, "stop.log");
-  writeFileSync(
-    join(repo, "scripts", "run-e2e.sh"),
-    `#!/usr/bin/env bash
-env | sort > ${q(envOut)}
-echo "cwd=$PWD head=$(git rev-parse HEAD)" >> ${q(envOut)}
-echo "dotenv=$(readlink .env || echo none)" >> ${q(envOut)}
-echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(envOut)}
-echo "ledger_seen=$(cat "$LEDGER_DIR/daily-history.jsonl" 2>/dev/null | tr -d '\n')" >> ${q(envOut)}
-echo '{"row":"on-demand"}' >> "$LEDGER_DIR/daily-history.jsonl"
-sleep ${runSleep}
-${preError ? `printf '\\033[1;31m::error:: %s\\033[0m\\n' ${q(preError)} >&2` : ""}
-${writeResults ? 'mkdir -p "$RUNS_ROOT/$RUN_ID" && echo "{}" > "$RUNS_ROOT/$RUN_ID/results.json"' : ""}
-${modelRefused ? `mkdir -p "$RUNS_ROOT/$RUN_ID/logs" && echo ${q(modelRefused)} > "$RUNS_ROOT/$RUN_ID/logs/shard-2.model-refused"` : ""}
-${verdict.length ? `printf '\\n\\033[1;36m==> %s\\033[0m\\n' Verdict\n${verdict.map((v) => `printf '\\033[1;31m::error:: %s\\033[0m\\n' ${q(v)} >&2`).join("\n")}` : ""}
-exit ${runExit}
-`,
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(repo, "ops", "vm", "build-target-image.sh"),
-    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\necho "::error:: an error line from before the run" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
-    { mode: 0o755 },
-  );
-  writeFileSync(join(dir, "build.out"), buildOut ? `${buildOut}\n` : "");
-  writeFileSync(join(dir, "leftover"), leftover);
-  writeFileSync(join(repo, "scripts", "stop-echo-source.sh"), `echo "echo $ECHO_PORT" >> ${q(stopLog)}\n`);
-  writeFileSync(join(repo, "scripts", "stop-ollama-source.sh"), `echo "ollama $OLLAMA_PORT" >> ${q(stopLog)}\n`);
-  const git = (...args) => execFileSync(REAL_GIT, args, { cwd: repo, stdio: "pipe", encoding: "utf8" }).trim();
-  git("init", "-q");
-  git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", ".");
-  git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "suite");
-  const head = git("rev-parse", "HEAD");
-  writeFileSync(join(repo, ".env"), "SOME_PROVIDER_API_KEY=from-dotenv\n");
-
-  const home = join(dir, "home");
-  const bin = join(home, ".local", "bin");
-  mkdirSync(bin, { recursive: true });
-  const dockerLog = join(dir, "docker.log");
-  const systemctlLog = join(dir, "systemctl.log");
-  stub(bin, "docker", `echo "$*" >> ${q(dockerLog)}
-case "$1" in
-  images) echo img-old ;;
-  ps) ${psFails ? "exit 1" : `cat ${q(join(dir, "leftover"))}`} ;;
-  builder) cp "$E2E_ONDEMAND_STATE"/results/*.env ${q(dir)}/at-prune.env 2>/dev/null ;;
-esac
-exit 0`);
-  const stateCases = Object.entries(states).map(([u, s]) => `  *${u}*) echo ${q(s)} ;;`).join("\n");
-  stub(bin, "systemctl", `echo "$*" >> ${q(systemctlLog)}
-case "$*" in
-${stateCases}
-  *) echo inactive ;;
-esac`);
-  stub(bin, "flock", lockBusy ? "exit 1" : "exit 0");
-  // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
-  // does the move, then signals the script that ran it.
-  if (termOnConsume) stub(bin, "mv", `/bin/mv "$@"; rc=$?\ncase "$*" in *"/request.env "*) kill -TERM $PPID ;; esac\nexit $rc`);
-
-  const secrets = join(dir, "secrets.env");
-  writeFileSync(secrets, [...PUBLISHING.map((n) => `export ${n}=secret-${n}`), "export GH_ENTERPRISE_TOKEN=ghe", "export OPENAI_API_KEY=provider-key"].join("\n") + "\n");
-
-  const official = join(dir, "official-ledger");
-  mkdirSync(official);
-  writeFileSync(join(official, "daily-history.jsonl"), '{"row":"daily"}\n');
-  writeFileSync(join(official, "spec-durations.json"), "{}\n");
-
-  const state = join(dir, "state");
-  mkdirSync(join(state, "results"), { recursive: true });
-  if (request !== null) writeFileSync(join(state, "request.env"), request);
-  if (answered) writeFileSync(join(state, "results", `${answered}.env`), "STATUS=done\nORIGINAL=1\n");
-  const shadowState = join(dir, "shadow-state");
-  mkdirSync(shadowState);
-  if (shadowRequest) writeFileSync(join(shadowState, "request.env"), `SHADOW_DATE=${shadowDate ?? new Date().toISOString().slice(0, 10)}\nSHADOW_VERSION=1\n`);
-  if (orphans.length) {
-    mkdirSync(join(state, "requests"), { recursive: true });
-    writeFileSync(join(state, "requests", "unparsed-20260101T000000Z-1.env"), "ONDEMAND_ID=../x\n");
-  }
-  for (const [id, answered] of orphans) {
-    mkdirSync(join(state, "requests"), { recursive: true });
-    writeFileSync(join(state, "requests", `${id}.env`), `ONDEMAND_ID=${id}\nONDEMAND_REF=x\n`);
-    if (answered) writeFileSync(join(state, "results", `${id}.env`), "STATUS=done\nORIGINAL=1\n");
-  }
-  if (leftovers) {
-    mkdirSync(join(state, "builds", "src-aaaaaaaaaaaa-XYZ"), { recursive: true });
-    mkdirSync(join(state, "ledger-killed-run"), { recursive: true });
-  }
-
-  const env = {
-    PATH: process.env.PATH,
-    HOME: home,
-    E2E_ONDEMAND_REPO: repo,
-    E2E_ONDEMAND_STATE: state,
-    E2E_ONDEMAND_LOG_DIR: join(dir, "logs"),
-    E2E_ONDEMAND_SECRETS: secrets,
-    E2E_ONDEMAND_OFFICIAL_LEDGER: official,
-    E2E_ONDEMAND_NOW: now,
-    E2E_SHADOW_STATE: shadowState,
-  };
-  const collect = (status) => {
-    const readIf = (p) => (existsSync(p) ? readFileSync(p, "utf8") : null);
-    const results = readdirSync(join(state, "results")).filter((f) => f.endsWith(".env"));
-    return {
-      status,
-      head,
-      repo,
-      state,
-      atPrune: readIf(join(dir, "at-prune.env")),
-      allLogs: existsSync(join(dir, "logs")) ? readdirSync(join(dir, "logs")).filter((f) => f !== "latest.log").map((f) => readFileSync(join(dir, "logs", f), "utf8")).join("") : "",
-      official,
-      log: readIf(join(dir, "logs", "latest.log")) ?? "",
-      env: readIf(envOut),
-      build: readIf(buildArgs),
-      docker: readIf(dockerLog) ?? "",
-      systemctl: readIf(systemctlLog) ?? "",
-      stops: readIf(stopLog) ?? "",
-      result: Object.fromEntries(results.map((f) => [f.slice(0, -4), kv(readFileSync(join(state, "results", f), "utf8"))])),
-      requestLeft: existsSync(join(state, "request.env")),
-      requests: existsSync(join(state, "requests")) ? readdirSync(join(state, "requests")) : [],
-      wtLeft: existsSync(join(state, "wt")),
-      ledgers: readdirSync(state).filter((f) => f.startsWith("ledger-")),
-      worktrees: git("worktree", "list"),
-    };
-  };
-  return { env, collect };
-}
+import { ROOT, ONDEMAND, TARGET_SHA, IMAGE, PUBLISHING, GOOD_REQUEST, stub, q, setup, kv } from "./lib/on-demand-machine.mjs";
 
 function onDemand(opts) {
   const { env, collect } = setup(opts);
@@ -193,7 +20,6 @@ function onDemand(opts) {
   return collect(r.status);
 }
 
-const kv = (text) => Object.fromEntries(text.split("\n").filter((l) => l.includes("=")).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
 
 // ---------------------------------------------------------------------------
 // The run itself
@@ -341,6 +167,53 @@ test("a SIGTERM the instant the request leaves the slot still answers it", () =>
     assert.equal(r.requestLeft, false, "the request was not consumed, so the stub never fired");
     assert.ok(r.result["req-1"], `${request}: consumed, signalled, and never answered:\n${r.log}`);
     assert.equal(r.status, r.result["req-1"].STATUS === "refused" ? 2 : 3, r.log);
+  }
+});
+
+test("a SIGTERM between any two parts of an outcome still answers a result the platform accepts", () => {
+  // ondemand_finish classifies only an exit with no STATUS. A STATUS set before its
+  // EXIT left EXIT empty; a VERDICT set before a STATUS that never came left
+  // failed/green. The platform refuses both (EXIT must match STATUS, and VERDICT is
+  // set exactly when STATUS is done), and the request is never answered. A DEBUG trap
+  // sends the signal right after the k-th assignment of STATUS, VERDICT, EXIT or
+  // REASON once signals are caught, for every k an outcome has.
+  const EXPECTED_EXIT = { "done/green": "0", "done/red": "1", "refused/": "2", "failed/": "3", "build_failed/": "4" };
+  const cases = {
+    "done/green": {},
+    "done/red": { runExit: 1 },
+    "refused (window)": { now: "3 0800" },
+    "refused (provider)": { runExit: 1, writeResults: false, modelRefused: "antropic is not active" },
+    "failed (build)": { buildExit: 3, buildOut: "" },
+    "build_failed": { buildExit: 5, buildOut: "" },
+    "failed (wrong version)": { runExit: 1, verdict: ["the target served the wrong Langflow — exact: served 1.12.4, declared 1.13.0."] },
+    "failed (no results.json)": { runExit: 1, writeResults: false },
+  };
+  for (const [name, opts] of Object.entries(cases)) {
+    for (const k of [1, 2, 3, 4]) {
+      const { env, collect } = setup(opts);
+      const harness = join(env.E2E_ONDEMAND_STATE, "..", "term-after-assignment.sh");
+      writeFileSync(harness, [
+        "od_term() {",
+        '  case "$od_prev" in',
+        "    \"trap 'exit 143' TERM\") od_armed=1 ;;",
+        "    *'=\"\"') ;;",
+        '    OD_STATUS=* | OD_VERDICT=* | OD_EXIT=* | OD_REASON=*)',
+        `      if [ "$od_armed" = 1 ]; then od_n=$((od_n + 1)); [ "$od_n" = ${k} ] && kill -TERM $$; fi ;;`,
+        "  esac",
+        '  od_prev="$BASH_COMMAND"',
+        "}",
+        'set -T; od_prev=""; od_armed=0; od_n=0; trap od_term DEBUG',
+        `source ${q(ONDEMAND)}`,
+      ].join("\n") + "\n");
+      const r = collect(spawnSync("bash", [harness], { encoding: "utf8", env }).status);
+      const res = r.result["req-1"];
+      const at = `${name}, signal after assignment ${k}`;
+      assert.ok(res, `${at}: no result:\n${r.log}`);
+      assert.equal(res.STATUS === "done", res.VERDICT !== "", `${at}: ${res.STATUS} with VERDICT='${res.VERDICT}'`);
+      assert.equal(res.EXIT, EXPECTED_EXIT[`${res.STATUS}/${res.VERDICT}`], `${at}: ${res.STATUS}/${res.VERDICT} answered EXIT='${res.EXIT}'`);
+      assert.notEqual(res.REASON, "", `${at}: no REASON`);
+      assert.equal(String(r.status), res.EXIT, `${at}: the exit status does not follow the result`);
+    }
   }
 });
 

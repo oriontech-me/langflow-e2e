@@ -387,7 +387,6 @@ const LANES = [
   { file: "daily-stable.yml", nextRun: "Run @stable tests" },
   { file: "pr-validation.yml", nextRun: "Run impacted specs" },
   { file: "manual.yml", nextRun: "Run tests and upload report" },
-  { file: "weekly-stable.yml", nextRun: "Run @stable tests" },
 ];
 
 // Line-based rather than YAML-parsed on purpose: the repo ships no YAML parser,

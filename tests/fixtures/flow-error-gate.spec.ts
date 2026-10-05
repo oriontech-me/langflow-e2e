@@ -27,8 +27,8 @@
 // LLM. The fixture only cares about the URL shape, the content type and the body.
 //
 // WHY `@stable` — it is load bearing, not decoration. `daily-stable.yml` selects
-// with `--grep @stable` and is the only recurring lane (`nightly.yml` has been
-// dormant since 03-2026), and `pr-validation.yml` caps the impacted set at 20
+// with `--grep @stable` and is the only recurring lane (`nightly.yml` was
+// dormant from 03-2026 until #2171 retired it), and `pr-validation.yml` caps the impacted set at 20
 // with `@stable` first — a fixtures change resolves to every spec in the repo, so
 // an untagged spec here sorts below the cap and never runs. Measured on PR #1164:
 // 237 impacted, 20 run, 217 dropped, and this file was among the dropped. A guard

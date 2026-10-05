@@ -161,8 +161,8 @@ function replacePhase0Block(
 
 function main(): void {
   // `--count` mode: print only the number of @stable test() calls and exit,
-  // without reading or rewriting QA-CHECKLIST.md. Used by the CI coverage step
-  // (STABLE_COUNT) in weekly-stable.yml. Reuses collectStableTests() so the
+  // without reading or rewriting QA-CHECKLIST.md. Was used by the CI coverage step
+  // (STABLE_COUNT) of the retired weekly-stable.yml (#2171). Reuses collectStableTests() so the
   // count always matches the Phase 0 regeneration.
   if (process.argv.includes("--count")) {
     console.log(collectStableTests().tests.length);
@@ -171,7 +171,7 @@ function main(): void {
 
   // `--count-oss` mode: the size of the DECLARED suite the nightly can reach —
   // every `test()` under regression/ minus the `@enterprise` ones. Feeds
-  // TOTAL_COUNT in daily-stable.yml / weekly-stable.yml, which is the
+  // TOTAL_COUNT in daily-stable.yml, which is the
   // denominator of the dashboard's coverage band.
   //
   // This used to be `grep -rE '^\s*test\s*\('` in the workflow. Two problems:

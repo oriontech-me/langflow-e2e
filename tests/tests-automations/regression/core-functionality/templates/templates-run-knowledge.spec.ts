@@ -431,25 +431,34 @@ test.describe("core-functionality/templates — knowledge-base templates run (§
     });
   }
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should run Knowledge Retrieval and show the ingested sentinel in its reply",
-    { tag: ["@stable", "@release", "@templates", "@playground"] },
+    { tag: ["@release", "@templates", "@playground"] },
     async ({ page, request }) => {
       await runKnowledgeTemplate(page, request, KNOWLEDGE_RETRIEVAL);
     },
   );
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should run Document Q&A with the ingested sentinel in the Agent's prompt",
-    { tag: ["@stable", "@release", "@templates", "@playground"] },
+    { tag: ["@release", "@templates", "@playground"] },
     async ({ page, request }) => {
       await runKnowledgeTemplate(page, request, DOCUMENT_QA);
     },
   );
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should run Vector Store RAG with the ingested sentinel in the Agent's prompt",
-    { tag: ["@stable", "@release", "@templates", "@playground"] },
+    { tag: ["@release", "@templates", "@playground"] },
     async ({ page, request }) => {
       await runKnowledgeTemplate(page, request, VECTOR_STORE_RAG);
     },

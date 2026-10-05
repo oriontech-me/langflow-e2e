@@ -312,7 +312,7 @@ function append(env) {
 }
 
 test("a lane that sets no LIVENESS_DIR writes the same line it always did", () => {
-  // weekly-stable.yml and every local run share this appender. The block must be
+  // Every local run shares this appender (and weekly-stable.yml did until #2171). The block must be
   // an addition to the daily, not a change to them.
   const entry = append(() => ({ LIVENESS_DIR: "", SHARD_TOTAL: "" }));
   assert.equal("backend" in entry, false);

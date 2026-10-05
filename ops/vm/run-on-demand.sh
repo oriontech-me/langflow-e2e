@@ -335,26 +335,33 @@ main() {
   # served another version and for a run that died in preflight alike. What tells them
   # apart is what it left and what its verdict said, so the result says that, in its
   # words: "red" alone read as product failures for a run that measured nothing.
+  #
+  # OD_STATUS is set LAST, in every branch here and in ondemand_refuse/ondemand_fail:
+  # ondemand_finish classifies only an exit with no STATUS, so a SIGTERM between a
+  # STATUS and its EXIT left a result the platform refuses (EXIT is required).
   local verdict_errs last_err model_refused
   verdict_errs="$(ondemand_run_errors verdict)"
   last_err="$(ondemand_run_errors last)"
   model_refused="$(cat "$RUNS_ROOT/$OD_RUN_ID"/logs/shard-*.model-refused 2>/dev/null | head -n 1)"
   if [ -n "$model_refused" ]; then
-    OD_STATUS=refused; OD_EXIT=2
+    OD_EXIT=2
     OD_REASON="the declared provider could not be used, so the agent specs did not run: $model_refused"
+    OD_STATUS=refused
   elif printf '%s\n' "$verdict_errs" | grep -qE 'served the wrong Langflow|version check (could not|had no)'; then
-    OD_STATUS=failed; OD_EXIT=3
+    OD_EXIT=3
     OD_REASON="the run says nothing about $OD_REF @ ${OD_TARGET_SHA:0:12}: $verdict_errs"
+    OD_STATUS=failed
   elif [ -f "$RUNS_ROOT/$OD_RUN_ID/results.json" ]; then
-    OD_STATUS=done
     if [ "$rc" = "0" ]; then
       OD_VERDICT=green; OD_EXIT=0; OD_REASON="the suite ran green"
     else
       OD_VERDICT=red; OD_EXIT=1; OD_REASON="the suite ran red: ${verdict_errs:-run-e2e.sh exit $rc, no verdict line}"
     fi
+    OD_STATUS=done
   else
-    OD_STATUS=failed; OD_EXIT=3
+    OD_EXIT=3
     OD_REASON="run-e2e.sh exited $rc without a results.json, so the suite reached no verdict: ${verdict_errs:-${last_err:-no reason given; see $OD_LOG}}"
+    OD_STATUS=failed
   fi
   exit "$OD_EXIT"
 }
@@ -420,13 +427,13 @@ ondemand_run_errors() {
 ondemand_refuse() {
   echo "REFUSED: $1"
   [ -n "${2:-}" ] && echo "         the request is kept at $2"
-  OD_STATUS=refused; OD_EXIT=2; OD_REASON="$1"
+  OD_EXIT=2; OD_REASON="$1"; OD_STATUS=refused
   exit 2
 }
 
 ondemand_fail() {
   echo "FAILED ($2): $3"
-  OD_EXIT="$1"; OD_STATUS="$2"; OD_REASON="$3"
+  OD_EXIT="$1"; OD_REASON="$3"; OD_STATUS="$2"
   exit "$1"
 }
 
@@ -445,8 +452,9 @@ ondemand_finish() {
   OD_CLEANING=1
   trap '' TERM INT
   if [ -z "$OD_STATUS" ]; then
-    # An exit nobody classified: a signal (the daily stopping this run), or a bug.
-    OD_STATUS=failed; OD_EXIT=3
+    # An exit nobody classified: a signal (the daily stopping this run), or a bug. A
+    # VERDICT set just before the signal goes too: VERDICT belongs to done alone.
+    OD_STATUS=failed; OD_EXIT=3; OD_VERDICT=""
     case "$code" in
       143) OD_REASON="stopped by SIGTERM — the daily starting, systemctl stop, or the unit's TimeoutStartSec" ;;
       130) OD_REASON="interrupted" ;;

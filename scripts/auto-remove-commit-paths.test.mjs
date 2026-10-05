@@ -3,13 +3,17 @@
 //
 // Two halves, and the second one is the one that fails against the defect.
 //
-// The pure half asserts what `removed[].file` turns into. The behavioural half
-// EXTRACTS the commit step from `.github/actions/auto-remove-stable/action.yml` and
-// runs it under `bash` against a real git repository with a real remote, because the
-// defect this closes lived entirely in that shell block: `git add` with one fixed path
-// prefix, over a script that edits whatever spec the report names. Asserting on the
-// YAML's text would have passed against it (#1226's lesson — a guard that pins a
-// spelling does not pin a behaviour), and so did the unit tests that existed.
+// The pure half asserts what `removed[].file` turns into. The behavioural half runs
+// the lane's real commit path — `auto_remove_commit` in `scripts/run-e2e.sh`, sourced
+// under `bash` — against a real git repository with a real remote, because the defect
+// this closes lived entirely in shell: `git add` with one fixed path prefix, over a
+// script that edits whatever spec the report names. Asserting on the script's text
+// would have passed against it (#1226's lesson — a guard that pins a spelling does not
+// pin a behaviour), and so did the unit tests that existed.
+//
+// Until #2171 these tests extracted the same block from the composite action
+// `.github/actions/auto-remove-stable`, the Actions lane's copy of this path. The
+// action left with its last caller; the VM lane (#1945) is the one that removes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -27,13 +31,8 @@ import { makeTempDir } from "./lib/tmp-dir.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "auto-remove-commit-paths.mjs");
-const ACTION = path.join(
-  REPO_ROOT,
-  ".github",
-  "actions",
-  "auto-remove-stable",
-  "action.yml",
-);
+const RUN_E2E = path.join(REPO_ROOT, "scripts", "run-e2e.sh");
+const BASH = execFileSync("/usr/bin/env", ["bash", "-c", "command -v bash"], { encoding: "utf8" }).trim();
 
 const REGRESSION_SPEC =
   "tests/tests-automations/regression/core-functionality/model-provider/anthropic-provider.spec.ts";
@@ -235,30 +234,12 @@ test("an unreadable or unknown invocation exits 2 rather than 0", () => {
   assert.equal(main([process.execPath, SCRIPT]), 2);
 });
 
-// ---------- the step itself, executed ----------
+// ---------- the lane's commit path, executed ----------
 //
-// Extracted from the action and run under bash, for the reason the file header
-// gives. Deliberately brittle in the safe direction: a renamed or reshaped step
-// throws here instead of quietly asserting on nothing.
-
-function commitStepBody() {
-  const action = fs.readFileSync(ACTION, "utf8");
-  const marker = "- name: Commit @stable removals to main";
-  const start = action.indexOf(marker);
-  assert.ok(start > 0, "the commit step must exist under its known name");
-  const next = action.indexOf("\n    - name:", start + 10);
-  const step = next === -1 ? action.slice(start) : action.slice(start, next);
-  const runAt = step.indexOf("run: |");
-  assert.ok(runAt > 0, "the commit step must still be an inline shell block");
-  const body = step
-    .slice(step.indexOf("\n", runAt) + 1)
-    .split("\n")
-    .map((line) => line.replace(/^ {8}/, ""))
-    .join("\n");
-  assert.match(body, /^git commit -m "\$MSG"$/m, "the step must still commit");
-  assert.match(body, /^git push$/m, "the step must still push");
-  return body;
-}
+// `auto_remove_commit` is sourced from the orchestrator and run against a fixture
+// repository whose `origin` is a local bare repository standing in for the source.
+// Deliberately brittle in the safe direction: a renamed function fails here instead of
+// quietly asserting on nothing.
 
 /**
  * git, insulated from whoever is running the test.
@@ -310,10 +291,6 @@ function workspace({ removed, edits, checklistChanges = true }) {
   write(REGRESSION_SPEC, 'test("a", { tag: ["@stable"] }, async () => {});\n');
   write(OUTSIDE_SPEC, 'test("b", { tag: ["@stable"] }, async () => {});\n');
   write(GATE_SPEC, 'test("c", { tag: ["@stable"] }, async () => {});\n');
-  write(
-    "scripts/auto-remove-commit-paths.mjs",
-    fs.readFileSync(SCRIPT, "utf8"),
-  );
 
   git(repo, "init", "-b", "main");
   git(repo, "config", "user.name", "fixture");
@@ -336,6 +313,8 @@ function workspace({ removed, edits, checklistChanges = true }) {
     path.join(repo, "auto-remove-result.json"),
     JSON.stringify(report(removed)),
   );
+  const result = path.join(root, "auto-remove-result.json");
+  fs.writeFileSync(result, JSON.stringify(report(removed)));
   // Untracked run artifacts at the repo root — the reason `git add -A` is not the
   // fix. Their absence from the commit is asserted below.
   fs.writeFileSync(path.join(repo, "results.json"), "{}");
@@ -351,30 +330,36 @@ function workspace({ removed, edits, checklistChanges = true }) {
     { mode: 0o755 },
   );
 
-  return { root, repo, remote, home, bin, baseline };
+  return { root, repo, remote, home, bin, baseline, result };
 }
 
 function runCommitStep(ws) {
-  const run = spawnSync("bash", ["-c", commitStepBody()], {
-    cwd: ws.repo,
+  const body = [
+    `source ${JSON.stringify(RUN_E2E)}`,
+    `REPO_DIR=${JSON.stringify(ws.repo)}`,
+    `SOURCE_REMOTE_URL=${JSON.stringify(ws.remote)}`,
+    // Any non-empty value: the local remote ignores the header the token becomes.
+    "SOURCE_PUSH_TOKEN=not-a-real-token",
+    "RUN_ID=test-run",
+    // Called the way the lane calls it, on the left of `||`: bash disables errexit
+    // for the whole function body there, and the function is written for that. A
+    // bare call would let `set -e` abort on a failure the function itself does not
+    // handle, and a test could pass on the abort instead of on the function.
+    `auto_remove_commit ${JSON.stringify(ws.result)} || exit 1`,
+  ].join("\n");
+  const run = spawnSync(BASH, ["-c", body], {
+    // The lane runs its helpers as `node scripts/...` from the checkout it lives in,
+    // so the real script is what stages and verifies here too.
+    cwd: REPO_ROOT,
     encoding: "utf8",
-    // Only what the step declares, plus what any shell needs. Anything it reads
-    // and the action does not export would otherwise come from the developer's
-    // environment.
     env: {
       PATH: `${ws.bin}:${process.env.PATH}`,
       HOME: ws.home,
-      // `HOME` insulates the step from the developer's GLOBAL config — which it
-      // writes to, via `git config --global --add safe.directory` — but not from
-      // the SYSTEM one (`/etc/gitconfig`, `/opt/homebrew/etc/gitconfig`), where a
-      // `commit.gpgsign = true` takes these tests down in exactly the same way.
-      // Not pinned to a writable file, because the step must keep being able to
-      // write its global config as it does on a runner.
+      // Insulated from the developer's global and system git config: a
+      // `commit.gpgsign = true` there takes these tests down in setup.
+      GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_SYSTEM: "/dev/null",
-      GITHUB_WORKSPACE: ws.repo,
-      REMOVED_COUNT: "2",
-      EXEMPT_COUNT: "0",
-      RUN_LABEL: "daily #1",
+      TARGET_SSH: "unused-in-sourced-tests",
     },
   });
   return { status: run.status, out: `${run.stdout}${run.stderr}` };
@@ -429,8 +414,9 @@ test("a reported removal that did not reach the commit fails the step, unpushed"
   assert.notEqual(run.status, 0, "a removal that did not land must fail the step");
   assert.match(run.out, /::error::/);
   assert.ok(run.out.includes(OUTSIDE_SPEC), `the missing path must be named:\n${run.out}`);
-  // Nothing reached main: the commit exists locally and the push never ran.
+  // Nothing reached main, and the clone was put back where it started.
   assert.equal(git(ws.remote, "rev-parse", "main"), ws.baseline);
+  assert.equal(git(ws.repo, "rev-parse", "HEAD"), ws.baseline);
 });
 
 test("a removal set whose every edit was lost fails naming the cause, not git's", () => {
@@ -446,22 +432,23 @@ test("a removal set whose every edit was lost fails naming the cause, not git's"
 });
 
 test("no lane stages the auto-removal by path prefix any more", () => {
-  // The prefix reached four lanes' worth of nothing: it lived in one action, and
-  // this is how it would come back — a second copy in a caller.
-  const action = fs.readFileSync(ACTION, "utf8");
-  // Over the COMMANDS only: the comment above the staging lines quotes the prefix
-  // it replaced, and a guard that cannot tell prose from a command would forbid
-  // recording why (#1822).
-  const commands = action
+  // The prefix reached four lanes' worth of nothing: it lived in one shell block, and
+  // this is how it would come back — a second copy beside the helper.
+  const sh = fs.readFileSync(RUN_E2E, "utf8");
+  const start = sh.indexOf("auto_remove_commit() {");
+  assert.ok(start > 0, "the lane's commit path must exist under its known name");
+  const fn = sh.slice(start, sh.indexOf("\n}\n", start));
+  // Over the COMMANDS only: comments may quote the prefix this replaced (#1822).
+  const commands = fn
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => !line.startsWith("#"));
   assert.ok(
-    !commands.some((line) => /^git add .*tests\/tests-automations/.test(line)),
-    "the commit step stages a path prefix again (#1822)",
+    !commands.some((line) => /git (-C \S+ )?add .*tests\/tests-automations/.test(line)),
+    "the commit path stages a path prefix again (#1822)",
   );
-  assert.match(action, /auto-remove-commit-paths\.mjs paths/);
-  assert.match(action, /auto-remove-commit-paths\.mjs verify/);
+  assert.match(fn, /auto-remove-commit-paths\.mjs paths/);
+  assert.match(fn, /auto-remove-commit-paths\.mjs verify/);
 });
 
 test("the CLI sets process.exitCode rather than calling process.exit", () => {

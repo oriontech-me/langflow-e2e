@@ -42,7 +42,6 @@ import {
   CC_DEFAULT,
 } from "./create-failure-issue.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 import {
   COMMITTED_FOOTER,
   PENDING_HEADLINE_PREFIX,
@@ -1189,57 +1188,6 @@ test("main() relabels on an outcome that did not COMPLETE, and on nothing else",
   }
 });
 
-test("the weekly drops the section rather than forwarding an unqualified claim", () => {
-  // This lane renders its umbrella INLINE, so it cannot relabel; what it must not
-  // do is forward a summary that says the removals landed.
-  //
-  // EVALUATED, not matched (#1226/#1300). A regex over the line pins a spelling:
-  // dropping the `|| ''` half leaves `${{ false && X }}`, which GitHub renders as
-  // the STRING "false" — truthy to the inline script, which then prints the
-  // section with the body `false`. Only evaluating the expression tells the two
-  // apart.
-  // Reads ONE line per key: a folded scalar (`>-` with the expression on the next
-  // line) is valid YAML with identical semantics and fails this guard. Loud rather
-  // than silent, which is the safe direction, but worth knowing before reformatting.
-  const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
-  const step = weekly.slice(weekly.indexOf("- name: Create issue on failure"));
-  const env = step.slice(0, step.indexOf("with:"));
-  const valueOf = (name) => {
-    const line = env.split("\n").find((l) => l.trim().startsWith(`${name}:`));
-    assert.ok(line, `${name} is not forwarded at all`);
-    return line.slice(line.indexOf(":") + 1).trim();
-  };
-  // Flat, dotted keys: the evaluator refuses any path the caller did not supply,
-  // so a renamed step id fails the guard instead of defaulting to empty.
-  // Distinct sentinels: asserting only "not empty" on success let the SUMMARY
-  // forward the STATUS and still pass, which would render `removed` as the
-  // umbrella's entire `@stable` section.
-  const context = (outcome) => ({
-    "steps.auto_remove.outcome": outcome,
-    "steps.auto_remove.outputs.status": "<the-status>",
-    "steps.auto_remove.outputs.summary_md": "<the-summary>",
-  });
-  const expected = {
-    AUTO_REMOVE_STATUS: "<the-status>",
-    AUTO_REMOVE_SUMMARY: "<the-summary>",
-  };
-  for (const name of ["AUTO_REMOVE_STATUS", "AUTO_REMOVE_SUMMARY"]) {
-    const raw = valueOf(name);
-    assert.equal(
-      evaluateWorkflowValue(raw, context("success")),
-      expected[name],
-      `${name} does not forward its own output on a successful removal`,
-    );
-    for (const outcome of ["failure", "skipped", "cancelled"]) {
-      assert.equal(
-        evaluateWorkflowValue(raw, context(outcome)),
-        "",
-        `${name} reaches the umbrella on outcome=${outcome} (#1822)`,
-      );
-    }
-  }
-});
-
 test("the daily stopped removing the tag, and stopped claiming it did (#1943)", () => {
   // #1822 added AUTO_REMOVE_OUTCOME so the umbrella could tell "removed nothing" from
   // "could not commit" — the default reads as "done". That forwarding lived on the
@@ -1256,13 +1204,15 @@ test("the daily stopped removing the tag, and stopped claiming it did (#1943)", 
     "the daily still removes @stable",
   );
 
-  // The mechanism is not deleted, only uncalled here: the weekly still runs it, and
-  // the VM lane will once it has a write path. A last caller disappearing would make
-  // the action dead code, which is a different decision from this one.
-  // (The weekly is now the ONLY lane that removes, and it never forwarded
-  // AUTO_REMOVE_OUTCOME — #1942, pre-existing and tracked there.)
-  const weekly = readFileSync(join(REPO, ".github/workflows/weekly-stable.yml"), "utf8");
-  assert.match(weekly, /actions\/auto-remove-stable/, "the shared action lost its last caller");
+  // The mechanism outlived the composite action that used to wrap it: the VM lane
+  // calls the same scripts inline (#1945), and the action went with its last
+  // caller, the retired weekly lane (#2171).
+  // On the call, over non-comment lines, so a comment cannot stand in for it.
+  const runner = readFileSync(join(REPO, "scripts/run-e2e.sh"), "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  assert.match(runner, /npx ts-node scripts\/remove-stable-from-failures\.ts/, "the VM lane no longer removes @stable");
 });
 
 test("a lost removal points the reader at a place that exists on ITS lane (#1945)", () => {

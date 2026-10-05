@@ -5,11 +5,10 @@
 #   gh workflow enable daily-stable.yml -R oriontech-me/langflow-e2e
 # Ask `gh workflow list --all` whether this runs, not this file.
 #
-# Daily Stable E2E — daily successor to weekly-stable.yml.
+# Daily Stable E2E — daily successor to the retired weekly-stable.yml.
 # Same machinery (@stable suite, QA Platform POST, failure issue) but runs every
 # day at 05:00 BRT and writes its own history to reports/daily-history.jsonl
 # (via the HISTORY_FILE override on the shared scripts/append-weekly-history.mjs).
-# weekly-stable.yml is kept in the repo but disabled as a fallback.
 name: Daily Stable E2E
 run-name: "Daily Stable E2E — ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}"
 
@@ -378,7 +377,7 @@ jobs:
 
     # This job runs INSIDE the Playwright container, so both the test process
     # and Langflow reach Ollama via the job network's service hostname (no
-    # localhost port mapping in here — unlike manual.yml/nightly.yml).
+    # localhost port mapping in here — unlike manual.yml).
     env:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_BASE_URL_FROM_LANGFLOW: http://ollama:11434
@@ -1839,9 +1838,10 @@ jobs:
       # --- Auto-removal of @stable left this lane with the cut (2026-09-20) ------
       # It used to run here: strip @stable from hard-failing tests and commit that back
       # to main with no human review (leadership decision; restoring a tag is manual).
-      # The action is untouched at .github/actions/auto-remove-stable and
-      # weekly-stable.yml still calls it — this is a caller that stopped calling, not a
-      # mechanism that was deleted. Restoring it here is re-adding the step.
+      # The mechanism was not deleted: the VM lane runs the same scripts inline in
+      # scripts/run-e2e.sh (#1945). The composite action that wrapped them for Actions
+      # left with its last caller, weekly-stable.yml (#2171); restoring the step here
+      # means restoring that action from git history first.
       #
       # Why it had to stop on the day the VM took the verdict: the tag decides WHAT the
       # authoritative lane runs. With the umbrella already coming from the VM, a spec

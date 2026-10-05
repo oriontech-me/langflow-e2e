@@ -733,7 +733,7 @@ test("#1763 an unmeasured shard says so, and never reads as clear", () => {
 
 test("#1763 a lane that does not measure omits the field entirely", () => {
   // Absence is this schema's word for "this lane does not measure it"; a null
-  // would read as a measured nothing. weekly-stable.yml has no recorder at all.
+  // would read as a measured nothing. weekly-stable.yml (retired in #2171) had no recorder.
   const entry = append(flakyReport("boots", [0]));
   assert.equal("outage_overlap" in entry.flaky[0], false);
 });
@@ -899,7 +899,7 @@ test("#1763 a lane that records liveness but passes no OUTAGE_ATTEMPTS says so",
 });
 
 test("#1763 a lane with no liveness recorder at all stays silent", () => {
-  // weekly-stable.yml sets neither, and its rows are honestly unmeasured — a
+  // A lane that sets neither writes rows that are honestly unmeasured — a
   // warning there would be noise on every run and would train the reader to
   // ignore the one case above.
   const { entry, stderr } = appendCapturingStderr(flakyReport("boots", [0]));
@@ -939,6 +939,24 @@ test("#2009 an unexpected pass records its own signature, not \"unknown\"", () =
   assert.equal(pass.infra_signature, null, "a passing attempt is never transport-level");
   assert.equal(pass.attempts, 3);
   assert.equal(lost.error_signature, "unknown", "the genuine no-message failure is unchanged");
+});
+
+test("#2116 the row records the guard count: failed minus unexpected passes", () => {
+  // The triage reads this field instead of recomputing, so rows written before
+  // #2116 keep the verdict their own guard reached.
+  const entry = append(
+    report([
+      {
+        title: "declared failing",
+        status: "unexpected",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("passed")],
+      },
+      { title: "real", status: "unexpected", results: [result("failed", "boom")] },
+      { title: "late", status: "unexpected", results: [result("passed"), result("failed", "boom")] },
+    ]),
+  );
+  assert.equal(entry.totals.failed, 3);
+  assert.equal(entry.guard_count, 2);
 });
 
 test("#2009 the pass is read off the LAST attempt: an earlier timeout does not mask it", () => {

@@ -207,9 +207,12 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
     return run;
   }
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should refuse every guarded knowledge-base route for a knowledge base a Memory Base manages",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/memories",
@@ -302,9 +305,12 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
     },
   );
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should fail an ingestion whose embedding provider cannot be reached, naming the provider",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, playwright }) => {
       const owner = await newUser(
         request,
@@ -338,9 +344,12 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
     },
   );
 
-  test(
+  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+  test.fixme(
     "should send an Ollama ingestion to the server OLLAMA_BASE_URL names",
-    { tag: ["@stable", "@regression", "@api", "@files"] },
+    { tag: ["@regression", "@api", "@files"] },
     async ({ request, playwright }) => {
       // Regression for langflow-ai/langflow#13883: ingestion built its embeddings
       // with the component's localhost default, which outranked OLLAMA_BASE_URL.

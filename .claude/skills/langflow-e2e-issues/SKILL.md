@@ -79,8 +79,8 @@ Skill tool. Reach for them whenever the phase calls for it:
 - **`playwright-cli`** — drive a **live browser** to scout real testids/handles
   (never invent selectors) or debug/heal a flaky step. Use in PLAN and when a
   `fix`/`daily-failure` issue needs live reproduction.
-- **`superpowers:systematic-debugging`** — for `fix` / `daily-failure` /
-  file-watcher issues: root-cause before proposing a fix.
+- **`superpowers:systematic-debugging`** — for `fix` / `daily-failure`
+  issues: root-cause before proposing a fix.
 - **`superpowers:test-driven-development`** — when the resolution builds a new
   helper/POM as real code (not just a `.spec.ts`).
 
@@ -169,11 +169,10 @@ it as, before touching code.
 | **daily-failure triage** | `daily-failure` label, "triage", lists multiple removed tests | **Dispatch only — `CONTRIBUTING.md` → *Triage protocol* governs and outranks this skill.** Shallow & descriptive: read the run, fan out one **dedicated issue per problem** in order **hard-failure → flake → skip**, note environment signals *descriptively — never as a verdict*, dedup against open issues, then **close the triage**. Do NOT reach a verdict, "prove on 3 environments", or fix anything here — `triage-verdicts.md` runs on the **dedicated issues** this spawns, not on the triage. If the mass-failure guard tripped, the one extra deliverable is a *descriptive* environmental call deciding whether to manually remove `@stable` from the real hard failures. |
 | **fix (dedicated)** | "Fixes #…", single hard-failure/flake | `systematic-debugging` → root-cause → fix → prove N clean `--retries=0` runs → **restore `@stable`** via PR on resolve. |
 | **community regression** | `community` label (+ `high`/`medium`/`low`) | Lives outside the wave milestone; work in severity order. Becomes a named `@regression` spec + `QA-CHECKLIST.md` bullet. |
-| **file-watcher** | opened by `file-watcher.yml`, lists upstream commits + a `--grep` table | Read the listed commits, run the indicated tests, fix any drift, close the issue (`CONTRIBUTING.md` § file-watcher). |
 
 **Failure triage — decide with evidence before "fixing" anything (on a DEDICATED
 issue).** Not every failing test means the test is wrong; the verdict routes the
-work. **This applies when working a dedicated `fix` / `community` / `file-watcher`
+work. **This applies when working a dedicated `fix` / `community`
 issue — NOT the daily-failure triage dispatcher**, which stays shallow and
 descriptive per `CONTRIBUTING.md` → *Triage protocol* (see the CLASSIFY row
 above); the verdicts run on the dedicated issues a triage spawns, never on the

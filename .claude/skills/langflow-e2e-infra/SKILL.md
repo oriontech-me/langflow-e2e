@@ -26,8 +26,8 @@ any other work — resolve the current wave live, never hardcode it.
 ## Scope — owns vs. defers
 
 **Owns:**
-- `.github/workflows/*` — nightly, daily-stable, pr-validation, manual,
-  file-watcher, update-coverage-summary, migration, triage-dispatch.
+- `.github/workflows/*` — daily-stable, pr-validation, manual,
+  update-coverage-summary, migration, triage-dispatch, and the rest of the folder.
 - `scripts/*` — start/stop Langflow, collect-models, history appender,
   coverage-summary, stable-tests, checklist guards.
 - `playwright.config.ts` — parallelism, workers, retries, timeouts, reporters,

@@ -3,10 +3,15 @@
  * The file-watcher's monitored-area table, its existence guard, and its change
  * sweep (issue #1092).
  *
+ * `file-watcher.yml`, the workflow wired to run `--mode=check` and `--mode=detect`
+ * and open the issue, never ran and was retired in #2171. `pr-validation.yml` still
+ * calls this script's other modes; the sweep and the issue renderers below keep their
+ * tests and have no scheduled caller today.
+ *
  * WHY THIS EXISTS
  *
- * `file-watcher.yml` opens a revalidation issue when upstream Langflow touches a
- * path one of our areas depends on, and prints the `--grep` to revalidate. It
+ * `file-watcher.yml` opened a revalidation issue when upstream Langflow touched a
+ * path one of our areas depends on, and printed the `--grep` to revalidate. It
  * carried two defects that made its output untrustworthy:
  *
  *   1. `src/lfx/` was watched by ZERO of the areas as they then stood (13; #1581
@@ -608,10 +613,10 @@ export function findLfxDrift({ classification = LFX_CLASSIFICATION, listChildren
  * *feat: introduce lfx package* (#9133, 2025-09-02); ~20 under `src/frontend/`
  * whose directory was reorganised; 7 missing the real `src/lfx/src/lfx/` prefix.
  *
- * The cost is not only a dead end for a reviewer. `scripts/impacted-tests.ts`
- * maps a changed Langflow path to the specs whose docs name it, by PREFIX — so a
- * path that resolves to nothing makes that spec unselectable by
- * `adaptive-impacted.yml`. A wrong path there is silent in exactly the way a
+ * The cost was not only a dead end for a reviewer. `scripts/impacted-tests.ts`
+ * (retired in #2171) mapped a changed Langflow path to the specs whose docs name
+ * it, by PREFIX — so a path that resolved to nothing made that spec unselectable by
+ * `adaptive-impacted.yml`. A wrong path there was silent in exactly the way a
  * missing one is.
  *
  * WHY THIS LIVES HERE, AND WHY IT RESOLVES VIA `git ls-tree`
@@ -644,7 +649,7 @@ export const DOC_DEPS_EXEMPT_FILES = ["docs/TEST-SPEC-TEMPLATE.md"];
  *
  * A bullet routinely names a second file mid-sentence, and a multi-file
  * dependency is written as continuation lines; checking only the first token per
- * bullet (what `impacted-tests.ts` consumes) would leave those unverified, which
+ * bullet (what the retired `impacted-tests.ts` consumed) would leave those unverified, which
  * is the silence this guard exists to remove.
  *
  * @param {string} markdown
@@ -1577,7 +1582,7 @@ export function renderGuardSection(guard) {
  *
  * A guard failure SUPPRESSES commits — a sweep over a path that is not there
  * finds nothing — so the run it caveats can legitimately report zero areas, and
- * `file-watcher.yml` therefore opens the issue on the guard's verdict as well as
+ * `file-watcher.yml` therefore opened the issue on the guard's verdict as well as
  * on `has_changes`. "Langflow source changed" would then be the one sentence on
  * the issue that is not true, on the issue whose entire subject is that the sweep
  * was incomplete.

@@ -8,7 +8,7 @@
 // at once, and until now nothing asserted that the guard fires.
 //
 // The tests drive the REAL script as a subprocess, through the contract
-// `.github/actions/auto-remove-stable/action.yml` uses (`PLAYWRIGHT_JSON` +
+// `scripts/run-e2e.sh` uses (`PLAYWRIGHT_JSON` +
 // `MAX_AUTO_REMOVE` in, one JSON object on stdout), against throwaway spec
 // files in a temp dir. Anything less would test a reimplementation of the guard
 // rather than the guard: `main()` reads its threshold at module scope and writes
@@ -45,6 +45,8 @@ interface Result {
   threshold: number;
   hardFailures: number;
   attributableFailures: number;
+  unexpectedPasses: number;
+  guardCount: number;
   removed: Array<{ file: string; title: string; line: number; soleTag: boolean }>;
   skipped: Array<{ file: string; title: string; line: number; reason: string }>;
   exempt: Array<{
@@ -278,6 +280,117 @@ test("guard counts failures ACROSS files, not per file", () => {
   for (const file of ["fixture-1017-a.spec.ts", "fixture-1017-b.spec.ts", "fixture-1017-c.spec.ts"]) {
     assert.equal(after[file], before);
   }
+});
+
+// ─── Unexpected passes and the guard (#2116) ─────────────────────────────────
+//
+// A `test.fail()` whose body passed is reported `unexpected` — a hard failure for
+// its own tag, on purpose (#2027) — but it is the fix-day signal of a declared bug,
+// the opposite of an infra day, so the guard does not count it. The shape below is
+// what Playwright 1.58.2 emits for one (see scripts/lib/unexpected-pass.mjs).
+const PASSED_ATTEMPTS = [
+  { status: "passed", retry: 0 },
+  { status: "passed", retry: 1 },
+  { status: "passed", retry: 2 },
+];
+
+test("2026-09-30: five hard failures plus two unexpected passes do NOT trip the guard", () => {
+  // The VM run 20260930T080030Z: 7 `unexpected`, 2 of them `test.fail()` bodies
+  // that passed (memory-base-ingestion:367, flow-lock:292). The guard tripped on
+  // 7 > 5 and five real failures needed a manual quarantine.
+  const real = ["r1", "r2", "r3", "r4", "r5"];
+  const fixed = ["memory-base-ingestion", "flow-lock"];
+  const { result, after } = runScript({
+    specs: { "fixture-2116-a.spec.ts": [...real, ...fixed] },
+    failures: [
+      ...real.map((title) => ({ file: "fixture-2116-a.spec.ts", title, error: PRODUCT_ERROR })),
+      ...fixed.map((title) => ({ file: "fixture-2116-a.spec.ts", title, results: PASSED_ATTEMPTS })),
+    ],
+    maxAutoRemove: "5",
+  });
+
+  assert.equal(result.status, "removed");
+  assert.equal(result.hardFailures, 7);
+  assert.equal(result.unexpectedPasses, 2);
+  assert.equal(result.guardCount, 5);
+  // The unexpected passes' own tag handling is unchanged (#2027): all seven go.
+  assert.deepEqual(
+    result.removed.map((r) => r.title).sort(),
+    [...real, ...fixed].sort(),
+  );
+  assert.equal(after["fixture-2116-a.spec.ts"].includes('"@stable"'), false);
+});
+
+test("unexpected passes never HIDE a real mass-failure day", () => {
+  // Six real failures still trip the guard whatever else passed unexpectedly.
+  const real = ["r1", "r2", "r3", "r4", "r5", "r6"];
+  const titles = [...real, "fixed"];
+  const before = specSource(titles);
+  const { result, after } = runScript({
+    specs: { "fixture-2116-a.spec.ts": titles },
+    failures: [
+      ...real.map((title) => ({ file: "fixture-2116-a.spec.ts", title, error: PRODUCT_ERROR })),
+      { file: "fixture-2116-a.spec.ts", title: "fixed", results: PASSED_ATTEMPTS },
+    ],
+    maxAutoRemove: "5",
+  });
+
+  assert.equal(result.status, "guard_tripped");
+  assert.equal(result.hardFailures, 7);
+  assert.equal(result.guardCount, 6);
+  assert.equal(after["fixture-2116-a.spec.ts"], before);
+});
+
+test("an earlier timed-out attempt does not stop a passing last attempt being excluded", () => {
+  // `[timedOut, passed]` is still an unexpected pass: a `timedOut` is not the
+  // `failed` a `test.fail()` expects, and the last attempt decides (#2009).
+  const real = ["r1", "r2", "r3", "r4", "r5"];
+  const { result } = runScript({
+    specs: { "fixture-2116-a.spec.ts": [...real, "fixed"] },
+    failures: [
+      ...real.map((title) => ({ file: "fixture-2116-a.spec.ts", title, error: PRODUCT_ERROR })),
+      {
+        file: "fixture-2116-a.spec.ts",
+        title: "fixed",
+        results: [
+          { status: "timedOut", retry: 0, error: { message: PRODUCT_ERROR } },
+          { status: "passed", retry: 1 },
+        ],
+      },
+    ],
+    maxAutoRemove: "5",
+  });
+
+  assert.equal(result.unexpectedPasses, 1);
+  assert.equal(result.guardCount, 5);
+  assert.equal(result.status, "removed");
+});
+
+test("a failure whose LAST attempt failed is counted, even after an earlier pass", () => {
+  // The predicate keys on the last attempt; a `[passed, failed]` test is a real
+  // hard failure for the guard, not a fix day. A SYNTHETIC shape — Playwright
+  // would report it `flaky`, not `unexpected` — kept because it pins the
+  // "last, not any, attempt" half of the predicate, which no real shape does.
+  const titles = ["r1", "r2", "r3", "r4", "r5", "late"];
+  const { result } = runScript({
+    specs: { "fixture-2116-a.spec.ts": titles },
+    failures: [
+      ...titles.slice(0, 5).map((title) => ({ file: "fixture-2116-a.spec.ts", title, error: PRODUCT_ERROR })),
+      {
+        file: "fixture-2116-a.spec.ts",
+        title: "late",
+        results: [
+          { status: "passed", retry: 0 },
+          { status: "failed", retry: 1, error: { message: PRODUCT_ERROR } },
+        ],
+      },
+    ],
+    maxAutoRemove: "5",
+  });
+
+  assert.equal(result.unexpectedPasses, 0);
+  assert.equal(result.guardCount, 6);
+  assert.equal(result.status, "guard_tripped");
 });
 
 // ─── The infra-signature exemption (#1031) ───────────────────────────────────
@@ -1078,8 +1191,8 @@ test("an attempt with a PRODUCT error is not exempted however well corroborated"
 });
 
 test("the LAST-attempt exemption never depends on corroboration", () => {
-  // #1031's rule is untouched: a caller with no liveness step (weekly-stable)
-  // still gets it, on the very run where the backend state is least known.
+  // #1031's rule is untouched: a caller with no liveness data still gets it, on the
+  // very run where the backend state is least known.
   const { result, after } = runScript({
     specs: { "fixture-1589-f.spec.ts": ["sustained"] },
     failures: [
@@ -1412,10 +1525,11 @@ test("whoever reads the corroboration file is in the lane that writes it", () =>
   // Scoped by mechanism rather than by file since #1943: the daily stopped calling the
   // auto-remove action when the VM took the verdict, so on that lane the reader is now
   // the history appender (#1763), which asks the same per-attempt question. The
-  // coupling is asserted wherever a reader exists, so a lane that gains one later —
-  // the VM's, once it removes tags — is covered by the same rule.
+  // coupling is asserted wherever a reader exists. The VM lane, which removes tags
+  // since #1945, writes and reads the file inside `scripts/run-e2e.sh`, and is checked
+  // below by the same rule.
   const wfDir = path.join(__dirname, "..", ".github", "workflows");
-  const lanes = ["daily-stable.yml", "weekly-stable.yml"];
+  const lanes = ["daily-stable.yml"];
   let readersFound = 0;
 
   for (const lane of lanes) {
@@ -1440,6 +1554,19 @@ test("whoever reads the corroboration file is in the lane that writes it", () =>
       );
     }
   }
+  // The VM lane: one writer, then every reader (the remover and the history appender),
+  // all naming the same file, and none of them before the writer.
+  const sh = fs.readFileSync(path.join(__dirname, "run-e2e.sh"), "utf-8");
+  const writer = /OUTAGE_ATTEMPTS_OUT="([^"]+)"/.exec(sh);
+  assert.ok(writer, "run-e2e.sh: nothing writes the corroboration file");
+  const vmReaders = [...sh.matchAll(/(?<![A-Z_])OUTAGE_ATTEMPTS="([^"]+)"/g)];
+  assert.ok(vmReaders.length > 0, "run-e2e.sh: nothing reads the corroboration file");
+  for (const r of vmReaders) {
+    readersFound += 1;
+    assert.equal(r[1], writer[1], "run-e2e.sh: a reader names a different file than the writer");
+    assert.ok(writer.index < (r.index ?? -1), "run-e2e.sh: a reader comes before the step that writes the file");
+  }
+
   // The guard against this test quietly protecting nothing, which is what it would do
   // if both readers were renamed at once.
   assert.ok(readersFound > 0, "no lane reads the corroboration file any more");

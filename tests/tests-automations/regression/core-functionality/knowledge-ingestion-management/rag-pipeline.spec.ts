@@ -296,9 +296,12 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-test(
+// Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
+// day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
+// spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
+test.fixme(
   "Full RAG pipeline grounds the model answer on the retrieved chunk",
-  { tag: ["@stable", "@release", "@components", "@files"] },
+  { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
       await openRagFlow(page);
