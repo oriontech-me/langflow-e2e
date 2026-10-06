@@ -8,6 +8,11 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
+import {
+  describeAgentReplyLoss,
+  readSessionLlmCalls,
+  toolOutputText,
+} from "../../../../helpers/flows/describe-agent-reply-loss";
 
 /**
  * MCP Client – Gemini tool-calling regression (upstream Langflow #440).
@@ -70,10 +75,18 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
 // the user message) from the monitor API — the backend truth, not the live
 // Playground bubble (which renders an empty placeholder mid-run and races the
 // stream). Returns null until the AI message is persisted, so callers poll on it.
+interface PersistedAgentTurn {
+  replyText: string;
+  echoToolUseCount: number;
+  sessionId: string;
+  /** The `echo` tool's persisted output per call, for the #2176 prefix check. */
+  echoToolOutputs: string[];
+}
+
 async function fetchPersistedAgentTurn(
   request: APIRequestContext,
   nonce: string,
-): Promise<{ replyText: string; echoToolUseCount: number } | null> {
+): Promise<PersistedAgentTurn | null> {
   const bearer = await getAuthToken(request);
   const res = await request.get("/api/v1/monitor/messages", {
     headers: { Authorization: bearer },
@@ -92,13 +105,20 @@ async function fetchPersistedAgentTurn(
   );
   if (aiMsgs.length === 0) return null;
 
-  const echoToolUseCount = aiMsgs
+  const echoToolUses = aiMsgs
     .flatMap((m: any) => (m.content_blocks ?? []) as any[])
     .flatMap((b: any) => (b.contents ?? []) as any[])
-    .filter((c: any) => c.type === "tool_use" && /echo/i.test(c.name ?? "")).length;
+    .filter((c: any) => c.type === "tool_use" && /echo/i.test(c.name ?? ""));
 
   const replyText = aiMsgs.map((m: any) => m.text ?? "").join(" ");
-  return { replyText, echoToolUseCount };
+  return {
+    replyText,
+    echoToolUseCount: echoToolUses.length,
+    sessionId: userMsg.session_id,
+    echoToolOutputs: echoToolUses
+      .map((c: any) => toolOutputText(c.output))
+      .filter((o): o is string => o !== null),
+  };
 }
 
 const skipReason = providerSkipReasons().get(PROVIDER);
@@ -128,10 +148,14 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
   // poll ignored its timeout, so the poll started mid-run and accepted the session's
   // AI row while its text was still empty. The send now goes through
   // `sendAndAwaitPlaygroundTurn` (#2123), so the poll starts after the turn ends.
-  // Quarantined for #2176: recurrent flake on the VM lane (2026-09-10 on 1.13.0.dev8,
-  // 2026-10-05 on 1.13.0.dev33), the final reply comes back truncated as "Echo: hello m".
-  // Lifting it (drop `test.fixme`, restore `@stable`) is #2176's deliverable.
-  test.fixme(
+  // Quarantined for #2176 and lifted there with `@stable` still off. The VM lane
+  // persisted the final reply as "Echo: hello m" on 2026-09-10 (1.13.0.dev8) and
+  // 2026-10-05 (1.13.0.dev33). That is a Langflow defect, not a test one: `lfx`
+  // drops the plain-string items of a mixed list content when it keeps a round's
+  // text. See the spec doc's "Known product defect". The test is right to fail
+  // when it fires, so `@stable` returns only once the upstream fix lands, and step
+  // 8 now names the cause when it does fail.
+  test(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
     // `@stable` was auto-removed by the daily of 2026-08-10 (commit c954cd9, run
     // 31373880200) on a failure that never ran this test: the shard's own
@@ -309,7 +333,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
       await test.step("#440 (fixed): agent completes a turn and invokes the echo MCP tool", async () => {
         // Poll the monitor until the agent turn for this session is persisted —
         // this is both the completion gate and a race-free source of truth.
-        let turn: { replyText: string; echoToolUseCount: number } | null = null;
+        let turn: PersistedAgentTurn | null = null;
         await expect
           .poll(
             async () => {
@@ -323,10 +347,29 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
         // The pipeline ran end-to-end: the agent produced a final reply that
         // surfaced the echoed payload (proves setup + run + playground worked,
         // so a tool call was genuinely possible — this is NOT the #440 flip).
-        expect(
-          turn!.replyText,
-          "Agent must produce a final reply containing the echoed payload",
-        ).toMatch(new RegExp(ECHO_PAYLOAD, "i"));
+        //
+        // When the reply lacks it, the message must say why (#2176). That needs
+        // the session's LLM calls from the native trace, read HERE because traces
+        // cascade with the flow `afterEach` deletes. The verdict is unchanged, and
+        // the first line stays as it was, because triage keys recurrence on it.
+        const payload = new RegExp(ECHO_PAYLOAD, "i");
+        let replyMessage = "Agent must produce a final reply containing the echoed payload";
+        if (!payload.test(turn!.replyText)) {
+          const llm = await readSessionLlmCalls(request, {
+            flowId: createdFlowId ?? "",
+            sessionId: turn!.sessionId,
+            headers: { Authorization: await getAuthToken(request) },
+          });
+          replyMessage +=
+            "\n" +
+            describeAgentReplyLoss({
+              replyText: turn!.replyText,
+              payload,
+              toolOutputs: turn!.echoToolOutputs,
+              llm,
+            });
+        }
+        expect(turn!.replyText, replyMessage).toMatch(payload);
 
         // The #440 fix (backend truth, no frontend selector drift): #440 is
         // FIXED, so Gemini persists at least one `echo` MCP tool_use block for
