@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { unescapeHandle } from "./create-python-interpreter-flow-via-api";
 import {
   CUSTOM_COMPONENT_TYPE,
+  applyNodeSpec,
   buildCustomComponentGraph,
   componentCode,
   findComponentTemplate,
@@ -74,6 +75,21 @@ test("every node declares a Message output, not the stock JSON", () => {
     assert.equal(outputs[0].types !== undefined && (outputs[0].types as string[])[0], "Message");
     assert.equal(outputs[0].selected, "Message");
   }
+});
+
+test("applyNodeSpec turns a catalog CustomComponent into the node, so another builder can embed it", () => {
+  // #2196 embeds one sleeping node between a catalog Chat Input and Chat Output;
+  // that only works if the same code/field/output rewrite the graph builder does
+  // is available on its own, applied to the copy the other builder already holds.
+  const template = findComponentTemplate(catalogFixture());
+  const applied = applyNodeSpec(template, { id: "Sleeper", kind: "echo", fields: ["in_text"], delayS: 10 });
+
+  assert.equal(applied, template, "rewrites the copy it was given rather than a fresh one");
+  assert.match(String(applied.template.code.value), /time\.sleep\(10\)/);
+  assert.deepEqual(applied.template.in_text.input_types, ["Message"]);
+  const outputs = applied.outputs as Array<Record<string, unknown>>;
+  assert.deepEqual(outputs[0].types, ["Message"]);
+  assert.equal(applied.display_name, "Sleeper");
 });
 
 test("each node carries its own display_name", () => {

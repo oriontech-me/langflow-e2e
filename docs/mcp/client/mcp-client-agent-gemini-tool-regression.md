@@ -1,7 +1,10 @@
 # MCP Client – Gemini Tool-Calling Regression (#440)
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev30`, #2095)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev33`, #2176)
 **Tracking issue:** oriontech-me/langflow-e2e #858 · **Upstream bug:** langflow-ai/langflow #440
+**Open product defect:** #2176, filed upstream as
+[LE-2919](https://datastax.jira.com/browse/LE-2919) — the persisted reply can lose
+the tail of the streamed answer (see *Known product defect* below)
 
 ---
 
@@ -55,7 +58,12 @@ check encodes the expected #440 state.
 
 ## Tags *(required)*
 
-`@mcp` `@agents` `@regression` `@model-provider` `@stable`
+`@mcp` `@agents` `@regression` `@model-provider`
+
+> **`@stable` is off while #2176 is open.** It comes back when the upstream fix
+> for the defect described under *Known product defect* (LE-2919) lands in the
+> nightly and is re-validated there. It is not restored on a test-side change, because the
+> test is right to fail when the defect fires.
 
 > **`@stable` — promoted under #947** after #440 was confirmed fixed on
 > 1.12.0.dev5 and the positive assertion (Gemini invokes `echo`) ran clean
@@ -81,6 +89,14 @@ check encodes the expected #440 state.
 > moved the send into `sendAndAwaitPlaygroundTurn` (step 7), so the poll now
 > starts only after the turn has finished. #2095 re-measured the test on
 > `1.13.0.dev30` with a live Google key and lifted the quarantine.
+>
+> **Quarantined under #2176, `test.fixme` lifted with `@stable` still off.** The
+> VM daily failed step 8 on its first attempt twice, on 2026-09-10
+> (`1.13.0.dev8`) and on 2026-10-05 (`1.13.0.dev33`). Both times `turn.replyText`
+> was exactly `"Echo: hello m"` and the retry passed. PR #2180 removed `@stable`
+> and added `test.fixme`. #2176 traced it to a Langflow defect, not to the test
+> (see *Known product defect*). The test runs again in every lane that is not
+> `@stable`-filtered, so the defect stays visible. `@stable` waits for the upstream fix.
 
 ---
 
@@ -103,7 +119,20 @@ check encodes the expected #440 state.
    waits for the turn to mount and `button-stop` to clear; then poll `GET /api/v1/monitor/messages` until the
    agent turn for this session (keyed by the nonce) is persisted.
 8. Assert (pipeline ran): the final reply contains the echoed payload
-   (`hello mcp`).
+   (`hello mcp`). When it does not, the failure message must say why. It
+   carries the persisted reply, the `echo` tool output persisted in the same
+   message's `tool_use` block, and whether the reply is a strict prefix of that
+   output. A strict prefix is the #2176 signature, and the message names it as
+   such. It also carries, for each LLM call of the session, the text the call
+   returned and the `model_name` it reported. Both come from the `llm` spans of
+   the native trace (`GET /api/v1/monitor/traces?flow_id=…&session_id=…`, then
+   `/traces/{id}`), read before teardown deletes the flow. Traces cascade with
+   the flow. An LLM text that holds the payload beside a persisted reply that
+   does not proves the text was lost inside Langflow. A `model_name` without
+   `gemini-3` points at the trigger described below. On an instance with
+   tracing off there are no spans, and the message says so instead of
+   omitting the line. The diagnostic adds evidence to the failure and never
+   changes the verdict: the assertion is the same `toMatch(/hello mcp/i)`.
 9. Assert (**the #440 fix**): the count of persisted `tool_use` blocks named
    `/echo/i` for the session is **> 0** — Gemini invoked the `echo` MCP tool.
 
@@ -119,6 +148,57 @@ check encodes the expected #440 state.
 - **If #440 regresses:** no `echo` `tool_use` block is persisted →
   `echoToolUseCount === 0` → step 9 **fails loudly**, signalling Gemini × MCP
   tool-calling has regressed to the #440 state.
+- **If the #2176 defect fires:** the persisted reply is a strict prefix of the
+  `echo` tool output. The observed case was `"Echo: hello m"` against
+  `"Echo: hello mcp (<nonce>)"`. Step 8 **fails**, never passes, and its message
+  names the #2176 signature with the observables from step 8: the persisted
+  reply, the tool output, and each LLM call's text and `model_name`. A failure
+  of step 8 that is **not** a strict prefix is reported as a different cause.
+
+---
+
+## Known product defect (#2176, LE-2919)
+
+Langflow can persist only part of the agent's final answer. The cut lands
+mid-word, and the rest of the streamed text is gone from the stored message.
+
+**Mechanism, proven against `lfx` `1.13.0.dev33`.**
+`handle_on_chat_model_end` in `lfx/base/agents/events.py` builds the persisted
+text from the round's aggregated `AIMessage.content` through
+`_coerce_ai_message_blocks`. That function keeps only `dict` items of type
+`text`/`tool_use` and drops every plain-string item. LangChain's own
+`merge_content` produces exactly such a list when one streamed chunk's content is
+a list and the next one is a string. It appends the string as a new list
+element. The result:
+
+| Streamed chunks | Merged `content` | Persisted `text` |
+|---|---|---|
+| all text dicts | one dict, full text | `Echo: hello mcp (…)` |
+| first chunk a signed dict, the rest strings | `[{text: "Echo: hello m"}, "cp (…)"]` | `Echo: hello m` |
+| strings, then a signed empty dict | `["Echo: hello mcp (…)", {text: ""}]` | `""` |
+
+The second row reproduces the 2026-09-10 and 2026-10-05 failures byte for byte.
+The third row is the empty-reply shape. The function was added in
+langflow-ai/langflow#13391 (2026-07-10). It is present on `release-1.11.2`,
+`v1.12.0`, `release-1.13.0` and `main`. The path it replaced extracted text with
+`_extract_output_text`, which keeps string items.
+
+**Trigger, not reproduced on demand.** `langchain-google-genai` 4.1.3 emits a
+text part as a dict when the response's `model_version` names a Gemini 3 model
+or the part carries a thought signature. Otherwise it emits a plain string. A
+stream that switches shape mid-answer triggers the drop. Measured under #2176,
+on both the local nightly and the QA VM venv: `gemini-flash-latest` reported
+`model_version` `gemini-3.8-flash` on every chunk, and 0 of about 175 runs
+truncated. Those runs covered the UI spec, the API, the bare round two after the
+tool call, and tracing on and off. The trigger is intermittent and comes from the
+provider. That is why step 8 records each LLM call's text and `model_name`
+when it fails: the next occurrence then carries its own evidence.
+
+**Ruled out by measurement:** the test reading early (the persisted text was the
+same right after the turn and 8 s later), model-side truncation (the tool input
+and the model output were complete in every run), event loss on the v2 stream
+(the queue fails loudly on overflow), and a library-version difference between
+lanes.
 
 ---
 
@@ -132,6 +212,9 @@ check encodes the expected #440 state.
 - `src/backend/base/langflow/api/v2/mcp.py` — `GET /api/v2/mcp/servers?action_count=true`, `DELETE /api/v2/mcp/servers/{name}`
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle
 - `GET /api/v1/monitor/messages` — persisted session messages; `content_blocks[].contents[]` with `type: "tool_use"` is the #440 observable
+- `src/lfx/src/lfx/base/agents/events.py` — `handle_on_chat_model_end` / `_coerce_ai_message_blocks`, where the #2176 defect drops plain-string content items
+- `src/backend/base/langflow/api/v1/monitor.py` — `GET /api/v1/monitor/traces` and `/traces/{trace_id}`, the source of each LLM call's text and `model_name` in step 8's failure message
+- PyPI `langchain-google-genai` (`_parse_response_candidate`) — decides per chunk whether Gemini text arrives as a string or a dict, the #2176 trigger
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx` (provides `echo`)
 - **Upstream bug #440** — Langflow: Gemini does not invoke MCP tools (the behavior under guard)
 

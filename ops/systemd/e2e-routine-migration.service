@@ -1,0 +1,21 @@
+[Unit]
+# The migration routine (stage 3, task 5): the upgrade from the latest stable Langflow
+# below the target to the target, in twelve cells. See ops/vm/run-migration.sh; the
+# shape every routine shares is ops/vm/lib/routine.sh.
+Description=E2E migration routine: latest stable -> target, twelve cells (VM lane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service (#1715), and uv needs it.
+Environment=HOME=/root
+ExecStart=/root/e2e-qa/ops/vm/run-migration.sh
+# 2 = skipped (its turn never came), 4 = blocked (the provider probe): said by the
+# watchdog, and neither is a broken unit.
+SuccessExitStatus=2 4
+# Up to 60 min waiting for its turn, then about 45 min of cells (estimated in the plan;
+# the first full rehearsal measures it). Well above both.
+TimeoutStartSec=3h
+# Its cleanup runs on SIGTERM -- the daily's stop -- and removes containers and volumes.
+TimeoutStopSec=5min

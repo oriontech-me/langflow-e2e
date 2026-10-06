@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-05
+> **Last updated:** 2026-10-06
 
 ---
 
@@ -458,7 +458,7 @@
 
 #### 5.2 Processing and Vectorization
 - [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
-- [x] Indexing in Vector Store — document available for query → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
+- [x] Indexing in Vector Store — document available for query (the stored chunks; the KB's **recorded** chunk count is declared failing with `test.fail()` since `1.13.0.dev33` — a Knowledge-component ingest leaves it at `0`, upstream regression from langflow-ai/langflow#15509, #2186, LE-2912) → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 - [x] Vector Store query returns relevant chunks for the prompt → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 - [x] Complete RAG pipeline (ingest → embed → store → retrieve → answer) → `core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
@@ -800,7 +800,7 @@
 - [x] JSON-RPC `message/send` round-trip — a per-run sentinel sent to a Chat Input→Chat Output passthrough comes back in the task's artifact text with state `completed` (no LLM involved) → `core-functionality/a2a/a2a-server-jsonrpc-message-send.spec.ts`
 - [x] JSON-RPC error envelopes — an unknown method returns `-32601` and a malformed envelope `-32600`/`-32700`, both over **HTTP 200** (JSON-RPC-level errors are not HTTP errors here) → `core-functionality/a2a/a2a-server-jsonrpc-message-send.spec.ts`
 - [x] Multi-turn context continuity — the first `message/send` response carries a server-minted `contextId`; reusing it on a second call returns the same `contextId` with a new task id and lands in the same stored session (`session_id` is the composite `<uuid>:<contextId>` in `GET /api/v1/monitor/messages`, carrying both turns as `User`/`Machine` pairs), while a call without it mints a different one → `core-functionality/a2a/a2a-server-multi-turn-context.spec.ts`
-- [x] Task lifecycle — `tasks/get` reads the `message/send` task back with the same `artifactId` and `status.timestamp` (a read-back, not a re-run); an unknown id is `-32001 "Task not found"` and a cancel on a finished task `-32002 "Task cannot be canceled"` with the stored state untouched, both over **HTTP 200**; a task id cancelled through another flow's endpoint is `-32001` (never `-32002`, which would confirm it exists); and a `message/stream` run cancelled mid-flight reports `canceled` from both `tasks/cancel` and `tasks/get` → `core-functionality/a2a/a2a-server-tasks-lifecycle.spec.ts`
+- [x] Task lifecycle — `tasks/get` reads the `message/send` task back with the same `artifactId` and `status.timestamp` (a read-back, not a re-run); an unknown id is `-32001 "Task not found"` and a cancel on a finished task `-32002 "Task cannot be canceled"` with the stored state untouched, both over **HTTP 200**; a task id cancelled through another flow's endpoint is `-32001` (never `-32002`, which would confirm it exists); and a `message/stream` run that waits 10 s in a node (API-key project, so its own code runs) is read `working`, cancelled to `canceled`, its stream ends on `canceled` with no `completed`/artifact frame, and `tasks/get` reads `canceled` (#2196 replaced a 2 MB payload that raced the cancel) → `core-functionality/a2a/a2a-server-tasks-lifecycle.spec.ts`
 - [x] API-key auth gate on the JSON-RPC endpoint — with the flow's project set to `auth_type=apikey`, the card advertises the `x-api-key` scheme in `securitySchemes`, a call with no header returns `401 "API key required"`, a wrong key `401 "Invalid API key"`, and the owner's key `200` + `completed` (the gate `LE-2081` lives behind; auth derives from the **project**, not the flow). The same flow is asserted **before and after** it is moved into the restricted project — one id crossing the boundary, so the `401` cannot be blamed on the flow, the graph, the server flag or the environment → `core-functionality/a2a/a2a-server-auth-apikey.spec.ts`
 - [x] Agent tab publish flow — a blank flow shows `Unavailable` with the copy "Add a chat input and output to serve this flow." and cannot publish; adding Chat Input + Chat Output (unwired — the two node types are the gate) enables `agent-publish-switch`; publishing shows status `Live` and the `agent-card-url` that `404`d as a draft now fetches `200`; editing Name and adding a tag then pressing `agent-save` updates `agent-card-name` **and** changes `name` / `skills[0].name` / `skills[0].tags` on the card the API serves. The "Agent updated" toast is **not** asserted — measured transient (<3 s), so the durable pair is the status chip plus the served card → `core-functionality/a2a/a2a-server-agent-tab-publish.spec.ts`
 - [~] Agent tab "Try it" panel — a sentinel sent from the panel over the live endpoint appears in `agent-transcript` **twice** (user turn + the agent's echo), the state reaches `completed`, the turn counter reads `1 turn` and a `Reset` control is present → `core-functionality/a2a/a2a-server-agent-tab-try-it.spec.ts`. **Partial:** "View JSON-RPC exchange" is not covered because it is not implemented — `agentTab.viewExchange` appears exactly once per locale bundle in the shipped frontend (the dictionary entry) with zero call sites, and the string is absent from the DOM after a completed turn (measured on `1.12.0.dev14`, #1244); pending an upstream question
@@ -889,7 +889,7 @@
 - [x] Reading a non-existent MCP server returns 404 Not Found (was 200 `null` before Nightly 1.13.0.dev21, #1406) → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Patching a non-existent MCP server returns 404 and creates nothing (upserted a ghost server before Nightly 1.13.0.dev21, #1406) → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts` (**`@stable` restored 2026-09-24 (#963)**, the deliverable of the issue that owned the removal. It was auto-removed 2026-07-27 when the `[google/gemini-2.5-flash]` variant hard-failed 3/3 with `"Message empty."`. **That signature does not reproduce: 0 occurrences in 17 runs on `1.13.0.dev22`**, including 7 on the named model with the Google API probed healthy either side. The restore rests on the models CI can actually resolve — `gpt-4o-mini` **10/10** and `gemini-3.5-flash` **8/8** clean, plus the Wave 8 measurement's 3/3 each on `1.13.0.dev7`. Two residuals recorded rather than buried: `gemini-2.5-flash` itself measures **4/7** with zero `429` markers — a real flake whose shape is the *opposite* of this issue's (the turn never completes inside 120 s, where `"Message empty."` is a turn that completes and renders empty) — and it is unreachable from CI, whose key gets *"no longer available to new users"*; and the file still carries `test.describe.configure({ mode: "serial" })`, which is what hid the google variant behind a failing openai one for three dailies (#963 §6) and is what the area guide tells new specs not to do)
-- [x] Gemini × MCP tool-calling regression — agent invokes the echo MCP tool (regression for fixed upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
+- [-] Gemini × MCP tool-calling regression — agent invokes the echo MCP tool (regression for fixed upstream #440); `@stable` off while a live Langflow regression is open (#2176: `lfx` drops plain-string items of a mixed list content, so the persisted reply can stop at `"Echo: hello m"`). Kept running as a guard, and a failure names the #2176 signature → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
 - [ ] List available resources via MCP protocol (client not-implementable on 1.11.x — MCPTools component and v2 client API expose tools only; server-side resources covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 - [ ] Consume resource URI and inject content into flow (client not-implementable on 1.11.x — no client resource surface; server-side read covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 
@@ -1195,7 +1195,7 @@
 
 - [x] The modal is **scoped to the flow**, proving a memory base belongs to a flow rather than being global — heading `Create Memory` plus the **description** `Create a memory for "<flow name>"` (measured: the flow-scoped string is the description, not the title, and `Create Memory` is also the submit label) naming the exact flow the test created → `core-functionality/memory/memory-base-panel.spec.ts`
 - [x] It exposes its five controls: Name (`#memory-name`), Embedding Model (`#memory-embedding-model`), Vector Database (`#memory-db-provider`), Batch Size (`#memory-batch-size`) and the LLM Preprocessing toggle (`#llm-preprocessing-switch`), with the preprocessing branch's two extra required fields absent while the toggle is off → `core-functionality/memory/memory-base-panel.spec.ts`
-- [x] Vector Database defaults to `Chroma Local` (bundled, so no external vector service is needed) and Batch Size to `1`; Embedding Model has **no** default — covered by three tests, one per state of the shared model widget, since its collapse needs **both** no options **and** no enabled provider (`!hasEnabledProviders && !showEmptyState && optionCount === 0`, where `hasEnabledProviders` is `some(p => p.is_enabled || p.is_configured)` — any provider, not an embeddings-capable one): with a provider exposing embeddings the picker renders unset and no `Provider:` line shows (asserted against the real instance, `GET /api/v1/models`); with providers enabled but **none** exposing embeddings the picker **still renders**, unset; with nothing configured it is replaced by an **enabled** provider-setup button (`#memory-embedding-model-setup-provider-label`, `Select embedding model`) whose click opens the **Model providers** dialog. The last two serve that payload per page (derived from the live response, never fabricated), so they run on every lane instead of skipping on all of them (#1569). **The previously recorded product gap is withdrawn:** measured on `1.12.0.dev37`, the empty state is an escape hatch, not a dead end — the Knowledge Base modal's `showEmptyState: true` (`No Models Enabled` + `Manage Model Providers`) is a different rendering of the same intent → `core-functionality/memory/memory-base-panel.spec.ts`
+- [x] Vector Database defaults to `SQLite Local` (bundled, so no external vector service is needed; `Chroma Local` until langflow-ai/langflow#15509 retired local Chroma on the 1.13 line, #2175) and Batch Size to `1`; Embedding Model has **no** default — covered by three tests, one per state of the shared model widget, since its collapse needs **both** no options **and** no enabled provider (`!hasEnabledProviders && !showEmptyState && optionCount === 0`, where `hasEnabledProviders` is `some(p => p.is_enabled || p.is_configured)` — any provider, not an embeddings-capable one): with a provider exposing embeddings the picker renders unset and no `Provider:` line shows (asserted against the real instance, `GET /api/v1/models`); with providers enabled but **none** exposing embeddings the picker **still renders**, unset; with nothing configured it is replaced by an **enabled** provider-setup button (`#memory-embedding-model-setup-provider-label`, `Select embedding model`) whose click opens the **Model providers** dialog. The last two serve that payload per page (derived from the live response, never fabricated), so they run on every lane instead of skipping on all of them (#1569). **The previously recorded product gap is withdrawn:** measured on `1.12.0.dev37`, the empty state is an escape hatch, not a dead end — the Knowledge Base modal's `showEmptyState: true` (`No Models Enabled` + `Manage Model Providers`) is a different rendering of the same intent → `core-functionality/memory/memory-base-panel.spec.ts`
 - [x] `Create Memory` is disabled with an empty form **and stays disabled with only the Name filled** — the gate, not just the initial render (the required Embedding Model is what holds it, since Vector Database and Batch Size carry defaults) → `core-functionality/memory/memory-base-panel.spec.ts`
 - [x] Cancelling closes the modal and creates nothing, asserted against the API rather than against the UI alone — **`GET /api/v1/memories?flow_id=<id>` → `total: 0`**, which is the endpoint the panel actually lists from (measured: opening it fires exactly that one request); `GET /api/v1/knowledge_bases` is a different resource this surface never calls, kept only as a secondary check that the flow's name is absent → `core-functionality/memory/memory-base-panel.spec.ts`
 
@@ -1601,7 +1601,7 @@
 | `core-functionality/templates/` | 46 | 37 | 0 | 0 | 9 |
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 37 | 34 | 0 | 2 | 1 |
-| `mcp/client/` | 15 | 13 | 0 | 0 | 2 |
+| `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
 | `mcp/server/` | 19 | 16 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
@@ -1612,7 +1612,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **740** | **654 (88%)** | **34 (5%)** | **13 (2%)** | **39 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **740** | **653 (88%)** | **35 (5%)** | **13 (2%)** | **39 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 717 `test()` calls carrying the `@stable` tag, distributed across 280 spec
+> 729 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1989,8 +1989,11 @@
 - [x] should search uploaded files → `files-page.spec.ts`
 - [x] should handle bulk actions for multiple files → `files-page.spec.ts`
 - [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
+- [x] Full RAG pipeline grounds the model answer on the retrieved chunk → `rag-pipeline.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
+- [x] Knowledge Base indexes the ingested document chunks (available for query) → `vector-store-index-query.spec.ts`
+- [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
@@ -2062,11 +2065,19 @@
 - [x] Web Search component places, offers its three search modes and persists its query → `web-search-component.spec.ts`
 
 #### core-functionality/memory/
+- [x] should refuse every guarded knowledge-base route for a knowledge base a Memory Base manages → `memory-base-ingestion-failures.spec.ts`
+- [x] should fail an ingestion whose embedding provider cannot be reached, naming the provider → `memory-base-ingestion-failures.spec.ts`
+- [x] should send an Ollama ingestion to the server OLLAMA_BASE_URL names → `memory-base-ingestion-failures.spec.ts`
 - [x] should keep the Google embedding models the Knowledge dialog offers to ones Google still serves → `memory-base-ingestion-failures.spec.ts`
 - [x] should open Create Knowledge Base with the 1000 / 200 / newline defaults and apply the chunk settings chosen there to the stored chunks → `memory-base-ingestion.spec.ts`
+- [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
+- [x] should store exactly the chunks preview-chunks promised when a line is longer than the chunk size → `memory-base-ingestion.spec.ts`
+- [x] should ingest a server-side folder through the folder connector and read its chunks back → `memory-base-ingestion.spec.ts`
+- [x] should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back → `memory-base-ingestion.spec.ts`
 - [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal is scoped to the current flow → `memory-base-panel.spec.ts`
 - [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
+- [x] Vector Database defaults to SQLite Local and Batch Size to 1 → `memory-base-panel.spec.ts`
 - [x] Embedding Model carries no default model when a provider offers embeddings → `memory-base-panel.spec.ts`
 - [x] the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured → `memory-base-panel.spec.ts`
 - [x] the Embedding Model picker still renders when the configured providers expose no embeddings model → `memory-base-panel.spec.ts`
@@ -2199,6 +2210,9 @@
 - [x] <template.name> instantiates with the template's components, edges and notes → `templates-instantiate.spec.ts`
 - [x] the registered template set matches the committed baseline → `templates-registration.spec.ts`
 - [x] every declared absence is still absent → `templates-registration.spec.ts`
+- [x] should run Knowledge Retrieval and show the ingested sentinel in its reply → `templates-run-knowledge.spec.ts`
+- [x] should run Document Q&A with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
+- [x] should run Vector Store RAG with the ingested sentinel in the Agent's prompt → `templates-run-knowledge.spec.ts`
 
 #### flow-functionality/
 - [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
@@ -2251,7 +2265,6 @@
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
 - [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
-- [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
 - [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
@@ -2295,7 +2308,6 @@
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
-- [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
@@ -2418,7 +2430,7 @@
 | `core-functionality/llm-agents/` | 1 | 3 |
 | `core-functionality/model-provider/` | 2 | 1 |
 | `core-functionality/playground/` | 0 | 0 |
-| `mcp/client/` | 0 | 2 |
+| `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
 

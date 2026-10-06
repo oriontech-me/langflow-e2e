@@ -338,6 +338,52 @@ test("a ciCoverage payload with no dispatchability is reported as unknown, not a
   assert.match(text, /trigger list unreadable/);
 });
 
+test("a VM-only verdict reaches the summary, naming the lane and the unit tests", () => {
+  // #2173: a script only the QA VM runs used to read as `none` — no CI surface at
+  // all — and printed nothing here, though it is the code that commits to `main`.
+  const text = renderSummary({
+    specs: "",
+    impacted: { specs: [], direct: [], dropped: [] },
+    provider: { run: [], stableRun: 0, excluded: [] },
+    ciCoverage: {
+      verdict: "vm-only",
+      ciFiles: ["scripts/remove-stable-from-failures.ts"],
+      vmLane: [
+        {
+          file: "scripts/remove-stable-from-failures.ts",
+          vmOnly: true,
+          unitTests: ["scripts/remove-stable-from-failures.test.ts"],
+        },
+      ],
+      dispatchWorkflows: [],
+      dispatchTargets: [],
+    },
+  }).join("\n");
+  assert.match(text, /`scripts\/remove-stable-from-failures\.ts` runs only on the VM lane/);
+  assert.match(text, /`scripts\/remove-stable-from-failures\.test\.ts`/);
+  assert.doesNotMatch(text, /Dispatch before merging/);
+});
+
+test("a MIXED diff renders the other lanes it reaches, worded for the specs that ran", () => {
+  // #2192: a diff with impacted specs AND CI surface skipped the classifier, so the
+  // summary said nothing about the lanes the specs do not exercise.
+  const text = renderSummary({
+    specs: "tests/a.spec.ts",
+    impacted: { specs: ["tests/a.spec.ts"], direct: ["tests/a.spec.ts"], dropped: [] },
+    provider: { run: ["tests/a.spec.ts"], stableRun: 1, excluded: [] },
+    ciCoverage: {
+      verdict: "dispatch",
+      specsSelected: true,
+      ciFiles: ["scripts/x.ts"],
+      dispatchWorkflows: ["daily-stable.yml"],
+      dispatchTargets: [{ workflow: "daily-stable.yml", dispatchable: true, triggers: ["workflow_dispatch"] }],
+    },
+  }).join("\n");
+  assert.match(text, /a lane the impacted specs cannot exercise/);
+  assert.match(text, /`daily-stable\.yml`/);
+  assert.doesNotMatch(text, /canary/i);
+});
+
 // ---------- the failure path (the regression buffering introduced) ----------
 
 test("a missing provider verdict degrades the summary instead of erasing it", () => {

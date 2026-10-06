@@ -338,19 +338,20 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
       });
     });
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme("Vector Database defaults to Chroma Local and Batch Size to 1",
-    { tag: ["@release", "@workspace", "@ui-ux"] },
+  test("Vector Database defaults to SQLite Local and Batch Size to 1",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       await openCreateMemoryModal(page);
 
       await test.step("both defaults are the shipped ones", async () => {
-        // `chroma` ships `defaultEnabled` with no config fields, so this holds
-        // on an instance with nothing configured under DB Providers.
+        // `sqlite` ships `defaultEnabled` with no config fields, so this holds
+        // on an instance with nothing configured under DB Providers and the
+        // local store available (`local_vector_store_available`, true off the
+        // production profile). It read `Chroma Local` until
+        // langflow-ai/langflow#15509 retired local Chroma on the 1.13 line
+        // (first nightly 1.13.0.dev33, #2175).
         await expect(page.locator("#memory-db-provider")).toHaveText(
-          "Chroma Local",
+          "SQLite Local",
           { timeout: 15000 },
         );
         await expect(page.locator("#memory-batch-size")).toHaveValue("1");

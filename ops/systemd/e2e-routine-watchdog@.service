@@ -1,0 +1,18 @@
+[Unit]
+# The absence alarm of one scheduled routine (ops/vm/e2e-routine-watchdog.sh): the
+# instance is the routine's name, so e2e-routine-watchdog@migration.service checks
+# e2e-routine-migration.service. One template for every routine; each routine ships its
+# own e2e-routine-<name>-watchdog.timer, because the check's time is the routine's.
+#
+# It is NOT a routine, though its name matches e2e-routine-*: run-daily.sh skips
+# templated units when it stops the routines before the daily.
+Description=Alarm when the routine %i did not run, or ran and gave no verdict (VM lane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service (#1715).
+Environment=HOME=/root
+ExecStart=/root/e2e-qa/ops/vm/e2e-routine-watchdog.sh %i
+TimeoutStartSec=5min

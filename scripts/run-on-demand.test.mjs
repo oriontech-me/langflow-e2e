@@ -94,6 +94,29 @@ test("the lock's descriptor reaches neither the build nor the run", () => {
   const r = onDemand();
   assert.match(r.build, /^fd9=closed$/m, "the build inherited the lock");
   assert.match(r.env, /^fd9=closed$/m, "run-e2e.sh inherited the lock");
+  // The heavy-lane lock too: an ollama holding it would make every routine wait for
+  // nothing until its budget ran out.
+  assert.match(r.build, /^fd8=closed$/m, "the build inherited the heavy-lane lock");
+  assert.match(r.env, /^fd8=closed$/m, "run-e2e.sh inherited the heavy-lane lock");
+});
+
+test("a routine holding the heavy-lane lock refuses the run, names the holder, and touches nothing", () => {
+  const { env, collect } = setup({ heavyBusy: true });
+  writeFileSync(`${env.E2E_HEAVY_LOCK}.holder`, "migration (pid 4242) since 20261006T091500Z\n");
+  const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
+  assert.equal(r.status, 2, r.log);
+  assert.equal(r.result["req-1"].STATUS, "refused");
+  assert.match(r.result["req-1"].REASON, /the machine is busy: migration \(pid 4242\)/);
+  assert.equal(r.build, null, "a build ran beside a routine");
+  assert.equal(r.docker, "", "docker was touched while refusing");
+  // Refused, it must not erase the holder's line.
+  assert.match(r.heavyHolder ?? "", /^migration \(pid 4242\)/);
+});
+
+test("a run takes the heavy-lane lock, names itself as holder, and clears only its own line", () => {
+  const r = onDemand();
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.heavyHolder, null, "the run left its holder line behind");
 });
 
 test("a green run is done/green, exit 0, and the result names the run and the target", () => {

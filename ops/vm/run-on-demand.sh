@@ -111,6 +111,7 @@ main() {
   local SECRETS="${E2E_ONDEMAND_SECRETS:-/root/.e2e-secrets}"
   local OFFICIAL_LEDGER="${E2E_ONDEMAND_OFFICIAL_LEDGER:-${XDG_STATE_HOME:-$HOME/.local/state}/langflow-e2e}"
   local SHADOW_STATE="${E2E_SHADOW_STATE:-/root/e2e-shadow}"
+  local HEAVY_LOCK="${E2E_HEAVY_LOCK:-/run/lock/e2e-heavy.lock}"
   # "<ISO weekday 1-7> <HHMM>", UTC. Tests only: the window is otherwise the clock's.
   local NOW="${E2E_ONDEMAND_NOW:-$(date -u '+%u %H%M')}"
 
@@ -128,7 +129,7 @@ main() {
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
-  OD_STARTED="$STAMP"; OD_CLEANING=0; OD_TOUCHED=0; OD_PARSE_ERR=""; OD_LOG_DIR="$LOG_DIR"
+  OD_STARTED="$STAMP"; OD_HEAVY_LOCK=""; OD_CLEANING=0; OD_TOUCHED=0; OD_PARSE_ERR=""; OD_LOG_DIR="$LOG_DIR"
 
   # --- one run at a time ------------------------------------------------------------
   # Before the request is read: a second start while one runs must not consume the
@@ -223,6 +224,23 @@ main() {
     ondemand_refuse "a shadow request for today is waiting at $SHADOW_STATE/request.env — the shadow is about to start"
   fi
 
+  # --- one heavy lane at a time -------------------------------------------------------
+  # Shared with the scheduled routines (ops/vm/lib/routine.sh): a lane that starts
+  # Langflow or a browser takes it, so two of them never share the machine (stage 3,
+  # 2026-10-05). A routine waits for it; this lane refuses at once, because whoever asked
+  # can ask again, and a request waiting here would hold the platform's one slot. Held on
+  # fd 8 until exit; every child that can outlive the run gets 8>&- with 9>&-.
+  command -v flock > /dev/null 2>&1 || ondemand_fail 3 failed "flock is not on this machine"
+  mkdir -p "$(dirname "$HEAVY_LOCK")" 2>/dev/null
+  exec 8>> "$HEAVY_LOCK" || ondemand_fail 3 failed "cannot open the heavy-lane lock $HEAVY_LOCK"
+  if ! flock -n 8; then
+    local holder
+    holder="$(cat "$HEAVY_LOCK.holder" 2>/dev/null || true)"
+    ondemand_refuse "the machine is busy: ${holder:-another heavy lane} holds $HEAVY_LOCK — ask again once it ends"
+  fi
+  printf 'on-demand %s (pid %s) since %s\n' "$OD_ID" "$$" "$STAMP" > "$HEAVY_LOCK.holder" 2>/dev/null || true
+  OD_HEAVY_LOCK="$HEAVY_LOCK"
+
   # --- leftovers of a run that was killed rather than finished ----------------------
   # Past every refusal: a request refused while the daily runs must not touch docker.
   # Under the lock, so nothing here belongs to a run still going. A run SIGKILLed past
@@ -260,7 +278,7 @@ main() {
   # last `build-target-image:` line, and the RESULT has to carry it. "See the line above"
   # pointed at a line only the log had (qa, 2026-10-01), and the result is what the
   # platform will show.
-  built="$(BUILD_ROOT="$STATE/builds" "$OD_WT/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 2> "$build_err")" || rc=$?
+  built="$(BUILD_ROOT="$STATE/builds" "$OD_WT/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 8>&- 2> "$build_err")" || rc=$?
   cat "$build_err" 2>/dev/null
   said="$(grep '^build-target-image: ' "$build_err" 2>/dev/null | tail -n 1)"
   said="${said#build-target-image: }"
@@ -336,7 +354,7 @@ main() {
   export LANGFLOW_HOSTS_FILE="$STATE/hosts"
 
   echo "=== run start $OD_RUN_ID ==="
-  ( cd "$OD_WT" && ./scripts/run-e2e.sh ) 9>&-
+  ( cd "$OD_WT" && ./scripts/run-e2e.sh ) 9>&- 8>&-
   rc=$?
   echo "=== run end, exit=$rc ==="
   # run-e2e.sh exits 1 for a red day, for a provider it refused, for a target that
@@ -504,6 +522,8 @@ ondemand_finish() {
   fi
 
   ondemand_write_result "$cleanup"
+  # Only this run's line: a run refused by the lock must not erase the holder's.
+  [ -n "$OD_HEAVY_LOCK" ] && grep -q "^on-demand $OD_ID (pid $$) " "$OD_HEAVY_LOCK.holder" 2>/dev/null && rm -f "$OD_HEAVY_LOCK.holder"
   find "$OD_LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +30 -delete 2>/dev/null || true
   # build-target-image.sh keeps each build's log beside the source tree it removes; a
   # month of them is the same retention as this lane's own logs.

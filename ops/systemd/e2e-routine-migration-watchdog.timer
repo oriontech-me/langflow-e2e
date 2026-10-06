@@ -1,0 +1,15 @@
+[Unit]
+Description=Schedule for the migration routine's absence alarm, 12:30 UTC on weekdays
+
+[Timer]
+# After the unit's own TimeoutStartSec (3h from 09:15, so 12:15), not after an estimate of
+# the cells: a slow day still inside its timeout is not stuck, and an earlier alarm would
+# say it was (review of #2194). At 12:30 "still running" means systemd failed to stop it.
+OnCalendar=Mon..Fri 12:30 UTC
+# An alarm that catches up still tells the truth.
+Persistent=true
+AccuracySec=1min
+Unit=e2e-routine-watchdog@migration.service
+
+[Install]
+WantedBy=timers.target
