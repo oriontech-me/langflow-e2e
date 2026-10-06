@@ -1,6 +1,6 @@
 # Memory Base — ingestion: chunk settings, preview, folder connector, runs and cancel
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev29`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
 
 ---
 
@@ -71,7 +71,8 @@ with the tag, and none of its four exceptions applies here (the file carries no 
 selector: the folder allow-list is set on every lane, not on a variant instance). Test 3
 kept it while declared failing. The daily's auto-removal stripped it on 2026-10-01
 (`c8cce0d2`), when the fix made the declared failure pass. It was restored together with
-the lift (#2115).
+the lift (#2115). Quarantined 2026-10-05 (#2175) together with every spec that creates a knowledge base through `helpers/knowledge/knowledge-base.ts`: the helper still asked for `backend_type: "chroma"`, which langflow-ai/langflow#15509 retired on the 1.13 line (`1.13.0.dev33` answers `422`). The helper now creates `sqlite` knowledge bases and the tag is back. Tests 2–5 were the ones quarantined;
+test 1 drives the Knowledge page and never used the helper.
 
 ---
 
@@ -208,6 +209,13 @@ the lift (#2115).
 ---
 
 ## Notes
+
+- **Teardown is failure-isolated (#2175).** Each cleanup step — leave the page, delete
+  the knowledge bases, restore the embedding flag, empty the flow folder, delete the
+  flow — runs even when an earlier one throws, and the failures are rethrown together.
+  Measured on `1.13.0.dev33`: with the steps in sequence, a restore that timed out on a
+  starved backend aborted the hook and leaked the flow; with an injected failure before
+  the flow delete, the old teardown leaked 1 flow and this one leaks none.
 
 ### The defect test 3 guards — preview and ingestion split differently (fixed)
 

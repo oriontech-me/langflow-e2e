@@ -9,14 +9,14 @@ import {
   assertEmbeddingCredentialConfigured,
   createKnowledgeBase,
   deleteKnowledgeBase,
-  getKnowledgeBase,
 } from "../../../../helpers/knowledge/knowledge-base";
+import { listAllChunks } from "../../../../helpers/knowledge/ingestion";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 
 // §5.2.4 — the *complete RAG pipeline* end-to-end. Builds on #673 (Split Text
 // chunking) and #674 (vector-store index + query) and adds the final "answer"
-// step: the chunk retrieved from a native (core, Chroma-backed) Knowledge Base is
+// step: the chunk retrieved from a native (core, SQLite-backed since 1.13.0.dev33) Knowledge Base is
 // fed through Parser -> Prompt -> Language Model, and the model's answer is proven
 // to be grounded on that retrieved chunk. Uses only core components (no
 // vector-store bundle), so it never yields a false failure on a packaging change.
@@ -296,12 +296,9 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-// Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-// day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-// spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-test.fixme(
+test(
   "Full RAG pipeline grounds the model answer on the retrieved chunk",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
       await openRagFlow(page);
@@ -311,13 +308,18 @@ test.fixme(
       await runNode(page, INGEST_NODE, "button_run_knowledge");
     });
 
-    await test.step("the Knowledge Base holds exactly the expected chunks", async () => {
+    await test.step("the Knowledge Base stores exactly the expected chunks", async () => {
       // Precondition proof the ingest embedded + indexed the document, so a later
       // answer failure is unambiguously answer-side rather than a broken ingest.
+      // It reads the STORED chunks, not the KB row's `chunks` total: since
+      // 1.13.0.dev33 a Knowledge-component ingest leaves that total at 0
+      // (#2186, LE-2912), a defect vector-store-index-query.spec.ts holds as declared
+      // failing — reading it here would block this spec's answer-side coverage
+      // on a defect another test already reports.
       const kbName = createdKbNames[createdKbNames.length - 1];
       const headers = await authHeaders(page);
-      const kb = await getKnowledgeBase(page.request, kbName, { headers });
-      expect(kb.chunks).toBe(EXPECTED_CHUNKS);
+      const { total } = await listAllChunks(page.request, kbName, {}, { headers });
+      expect(total).toBe(EXPECTED_CHUNKS);
     });
 
     await test.step("run the answer path via the Chat Output node", async () => {

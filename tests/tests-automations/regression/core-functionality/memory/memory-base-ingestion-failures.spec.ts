@@ -127,18 +127,40 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
   });
 
   test.afterEach(async ({ request }) => {
+    // Every step runs even when an earlier one throws, and the failures are
+    // rethrown together at the end, so one failed delete can never skip the
+    // flow's (the leak memory-base-ingestion.spec.ts measured, #2175).
+    const failures: string[] = [];
+    const attempt = async (step: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (e) {
+        failures.push(`${step}: ${String(e)}`);
+      }
+    };
     // Each user's knowledge bases go first, as that user: deleting the user does not
     // remove a knowledge base's storage. Then the user, which takes its variables.
     for (const { user, kbs } of users) {
-      try {
-        for (const kb of kbs) await deleteKnowledgeBase(user.request, kb, { headers: user.headers });
-      } finally {
-        await deleteThrowawayUser(request, { Authorization: token }, user);
+      for (const kb of kbs) {
+        await attempt(`delete knowledge base ${kb}`, () =>
+          deleteKnowledgeBase(user.request, kb, { headers: user.headers }),
+        );
       }
+      await attempt("delete the throwaway user", () =>
+        deleteThrowawayUser(request, { Authorization: token }, user),
+      );
     }
-    for (const id of memoryIds) await deleteMemoryBase(request, id, auth());
-    for (const kb of plainKbs) await deleteKnowledgeBase(request, kb, auth());
-    if (flowId) await deleteFlow(request, flowId, auth());
+    for (const id of memoryIds) {
+      await attempt(`delete memory base ${id}`, () => deleteMemoryBase(request, id, auth()));
+    }
+    for (const kb of plainKbs) {
+      await attempt(`delete knowledge base ${kb}`, () => deleteKnowledgeBase(request, kb, auth()));
+    }
+    const owned = flowId;
+    if (owned) await attempt(`delete flow ${owned}`, () => deleteFlow(request, owned, auth()));
+    if (failures.length > 0) {
+      throw new Error(`Teardown cleanup failed: ${failures.join("; ")}`);
+    }
   });
 
   async function newUser(
@@ -207,12 +229,9 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
     return run;
   }
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should refuse every guarded knowledge-base route for a knowledge base a Memory Base manages",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/memories",
@@ -305,12 +324,9 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
     },
   );
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should fail an ingestion whose embedding provider cannot be reached, naming the provider",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, playwright }) => {
       const owner = await newUser(
         request,
@@ -344,12 +360,9 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
     },
   );
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should send an Ollama ingestion to the server OLLAMA_BASE_URL names",
-    { tag: ["@regression", "@api", "@files"] },
+    { tag: ["@stable", "@regression", "@api", "@files"] },
     async ({ request, playwright }) => {
       // Regression for langflow-ai/langflow#13883: ingestion built its embeddings
       // with the component's localhost default, which outranked OLLAMA_BASE_URL.

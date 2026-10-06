@@ -2,9 +2,10 @@ import type { APIRequestContext } from "@playwright/test";
 
 /**
  * Helpers for the native Langflow **Knowledge Base** REST API
- * (`/api/v1/knowledge_bases`). A Knowledge Base is a persistent, Chroma-backed
- * vector store owned by the current user — it is core (bundle-free), which is
- * why RAG specs prefer it over drop-in vector-store bundles.
+ * (`/api/v1/knowledge_bases`). A Knowledge Base is a persistent vector store
+ * owned by the current user, backed by the instance's local store — it is core
+ * (bundle-free), which is why RAG specs prefer it over drop-in vector-store
+ * bundles.
  *
  * A KB is an instance resource with its own lifecycle: unlike an in-memory
  * store it survives the flow that created it, so every test that creates one
@@ -36,8 +37,16 @@ export interface CreateKnowledgeBaseInput {
  *
  * Only the provider + model are needed — the KB stores that config and resolves
  * the embedding function (via the auto-imported provider credential) at ingest
- * time, so no `model_selection` blob is required. `backend_type` is `"chroma"`
- * (the core embedded backend).
+ * time, so no `model_selection` blob is required.
+ *
+ * `backend_type` is `"sqlite"`, the local embedded store of the 1.13 line the
+ * nightly is cut from. langflow-ai/langflow#15509 retired local Chroma there
+ * (first nightly `1.13.0.dev33`), which answers `"chroma"` with a 422 naming the
+ * available backends (#2175). It is named rather than left to the server's
+ * default on purpose: with no `backend_type` the server picks pgVector whenever
+ * `PGVECTOR_CONNECTION_STRING` is set, so the backend under test would depend on
+ * the environment. A line without SQLite (anything before #15509) fails here
+ * with that same 422, which names the cause.
  */
 export async function createKnowledgeBase(
   request: APIRequestContext,
@@ -50,7 +59,7 @@ export async function createKnowledgeBase(
       name: input.name,
       embedding_provider: input.embeddingProvider,
       embedding_model: input.embeddingModel,
-      backend_type: "chroma",
+      backend_type: "sqlite",
     },
   });
   if (res.status() !== 201) {
