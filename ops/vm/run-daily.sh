@@ -107,6 +107,9 @@ main() {
     activating | active | reloading | deactivating)
       echo "stopping the image shadow ($shadow_state) before this run"
       systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
+      # A stopped shadow did not answer its week: forget it, so this run's own request
+      # asks again instead of reading the week as covered (review of #2185).
+      rm -f "${E2E_SHADOW_STATE:-/root/e2e-shadow}/requested-week"
       ;;
   esac
   # The same priority over the on-demand run. That one refuses to START in the daily's

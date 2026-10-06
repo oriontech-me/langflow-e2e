@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, readdirSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -78,6 +78,7 @@ function runWrapper(dir, laneLines, script = WRAPPER, files = {}, binStubs = {})
       E2E_DAILY_SECRETS: l.secrets,
       E2E_DAILY_LANE: l.lane,
       E2E_DAILY_VENV: join(dir, "venv"),
+      E2E_SHADOW_STATE: join(dir, "shadow-state"),
       // Never the machine's /run/lock: whether a routine holds its turn is the test's.
       E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
     },
@@ -256,7 +257,11 @@ test("a running shadow is stopped before the official run, whatever state system
     try {
       const calls = join(dir, "systemctl.calls");
       const systemctl = `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\n[ "$1" = show ] && echo ${JSON.stringify(state)}\nexit 0\n`;
+      // The week the shadow was asked for: a stopped shadow did not answer it.
+      mkdirSync(join(dir, "shadow-state"), { recursive: true });
+      writeFileSync(join(dir, "shadow-state", "requested-week"), "2026-W42\n");
       const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
+      assert.equal(existsSync(join(dir, "shadow-state", "requested-week")), !stops, `${state || "(none)"}: the week's record after the guard`);
       const log = readFileSync(calls, "utf8");
       assert.match(log, /show -p ActiveState --value e2e-shadow\.service/, `${state}: the state was not asked`);
       if (stops) {

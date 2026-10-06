@@ -42,6 +42,10 @@ esac`);
   // "YYYY-MM-DD N YYYY-Www": the UTC day, its ISO weekday and ISO week, as the script
   // reads them in one call. "FAIL" is a date that exits non-zero and prints nothing.
   if (clock === "FAIL") stub(bin, "date", "exit 1");
+  // {format: "YYYY-MM-DD"}: a date that FORMATS a fixed day with the script's own format
+  // string, so the format itself is under test, not a canned answer.
+  else if (clock && typeof clock === "object")
+    stub(bin, "date", `exec python3 -c 'import sys,datetime; print(datetime.date.fromisoformat(sys.argv[1]).strftime(sys.argv[2].lstrip("+")))' ${clock.format} "\${@: -1}"`);
   else if (clock !== null) stub(bin, "date", `echo ${JSON.stringify(clock)}`);
   // A state kept across calls, for the cadence's memory of the week.
   const state = stateDir ?? join(dir, "state");
@@ -159,8 +163,10 @@ test("a cadence or a clock that cannot be read asks for nothing and says why", (
     [{ cadence: { SHADOW_DAILY_UNTIL: "2026-10-90" } }, /SHADOW_DAILY_UNTIL is not a date/],
     [{ cadence: { SHADOW_DAILY_UNTIL: "2026-13-01" } }, /SHADOW_DAILY_UNTIL is not a date/],
     [{ cadence: { SHADOW_DAILY_UNTIL: "2026-02-29" } }, /SHADOW_DAILY_UNTIL is not a date/],
-    [{ cadence: { SHADOW_WEEKDAY: "Mon" } }, /SHADOW_WEEKDAY is not 1 to 7/],
-    [{ cadence: { SHADOW_WEEKDAY: "0" } }, /SHADOW_WEEKDAY is not 1 to 7/],
+    [{ cadence: { SHADOW_WEEKDAY: "Mon" } }, /SHADOW_WEEKDAY is not 1 to 5/],
+    [{ cadence: { SHADOW_WEEKDAY: "0" } }, /SHADOW_WEEKDAY is not 1 to 5/],
+    // The daily never runs on a weekend: such a cadence would never be due.
+    [{ cadence: { SHADOW_WEEKDAY: "6" } }, /SHADOW_WEEKDAY is not 1 to 5, the days the daily runs/],
     [{ clock: "" }, /could not read today's date/],
     [{ clock: "FAIL" }, /could not read today's date/],
   ]) {
@@ -471,4 +477,38 @@ test("the official lane stops an active shadow before it runs, and only an activ
   // The behaviour, state by state, is run-daily-wrapper.test.mjs's; this pins placement.
   assert.match(block, /case "\$shadow_state" in/);
   assert.match(daily, /systemctl stop e2e-shadow\.service \|\| echo "WARNING/, "a failed stop must not end the daily");
+});
+
+test("the week is the ISO week-year's: the Friday after a late-December Monday is the same week (review of #2185)", () => {
+  // 2026-12-28 is Monday of 2026-W53 and 2027-01-01 its Friday. With the calendar year
+  // the Friday would read 2027-W53 and ask for a second shadow in the same week.
+  const cadence = { SHADOW_WEEKDAY: "1" };
+  const stateDir = join(makeTempDir("shadow-isoyear-"), "state");
+  const mon = request({ clock: { format: "2026-12-28" }, cadence, stateDir });
+  assert.ok(mon.calls.includes("start --no-block e2e-shadow.service"), mon.stdout);
+  const fri = request({ clock: { format: "2027-01-01" }, cadence, stateDir });
+  assert.equal(fri.request, null, fri.stdout);
+  assert.match(fri.stdout, /this week's \(2026-W53\) was already requested/);
+  // And the first Monday of 2027-W01 (2027-01-04) asks.
+  assert.ok(request({ clock: { format: "2027-01-04" }, cadence, stateDir }).request);
+});
+
+test("a daily stretch ending mid-week counts for that week: no second shadow after it", () => {
+  // The stretch's own requests record the week, so a lane-file date on a Tuesday is not
+  // followed by a "catch-up" on Wednesday.
+  const cadence = { SHADOW_DAILY_UNTIL: "2026-10-13", SHADOW_WEEKDAY: "1" };
+  const stateDir = join(makeTempDir("shadow-midweek-"), "state");
+  assert.ok(request({ clock: "2026-10-12 1 2026-W42", cadence, stateDir }).request);
+  assert.ok(request({ clock: "2026-10-13 2 2026-W42", cadence, stateDir }).request);
+  const wed = request({ clock: "2026-10-14 3 2026-W42", cadence, stateDir });
+  assert.equal(wed.request, null, wed.stdout);
+});
+
+test("a week that cannot be recorded is said: the next runs would ask again", () => {
+  const stateDir = join(makeTempDir("shadow-weekwrite-"), "state");
+  // A directory where the file goes: the write fails, the request itself does not.
+  mkdirSync(join(stateDir, "requested-week"), { recursive: true });
+  const r = request({ clock: "2026-10-19 1 2026-W43", cadence: { SHADOW_WEEKDAY: "1" }, stateDir });
+  assert.ok(r.calls.includes("start --no-block e2e-shadow.service"), r.stdout);
+  assert.match(r.stdout, /WARNING — could not record 2026-W43/);
 });

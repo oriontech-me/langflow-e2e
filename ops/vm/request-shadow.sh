@@ -9,7 +9,7 @@
 #
 # The cadence (#2184) is optional, and with neither knob set every run asks:
 #   SHADOW_DAILY_UNTIL=YYYY-MM-DD  ask on every run through this UTC day
-#   SHADOW_WEEKDAY=1..7            and once per ISO week: the first run on or after this
+#   SHADOW_WEEKDAY=1..5            and once per ISO week: the first run on or after this
 #                                  ISO weekday (1 = Monday) that week
 # The weekday alone means weekly from the start; the date alone means nothing after it.
 #
@@ -61,8 +61,10 @@ main() {
     || { echo "shadow: NOT requested — could not read today's date"; return 0; }
   [[ -z "$until" ]] || shadow_real_date "$until" \
     || { echo "shadow: NOT requested — SHADOW_DAILY_UNTIL is not a date ('$until')"; return 0; }
-  [[ -z "$on" || "$on" =~ ^[1-7]$ ]] \
-    || { echo "shadow: NOT requested — SHADOW_WEEKDAY is not 1 to 7 ('$on')"; return 0; }
+  # 1 to 5: the daily runs Monday to Friday, so a weekend weekday would never be due and
+  # each day would only say "today is weekday N" (review of #2185).
+  [[ -z "$on" || "$on" =~ ^[1-5]$ ]] \
+    || { echo "shadow: NOT requested — SHADOW_WEEKDAY is not 1 to 5, the days the daily runs ('$on')"; return 0; }
   local catchup=""
   if [ -n "$until$on" ]; then
     local due=0 last=""
@@ -96,7 +98,8 @@ main() {
   if systemctl start --no-block "$UNIT"; then
     # Only a request that queued the unit counts for the week: one that did not is
     # asked again on the next run.
-    printf '%s\n' "$week" > "$STATE/requested-week" 2> /dev/null || true
+    printf '%s\n' "$week" > "$STATE/requested-week" 2> /dev/null \
+      || echo "shadow: WARNING — could not record $week in $STATE/requested-week: the next runs this week will ask again"
     echo "shadow: requested for $version at ${sha:0:12} ($UNIT queued)$catchup"
   else
     echo "shadow: request written, but $UNIT did not start — see systemctl status $UNIT"
