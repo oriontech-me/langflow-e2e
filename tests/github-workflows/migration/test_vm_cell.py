@@ -196,3 +196,43 @@ def test_a_kept_account_the_admin_api_cannot_reactivate_is_not_reported_as_delet
     api, c = _AdoptApi({"users": [{"id": "u1", "username": "langflow"}]}, patch_error=cell.ApiError(422, "no password field", "u")), cell.Checks()
     assert cell.adopt_default_user(api, STATE, c) is False
     assert [(n, v) for n, v, _ in c.rows] == [("default-user-kept", "pass"), ("default-user-adopt", "fail")]
+
+
+def test_already_is_not_ready_and_the_verdict_reaches_the_check(monkeypatch):
+    assert cell.credential_verdict("The key was already revoked.")[1] == "fail"
+    # The wiring, not only the function: the check records what credential_verdict says.
+    for text, want in (("Ready.", "pass"), ("Error: 401 Incorrect API key provided", "fail"), ("Ready, error: none", "fail")):
+        monkeypatch.setattr(cell, "_credential_call", lambda api, state, t=text: t)
+        c = cell.Checks()
+        cell._credential_check(c, None, {})
+        assert c.rows[-1][:2] == ("credential", want), text
+
+
+def test_the_witness_rejects_an_empty_or_error_shaped_reply():
+    assert cell.witness_reply_ok("Ready")
+    assert not cell.witness_reply_ok("  ")
+    assert not cell.witness_reply_ok("Error: model 'llama3.2:1b' not found")
+
+
+def test_a_seed_whose_run_stored_no_messages_fails_on_the_source():
+    import pytest
+    with pytest.raises(RuntimeError, match="stored no messages"):
+        cell.require_messages([], "s", "ready")
+    assert cell.require_messages([{"id": "m"}], "s", "ready") == [{"id": "m"}]
+
+
+def test_a_users_listing_that_fails_is_not_reported_as_the_default_user_deleted(tmp_path, monkeypatch, capsys):
+    # default-user-kept draws the #15326 note on an old target: a 500 on the listing is
+    # a regression of its own (review of #2194).
+    state = tmp_path / "s.json"
+    state.write_text(json.dumps(STATE))
+    monkeypatch.setattr(cell, "wait_up", lambda api, seconds=240: True)
+    monkeypatch.setattr(cell, "login", lambda api, how: None)
+
+    def boom(api, state, checks):
+        raise cell.ApiError(500, "boom", "u")
+    monkeypatch.setattr(cell, "adopt_default_user", boom)
+    assert cell.main(["verify", "--url", "http://x", "--state", str(state), "--login", "adopt"]) == 1
+    out = capsys.readouterr().out
+    assert "CHECK user-listing fail" in out
+    assert "default-user-kept" not in out

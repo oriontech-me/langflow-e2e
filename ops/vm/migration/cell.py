@@ -47,6 +47,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -238,11 +239,7 @@ def seed(api: Api, args) -> dict:
     # Messages: one run of the first witness, in a session of its own.
     session = f"{SEED_TAG}-{uuid.uuid4().hex[:8]}"
     text = run_text(api, state["flows"][0]["id"], "Reply with the single word: ready", session, state["api_key"]["value"])
-    msgs = seeded_messages(api, session)
-    if not msgs:
-        # verify requires them: a seed with none would turn into a red against the TARGET
-        # for what happened on the source (review of #2194).
-        raise RuntimeError(f"the witness run stored no messages in session {session} (reply: {text[:80]!r})")
+    msgs = require_messages(seeded_messages(api, session), session, text)
     state["messages"] = {"session": session, "count": len(msgs), "ids": sorted(m["id"] for m in msgs), "reply": text[:200]}
 
     # A file: the row and the bytes.
@@ -266,6 +263,14 @@ def seeded_messages(api: Api, session: str, seconds: int = 10) -> list:
         if msgs or time.time() >= deadline:
             return msgs
         time.sleep(1)
+
+
+def require_messages(msgs: list, session: str, reply: str) -> list:
+    """verify requires the seeded messages: a seed with none would become a red against
+    the TARGET for what happened on the source (review of #2194)."""
+    if not msgs:
+        raise RuntimeError(f"the witness run stored no messages in session {session} (reply: {reply[:80]!r})")
+    return msgs
 
 
 def owned_flows(api: Api, user_id: str) -> int:
@@ -380,9 +385,7 @@ def verify(api: Api, state: dict, args) -> Checks:
 
     def run_witness():
         text = run_text(api, state["flows"][1]["id"], "Reply with the single word: ready", f"{SEED_TAG}-verify-{uuid.uuid4().hex[:6]}", state["api_key"]["value"])
-        # Any reply from a 1B model, but not an error rendered as the chat output.
-        ok = bool(text.strip()) and not looks_like_error(text)
-        return ok, f"ollama replied: {text.strip()[:60]!r}"
+        return witness_reply_ok(text), f"ollama replied: {text.strip()[:60]!r}"
 
     c.run("projects", projects)
     c.run("flows", witness_flows)
@@ -422,6 +425,11 @@ def looks_like_error(text: str) -> bool:
     return any(m in t for m in _ERROR_TEXT)
 
 
+def witness_reply_ok(text: str) -> bool:
+    """Any reply from a 1B model, but not an error rendered as the chat output."""
+    return bool(text.strip()) and not looks_like_error(text)
+
+
 # The provider's own refusals: rate limit and quota. Never 401 / invalid key, which is
 # what a credential that failed to decrypt produces -- the case this check exists for.
 _PROVIDER_REFUSAL = ("insufficient_quota", "exceeded your current quota", "rate limit", "rate_limit", "error code: 429", "status code 429")
@@ -452,7 +460,8 @@ def credential_verdict(text: str) -> tuple:
     t = text.strip()
     if any(m in t.lower() for m in _PROVIDER_REFUSAL):
         return "credential", "blocked", f"the provider refused the call: not proved today, not disproved: {t[:80]!r}"
-    if "ready" in t.lower() and not looks_like_error(t):
+    # The word, not a substring: "already revoked" is not the reply asked for.
+    if re.search(r"\bready\b", t.lower()) and not looks_like_error(t):
         return "credential", "pass", f"decrypted and called OpenAI: {t[:40]!r}"
     return "credential", "fail", f"the reply is not the one asked for: {t[:120]!r}"
 
@@ -527,7 +536,9 @@ def main(argv=None) -> int:
             if not adopt_default_user(api, state, checks):
                 return 1
         except Exception as e:  # the listing itself: a failed check, never a traceback
-            checks.add("default-user-kept", "fail", f"the users could not be listed: {type(e).__name__}: {e}")
+            # Its own name: the account was never looked at, so this is not #15326's
+            # default-user-kept, and must not draw that note in the report.
+            checks.add("user-listing", "fail", f"the users could not be listed: {type(e).__name__}: {e}")
             return 1
     result = verify(api, state, args)
     return 1 if (result.failed or checks.failed) else 0

@@ -55,7 +55,8 @@
 #   work      /root/e2e-routines/migration/work: venvs and seed states removed after,
 #             the cells' logs kept until the next run
 #   docker    containers, volumes and compose projects named e2e-migration-*, removed
-#             after; the images it pulled, removed after (task 8 decides retention)
+#             after; the Langflow images this run pulled (absent before it), removed
+#             after. The Postgres images are kept (task 8 decides retention)
 #
 # Never `docker system prune`: the other lanes' images are not this routine's.
 #
