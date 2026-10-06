@@ -1284,9 +1284,13 @@ test("with specs selected, a would-be canary is never returned, and the advice s
   assert.deepEqual(r.canarySpecs, []);
   assert.equal(r.verdict, "dispatch", "the other lane using the action is still named");
   const { annotation, summaryLines } = dispatchAdvice(r);
-  assert.match(annotation, /the impacted specs exercise THIS lane/);
-  assert.doesNotMatch(annotation, /canary/i);
-  assert.match(summaryLines[0], /a lane the impacted specs cannot exercise/);
+  assert.match(annotation, /the impacted specs run on THIS lane/);
+  assert.doesNotMatch(annotation, /exercise THIS lane/, "the specs may skip the very step this action is");
+  // The action IS this lane's wiring, and the canary that would have run it did not.
+  assert.deepEqual(r.prLaneFiles, [".github/actions/wait-for-backend/action.yml"]);
+  assert.match(annotation, /own wiring \(\.github\/actions\/wait-for-backend\/action\.yml\), and the canary did not run/);
+  assert.match(summaryLines[0], /this lane's own wiring changed/);
+  assert.match(summaryLines.join("\n"), /a lane the impacted specs cannot exercise/);
 });
 
 test("with specs selected, a VM-only file is reported but 'nothing in CI' is not claimed", () => {
@@ -1297,10 +1301,29 @@ test("with specs selected, a VM-only file is reported but 'nothing in CI' is not
   assert.doesNotMatch(annotation, /Nothing in CI can prove/, "the impacted specs did run");
 });
 
-test("with specs selected and only PR-lane surface, there is nothing to add", () => {
+test("with specs selected and only PR-lane surface, the unproven wiring is still named", () => {
+  // The review of #2192's first draft: this case returned `none` and NO advice, so a
+  // PR editing pr-validation.yml beside an LLM-free spec said nothing — while the
+  // sweep and health gate it may have rewired were skipped.
   const r = classifyCiChange({ changed: [PR_LANE], refs, specsSelected: true });
   assert.equal(r.verdict, "none");
-  assert.equal(dispatchAdvice(r).annotation, null);
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /own wiring \(\.github\/workflows\/pr-validation\.yml\), and the canary did not run/);
+  assert.doesNotMatch(annotation, /Nothing in CI can prove/);
+  // …while a spec-less `none` stays silent, as it always was.
+  assert.equal(dispatchAdvice(classifyCiChange({ changed: ["docs/x.md"], refs })).annotation, null);
+});
+
+test("the state fetch covers a skill's scripts too — a skill script can name a dispatch", () => {
+  // Executed against real paths rather than spelled: the gate's own regex, taken out of
+  // the workflow. Reverting it to `^(\.github/|scripts/)` left every other test green.
+  const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
+  const m = /if grep -qE '([^']+)' \/tmp\/changed\.txt; then\n\s+# `-s` as well as the exit status/.exec(text);
+  assert.ok(m, "the state-fetch gate is where this test expects it");
+  const gate = new RegExp(m[1]);
+  assert.ok(gate.test(".claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs"));
+  assert.ok(gate.test("scripts/x.mjs") && gate.test(".github/workflows/x.yml"));
+  assert.ok(!gate.test("docs/x.md"));
 });
 
 test("the lane's gate runs the classifier on a mixed diff, and tells it so", () => {

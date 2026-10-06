@@ -711,6 +711,9 @@ export function classifyCiChange({ changed, refs, states = null, specsSelected =
   const reasons = [];
   const dispatch = new Set();
   const vmLane = [];
+  // The changed files that make up the PR lane's OWN wiring — what a canary exists to
+  // exercise. Recorded because, with specs selected, nothing else names them (#2192).
+  const prLaneFiles = [];
   let canary = false;
 
   const prActions = refs.workflowActions.get(PR_LANE) ?? new Set();
@@ -739,6 +742,7 @@ export function classifyCiChange({ changed, refs, states = null, specsSelected =
       ciFiles.push(file);
       if (file === PR_LANE) {
         canary = true;
+        prLaneFiles.push(file);
         reasons.push(`${file} IS the PR lane — its own wiring changed`);
       } else {
         dispatch.add(file);
@@ -759,6 +763,7 @@ export function classifyCiChange({ changed, refs, states = null, specsSelected =
       users.forEach((w) => dispatch.add(w));
       if (prActions.has(actionName)) {
         canary = true;
+        prLaneFiles.push(file);
         const also = users.length ? `, and by ${users.join(", ")}` : "";
         reasons.push(`.github/actions/${actionName} is used by the PR lane${also}`);
       } else {
@@ -831,6 +836,7 @@ export function classifyCiChange({ changed, refs, states = null, specsSelected =
     const alsoDispatch = users.length > 0 ? `, and by ${users.join(", ")}` : "";
     if (onPrLane) {
       canary = true;
+      prLaneFiles.push(file);
       // The PR-lane clause survives because it qualifies ONE named thing — the PR
       // lane — and `prScripts` is exactly the question it asks. It stays hedged
       // ("or through an action it uses") because `workflowScripts` folds in the
@@ -866,6 +872,7 @@ export function classifyCiChange({ changed, refs, states = null, specsSelected =
   return {
     verdict,
     specsSelected,
+    prLaneFiles: [...new Set(prLaneFiles)].sort(),
     ciFiles: [...new Set(ciFiles)].sort(),
     canarySpecs: runsCanary ? [...CANARY_SPECS] : [],
     vmLane: vmLane.sort((a, b) => a.file.localeCompare(b.file)),
@@ -923,6 +930,15 @@ const vmWhere = (v) =>
     ? "runs only on the VM lane, outside GitHub Actions, so its first real run is the next VM daily after merge"
     : "also runs on the VM lane, outside GitHub Actions, which nothing above exercises";
 
+/**
+ * The PR lane's own wiring changed in a diff whose specs replaced the canary (#2192).
+ * Worded over what is NOT known: whether a step ran depends on what the specs need,
+ * which this script does not decide.
+ */
+function unprovenWiringSentence(files) {
+  return `It also changes this lane's own wiring (${list(files)}), and the canary did not run: the provider sweep and the health gate run only when the impacted specs need a model, so a step they skip is proven only after merge.`;
+}
+
 /** One sentence per VM-lane file, for the annotation (#2173). */
 function vmSentence(v) {
   return `${v.file} ${vmWhere(v)}. ${vmTests(v)}`;
@@ -957,15 +973,25 @@ export function dispatchAdvice(result) {
   // behaviour before any of this. The canary proves this lane boots; it says nothing
   // about the other lanes the same diff reaches, so their instruction still has to be
   // printed. `none` has nothing to say by definition.
-  if (!result || !["dispatch", "canary", "vm-only"].includes(result.verdict)) {
+  // `none` is admitted only for a mixed diff, whose PR-lane wiring may still have
+  // something to say; a spec-less `none` is silent by definition.
+  if (
+    !result ||
+    !(["dispatch", "canary", "vm-only"].includes(result.verdict) || (result.specsSelected && result.verdict === "none"))
+  ) {
     return { annotation: null, summaryLines: [] };
   }
   // Something in CI demonstrably runs on this PR — the canary, or the impacted specs of
-  // a diff that also touched CI surface (#2192). Either way the lane itself is proven,
-  // so the advice is only about the OTHER lanes, and the closing "nothing in CI can
+  // a diff that also touched CI surface (#2192) — so the closing "nothing in CI can
   // prove this" is never true of the whole change.
+  //
+  // The two are NOT equivalent, and the first draft of #2192 said they were. The canary
+  // forces the provider sweep, and with it the health gate; impacted specs that need no
+  // model run with both SKIPPED. So with specs selected the PR lane's own wiring is
+  // proven only as far as those specs happen to reach it, and the advice says so.
   const onCanary = result.verdict === "canary";
   const ranSomething = onCanary || result.specsSelected === true;
+  const unprovenWiring = !onCanary && result.specsSelected === true ? (result.prLaneFiles ?? []) : [];
   // The VM lane rides on every verdict, the way dispatch targets ride on a canary: no
   // workflow exercises it, so neither a canary nor a dispatch says anything about it.
   const vmLane = result.vmLane ?? [];
@@ -973,7 +999,8 @@ export function dispatchAdvice(result) {
   if (
     ranSomething &&
     (result.dispatchTargets ?? result.dispatchWorkflows ?? []).length === 0 &&
-    vmLane.length === 0
+    vmLane.length === 0 &&
+    unprovenWiring.length === 0
   ) {
     return { annotation: null, summaryLines: [] };
   }
@@ -1022,11 +1049,12 @@ export function dispatchAdvice(result) {
     onCanary
       ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
       : ranSomething
-        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); the impacted specs exercise THIS lane, not the other lanes it reaches.`
+        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); the impacted specs run on THIS lane, and do not exercise the other lanes it reaches.`
         : result.verdict === "vm-only"
         ? `Change to ${list(result.ciFiles ?? [])}, which no GitHub workflow runs — nothing in CI proves it works.`
         : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
   ];
+  if (unprovenWiring.length > 0) sentences.push(unprovenWiringSentence(unprovenWiring));
   if (yes.length > 0) sentences.push(`Dispatch ${list(yes)} on this branch before merging (#1159).`);
   for (const t of absent) {
     sentences.push(
@@ -1080,6 +1108,11 @@ export function dispatchAdvice(result) {
   }
 
   const summaryLines = [];
+  if (unprovenWiring.length > 0) {
+    summaryLines.push(
+      `- ⚠️ **this lane's own wiring changed** (${unprovenWiring.map((f) => `\`${f}\``).join(", ")}) **and the canary did not run**, because the diff also impacts specs. The provider sweep and the health gate run only when those specs need a model, so a step they skip is proven only after merge (#2192).`,
+    );
+  }
   if (yes.length > 0) {
     summaryLines.push(
       onCanary
