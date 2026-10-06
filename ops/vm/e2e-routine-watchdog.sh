@@ -101,7 +101,7 @@ elif [ -z "$exit_raw" ] || [ "$exit_raw" -lt "$start_raw" ]; then
   # By the exit timestamp, not ActiveState: a oneshot with RemainAfterExit=yes is
   # `active` forever after it ends (the daily's watchdog, first version).
   headline="Routine $ROUTINE: still running"
-  body="It started at $(hm "$start_raw") UTC and has not finished, $(( (NOW - start_raw) / 60 )) min later. The check is placed past its longest healthy run plus its wait for a turn, so this is stuck rather than slow, and today has no result until the unit's TimeoutStartSec ends it.
+  body="It started at $(hm "$start_raw") UTC and has not finished, $(( (NOW - start_raw) / 60 )) min later. The check is placed past its longest healthy run plus its wait for a turn, so this is stuck rather than slow. If the check also sits past the unit's TimeoutStartSec, systemd is stopping it or failed to; otherwise today has no result until that timeout ends it.
 Last log: $LOG_DIR/latest.log"
 else
   started="$(field STARTED)"
@@ -123,9 +123,9 @@ Last log: $LOG_DIR/latest.log"
         # Quiet only on a delivery known to have happened (ok) or not asked for (none).
         # `unreported` is a run killed during its report, and anything else is unknown.
         if [ "$report" != "ok" ] && [ "$report" != "none" ]; then
-          headline="Routine $ROUTINE: $status, and the report was not delivered (${report:-no record})"
+          headline="Routine $ROUTINE: $status, and the report was not fully delivered (${report:-no record})"
           body="$reason
-The result is on the machine, and the issue or the Slack post it asked for did not go out.
+The result is on the machine, and the issue or the Slack post it asked for is missing or incomplete (an issue created without its label counts: tomorrow could not find it). The routine's log names which.
 Last log: $LOG_DIR/latest.log"
         else
           say "quiet: $status today, report=${report:-none}"

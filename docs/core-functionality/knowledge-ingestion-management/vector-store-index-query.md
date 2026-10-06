@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 
-**Last validated:** Langflow 1.13.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
 
 ---
 
@@ -18,8 +18,10 @@ It covers the two §5.2 checklist bullets that #673 deliberately left out:
 
 - **§5.2.2 — Indexing in Vector Store (document available for query):** running
   the **Knowledge (Ingest)** node embeds every chunk and indexes it in the KB. A
-  broken embeddings key or a failed index build fails this — the KB's chunk count
-  is the causal proof that embeddings actually ran.
+  broken embeddings key or a failed index build fails this — the chunks the KB
+  stores are the causal proof that embeddings actually ran. The test then holds
+  the KB's **recorded** chunk count to the same number, which is the half that
+  is declared failing since `1.13.0.dev33` (see *Declared failing* below).
 - **§5.2.3 — Vector Store query returns the relevant chunk:** with the index
   built, running **Knowledge (Retrieve)** answers the static `search_query` and
   its single top result is the one chunk of the document that is actually about
@@ -34,10 +36,17 @@ real regression — the same reasoning that kept #673 on core, bundle-free
 components.
 
 The **Knowledge** component (`files_and_knowledge/Knowledge`, non-legacy) is the
-**core** vector-store primitive: it is backed by an embedded **ChromaDB** that
+**core** vector-store primitive: it is backed by an embedded local store that
 ships *inside* core Langflow (a library dependency, not an optional bundle
 component), and it is what the current starter templates (Vector Store RAG,
-Document Q&A) use for RAG. So this spec exercises real indexing + semantic
+Document Q&A) use for RAG. That store is **SQLite** (`sqlite-vec`) from
+`1.13.0.dev33` on: langflow-ai/langflow#15509 retired local Chroma on the 1.13
+line, so `POST /api/v1/knowledge_bases` answers `422` for
+`backend_type: "chroma"` (*"not enabled in this build. Available backends:
+opensearch, postgres, sqlite"*) and the spec creates its KB with
+`backend_type: "sqlite"`. Lines that predate #15509 — `main` included, as of
+2026-10-05 — have no `sqlite` backend at all, so this spec fails loudly there
+with the 422 naming the backends that build offers (#2175). So this spec exercises real indexing + semantic
 retrieval **without any bundle dependency**, and never yields a false failure on
 a packaging change.
 
@@ -119,10 +128,17 @@ delete it in teardown.
 
 - **Test 1 — index (§5.2.2):** run the Knowledge (Ingest) node; the
   successful-build badge `node_duration_knowledge` becomes visible, and
-  `GET /api/v1/knowledge_bases/{name}` reports **exactly 5 chunks**. Because the
-  ingest embeds every chunk against the live key and writes them to the KB, the
-  chunk count is a causal proof the embeddings ran and the document is indexed —
-  a broken key or index build leaves it at 0.
+  `GET /api/v1/knowledge_bases/{name}/chunks` reports **exactly 5 stored
+  chunks** (`total === 5`), one of which carries the sentinel `embedding
+  vector`. Because the ingest embeds every chunk against the live key and writes
+  them to the KB, the stored chunks are a causal proof the embeddings ran and the
+  document is indexed — a broken key or index build leaves none. Only then does
+  the test declare itself failing (`test.fail()`, called **after** those
+  assertions, so any failure up to here is still an unexpected red) and assert
+  the KB's recorded count: `GET /api/v1/knowledge_bases/{name}` reports
+  `chunks === 5`. That last assertion is the correct contract and fails today
+  (the record reads `chunks: 0`, `status: "empty"`); the day upstream fixes it,
+  Playwright reports *"expected to fail, but passed"* — the lift signal.
 - **Test 2 — query (§5.2.3):** run Ingest (populate the KB), then run the
   Knowledge (Retrieve) node; open its `Results` output inspector. With
   `top_k = 1`, the ag-Grid shows **exactly one row**, and that row contains the
@@ -143,7 +159,9 @@ is both sharp and deterministic.
 
 `@stable` `@release` `@components` `@files`
 
-(`@files`: knowledge-ingestion surface — functional. `@components`:
+(`@stable` restored by #2175 after the 1.13.0.dev33 quarantine; Test 1 carries it
+while declared failing, the same shape as `api/flows/graph-execution-contract.spec.ts`,
+so the daily notices the day the defect is fixed. `@files`: knowledge-ingestion surface — functional. `@components`:
 canvas-component configuration. `@stable`/`@release` cross-cutting. Second §5.2
 RAG spec, builds on #673; created `@stable` after deterministic validation on the
 fresh nightly. Core Knowledge component — no bundle guard; skips cleanly when
@@ -164,7 +182,7 @@ local `providers.json`.
 **Setup (each test):**
 1. Create a fresh KB via `POST /api/v1/knowledge_bases` — unique name per run,
    `embedding_provider = "Google Generative AI"`, `embedding_model =
-   "models/gemini-embedding-001"`, `backend_type = "chroma"` (no `model_selection`
+   "models/gemini-embedding-001"`, `backend_type = "sqlite"` (no `model_selection`
    needed — the KB resolves the embedding from provider + model at ingest time).
    Record the KB `dir_name` for teardown.
 2. Load the fixture JSON and set `knowledge_base.value` **and**
@@ -193,7 +211,11 @@ local `providers.json`.
    quota/rate-limit reason retries the node run within a bounded budget; any other
    reason throws at once, quoting the on-screen text (see *Node-run wait
    strategy*).
-3. Assert `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
+3. Assert `GET /api/v1/knowledge_bases/{dir_name}/chunks` (all pages,
+   `listAllChunks`) reports `total === 5`, and exactly one stored chunk contains
+   `embedding vector`.
+4. Declare the test failing (`test.fail()`), then assert
+   `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
 
 **Test 2 — Vector Store query returns the relevant chunk:**
 1. Run Ingest (as above); wait for its `node_duration_knowledge`.
@@ -221,9 +243,20 @@ local `providers.json`.
 - `GOOGLE_API_KEY` — required (the KB embeds each chunk with
   `models/gemini-embedding-001`), **and** Google recorded `active` in
   `providers.json` by `collect-models` (#1029).
-- Knowledge Base API: `POST /api/v1/knowledge_bases` (create),
-  `GET /api/v1/knowledge_bases/{name}` (chunk count),
+- Knowledge Base API: `POST /api/v1/knowledge_bases` (create, `backend_type:
+  "sqlite"`), `GET /api/v1/knowledge_bases/{name}/chunks` (the stored chunks),
+  `GET /api/v1/knowledge_bases/{name}` (the recorded chunk count),
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).
+- The fixture's frozen Knowledge source still imports `langchain_chroma` and its
+  `metadata.dependencies` still lists `chromadb`. Both are inert: `loadFixtureFlow`
+  replaces the `code` field with the image's before the flow exists (measured on
+  `1.13.0.dev33`: `[fixture] … hydrated: … Knowledge-ingest, Knowledge-retrieve`,
+  and the run builds), and the dependency list is display metadata hydration does
+  not rewrite.
+- `src/lfx/src/lfx/components/files_and_knowledge/knowledge.py`,
+  `src/backend/base/langflow/services/knowledge_base_storage/runtime.py` and
+  `src/backend/base/langflow/api/utils/kb_helpers.py` — the three upstream files
+  the declared-failing assertion depends on (see *Declared failing*).
 - Flows API: `POST /api/v1/flows/` (fixture create), `DELETE /api/v1/flows/{id}`
   (scoped cleanup).
 - `tests/helpers/ui/clear-canvas-bottom-overlay.ts` — frees the canvas
@@ -247,6 +280,37 @@ local `providers.json`.
   signal `api/flows/api-component-regression.spec.ts` gates on; the reason renders
   adjacent to it, so it is read out of the page text rather than out of a
   container.
+
+---
+
+## Declared failing — the recorded chunk count (#2186)
+
+Measured on `1.13.0.dev33` (`langflowai/langflow-nightly:latest`, 2026-10-05):
+after the Knowledge (Ingest) node builds successfully against a `sqlite` KB,
+`GET /api/v1/knowledge_bases/{name}/chunks` returns the 5 ingested chunks while
+`GET /api/v1/knowledge_bases/{name}` answers `chunks: 0`, `words: 0`, `size: 0`,
+`status: "empty"` — unchanged 15 s later. The same assertion read `5` on the
+Chroma line up to `1.13.0.dev30`.
+
+Mechanism, proven in the running build by raising from inside the component:
+`Knowledge.build_kb_info` refreshes the KB row's totals through
+`_refresh_kb_stats` only `if isinstance(backend, BaseVectorStoreBackend)`. Since
+langflow-ai/langflow#15509, `backend_for_name` (annotated
+`-> BaseVectorStoreBackend`) returns
+`langflow.services.knowledge_base_storage.runtime._GuardedMethods`, a proxy whose
+MRO is `_GuardedMethods → object`, so the check is `False`, the refresh never
+runs, and neither does the `backend.teardown()` behind the same check in the
+`finally`. It is the component path only: ingestion through the API and the
+Create Knowledge Base dialog records exact counts on the same build
+(`memory-base-ingestion.spec.ts`).
+
+Verdict: an **unintended regression** from #15509, not a product change — the
+component still calls the refresh whose docstring promises real numbers for every
+backend, the API reports a KB that stores 5 chunks as `"empty"`, and the PR
+announces no change to it. Tracked by #2186 and upstream as
+[LE-2912](https://datastax.jira.com/browse/LE-2912). **To lift:**
+when Test 1 reports *"expected to fail, but passed"*, delete `test.fail()` and its
+comment, keep `@stable`, move the `REGRESSIONS.md` entry to *Fixed*, and close #2186.
 
 ---
 

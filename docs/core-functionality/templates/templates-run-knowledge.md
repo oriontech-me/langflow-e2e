@@ -2,8 +2,8 @@
 
 **File:** `tests/tests-automations/regression/core-functionality/templates/templates-run-knowledge.spec.ts`
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev25`, `langflowai/langflow-nightly:latest`,
-measured 2026-09-27)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev33`, `langflowai/langflow-nightly:latest`,
+measured 2026-10-05; first measured on `1.13.0.dev25`, 2026-09-27)
 
 Owning issue: #2045 (row **E4** of the planned spec inventory in
 `docs/core-functionality/templates/templates-coverage-scope.md`, the #1860 scoping pass) ·
@@ -83,6 +83,10 @@ Each test:
   before a deploy.
 - `@stable` from the first PR (`CONTRIBUTING.md` → *Tag @stable*): none of its exceptions
   applies — no lane selector, no known product defect, no model-dependent assertion.
+- Quarantined 2026-10-05 (#2175) together with every spec that creates a knowledge base
+  through `helpers/knowledge/knowledge-base.ts`: the helper still asked for `backend_type:
+  "chroma"`, which langflow-ai/langflow#15509 retired on the 1.13 line (`1.13.0.dev33`
+  answers `422`). The helper now creates `sqlite` knowledge bases and the tag is back.
 
 ---
 

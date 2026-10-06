@@ -140,13 +140,13 @@ test("a result from an earlier run the same day does not answer for this one", {
 test("a report that never finished is not taken for a delivered one", { skip: !SAFE && "too close to UTC midnight" }, () => {
   for (const report of ["unreported", "", "garbled"]) {
     const r = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "2 of 12", REPORT: report }) });
-    assert.match(r.headline, /^Routine demo: red, and the report was not delivered/, `REPORT=${report}`);
+    assert.match(r.headline, /^Routine demo: red, and the report was not fully delivered/, `REPORT=${report}`);
   }
 });
 
 test("a red nobody heard is said", { skip: !SAFE && "too close to UTC midnight" }, () => {
   const r = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "2 of 12", REPORT: "failed" }) });
-  assert.equal(r.headline, "Routine demo: red, and the report was not delivered (failed)");
+  assert.equal(r.headline, "Routine demo: red, and the report was not fully delivered (failed)");
 });
 
 test("an unknown status is said, not taken for quiet", { skip: !SAFE && "too close to UTC midnight" }, () => {

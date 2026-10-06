@@ -169,8 +169,9 @@ reference. In short:
 
 - **The daily has priority.** A routine does not start on weekdays 07:30-08:40 UTC,
   beside `e2e-daily` or `e2e-shadow`, or while today's shadow request waits. It *waits*
-  for its turn within a budget it declares, and `run-daily.sh` stops any routine still
-  going at 08:00, found by the `e2e-routine-*` name.
+  for its turn within a budget it declares, and `run-daily.sh` stops the routine that
+  holds its turn at 08:00, found by the `e2e-routine-*` name; one still waiting is left
+  to wait.
 - **One heavy lane at a time.** Every lane that starts Langflow or a browser (the
   routines and the on-demand run) takes `/run/lock/e2e-heavy.lock`; who holds it is in
   `/run/lock/e2e-heavy.lock.holder`. A routine waits for it, the on-demand run refuses.
@@ -185,7 +186,7 @@ reference. In short:
   only by the report, never by the routine's work. Skipped, failed and blocked days, and
   a red whose report failed, are said by the routine's watchdog.
 
-Installing one routine, e.g. `migration`:
+Installing one routine, e.g. `migration` (each routine's units ship with the routine itself; migration's arrive with #2194):
 
 ```sh
 cd /root/e2e-qa

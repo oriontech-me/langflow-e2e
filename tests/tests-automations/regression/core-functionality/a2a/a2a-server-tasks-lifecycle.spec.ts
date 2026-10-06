@@ -162,7 +162,7 @@ test.describe("A2A Server — task lifecycle", () => {
     }
   });
 
-  test("cancelling a running task moves it to canceled", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({
+  test("cancelling a running task moves it to canceled", { tag: ["@api", "@regression", "@a2a"] }, async ({
     request,
     baseURL,
   }) => {

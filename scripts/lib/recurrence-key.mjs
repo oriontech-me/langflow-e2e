@@ -49,6 +49,11 @@ import { normalizeSpecPath } from "./spec-path.mjs";
  * never compared field by field — only by head, and the match is reported
  * `unverified` — because a changed derivation would otherwise read as a changed
  * cause and silently reset every window it touched.
+ *
+ * #2178 changed how the VM lane spells `file` WITHOUT a bump, on purpose: the
+ * comparison canonicalises both sides, so an old VM key and a new one still compare
+ * field by field — while a bump would have demoted every row in the ledger, both
+ * lanes', to `unverified`.
  */
 export const RECURRENCE_KEY_VERSION = 1;
 
@@ -149,12 +154,35 @@ export function recurrenceLocator(message) {
   return null;
 }
 
+// A VM-lane shard runs from its own copy of the repo at
+// `$RUNS_ROOT/<run id>/shard-N/`, and `RUNS_ROOT` defaults to `runs/` INSIDE the
+// checkout the appender runs from — so stripping the checkout leaves the run id and
+// the shard in front of the path, and two dailies could never spell one spec alike
+// (#2178: 59 of 62 keyed VM entries on 2026-10-05).
+const SHARD_COPY_PREFIX = /^runs\/[^/]+\/shard-\d+\//;
+
+/**
+ * The one spelling of a key's `file`: shard copy and `tests/` stripped.
+ *
+ * Applied when the key is derived AND when two keys are compared, so the rows the
+ * VM lane wrote before #2178 — which still carry `runs/<id>/shard-N/tests/…` —
+ * match a new one without rewriting the ledger. A leading `./` goes before the
+ * shard prefix is tested, or `./runs/<id>/shard-N/…` would keep it on the first
+ * pass and lose it on the second.
+ */
+export function canonicalRecurrenceFile(rel) {
+  if (rel === null || rel === undefined) return null;
+  return normalizeSpecPath(String(rel).replace(/^\.\//, "").replace(SHARD_COPY_PREFIX, "")) || null;
+}
+
 /**
  * Repo-relative, `tests/`-stripped path of the error's own location, or null.
  *
  * `root` is the working directory the report was produced under; when the path is
  * not below it (a report merged on another machine), the last `/tests/` segment
- * anchors it instead — both lanes lay the repo out the same way beneath that.
+ * anchors it instead — both lanes lay the repo out the same way beneath that. A
+ * path below the root that is really below one of its shard copies is reduced by
+ * `canonicalRecurrenceFile()`.
  */
 export function recurrenceFile(location, root = "") {
   const file = String(location?.file ?? "");
@@ -166,7 +194,7 @@ export function recurrenceFile(location, root = "") {
     const at = file.lastIndexOf("/tests/");
     if (at !== -1) rel = file.slice(at + 1);
   }
-  return normalizeSpecPath(rel) || null;
+  return canonicalRecurrenceFile(rel);
 }
 
 /**
@@ -271,7 +299,7 @@ export function recurrenceKey(error, root = "", inFlight = null) {
 const sameKey = (a, b) =>
   a.head.toLowerCase() === b.head.toLowerCase() &&
   a.locator === b.locator &&
-  a.file === b.file &&
+  canonicalRecurrenceFile(a.file) === canonicalRecurrenceFile(b.file) &&
   a.source === b.source;
 
 /**

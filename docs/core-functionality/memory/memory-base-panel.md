@@ -1,6 +1,6 @@
 # Memory Base — Memories panel and Create Memory modal
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
 
 ---
 
@@ -25,8 +25,11 @@ fails on it for the wrong reason.
    Embedding Model (`#memory-embedding-model`), Vector Database
    (`#memory-db-provider`), Batch Size (`#memory-batch-size`) and the LLM
    Preprocessing toggle (`#llm-preprocessing-switch`) all render.
-4. **should default Vector Database to Chroma Local and Batch Size to 1** — both
+4. **should default Vector Database to SQLite Local and Batch Size to 1** — both
    shipped defaults, on an instance with nothing configured under DB Providers.
+   The vector-database default was `Chroma Local` until langflow-ai/langflow#15509
+   retired local Chroma on the 1.13 line (first nightly `1.13.0.dev33`); the label
+   follows the product's default, not the other way round (#2175).
 5. **should show Embedding Model carrying no default model when a provider
    offers embeddings** — the control renders reading its unset placeholder and
    the modal shows no `Provider:` line. Of the three tests covering this
@@ -163,8 +166,14 @@ are.
   proves the control behaves against Langflow's own provider state, and that
   state holds on every scheduled lane.
 - **The Vector Database default is the opposite case and is asserted
-  literally**: `Chroma Local`, which the frontend ships as `defaultEnabled` with
-  no config fields, so it holds on any instance. Batch Size likewise reads `1`.
+  literally**: `SQLite Local`, which the frontend ships as `defaultEnabled` with
+  no config fields. It holds on any instance that keeps the local store
+  available and names no other active DB provider: `getActiveDBProvider` returns
+  `postgres` when `GET /api/v1/config` reports
+  `local_vector_store_available: false` (the production profile), and an
+  OpenSearch/Postgres provider configured as active under DB Providers wins over
+  it — neither applies to any lane this suite runs (measured on `1.13.0.dev33`:
+  `local_vector_store_available: true`). Batch Size likewise reads `1`.
 - **The disabled gate is asserted in two states, not one** — empty form and
   Name-only. Only the second distinguishes a real required-field gate from a
   button that is simply disabled until first input.
@@ -225,7 +234,7 @@ delete-all (#553/#520).
   `#preprocessing-prompt`), which only render with the toggle on.
 - Memory detail views, message/session tables, auto-capture, refresh and
   delete of an existing memory base.
-- Non-`chroma` vector databases (Chroma Cloud, OpenSearch, Postgres pgvector),
+- Vector databases other than the local default (OpenSearch, Postgres pgvector),
   which require DB Providers configuration.
 - The Agent's conversation memory (§6.3) — a different surface that shares the
   word "memory".
@@ -299,7 +308,8 @@ delete-all (#553/#520).
 - **The submit gate, from the bundle:**
   `disabled = !name.trim() || embedding.length === 0 || !backendConfigured ||
   (preprocessing && preprocModel.length === 0) || (preprocessing && !prompt.trim())`.
-  `backendConfigured` is true for `chroma` out of the box, which is why the
+  `backendConfigured` is true for the local default (`chroma` before
+  `1.13.0.dev33`, `sqlite` since) out of the box, which is why the
   Name-only state is disabled by the embedding model alone.
 - **Checklist placement.** The bullets flip the existing `## memory/ — Memory
   Base Registration (1.12)` §20.1–§20.2 entries in place; the section and its
