@@ -1207,11 +1207,17 @@ test("a cycle between shell scripts terminates", () => {
   assert.deepEqual([...reached].sort(), ["scripts/a.sh", "scripts/b.sh"]);
 });
 
-test("unitTestsCovering finds the sibling and the importer, never the file itself", () => {
-  assert.deepEqual(unitTestsCovering(vmRefs, "scripts/remove-stable-from-failures.ts"), [
-    "scripts/remove-stable-from-failures.test.ts",
-  ]);
-  assert.deepEqual(unitTestsCovering(vmRefs, "scripts/remove-stable-from-failures.test.ts"), []);
+test("unitTestsCovering finds a sibling that does NOT import its subject — the shell case", () => {
+  // A test exercises a shell script by running it (`path.join(HERE, "run-e2e.sh")`),
+  // never by importing it, so for `.sh` the sibling convention is the only link. The
+  // fixture's other sibling also imports its subject and cannot pin this route.
+  const shellRefs = buildCiReferences({
+    ...FIXTURE,
+    scriptFiles: new Map([["scripts/run-e2e.test.mjs", "spawnSync('bash', [join(HERE, 'run-e2e.sh')]);"]]),
+    vmEntries: new Map([["ops/vm/run-daily.sh", "./scripts/run-e2e.sh"]]),
+    shellScripts: new Map([["scripts/run-e2e.sh", "true"]]),
+  });
+  assert.deepEqual(unitTestsCovering(shellRefs, "scripts/run-e2e.sh"), ["scripts/run-e2e.test.mjs"]);
 });
 
 test("an absent ops/ degrades OUT LOUD — a VM-only script must not resolve to 'none' in silence", () => {
@@ -1242,6 +1248,15 @@ test("against the live repo, the three removal scripts #2173 names are vm-only, 
     ]);
     assert.match(r.json.advice, /runs only on the VM lane/);
   }
+});
+
+test("against the live repo, run-e2e.sh is not claimed by the PR lane", () => {
+  // The first version of #2173 documented the new verdict in pr-validation.yml with
+  // the path spelled out, and `SCRIPT_REF` reads YAML comments — so a PR editing
+  // only run-e2e.sh would have run the canary under "a surface THIS lane runs".
+  const r = cli(["--root", REPO_ROOT, "--format=json", "--stdin"], "scripts/run-e2e.sh\n");
+  assert.notEqual(r.json.verdict, "canary", r.json.reasons.join(" | "));
+  assert.equal(r.json.vmLane[0]?.file, "scripts/run-e2e.sh");
 });
 
 test("against the live repo, the VM lane is reached from the systemd unit down", () => {

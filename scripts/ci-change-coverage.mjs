@@ -560,10 +560,10 @@ export function importersOf(refs, file) {
 export function vmLaneReach(vmEntries, shellScripts) {
   const reached = new Set();
   // Comments are dropped before the scan in every non-JavaScript file — a shell
-  // script, a systemd unit — because there they are where OTHER lanes get mentioned:
-  // `run-e2e.sh` cites `scripts/start-langflow-docker.sh` in prose, and the VM has no
-  // container runtime at all, so "runs only on the VM lane" would have been false for
-  // it. JavaScript is left whole; its dependencies arrive by import, not by token.
+  // script, a systemd unit — because there they are where tools the lane never runs
+  // get mentioned: `run-e2e.sh` cites `scripts/check-vm-env-parity.mjs` only in prose,
+  // and reading that as a call reported four such files as VM-only. JavaScript is
+  // left whole; its dependencies arrive by import, not by token.
   const code = (file, text) =>
     SOURCE_FILE.test(file) ? text : String(text).split("\n").map(stripComment).join("\n");
   const queue = [...vmEntries].map(([file, text]) => code(file, text));
@@ -596,7 +596,6 @@ export function unitTestsCovering(refs, file) {
   for (const importer of refs.scriptImporters?.get(file) ?? []) {
     if (UNIT_TEST.test(importer)) tests.add(importer);
   }
-  tests.delete(file);
   return [...tests].sort();
 }
 
