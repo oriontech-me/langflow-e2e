@@ -137,25 +137,46 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
   });
 
   test.afterEach(async ({ page, request }) => {
+    // Every step runs even when an earlier one throws, and the failures are
+    // rethrown together at the end. A step that aborted the hook used to skip
+    // deleteFlow and leak the flow: measured on 1.13.0.dev33 (#2175), when the
+    // embedding-flag restore timed out on a starved backend.
+    const failures: string[] = [];
+    const attempt = async (step: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (e) {
+        failures.push(`${step}: ${String(e)}`);
+      }
+    };
     // Leave the Knowledge page before its knowledge bases disappear under it.
-    if (pageUsed) await page.goto("about:blank");
+    if (pageUsed) await attempt("leave the Knowledge page", () => page.goto("about:blank"));
     // Every cleanup call is idempotent (a 404 delete is done, a flag set twice is
     // set), so each may re-dial the socket the UI steps left idle (see ingestion.ts).
     for (const dirName of createdKbs) {
-      await retryOnDroppedConnection(() => deleteKnowledgeBase(request, dirName, auth()));
+      await attempt(`delete knowledge base ${dirName}`, () =>
+        retryOnDroppedConnection(() => deleteKnowledgeBase(request, dirName, auth())),
+      );
     }
     if (restoreEmbeddingTo !== null) {
       const flag = restoreEmbeddingTo;
-      await retryOnDroppedConnection(() =>
-        setEmbeddingModelEnabled(request, EMBEDDING, flag, auth()),
+      await attempt("restore the embedding model flag", () =>
+        retryOnDroppedConnection(() => setEmbeddingModelEnabled(request, EMBEDDING, flag, auth())),
       );
     }
     const owned = flowId;
     if (owned) {
       // Uploads outlive their flow on disk and are unreachable once it is gone, so
       // the folder is emptied first (tests 4 and 5 write a file there).
-      await emptyFlowFolder(request, owned, retryOnDroppedConnection, auth());
-      await retryOnDroppedConnection(() => deleteFlow(request, owned, auth()));
+      await attempt(`empty the folder of flow ${owned}`, () =>
+        emptyFlowFolder(request, owned, retryOnDroppedConnection, auth()),
+      );
+      await attempt(`delete flow ${owned}`, () =>
+        retryOnDroppedConnection(() => deleteFlow(request, owned, auth())),
+      );
+    }
+    if (failures.length > 0) {
+      throw new Error(`Teardown cleanup failed: ${failures.join("; ")}`);
     }
   });
 
@@ -353,12 +374,9 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     `GET ${KB_API}/{kb_name}/chunks`,
   ];
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should store exactly the chunks preview-chunks promised when every line fits the chunk size",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare(PARITY_OPS);
       const { previewed, stored } = await previewAndIngest(request, `${FITTING_LINES.join("\n")}\n`);
@@ -367,12 +385,9 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should store exactly the chunks preview-chunks promised when a line is longer than the chunk size",
-    { tag: ["@regression", "@api", "@files"] },
+    { tag: ["@stable", "@regression", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       // LE-2771, fixed by langflow-ai/langflow#15421 (1.12.4; first nightly 1.13.0.dev28): ingestion used to
       // split on the separator alone and store this line whole. See the spec doc's Notes.
@@ -414,12 +429,9 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     return runId;
   }
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should ingest a server-side folder through the folder connector and read its chunks back",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",
@@ -489,12 +501,9 @@ test.describe("core-functionality/memory — Memory Base ingestion", () => {
     },
   );
 
-  // Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-  // day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-  // spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-  test.fixme(
+  test(
     "should report an in-flight folder ingestion as running and, once cancelled, as cancelled with its chunks rolled back",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, apiCoverage }) => {
       apiCoverage.declare([
         "POST /api/v1/files/upload/{flow_id}",

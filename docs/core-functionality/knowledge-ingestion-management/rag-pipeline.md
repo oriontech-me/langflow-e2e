@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
-**Last validated:** Langflow 1.13.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
 
 ---
 
@@ -68,8 +68,10 @@ Answer:  Knowledge[Retrieve] → Parser → Prompt{context} → Language Model �
 Same rationale as #674: every drop-in vector store (FAISS, Chroma DB, …) is a
 **bundle** (`ext:…@official`), so a bundle-dependent `@stable` test would fail on
 a packaging change rather than a real regression. The **Knowledge** component
-(`files_and_knowledge/Knowledge`, non-legacy) is the **core**, ChromaDB-backed
-vector-store primitive; **Split Text**, **Parser**, **Prompt** and **Chat Output**
+(`files_and_knowledge/Knowledge`, non-legacy) is the **core** vector-store
+primitive — backed by an embedded **SQLite** (`sqlite-vec`) store from
+`1.13.0.dev33` on, since langflow-ai/langflow#15509 retired local Chroma, so the
+KB is created with `backend_type: "sqlite"` (#2175); **Split Text**, **Parser**, **Prompt** and **Chat Output**
 are all core; the **Language Model** component is core. So the whole pipeline is
 bundle-free and never yields a false failure on a packaging change.
 
@@ -174,9 +176,15 @@ teardown.
 1. Run the **Knowledge (Ingest)** node; its success-build badge
    `node_duration_knowledge` becomes visible (raced against the
    `Flow build failed` signal — see *Node-run wait strategy*), and `GET
-   /api/v1/knowledge_bases/{name}` reports **exactly 5 chunks** — a precondition
-   proof that the document is embedded + indexed (so a later answer failure is
-   unambiguously an answer-side failure, not a broken ingest).
+   /api/v1/knowledge_bases/{name}/chunks` reports **exactly 5 stored chunks**
+   (`total === 5`) — a precondition proof that the document is embedded +
+   indexed (so a later answer failure is unambiguously an answer-side failure,
+   not a broken ingest). The precondition reads the **stored** chunks, not the
+   KB's recorded `chunks` total: since `1.13.0.dev33` the record stays at `0`
+   after a component-driven ingest (#2186, LE-2912 — `vector-store-index-query.spec.ts`
+   holds that contract, declared failing), so reading it here would block the
+   answer-side coverage this spec exists for on a defect another test already
+   reports.
 2. Run the **Chat Output** node (which pulls the whole answer chain
    Retrieve → Parser → Prompt → Language Model → Chat Output; the ingest branch is
    *not* upstream of Chat Output, so it does not re-run). Its
@@ -201,7 +209,8 @@ The answer observed live on 1.11.0.dev38 is exactly `ZEPHYR-42`.
 
 `@stable` `@release` `@components` `@files`
 
-(`@files`: knowledge-ingestion surface — functional. `@components`:
+(`@stable` restored by #2175 after the 1.13.0.dev33 quarantine. `@files`:
+knowledge-ingestion surface — functional. `@components`:
 canvas-component configuration. `@stable`/`@release` cross-cutting. Third and
 final §5.2 RAG spec, builds on #673/#674; created `@stable` after deterministic
 end-to-end validation on the fresh nightly. All-core components — no bundle guard;
@@ -221,7 +230,7 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
 **Setup:**
 1. Create a fresh KB via `POST /api/v1/knowledge_bases` — unique name per run,
    `embedding_provider = "Google Generative AI"`, `embedding_model =
-   "models/gemini-embedding-001"`, `backend_type = "chroma"`. Record the KB `dir_name`
+   "models/gemini-embedding-001"`, `backend_type = "sqlite"`. Record the KB `dir_name`
    for teardown.
 2. Load the fixture JSON and set `knowledge_base.value` **and**
    `knowledge_base.options = [dir_name]` on **both** Knowledge nodes (both are
@@ -244,7 +253,8 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
    `Flow build failed` signal, whichever lands first (45 s). A quota/rate-limit
    reason retries the node run within a bounded budget; any other reason throws
    at once, quoting the on-screen text (see *Node-run wait strategy*).
-2. Assert `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
+2. Assert `GET /api/v1/knowledge_bases/{dir_name}/chunks` (all pages,
+   `listAllChunks`) reports `total === 5`.
 3. Run the answer path: click the Chat Output run button
    (`button_run_chat output`) scoped to `[data-id="ChatOutput-answer"]`; wait for
    its build badge.
@@ -272,9 +282,14 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
 - `GOOGLE_API_KEY` — required (embeds each chunk with `models/gemini-embedding-001` and
   answers with `gemini-flash-latest`), **and** Google recorded `active` in
   `providers.json` by `collect-models` (#1029).
-- Knowledge Base API: `POST /api/v1/knowledge_bases` (create),
-  `GET /api/v1/knowledge_bases/{name}` (chunk count),
+- Knowledge Base API: `POST /api/v1/knowledge_bases` (create, `backend_type:
+  "sqlite"`), `GET /api/v1/knowledge_bases/{name}/chunks` (the stored chunks),
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).
+- The fixture's frozen Knowledge source still imports `langchain_chroma` and its
+  `metadata.dependencies` still lists `chromadb`; both are inert, because
+  `loadFixtureFlow` replaces the `code` field with the image's before the flow
+  exists (measured on `1.13.0.dev33`: the run builds), and the dependency list is
+  display metadata hydration does not rewrite.
 - Flows API: `POST /api/v1/flows/` (fixture create), `DELETE /api/v1/flows/{id}`
   (scoped cleanup).
 - `tests/helpers/ui/clear-canvas-bottom-overlay.ts` — frees the canvas
@@ -309,8 +324,9 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
 
 - Split Text chunking itself (§5.2.1 — #673, `split-text-chunking.spec.ts`).
 - Vector-store indexing + retrieval in isolation (§5.2.2/§5.2.3 — #674,
-  `vector-store-index-query.spec.ts`). This spec re-asserts the 5-chunk index only
-  as a precondition, not as new coverage.
+  `vector-store-index-query.spec.ts`). This spec re-asserts the 5 stored chunks
+  only as a precondition, not as new coverage — and deliberately not the KB's
+  recorded total, which that spec owns (#2186).
 - Drop-in vector-store bundles (FAISS, Chroma DB component, …) — the core
   Knowledge base is used precisely to stay bundle-free.
 - File upload as the document source (§5.1); this spec sources the document from

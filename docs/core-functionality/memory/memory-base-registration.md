@@ -1,6 +1,6 @@
 # Memory Base — registering a memory base end-to-end
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
 
 ---
 
@@ -157,8 +157,13 @@ impacted-specs lane selects by import graph rather than by tag (#871/#1054).
   `POST /api/v1/models/enabled_models` and `GET /api/v1/models/enabled_models`.
 - **Test 2: none** — it creates its memory base through the API with an
   `embedding_model` string and no provider configured (measured: `201`).
-- The default vector database is **Chroma Local**, bundled with the instance, so
-  no external vector service is required.
+- The default vector database is the local store bundled with the instance —
+  **SQLite Local** since `1.13.0.dev33` (langflow-ai/langflow#15509 retired local
+  Chroma on the 1.13 line), **Chroma Local** before — so no external vector
+  service is required. The registration request names no backend, so the server
+  picks that default (measured on `1.13.0.dev33`: `POST /api/v1/memories/` with
+  `{name, flow_id, embedding_model, threshold}` answers `201` with
+  `backend_type: "sqlite"`, `backend_config: {}`; #2175).
 - `POST /api/v1/flows/` + `DELETE /api/v1/flows/{id}` (flow lifecycle),
   `POST /api/v1/memories`, `GET /api/v1/memories?flow_id=<id>`,
   `DELETE /api/v1/memories/{id}` (`204`) and `GET /api/v1/knowledge_bases/`.
@@ -189,8 +194,8 @@ is shared with parallel workers.
   separate wave item, and where all three known upstream defects live.
 - The LLM Preprocessing branch (`preprocessing: true` + `preproc_model`), which
   the API answers `422` for when the model is missing.
-- Non-`chroma` vector databases (Chroma Cloud, OpenSearch, pgvector), which need
-  DB Providers configured.
+- Vector databases other than the local default (OpenSearch, pgvector), which
+  need DB Providers configured.
 - Duplicate-name handling (`409`), `PATCH`, `/flush`, `/regenerate` and
   `/mismatch`.
 - The Agent's conversation memory (§6.3) — a different surface sharing the word.

@@ -11,13 +11,14 @@ import {
   deleteKnowledgeBase,
   getKnowledgeBase,
 } from "../../../../helpers/knowledge/knowledge-base";
+import { listAllChunks } from "../../../../helpers/knowledge/ingestion";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 // §5.2.2 + §5.2.3 — the *vectorization + retrieval* step of RAG ingestion. The
 // chunks produced by Split Text are embedded and indexed into a native (core,
-// Chroma-backed) Langflow Knowledge Base, then a static query retrieves the
+// SQLite-backed since 1.13.0.dev33) Langflow Knowledge Base, then a static query retrieves the
 // relevant chunk. Uses the core Knowledge component, not a vector-store bundle,
 // so it never yields a false failure on a packaging change. Spec doc:
 // docs/core-functionality/knowledge-ingestion-management/vector-store-index-query.md
@@ -223,12 +224,9 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-// Quarantined for #2175: hard failure on the VM daily of 2026-10-05 (1.13.0.dev33), a guard-tripped
-// day judged non-environmental. Upstream langflow-ai/langflow#15509 removed Chroma, which this
-// spec still uses. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-test.fixme(
+test(
   "Knowledge Base indexes the ingested document chunks (available for query)",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);
@@ -238,10 +236,31 @@ test.fixme(
       await runKnowledgeNode(page, INGEST_NODE);
     });
 
-    await test.step("the Knowledge Base holds exactly the expected chunks", async () => {
-      // Causal proof the ingest embedded + indexed the document: the KB reports
-      // one indexed chunk per Split Text row. A broken key/index leaves it at 0.
-      const kbName = createdKbNames[createdKbNames.length - 1];
+    const kbName = createdKbNames[createdKbNames.length - 1];
+
+    await test.step("the Knowledge Base stores exactly the expected chunks", async () => {
+      // Causal proof the ingest embedded + indexed the document: the KB stores
+      // one chunk per Split Text row, and the sentinel sentence is one of them.
+      // A broken key/index stores none.
+      const headers = await authHeaders(page);
+      const { total, chunks } = await listAllChunks(page.request, kbName, {}, { headers });
+      expect(total).toBe(EXPECTED_CHUNKS);
+      expect(chunks.filter((c) => c.content.includes(CHUNK_SENTINEL))).toHaveLength(1);
+    });
+
+    await test.step("the Knowledge Base records the same chunk count", async () => {
+      // DECLARED FAILING (#2186, LE-2912). Since langflow-ai/langflow#15509
+      // (1.13.0.dev33) a Knowledge-component ingest leaves the KB row at
+      // `chunks: 0` / `status: "empty"` while the chunks above are stored:
+      // `backend_for_name` returns the `_GuardedMethods` proxy, so
+      // `isinstance(backend, BaseVectorStoreBackend)` is False and
+      // `_refresh_kb_stats` never runs. The assertion below is the CORRECT
+      // contract; it fails today, and test.fail() expects that. It is declared
+      // HERE, after the stored-chunk proof, so a broken bootstrap or ingest
+      // above still fails as an unexpected red instead of hiding behind it. The
+      // day upstream fixes it, this reports "expected to fail, but passed" —
+      // then delete test.fail() and this comment, keep @stable, and close #2186.
+      test.fail();
       const headers = await authHeaders(page);
       const kb = await getKnowledgeBase(page.request, kbName, { headers });
       expect(kb.chunks).toBe(EXPECTED_CHUNKS);
@@ -249,13 +268,9 @@ test.fixme(
   },
 );
 
-// Quarantined for #2175 with its serial sibling above: it was skipped, not failed, on the VM daily
-// of 2026-10-05 (1.13.0.dev33), but it creates its own Knowledge Base through the same Chroma helper,
-// so with the sibling in `test.fixme` it would run and hit the same 422. Upstream
-// langflow-ai/langflow#15509 removed Chroma. Lifting it (drop `test.fixme`, restore `@stable`) is #2175's deliverable.
-test.fixme(
+test(
   "Knowledge Base query returns the relevant chunk for the prompt",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);

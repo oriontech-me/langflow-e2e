@@ -1,6 +1,6 @@
 # Memory Base — ingestion failure modes: unreachable embedding provider and the association guard
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev28`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
 
 **File:** `tests/tests-automations/regression/core-functionality/memory/memory-base-ingestion-failures.spec.ts`
 
@@ -77,6 +77,11 @@ changes. Tests 3 and 4 carry `@regression` for #13883 and #12277.
 applies (no lane selector; test 3's Ollama runs on the daily, the manual lane and the VM
 lane, and is an explicit skip where there is none, as in `ollama-provider.spec.ts`).
 
+Quarantined 2026-10-05 (#2175) (tests 1–3) together with every spec that creates a knowledge base
+through `helpers/knowledge/knowledge-base.ts`: the helper still asked for `backend_type:
+"chroma"`, which langflow-ai/langflow#15509 retired on the 1.13 line (`1.13.0.dev33`
+answers `422`). The helper now creates `sqlite` knowledge bases and the tag is back.
+
 ---
 
 ## Validation criterion *(required)*
@@ -148,6 +153,8 @@ lane, and is an explicit skip where there is none, as in `ollama-provider.spec.t
   superuser (which takes its variables with it). Only the user's empty
   `knowledge_bases/<username>/` directory is left on disk, which no route removes —
   the same residue #2043 records for its empty `<flow_id>` upload directory.
+  Every teardown step runs even when an earlier one throws, and the failures are
+  rethrown together (#2175): a failed delete used to abort the hook before the flow's.
 
 ---
 
