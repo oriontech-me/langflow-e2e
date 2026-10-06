@@ -363,9 +363,12 @@ test("a routine still waiting for its turn is left to wait: it is doing nothing,
   const dir = makeTempDir("run-daily-routines-wait-");
   try {
     const calls = join(dir, "systemctl.calls");
-    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl: routineSystemctl(calls), flock: "#!/bin/sh\nexit 0\n" });
+    const flockCalls = join(dir, "flock.calls");
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl: routineSystemctl(calls), flock: `#!/bin/sh\necho "$*" >> ${JSON.stringify(flockCalls)}\nexit 0\n` });
     const log = readFileSync(calls, "utf8");
     assert.doesNotMatch(log, /^stop e2e-routine-/m, log);
+    // The probe: non-blocking, on the lock the routines take, and nothing held after it.
+    assert.equal(readFileSync(flockCalls, "utf8"), `-n ${join(dir, "heavy.lock")} true\n`);
     assert.match(r.log, /leaving the routine e2e-routine-migration\.service: it is waiting for its turn/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -382,6 +385,22 @@ test("with the lock held, only the routine that holds it is stopped", () => {
     assert.match(log, /^stop e2e-routine-migration\.service$/m, log);
     assert.doesNotMatch(log, /^stop e2e-routine-validation\.service$/m, log);
     assert.match(r.log, /leaving the routine e2e-routine-validation\.service/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a holder named for no listed unit is unknown: every routine is stopped", () => {
+  // A routine whose routine_start name is not its unit's would otherwise be the one left
+  // running beside the daily (review of #2190).
+  const dir = makeTempDir("run-daily-routines-ghost-");
+  try {
+    const calls = join(dir, "systemctl.calls");
+    writeFileSync(join(dir, "heavy.lock.holder"), "ghost (pid 4242) since 20261006T074500Z\n");
+    runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl: routineSystemctl(calls), flock: "#!/bin/sh\nexit 1\n" });
+    const log = readFileSync(calls, "utf8");
+    assert.match(log, /^stop e2e-routine-migration\.service$/m, log);
+    assert.match(log, /^stop e2e-routine-validation\.service$/m, log);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
