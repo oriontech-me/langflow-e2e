@@ -135,3 +135,64 @@ def test_an_unreadable_seed_state_is_this_machines_not_the_products(tmp_path, mo
     monkeypatch.setattr(cell, "login", lambda api, how: None)
     rc = cell.main(["verify", "--url", "http://x", "--state", str(tmp_path / "missing.json")])
     assert rc == 5
+
+
+def test_a_credential_reply_must_be_the_one_asked_for():
+    # A 200 whose chat output is an error string is what a key that did not decrypt can
+    # look like; any non-empty text used to pass (review of #2194).
+    assert cell.credential_verdict("Ready.")[1] == "pass"
+    for text in ("Error: 401 Incorrect API key provided", "", "Sure! How can I help?"):
+        assert cell.credential_verdict(text)[1] == "fail", text
+    assert cell.credential_verdict("Error code: 429 - rate limit reached")[1] == "blocked"
+
+
+def test_a_witness_reply_that_reads_like_an_error_is_not_a_reply():
+    assert not cell.looks_like_error("ready")
+    assert cell.looks_like_error("Error: connection refused to http://10.0.0.9:11464")
+
+
+class _MsgApi:
+    def __init__(self, answers):
+        self.answers = list(answers)
+
+    def json(self, method, path, **_):
+        return self.answers.pop(0) if self.answers else []
+
+
+def test_the_seed_waits_briefly_for_messages_and_returns_none_when_there_are_none(monkeypatch):
+    monkeypatch.setattr(cell.time, "sleep", lambda s: None)
+    assert cell.seeded_messages(_MsgApi([[], [{"id": "m1"}]]), "s") == [{"id": "m1"}]
+    assert cell.seeded_messages(_MsgApi([]), "s", seconds=0) == []
+
+
+class _AdoptApi:
+    def __init__(self, users, patch_error=None):
+        self.users = users
+        self.patch_error = patch_error
+        self.logged_in = None
+
+    def json(self, method, path, **_):
+        if method == "GET":
+            return self.users
+        if self.patch_error:
+            raise self.patch_error
+        return {}
+
+    def login_password(self, username, password):
+        self.logged_in = username
+
+
+STATE = {"user": {"id": "u1", "username": "langflow"}}
+
+
+def test_adopt_reads_a_users_page_and_a_bare_list_alike():
+    for users in ({"users": [{"id": "u1", "username": "langflow"}]}, [{"id": "u1", "username": "langflow"}]):
+        api, c = _AdoptApi(users), cell.Checks()
+        assert cell.adopt_default_user(api, STATE, c) is True, users
+        assert api.logged_in == "langflow"
+
+
+def test_a_kept_account_the_admin_api_cannot_reactivate_is_not_reported_as_deleted():
+    api, c = _AdoptApi({"users": [{"id": "u1", "username": "langflow"}]}, patch_error=cell.ApiError(422, "no password field", "u")), cell.Checks()
+    assert cell.adopt_default_user(api, STATE, c) is False
+    assert [(n, v) for n, v, _ in c.rows] == [("default-user-kept", "pass"), ("default-user-adopt", "fail")]

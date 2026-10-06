@@ -238,7 +238,11 @@ def seed(api: Api, args) -> dict:
     # Messages: one run of the first witness, in a session of its own.
     session = f"{SEED_TAG}-{uuid.uuid4().hex[:8]}"
     text = run_text(api, state["flows"][0]["id"], "Reply with the single word: ready", session, state["api_key"]["value"])
-    msgs = api.json("GET", f"/api/v1/monitor/messages?session_id={urllib.parse.quote(session)}") or []
+    msgs = seeded_messages(api, session)
+    if not msgs:
+        # verify requires them: a seed with none would turn into a red against the TARGET
+        # for what happened on the source (review of #2194).
+        raise RuntimeError(f"the witness run stored no messages in session {session} (reply: {text[:80]!r})")
     state["messages"] = {"session": session, "count": len(msgs), "ids": sorted(m["id"] for m in msgs), "reply": text[:200]}
 
     # A file: the row and the bytes.
@@ -251,6 +255,17 @@ def seed(api: Api, args) -> dict:
     # every AUTO_LOGIN-off cell red for 26 flows that were never the user's (2026-10-06).
     state["flow_count"] = owned_flows(api, me["id"])
     return state
+
+
+def seeded_messages(api: Api, session: str, seconds: int = 10) -> list:
+    """The session's messages, waited for briefly: a run's history may land just after
+    its answer."""
+    deadline = time.time() + seconds
+    while True:
+        msgs = api.json("GET", f"/api/v1/monitor/messages?session_id={urllib.parse.quote(session)}") or []
+        if msgs or time.time() >= deadline:
+            return msgs
+        time.sleep(1)
 
 
 def owned_flows(api: Api, user_id: str) -> int:
@@ -288,7 +303,8 @@ def adopt_default_user(api: Api, state: dict, checks: Checks) -> bool:
     reactivates it and sets a password, and the rest of the checks run as that account,
     so they see what it owns."""
     users = api.json("GET", "/api/v1/users/?skip=0&limit=200")
-    found = [u for u in users.get("users", users if isinstance(users, list) else []) if u["username"] == state["user"]["username"]]
+    listed = users.get("users", []) if isinstance(users, dict) else (users or [])
+    found = [u for u in listed if u.get("username") == state["user"]["username"]]
     if not found:
         checks.add("default-user-kept", "fail", f"no user '{state['user']['username']}' after the upgrade: deleted (#15326)")
         return False
@@ -300,8 +316,14 @@ def adopt_default_user(api: Api, state: dict, checks: Checks) -> bool:
     password = f"Migration-{uuid.uuid4().hex[:12]}!"
     # The admin path #15326 names: PATCH /api/v1/users/{id}. reset-password is the user's
     # own and asks for the current password, which nobody has for this account.
-    api.json("PATCH", f"/api/v1/users/{u['id']}", body={"is_active": True, "password": password})
-    api.login_password(u["username"], password)
+    # Its own check: the account WAS kept, so a refusal here is the admin API's or the
+    # login's, never #15326's.
+    try:
+        api.json("PATCH", f"/api/v1/users/{u['id']}", body={"is_active": True, "password": password})
+        api.login_password(u["username"], password)
+    except Exception as e:
+        checks.add("default-user-adopt", "fail", f"kept, but could not be reactivated and signed in: {type(e).__name__}: {e}")
+        return False
     return True
 
 
@@ -358,7 +380,9 @@ def verify(api: Api, state: dict, args) -> Checks:
 
     def run_witness():
         text = run_text(api, state["flows"][1]["id"], "Reply with the single word: ready", f"{SEED_TAG}-verify-{uuid.uuid4().hex[:6]}", state["api_key"]["value"])
-        return bool(text.strip()), f"ollama replied: {text.strip()[:60]!r}"
+        # Any reply from a 1B model, but not an error rendered as the chat output.
+        ok = bool(text.strip()) and not looks_like_error(text)
+        return ok, f"ollama replied: {text.strip()[:60]!r}"
 
     c.run("projects", projects)
     c.run("flows", witness_flows)
@@ -388,6 +412,16 @@ def verify(api: Api, state: dict, args) -> Checks:
     return c
 
 
+# An error a flow can render as its chat output instead of failing the run: a reply that
+# reads like one is not a reply.
+_ERROR_TEXT = ("error code:", "error:", "incorrect api key", "invalid api key", "authentication", "unauthorized", "traceback", "exception")
+
+
+def looks_like_error(text: str) -> bool:
+    t = text.strip().lower()
+    return any(m in t for m in _ERROR_TEXT)
+
+
 # The provider's own refusals: rate limit and quota. Never 401 / invalid key, which is
 # what a credential that failed to decrypt produces -- the case this check exists for.
 _PROVIDER_REFUSAL = ("insufficient_quota", "exceeded your current quota", "rate limit", "rate_limit", "error code: 429", "status code 429")
@@ -397,21 +431,34 @@ def _credential_check(c: "Checks", api, state):
     """The one real call. A provider refusing mid-run (429, quota) is `blocked`, like
     the pre-flight probe's verdict: the decrypt is neither proved nor disproved."""
     try:
-        ok, detail = _credential_call(api, state)
-        c.add("credential", "pass" if ok else "fail", detail)
+        text = _credential_call(api, state)
     except ApiError as e:
         body = e.body.lower()
         if any(m in body for m in _PROVIDER_REFUSAL):
             c.add("credential", "blocked", f"the provider refused the call (HTTP {e.status}): not proved today, not disproved")
         else:
             c.add("credential", "fail", str(e))
+        return
     except Exception as e:
         c.add("credential", "fail", f"{type(e).__name__}: {e}")
+        return
+    c.add(*credential_verdict(text))
 
 
-def _credential_call(api, state):
-    text = run_text(api, state["credential_flow"]["id"], "Reply with the single word: ready", f"{SEED_TAG}-cred-{uuid.uuid4().hex[:6]}", state["api_key"]["value"])
-    return bool(text.strip()), f"decrypted and called OpenAI: {text.strip()[:40]!r}"
+def credential_verdict(text: str) -> tuple:
+    """A reply proves the decrypt only when it is the reply asked for. A 200 whose chat
+    output is an error string -- a key that did not decrypt, rendered as the message --
+    is the case this check exists for (review of #2194)."""
+    t = text.strip()
+    if any(m in t.lower() for m in _PROVIDER_REFUSAL):
+        return "credential", "blocked", f"the provider refused the call: not proved today, not disproved: {t[:80]!r}"
+    if "ready" in t.lower() and not looks_like_error(t):
+        return "credential", "pass", f"decrypted and called OpenAI: {t[:40]!r}"
+    return "credential", "fail", f"the reply is not the one asked for: {t[:120]!r}"
+
+
+def _credential_call(api, state) -> str:
+    return run_text(api, state["credential_flow"]["id"], "Reply with the single word: ready", f"{SEED_TAG}-cred-{uuid.uuid4().hex[:6]}", state["api_key"]["value"])
 
 
 def probe_verdict() -> str:
@@ -479,8 +526,8 @@ def main(argv=None) -> int:
         try:
             if not adopt_default_user(api, state, checks):
                 return 1
-        except ApiError as e:
-            checks.add("default-user-kept", "fail", str(e))
+        except Exception as e:  # the listing itself: a failed check, never a traceback
+            checks.add("default-user-kept", "fail", f"the users could not be listed: {type(e).__name__}: {e}")
             return 1
     result = verify(api, state, args)
     return 1 if (result.failed or checks.failed) else 0
