@@ -25,6 +25,7 @@ import {
   readWorkflowTriggers,
   unitTestsCovering,
   vmLaneReach,
+  withNpmRuns,
   workflowDispatchability,
 } from "./ci-change-coverage.mjs";
 
@@ -1269,6 +1270,177 @@ test("against the live repo, the VM lane is reached from the systemd unit down",
   assert.match(daily, /\.\/scripts\/run-e2e\.sh/, "the wrapper still calls run-e2e.sh by that spelling");
 });
 
+// ── #2192: mixed diffs, npm-run routes, skill scripts, comments ─────────────
+
+test("with specs selected, a would-be canary is never returned, and the advice still speaks", () => {
+  // A mixed diff: the lane runs the impacted specs, so substituting the canary would
+  // REPLACE them. The classifier is consulted for its advice only.
+  const r = classifyCiChange({
+    changed: [".github/actions/wait-for-backend/action.yml"],
+    refs,
+    specsSelected: true,
+  });
+  assert.notEqual(r.verdict, "canary");
+  assert.deepEqual(r.canarySpecs, []);
+  assert.equal(r.verdict, "dispatch", "the other lane using the action is still named");
+  const { annotation, summaryLines } = dispatchAdvice(r);
+  assert.match(annotation, /THIS lane selected the impacted specs instead of the canary/);
+  // Not "run": they may all be lane-gated (`@enterprise`/`@serving`), which is decided
+  // AFTER this verdict and skips the run entirely.
+  assert.doesNotMatch(annotation, /specs run on THIS lane|exercise THIS lane/);
+  // The action IS this lane's wiring, and the canary that would have run it did not.
+  assert.deepEqual(r.prLaneFiles, [".github/actions/wait-for-backend/action.yml"]);
+  assert.match(annotation, /own wiring \(\.github\/actions\/wait-for-backend\/action\.yml\), and the canary did not run/);
+  assert.match(summaryLines[0], /this lane's own wiring changed/);
+  assert.match(summaryLines.join("\n"), /a lane the impacted specs cannot exercise/);
+});
+
+test("with specs selected, a VM-only file still closes on 'nothing in CI', scoped to the CI part", () => {
+  // The specs a mixed diff selects never reach the VM, so their run proves nothing
+  // about this file — dropping the conclusion there would read as partial coverage.
+  const r = classifyCiChange({ changed: ["scripts/remove-stable-from-failures.ts"], refs: vmRefs, specsSelected: true });
+  assert.equal(r.verdict, "vm-only");
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /runs only on the VM lane/);
+  assert.match(annotation, /Nothing in CI can prove this change's CI part before merge — the impacted specs do not reach it/);
+  // …but not when this lane's own wiring changed too: those specs may exercise it.
+  const mixed = classifyCiChange({
+    changed: ["scripts/remove-stable-from-failures.ts", PR_LANE],
+    refs: vmRefs,
+    specsSelected: true,
+  });
+  assert.doesNotMatch(dispatchAdvice(mixed).annotation, /Nothing in CI can prove/);
+});
+
+test("with specs selected and only PR-lane surface, the unproven wiring is still named", () => {
+  // The review of #2192's first draft: this case returned `none` and NO advice, so a
+  // PR editing pr-validation.yml beside an LLM-free spec said nothing — while the
+  // sweep and health gate it may have rewired were skipped.
+  const r = classifyCiChange({ changed: [PR_LANE], refs, specsSelected: true });
+  assert.equal(r.verdict, "none");
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /own wiring \(\.github\/workflows\/pr-validation\.yml\), and the canary did not run/);
+  assert.doesNotMatch(annotation, /Nothing in CI can prove/);
+  assert.doesNotMatch(annotation, /other lanes/, "there are none to speak of");
+  // The third route into the PR lane — a script it runs, here by import — is recorded too.
+  const viaScript = classifyCiChange({ changed: ["scripts/lib/spec-path.mjs"], refs: importRefs, specsSelected: true });
+  assert.deepEqual(viaScript.prLaneFiles, ["scripts/lib/spec-path.mjs"]);
+  // …while a spec-less `none` stays silent, as it always was.
+  assert.equal(dispatchAdvice(classifyCiChange({ changed: ["docs/x.md"], refs })).annotation, null);
+});
+
+test("the state fetch covers a skill's scripts too — a skill script can name a dispatch", () => {
+  // Executed against real paths rather than spelled: the gate's own regex, taken out of
+  // the workflow. Reverting it to `^(\.github/|scripts/)` left every other test green.
+  const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
+  const m = /if grep -qE '([^']+)' \/tmp\/changed\.txt; then\n\s+# `-s` as well as the exit status/.exec(text);
+  assert.ok(m, "the state-fetch gate is where this test expects it");
+  const gate = new RegExp(m[1]);
+  assert.ok(gate.test(".claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs"));
+  assert.ok(gate.test("scripts/x.mjs") && gate.test(".github/workflows/x.yml"));
+  assert.ok(!gate.test("docs/x.md"));
+});
+
+test("the lane's gate runs the classifier on a mixed diff, and tells it so", () => {
+  // Executed, not spelled (#1226): the lines that decide, cut out of the workflow and
+  // run under bash against the three shapes that matter.
+  const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
+  const start = text.indexOf("CI_SURFACE=");
+  const end = text.indexOf("\n", text.indexOf('if [ "$TOTAL" -eq 0 ] || grep -qE "$CI_SURFACE"'));
+  assert.ok(start > 0 && end > start, "the gate is where this test expects it");
+  const gate = text.slice(start, end).replace(/^\s+/gm, "");
+  const tmp = makeTempDir("cc-gate-");
+  const run = (total, changed) => {
+    fs.writeFileSync(path.join(tmp, "changed.txt"), `${changed.join("\n")}\n`);
+    const script = `TOTAL=${total}\n${gate.replaceAll("/tmp/changed.txt", path.join(tmp, "changed.txt"))}\necho RUN; else echo SKIP; fi\necho "flag=$SPECS_SELECTED"\n`;
+    return execFileSync("bash", ["-c", script], { encoding: "utf8" }).trim().split("\n");
+  };
+  assert.deepEqual(run(0, ["docs/x.md"]), ["RUN", "flag="], "a spec-less diff always runs it, as before");
+  assert.deepEqual(run(3, ["tests/a.spec.ts", "ops/vm/run-daily.sh"]), ["RUN", "flag=--specs-selected"]);
+  assert.deepEqual(
+    run(3, ["tests/a.spec.ts", ".claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs"]),
+    ["RUN", "flag=--specs-selected"],
+  );
+  assert.deepEqual(run(3, ["tests/a.spec.ts", "docs/x.md"]), ["SKIP", "flag=--specs-selected"], "no CI surface, no noise");
+});
+
+test("an `npm run` route reaches what the package script runs, recursively", () => {
+  const npm = new Map([
+    ["coverage:summary", "ts-node scripts/coverage-summary.ts && npm run -s inner"],
+    ["inner", "node scripts/inner.mjs && npm run inner"],
+  ]);
+  const expanded = withNpmRuns("npm run coverage:summary\nnpm run not-defined", npm);
+  assert.match(expanded, /scripts\/coverage-summary\.ts/);
+  assert.match(expanded, /scripts\/inner\.mjs/, "and through a package script that runs another");
+  const r = buildCiReferences({
+    workflows: new Map([[PR_LANE, "on: pull_request\nsteps:\n  - run: npm run -s coverage:summary"]]),
+    actions: new Map(),
+    npmScripts: npm,
+  });
+  assert.ok(r.workflowScripts.get(PR_LANE).has("scripts/inner.mjs"));
+  // …and the VM lane follows it too: this is the route `run-e2e.sh` commits by.
+  const vm = vmLaneReach(new Map([["ops/vm/x.sh", "npm run coverage:summary"]]), new Map(), npm);
+  assert.ok(vm.has("scripts/coverage-summary.ts"));
+});
+
+test("a commented-out run is not wiring, in a workflow or an action", () => {
+  const r = buildCiReferences({
+    workflows: new Map([
+      [".github/workflows/w.yml", "on: push\n# node scripts/in-a-comment.mjs\nsteps:\n  - run: node scripts/real.mjs # and scripts/trailing.mjs\n"],
+    ]),
+    actions: new Map([["a", "runs:\n  steps:\n    # npx ts-node scripts/action-comment.ts\n    - run: echo '#not a comment scripts/quoted.mjs'"]]),
+  });
+  const scripts = r.workflowScripts.get(".github/workflows/w.yml");
+  assert.ok(scripts.has("scripts/real.mjs"));
+  assert.ok(!scripts.has("scripts/in-a-comment.mjs"));
+  assert.ok(!scripts.has("scripts/trailing.mjs"));
+  assert.ok(!r.actionScripts.get("a").has("scripts/action-comment.ts"));
+  assert.ok(r.actionScripts.get("a").has("scripts/quoted.mjs"), "a quoted `#` is not a comment");
+});
+
+test("a skill's own scripts/ is a script root, spelled whole on both scans", () => {
+  const skill = ".claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs";
+  const r = buildCiReferences({
+    workflows: new Map([[".github/workflows/w.yml", "on: workflow_dispatch\nsteps:\n  - uses: ./.github/actions/g"]]),
+    actions: new Map([["g", `runs:\n  steps:\n    - run: node ${skill} --json`]]),
+  });
+  assert.equal(classifyCiChange({ changed: [skill], refs: r }).verdict, "dispatch");
+  // The VM scan's prefix used to swallow the skill root and capture a phantom
+  // `scripts/build-triage-dataset.mjs` out of the line that runs the real one.
+  const vm = vmLaneReach(
+    new Map([["ops/vm/x.sh", "if node .claude/skills/t/scripts/build-triage-dataset.mjs \\"]]),
+    new Map(),
+  );
+  assert.deepEqual([...vm], [".claude/skills/t/scripts/build-triage-dataset.mjs"]);
+});
+
+test("against the live repo, each of #2192's four cases is answered", () => {
+  const verdict = (file, ...flags) => {
+    const r = cli(["--root", REPO_ROOT, "--format=json", ...flags, "--stdin"], `${file}\n`);
+    assert.equal(r.status, 0, r.stderr);
+    return r.json;
+  };
+  // 1. `run-e2e.sh` → `npm run coverage:summary` → the script that commits to main.
+  assert.equal(verdict("scripts/coverage-summary.ts").vmLane[0]?.file, "scripts/coverage-summary.ts");
+  // 2. A skill script, on the VM lane and on Actions.
+  const dataset = verdict(".claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs");
+  assert.equal(dataset.verdict, "vm-only");
+  assert.deepEqual(dataset.vmLane[0].unitTests, [
+    ".claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.test.mjs",
+  ]);
+  // …and reached by IMPORT alone, which needs the skill root in the importer graph:
+  // `triage-core.mjs` is spelled under no `.github/` file, only imported by the
+  // script `guard-dedicated-issue` runs.
+  assert.equal(verdict(".claude/skills/langflow-e2e-triage/scripts/lib/triage-core.mjs").verdict, "dispatch");
+  assert.equal(verdict(".claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs").verdict, "dispatch");
+  // 3. `daily-stable.yml` names run-e2e.sh only in comments; that is not wiring.
+  const e2e = verdict("scripts/run-e2e.sh");
+  assert.equal(e2e.verdict, "vm-only");
+  assert.deepEqual(e2e.dispatchWorkflows, []);
+  // 4. A mixed diff never yields the canary.
+  assert.notEqual(verdict(PR_LANE, "--specs-selected").verdict, "canary");
+});
+
 // ── The real repo ───────────────────────────────────────────────────────────
 
 test("every canary spec exists, is @stable, and needs no provider model", () => {
@@ -1364,9 +1536,11 @@ test("an unknown flag exits 2 — undecidable must not read as 'no CI change'", 
 test("pr-validation.yml runs the classifier and substitutes the canary specs", () => {
   const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
   assert.match(text, /node scripts\/ci-change-coverage\.mjs --stdin --format=json/);
-  // Only when the import graph found nothing — a CI change that DOES touch specs
-  // must still run those specs, not the canary.
-  assert.match(text, /if \[ "\$TOTAL" -eq 0 \]; then/);
+  // A CI change that DOES touch specs must still run those specs, not the canary:
+  // since #2192 the classifier runs on such a diff too, but told so, and it then never
+  // returns a canary (pinned by executing the gate below and by the classifier tests).
+  assert.match(text, /if \[ "\$TOTAL" -gt 0 \]; then SPECS_SELECTED="--specs-selected"; fi/);
+  assert.match(text, /ci-change-coverage\.mjs --stdin --format=json \$STATES \$BASE_CI \$SPECS_SELECTED/);
   assert.match(text, /SPECS=\$\(jq -r '\.canarySpecs \| join\(" "\)'/);
   // Both verdicts have to reach the reader; a silent canary is the same bug in a
   // new costume (#1012's no-silent-caps rule).

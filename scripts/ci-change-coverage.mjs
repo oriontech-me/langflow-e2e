@@ -37,6 +37,14 @@
  *   none      the diff touches no CI surface at all (docs, ROADMAP): nothing to
  *             say, and nothing to run.
  *
+ * A diff that ALSO impacts specs is classified too (`--specs-selected`, #2192): the
+ * lane runs those specs, `canary` is never returned, and only the advice is used —
+ * before, such a diff skipped this script and its other-lane surface went unmentioned.
+ *
+ * What counts as "runs" (#2192): comments in a workflow, an action or a shell script
+ * are dropped first; `npm run <name>` is followed through `package.json`; and a skill's
+ * own `scripts/` (`.claude/skills/<skill>/scripts/`) is a script root beside `scripts/`.
+ *
  * The reachability is DERIVED from the YAML, never hardcoded: a workflow's
  * `scripts/x` references and its `uses: ./.github/actions/y`, plus each action's
  * own `scripts/x`. The VM lane is derived the same way, from the files under `ops/`
@@ -197,14 +205,20 @@ export const CANARY_SPECS = [
 // verdict at `none`: "the diff touches no CI surface at all". Measured over the real
 // `.github/`, widening it takes the token set from 47 to 51: the five `scripts/lib/**`
 // paths appear and the directory token `scripts/lib` goes, which is the right trade
-// because a directory is never a changed FILE. Three inert keys are unchanged and stay
-// inert — two are a real filename followed by a sentence-ending period (the `.` in this
-// class absorbs it), one is the literal `scripts/x` out of `pr-validation.yml`'s own
-// explanatory comment, the token scan reading only `.github/`. Those
-// periods are NOT what keeps a unit test out: `UNIT_TEST` below does that, as its live
-// sibling `daily-matrix-provider-keys.test.mjs` shows — a real token, resolving to
-// `none`. Belt and braces, not a single point of failure.
-const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._/-]+)/g;
+// because a directory is never a changed FILE. Two inert keys are unchanged and stay
+// inert — a real filename followed by a sentence-ending period (the `.` in this class
+// absorbs it). Those periods are NOT what keeps a unit test out: `UNIT_TEST` below does
+// that, as its live sibling `daily-matrix-provider-keys.test.mjs` shows — a real token,
+// resolving to `none`. Belt and braces, not a single point of failure.
+//
+// The optional `.claude/skills/<skill>/scripts/` root is the second place this repo
+// keeps scripts CI runs (#2192): `guard-dedicated-issue` runs
+// `.claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs`, and without the
+// root a change to it resolved to `none`.
+const SCRIPT_REF = /(?:^|[^\w/])((?:\.claude\/skills\/[A-Za-z0-9._-]+\/)?scripts\/[A-Za-z0-9._/-]+)/g;
+
+/** A changed path in either script root — `scripts/` or a skill's own `scripts/`. */
+const SCRIPT_PATH = /^(?:\.claude\/skills\/[^/]+\/)?scripts\//;
 
 /** A unit test — covered by `npm run test:scripts`, never CI wiring. */
 const UNIT_TEST = /\.test\.(mjs|mts|ts|js)$/;
@@ -232,11 +246,64 @@ export const VM_LANE_ROOT = "ops/";
 // `/`; the last character is never `.` or `/`, so a sentence-ending period is not
 // captured (unlike `SCRIPT_REF`, whose tokens are only ever compared, these are also
 // LOOKED UP, to follow one shell script into the next).
-const VM_SCRIPT_REF = /(?:^|[^\w-])(?:[^\s"'`()=<>|;]*\/)?(scripts\/[A-Za-z0-9._/-]*[A-Za-z0-9_-])/g;
+//
+// The prefix is LAZY and the skill root is part of the capture (#2192). Greedy, it
+// swallowed `.claude/skills/langflow-e2e-triage/` as a mere prefix and captured
+// `scripts/build-triage-dataset.mjs` — a file that does not exist — out of the very
+// line in `run-e2e.sh` that runs the real one. Lazy TWICE: `??` tries no prefix at all
+// before any prefix (a plain `?` tries the prefix first, and a lazy body inside it still
+// grows until it reaches the phantom), and `*?` then takes the shortest prefix, so the
+// earliest start wins — which is the skill root whenever there is one.
+const VM_SCRIPT_REF =
+  /(?:^|[^\w-])(?:[^\s"'`()=<>|;]*?\/)??((?:\.claude\/skills\/[A-Za-z0-9._-]+\/)?scripts\/[A-Za-z0-9._/-]*[A-Za-z0-9_-])/g;
+
+// `npm run <name>`, with the flags this repo writes in front of the name (#2192).
+const NPM_RUN = /\bnpm\s+run(?:-script)?\s+(?:(?:-s|--silent)\s+)*([A-Za-z0-9:._-]+)/g;
 const SOURCE_FILE = /\.(mjs|mts|ts|js)$/;
 const LOCAL_ACTION_REF = /\.\/\.github\/actions\/([A-Za-z0-9._-]+)/g;
 
 const matchAll = (text, re) => [...String(text).matchAll(re)].map((m) => m[1]);
+
+/**
+ * A YAML or shell file with its comments dropped, line by line (#2192).
+ *
+ * The reference scan read comments as wiring, and that is not a hypothetical: #2191's
+ * first commit documented the `vm-only` verdict in a `pr-validation.yml` comment that
+ * spelled `scripts/run-e2e.sh`, and a PR editing only that script flipped to `canary` —
+ * "a surface THIS lane runs" — for a script the lane never executes. `daily-stable.yml`
+ * still names it in comments alone, which is why it read as "dispatch daily-stable".
+ * `stripComment` is the same reader the trigger parser uses; a `#` not preceded by
+ * whitespace (`$#`, `${#x}`, a URL fragment) or inside quotes survives.
+ */
+const uncommented = (text) => String(text).split("\n").map(stripComment).join("\n");
+
+/**
+ * `text` followed by the body of every `npm run <name>` it reaches, recursively,
+ * through `package.json`'s `scripts` (#2192).
+ *
+ * `run-e2e.sh` runs `npm run coverage:summary`, which runs `scripts/coverage-summary.ts`
+ * and `scripts/stable-tests.ts` to commit to `main` — and the token scan saw only the
+ * name `coverage:summary`. The body is APPENDED rather than substituted, so the
+ * expansion can only ever add tokens. A name `package.json` does not define adds
+ * nothing; the `seen` set ends a script that runs itself.
+ */
+export function withNpmRuns(text, npmScripts) {
+  if (!npmScripts) return String(text);
+  const bodies = [];
+  const seen = new Set();
+  const queue = [String(text)];
+  while (queue.length > 0) {
+    for (const name of matchAll(queue.shift(), NPM_RUN)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const body = npmScripts.get(name);
+      if (body === undefined) continue;
+      bodies.push(body);
+      queue.push(body);
+    }
+  }
+  return [String(text), ...bodies].join("\n");
+}
 
 /** The one event that makes `gh workflow run <wf> --ref <branch>` possible. */
 export const DISPATCH_TRIGGER = "workflow_dispatch";
@@ -413,6 +480,8 @@ export function parseWorkflowStates(text) {
  *   file also counts as CI surface if some NAMED script imports it, transitively.
  *   `vmEntries` is `ops/**` and `shellScripts` is `scripts/**.sh`, both keyed by
  *   repo-relative path; together they derive what the VM lane runs (#2173).
+ *   `npmScripts` is `package.json`'s `scripts` as a name → command Map; when given,
+ *   every `npm run <name>` reaches what that command runs (#2192).
  */
 export function buildCiReferences({
   workflows,
@@ -421,10 +490,16 @@ export function buildCiReferences({
   scriptFiles = null,
   vmEntries = null,
   shellScripts = null,
+  npmScripts = null,
 }) {
+  // What a workflow or action RUNS: its text with comments dropped and every
+  // `npm run` expanded (#2192). Only the reference scan reads this; the trigger reader
+  // keeps its own comment handling over the raw text.
+  const wiring = (text) => withNpmRuns(uncommented(text), npmScripts);
+
   const actionScripts = new Map();
   for (const [name, text] of actions) {
-    actionScripts.set(name, new Set(matchAll(text, SCRIPT_REF)));
+    actionScripts.set(name, new Set(matchAll(wiring(text), SCRIPT_REF)));
   }
 
   // Triggers come from the base copy when there is one. A workflow the head has and
@@ -440,9 +515,10 @@ export function buildCiReferences({
   const workflowScripts = new Map();
   const workflowActions = new Map();
   for (const [file, text] of workflows) {
-    const used = new Set(matchAll(text, LOCAL_ACTION_REF));
+    const code = wiring(text);
+    const used = new Set(matchAll(code, LOCAL_ACTION_REF));
     workflowActions.set(file, used);
-    const scripts = new Set(matchAll(text, SCRIPT_REF));
+    const scripts = new Set(matchAll(code, SCRIPT_REF));
     // A workflow reaches a script THROUGH an action too — that indirection is
     // exactly how #1045 shipped (`wait-for-backend.mjs` is named nowhere in
     // pr-validation.yml, only in the action it uses).
@@ -483,7 +559,7 @@ export function buildCiReferences({
     // The unit tests that exist, so a VM-only verdict can name the ones that cover a
     // file. Not the whole `scripts/` map: only the paths, and only the tests.
     unitTests: new Set([...(graphFiles?.keys() ?? [])].filter((f) => UNIT_TEST.test(f))),
-    vmScripts: vmEntries ? vmLaneReach(vmEntries, shellScripts ?? new Map()) : new Set(),
+    vmScripts: vmEntries ? vmLaneReach(vmEntries, shellScripts ?? new Map(), npmScripts) : new Set(),
     vmLaneKnown: Boolean(vmEntries),
     // Whether `workflowDispatch` reflects the copy GitHub will actually resolve.
     triggersFromBase: Boolean(baseWorkflows),
@@ -557,15 +633,14 @@ export function importersOf(refs, file) {
  * #2173 is about. Terminates because each shell script is queued at most once — the
  * `reached` set guards the push.
  */
-export function vmLaneReach(vmEntries, shellScripts) {
+export function vmLaneReach(vmEntries, shellScripts, npmScripts = null) {
   const reached = new Set();
   // Comments are dropped before the scan in every non-JavaScript file — a shell
   // script, a systemd unit — because there they are where tools the lane never runs
   // get mentioned: `run-e2e.sh` cites `scripts/check-vm-env-parity.mjs` only in prose,
   // and reading that as a call reported four such files as VM-only. JavaScript is
   // left whole; its dependencies arrive by import, not by token.
-  const code = (file, text) =>
-    SOURCE_FILE.test(file) ? text : String(text).split("\n").map(stripComment).join("\n");
+  const code = (file, text) => (SOURCE_FILE.test(file) ? text : withNpmRuns(uncommented(text), npmScripts));
   const queue = [...vmEntries].map(([file, text]) => code(file, text));
   while (queue.length > 0) {
     for (const token of matchAll(queue.shift(), VM_SCRIPT_REF)) {
@@ -631,11 +706,14 @@ function workflowsReaching(refs, { action, script }) {
  *                              note?: string}[],
  *            reasons: string[]}}
  */
-export function classifyCiChange({ changed, refs, states = null }) {
+export function classifyCiChange({ changed, refs, states = null, specsSelected = false }) {
   const ciFiles = [];
   const reasons = [];
   const dispatch = new Set();
   const vmLane = [];
+  // The changed files that make up the PR lane's OWN wiring — what a canary exists to
+  // exercise. Recorded because, with specs selected, nothing else names them (#2192).
+  const prLaneFiles = [];
   let canary = false;
 
   const prActions = refs.workflowActions.get(PR_LANE) ?? new Set();
@@ -648,7 +726,7 @@ export function classifyCiChange({ changed, refs, states = null }) {
   for (const file of changed) {
     const isWorkflow = file.startsWith(".github/workflows/");
     const actionName = /^\.github\/actions\/([^/]+)\//.exec(file)?.[1];
-    const isScript = file.startsWith("scripts/");
+    const isScript = SCRIPT_PATH.test(file);
     // A README under `ops/` documents the lane and runs nowhere.
     const isVmWiring = file.startsWith(VM_LANE_ROOT) && !/\.md$/i.test(file);
     if (!isWorkflow && !actionName && !isScript && !isVmWiring) continue;
@@ -664,6 +742,7 @@ export function classifyCiChange({ changed, refs, states = null }) {
       ciFiles.push(file);
       if (file === PR_LANE) {
         canary = true;
+        prLaneFiles.push(file);
         reasons.push(`${file} IS the PR lane — its own wiring changed`);
       } else {
         dispatch.add(file);
@@ -684,6 +763,7 @@ export function classifyCiChange({ changed, refs, states = null }) {
       users.forEach((w) => dispatch.add(w));
       if (prActions.has(actionName)) {
         canary = true;
+        prLaneFiles.push(file);
         const also = users.length ? `, and by ${users.join(", ")}` : "";
         reasons.push(`.github/actions/${actionName} is used by the PR lane${also}`);
       } else {
@@ -756,6 +836,7 @@ export function classifyCiChange({ changed, refs, states = null }) {
     const alsoDispatch = users.length > 0 ? `, and by ${users.join(", ")}` : "";
     if (onPrLane) {
       canary = true;
+      prLaneFiles.push(file);
       // The PR-lane clause survives because it qualifies ONE named thing — the PR
       // lane — and `prScripts` is exactly the question it asks. It stays hedged
       // ("or through an action it uses") because `workflowScripts` folds in the
@@ -780,12 +861,20 @@ export function classifyCiChange({ changed, refs, states = null }) {
   // before merge and it names nothing: a script only the VM lane runs is first
   // exercised by the next VM daily after merge (#2173). Above `none`, because that is
   // the word for "no CI surface at all", and these scripts commit to `main`.
-  const verdict = canary ? "canary" : dispatch.size > 0 ? "dispatch" : vmLane.length > 0 ? "vm-only" : "none";
+  //
+  // `specsSelected` (#2192): the diff ALSO changed specs or what they import, so the
+  // lane runs those instead and this verdict is consulted for its advice only. A canary
+  // is then never returned — substituting it would replace the specs the diff actually
+  // impacts — and the lane booting is already proven by the run it is about to do.
+  const runsCanary = canary && !specsSelected;
+  const verdict = runsCanary ? "canary" : dispatch.size > 0 ? "dispatch" : vmLane.length > 0 ? "vm-only" : "none";
   const dispatchWorkflows = [...dispatch].sort();
   return {
     verdict,
+    specsSelected,
+    prLaneFiles: [...new Set(prLaneFiles)].sort(),
     ciFiles: [...new Set(ciFiles)].sort(),
-    canarySpecs: canary ? [...CANARY_SPECS] : [],
+    canarySpecs: runsCanary ? [...CANARY_SPECS] : [],
     vmLane: vmLane.sort((a, b) => a.file.localeCompare(b.file)),
     dispatchWorkflows,
     // Every named workflow carries whether it can actually BE dispatched (#1609).
@@ -841,6 +930,15 @@ const vmWhere = (v) =>
     ? "runs only on the VM lane, outside GitHub Actions, so its first real run is the next VM daily after merge"
     : "also runs on the VM lane, outside GitHub Actions, which nothing above exercises";
 
+/**
+ * The PR lane's own wiring changed in a diff whose specs replaced the canary (#2192).
+ * Worded over what is NOT known: whether a step ran depends on what the specs need,
+ * which this script does not decide.
+ */
+function unprovenWiringSentence(files) {
+  return `It also changes this lane's own wiring (${list(files)}), and the canary did not run: the steps it forces (provider sweep, health gate, model pin, browser install) run only when the impacted specs need them, so a step they skip is proven only after merge.`;
+}
+
 /** One sentence per VM-lane file, for the annotation (#2173). */
 function vmSentence(v) {
   return `${v.file} ${vmWhere(v)}. ${vmTests(v)}`;
@@ -875,17 +973,34 @@ export function dispatchAdvice(result) {
   // behaviour before any of this. The canary proves this lane boots; it says nothing
   // about the other lanes the same diff reaches, so their instruction still has to be
   // printed. `none` has nothing to say by definition.
-  if (!result || !["dispatch", "canary", "vm-only"].includes(result.verdict)) {
+  // `none` is admitted only for a mixed diff, whose PR-lane wiring may still have
+  // something to say; a spec-less `none` is silent by definition.
+  if (
+    !result ||
+    !(["dispatch", "canary", "vm-only"].includes(result.verdict) || (result.specsSelected && result.verdict === "none"))
+  ) {
     return { annotation: null, summaryLines: [] };
   }
+  // Something in CI demonstrably runs on this PR — the canary, or the impacted specs of
+  // a diff that also touched CI surface (#2192) — so the closing "nothing in CI can
+  // prove this" is never true of the whole change.
+  //
+  // The two are NOT equivalent, and the first draft of #2192 said they were. The canary
+  // forces the provider sweep, and with it the health gate; impacted specs that need no
+  // model run with both SKIPPED. So with specs selected the PR lane's own wiring is
+  // proven only as far as those specs happen to reach it, and the advice says so.
+  const onCanary = result.verdict === "canary";
+  const ranSomething = onCanary || result.specsSelected === true;
+  const unprovenWiring = !onCanary && result.specsSelected === true ? (result.prLaneFiles ?? []) : [];
   // The VM lane rides on every verdict, the way dispatch targets ride on a canary: no
   // workflow exercises it, so neither a canary nor a dispatch says anything about it.
   const vmLane = result.vmLane ?? [];
   const vmOnly = vmLane.filter((v) => v.vmOnly);
   if (
-    result.verdict === "canary" &&
+    ranSomething &&
     (result.dispatchTargets ?? result.dispatchWorkflows ?? []).length === 0 &&
-    vmLane.length === 0
+    vmLane.length === 0 &&
+    unprovenWiring.length === 0
   ) {
     return { annotation: null, summaryLines: [] };
   }
@@ -930,14 +1045,16 @@ export function dispatchAdvice(result) {
   // and folding a doubt into a conclusion is exactly what the header forbids (#1012).
   const blocked = [...absent, ...off, ...no];
 
-  const onCanary = result.verdict === "canary";
   const sentences = [
     onCanary
       ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
-      : result.verdict === "vm-only"
+      : ranSomething
+        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); THIS lane selected the impacted specs instead of the canary${targets.length > 0 || vmLane.length > 0 ? ", and they do not exercise the other lanes it reaches" : ""}.`
+        : result.verdict === "vm-only"
         ? `Change to ${list(result.ciFiles ?? [])}, which no GitHub workflow runs — nothing in CI proves it works.`
         : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
   ];
+  if (unprovenWiring.length > 0) sentences.push(unprovenWiringSentence(unprovenWiring));
   if (yes.length > 0) sentences.push(`Dispatch ${list(yes)} on this branch before merging (#1159).`);
   for (const t of absent) {
     sentences.push(
@@ -978,24 +1095,38 @@ export function dispatchAdvice(result) {
   // …and never on a canary, where something in CI demonstrably did run. A file only
   // the VM lane runs is as established as a workflow that cannot be dispatched: both
   // are facts about where it runs, not doubts about it.
+  //
+  // A mixed diff (#2192) gets the same conclusion, scoped to its CI part: the specs it
+  // selected do not reach another lane or the VM, so their run proves none of that. It
+  // is withheld when this lane's own wiring changed, which those specs may exercise.
   if (
     !onCanary &&
+    unprovenWiring.length === 0 &&
     yes.length === 0 &&
     (blocked.length > 0 || vmOnly.length > 0) &&
     unknown.length === 0 &&
     unverified.length === 0
   ) {
     sentences.push(
-      "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
+      result.specsSelected
+        ? "Nothing in CI can prove this change's CI part before merge — the impacted specs do not reach it: rely on the unit lanes and local verification, and watch the post-merge run (#1609)."
+        : "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
     );
   }
 
   const summaryLines = [];
+  if (unprovenWiring.length > 0) {
+    summaryLines.push(
+      `- ⚠️ **this lane's own wiring changed** (${unprovenWiring.map((f) => `\`${f}\``).join(", ")}) **and the canary did not run**, because the diff also impacts specs. The steps a canary forces (provider sweep, health gate, model pin, browser install) run only when those specs need them, so a step they skip is proven only after merge (#2192).`,
+    );
+  }
   if (yes.length > 0) {
     summaryLines.push(
       onCanary
         ? "- ⚠️ **the diff also reaches a lane the canary cannot exercise.** Dispatch before merging:"
-        : "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
+        : ranSomething
+          ? "- ⚠️ **the diff also reaches a lane the impacted specs cannot exercise.** Dispatch before merging:"
+          : "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:",
       ...yes.map((wf) => `  - \`${wf}\``),
     );
   }
@@ -1057,7 +1188,31 @@ function readCiSources(root = ".", { withScripts = true } = {}) {
     }
   }
   if (!withScripts) return { workflows, actions, scriptFiles: null };
-  return { workflows, actions, scriptFiles: readScriptFiles(root), ...readVmLane(root) };
+  return {
+    workflows,
+    actions,
+    scriptFiles: readScriptFiles(root),
+    npmScripts: readNpmScripts(root),
+    ...readVmLane(root),
+  };
+}
+
+/**
+ * `package.json`'s `scripts` as a name → command Map (#2192), or `null` with a warning:
+ * without it, a script reached only through `npm run` resolves narrower than it is,
+ * and the reader must be told rather than handed a confident verdict (#1012).
+ */
+function readNpmScripts(root = ".") {
+  try {
+    const scripts = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts;
+    if (!scripts || typeof scripts !== "object") throw new Error("it has no `scripts` object");
+    return new Map(Object.entries(scripts).filter(([, body]) => typeof body === "string"));
+  } catch (error) {
+    process.stderr.write(
+      `::warning::ci-change-coverage could not read package.json scripts (${error.message}); a script reached only through \`npm run\` will resolve narrower than it is.\n`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -1131,6 +1286,23 @@ function readScriptFiles(root = ".") {
   } catch (error) {
     reason = error.message;
   }
+  // The second script root (#2192): each skill's own `scripts/`. Optional — a fixture
+  // tree has no `.claude/` — so an absent directory is simply not walked; a skill
+  // whose `scripts/` exists but cannot be read warns, like `scripts/` itself.
+  const skills = path.join(root, ".claude/skills");
+  if (reason === null && fs.existsSync(skills)) {
+    for (const skill of fs.readdirSync(skills, { withFileTypes: true })) {
+      const dir = path.join(skills, skill.name, "scripts");
+      if (!skill.isDirectory() || !fs.existsSync(dir)) continue;
+      try {
+        walk(dir);
+      } catch (error) {
+        process.stderr.write(
+          `::warning::ci-change-coverage could not read ${path.relative(root, dir)} (${error.message}); a change there reached only by import will resolve to 'none'.\n`,
+        );
+      }
+    }
+  }
   if (reason === null) return files;
   process.stderr.write(
     `::warning::ci-change-coverage could not read scripts/ (${reason}); a change reached only by import will resolve to 'none'.\n`,
@@ -1152,6 +1324,7 @@ function main(argv) {
   let root = ".";
   let statesFile = null;
   let baseRoot = null;
+  let specsSelected = false;
   const changed = [];
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
@@ -1165,6 +1338,7 @@ function main(argv) {
     // records for `declared-stable-specs`, failing the other way.
     else if (a.startsWith("--workflow-states=")) statesFile = emptyFlag(a, "--workflow-states=");
     else if (a.startsWith("--base-root=")) baseRoot = emptyFlag(a, "--base-root=");
+    else if (a === "--specs-selected") specsSelected = true;
     else if (!a.startsWith("--")) changed.push(a);
     else {
       process.stderr.write(`::error::ci-change-coverage: unknown argument ${a}\n`);
@@ -1224,7 +1398,7 @@ function main(argv) {
   // a decision it never reached.
   let result;
   try {
-    result = classifyCiChange({ changed, refs, states });
+    result = classifyCiChange({ changed, refs, states, specsSelected });
   } catch (error) {
     process.stderr.write(`::error::ci-change-coverage could not classify the diff (${error.message}).\n`);
     process.exit(2);
