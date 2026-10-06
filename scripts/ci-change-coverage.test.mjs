@@ -1310,6 +1310,10 @@ test("with specs selected and only PR-lane surface, the unproven wiring is still
   const { annotation } = dispatchAdvice(r);
   assert.match(annotation, /own wiring \(\.github\/workflows\/pr-validation\.yml\), and the canary did not run/);
   assert.doesNotMatch(annotation, /Nothing in CI can prove/);
+  assert.doesNotMatch(annotation, /other lanes/, "there are none to speak of");
+  // The third route into the PR lane — a script it runs, here by import — is recorded too.
+  const viaScript = classifyCiChange({ changed: ["scripts/lib/spec-path.mjs"], refs: importRefs, specsSelected: true });
+  assert.deepEqual(viaScript.prLaneFiles, ["scripts/lib/spec-path.mjs"]);
   // …while a spec-less `none` stays silent, as it always was.
   assert.equal(dispatchAdvice(classifyCiChange({ changed: ["docs/x.md"], refs })).annotation, null);
 });

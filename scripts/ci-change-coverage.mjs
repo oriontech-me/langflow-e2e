@@ -936,7 +936,7 @@ const vmWhere = (v) =>
  * which this script does not decide.
  */
 function unprovenWiringSentence(files) {
-  return `It also changes this lane's own wiring (${list(files)}), and the canary did not run: the provider sweep and the health gate run only when the impacted specs need a model, so a step they skip is proven only after merge.`;
+  return `It also changes this lane's own wiring (${list(files)}), and the canary did not run: the steps it forces (provider sweep, health gate, model pin, browser install) run only when the impacted specs need them, so a step they skip is proven only after merge.`;
 }
 
 /** One sentence per VM-lane file, for the annotation (#2173). */
@@ -1049,7 +1049,7 @@ export function dispatchAdvice(result) {
     onCanary
       ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
       : ranSomething
-        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); the impacted specs run on THIS lane, and do not exercise the other lanes it reaches.`
+        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); the impacted specs run on THIS lane${targets.length > 0 || vmLane.length > 0 ? ", and do not exercise the other lanes it reaches" : ""}.`
         : result.verdict === "vm-only"
         ? `Change to ${list(result.ciFiles ?? [])}, which no GitHub workflow runs — nothing in CI proves it works.`
         : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
@@ -1110,7 +1110,7 @@ export function dispatchAdvice(result) {
   const summaryLines = [];
   if (unprovenWiring.length > 0) {
     summaryLines.push(
-      `- ⚠️ **this lane's own wiring changed** (${unprovenWiring.map((f) => `\`${f}\``).join(", ")}) **and the canary did not run**, because the diff also impacts specs. The provider sweep and the health gate run only when those specs need a model, so a step they skip is proven only after merge (#2192).`,
+      `- ⚠️ **this lane's own wiring changed** (${unprovenWiring.map((f) => `\`${f}\``).join(", ")}) **and the canary did not run**, because the diff also impacts specs. The steps a canary forces (provider sweep, health gate, model pin, browser install) run only when those specs need them, so a step they skip is proven only after merge (#2192).`,
     );
   }
   if (yes.length > 0) {
