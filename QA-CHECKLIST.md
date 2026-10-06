@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 728 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 729 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1952,6 +1952,7 @@
 - [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
 - [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
 - [x] a task id is invisible to another flow → `a2a-server-tasks-lifecycle.spec.ts`
+- [x] cancelling a running task moves it to canceled → `a2a-server-tasks-lifecycle.spec.ts`
 
 #### core-functionality/auth/
 - [x] admin changes user password — user can log in with new password → `admin-password-change.spec.ts`
