@@ -10,12 +10,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./tmp-dir.mjs";
 import {
   RECURRENCE_KEY_VERSION,
+  canonicalRecurrenceFile,
   compareRecurrence,
   recurrenceFile,
   recurrenceHead,
@@ -107,6 +108,41 @@ test("the file is repo-relative under the report's root, and anchored on tests/ 
   assert.equal(recurrenceFile(undefined, ROOT), null);
 });
 
+// #2178: the two VM rows `agent-structured-output.spec.ts:293` wrote on 2026-10-01
+// and 2026-10-05, whose keys differed in `file` alone.
+const VM_CHECKOUT = "/root/e2e-qa";
+const VM_SPEC = "tests/tests-automations/regression/core-functionality/llm-agents/agent-structured-output.spec.ts";
+const VM_FILES = {
+  "2026-10-01": `runs/20261001T080029Z/shard-4/${VM_SPEC}`,
+  "2026-10-05": `runs/20261005T080028Z/shard-1/${VM_SPEC}`,
+};
+
+test("#2178: a VM shard copy below the checkout spells the spec as the checkout would", () => {
+  const expected = "tests-automations/regression/core-functionality/llm-agents/agent-structured-output.spec.ts";
+  for (const rel of Object.values(VM_FILES)) {
+    assert.equal(recurrenceFile({ file: `${VM_CHECKOUT}/${rel}`, line: 293 }, VM_CHECKOUT), expected);
+  }
+  // A RUNS_ROOT outside the checkout already went through the tests/ anchor.
+  assert.equal(recurrenceFile({ file: `/srv/runs/20261005T080028Z/shard-1/${VM_SPEC}` }, VM_CHECKOUT), expected);
+  // The checkout's own copy is unchanged, and the canonical form is a fixed point.
+  assert.equal(recurrenceFile({ file: `${VM_CHECKOUT}/${VM_SPEC}` }, VM_CHECKOUT), expected);
+  assert.equal(canonicalRecurrenceFile(expected), expected);
+  assert.equal(canonicalRecurrenceFile(null), null);
+  assert.equal(canonicalRecurrenceFile(`./${VM_FILES["2026-10-05"]}`), expected);
+  // Only the shard-copy shape is stripped: a directory merely named `runs` is a real path.
+  assert.equal(canonicalRecurrenceFile("helpers/runs/x/shard-1/y.ts"), "helpers/runs/x/shard-1/y.ts");
+});
+
+test("#2178: rows already in the ledger, keyed with the shard prefix, match each other and a new row", () => {
+  const vmKey = (file) => key({ head: "error: expect(received).tobe(expected)", locator: null, file });
+  const [oct01, oct05] = Object.values(VM_FILES).map((f) => entry("x", [vmKey(f)]));
+  assert.equal(compareRecurrence(oct01, oct05), "match");
+  const fresh = entry("x", [vmKey(recurrenceFile({ file: `${VM_CHECKOUT}/${VM_FILES["2026-10-05"]}` }, VM_CHECKOUT))]);
+  assert.equal(compareRecurrence(oct01, fresh), "match");
+  // A different spec still differs.
+  assert.equal(compareRecurrence(oct01, entry("x", [vmKey(VM_FILES["2026-10-01"].replace("structured", "unstructured"))])), "none");
+});
+
 test("the source comes from the snippet, or from the frame inside the message", () => {
   const frame = "  54 |\n> 56 |     await page.waitForSelector('[data-testid=\"a\"]', {\n     |                ^";
   assert.equal(recurrenceSource({ snippet: frame }), "await page.waitForSelector('[data-testid=\"a\"]', {");
@@ -187,9 +223,18 @@ test("current-form entries with no keys stand on their head, and still match", (
 
 // ------------------------------------------------- end to end, on real attempts
 
-/** Run the real appender over one real case and return the entry it wrote. */
-function appendReal(c) {
+/** Run the real appender over one real case and return the entry it wrote.
+ *  `relocate(dir)`, when given, rewrites the case's error locations from the
+ *  Actions checkout to a path below the appender's working directory `dir`. */
+function appendReal(c, relocate = null) {
   const dir = makeTempDir("recurrence-key-");
+  if (relocate) {
+    // The appender's process.cwd() is the REAL path (macOS tmp is `/var` →
+    // `/private/var`); relocating below the symlinked spelling would miss the root
+    // prefix and fall through to the tests/ anchor, testing nothing.
+    const to = relocate(realpathSync(dir));
+    c = { ...c, results: JSON.parse(JSON.stringify(c.results).replaceAll(`${ROOT}/`, to)) };
+  }
   const reportPath = join(dir, "results.json");
   const historyPath = join(dir, "history.jsonl");
   writeFileSync(
@@ -226,7 +271,7 @@ function appendReal(c) {
 
 /** Recurrence of the latest case of `group`, over every case of it. */
 function recurrenceOf(group) {
-  const rows = REAL.filter((c) => c.group === group).map(appendReal);
+  const rows = REAL.filter((c) => c.group === group).map((c) => appendReal(c));
   const latest = rows[rows.length - 1];
   const item = [...(latest.failures || []), ...(latest.flaky || [])][0];
   return { item, rows, r: computeRecurrence(item, rows) };
@@ -280,6 +325,21 @@ test("#1676: a cause on attempt 0 of a hard failure matches a flake of the same 
   assert.notEqual(sigs[0], sigs[1], "the hard failure records its LAST attempt, a different error");
   assert.equal(r.count, 2);
   assert.equal(r.same_signature, true);
+});
+
+test("#2178: one cause, two VM dailies on different shards, recurs through the real appender", () => {
+  // The VM lane runs the appender from the checkout while every error location is
+  // below `runs/<run id>/shard-N/` inside it — the layout that kept count at 1.
+  const cases = REAL.filter((c) => c.group === "comment-1665");
+  const rows = cases.map((c, i) =>
+    appendReal(c, (dir) => `${dir}/runs/${c.run_id}/shard-${i + 1}/`),
+  );
+  const item = [...rows[1].failures, ...rows[1].flaky][0];
+  assert.ok(item.recurrence_keys.every((k) => !k.file.startsWith("runs/")), JSON.stringify(item.recurrence_keys));
+  const r = computeRecurrence(item, rows);
+  assert.equal(r.count, 2);
+  assert.equal(r.same_signature, true);
+  assert.deepEqual(r.unverified_dates, []);
 });
 
 test("the appender records the keys beside an unchanged error_signature", () => {
