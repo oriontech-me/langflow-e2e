@@ -23,6 +23,8 @@ import {
   dispatchAdvice,
   parseWorkflowStates,
   readWorkflowTriggers,
+  unitTestsCovering,
+  vmLaneReach,
   workflowDispatchability,
 } from "./ci-change-coverage.mjs";
 
@@ -1030,6 +1032,226 @@ test("dispatchability rides on the verdict, per named workflow", () => {
     ],
   );
   assert.deepEqual(r.dispatchWorkflows, r.dispatchTargets.map((t) => t.workflow), "the two lists must agree");
+});
+
+// ── The VM lane (#2173) ─────────────────────────────────────────────────────
+
+// A miniature `ops/`: the systemd unit runs the wrapper, the wrapper runs
+// `run-e2e.sh`, and `run-e2e.sh` runs the removal script — the two hops that took
+// `remove-stable-from-failures.ts` from `dispatch` to `none` when #2171 retired the
+// last workflow naming it. Spelled the way the real files spell them: `./scripts/`,
+// `"$WT/scripts/"` and an absolute `/root/e2e-qa/scripts/`, none of which
+// `SCRIPT_REF` accepts.
+const VM_ENTRIES = new Map([
+  ["ops/systemd/e2e-daily.service", "[Service]\nExecStart=/root/e2e-qa/ops/vm/run-daily.sh\n"],
+  [
+    "ops/vm/run-daily.sh",
+    [
+      "#!/usr/bin/env bash",
+      "# scripts/only-a-comment-names-me.mjs is prose, not a call",
+      "./scripts/run-e2e.sh",
+      'if [ -x "$WT/scripts/backup-ledger.sh" ]; then "$WT/scripts/backup-ledger.sh"; fi',
+      "echo done # trailing comment naming scripts/also-only-a-comment.mjs",
+    ].join("\n"),
+  ],
+  ["ops/systemd/e2e-alarm.service", "ExecStart=/root/e2e-qa/scripts/mirror-alarm.sh\n"],
+  ["ops/vm/worker.mjs", `import { summary } from "../../scripts/lib/vm-only-lib.mjs";`],
+  ["ops/systemd/README.md", "Explains scripts/run-e2e.sh."],
+]);
+const SHELL_SCRIPTS = new Map([
+  [
+    "scripts/run-e2e.sh",
+    [
+      'npx ts-node scripts/remove-stable-from-failures.ts > "$result"',
+      "node scripts/partition-shards.mjs matrix",
+      "node scripts/no-test-for-me.mjs.",
+    ].join("\n"),
+  ],
+  ["scripts/backup-ledger.sh", "cp ledger.db /backup"],
+  ["scripts/mirror-alarm.sh", "node scripts/mirror-summary.mjs"],
+]);
+const VM_SCRIPT_FILES = new Map([
+  ...SCRIPT_FILES,
+  ["scripts/remove-stable-from-failures.ts", `import { norm } from "./lib/spec-path.mjs";`],
+  ["scripts/remove-stable-from-failures.test.ts", `import { x } from "./remove-stable-from-failures.ts";`],
+  ["scripts/no-test-for-me.mjs", "export const y = 1;"],
+  ["scripts/mirror-summary.mjs", "export const z = 1;"],
+  ["scripts/lib/vm-only-lib.mjs", `import { d } from "./deeper.mjs";\nexport const summary = 1;`],
+  ["scripts/lib/deeper.mjs", "export const d = 1;"],
+  ["scripts/vm-only-lib.test.mjs", `import { summary } from "./lib/vm-only-lib.mjs";`],
+]);
+const vmRefs = buildCiReferences({
+  ...FIXTURE,
+  // The removal script moves out of the fixture's workflows: after #2171 no
+  // workflow names it, which is the state this issue is about.
+  actions: new Map([...FIXTURE.actions].filter(([name]) => name !== "auto-remove-stable")),
+  scriptFiles: VM_SCRIPT_FILES,
+  vmEntries: VM_ENTRIES,
+  shellScripts: SHELL_SCRIPTS,
+});
+const classifyVm = (...changed) => classifyCiChange({ changed, refs: vmRefs });
+
+test("a script only the VM lane runs, two hops in, is vm-only rather than silence", () => {
+  const r = classifyVm("scripts/remove-stable-from-failures.ts");
+  assert.equal(r.verdict, "vm-only");
+  assert.deepEqual(r.ciFiles, ["scripts/remove-stable-from-failures.ts"]);
+  assert.deepEqual(r.vmLane, [
+    {
+      file: "scripts/remove-stable-from-failures.ts",
+      vmOnly: true,
+      unitTests: ["scripts/remove-stable-from-failures.test.ts"],
+    },
+  ]);
+  assert.deepEqual(r.dispatchWorkflows, []);
+  // The premise: without the VM sources the same change is the silence #2173 found.
+  assert.equal(
+    classifyCiChange({ changed: ["scripts/remove-stable-from-failures.ts"], refs: buildCiReferences({
+      ...FIXTURE,
+      actions: new Map([...FIXTURE.actions].filter(([name]) => name !== "auto-remove-stable")),
+      scriptFiles: VM_SCRIPT_FILES,
+    }) }).verdict,
+    "none",
+  );
+});
+
+test("the advice says where it runs, names its tests, and closes on 'nothing in CI'", () => {
+  const advice = dispatchAdvice(classifyVm("scripts/remove-stable-from-failures.ts"));
+  assert.match(advice.annotation, /runs only on the VM lane/);
+  assert.match(advice.annotation, /next VM daily after merge/);
+  assert.match(advice.annotation, /Unit tests covering it: scripts\/remove-stable-from-failures\.test\.ts\./);
+  assert.match(advice.annotation, /Nothing in CI can prove this change before merge/);
+  assert.doesNotMatch(advice.annotation, /Dispatch /);
+  assert.equal(advice.summaryLines.length, 1);
+  assert.match(advice.summaryLines[0], /runs only on the VM lane/);
+});
+
+test("a VM-only file with no unit test says so, without claiming it is untested", () => {
+  const r = classifyVm("scripts/no-test-for-me.mjs");
+  assert.equal(r.verdict, "vm-only", "a sentence-ending period is not part of the path");
+  assert.deepEqual(r.vmLane[0].unitTests, []);
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /No unit test sits next to it or imports it/);
+  assert.doesNotMatch(annotation, /untested/);
+});
+
+test("every shell spelling of a path is followed: ./, $VAR/ and an absolute prefix", () => {
+  assert.ok(vmRefs.vmScripts.has("scripts/run-e2e.sh"), "./scripts/run-e2e.sh");
+  assert.ok(vmRefs.vmScripts.has("scripts/backup-ledger.sh"), '"$WT/scripts/backup-ledger.sh"');
+  assert.ok(vmRefs.vmScripts.has("scripts/mirror-alarm.sh"), "/root/e2e-qa/scripts/mirror-alarm.sh");
+  // …and THROUGH the shell script that absolute path names.
+  assert.equal(classifyVm("scripts/mirror-summary.mjs").verdict, "vm-only");
+});
+
+test("a shell comment naming a script does not put it on the VM lane", () => {
+  // `run-e2e.sh` cites scripts in prose that the VM never runs; reading those as
+  // calls reported `check-vm-env-parity.mjs` as VM-only on the real repo.
+  assert.ok(!vmRefs.vmScripts.has("scripts/only-a-comment-names-me.mjs"));
+  assert.ok(!vmRefs.vmScripts.has("scripts/also-only-a-comment.mjs"));
+});
+
+test("the VM lane's own wiring under ops/ is vm-only; its README is not wiring", () => {
+  assert.equal(classifyVm("ops/vm/run-daily.sh").verdict, "vm-only");
+  assert.equal(classifyVm("ops/systemd/e2e-daily.service").verdict, "vm-only");
+  assert.equal(classifyVm("ops/systemd/README.md").verdict, "none");
+});
+
+test("a module only the VM lane's JavaScript imports is vm-only, and the route is named", () => {
+  // `ops/vm/worker.mjs` imports `../../scripts/lib/vm-only-lib.mjs`, which the token
+  // scan reads as a spelled path — so the import-only case is one level further in,
+  // where nothing under `ops/` spells it and the importer graph is the only route.
+  const direct = classifyVm("scripts/lib/vm-only-lib.mjs");
+  assert.equal(direct.verdict, "vm-only");
+  assert.deepEqual(direct.vmLane[0].unitTests, ["scripts/vm-only-lib.test.mjs"], "a test that IMPORTS it covers it");
+  const r = classifyVm("scripts/lib/deeper.mjs");
+  assert.equal(r.verdict, "vm-only");
+  assert.match(r.reasons.join(" "), /reached through ops\/vm\/worker\.mjs, scripts\/lib\/vm-only-lib\.mjs/);
+});
+
+test("a script a workflow AND the VM run keeps its dispatch and adds the VM lane", () => {
+  const r = classifyVm("scripts/partition-shards.mjs");
+  assert.equal(r.verdict, "dispatch", "a remedy before merge outranks a fact about after it");
+  assert.deepEqual(r.vmLane.map((v) => [v.file, v.vmOnly]), [["scripts/partition-shards.mjs", false]]);
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /Dispatch \.github\/workflows\/daily-stable\.yml/);
+  assert.match(annotation, /also runs on the VM lane/);
+  assert.doesNotMatch(annotation, /Nothing in CI can prove/, "a dispatchable workflow DOES prove part of it");
+});
+
+test("a canary that also reaches the VM lane speaks, even with nothing to dispatch", () => {
+  const r = classifyCiChange({ changed: [PR_LANE, "ops/vm/run-daily.sh"], refs: vmRefs });
+  assert.equal(r.verdict, "canary");
+  const { annotation } = dispatchAdvice(r);
+  assert.match(annotation, /ops\/vm\/run-daily\.sh runs only on the VM lane/);
+  assert.doesNotMatch(annotation, /Nothing in CI can prove/, "the canary ran something");
+});
+
+test("a unit test is never VM wiring, even when the VM lane names it", () => {
+  const refsNamingATest = buildCiReferences({
+    ...FIXTURE,
+    scriptFiles: VM_SCRIPT_FILES,
+    vmEntries: new Map([["ops/vm/x.sh", "node scripts/vm-only-lib.test.mjs"]]),
+    shellScripts: new Map(),
+  });
+  const r = classifyCiChange({ changed: ["scripts/vm-only-lib.test.mjs"], refs: refsNamingATest });
+  assert.equal(r.verdict, "none");
+});
+
+test("a cycle between shell scripts terminates", () => {
+  const reached = vmLaneReach(
+    new Map([["ops/vm/a.sh", "./scripts/a.sh"]]),
+    new Map([
+      ["scripts/a.sh", "./scripts/b.sh"],
+      ["scripts/b.sh", "./scripts/a.sh"],
+    ]),
+  );
+  assert.deepEqual([...reached].sort(), ["scripts/a.sh", "scripts/b.sh"]);
+});
+
+test("unitTestsCovering finds the sibling and the importer, never the file itself", () => {
+  assert.deepEqual(unitTestsCovering(vmRefs, "scripts/remove-stable-from-failures.ts"), [
+    "scripts/remove-stable-from-failures.test.ts",
+  ]);
+  assert.deepEqual(unitTestsCovering(vmRefs, "scripts/remove-stable-from-failures.test.ts"), []);
+});
+
+test("an absent ops/ degrades OUT LOUD — a VM-only script must not resolve to 'none' in silence", () => {
+  const tmp = makeTempDir("cc-noops-");
+  fs.mkdirSync(path.join(tmp, ".github/workflows"), { recursive: true });
+  fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, ".github/workflows/x.yml"), "on:\n  workflow_dispatch:\n");
+  fs.writeFileSync(path.join(tmp, "scripts/y.mjs"), "export const y = 1;");
+  const r = cli(["--root", tmp, "--format=json", "--stdin"], "scripts/y.mjs\n");
+  assert.equal(r.status, 0);
+  assert.equal(r.json.verdict, "none");
+  assert.match(r.stderr, /::warning::.*could not read ops\/.*resolve to 'none'/);
+});
+
+test("against the live repo, the three removal scripts #2173 names are vm-only, each with its test", () => {
+  // The measurement that opened #2173: `dispatch` (weekly-stable.yml) on the base of
+  // #2172, `none` after it — for the code that pushes `@stable` removals to `main`.
+  for (const file of [
+    "scripts/remove-stable-from-failures.ts",
+    "scripts/format-auto-remove-summary.mjs",
+    "scripts/auto-remove-commit-paths.mjs",
+  ]) {
+    const r = cli(["--root", REPO_ROOT, "--format=json", "--stdin"], `${file}\n`);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.verdict, "vm-only", file);
+    assert.deepEqual(r.json.vmLane, [
+      { file, vmOnly: true, unitTests: [file.replace(/\.(ts|mjs)$/, ".test.$1")] },
+    ]);
+    assert.match(r.json.advice, /runs only on the VM lane/);
+  }
+});
+
+test("against the live repo, the VM lane is reached from the systemd unit down", () => {
+  // The chain the real repo hangs off: e2e-daily.service → ops/vm/run-daily.sh →
+  // ./scripts/run-e2e.sh. If a rename broke any link, the removal scripts would fall
+  // back to `none` and the test above would say so; this one says WHERE.
+  const r = cli(["--root", REPO_ROOT, "--format=json", "--stdin"], "ops/vm/run-daily.sh\n");
+  assert.equal(r.json.verdict, "vm-only");
+  const daily = fs.readFileSync(path.join(REPO_ROOT, "ops/vm/run-daily.sh"), "utf8");
+  assert.match(daily, /\.\/scripts\/run-e2e\.sh/, "the wrapper still calls run-e2e.sh by that spelling");
 });
 
 // ── The real repo ───────────────────────────────────────────────────────────

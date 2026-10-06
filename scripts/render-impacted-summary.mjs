@@ -134,12 +134,14 @@ export function renderSummary({
       // #1979 removed from the verdict, and it lived here too.
       ...dispatchAdvice(ciCoverage).summaryLines,
     );
-  } else if (ciCoverage?.verdict === "dispatch") {
+  } else if (ciCoverage?.verdict === "dispatch" || ciCoverage?.verdict === "vm-only") {
     // Worded by the classifier, which is the only thing that read the named
     // workflows' `on:` blocks. Telling a reviewer to dispatch
     // `update-coverage-summary.yml` — `on: push: [main]`, no `workflow_dispatch` —
     // is an instruction that 422s, and an instruction nobody can carry out is
-    // indistinguishable from saying nothing (#1609).
+    // indistinguishable from saying nothing (#1609). `vm-only` is the same block
+    // with nothing to dispatch: the file runs only on the QA VM, outside Actions,
+    // and leaving it out of the summary would read as "no CI surface" (#2173).
     lines.push(...dispatchAdvice(ciCoverage).summaryLines);
   }
 

@@ -28,12 +28,19 @@
  *   dispatch  no — the changed surface belongs to another lane (daily-stable,
  *             manual, nightly…). A PR canary cannot exercise it, so name the
  *             workflows to dispatch instead of implying coverage.
+ *   vm-only   no — the changed surface runs only on the QA VM lane (`ops/**`,
+ *             `scripts/run-e2e.sh` and what they call), which is not a GitHub
+ *             workflow. Nothing can be dispatched, so the advice says where it runs,
+ *             names the unit tests that cover it, and that the next VM daily after
+ *             merge is its first real run (#2173). The VM lane rides on the other two
+ *             verdicts as well, since neither a canary nor a dispatch exercises it.
  *   none      the diff touches no CI surface at all (docs, ROADMAP): nothing to
  *             say, and nothing to run.
  *
  * The reachability is DERIVED from the YAML, never hardcoded: a workflow's
  * `scripts/x` references and its `uses: ./.github/actions/y`, plus each action's
- * own `scripts/x`. A new action wired into pr-validation is covered the day it
+ * own `scripts/x`. The VM lane is derived the same way, from the files under `ops/`
+ * and every shell script they reach. A new action wired into pr-validation is covered the day it
  * lands, with no table to maintain — the maintenance cost that made the
  * path→lane mapping alternative unattractive in #1159.
  *
@@ -201,6 +208,32 @@ const SCRIPT_REF = /(?:^|[^\w/])(scripts\/[A-Za-z0-9._/-]+)/g;
 
 /** A unit test — covered by `npm run test:scripts`, never CI wiring. */
 const UNIT_TEST = /\.test\.(mjs|mts|ts|js)$/;
+
+/**
+ * The VM lane (issue #2173): the daily that runs on the QA VM, outside GitHub
+ * Actions. Its entry points are the systemd units and wrappers under `ops/`
+ * (`ops/systemd/e2e-daily.service` → `ops/vm/run-daily.sh` → `scripts/run-e2e.sh`),
+ * and no workflow runs any of them — so a script reached only from there used to read
+ * as "the diff touches no CI surface at all". That was measured on the scripts that
+ * push `@stable` removals to `main` without review (`remove-stable-from-failures.ts`,
+ * `format-auto-remove-summary.mjs`, `auto-remove-commit-paths.mjs`): `dispatch` while
+ * `weekly-stable.yml` still ran them, `none` the day #2171 retired it.
+ *
+ * Derived, like the workflow graph, rather than listed: the root is a DIRECTORY, and
+ * everything below it is read from the files themselves.
+ */
+export const VM_LANE_ROOT = "ops/";
+
+// The VM lane spells a script the way a shell does — `./scripts/run-e2e.sh`,
+// `"$WT/scripts/backup-ledger.sh"`, `/root/e2e-qa/scripts/mirror-freshness-alarm.sh` —
+// where every workflow here writes a bare `scripts/x`. `SCRIPT_REF` refuses a `/`
+// before `scripts/` on purpose, so reusing it would have missed `./scripts/run-e2e.sh`,
+// the one reference the whole lane hangs off. The optional prefix is a path ending in
+// `/`; the last character is never `.` or `/`, so a sentence-ending period is not
+// captured (unlike `SCRIPT_REF`, whose tokens are only ever compared, these are also
+// LOOKED UP, to follow one shell script into the next).
+const VM_SCRIPT_REF = /(?:^|[^\w-])(?:[^\s"'`()=<>|;]*\/)?(scripts\/[A-Za-z0-9._/-]*[A-Za-z0-9_-])/g;
+const SOURCE_FILE = /\.(mjs|mts|ts|js)$/;
 const LOCAL_ACTION_REF = /\.\/\.github\/actions\/([A-Za-z0-9._-]+)/g;
 
 const matchAll = (text, re) => [...String(text).matchAll(re)].map((m) => m[1]);
@@ -378,8 +411,17 @@ export function parseWorkflowStates(text) {
  *   against. The reference graph always comes from `workflows` (the head).
  *   `scriptFiles` is `scripts/**` keyed by repo-relative path; when given, a changed
  *   file also counts as CI surface if some NAMED script imports it, transitively.
+ *   `vmEntries` is `ops/**` and `shellScripts` is `scripts/**.sh`, both keyed by
+ *   repo-relative path; together they derive what the VM lane runs (#2173).
  */
-export function buildCiReferences({ workflows, actions, baseWorkflows = null, scriptFiles = null }) {
+export function buildCiReferences({
+  workflows,
+  actions,
+  baseWorkflows = null,
+  scriptFiles = null,
+  vmEntries = null,
+  shellScripts = null,
+}) {
   const actionScripts = new Map();
   for (const [name, text] of actions) {
     actionScripts.set(name, new Set(matchAll(text, SCRIPT_REF)));
@@ -422,7 +464,13 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null, sc
   // reuses `impacted-specs-by-import.mjs`'s resolver rather than a second copy: those
   // three functions take a file map keyed by repo-relative path and are root-agnostic,
   // so nothing about them was tests-specific.
-  const scriptImporters = scriptFiles ? buildImporterGraph(scriptFiles) : null;
+  //
+  // The VM lane's own JavaScript joins the same graph: `ops/vm/on-demand-worker.mjs`
+  // reaches `scripts/lib/on-demand-summary.mjs` by import and spells it nowhere.
+  const graphFiles = scriptFiles
+    ? new Map([...scriptFiles, ...[...(vmEntries ?? [])].filter(([f]) => SOURCE_FILE.test(f))])
+    : null;
+  const scriptImporters = graphFiles ? buildImporterGraph(graphFiles) : null;
 
   return {
     workflowScripts,
@@ -431,7 +479,12 @@ export function buildCiReferences({ workflows, actions, baseWorkflows = null, sc
     workflowDispatch,
     scriptImporters,
     // A true ceiling for the importer walk: every node it can reach is a key here.
-    scriptNodeCount: scriptFiles ? scriptFiles.size : 0,
+    scriptNodeCount: graphFiles ? graphFiles.size : 0,
+    // The unit tests that exist, so a VM-only verdict can name the ones that cover a
+    // file. Not the whole `scripts/` map: only the paths, and only the tests.
+    unitTests: new Set([...(graphFiles?.keys() ?? [])].filter((f) => UNIT_TEST.test(f))),
+    vmScripts: vmEntries ? vmLaneReach(vmEntries, shellScripts ?? new Map()) : new Set(),
+    vmLaneKnown: Boolean(vmEntries),
     // Whether `workflowDispatch` reflects the copy GitHub will actually resolve.
     triggersFromBase: Boolean(baseWorkflows),
   };
@@ -492,6 +545,62 @@ export function importersOf(refs, file) {
 }
 
 /**
+ * Every `scripts/…` path the VM lane spells, following one SHELL script into the next.
+ *
+ * Shell scripts only, because that is where a script is invoked by path:
+ * `ops/vm/run-daily.sh` runs `./scripts/run-e2e.sh`, which runs
+ * `scripts/remove-stable-from-failures.ts` — two hops, and the second is the one that
+ * matters. A `.mjs`/`.ts` reaches its dependencies by import, which the importer graph
+ * already follows. Unlike the workflow scan, a shell COMMENT does not count (see below);
+ * a string that merely names a path still does, since this is a token scan, and
+ * over-reporting a lane costs one sentence where under-reporting it is the silence
+ * #2173 is about. Terminates because each shell script is queued at most once — the
+ * `reached` set guards the push.
+ */
+export function vmLaneReach(vmEntries, shellScripts) {
+  const reached = new Set();
+  // Comments are dropped before the scan in every non-JavaScript file — a shell
+  // script, a systemd unit — because there they are where OTHER lanes get mentioned:
+  // `run-e2e.sh` cites `scripts/start-langflow-docker.sh` in prose, and the VM has no
+  // container runtime at all, so "runs only on the VM lane" would have been false for
+  // it. JavaScript is left whole; its dependencies arrive by import, not by token.
+  const code = (file, text) =>
+    SOURCE_FILE.test(file) ? text : String(text).split("\n").map(stripComment).join("\n");
+  const queue = [...vmEntries].map(([file, text]) => code(file, text));
+  while (queue.length > 0) {
+    for (const token of matchAll(queue.shift(), VM_SCRIPT_REF)) {
+      if (reached.has(token)) continue;
+      reached.add(token);
+      const text = shellScripts.get(token);
+      if (text !== undefined) queue.push(code(token, text));
+    }
+  }
+  return reached;
+}
+
+/**
+ * The unit tests that cover `file`, by the two links the repository can show: the
+ * sibling `<name>.test.<ext>` CONTRIBUTING.md requires ("a unit test goes next to the
+ * code it covers"), and any unit test that imports it. A test that runs a shell script
+ * by `path.join(HERE, "run-e2e.sh")` is found only by the first, and a test elsewhere
+ * that names a file in a string is found by neither — so an empty list means "none
+ * found by those two links", never "untested", and the wording says so.
+ */
+export function unitTestsCovering(refs, file) {
+  const tests = new Set();
+  const stem = file.replace(/\.[^./]+$/, "");
+  for (const ext of ["mjs", "mts", "ts", "js"]) {
+    const sibling = `${stem}.test.${ext}`;
+    if (refs.unitTests?.has(sibling)) tests.add(sibling);
+  }
+  for (const importer of refs.scriptImporters?.get(file) ?? []) {
+    if (UNIT_TEST.test(importer)) tests.add(importer);
+  }
+  tests.delete(file);
+  return [...tests].sort();
+}
+
+/**
  * Workflows OTHER THAN THE PR LANE that reach a given action or script.
  *
  * The exclusion was the doc comment's claim and not the code's behaviour, which was
@@ -527,16 +636,30 @@ export function classifyCiChange({ changed, refs, states = null }) {
   const ciFiles = [];
   const reasons = [];
   const dispatch = new Set();
+  const vmLane = [];
   let canary = false;
 
   const prActions = refs.workflowActions.get(PR_LANE) ?? new Set();
   const prScripts = refs.workflowScripts.get(PR_LANE) ?? new Set();
+  // What the VM lane runs: its own wiring under `ops/`, and every script that wiring
+  // spells. A unit test is never wiring here either, for the reason given below.
+  const vmNamed = (f) => !UNIT_TEST.test(f) && (f.startsWith(VM_LANE_ROOT) || refs.vmScripts?.has(f));
+  const noteVm = (file, vmOnly) => vmLane.push({ file, vmOnly, unitTests: unitTestsCovering(refs, file) });
 
   for (const file of changed) {
     const isWorkflow = file.startsWith(".github/workflows/");
     const actionName = /^\.github\/actions\/([^/]+)\//.exec(file)?.[1];
     const isScript = file.startsWith("scripts/");
-    if (!isWorkflow && !actionName && !isScript) continue;
+    // A README under `ops/` documents the lane and runs nowhere.
+    const isVmWiring = file.startsWith(VM_LANE_ROOT) && !/\.md$/i.test(file);
+    if (!isWorkflow && !actionName && !isScript && !isVmWiring) continue;
+
+    if (isVmWiring) {
+      ciFiles.push(file);
+      noteVm(file, true);
+      reasons.push(`${file} is VM-lane wiring (${VM_LANE_ROOT}), which no GitHub workflow runs`);
+      continue;
+    }
 
     if (isWorkflow) {
       ciFiles.push(file);
@@ -595,10 +718,27 @@ export function classifyCiChange({ changed, refs, states = null }) {
     // `scripts/stable-tests.ts`, which two other lanes run. Preferring the direct
     // route named one workflow and dropped the others, which is the under-report this
     // issue is about wearing a smaller hat.
-    const viaImport = [...importersOf(refs, file)].filter(named);
+    const importers = [...importersOf(refs, file)];
+    const viaImport = importers.filter(named);
     const entryPoints = [...new Set([...(named(file) ? [file] : []), ...viaImport])].sort();
-    if (entryPoints.length === 0) continue;
+    // The VM lane is asked separately and ANSWERED separately: a file it runs is
+    // recorded whatever the workflows say, because "also runs on the VM" is news on a
+    // canary and on a dispatch alike — neither of them exercises that lane.
+    const vmVia = importers.filter(vmNamed).sort();
+    const onVm = vmNamed(file) || vmVia.length > 0;
+    if (entryPoints.length === 0) {
+      if (!onVm) continue;
+      ciFiles.push(file);
+      noteVm(file, true);
+      const vmRoute = vmNamed(file) ? "" : ` (reached through ${vmVia.join(", ")})`;
+      reasons.push(`${file} runs only on the VM lane, which no GitHub workflow runs${vmRoute}`);
+      continue;
+    }
     ciFiles.push(file);
+    if (onVm) {
+      noteVm(file, false);
+      reasons.push(`${file} also runs on the VM lane, which no GitHub workflow runs`);
+    }
     // Both halves, always — the top-level rule this file already states for workflows
     // and actions ("canary wins over dispatch, and the dispatch advice SURVIVES") was
     // not being applied here. Measured: `scripts/reconcile-stable-orphans.ts` went
@@ -637,12 +777,17 @@ export function classifyCiChange({ changed, refs, states = null }) {
 
   // `canary` wins over `dispatch`: running the PR lane's own wiring is strictly
   // more than warning about it, and the dispatch advice is still printed.
-  const verdict = canary ? "canary" : dispatch.size > 0 ? "dispatch" : "none";
+  // `vm-only` sits below both, because each of them names something a reviewer can do
+  // before merge and it names nothing: a script only the VM lane runs is first
+  // exercised by the next VM daily after merge (#2173). Above `none`, because that is
+  // the word for "no CI surface at all", and these scripts commit to `main`.
+  const verdict = canary ? "canary" : dispatch.size > 0 ? "dispatch" : vmLane.length > 0 ? "vm-only" : "none";
   const dispatchWorkflows = [...dispatch].sort();
   return {
     verdict,
     ciFiles: [...new Set(ciFiles)].sort(),
     canarySpecs: canary ? [...CANARY_SPECS] : [],
+    vmLane: vmLane.sort((a, b) => a.file.localeCompare(b.file)),
     dispatchWorkflows,
     // Every named workflow carries whether it can actually BE dispatched (#1609).
     // A workflow the reference graph knows but whose triggers were never read is
@@ -685,6 +830,32 @@ export function classifyCiChange({ changed, refs, states = null }) {
 
 const list = (items) => items.join(", ");
 
+// Worded over what the repository can SHOW: "none found by those two links" is not
+// "untested", and printing the second would be the confident claim #1012 forbids.
+const vmTests = (v) =>
+  v.unitTests.length > 0
+    ? `Unit tests covering it: ${list(v.unitTests)}.`
+    : "No unit test sits next to it or imports it — check its coverage by hand.";
+
+const vmWhere = (v) =>
+  v.vmOnly
+    ? "runs only on the VM lane, outside GitHub Actions, so its first real run is the next VM daily after merge"
+    : "also runs on the VM lane, outside GitHub Actions, which nothing above exercises";
+
+/** One sentence per VM-lane file, for the annotation (#2173). */
+function vmSentence(v) {
+  return `${v.file} ${vmWhere(v)}. ${vmTests(v)}`;
+}
+
+/** The same fact as a run-summary bullet. */
+function vmSummaryLine(v) {
+  const tests =
+    v.unitTests.length > 0
+      ? `unit tests covering it: ${v.unitTests.map((t) => `\`${t}\``).join(", ")}`
+      : "no unit test sits next to it or imports it — check its coverage by hand";
+  return `- 🖥️ **\`${v.file}\` ${v.vmOnly ? "runs only on the VM lane" : "also runs on the VM lane"}** — no GitHub workflow exercises it${v.vmOnly ? ", so its first real run is the next VM daily after merge" : ""}; ${tests} (#2173).`;
+}
+
 /**
  * Turn the verdict into the words a reviewer reads, in both shapes the lane needs.
  *
@@ -705,10 +876,18 @@ export function dispatchAdvice(result) {
   // behaviour before any of this. The canary proves this lane boots; it says nothing
   // about the other lanes the same diff reaches, so their instruction still has to be
   // printed. `none` has nothing to say by definition.
-  if (!result || (result.verdict !== "dispatch" && result.verdict !== "canary")) {
+  if (!result || !["dispatch", "canary", "vm-only"].includes(result.verdict)) {
     return { annotation: null, summaryLines: [] };
   }
-  if (result.verdict === "canary" && (result.dispatchTargets ?? result.dispatchWorkflows ?? []).length === 0) {
+  // The VM lane rides on every verdict, the way dispatch targets ride on a canary: no
+  // workflow exercises it, so neither a canary nor a dispatch says anything about it.
+  const vmLane = result.vmLane ?? [];
+  const vmOnly = vmLane.filter((v) => v.vmOnly);
+  if (
+    result.verdict === "canary" &&
+    (result.dispatchTargets ?? result.dispatchWorkflows ?? []).length === 0 &&
+    vmLane.length === 0
+  ) {
     return { annotation: null, summaryLines: [] };
   }
 
@@ -756,7 +935,9 @@ export function dispatchAdvice(result) {
   const sentences = [
     onCanary
       ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
-      : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
+      : result.verdict === "vm-only"
+        ? `Change to ${list(result.ciFiles ?? [])}, which no GitHub workflow runs — nothing in CI proves it works.`
+        : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
   ];
   if (yes.length > 0) sentences.push(`Dispatch ${list(yes)} on this branch before merging (#1159).`);
   for (const t of absent) {
@@ -794,8 +975,17 @@ export function dispatchAdvice(result) {
   // may well have been dispatchable. Each per-target line is careful to scope itself
   // ("nothing in CI proves THIS PART"); this one cannot be, so it needs silence
   // whenever anything is unresolved.
-  // …and never on a canary, where something in CI demonstrably did run.
-  if (!onCanary && yes.length === 0 && blocked.length > 0 && unknown.length === 0 && unverified.length === 0) {
+  for (const v of vmLane) sentences.push(vmSentence(v));
+  // …and never on a canary, where something in CI demonstrably did run. A file only
+  // the VM lane runs is as established as a workflow that cannot be dispatched: both
+  // are facts about where it runs, not doubts about it.
+  if (
+    !onCanary &&
+    yes.length === 0 &&
+    (blocked.length > 0 || vmOnly.length > 0) &&
+    unknown.length === 0 &&
+    unverified.length === 0
+  ) {
     sentences.push(
       "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
     );
@@ -836,6 +1026,8 @@ export function dispatchAdvice(result) {
     );
   }
 
+  for (const v of vmLane) summaryLines.push(vmSummaryLine(v));
+
   return { annotation: sentences.join(" "), summaryLines };
 }
 
@@ -865,7 +1057,47 @@ function readCiSources(root = ".", { withScripts = true } = {}) {
       if (fs.existsSync(file)) actions.set(entry.name, fs.readFileSync(file, "utf8"));
     }
   }
-  return { workflows, actions, scriptFiles: withScripts ? readScriptFiles(root) : null };
+  if (!withScripts) return { workflows, actions, scriptFiles: null };
+  return { workflows, actions, scriptFiles: readScriptFiles(root), ...readVmLane(root) };
+}
+
+/**
+ * The VM lane's sources (#2173): every file under `ops/`, and every shell script under
+ * `scripts/` so a reference can be followed from one into the next.
+ *
+ * Absent `ops/` is not an error — a fixture tree has none — but it is not silent
+ * either: with no entry points every VM-only script resolves to `none`, which is the
+ * exact silence this exists to remove, so the reader is told (#1012).
+ */
+function readVmLane(root = ".") {
+  const walk = (dir, keep, into) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      if (entry.isDirectory()) walk(full, keep, into);
+      else if (keep(entry.name)) {
+        into.set(path.relative(root, full).split(path.sep).join("/"), fs.readFileSync(full, "utf8"));
+      }
+    }
+    return into;
+  };
+  let vmEntries = null;
+  try {
+    vmEntries = walk(path.join(root, VM_LANE_ROOT), () => true, new Map());
+    if (vmEntries.size === 0) throw new Error("it holds no files");
+  } catch (error) {
+    vmEntries = null;
+    process.stderr.write(
+      `::warning::ci-change-coverage could not read ${VM_LANE_ROOT} (${error.message}); a script only the VM lane runs will resolve to 'none'.\n`,
+    );
+  }
+  let shellScripts = new Map();
+  try {
+    shellScripts = walk(path.join(root, "scripts"), (name) => name.endsWith(".sh"), new Map());
+  } catch {
+    // `readScriptFiles` has already warned about an unreadable `scripts/`.
+  }
+  return { vmEntries, shellScripts };
 }
 
 /**
