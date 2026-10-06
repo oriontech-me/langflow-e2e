@@ -1,10 +1,11 @@
 [Unit]
-Description=Schedule for the migration routine's absence alarm, 11:30 UTC on weekdays
+Description=Schedule for the migration routine's absence alarm, 12:30 UTC on weekdays
 
 [Timer]
-# 09:15 start + up to 60 min waiting for its turn + about 45 min of cells = 11:00 at the
-# latest on a healthy day; 11:30 leaves slack, so "still running" means stuck.
-OnCalendar=Mon..Fri 11:30 UTC
+# After the unit's own TimeoutStartSec (3h from 09:15, so 12:15), not after an estimate of
+# the cells: a slow day still inside its timeout is not stuck, and an earlier alarm would
+# say it was (review of #2194). At 12:30 "still running" means systemd failed to stop it.
+OnCalendar=Mon..Fri 12:30 UTC
 # An alarm that catches up still tells the truth.
 Persistent=true
 AccuracySec=1min

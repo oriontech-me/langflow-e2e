@@ -92,6 +92,10 @@ main() {
   local budget="${MIGRATION_WAIT_BUDGET_S:-3600}"
 
   routine_wait_turn "$budget"
+  # From here on the machine is this routine's. Before it, a run that ends `skipped`
+  # waiting for its turn must not tear down the run that holds the lock (review of #2194).
+  MIG_TURN=1
+  MIG_PULLED=""
 
   # --- the target and the source ----------------------------------------------------
   local target="${MIGRATION_TARGET:-}"
@@ -126,13 +130,16 @@ main() {
   export OPENAI_API_KEY
   export CREDENTIAL_VERDICT_FILE="$MIG_WORK/credential-verdict.json"
   if [ -n "$OPENAI_API_KEY" ]; then
-    # The probe writes its file only for a blocking verdict (exit 1); exit 0 with no
-    # file is a live account. Anything else decided nothing, and must not read as live.
-    local prc=0
-    python3 "$REPO/tests/github-workflows/migration/provider_credentials.py" --probe \
-      --phase "pre-flight/vm-migration" --job api --marker "$CREDENTIAL_VERDICT_FILE" || prc=$?
-    if [ "$prc" != 0 ] && [ ! -f "$CREDENTIAL_VERDICT_FILE" ]; then
-      printf '{"verdict": "inconclusive", "reason": "the probe ended with status %s and no verdict"}\n' "$prc" > "$CREDENTIAL_VERDICT_FILE"
+    # The probe writes its file only for a blocking verdict (exit 1), and exits 0 both
+    # for a live account and for INCONCLUSIVE (a 5xx, a timeout). Only its own `live`
+    # line is a live account: anything else decided nothing, and must not read as live
+    # (review of #2194).
+    local prc=0 pout
+    pout="$(python3 "$REPO/tests/github-workflows/migration/provider_credentials.py" --probe \
+      --phase "pre-flight/vm-migration" --job api --marker "$CREDENTIAL_VERDICT_FILE" 2>&1)" || prc=$?
+    printf '%s\n' "$pout"
+    if [ ! -f "$CREDENTIAL_VERDICT_FILE" ] && ! printf '%s\n' "$pout" | grep -q '^OpenAI credential probe: live'; then
+      printf '{"verdict": "inconclusive", "reason": "the probe ended with status %s and did not say live"}\n' "$prc" > "$CREDENTIAL_VERDICT_FILE"
     fi
     echo "provider probe: $( [ -f "$CREDENTIAL_VERDICT_FILE" ] && migration_json verdict < "$CREDENTIAL_VERDICT_FILE" || echo live)"
   fi
@@ -224,7 +231,11 @@ migration_cell() {
   elif [ "$rc" != 0 ]; then verdict=red; detail="verify ended with status $rc: $(tail -n 1 "$dir/verify.log")"
   elif [ -n "$blocked" ]; then verdict=blocked; detail="blocked: ${blocked% }"
   else verdict=green; detail="$(grep -c '^CHECK ' "$dir/verify.log") checks"; fi
-  if [ "$verdict" = red ] && [ "$auth" = off ] && migration_before_15326 "$MIG_TARGET"; then
+  # Only the defect #15326 is: the default account gone on Postgres. Any other red on an
+  # old target is a regression of its own, and must not be filed under the old bug.
+  if [ "$verdict" = red ] && [ "$auth" = off ] && [ "$db" = postgres ] \
+     && case " $fails " in *" default-user-kept "*) true ;; *) false ;; esac \
+     && migration_before_15326 "$MIG_TARGET"; then
     detail="$detail (known: the target predates langflow-ai/langflow#15326)"
   fi
   migration_record "$cell" "$verdict" "$detail"
@@ -274,15 +285,18 @@ migration_up_pip() {
   # langflow==1.12.4 to langflow-base and lfx 1.12.5rc1 -- where the migrations live --
   # so the pip cells upgraded from a release nobody runs (review of #2194, measured).
   local pre=(); [ "$version" = "$MIG_TARGET" ] && pre=(--prerelease=allow)
-  if ! uv pip install -q -p "$venv/bin/python" ${pre[@]+"${pre[@]}"} "langflow[postgresql]==$version" ${extra[@]+"${extra[@]}"} > "$MC_DIR/install-$version.log" 2>&1 8>&-; then
+  # Pinned too: before 1.12 langflow asks for langflow-base `>=0.11.x`, which a resolver
+  # may satisfy with any later base.
+  local base; base="$(migration_expected_base "$version")"
+  if ! uv pip install -q -p "$venv/bin/python" ${pre[@]+"${pre[@]}"} "langflow[postgresql]==$version" "langflow-base==$base" ${extra[@]+"${extra[@]}"} > "$MC_DIR/install-$version.log" 2>&1 8>&-; then
     MC_UP_VERDICT=failed; MC_UP_WHY="pip install failed: $(tail -n 1 "$MC_DIR/install-$version.log")"; return 1
   fi
   # The packages that carry the code must be the asked release, not a neighbour the
   # resolver preferred: a wrong source is a cell that tests nothing it names.
   local got
   got="$("$venv/bin/python" -c 'import importlib.metadata as m; print(m.version("langflow-base"))' 2>/dev/null)"
-  if [ "$got" != "$version" ]; then
-    MC_UP_VERDICT=failed; MC_UP_WHY="langflow==$version installed langflow-base ${got:-<none>}, not $version"; return 1
+  if [ "$got" != "$base" ]; then
+    MC_UP_VERDICT=failed; MC_UP_WHY="langflow==$version installed langflow-base ${got:-<none>}, not $base"; return 1
   fi
   if [ "$MC_DB" = postgres ] && ! migration_pg_up; then return 1; fi
   (
@@ -310,6 +324,10 @@ migration_up_pip() {
 migration_up_docker() {
   local version="$1" auth="$2" image
   image="$MIG_SOURCE_IMAGE"; [ "$version" = "$MIG_TARGET" ] && image="$MIG_TARGET_IMAGE"
+  # Absent before this run's first pull of it: this run's to remove at the end.
+  case " $MIG_PULLED " in *" $image "*) ;; *)
+    docker image inspect "$image" > /dev/null 2>&1 || MIG_PULLED="$MIG_PULLED $image" ;;
+  esac
   if ! docker pull -q "$image" > /dev/null 2>> "$MC_LOG"; then
     MC_UP_VERDICT=failed; MC_UP_WHY="docker pull $image failed: $(migration_log_tail)"; return 1
   fi
@@ -482,15 +500,19 @@ migration_previous_red() {
 # --- helpers ----------------------------------------------------------------------------
 
 routine_cleanup() {
+  # Only a run that took its turn owns what is named e2e-migration-*: one that ended while
+  # waiting would remove the holder's containers, ollama and venvs mid-cell.
+  [ "${MIG_TURN:-0}" = 1 ] || return 0
   [ -n "${MIG_WORK:-}" ] || return 0
   migration_clear_docker
   ( cd "$REPO" && OLLAMA_PORT="$MIG_OLLAMA_PORT" bash scripts/stop-ollama-source.sh ) > /dev/null 2>&1 || true
   pkill -f "langflow run --host 127.0.0.1 --port 79(2[0-9]|3[01])" 2> /dev/null || true
-  # The images this run pulled: retention is task 8's decision, and until then a day's
-  # pulls do not accumulate.
+  # The images this run pulled, and only those: retention is task 8's decision, and until
+  # then a day's pulls do not accumulate. An image that was here before is another lane's
+  # -- the shadow keeps today's nightly on purpose, and the target is that same tag.
   local img
-  for img in "${MIG_SOURCE_IMAGE:-}" "${MIG_TARGET_IMAGE:-}"; do
-    [ -n "$img" ] && docker rmi "$img" > /dev/null 2>&1 || true
+  for img in ${MIG_PULLED:-}; do
+    docker rmi "$img" > /dev/null 2>&1 || true
   done
   # The venvs, and the seed states: they hold the seeded API key in clear. The logs of
   # each cell stay until the next run, for whoever reads today's red.
@@ -525,6 +547,13 @@ migration_daily_version() {
     [ -n "$this" ] && v="$this"
   done
   printf '%s\n' "$v"
+}
+
+# The langflow-base a langflow release ships with. From 1.12 they share the number; before
+# it, a release 1.N.x pairs with base 0.N.x (1.11.2 -> 0.11.2, measured on PyPI
+# 2026-10-06), and the nightly dev builds carry the langflow number on both.
+migration_expected_base() {
+  python3 -c 'import sys,re; v=sys.argv[1]; m=re.match(r"1\.(\d+)\.(.*)$",v); print(f"0.{m[1]}.{m[2]}" if m and int(m[1])<12 and ".dev" not in v else v)' "$1"
 }
 
 migration_before_15326() {

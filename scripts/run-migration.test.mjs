@@ -33,7 +33,7 @@ const ALL = [
  * install: { version: exitCode }   uv pip install outcome per version
  * seed:    { cell: exitCode }
  */
-function migration({ target = "1.13.0.dev33", daily = null, dailyRuns = null, cells = "all", verify = {}, install = {}, installedBase = {}, seed = {}, previous = null, pypi = PYPI, healthDown = [] } = {}) {
+function migration({ target = "1.13.0.dev33", daily = null, dailyRuns = null, cells = "all", verify = {}, install = {}, installedBase = {}, seed = {}, previous = null, pypi = PYPI, healthDown = [], serveAs = {}, presentImages = [], probe = { out: "OpenAI credential probe: live — ok", rc: 0 }, lockBusy = false } = {}) {
   const dir = makeTempDir("run-migration-");
   const repo = join(dir, "repo");
   for (const rel of ["ops/vm/lib/routine.sh", "ops/vm/run-migration.sh", "scripts/resolve-migration-pair.mjs"]) {
@@ -45,7 +45,7 @@ function migration({ target = "1.13.0.dev33", daily = null, dailyRuns = null, ce
   mkdirSync(join(repo, "scripts"), { recursive: true });
   writeFileSync(join(repo, "scripts/start-ollama-source.sh"), "echo OLLAMA_HOST_IP=10.0.0.9\necho OLLAMA_PORT=$OLLAMA_PORT\n");
   writeFileSync(join(repo, "scripts/stop-ollama-source.sh"), `echo "stop $OLLAMA_PORT" >> ${q(join(dir, "ollama.log"))}\n`);
-  writeFileSync(join(repo, "tests/github-workflows/migration/provider_credentials.py"), "import sys; sys.exit(0)\n");
+  writeFileSync(join(repo, "tests/github-workflows/migration/provider_credentials.py"), `import sys; print(${q(probe.out)}); sys.exit(${probe.rc})\n`);
   // The cell stub: seed writes a state file; verify answers from the table, by the port
   // the cell was given (7920 + index, in the wrapper's order).
   const table = Object.fromEntries(ALL.map((c, i) => [7920 + i, verify[c] ?? "green"]));
@@ -81,7 +81,7 @@ print("CHECK credential pass ok"); sys.exit(0)
   // uv: `venv` makes a venv whose langflow sleeps; `pip install` answers per version.
   const installCases = Object.entries(install).map(([v, rc]) => `  *"==${v}"*) rc=${rc} ;;`).join("\n");
   // A venv whose python answers the langflow-base version uv "installed" (or a forced
-  // one), and whose langflow records its environment and serves that version on its port.
+  // one), and whose langflow records its environment and serves the langflow version.
   const served = join(dir, "served");
   mkdirSync(served);
   const baseCases = Object.entries(installedBase).map(([v, b]) => `  *"==${v}"*) inst=${q(b)} ;;`).join("\n");
@@ -89,7 +89,7 @@ print("CHECK credential pass ok"); sys.exit(0)
 case "$1" in
   venv) v="\${@: -1}"; mkdir -p "$v/bin"
     printf '#!/usr/bin/env bash\\ncat "%s/installed"\\n' "$v" > "$v/bin/python"
-    printf '#!/usr/bin/env bash\\nenv | sort > %s/langflow-env.$$\\nport=$(echo "$*" | sed -n "s/.*--port \\\\([0-9]*\\\\).*/\\\\1/p")\\ncp "%s/installed" %s/$port\\nsleep 30\\n' ${q(dir)} "$v" ${q(served)} > "$v/bin/langflow"
+    printf '#!/usr/bin/env bash\\nenv | sort > %s/langflow-env.$$\\nport=$(echo "$*" | sed -n "s/.*--port \\\\([0-9]*\\\\).*/\\\\1/p")\\ncp "%s/langflow-version" %s/$port\\nsleep 30\\n' ${q(dir)} "$v" ${q(served)} > "$v/bin/langflow"
     chmod +x "$v/bin/python" "$v/bin/langflow"; exit 0 ;;
   pip) rc=0
     case "$*" in
@@ -98,15 +98,19 @@ ${installCases}
     [ "$rc" = 0 ] || exit "$rc"
     py="$(echo "$*" | sed -n 's/.*-p \\([^ ]*\\)\\/bin\\/python.*/\\1/p')"
     ver="$(echo "$*" | sed -n 's/.*langflow\\[postgresql\\]==\\([^ ]*\\).*/\\1/p')"
-    inst="$ver"
+    bp="$(echo "$*" | sed -n 's/.*langflow-base==\\([^ ]*\\).*/\\1/p')"
+    inst="\${bp:-$ver}"
     case "$*" in
 ${baseCases}
     esac
-    echo "$inst" > "$py/installed"; exit 0 ;;
+    # /api/v1/version answers the langflow package's version, not the base's.
+    echo "$inst" > "$py/installed"; echo "$ver" > "$py/langflow-version"; exit 0 ;;
 esac`);
   stub(bin, "curl", `case "$*" in
   *pypi.org*) cp ${q(pypiFile)} "$(echo "$*" | sed -n 's/.*-o \\([^ ]*\\).*/\\1/p')" ;;
-  *api/v1/version*) port="$(echo "$*" | sed -n 's/.*:\\([0-9]*\\)\\/api.*/\\1/p')"; [ -f ${q(served)}/$port ] && printf '{"version": "%s"}' "$(cat ${q(served)}/$port)" ;;
+  *api/v1/version*) port="$(echo "$*" | sed -n 's/.*:\\([0-9]*\\)\\/api.*/\\1/p')"; [ -f ${q(served)}/$port ] || exit 0
+    v="$(cat ${q(served)}/$port)"; o="$(awk -v s="$v" '$1==s{print $2}' ${q(join(dir, "serve-as"))} 2>/dev/null)"
+    printf '{"version": "%s"}' "\${o:-$v}" ;;
   *health_check*) case "$*" in ${healthDown.map((p) => `*:${p}/*`).join("|") || "__none__"}) exit 7 ;; esac; exit 0 ;;
   *docker-compose.yml*) out="$(echo "$*" | sed -n 's/.*-o \\([^ ]*\\).*/\\1/p')"; echo "services: {}" > "$out" ;;
   *) exit 22 ;;
@@ -114,6 +118,7 @@ esac`);
   stub(bin, "docker", `echo "$*" >> ${q(join(dir, "docker.log"))}
 case "$1" in
   ps|volume|network) exit 0 ;;
+  image) case " ${presentImages.join(" ")} " in *" \${@: -1} "*) exit 0 ;; esac; exit 1 ;;
   inspect) exit 1 ;;
   run) case "$*" in *postgres*) exit 0 ;; esac
     port="$(echo "$*" | sed -n 's/.*127\\.0\\.0\\.1:\\([0-9]*\\):7860.*/\\1/p')"
@@ -125,7 +130,8 @@ case "$1" in
   esac ;;
 esac
 exit 0`);
-  stub(bin, "flock", "exit 0");
+  stub(bin, "flock", lockBusy ? "exit 1" : "exit 0");
+  writeFileSync(join(dir, "serve-as"), Object.entries(serveAs).map(([a, b]) => `${a} ${b}\n`).join(""));
   stub(bin, "systemctl", "echo inactive");
   stub(bin, "pkill", "exit 0");
 
@@ -334,8 +340,12 @@ test("an instance is up only when it serves the asked version, whatever answers 
   assert.equal(ok.status, 0, ok.log);
   assert.match(ok.log, /up: 1\.12\.4 after/);
   assert.match(ok.log, /up: 1\.13\.0\.dev33 after/);
-  const wrong = migration({ cells: "sqlite-pip-fresh", installedBase: { "1.13.0.dev33": "1.13.0.dev32" } });
-  assert.notEqual(wrong.last.STATUS, "green", wrong.log);
+  // Pip: the install is right, but another version answers on the port. The first
+  // version of this case changed the installed base and so never reached this guard.
+  const wrong = migration({ cells: "sqlite-pip-fresh", serveAs: { "1.13.0.dev33": "1.12.4" } });
+  assert.equal(wrong.last.STATUS, "red", wrong.log);
+  assert.match(wrong.log, /port 7920 answers 1\.12\.4, waiting for 1\.13\.0\.dev33/);
+  assert.doesNotMatch(wrong.log, /installed langflow-base/);
 });
 
 test("the target is the last non-empty version among today's daily runs", () => {
@@ -348,4 +358,43 @@ test("everything the routine names is cleared on exit, and its ollama stopped", 
   assert.match(r.docker, /ps -aq --filter name=\^e2e-migration-/);
   assert.match(r.docker, /volume ls -q --filter name=\^e2e-migration-/);
   assert.match(r.ollama, /^stop 11464$/m);
+});
+
+test("a run that ends skipped waiting for its turn tears down nothing: the holder's cells are not its", () => {
+  const r = migration({ lockBusy: true });
+  assert.equal(r.last.STATUS, "skipped", r.log);
+  assert.equal(r.docker, "", r.docker);
+  assert.equal(r.ollama, "");
+  assert.equal(r.calls, "");
+});
+
+test("only the images this run pulled are removed: one already here is another lane's", () => {
+  const r = migration({ cells: "sqlite-docker-upgrade", presentImages: ["langflowai/langflow-nightly:1.13.0.dev33"] });
+  assert.equal(r.status, 0, r.log);
+  const rmi = r.docker.split("\n").filter((l) => l.startsWith("rmi "));
+  assert.deepEqual(rmi, ["rmi langflowai/langflow:1.12.4"], r.docker);
+});
+
+test("an inconclusive provider probe is not a live account", () => {
+  const r = migration({ cells: "sqlite-pip-fresh", probe: { out: "::warning::OpenAI credential probe inconclusive (x) — provider-side HTTP 503", rc: 0 } });
+  assert.match(r.log, /^provider probe: inconclusive$/m, r.log);
+  const live = migration({ cells: "sqlite-pip-fresh" });
+  assert.match(live.log, /^provider probe: live$/m, live.log);
+});
+
+test("before 1.12 the source's langflow-base is 0.N.x, pinned and checked as such", () => {
+  const pypi = { releases: { "1.11.5": [{}], "1.11.6": [{}], "1.12.0": [{}] } };
+  const r = migration({ target: "1.12.0", pypi, cells: "sqlite-pip-upgrade" });
+  assert.equal(r.last.STATUS, "green", r.log);
+  const src = r.uv.split("\n").find((l) => l.startsWith("pip install") && l.includes("langflow[postgresql]==1.11.6"));
+  assert.match(src, /langflow-base==0\.11\.6/, r.uv);
+  const tgt = r.uv.split("\n").find((l) => l.startsWith("pip install") && l.includes("langflow[postgresql]==1.12.0"));
+  assert.match(tgt, /langflow-base==1\.12\.0/, r.uv);
+});
+
+test("the #15326 note is for the default account gone on Postgres, not for any red on an old target", () => {
+  const sqlite = migration({ target: "1.12.5rc1", cells: "sqlite-pip-upgrade-autologin-off", verify: { "sqlite-pip-upgrade-autologin-off": "red:default-user-kept" } });
+  assert.doesNotMatch(sqlite.detail, /15326/);
+  const other = migration({ target: "1.12.5rc1", cells: "postgres-pip-upgrade-autologin-off", verify: { "postgres-pip-upgrade-autologin-off": "red:messages" } });
+  assert.doesNotMatch(other.detail, /15326/);
 });
