@@ -107,6 +107,9 @@ main() {
     activating | active | reloading | deactivating)
       echo "stopping the image shadow ($shadow_state) before this run"
       systemctl stop e2e-shadow.service || echo "WARNING: could not stop e2e-shadow.service"
+      # A stopped shadow did not answer its week: forget it, so this run's own request
+      # asks again instead of reading the week as covered (review of #2185).
+      rm -f "${E2E_SHADOW_STATE:-/root/e2e-shadow}/requested-week"
       ;;
   esac
   # The same priority over the on-demand run. That one refuses to START in the daily's
@@ -385,9 +388,19 @@ main() {
   #
   # Rollback: IMAGE_SHADOW=0 on this line, or remove e2e-shadow.service; the request
   # script says "not installed" and asks for nothing.
+  #
+  # The cadence (#2184), decided on 2026-10-05: the pip venv stays this lane's target,
+  # and the shadow keeps measuring the image -- every run through Friday 2026-10-09,
+  # for clean shadows after #2161 and #2163, then once a week from Monday (a missed
+  # Monday is caught up on the next run). Defaults, not literals: the lane file
+  # (/root/.e2e-lane) may move either knob without a commit, and an EMPTY value turns
+  # that knob off (review of #2185).
+  # --- shadow request: begin ---
   if [ "${IMAGE_SHADOW:-1}" = "1" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+    SHADOW_DAILY_UNTIL="${SHADOW_DAILY_UNTIL-2026-10-09}" SHADOW_WEEKDAY="${SHADOW_WEEKDAY-1}" \
     SHADOW_VERSION="$WANT" SHADOW_SUITE_SHA="$SUITE_SHA" ./ops/vm/request-shadow.sh || true
   fi
+  # --- shadow request: end ---
   find "$LOG_DIR" -maxdepth 1 -name '*.log' -type f -mtime +"$LOG_KEEP_DAYS" -delete
   # The run's status, not the pruning's: without it a red day ends Result=success.
   return "$code"

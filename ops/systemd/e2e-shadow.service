@@ -4,7 +4,8 @@
 # into machine and artifact. No consequence: it publishes nothing (see the wrapper).
 #
 # No timer, on purpose. ops/vm/request-shadow.sh starts it with --no-block at the end of
-# run-daily.sh, after writing what to run. After= the daily, so the job it queues from
+# run-daily.sh, after writing what to run -- on the days its cadence is due (every run
+# through 2026-10-09, then once a week from Monday; see run-daily.sh), not every day. After= the daily, so the job it queues from
 # inside the daily's own unit starts only once that unit has finished.
 Description=E2E @stable image shadow (VM lane, no consequence)
 After=network-online.target e2e-daily.service
