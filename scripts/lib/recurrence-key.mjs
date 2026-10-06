@@ -166,11 +166,13 @@ const SHARD_COPY_PREFIX = /^runs\/[^/]+\/shard-\d+\//;
  *
  * Applied when the key is derived AND when two keys are compared, so the rows the
  * VM lane wrote before #2178 — which still carry `runs/<id>/shard-N/tests/…` —
- * match a new one without rewriting the ledger. Idempotent.
+ * match a new one without rewriting the ledger. A leading `./` goes before the
+ * shard prefix is tested, or `./runs/<id>/shard-N/…` would keep it on the first
+ * pass and lose it on the second.
  */
 export function canonicalRecurrenceFile(rel) {
   if (rel === null || rel === undefined) return null;
-  return normalizeSpecPath(String(rel).replace(SHARD_COPY_PREFIX, "")) || null;
+  return normalizeSpecPath(String(rel).replace(/^\.\//, "").replace(SHARD_COPY_PREFIX, "")) || null;
 }
 
 /**

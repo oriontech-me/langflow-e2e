@@ -128,6 +128,7 @@ test("#2178: a VM shard copy below the checkout spells the spec as the checkout 
   assert.equal(recurrenceFile({ file: `${VM_CHECKOUT}/${VM_SPEC}` }, VM_CHECKOUT), expected);
   assert.equal(canonicalRecurrenceFile(expected), expected);
   assert.equal(canonicalRecurrenceFile(null), null);
+  assert.equal(canonicalRecurrenceFile(`./${VM_FILES["2026-10-05"]}`), expected);
   // Only the shard-copy shape is stripped: a directory merely named `runs` is a real path.
   assert.equal(canonicalRecurrenceFile("helpers/runs/x/shard-1/y.ts"), "helpers/runs/x/shard-1/y.ts");
 });
