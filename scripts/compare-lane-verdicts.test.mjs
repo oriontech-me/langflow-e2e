@@ -1837,7 +1837,10 @@ test("daily-stable.yml passes the suite revision to the history appender", () =>
 test("run-e2e.sh passes the suite revision to the history appender", () => {
   const sh = readFileSync(join(HERE, "run-e2e.sh"), "utf8");
   const block = blockAfter(sh, /HISTORY_FILE="\$LEDGER_HISTORY"/, /append-weekly-history\.mjs/);
-  assert.match(block, /SUITE_SHA="\$\(git -C "\$REPO_DIR" rev-parse HEAD/);
+  // Through suite_revision since #2203, the one derivation the platform record uses too.
+  assert.match(block, /SUITE_SHA="\$\(suite_revision\)"/);
+  assert.match(sh, /suite_revision\(\) \{\n\s+git -C "\$REPO_DIR" rev-parse HEAD/,
+    "suite_revision must still read the clone this run used");
 });
 
 // ---------------------------------------------------------------------------

@@ -4157,3 +4157,40 @@ test("the run POST is bounded in time (#2020)", async () => {
   assert.ok(seconds > 0 && seconds <= 300, `unexpected bound: ${r.curlArgs[at + 1]}`);
   assert.equal(r.received.length, 2, "the wrapper must still deliver the POST");
 });
+
+// ---------------------------------------------------------------------------
+// The suite commit on the platform record (#2203)
+// ---------------------------------------------------------------------------
+
+test("suite_revision prints the clone's HEAD, and nothing outside a clone", () => {
+  const head = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const inside = sourced("suite_revision");
+  assert.equal(inside.status, 0, inside.stderr);
+  assert.equal(inside.stdout.trim(), head);
+
+  // REPO_DIR is assigned when the script is sourced, so it is overridden after that.
+  const outside = sourced(`REPO_DIR=${JSON.stringify(makeTempDir("not-a-clone-"))}; suite_revision`);
+  assert.equal(outside.status, 0, "a clone that cannot answer must not abort the phase (set -e)");
+  assert.equal(outside.stdout, "", "and it must print nothing rather than a guess");
+});
+
+test("the platform record and the history row name the suite through one expression", () => {
+  // Two copies of the derivation are two chances to disagree about which suite ran,
+  // which is exactly what the platform pairs runs on. Both calls go through
+  // suite_revision, and neither carries a derivation of its own.
+  const script = readFileSync(SCRIPT, "utf8");
+  const publish = script.slice(script.indexOf("phase_publish() {"), script.indexOf("phase_verdict() {"));
+  const callOf = (marker, tool) => {
+    const from = publish.indexOf(marker);
+    assert.ok(from > 0, `${marker} moved out of phase_publish`);
+    return publish.slice(from, publish.indexOf(tool, from));
+  };
+  // Cut at the invocation, not at the script's name: comments between the log line
+  // and the call mention it too.
+  const payload = callOf('log "Building the run payload"', "node scripts/build-run-payload.mjs");
+  const history = callOf('log "Recording the daily history"', "node scripts/append-weekly-history.mjs");
+  for (const [name, call] of [["payload", payload], ["history", history]]) {
+    assert.match(call, /SUITE_SHA="\$\(suite_revision\)"/, `the ${name} call must take SUITE_SHA from suite_revision`);
+    assert.doesNotMatch(call, /SUITE_SHA="\$\(git /, `the ${name} call must not derive the commit itself`);
+  }
+});

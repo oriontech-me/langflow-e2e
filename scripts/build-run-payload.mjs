@@ -176,6 +176,24 @@ const validAttempt = runAttempt !== null && runAttempt >= 1 ? runAttempt : null;
 const coverage = (process.env.STABLE_COUNT || process.env.TOTAL_COUNT)
   ? { stable_count: num(process.env.STABLE_COUNT), total_count: num(process.env.TOTAL_COUNT) } : undefined;
 
+// The langflow-e2e commit this run's suite came from (#2203). The QA Platform pairs
+// an on-demand run with the daily that ran the SAME suite commit — the queue
+// contract's phase 8 — and that pairing is what tells a branch's new failures from
+// the daily's own. Both lanes already hand the same value to the history row, so the
+// row and the record cannot disagree about which suite ran.
+//
+// Only a full lowercase 40-hex commit is sent, as git and `github.sha` print it.
+// Anything else is dropped rather than forwarded: a malformed commit matches no
+// on-demand run and is indistinguishable, on the platform, from a genuine "different
+// suite" — while an omitted one says "not known", which is what it is. The ingest
+// does not reject unknown keys, so this field is safe to send before the platform
+// stores it.
+const suiteShaRaw = String(process.env.SUITE_SHA ?? "").trim();
+const suiteSha = /^[0-9a-f]{40}$/.test(suiteShaRaw) ? suiteShaRaw : null;
+if (suiteShaRaw && !suiteSha) {
+  console.error(`[payload] SUITE_SHA ${JSON.stringify(suiteShaRaw.slice(0, 60))} is not a 40-hex commit; suite_sha omitted`);
+}
+
 const now = new Date();
 // Stamp date/time in BRT (America/Sao_Paulo), NOT UTC. run_date is what the QA
 // Platform's Trend view filters on and the Run Summary labels "BRT"; stamping in
@@ -211,6 +229,7 @@ const payload = {
   langflow_image: process.env.LANGFLOW_IMAGE || null,   // the nightly build (or RC/stable on a manual run)
   langflow_version: process.env.LANGFLOW_VERSION || null, // resolved version from GET /api/v1/version (e.g. 1.11.0.dev25)
   langflow_commit_sha: process.env.LANGFLOW_COMMIT_SHA || null,
+  ...(suiteSha ? { suite_sha: suiteSha } : {}),
   duration_ms: Math.round(report?.stats?.duration ?? 0),
   ...(coverage ? { coverage } : {}),
   ...(process.env.EVIDENCE_URL ? { evidence_artifact_url: process.env.EVIDENCE_URL } : {}),

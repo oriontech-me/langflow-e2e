@@ -731,6 +731,13 @@ target_artifact() {
   fi
 }
 
+# The revision this clone's suite ran from, for the history row AND the platform
+# record: one expression, so the two cannot name different suites (#2203). Empty
+# when the clone cannot answer — the payload then omits the field, never guesses.
+suite_revision() {
+  git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true
+}
+
 # TARGET_KIND, and the image target's preconditions, refused together and before
 # anything runs. Split out so it is testable without docker.
 check_target_kind() {
@@ -2993,6 +3000,7 @@ phase_publish() {
     LANGFLOW_IMAGE="$(target_artifact)" \
     STABLE_COUNT="$stable_count" \
     TOTAL_COUNT="$total_count" \
+    SUITE_SHA="$(suite_revision)" \
     EVIDENCE_URL="$REPORT_URL" \
       node scripts/build-run-payload.mjs > "$RUN_DIR/payload.json"
     PAYLOAD_BUILT=true
@@ -3179,7 +3187,7 @@ phase_publish() {
     HISTORY_FILE="$LEDGER_HISTORY" \
     WORKFLOW="$WORKFLOW_ID" \
     GITHUB_RUN_ID="$RUN_ID" \
-    SUITE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)" \
+    SUITE_SHA="$(suite_revision)" \
     LANGFLOW_VERSION="${LANGFLOW_VERSION:-}" \
     LANGFLOW_IMAGE="$(target_artifact)" \
     LANGFLOW_VERSION_EXPECTED="${LANGFLOW_VERSION_EXPECTED:-}" \
