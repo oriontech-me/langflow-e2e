@@ -1,0 +1,16 @@
+[Unit]
+Description=Schedule for the E2E migration routine, 09:15 UTC on weekdays
+
+[Timer]
+# After the daily (08:00) and the image shadow (until about 08:45), so it migrates to the
+# build the daily just judged: dev builds reach PyPI between 02:20 and 04:30 UTC, and a
+# night slot would test yesterday's on some days (decided 2026-10-05, stage 3 task 3).
+# 09:15 UTC is 06:15 in Brasilia and 05:15 EDT, when nobody asks for an on-demand run.
+OnCalendar=Mon..Fri 09:15 UTC
+# A routine that catches up gives a verdict for a day it did not observe.
+Persistent=false
+AccuracySec=1min
+Unit=e2e-routine-migration.service
+
+[Install]
+WantedBy=timers.target

@@ -186,7 +186,7 @@ reference. In short:
   only by the report, never by the routine's work. Skipped, failed and blocked days, and
   a red whose report failed, are said by the routine's watchdog.
 
-Installing one routine, e.g. `migration` (each routine's units ship with the routine itself; migration's arrive with #2194):
+Installing one routine, e.g. `migration` (each routine's units ship with the routine itself):
 
 ```sh
 cd /root/e2e-qa
