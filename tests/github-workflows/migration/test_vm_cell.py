@@ -106,3 +106,32 @@ def test_blocked_alone_is_not_failed():
     c = cell.Checks()
     c.add("credential", "blocked", "x")
     assert not c.failed
+
+
+def _credential_with(monkeypatch, exc):
+    def boom(api, state):
+        raise exc
+    monkeypatch.setattr(cell, "_credential_call", boom)
+    c = cell.Checks()
+    cell._credential_check(c, None, {})
+    return c.rows[-1]
+
+
+def test_a_provider_refusing_mid_run_is_blocked(monkeypatch):
+    for body in ('{"detail": "Error code: 429 - rate limit reached"}', '{"error": {"code": "insufficient_quota"}}'):
+        name, verdict, _ = _credential_with(monkeypatch, cell.ApiError(500, body, "u"))
+        assert (name, verdict) == ("credential", "blocked"), body
+
+
+def test_an_invalid_key_is_red_because_it_is_what_a_failed_decrypt_looks_like(monkeypatch):
+    body = '{"detail": "Error code: 401 - Incorrect API key provided"}'
+    _, verdict, detail = _credential_with(monkeypatch, cell.ApiError(500, body, "u"))
+    assert verdict == "fail"
+    assert "401" in detail
+
+
+def test_an_unreadable_seed_state_is_this_machines_not_the_products(tmp_path, monkeypatch):
+    monkeypatch.setattr(cell, "wait_up", lambda api, seconds=240: True)
+    monkeypatch.setattr(cell, "login", lambda api, how: None)
+    rc = cell.main(["verify", "--url", "http://x", "--state", str(tmp_path / "missing.json")])
+    assert rc == 5

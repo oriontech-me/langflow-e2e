@@ -52,7 +52,8 @@
 # ## Where it runs
 #
 #   ports     7920-7931 (one per cell), postgres 5470-5481, ollama 11464
-#   work      /root/e2e-routines/migration/work, removed after
+#   work      /root/e2e-routines/migration/work: venvs and seed states removed after,
+#             the cells' logs kept until the next run
 #   docker    containers, volumes and compose projects named e2e-migration-*, removed
 #             after; the images it pulled, removed after (task 8 decides retention)
 #
@@ -217,7 +218,8 @@ migration_cell() {
   local fails blocked
   fails="$(grep -E '^CHECK [^ ]+ fail' "$dir/verify.log" | cut -d' ' -f2 | tr '\n' ' ')"
   blocked="$(grep -E '^CHECK [^ ]+ blocked' "$dir/verify.log" | cut -d' ' -f2 | tr '\n' ' ')"
-  if [ "$rc" = 3 ]; then verdict=red; detail="$MIG_TARGET stopped answering during the checks"
+  if [ "$rc" = 5 ]; then verdict=failed; detail="the seed's state could not be read: $(tail -n 1 "$dir/verify.log")"
+  elif [ "$rc" = 3 ]; then verdict=red; detail="$MIG_TARGET stopped answering during the checks"
   elif [ -n "$fails" ]; then verdict=red; detail="failed: ${fails% }"
   elif [ "$rc" != 0 ]; then verdict=red; detail="verify ended with status $rc: $(tail -n 1 "$dir/verify.log")"
   elif [ -n "$blocked" ]; then verdict=blocked; detail="blocked: ${blocked% }"
@@ -245,7 +247,14 @@ migration_up() {
   # start on migrated data runs the schema migrations too. Overridable for the tests only.
   local i wait_s="${MIGRATION_UP_WAIT_S:-240}"
   for i in $(seq 1 $((wait_s / 2))); do
-    curl -fsS --max-time 3 "$MC_URL/health_check" > /dev/null 2>&1 && { echo "up: $version after $((i * 2))s"; return 0; }
+    # The asked version, not whatever answers on the port: Langflow moves to the next
+    # free port when its own is taken, and a source still dying would answer for it.
+    if curl -fsS --max-time 3 "$MC_URL/health_check" > /dev/null 2>&1; then
+      local served
+      served="$(curl -fsS --max-time 3 "$MC_URL/api/v1/version" 2>/dev/null | migration_json version 2>/dev/null)"
+      if [ "$served" = "$version" ]; then echo "up: $version after $((i * 2))s"; return 0; fi
+      [ -n "$served" ] && echo "port $MC_PORT answers $served, waiting for $version"
+    fi
     sleep 2
   done
   MC_UP_VERDICT=red; MC_UP_WHY="did not answer /health_check in ${wait_s}s: $(migration_log_tail)"
@@ -256,13 +265,24 @@ migration_up_pip() {
   local version="$1" auth="$2" venv="$MC_DIR/venv"
   [ -d "$venv" ] || uv venv -q -p "$MIG_PY" "$venv" 8>&- \
     || { MC_UP_VERDICT=failed; MC_UP_WHY="uv could not create a Python $MIG_PY venv"; return 1; }
-  # --prerelease=allow for a dev or rc target; the extra brings the Postgres driver to
+  # The extra brings the Postgres driver to
   # both versions, as the Actions job installed it.
   # psycopg[binary] beside it: the extra brings psycopg without a driver, and this machine
   # has no libpq (the Actions runner had one), so Postgres cells failed to connect at all.
   local extra=(); [ "$MC_DB" = postgres ] && extra=("psycopg[binary]")
-  if ! uv pip install -q -p "$venv/bin/python" --prerelease=allow "langflow[postgresql]==$version" ${extra[@]+"${extra[@]}"} > "$MC_DIR/install-$version.log" 2>&1 8>&-; then
+  # Pre-releases for the TARGET only. On the source, --prerelease=allow resolved
+  # langflow==1.12.4 to langflow-base and lfx 1.12.5rc1 -- where the migrations live --
+  # so the pip cells upgraded from a release nobody runs (review of #2194, measured).
+  local pre=(); [ "$version" = "$MIG_TARGET" ] && pre=(--prerelease=allow)
+  if ! uv pip install -q -p "$venv/bin/python" ${pre[@]+"${pre[@]}"} "langflow[postgresql]==$version" ${extra[@]+"${extra[@]}"} > "$MC_DIR/install-$version.log" 2>&1 8>&-; then
     MC_UP_VERDICT=failed; MC_UP_WHY="pip install failed: $(tail -n 1 "$MC_DIR/install-$version.log")"; return 1
+  fi
+  # The packages that carry the code must be the asked release, not a neighbour the
+  # resolver preferred: a wrong source is a cell that tests nothing it names.
+  local got
+  got="$("$venv/bin/python" -c 'import importlib.metadata as m; print(m.version("langflow-base"))' 2>/dev/null)"
+  if [ "$got" != "$version" ]; then
+    MC_UP_VERDICT=failed; MC_UP_WHY="langflow==$version installed langflow-base ${got:-<none>}, not $version"; return 1
   fi
   if [ "$MC_DB" = postgres ] && ! migration_pg_up; then return 1; fi
   (
@@ -273,6 +293,10 @@ migration_up_pip() {
     # The SSRF guard blocks private addresses; this one host, and nothing else, is ours.
     export LANGFLOW_SSRF_ALLOWED_HOSTS="$MIG_OLLAMA_HOST"
     unset LANGFLOW_DATABASE_URL
+    # The credential must come from the DATABASE: with the key in the environment, an
+    # api_key that failed to decrypt fell back to it silently (lfx get_api_key_for_provider)
+    # and the decrypt check passed with nothing decrypted (review of #2194).
+    unset OPENAI_API_KEY
     [ "$MC_DB" = postgres ] && export LANGFLOW_DATABASE_URL="postgresql://langflow:langflow@127.0.0.1:$MC_PG/langflow"
     if [ "$auth" = off ]; then
       export LANGFLOW_AUTO_LOGIN=false LANGFLOW_SUPERUSER="$MC_SU" LANGFLOW_SUPERUSER_PASSWORD="$MC_SU_PW"
@@ -333,10 +357,20 @@ services:
       - LANGFLOW_SSRF_ALLOWED_HOSTS=$MIG_OLLAMA_HOST
       - LANGFLOW_AUTO_LOGIN=$env_auto
       - LANGFLOW_SUPERUSER=$MC_SU
+    # upstream's depends_on has no condition: a slow first postgres made Langflow exit
+    # on its first connect, a machine race read as red (review of #2194).
+    depends_on: !override
+      postgres:
+        condition: service_healthy
   postgres:
     container_name: e2e-migration-$MC_CELL-pg
     ports: !override
       - "127.0.0.1:$MC_PG:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langflow"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 EOF
   local pw="${MC_SU_PW:-unused-with-auto-login}"
   if ! LANGFLOW_SUPERUSER_PASSWORD="$pw" docker compose -p "e2e-migration-$MC_CELL" \
@@ -375,7 +409,7 @@ migration_stop_langflow() {
       local i; for i in $(seq 1 30); do kill -0 "$MC_PID" 2> /dev/null || break; sleep 1; done
       kill -9 "$MC_PID" 2> /dev/null; MC_PID="" ;;
     docker)
-      if [ "$MC_DB" = sqlite ]; then docker rm -f "e2e-migration-$MC_CELL" > /dev/null 2>&1
+      if [ "$MC_DB" = sqlite ]; then docker stop -t 30 "e2e-migration-$MC_CELL" > /dev/null 2>&1; docker rm -f "e2e-migration-$MC_CELL" > /dev/null 2>&1
       else docker compose -p "e2e-migration-$MC_CELL" -f "$MIG_WORK/compose/docker-compose.yml" -f "$MC_DIR/override.yml" rm -sf langflow > /dev/null 2>&1; fi ;;
   esac
 }
@@ -458,8 +492,12 @@ routine_cleanup() {
   for img in "${MIG_SOURCE_IMAGE:-}" "${MIG_TARGET_IMAGE:-}"; do
     [ -n "$img" ] && docker rmi "$img" > /dev/null 2>&1 || true
   done
-  rm -rf "${MIG_WORK:?}"/*/venv
-  echo "cleanup: containers, volumes, ollama and venvs removed"
+  # The venvs, and the seed states: they hold the seeded API key in clear. The logs of
+  # each cell stay until the next run, for whoever reads today's red.
+  rm -rf "${MIG_WORK:?}"/*/venv "${MIG_WORK:?}"/*/home
+  rm -f "${MIG_WORK:?}"/*/state.json
+  find "$RT_STATE/results" -maxdepth 1 -name '*.md' -type f -mtime +90 -delete 2> /dev/null || true
+  echo "cleanup: containers, volumes, networks, ollama, venvs and seed states removed"
 }
 
 # Every container, compose project and volume this routine names, whatever cell left it.
@@ -469,6 +507,9 @@ migration_clear_docker() {
   [ -z "$ids" ] || docker rm -f $ids > /dev/null 2>&1
   ids="$(docker volume ls -q --filter name=^e2e-migration- 2> /dev/null)"
   [ -z "$ids" ] || docker volume rm -f $ids > /dev/null 2>&1
+  # Compose's networks too: on a stop mid-cell, no `down` ran for them.
+  ids="$(docker network ls -q --filter name=^e2e-migration- 2> /dev/null)"
+  [ -z "$ids" ] || docker network rm $ids > /dev/null 2>&1
   return 0
 }
 
@@ -478,7 +519,10 @@ migration_daily_version() {
   today="$(date -u +%Y%m%d)"
   for d in "$runs/$today"T*/; do
     [ -f "$d/run-metadata.json" ] || continue
-    v="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("langflow_version",""))' "$d/run-metadata.json" 2> /dev/null)"
+    # The last NON-EMPTY: a re-run that aborted early must not erase a good earlier one.
+    local this
+    this="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("langflow_version",""))' "$d/run-metadata.json" 2> /dev/null)"
+    [ -n "$this" ] && v="$this"
   done
   printf '%s\n' "$v"
 }

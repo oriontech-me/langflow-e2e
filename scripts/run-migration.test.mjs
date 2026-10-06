@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -33,7 +33,7 @@ const ALL = [
  * install: { version: exitCode }   uv pip install outcome per version
  * seed:    { cell: exitCode }
  */
-function migration({ target = "1.13.0.dev33", daily = null, cells = "all", verify = {}, install = {}, seed = {}, previous = null, pypi = PYPI, healthDown = [] } = {}) {
+function migration({ target = "1.13.0.dev33", daily = null, dailyRuns = null, cells = "all", verify = {}, install = {}, installedBase = {}, seed = {}, previous = null, pypi = PYPI, healthDown = [] } = {}) {
   const dir = makeTempDir("run-migration-");
   const repo = join(dir, "repo");
   for (const rel of ["ops/vm/lib/routine.sh", "ops/vm/run-migration.sh", "scripts/resolve-migration-pair.mjs"]) {
@@ -57,7 +57,9 @@ args = sys.argv[1:]
 port = int(re.search(r":(\\d+)$", args[args.index("--url") + 1]).group(1))
 state = args[args.index("--state") + 1]
 login = args[args.index("--login") + 1] if "--login" in args else "auto"
-open(${q(join(dir, "calls.log"))}, "a").write(f"{args[0]} {port} {login}\\n")
+import os
+leaked = [k for k in ("GH_TOKEN", "GITHUB_TOKEN", "SOURCE_PUSH_TOKEN", "SLACK_WEBHOOK_URL") if os.environ.get(k)]
+open(${q(join(dir, "calls.log"))}, "a").write(f"{args[0]} {port} {login} leaked={','.join(leaked)}\\n")
 if args[0] == "seed":
     rc = ${q(seeds)}[str(port)]
     if rc: print("SEED fail boom"); sys.exit(rc)
@@ -77,21 +79,52 @@ print("CHECK credential pass ok"); sys.exit(0)
   const pypiFile = join(dir, "pypi.json");
   writeFileSync(pypiFile, JSON.stringify(pypi));
   // uv: `venv` makes a venv whose langflow sleeps; `pip install` answers per version.
-  const installCases = Object.entries(install).map(([v, rc]) => `  *"==${v}"*) exit ${rc} ;;`).join("\n");
+  const installCases = Object.entries(install).map(([v, rc]) => `  *"==${v}"*) rc=${rc} ;;`).join("\n");
+  // A venv whose python answers the langflow-base version uv "installed" (or a forced
+  // one), and whose langflow records its environment and serves that version on its port.
+  const served = join(dir, "served");
+  mkdirSync(served);
+  const baseCases = Object.entries(installedBase).map(([v, b]) => `  *"==${v}"*) inst=${q(b)} ;;`).join("\n");
   stub(bin, "uv", `echo "$*" >> ${q(join(dir, "uv.log"))}
 case "$1" in
-  venv) mkdir -p "\${@: -1}/bin"; printf '#!/usr/bin/env bash\\nsleep 30\\n' > "\${@: -1}/bin/langflow"; chmod +x "\${@: -1}/bin/langflow"; exit 0 ;;
-  pip) case "$*" in
+  venv) v="\${@: -1}"; mkdir -p "$v/bin"
+    printf '#!/usr/bin/env bash\\ncat "%s/installed"\\n' "$v" > "$v/bin/python"
+    printf '#!/usr/bin/env bash\\nenv | sort > %s/langflow-env.$$\\nport=$(echo "$*" | sed -n "s/.*--port \\\\([0-9]*\\\\).*/\\\\1/p")\\ncp "%s/installed" %s/$port\\nsleep 30\\n' ${q(dir)} "$v" ${q(served)} > "$v/bin/langflow"
+    chmod +x "$v/bin/python" "$v/bin/langflow"; exit 0 ;;
+  pip) rc=0
+    case "$*" in
 ${installCases}
-  esac; exit 0 ;;
+    esac
+    [ "$rc" = 0 ] || exit "$rc"
+    py="$(echo "$*" | sed -n 's/.*-p \\([^ ]*\\)\\/bin\\/python.*/\\1/p')"
+    ver="$(echo "$*" | sed -n 's/.*langflow\\[postgresql\\]==\\([^ ]*\\).*/\\1/p')"
+    inst="$ver"
+    case "$*" in
+${baseCases}
+    esac
+    echo "$inst" > "$py/installed"; exit 0 ;;
 esac`);
   stub(bin, "curl", `case "$*" in
   *pypi.org*) cp ${q(pypiFile)} "$(echo "$*" | sed -n 's/.*-o \\([^ ]*\\).*/\\1/p')" ;;
+  *api/v1/version*) port="$(echo "$*" | sed -n 's/.*:\\([0-9]*\\)\\/api.*/\\1/p')"; [ -f ${q(served)}/$port ] && printf '{"version": "%s"}' "$(cat ${q(served)}/$port)" ;;
   *health_check*) case "$*" in ${healthDown.map((p) => `*:${p}/*`).join("|") || "__none__"}) exit 7 ;; esac; exit 0 ;;
   *docker-compose.yml*) out="$(echo "$*" | sed -n 's/.*-o \\([^ ]*\\).*/\\1/p')"; echo "services: {}" > "$out" ;;
   *) exit 22 ;;
 esac`);
-  stub(bin, "docker", `echo "$*" >> ${q(join(dir, "docker.log"))}\ncase "$1" in ps|volume) exit 0 ;; inspect) exit 1 ;; exec) exit 0 ;; esac\nexit 0`);
+  stub(bin, "docker", `echo "$*" >> ${q(join(dir, "docker.log"))}
+case "$1" in
+  ps|volume|network) exit 0 ;;
+  inspect) exit 1 ;;
+  run) case "$*" in *postgres*) exit 0 ;; esac
+    port="$(echo "$*" | sed -n 's/.*127\\.0\\.0\\.1:\\([0-9]*\\):7860.*/\\1/p')"
+    echo "\${@: -1}" | sed 's/.*://' > ${q(served)}/$port ;;
+  compose) case "$*" in *" up "*)
+    ov="$(echo "$*" | sed -n 's/.*-f \\([^ ]*override\\.yml\\).*/\\1/p')"
+    port="$(sed -n 's/.*"127\\.0\\.0\\.1:\\([0-9]*\\):7860".*/\\1/p' "$ov")"
+    sed -n 's/^ *image: .*:\\(.*\\)$/\\1/p' "$ov" | head -1 > ${q(served)}/$port ;;
+  esac ;;
+esac
+exit 0`);
   stub(bin, "flock", "exit 0");
   stub(bin, "systemctl", "echo inactive");
   stub(bin, "pkill", "exit 0");
@@ -100,10 +133,10 @@ esac`);
   mkdirSync(join(state, "migration", "results"), { recursive: true });
   if (previous) writeFileSync(join(state, "migration", "results", "20200101T000000Z.env"), previous);
   const runs = join(dir, "runs");
-  if (daily) {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    mkdirSync(join(runs, `${today}T080028Z`), { recursive: true });
-    writeFileSync(join(runs, `${today}T080028Z`, "run-metadata.json"), JSON.stringify({ langflow_version: daily }));
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  for (const [stamp, version] of dailyRuns ?? (daily ? [["080028Z", daily]] : [])) {
+    mkdirSync(join(runs, `${today}T${stamp}`), { recursive: true });
+    writeFileSync(join(runs, `${today}T${stamp}`, "run-metadata.json"), JSON.stringify({ langflow_version: version }));
   }
   const secrets = join(dir, "secrets.env");
   writeFileSync(secrets, "export OPENAI_API_KEY=sk-test\nexport GH_TOKEN=must-not-leak\n");
@@ -136,6 +169,7 @@ esac`);
     docker: readIf(join(dir, "docker.log")),
     ollama: readIf(join(dir, "ollama.log")),
     uv: readIf(join(dir, "uv.log")),
+    langflowEnvs: readdirSync(dir).filter((f) => f.startsWith("langflow-env.")).map((f) => readIf(join(dir, f))),
   };
 }
 
@@ -154,7 +188,7 @@ test("twelve cells, in a fixed order, each on its own port; all green is green, 
 
 test("the AUTO_LOGIN-off cells verify by adopting the default account; the others log in automatically", () => {
   const r = migration();
-  const verifies = r.calls.split("\n").filter((l) => l.startsWith("verify"));
+  const verifies = r.calls.split("\n").filter((l) => l.startsWith("verify")).map((l) => l.split(" ").slice(0, 3).join(" "));
   for (const [i, c] of ALL.entries()) {
     const want = c.endsWith("autologin-off") ? "adopt" : "auto";
     assert.ok(verifies.includes(`verify ${7920 + i} ${want}`), `${c}: not verified with ${want}`);
@@ -162,7 +196,7 @@ test("the AUTO_LOGIN-off cells verify by adopting the default account; the other
 });
 
 test("a failed check is red, and red wins over failed and blocked", () => {
-  const r = migration({ verify: { "sqlite-pip-upgrade": "red:file", "postgres-pip-fresh": "blocked" }, install: { "1.12.4": 0 }, seed: { "sqlite-docker-upgrade": 1 } });
+  const r = migration({ verify: { "sqlite-pip-upgrade": "red:file", "postgres-pip-fresh": "blocked" }, seed: { "sqlite-docker-upgrade": 1 } });
   assert.equal(r.status, 1, r.log);
   assert.equal(r.last.STATUS, "red");
   assert.equal(r.last.RED_CELLS, "sqlite-pip-upgrade");
@@ -259,10 +293,54 @@ test("no stable release below the target is failed, with the resolver's words", 
   assert.match(r.last.REASON, /no migration pair for 1\.13\.0\.dev33: no stable release below/);
 });
 
-test("only the provider key reaches the cells, never a publishing token", () => {
-  const r = migration({ cells: "sqlite-pip-fresh" });
+test("no publishing token reaches the cells or the Langflow they start", () => {
+  // The first version asserted only on the log, and a routine that exported the whole
+  // secrets file still passed (review of #2194).
+  const r = migration({ cells: "sqlite-pip-upgrade" });
   assert.equal(r.status, 0, r.log);
-  assert.doesNotMatch(r.log, /must-not-leak/);
+  for (const line of r.calls.split("\n").filter(Boolean)) assert.match(line, / leaked=$/, line);
+  assert.ok(r.langflowEnvs.length >= 2, "the pip Langflow never started");
+  for (const env of r.langflowEnvs) assert.doesNotMatch(env, /^(GH_TOKEN|GITHUB_TOKEN)=/m);
+});
+
+test("the pip Langflow gets no OPENAI_API_KEY: the credential must come from the database", () => {
+  // With the key in the environment, an api_key that failed to decrypt fell back to it
+  // silently, and the decrypt check passed with nothing decrypted (review of #2194).
+  const r = migration({ cells: "sqlite-pip-upgrade" });
+  assert.ok(r.langflowEnvs.length >= 2);
+  for (const env of r.langflowEnvs) assert.doesNotMatch(env, /^OPENAI_API_KEY=/m);
+});
+
+test("pre-releases are allowed for the target only, never for the source", () => {
+  // On the source, --prerelease=allow resolved langflow==1.12.4 to langflow-base 1.12.5rc1.
+  const r = migration({ cells: "sqlite-pip-upgrade" });
+  const installs = r.uv.split("\n").filter((l) => l.startsWith("pip install"));
+  const src = installs.find((l) => l.includes("==1.12.4"));
+  const tgt = installs.find((l) => l.includes("==1.13.0.dev33"));
+  assert.ok(src && tgt, r.uv);
+  assert.doesNotMatch(src, /--prerelease/);
+  assert.match(tgt, /--prerelease=allow/);
+});
+
+test("a source whose backend is not the asked release is failed, not tested", () => {
+  const r = migration({ cells: "sqlite-pip-upgrade", installedBase: { "1.12.4": "1.12.5rc1" } });
+  assert.equal(r.last.STATUS, "failed", r.log);
+  assert.match(r.detail, /langflow==1\.12\.4 installed langflow-base 1\.12\.5rc1, not 1\.12\.4/);
+});
+
+test("an instance is up only when it serves the asked version, whatever answers on the port", () => {
+  // Docker: the target image's tag is what the stub serves; asking for another fails.
+  const ok = migration({ cells: "sqlite-docker-upgrade postgres-docker-upgrade" });
+  assert.equal(ok.status, 0, ok.log);
+  assert.match(ok.log, /up: 1\.12\.4 after/);
+  assert.match(ok.log, /up: 1\.13\.0\.dev33 after/);
+  const wrong = migration({ cells: "sqlite-pip-fresh", installedBase: { "1.13.0.dev33": "1.13.0.dev32" } });
+  assert.notEqual(wrong.last.STATUS, "green", wrong.log);
+});
+
+test("the target is the last non-empty version among today's daily runs", () => {
+  const r = migration({ target: null, dailyRuns: [["080028Z", "1.13.0.dev34"], ["093000Z", ""]], cells: "sqlite-pip-fresh" });
+  assert.equal(r.last.TARGET, "1.13.0.dev34", r.log);
 });
 
 test("everything the routine names is cleared on exit, and its ollama stopped", () => {

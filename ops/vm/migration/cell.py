@@ -36,7 +36,8 @@ account can pay: otherwise that check is `blocked`, not red.
 
 Seed writes the state file (JSON) the verify reads. Verify prints one line per check,
 `CHECK <name> <pass|fail|blocked> <detail>`, and exits 0 when every check passed or was
-blocked, 1 when any failed, 3 when the instance could not be reached at all.
+blocked, 1 when any failed, 3 when the instance could not be reached at all, 5 when the
+seed's state could not be read (this machine's, not the product's).
 """
 
 from __future__ import annotations
@@ -306,7 +307,11 @@ def adopt_default_user(api: Api, state: dict, checks: Checks) -> bool:
 
 def verify(api: Api, state: dict, args) -> Checks:
     c = Checks()
-    flows = {f["id"]: f for f in (api.json("GET", "/api/v1/flows/?get_all=true&header_flows=true") or [])}
+    try:
+        flows = {f["id"]: f for f in (api.json("GET", "/api/v1/flows/?get_all=true&header_flows=true") or [])}
+    except Exception as e:  # a listing that fails is a failed check, with its words
+        c.add("flow-listing", "fail", f"{type(e).__name__}: {e}")
+        flows = {}
 
     def projects():
         have = {p["id"]: p["name"] for p in api.json("GET", "/api/v1/projects/")}
@@ -365,7 +370,11 @@ def verify(api: Api, state: dict, args) -> Checks:
 
     # The credential decrypts: one real call, only when the probe says it can be paid.
     if "variable" in state:
-        have = {v["name"] for v in api.json("GET", "/api/v1/variables/")}
+        try:
+            have = {v["name"] for v in api.json("GET", "/api/v1/variables/")}
+        except Exception as e:
+            c.add("credential", "fail", f"the variables could not be listed: {type(e).__name__}: {e}")
+            return c
         if state["variable"]["name"] not in have:
             c.add("credential", "fail", "the Credential variable is gone")
         else:
@@ -373,10 +382,31 @@ def verify(api: Api, state: dict, args) -> Checks:
             if verdict not in ("live", ""):
                 c.add("credential", "blocked", f"provider probe says {verdict}: the decrypt is not proved today, and not disproved")
             else:
-                c.run("credential", lambda: _credential_call(api, state))
+                _credential_check(c, api, state)
     else:
         c.add("credential", "blocked", "no OPENAI_API_KEY at seed time: nothing to decrypt")
     return c
+
+
+# The provider's own refusals: rate limit and quota. Never 401 / invalid key, which is
+# what a credential that failed to decrypt produces -- the case this check exists for.
+_PROVIDER_REFUSAL = ("insufficient_quota", "exceeded your current quota", "rate limit", "rate_limit", "error code: 429", "status code 429")
+
+
+def _credential_check(c: "Checks", api, state):
+    """The one real call. A provider refusing mid-run (429, quota) is `blocked`, like
+    the pre-flight probe's verdict: the decrypt is neither proved nor disproved."""
+    try:
+        ok, detail = _credential_call(api, state)
+        c.add("credential", "pass" if ok else "fail", detail)
+    except ApiError as e:
+        body = e.body.lower()
+        if any(m in body for m in _PROVIDER_REFUSAL):
+            c.add("credential", "blocked", f"the provider refused the call (HTTP {e.status}): not proved today, not disproved")
+        else:
+            c.add("credential", "fail", str(e))
+    except Exception as e:
+        c.add("credential", "fail", f"{type(e).__name__}: {e}")
 
 
 def _credential_call(api, state):
@@ -441,8 +471,9 @@ def main(argv=None) -> int:
         with open(args.state) as f:
             state = json.load(f)
     except (OSError, ValueError) as e:
+        # This machine's: the seed's state is the routine's own file.
         print(f"CHECK state fail no seed to verify against: {e}", flush=True)
-        return 3
+        return 5
     checks = Checks()
     if args.login == "adopt":
         try:
