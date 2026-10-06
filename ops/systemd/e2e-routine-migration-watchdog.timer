@@ -1,0 +1,14 @@
+[Unit]
+Description=Schedule for the migration routine's absence alarm, 11:30 UTC on weekdays
+
+[Timer]
+# 09:15 start + up to 60 min waiting for its turn + about 45 min of cells = 11:00 at the
+# latest on a healthy day; 11:30 leaves slack, so "still running" means stuck.
+OnCalendar=Mon..Fri 11:30 UTC
+# An alarm that catches up still tells the truth.
+Persistent=true
+AccuracySec=1min
+Unit=e2e-routine-watchdog@migration.service
+
+[Install]
+WantedBy=timers.target
