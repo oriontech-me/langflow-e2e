@@ -30,6 +30,10 @@ export function parseResult(text) {
   return out;
 }
 
+// Every request is bounded: a hung destination or webhook would otherwise hold the
+// routine's unit until systemd killed it mid-report, and the day's red with it.
+export const TIMEOUT_MS = 30_000;
+
 export const labelFor = (routine) => `routine:${routine}`;
 export const LABELS = (routine) => ["routine-failure", labelFor(routine)];
 
@@ -93,7 +97,7 @@ const ghHeaders = (token) => ({
 });
 
 async function gh(fetchFn, token, method, url, body) {
-  const res = await fetchFn(url, { method, headers: ghHeaders(token), body: body ? JSON.stringify(body) : undefined });
+  const res = await fetchFn(url, { method, headers: ghHeaders(token), body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(TIMEOUT_MS) });
   const text = await res.text();
   if (!res.ok) throw new Error(`${method} ${url}: HTTP ${res.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : {};
@@ -175,6 +179,7 @@ export async function deliverVerdict(result, env, { fetchFn = fetch, detail = ""
         const res = await fetchFn(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(TIMEOUT_MS),
           body: JSON.stringify(slackPayload(url, headline, body, issueUrl)),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -194,6 +199,7 @@ export async function deliverAlarm(headline, body, env, { fetchFn = fetch } = {}
     const res = await fetchFn(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
       body: JSON.stringify(slackPayload(url, headline, body)),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

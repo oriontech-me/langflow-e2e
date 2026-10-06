@@ -105,18 +105,25 @@ elif [ -z "$exit_raw" ] || [ "$exit_raw" -lt "$start_raw" ]; then
 Last log: $LOG_DIR/latest.log"
 else
   started="$(field STARTED)"
+  started_epoch="$(field STARTED_EPOCH)"
+  [[ "$started_epoch" =~ ^[0-9]+$ ]] || started_epoch=0
   status="$(field STATUS)"
   reason="$(field REASON)"
   report="$(field REPORT)"
-  if [ "${started:0:8}" != "$TODAY_STAMP" ]; then
+  # This run's, not merely today's: a result is the one systemd's last start produced
+  # only when it began at or after that start. A manual run at 03:00 must not answer
+  # for a 09:15 run that was killed before writing anything.
+  if [ "${started:0:8}" != "$TODAY_STAMP" ] || [ "$started_epoch" -lt "$start_raw" ]; then
     headline="Routine $ROUTINE: ran today and left no result"
-    body="It started at $(hm "$start_raw") UTC and ended (${result:-unknown}), but $STATE/last.env is not today's (${started:-none}). It died before its EXIT trap could write one -- SIGKILL, an OOM kill, or a bug before the library was loaded.
+    body="It started at $(hm "$start_raw") UTC and ended (${result:-unknown}), but $STATE/last.env is not this run's (it started ${started:-never}). It died before its EXIT trap could write one -- SIGKILL, an OOM kill, or a bug before the library was loaded.
 Last log: $LOG_DIR/latest.log"
   else
     case "$status" in
       green | red)
-        if [ "$report" = "failed" ]; then
-          headline="Routine $ROUTINE: $status, and the report could not be delivered"
+        # Quiet only on a delivery known to have happened (ok) or not asked for (none).
+        # `unreported` is a run killed during its report, and anything else is unknown.
+        if [ "$report" != "ok" ] && [ "$report" != "none" ]; then
+          headline="Routine $ROUTINE: $status, and the report was not delivered (${report:-no record})"
           body="$reason
 The result is on the machine, and the issue or the Slack post it asked for did not go out.
 Last log: $LOG_DIR/latest.log"
@@ -156,8 +163,11 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 if [ -r "${E2E_ROUTINE_SECRETS:-/root/.e2e-secrets}" ]; then
+  # Without -u: a reference to an unset name inside the file must not abort the alarm.
+  set +u
   # shellcheck disable=SC1090
   . "${E2E_ROUTINE_SECRETS:-/root/.e2e-secrets}"
+  set -u
 fi
 export SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
 if node "$REPO/scripts/routine-report.mjs" alarm "$headline" "$body" >> "$WATCHDOG_LOG" 2>&1; then

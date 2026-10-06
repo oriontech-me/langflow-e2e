@@ -26,7 +26,7 @@ const SAFE = now() % 86400 > 180;
  * props: systemctl properties of e2e-routine-demo.service
  * last:  the routine's last.env, or null
  */
-function watchdog({ props = {}, last = null, env = {}, reportExit = 0 } = {}) {
+function watchdog({ props = {}, last = null, env = {}, reportExit = 0, secretsText = "export SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/x\n" } = {}) {
   const dir = makeTempDir("routine-watchdog-");
   const home = join(dir, "home");
   const bin = join(home, ".local", "bin");
@@ -44,7 +44,7 @@ function watchdog({ props = {}, last = null, env = {}, reportExit = 0 } = {}) {
   mkdirSync(join(state, "demo"), { recursive: true });
   if (last) writeFileSync(join(state, "demo", "last.env"), Object.entries(last).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
   const secrets = join(dir, "secrets.env");
-  writeFileSync(secrets, "export SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/x\n");
+  writeFileSync(secrets, secretsText);
   const r = spawnSync("bash", [SCRIPT, "demo"], {
     encoding: "utf8",
     env: {
@@ -64,7 +64,7 @@ function watchdog({ props = {}, last = null, env = {}, reportExit = 0 } = {}) {
 }
 
 const ranToday = (extra = {}) => ({ LoadState: "loaded", ExecMainStartTimestamp: `@${now() - 60}`, ExecMainExitTimestamp: `@${now() - 30}`, Result: "success", ...extra });
-const resultToday = (fields) => ({ ROUTINE: "demo", STARTED: stampOf(now() - 60), ...fields });
+const resultToday = (fields) => ({ ROUTINE: "demo", STARTED: stampOf(now() - 59), STARTED_EPOCH: now() - 59, ...fields });
 
 test("a bad routine name or DRY_RUN stops the check before anything", () => {
   const r = spawnSync("bash", [SCRIPT, "../x"], { encoding: "utf8" });
@@ -126,14 +126,38 @@ test("green and red that were delivered are quiet, and the quiet is logged", { s
   }
 });
 
+test("a result from an earlier run the same day does not answer for this one", { skip: !SAFE && "too close to UTC midnight" }, () => {
+  // A manual run at 03:00 went green; the timer's run started later and was killed
+  // before writing anything. The 03:00 result must not make that day quiet.
+  const earlier = now() - 3600;
+  const r = watchdog({
+    props: ranToday({ ExecMainStartTimestamp: `@${now() - 60}`, Result: "signal" }),
+    last: resultToday({ STATUS: "green", REPORT: "ok", STARTED: stampOf(earlier), STARTED_EPOCH: earlier }),
+  });
+  assert.equal(r.headline, "Routine demo: ran today and left no result");
+});
+
+test("a report that never finished is not taken for a delivered one", { skip: !SAFE && "too close to UTC midnight" }, () => {
+  for (const report of ["unreported", "", "garbled"]) {
+    const r = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "2 of 12", REPORT: report }) });
+    assert.match(r.headline, /^Routine demo: red, and the report was not delivered/, `REPORT=${report}`);
+  }
+});
+
 test("a red nobody heard is said", { skip: !SAFE && "too close to UTC midnight" }, () => {
   const r = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "2 of 12", REPORT: "failed" }) });
-  assert.equal(r.headline, "Routine demo: red, and the report could not be delivered");
+  assert.equal(r.headline, "Routine demo: red, and the report was not delivered (failed)");
 });
 
 test("an unknown status is said, not taken for quiet", { skip: !SAFE && "too close to UTC midnight" }, () => {
   const r = watchdog({ props: ranToday(), last: resultToday({ STATUS: "greenish" }) });
   assert.equal(r.headline, "Routine demo: a result this check does not know");
+});
+
+test("a secrets file that references an unset name does not silence the alarm", () => {
+  const r = watchdog({ props: { LoadState: "not-found" }, secretsText: 'export SLACK_WEBHOOK_URL=https://hooks.slack.com/triggers/x\nexport OTHER="$NOT_SET_ANYWHERE"\n' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.posted, "the alarm was not posted");
 });
 
 test("DRY_RUN prints the alarm and posts nothing; a delivery that fails exits 1", () => {

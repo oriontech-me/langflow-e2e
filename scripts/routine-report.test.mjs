@@ -168,6 +168,16 @@ test("only a green or red result is a verdict to deliver", async () => {
   assert.deepEqual(calls, []);
 });
 
+test("every request carries a timeout, so a hung host cannot hold the unit until it is killed", async () => {
+  const { fn, calls } = fakeFetch({ [`GET ${ISSUES}?`]: [200, []], [`POST ${ISSUES}`]: [201, { html_url: "u" }] });
+  const seen = [];
+  await deliverVerdict(RED, ENV, { fetchFn: (url, init) => (seen.push(init.signal), fn(url, init)) });
+  await deliverAlarm("h", "b", ENV, { fetchFn: (url, init) => (seen.push(init.signal), fn(url, init)) });
+  assert.equal(seen.length, calls.length);
+  assert.ok(seen.length >= 4);
+  for (const s of seen) assert.ok(s instanceof AbortSignal, "a request without a timeout");
+});
+
 test("the alarm posts to Slack only, and says so when it cannot", async () => {
   const { fn, calls } = fakeFetch();
   assert.equal((await deliverAlarm("h", "b", ENV, { fetchFn: fn })).ok, true);

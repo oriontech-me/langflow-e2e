@@ -279,6 +279,22 @@ test("the report reads the final result, with the lane's destination and the pub
   assert.equal(r.report.env.SLACK_WEBHOOK_URL, "https://hooks.slack.com/triggers/x");
 });
 
+test("visibility set by plain assignment inside the routine still reaches the report", () => {
+  // A routine writes ROUTINE_ISSUE=1 as a shell variable, unexported. The first version
+  // passed only the credentials to node, so a red day was reported nowhere and said ok.
+  const r = routine("ROUTINE_ISSUE=1; ROUTINE_SLACK=red; routine_end red broken");
+  assert.ok(r.report, "the report was not run");
+  assert.equal(r.report.env.ROUTINE_ISSUE, "1");
+  assert.equal(r.report.env.ROUTINE_SLACK, "red");
+});
+
+test("the result carries the start as epoch seconds, matching its stamp", () => {
+  const r = routine("routine_end green ok");
+  const epoch = Number(r.last.STARTED_EPOCH);
+  assert.ok(epoch > 1_700_000_000, r.last.STARTED_EPOCH);
+  assert.equal(new Date(epoch * 1000).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z"), r.last.STARTED);
+});
+
 test("the publishing credentials never reach the routine's own work", () => {
   const r = routine("routine_end green ok", { env: { ROUTINE_ISSUE: "1" } });
   const body = kv(r.body);

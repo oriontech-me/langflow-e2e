@@ -49,7 +49,9 @@
 #   routine_set TARGET "$version"      # extra result fields, any number
 #   routine_end red "2 of 12 cells red: ..."
 #
-# routine_end exits; the EXIT trap writes the result and reports it. An exit that never
+# routine_end exits; the EXIT trap writes the result and reports it. Call it from the
+# routine's own shell, never inside $(...) or a pipeline: there it exits only that
+# subshell, and the status is lost. An exit that never
 # went through routine_end -- a bug, `set -e`, the daily's SIGTERM -- is recorded as
 # failed with the reason, so a result always exists for a run that started.
 #
@@ -74,7 +76,9 @@ routine_start() {
   RT_SHADOW_STATE="${E2E_SHADOW_STATE:-/root/e2e-shadow}"
   RT_POLL_S="${E2E_ROUTINE_POLL_S:-30}"
   mkdir -p "$RT_STATE/results" "$RT_LOG_DIR"
-  RT_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+  RT_EPOCH="$(date -u +%s)"
+  # GNU date on the machine, BSD date where the tests may run.
+  RT_STAMP="$(date -u -d "@$RT_EPOCH" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -r "$RT_EPOCH" +%Y%m%dT%H%M%SZ)"
   RT_LOG="$RT_LOG_DIR/$RT_STAMP.log"
   exec >>"$RT_LOG" 2>&1
   ln -sfn "$RT_LOG" "$RT_LOG_DIR/latest.log"
@@ -208,6 +212,9 @@ routine_write_result() {
     routine_kv EXIT "$(routine_code "$RT_STATUS")"
     for ((i = 0; i < ${#RT_EXTRA[@]}; i += 2)); do routine_kv "${RT_EXTRA[i]}" "${RT_EXTRA[i + 1]}"; done
     routine_kv STARTED "$RT_STAMP"
+    # Epoch seconds of the same instant: the watchdog compares it with systemd's start of
+    # the unit, so a result from an earlier run the same day never answers for this one.
+    routine_kv STARTED_EPOCH "$RT_EPOCH"
     routine_kv FINISHED "$(date -u +%Y%m%dT%H%M%SZ)"
     routine_kv LOG "$RT_LOG"
     routine_kv REPORT "$1"
@@ -238,7 +245,9 @@ routine_report() {
             # shellcheck disable=SC1090
             [ -r "$f" ] && . "$f"
           done
-          export ISSUE_HOST ISSUE_REPO ISSUE_CC GITHUB_TOKEN GH_TOKEN SLACK_WEBHOOK_URL 2>/dev/null
+          # The visibility too: a routine sets it with a plain assignment, and node reads
+          # only the environment -- unexported, a red day reported nothing and said ok.
+          export ROUTINE_ISSUE ROUTINE_SLACK ISSUE_HOST ISSUE_REPO ISSUE_CC GITHUB_TOKEN GH_TOKEN SLACK_WEBHOOK_URL 2>/dev/null
           node "$RT_REPO/scripts/routine-report.mjs" verdict "$RT_STATE/last.env"
         ); then
           outcome=ok
