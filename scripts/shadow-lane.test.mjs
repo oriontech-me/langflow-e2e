@@ -191,6 +191,7 @@ test("the lane file may move either knob, and an empty one turns it off (review 
   assert.equal(dailyShadowBlock("SHADOW_DAILY_UNTIL=2026-10-16"), `until=2026-10-16 on=1 version=1.13.0.dev26 sha=${SHA}`);
   assert.equal(dailyShadowBlock("SHADOW_WEEKDAY=3"), `until=2026-10-09 on=3 version=1.13.0.dev26 sha=${SHA}`);
   assert.equal(dailyShadowBlock("SHADOW_DAILY_UNTIL="), `until= on=1 version=1.13.0.dev26 sha=${SHA}`);
+  assert.equal(dailyShadowBlock("SHADOW_WEEKDAY="), `until=2026-10-09 on= version=1.13.0.dev26 sha=${SHA}`);
 });
 
 /** Runs the daily's own shadow block, cut at its markers, after `lane` (shell lines). */
