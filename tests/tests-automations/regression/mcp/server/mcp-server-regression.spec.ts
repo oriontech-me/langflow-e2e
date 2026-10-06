@@ -17,9 +17,12 @@ test.describe("MCP Server – Flow Exposed as MCP Tool", () => {
     }
   });
 
-  test(
+  // Quarantined for #2198: recurrent flake on the VM lane (2026-10-02 on 1.13.0.dev30, 2026-10-06 on
+  // 1.13.0.dev34), the new flow never shows up in `div-mcp-server-tools` within 30 s.
+  // Lifting it (drop `test.fixme`, restore `@stable`) is #2198's deliverable.
+  test.fixme(
     "flow appears as MCP tool in MCP Server tab and endpoint responds",
-    { tag: ["@stable", "@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression"] },
     async ({ page }) => {
       let flowName = "";
 

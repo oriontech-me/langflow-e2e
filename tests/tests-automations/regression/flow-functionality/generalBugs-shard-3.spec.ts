@@ -174,9 +174,12 @@ test(
 // assertion wants. The modal is therefore asserted by its own dialog role/name.
 const PLAYGROUND_DIALOG = { role: "dialog" as const, name: "Playground" };
 
-test(
+// Quarantined for #2197: recurrent flake on the VM lane (2026-09-15 on 1.13.0.dev12, 2026-10-06 on
+// 1.13.0.dev34), the click on `playground-btn-flow-io` times out after the Chat Output is dropped.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2197's deliverable.
+test.fixme(
   "playground button should be enabled or disabled",
-  { tag: ["@stable", "@release", "@workspace", "@playground"] },
+  { tag: ["@release", "@workspace", "@playground"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
