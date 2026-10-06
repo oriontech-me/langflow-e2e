@@ -29,7 +29,7 @@ const stub = (dir, name, body) => writeFileSync(join(dir, name), `#!/usr/bin/env
 // request-shadow.sh
 // ---------------------------------------------------------------------------
 
-function request({ version = "1.13.0.dev26", sha = SHA, installed = true, startFails = false, clock = null, cadence = {} } = {}) {
+function request({ version = "1.13.0.dev26", sha = SHA, installed = true, startFails = false, clock = null, cadence = {}, stateDir = null } = {}) {
   const dir = makeTempDir("shadow-request-");
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -39,9 +39,12 @@ case "$1" in
   cat) ${installed ? "exit 0" : "exit 1"} ;;
   start) ${startFails ? "exit 1" : "exit 0"} ;;
 esac`);
-  // "YYYY-MM-DD N": the UTC day and its ISO weekday, as the script reads them in one call.
-  if (clock !== null) stub(bin, "date", `echo ${JSON.stringify(clock)}`);
-  const state = join(dir, "state");
+  // "YYYY-MM-DD N YYYY-Www": the UTC day, its ISO weekday and ISO week, as the script
+  // reads them in one call. "FAIL" is a date that exits non-zero and prints nothing.
+  if (clock === "FAIL") stub(bin, "date", "exit 1");
+  else if (clock !== null) stub(bin, "date", `echo ${JSON.stringify(clock)}`);
+  // A state kept across calls, for the cadence's memory of the week.
+  const state = stateDir ?? join(dir, "state");
   const r = spawnSync("bash", [REQUEST], {
     encoding: "utf8",
     env: { PATH: `${bin}:${process.env.PATH}`, E2E_SHADOW_STATE: state, SHADOW_VERSION: version, SHADOW_SUITE_SHA: sha, ...cadence },
@@ -52,6 +55,8 @@ esac`);
     calls: existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
     request: existsSync(join(state, "request.env")) ? readFileSync(join(state, "request.env"), "utf8") : null,
   };
+  // A kept state reads as the shadow left it: the request consumed.
+  if (stateDir && existsSync(join(state, "request.env"))) rmSync(join(state, "request.env"));
   rmSync(dir, { recursive: true, force: true });
   return out;
 }
@@ -87,35 +92,62 @@ test("a unit that does not start is said, and the daily is still not failed", ()
   assert.match(r.stdout, /did not start/);
 });
 
-test("the cadence asks every run through its last daily day, then only on its weekday (#2184)", () => {
+test("the cadence asks every run through its last daily day, then once a week from its weekday (#2184)", () => {
   const cadence = { SHADOW_DAILY_UNTIL: "2026-10-09", SHADOW_WEEKDAY: "1" };
+  const stateDir = join(makeTempDir("shadow-cadence-"), "state");
   for (const [clock, asked] of [
-    ["2026-10-05 1", true], // a Monday inside the daily stretch
-    ["2026-10-07 3", true],
-    ["2026-10-09 5", true], // the last daily day is still daily
-    ["2026-10-12 1", true], // the first Monday after it
-    ["2026-10-13 2", false],
-    ["2026-10-16 5", false],
-    ["2026-10-19 1", true],
+    ["2026-10-05 1 2026-W41", true], // a Monday inside the daily stretch
+    ["2026-10-07 3 2026-W41", true],
+    ["2026-10-09 5 2026-W41", true], // the last daily day is still daily
+    ["2026-10-12 1 2026-W42", true], // the first Monday after it
+    ["2026-10-13 2 2026-W42", false],
+    ["2026-10-16 5 2026-W42", false],
+    ["2026-10-19 1 2026-W43", true],
   ]) {
-    const r = request({ clock, cadence });
+    const r = request({ clock, cadence, stateDir });
     assert.equal(r.status, 0, clock);
     assert.equal(r.calls.some((c) => c.startsWith("start")), asked, `${clock}: ${r.stdout}`);
     if (asked) {
       assert.equal(r.request.split("\n")[0], `SHADOW_DATE=${clock.slice(0, 10)}`, "the request carries the day the cadence judged");
     } else {
       assert.equal(r.request, null, `${clock}: a request was written`);
-      assert.match(r.stdout, /NOT requested — weekly on ISO weekday 1 since 2026-10-09, and today is weekday [2-7]/);
+      assert.match(r.stdout, /NOT requested — weekly on ISO weekday 1 after 2026-10-09, and this week's \(2026-W42\) was already requested/);
     }
   }
 });
 
+test("a missed weekday is caught up on the next run that week, and said (review of #2185)", () => {
+  const cadence = { SHADOW_DAILY_UNTIL: "2026-10-09", SHADOW_WEEKDAY: "1" };
+  const stateDir = join(makeTempDir("shadow-catchup-"), "state");
+  mkdirSync(stateDir, { recursive: true });
+  // Last week's Monday asked; this week's Monday had no daily run at all.
+  writeFileSync(join(stateDir, "requested-week"), "2026-W42\n");
+  const tue = request({ clock: "2026-10-20 2 2026-W43", cadence, stateDir });
+  assert.ok(tue.calls.includes("start --no-block e2e-shadow.service"), tue.stdout);
+  assert.match(tue.stdout, /catching up: no shadow was requested on weekday 1 this week/);
+  // Asked once: Wednesday is quiet again.
+  const wed = request({ clock: "2026-10-21 3 2026-W43", cadence, stateDir });
+  assert.equal(wed.request, null, wed.stdout);
+});
+
+test("a request whose unit did not start does not count for the week: the next run asks again", () => {
+  const cadence = { SHADOW_WEEKDAY: "1" };
+  const stateDir = join(makeTempDir("shadow-startfail-"), "state");
+  const mon = request({ clock: "2026-10-19 1 2026-W43", cadence, stateDir, startFails: true });
+  assert.match(mon.stdout, /did not start/);
+  const tue = request({ clock: "2026-10-20 2 2026-W43", cadence, stateDir });
+  assert.ok(tue.calls.includes("start --no-block e2e-shadow.service"), tue.stdout);
+});
+
 test("without a cadence every run asks, and each knob alone means what it says", () => {
-  assert.ok(request({ clock: "2026-10-13 2" }).calls.includes("start --no-block e2e-shadow.service"));
-  const weekly = request({ clock: "2026-10-13 2", cadence: { SHADOW_WEEKDAY: "2" } });
+  assert.ok(request({ clock: "2026-10-13 2 2026-W42" }).calls.includes("start --no-block e2e-shadow.service"));
+  const weekly = request({ clock: "2026-10-13 2 2026-W42", cadence: { SHADOW_WEEKDAY: "2" } });
   assert.ok(weekly.calls.includes("start --no-block e2e-shadow.service"), weekly.stdout);
-  assert.equal(request({ clock: "2026-10-14 3", cadence: { SHADOW_WEEKDAY: "2" } }).request, null);
-  const ended = request({ clock: "2026-10-12 1", cadence: { SHADOW_DAILY_UNTIL: "2026-10-09" } });
+  // Before the weekday, nothing yet this week.
+  const early = request({ clock: "2026-10-12 1 2026-W42", cadence: { SHADOW_WEEKDAY: "2" } });
+  assert.equal(early.request, null);
+  assert.match(early.stdout, /weekly on ISO weekday 2, and today is weekday 1/);
+  const ended = request({ clock: "2026-10-12 1 2026-W42", cadence: { SHADOW_DAILY_UNTIL: "2026-10-09" } });
   assert.equal(ended.request, null);
   assert.match(ended.stdout, /the daily shadow ended on 2026-10-09/);
 });
@@ -123,9 +155,14 @@ test("without a cadence every run asks, and each knob alone means what it says",
 test("a cadence or a clock that cannot be read asks for nothing and says why", () => {
   for (const [opts, why] of [
     [{ cadence: { SHADOW_DAILY_UNTIL: "09/10/2026" } }, /SHADOW_DAILY_UNTIL is not a date/],
+    // The right shape, not a day: these used to stretch or end the daily cadence silently.
+    [{ cadence: { SHADOW_DAILY_UNTIL: "2026-10-90" } }, /SHADOW_DAILY_UNTIL is not a date/],
+    [{ cadence: { SHADOW_DAILY_UNTIL: "2026-13-01" } }, /SHADOW_DAILY_UNTIL is not a date/],
+    [{ cadence: { SHADOW_DAILY_UNTIL: "2026-02-29" } }, /SHADOW_DAILY_UNTIL is not a date/],
     [{ cadence: { SHADOW_WEEKDAY: "Mon" } }, /SHADOW_WEEKDAY is not 1 to 7/],
     [{ cadence: { SHADOW_WEEKDAY: "0" } }, /SHADOW_WEEKDAY is not 1 to 7/],
     [{ clock: "" }, /could not read today's date/],
+    [{ clock: "FAIL" }, /could not read today's date/],
   ]) {
     const r = request(opts);
     assert.equal(r.status, 0, JSON.stringify(opts));
@@ -133,24 +170,49 @@ test("a cadence or a clock that cannot be read asks for nothing and says why", (
     assert.ok(!r.calls.some((c) => c.startsWith("start")), `${JSON.stringify(opts)}: the unit was started`);
     assert.match(r.stdout, why);
   }
+  // A leap day is a day.
+  assert.ok(request({ clock: "2028-02-28 1 2028-W09", cadence: { SHADOW_DAILY_UNTIL: "2028-02-29" } }).request);
+});
+
+test("a removed unit says so on every day, not only on the days the cadence is due", () => {
+  // "not installed" is the rollback's signal (review of #2185).
+  const r = request({ installed: false, clock: "2026-10-14 3 2026-W42", cadence: { SHADOW_DAILY_UNTIL: "2026-10-09", SHADOW_WEEKDAY: "1" } });
+  assert.match(r.stdout, /e2e-shadow\.service is not installed/);
 });
 
 test("the daily passes the cadence decided on 2026-10-05", () => {
   // Runs the daily's own shadow block against a request script that records what it
   // was given: a knob line commented out or moved off the call fails here, not on
   // the first Tuesday that still has a shadow.
+  assert.equal(dailyShadowBlock(""), `until=2026-10-09 on=1 version=1.13.0.dev26 sha=${SHA}`);
+});
+
+test("the lane file may move either knob, and an empty one turns it off (review of #2185)", () => {
+  assert.equal(dailyShadowBlock("SHADOW_DAILY_UNTIL=2026-10-16"), `until=2026-10-16 on=1 version=1.13.0.dev26 sha=${SHA}`);
+  assert.equal(dailyShadowBlock("SHADOW_WEEKDAY=3"), `until=2026-10-09 on=3 version=1.13.0.dev26 sha=${SHA}`);
+  assert.equal(dailyShadowBlock("SHADOW_DAILY_UNTIL="), `until= on=1 version=1.13.0.dev26 sha=${SHA}`);
+});
+
+/** Runs the daily's own shadow block, cut at its markers, after `lane` (shell lines). */
+function dailyShadowBlock(lane) {
   const daily = readFileSync(DAILY, "utf8");
-  const start = daily.indexOf('  if [ "${IMAGE_SHADOW:-1}" = "1" ]');
-  assert.ok(start >= 0, "the shadow block is missing");
-  const block = daily.slice(start, daily.indexOf("\n  fi\n", start) + "\n  fi\n".length);
+  const begin = "  # --- shadow request: begin ---\n";
+  const end = "  # --- shadow request: end ---\n";
+  const start = daily.indexOf(begin);
+  const stop = daily.indexOf(end, start);
+  assert.ok(start >= 0 && stop > start, "the shadow block's markers are missing");
+  // Exactly one block between them, so a cut can never run half of one.
+  assert.equal(daily.indexOf(begin, start + 1), -1, "two shadow request blocks");
+  const block = daily.slice(start, stop + end.length);
+  assert.match(block, /request-shadow\.sh/);
   const dir = makeTempDir("shadow-daily-");
   mkdirSync(join(dir, "ops", "vm"), { recursive: true });
-  stub(join(dir, "ops", "vm"), "request-shadow.sh", 'echo "until=${SHADOW_DAILY_UNTIL:-} on=${SHADOW_WEEKDAY:-} version=$SHADOW_VERSION sha=$SHADOW_SUITE_SHA"');
-  const r = spawnSync("bash", ["-c", `WANT=1.13.0.dev26 SUITE_SHA=${SHA}\n${block}`], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+  stub(join(dir, "ops", "vm"), "request-shadow.sh", 'echo "until=${SHADOW_DAILY_UNTIL-unset} on=${SHADOW_WEEKDAY-unset} version=$SHADOW_VERSION sha=$SHADOW_SUITE_SHA"');
+  const r = spawnSync("bash", ["-c", `set -u\nWANT=1.13.0.dev26 SUITE_SHA=${SHA}\n${lane}\n${block}`], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
   rmSync(dir, { recursive: true, force: true });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), `until=2026-10-09 on=1 version=1.13.0.dev26 sha=${SHA}`);
-});
+  return r.stdout.trim();
+}
 
 // ---------------------------------------------------------------------------
 // run-shadow.sh
