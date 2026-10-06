@@ -32,6 +32,7 @@ export function setup({
   now = OPEN,
   states = {},
   lockBusy = false,
+  heavyBusy = false,
   buildExit = 0,
   buildOut = `target_ref=release-1.13.0\ntarget_sha=${TARGET_SHA}\ntarget_version=1.13.0\nimage=${IMAGE}\nbuild_s=300`,
   runExit = 0,
@@ -63,6 +64,7 @@ env | sort > ${q(envOut)}
 echo "cwd=$PWD head=$(git rev-parse HEAD)" >> ${q(envOut)}
 echo "dotenv=$(readlink .env || echo none)" >> ${q(envOut)}
 echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(envOut)}
+echo "fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(envOut)}
 echo "ledger_seen=$(cat "$LEDGER_DIR/daily-history.jsonl" 2>/dev/null | tr -d '\n')" >> ${q(envOut)}
 echo '{"row":"on-demand"}' >> "$LEDGER_DIR/daily-history.jsonl"
 sleep ${runSleep}
@@ -76,7 +78,7 @@ exit ${runExit}
   );
   writeFileSync(
     join(repo, "ops", "vm", "build-target-image.sh"),
-    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\necho "::error:: an error line from before the run" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
+    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\necho "::error:: an error line from before the run" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
     { mode: 0o755 },
   );
   writeFileSync(join(dir, "build.out"), buildOut ? `${buildOut}\n` : "");
@@ -108,7 +110,8 @@ case "$*" in
 ${stateCases}
   *) echo inactive ;;
 esac`);
-  stub(bin, "flock", lockBusy ? "exit 1" : "exit 0");
+  // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
+  stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.
   if (termOnConsume) stub(bin, "mv", `/bin/mv "$@"; rc=$?\ncase "$*" in *"/request.env "*) kill -TERM $PPID ;; esac\nexit $rc`);
@@ -152,6 +155,7 @@ esac`);
     E2E_ONDEMAND_OFFICIAL_LEDGER: official,
     E2E_ONDEMAND_NOW: now,
     E2E_SHADOW_STATE: shadowState,
+    E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
   };
   const collect = (status) => {
     const readIf = (p) => (existsSync(p) ? readFileSync(p, "utf8") : null);
@@ -177,6 +181,7 @@ esac`);
       hosts: readIf(join(state, "hosts")),
       ledgers: readdirSync(state).filter((f) => f.startsWith("ledger-")),
       worktrees: git("worktree", "list"),
+      heavyHolder: readIf(join(dir, "heavy.lock.holder")),
     };
   };
   return { env, collect };

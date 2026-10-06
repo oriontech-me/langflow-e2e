@@ -243,3 +243,48 @@ test("the on-demand worker comes back by itself, except from a wrong configurati
   assert.match(envFile, /^\/root\/\.[^/]+$/);
   assert.ok(!readdirSync(OPS).includes("e2e-on-demand-worker.timer"));
 });
+
+// ---------------------------------------------------------------------------
+// The scheduled routines (ops/vm/lib/routine.sh). Found by name, so a routine added
+// later is held to the same shape without anyone extending a list.
+// ---------------------------------------------------------------------------
+
+const ROUTINE_UNIT = /^e2e-routine-(?!watchdog@)([a-z][a-z0-9-]*)\.service$/;
+const routines = () => readdirSync(OPS).map((f) => ROUTINE_UNIT.exec(f)?.[1]).filter(Boolean);
+
+test("a routine's service is a oneshot with HOME, no [Install], and skipped/blocked are not unit failures", () => {
+  for (const name of routines()) {
+    const unit = read(`e2e-routine-${name}.service`);
+    assert.deepEqual(directives(unit, "Type"), ["oneshot"], name);
+    assert.ok(directives(unit, "Environment").includes("HOME=/root"), `${name}: HOME is not declared`);
+    assert.doesNotMatch(unit, /^\[Install\]/m, `${name}: the service carries an [Install] section`);
+    // 2 = skipped, 4 = blocked (routine.sh): said by the watchdog, and not a broken unit.
+    assert.deepEqual(directives(unit, "SuccessExitStatus"), ["2 4"], name);
+    assert.ok(directives(unit, "TimeoutStartSec").length === 1, `${name}: no TimeoutStartSec`);
+  }
+});
+
+test("each routine has its timer and its watchdog's timer, in UTC, with Persistent= opposite", () => {
+  for (const name of routines()) {
+    const timer = read(`e2e-routine-${name}.timer`);
+    const watch = read(`e2e-routine-${name}-watchdog.timer`);
+    for (const [label, t] of [["timer", timer], ["watchdog timer", watch]]) {
+      const cal = directives(t, "OnCalendar");
+      assert.ok(cal.length >= 1 && cal.every((c) => /\bUTC$/.test(c)), `${name} ${label}: OnCalendar without UTC`);
+      assert.match(t, /^\[Install\]\nWantedBy=timers\.target$/m, `${name} ${label}: not enablable`);
+    }
+    // A routine that catches up gives a verdict for a day it did not observe; an alarm
+    // that catches up still tells the truth.
+    assert.deepEqual(directives(timer, "Persistent"), ["false"], name);
+    assert.deepEqual(directives(watch, "Persistent"), ["true"], name);
+    assert.deepEqual(directives(timer, "Unit"), [`e2e-routine-${name}.service`], name);
+    assert.deepEqual(directives(watch, "Unit"), [`e2e-routine-watchdog@${name}.service`], name);
+  }
+});
+
+test("the routine watchdog template runs the generic watchdog for its instance", () => {
+  const unit = read("e2e-routine-watchdog@.service");
+  assert.deepEqual(directives(unit, "ExecStart"), ["/root/e2e-qa/ops/vm/e2e-routine-watchdog.sh %i"]);
+  assert.ok(directives(unit, "Environment").includes("HOME=/root"));
+  assert.doesNotMatch(unit, /^\[Install\]/m);
+});

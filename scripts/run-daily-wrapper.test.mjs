@@ -78,6 +78,8 @@ function runWrapper(dir, laneLines, script = WRAPPER, files = {}, binStubs = {})
       E2E_DAILY_SECRETS: l.secrets,
       E2E_DAILY_LANE: l.lane,
       E2E_DAILY_VENV: join(dir, "venv"),
+      // Never the machine's /run/lock: whether a routine holds its turn is the test's.
+      E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
     },
   });
   return { ...r, log: readFileSync(join(l.logs, "latest.log"), "utf8"), leftInTmp: readdirSync(tmp) };
@@ -296,6 +298,34 @@ test("a running on-demand run is stopped before the official run, and only a run
   }
 });
 
+test("with the heavy lock held by an unknown holder, every running routine is stopped, found by name, and the watchdog template is not", () => {
+  // ops/vm/lib/routine.sh: routines wait out the daily's window, but one started late or
+  // held by a slow turn can still be going at 08:00. Found by the e2e-routine-* pattern
+  // so a new routine needs no line in the wrapper; a templated unit is never a routine.
+  const dir = makeTempDir("run-daily-routines-");
+  try {
+    const calls = join(dir, "systemctl.calls");
+    const listing = [
+      "e2e-routine-migration.service loaded activating start Migration",
+      "e2e-routine-validation.service loaded active running Validation",
+      "e2e-routine-watchdog@migration.service loaded activating start Alarm",
+    ].join("\\n");
+    const systemctl = `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\ncase "$1" in list-units) printf '${listing}\\n' ;; show) echo inactive ;; stop) [ "$2" = e2e-routine-validation.service ] && exit 1 ;; esac\nexit 0\n`;
+    // Held, and no holder line to say by whom: stopping them all is the safe side.
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl, flock: "#!/bin/sh\nexit 1\n" });
+    const log = readFileSync(calls, "utf8");
+    assert.match(log, /^list-units --plain --no-legend --state=activating,active,reloading,deactivating e2e-routine-\*\.service$/m);
+    assert.match(log, /^stop e2e-routine-migration\.service$/m);
+    assert.match(log, /^stop e2e-routine-validation\.service$/m);
+    assert.doesNotMatch(log, /^stop e2e-routine-watchdog@/m, "the watchdog template was stopped as a routine");
+    // A failed stop is said and the daily goes on, as for the shadow.
+    assert.match(r.log, /WARNING: could not stop e2e-routine-validation\.service/);
+    assert.match(r.log, /could not resolve the version/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failed stop of the on-demand run is said and does not end the daily", () => {
   const dir = makeTempDir("run-daily-ondemand-");
   try {
@@ -315,6 +345,62 @@ test("a failed stop is said and does not end the daily (#2094)", () => {
     const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
     assert.match(r.log, /WARNING: could not stop e2e-shadow\.service/);
     assert.match(r.log, /could not resolve the version/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const ROUTINE_LISTING = [
+  "e2e-routine-migration.service loaded activating start Migration",
+  "e2e-routine-validation.service loaded activating start Validation",
+].join("\\n");
+const routineSystemctl = (calls) =>
+  `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\ncase "$1" in list-units) printf '${ROUTINE_LISTING}\\n' ;; show) echo inactive ;; esac\nexit 0\n`;
+
+test("a routine still waiting for its turn is left to wait: it is doing nothing, and this run keeps it waiting", () => {
+  // A routine whose timer falls in the daily's window is `activating` while it waits; the
+  // first version stopped it and its day read failed (review of #2190).
+  const dir = makeTempDir("run-daily-routines-wait-");
+  try {
+    const calls = join(dir, "systemctl.calls");
+    const flockCalls = join(dir, "flock.calls");
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl: routineSystemctl(calls), flock: `#!/bin/sh\necho "$*" >> ${JSON.stringify(flockCalls)}\nexit 0\n` });
+    const log = readFileSync(calls, "utf8");
+    assert.doesNotMatch(log, /^stop e2e-routine-/m, log);
+    // The probe: non-blocking, on the lock the routines take, and nothing held after it.
+    assert.equal(readFileSync(flockCalls, "utf8"), `-n ${join(dir, "heavy.lock")} true\n`);
+    assert.match(r.log, /leaving the routine e2e-routine-migration\.service: it is waiting for its turn/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("with the lock held, only the routine that holds it is stopped", () => {
+  const dir = makeTempDir("run-daily-routines-holder-");
+  try {
+    const calls = join(dir, "systemctl.calls");
+    writeFileSync(join(dir, "heavy.lock.holder"), "migration (pid 4242) since 20261006T074500Z\n");
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl: routineSystemctl(calls), flock: "#!/bin/sh\nexit 1\n" });
+    const log = readFileSync(calls, "utf8");
+    assert.match(log, /^stop e2e-routine-migration\.service$/m, log);
+    assert.doesNotMatch(log, /^stop e2e-routine-validation\.service$/m, log);
+    assert.match(r.log, /leaving the routine e2e-routine-validation\.service/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a holder named for no listed unit is unknown: every routine is stopped", () => {
+  // A routine whose routine_start name is not its unit's would otherwise be the one left
+  // running beside the daily (review of #2190).
+  const dir = makeTempDir("run-daily-routines-ghost-");
+  try {
+    const calls = join(dir, "systemctl.calls");
+    writeFileSync(join(dir, "heavy.lock.holder"), "ghost (pid 4242) since 20261006T074500Z\n");
+    runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl: routineSystemctl(calls), flock: "#!/bin/sh\nexit 1\n" });
+    const log = readFileSync(calls, "utf8");
+    assert.match(log, /^stop e2e-routine-migration\.service$/m, log);
+    assert.match(log, /^stop e2e-routine-validation\.service$/m, log);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
