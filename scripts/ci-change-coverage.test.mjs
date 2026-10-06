@@ -1385,7 +1385,15 @@ test("against the live repo, each of #2192's four cases is answered", () => {
   // 1. `run-e2e.sh` → `npm run coverage:summary` → the script that commits to main.
   assert.equal(verdict("scripts/coverage-summary.ts").vmLane[0]?.file, "scripts/coverage-summary.ts");
   // 2. A skill script, on the VM lane and on Actions.
-  assert.equal(verdict(".claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs").verdict, "vm-only");
+  const dataset = verdict(".claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs");
+  assert.equal(dataset.verdict, "vm-only");
+  assert.deepEqual(dataset.vmLane[0].unitTests, [
+    ".claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.test.mjs",
+  ]);
+  // …and reached by IMPORT alone, which needs the skill root in the importer graph:
+  // `triage-core.mjs` is spelled under no `.github/` file, only imported by the
+  // script `guard-dedicated-issue` runs.
+  assert.equal(verdict(".claude/skills/langflow-e2e-triage/scripts/lib/triage-core.mjs").verdict, "dispatch");
   assert.equal(verdict(".claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs").verdict, "dispatch");
   // 3. `daily-stable.yml` names run-e2e.sh only in comments; that is not wiring.
   const e2e = verdict("scripts/run-e2e.sh");
