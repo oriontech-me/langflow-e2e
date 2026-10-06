@@ -1391,6 +1391,9 @@ jobs:
           LANGFLOW_VERSION: ${{ steps.lfver.outputs.version }}
           STABLE_COUNT: ${{ steps.cov.outputs.stable }}
           TOTAL_COUNT:  ${{ steps.cov.outputs.total }}
+          # The suite commit, the value the history step gets too: the platform pairs
+          # an on-demand run with the daily on it (#2203).
+          SUITE_SHA: ${{ github.sha }}
           # Point the QA Platform at the lightweight index (one-click, small
           # download), not the heavy full report — and match its 90-day retention.
           EVIDENCE_URL: ${{ steps.upload_index.outputs.artifact-url }}

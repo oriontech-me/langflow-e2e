@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -239,4 +239,51 @@ test("#2079 passed and hard-failed entries are unchanged by the flaky path", () 
   assert.equal(payload.failures[0].error_signature, "Error: b", "a hard failure still reads its LAST failed attempt");
   assert.equal(payload.tests[1].error.split("\n")[0], "Error: b");
   assert.deepEqual(payload.flaky, []);
+});
+
+// --- #2203: the suite commit, so the platform can pair an on-demand run with the daily ---
+//
+// The platform matches an on-demand run against the daily that ran the same suite
+// commit. A malformed value would match nothing and look exactly like a real "different
+// suite", so it is dropped; an absent one says "not known", which is what it is.
+
+const SUITE = "6ff9754178014cf3342b404e59159d13dae4b42f";
+
+test("suite_sha is emitted from SUITE_SHA", () => {
+  assert.equal(build({ SUITE_SHA: SUITE }).suite_sha, SUITE);
+});
+
+test("an absent or blank SUITE_SHA omits the field, and the payload still builds", () => {
+  for (const env of [{}, { SUITE_SHA: "" }, { SUITE_SHA: "   " }]) {
+    const payload = build(env);
+    assert.ok(!("suite_sha" in payload), `suite_sha must be absent for ${JSON.stringify(env)}: ${JSON.stringify(payload)}`);
+    assert.equal(payload.run_id, "42", "the rest of the payload is unaffected");
+  }
+});
+
+test("a value that is not a full lowercase 40-hex commit is dropped, never forwarded", () => {
+  for (const value of [SUITE.slice(0, 7), SUITE.toUpperCase(), `${SUITE}0`, "HEAD", "not-a-sha"]) {
+    const payload = build({ SUITE_SHA: value });
+    assert.ok(!("suite_sha" in payload), `suite_sha must be absent for ${JSON.stringify(value)}: got ${payload.suite_sha}`);
+  }
+});
+
+test("surrounding whitespace is trimmed rather than costing the field", () => {
+  assert.equal(build({ SUITE_SHA: `${SUITE}\n` }).suite_sha, SUITE);
+});
+
+test("the daily's payload step passes the same suite commit as its history step", () => {
+  // The payload and the history row must not disagree about which suite ran. Each step
+  // is read on its own: a match anywhere in the 1700-line workflow proves nothing about
+  // the step that has to carry it.
+  const daily = readFileSync(fileURLToPath(new URL("../.github/workflows/daily-stable.yml", import.meta.url)), "utf8");
+  const step = (name) => {
+    const at = daily.indexOf(`- name: ${name}`);
+    assert.ok(at > 0, `the daily no longer has a "${name}" step`);
+    const next = daily.indexOf("      - name:", at + 10);
+    return daily.slice(at, next > 0 ? next : daily.length);
+  };
+  const shaOf = (body) => body.match(/^\s+SUITE_SHA:\s*(.+)$/m)?.[1]?.trim();
+  assert.equal(shaOf(step("Build run payload")), "${{ github.sha }}");
+  assert.equal(shaOf(step("Build run payload")), shaOf(step("Append daily history")));
 });
