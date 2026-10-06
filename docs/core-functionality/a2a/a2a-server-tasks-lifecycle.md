@@ -1,8 +1,8 @@
 # A2A Server — task lifecycle: read back, cancel, and fail closed
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev34`)
 
-**Issue:** #1247 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T6**) ·
+**Issue:** #1247 (Test 3 redesigned by #2196) · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T6**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
 (`requireA2aEnabled()`, `postA2AJsonRpc`, `messageSendEnvelope`) ·
 **Jira:** epic `LE-1588`
@@ -49,7 +49,9 @@ Two behaviours are safety properties rather than conveniences:
 - `@a2a` — functional area; requires `LANGFLOW_A2A_ENABLED=true` (`CLAUDE.md`).
 - `@stable` — validated by the team and promoted in #1349: the batch ran
   **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
-  with no leaked flow and no backend error logged.
+  with no leaked flow and no backend error logged. The daily removed it from
+  Test 3 on 2026-10-06 (#2196 — the test raced the run it was cancelling, see
+  *Measured behaviour*); the redesign restored it.
 
 ---
 
@@ -75,10 +77,16 @@ All four over **HTTP 200** — JSON-RPC errors are not HTTP errors on this endpo
 
 And the live path:
 
-5. **Cancelling a running task terminates it.** A `message/stream` run started with
-   a large payload is cancelled the moment its `submitted` frame yields the task
-   id: the `tasks/cancel` response carries `result.status.state === "canceled"`,
-   and a subsequent `tasks/get` reads back `canceled`.
+5. **Cancelling a running task terminates it.** A `message/stream` run whose flow
+   **waits** 10 s inside a node is cancelled while it is provably in flight:
+   - **precondition** — a `tasks/get` sent right before the cancel reads `working`,
+     so the cancel targets a live task (it does not replace the wait: see
+     *Measured behaviour*);
+   - the `tasks/cancel` response carries `result.status.state === "canceled"`;
+   - the open stream then **ends**, its last status frame is `canceled`, and no
+     frame ever carries `completed` or an artifact — the subscriber saw the run
+     stop, not finish;
+   - a subsequent `tasks/get` reads back `canceled`.
 
 ---
 
@@ -87,11 +95,17 @@ And the live path:
 - **`LANGFLOW_A2A_ENABLED=true`** on the instance under test — set by
   `scripts/start-langflow-docker.sh` and every CI lane since #1240; asserted at
   runtime by `requireA2aEnabled()`.
-- **No LLM, no provider key, no external network.** Both flows are the Chat Input →
+- **No LLM, no provider key, no external network.** Tests 1–2 use the Chat Input →
   Chat Output passthrough (`createRunnableChatFlowViaApi()`).
+- **`LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true`** (Test 3 only) — its flow is Chat Input
+  → a `CustomComponent` that sleeps 10 s → Chat Output, built from the live catalog.
+  Every lane sets the flag (`scripts/start-langflow-docker.sh`, `daily-stable.yml`,
+  `manual.yml`, `scripts/run-e2e.sh`); with it off the catalog omits
+  `CustomComponent` and the builder throws naming the cause.
+- **An API-key project** (Test 3 only) — a project created with
+  `auth_settings.auth_type = "apikey"` plus a fresh API key sent as `x-api-key`. The
+  public (`auth_type: none`) path cannot run this flow; see *Measured behaviour*.
 - Auto-login superuser (`getAuthToken()`).
-- **A ~2 MB text payload** on the cancel test only — see below. It costs the run
-  about 2.7 s of CPU and no network.
 
 ---
 
@@ -100,6 +114,8 @@ And the live path:
 - Langflow reachable at `PLAYWRIGHT_BASE_URL` with A2A enabled.
 - The cross-flow test needs **two** published flows; both are created by the test
   and deleted **by id** in `finally`. **No pre-test wipe.**
+- The cancel test creates one flow, one project and one API key, and deletes all
+  three **by id** in `finally`.
 
 ---
 
@@ -124,15 +140,17 @@ And the live path:
 5. `finally`: delete both flows by id.
 
 **Test 3 — `cancelling a running task moves it to canceled`**
-1. `requireA2aEnabled`; create + publish flow A.
-2. `POST message/stream` with a sentinel **prefixed to ~2 MB of filler** (see
-   *Measured behaviour* — this is what makes the run long enough to cancel
-   deterministically). Read the SSE stream only until the first frame carrying
-   `result.id`.
-3. Immediately `tasks/cancel` that id → assert
-   `result.status.state === "canceled"`.
-4. Stop reading the stream; `tasks/get` → `canceled`.
-5. `finally`: delete the flow by id.
+1. `requireA2aEnabled`; create a project with `auth_type: "apikey"` and an API key;
+   create the Chat Input → *sleep 10 s* → Chat Output flow, move it into that project
+   and publish it.
+2. `POST message/stream` with `x-api-key`; read the SSE stream only until the first
+   frame carrying `result.id`.
+3. `tasks/get` that id → `working` (the precondition of criterion 5).
+4. `tasks/cancel` that id → `result.status.state === "canceled"`.
+5. Read the rest of the stream to its end → last status `canceled`, no `completed`,
+   no artifact.
+6. `tasks/get` → `canceled`.
+7. `finally`: close the stream; delete the flow, the API key and the project by id.
 
 ---
 
@@ -142,7 +160,7 @@ And the live path:
 |---|---|---|
 | 1 | read back + refused cancel | identical `id`/`contextId`/`artifactId`/`timestamp` + sentinel; unknown id `-32001`; terminal cancel `-32002`; state and timestamp unchanged after |
 | 2 | cross-flow isolation | `-32001` through flow B (not `-32002`/`-32004`), while flow A still reads the task `completed` |
-| 3 | live cancel | `tasks/cancel` returns `state: "canceled"` and `tasks/get` confirms it |
+| 3 | live cancel | `tasks/get` reads `working` before the cancel; `tasks/cancel` returns `state: "canceled"`; the stream ends on `canceled` with no `completed`/artifact frame; `tasks/get` confirms `canceled` |
 
 ---
 
@@ -152,21 +170,58 @@ And the live path:
   `{"code":-32001,"message":"Task not found","data":null}` and
   `{"code":-32002,"message":"Task cannot be canceled","data":null}`, both under
   `HTTP 200`.
-- **The 2 MB payload is margin, not a requirement — and the force-fail proved it.**
-  Measured: a 1 KB run completes in ~121 ms while the task id reaches the client at
-  52–182 ms, so a cancel issued the instant the id appears wins by only 20–36 ms.
-  It wins **anyway**, 3/3 by hand and again when a force-fail attempt deliberately
-  shrank the payload back to 1 KB — that mutation was **rejected** for not making
-  the test fail, which is the evidence that the narrow window still passes locally.
-  Run time scales with the payload (1 KB → 121 ms, 200 KB → 423 ms, **2 MB →
-  2687 ms**), so the 2 MB message buys a ~2.4 s margin (cancel landing at
-  121–259 ms) instead of 20 ms. It is kept because a 20 ms margin is not something
-  a shared CI lane should be asked to reproduce on a loaded runner — not because
-  the assertion needs it here. Either way it is the deliberate alternative to a
-  `waitForTimeout` racing the run.
+- **#2196 — the 2 MB "margin" never existed, and the redesign is why Test 3 is a
+  wait rather than a payload.** The first version made the run long by sending
+  ~2 MB of filler and assumed that bought a ~2.4 s window. It did not: the run was
+  long because it was **CPU-bound**, and the cancel request contends with it on the
+  same worker. Measured on `1.13.0.dev34`, a `tasks/get` sent mid-run took ~700 ms to
+  answer, and the window a cancel actually had was the ~100 ms before the run's
+  first CPU-heavy stretch. A cancel delayed by one in-flight request was refused
+  (`-32002`, task `completed`) in **6 of 11** runs on a native install that
+  resolves dependencies freely (as the VM lane does) with `a2a-sdk` 1.2.2, and in
+  **0 of 6** with only the SDK swapped back to 1.2.1. On the image (lock: 1.1.2) it
+  was 0 of 12, and still 0 of 4 with the image's SDK patched to 1.2.2 — so the
+  outcome moves with the SDK *and* the environment together, which is what a race
+  looks like rather than a regression. The VM lane picked up 1.2.2 with
+  `1.13.0.dev34` and went **3/3 red** on 2026-10-06; the unmodified spec, which
+  cancels the instant the id arrives, did not fail locally in any configuration
+  (10/10 on the native 1.2.2 install), so the VM's exact timing is not reproduced
+  here — the mechanism is. The dev33→dev34 diff touches nothing on the A2A path,
+  and a refused cancel was the correct answer each time: served after the run
+  finished, it is refused and leaves `completed` untouched, as criterion 3
+  requires.
+- **One delayed cancel contradicted the store, once.** On the image (`a2a-sdk`
+  1.1.2), 1 of 12 cancels sent mid-run behind a `tasks/get` answered `canceled`
+  while the `tasks/get` right after it read `completed`. It did not recur in the
+  other 11, nor in 21 runs on 1.2.x. It lives in the cancel-vs-completion race this
+  redesign deliberately avoids, so no test here can see it; it is recorded so a
+  later report of the same shape has a first data point.
+- **A wait keeps the window open on any machine.** The 10 s node does not use the
+  CPU, so the run stays `working` for 10 s while the cancel is served in
+  ~100–500 ms, and a faster machine does not shrink the margin. Measured: during
+  the sleep `/api/v1/version` answers in ~3–15 ms — the node's `time.sleep` runs
+  off the event loop — and the cancel was answered 96–515 ms into the run,
+  `canceled` every time, on `a2a-sdk` 1.1.2 (image) and 1.2.2 (native).
+- **The stream ends on cancel.** Measured: within 1–4 ms of the cancel response the
+  stream closes, having carried `submitted → working → canceled → canceled` and
+  nothing else. Left alone — force-failed by never sending the cancel — the same
+  stream runs ~10 s and ends `submitted → working → artifact-update → completed`,
+  which is what step 5 catches.
+- **A short run reproduces the VM symptom exactly.** Force-failed with the node
+  sleeping 0 s, the precondition still read `working`, the run ended in the
+  milliseconds before the cancel, and the cancel answered
+  `-32002 "Task cannot be canceled"` — the 2026-10-06 error, verbatim. The `working`
+  read proves the cancel targets a live task; only the wait makes it still live
+  when the cancel lands.
+- **Why Test 3 runs behind an API key.** A public agent (`auth_type: none`) runs
+  under the public code policy, which replaces a `CustomComponent`'s code with the
+  server's stock copy: measured, the sleeping flow answered
+  `{"value": "Hello, World!"}` in ~20 ms. The API-key path runs the flow's own code.
+  Cancellation goes through the same handler on both paths — only admission and
+  the task's owner scope differ — and Tests 1–2 keep covering the public path.
 - **Not-reading the SSE stream does not park the task.** Measured: leaving the
   stream unconsumed for 3 s still ends in `completed`, then `-32002` — so
-  backpressure is not a way to widen the window, and the payload is.
+  backpressure is not a way to widen the window.
 - **Streaming errors still collapse to -32603**, stated in the product's own
   docstring ("fixing that means reimplementing that generator, tracked
   separately"). So no spec code is asserted on a `message/stream` /

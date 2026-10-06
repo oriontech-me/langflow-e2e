@@ -196,14 +196,30 @@ export function findComponentTemplate(catalog: Record<string, unknown>): Compone
   );
 }
 
-function makeNode(catalog: Record<string, unknown>, node: NodeSpec, index: number): FlowNode {
-  const template = findComponentTemplate(catalog);
-  template.template.code = { ...template.template.code, value: componentCode(node) };
+/**
+ * Rewrites a `CustomComponent` catalog copy into `node`: its code, its input fields,
+ * the `Message` output and its own `display_name`. Mutates and returns the copy it is
+ * given, so another builder can embed one such node in a flow of built-in components
+ * (`build-catalog-flow.ts`'s `configure` hook — #2196 puts a sleeping node between
+ * Chat Input and Chat Output).
+ */
+export function applyNodeSpec<T extends { template: Record<string, unknown>; [key: string]: unknown }>(
+  template: T,
+  node: NodeSpec,
+): T {
+  const fields = template.template as Record<string, TemplateField>;
+  fields.code = { ...fields.code, value: componentCode(node) };
   for (const f of node.fields ?? []) {
-    template.template[f] = inputField(f);
+    fields[f] = inputField(f);
   }
-  template.outputs = [messageOutput()];
-  template.display_name = node.id;
+  const component = template as Record<string, unknown>;
+  component.outputs = [messageOutput()];
+  component.display_name = node.id;
+  return template;
+}
+
+function makeNode(catalog: Record<string, unknown>, node: NodeSpec, index: number): FlowNode {
+  const template = applyNodeSpec(findComponentTemplate(catalog), node);
   return {
     id: node.id,
     type: "genericNode",
