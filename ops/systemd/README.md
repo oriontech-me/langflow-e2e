@@ -12,8 +12,10 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-daily-watchdog.timer` | 09:00 UTC on weekdays, `Persistent=true` |
 | `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947). **Records** the answer, never posts |
 | `e2e-shadow.service` | the **image shadow** (#2093): the same suite against the published image of the version the daily served, on its own ports, worktree, ledger and logs, publishing nothing. **No timer**: `ops/vm/request-shadow.sh` starts it with `--no-block` at the end of the daily, and `After=e2e-daily.service` holds it until the daily's unit has finished |
-| `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7910-7913, echo 8100, ollama 11454; not 7890-7893, the Enterprise and serving-identity defaults), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00 |
+| `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7910-7913, echo 8100, ollama 11454; not 7890-7893, the Enterprise and serving-identity defaults), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00. It also refuses while a scheduled routine holds the heavy-lane lock (*Scheduled routines*) |
 | `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
+| `e2e-routine-<name>.service` + `.timer` | a **scheduled routine** moved off Actions (stage 3): the shape is `ops/vm/lib/routine.sh`, see *Scheduled routines* below |
+| `e2e-routine-watchdog@.service` + `e2e-routine-<name>-watchdog.timer` | the **absence alarm** of one routine, the instance being its name; one template, one timer per routine |
 
 ## Two asymmetries that look like inconsistencies and are not
 
@@ -158,6 +160,44 @@ units that point at `ops/vm/` are installed.
 `/root/run-daily-dist.sh` for the drop-in's `ExecStart`, `/root/e2e-daily-watchdog.sh`
 for the watchdog's, then `systemctl daemon-reload`. Deleting the drop-in is *not* a
 rollback: it falls through to `/root/run-daily.sh`, the split-lane wrapper.
+
+## Scheduled routines
+
+The routines that ran on Actions' cron move here one at a time (stage 3 of the migration
+plan). Each is a wrapper that sources `ops/vm/lib/routine.sh`, whose header is the
+reference. In short:
+
+- **The daily has priority.** A routine does not start on weekdays 07:30-08:40 UTC,
+  beside `e2e-daily` or `e2e-shadow`, or while today's shadow request waits. It *waits*
+  for its turn within a budget it declares, and `run-daily.sh` stops any routine still
+  going at 08:00, found by the `e2e-routine-*` name.
+- **One heavy lane at a time.** Every lane that starts Langflow or a browser (the
+  routines and the on-demand run) takes `/run/lock/e2e-heavy.lock`; who holds it is in
+  `/run/lock/e2e-heavy.lock.holder`. A routine waits for it, the on-demand run refuses.
+  The daily and the shadow take no lock: they have priority by stopping the others.
+- **An honest exit.** 0 green, 1 red, 2 skipped, 3 failed, 4 blocked. The service
+  declares `SuccessExitStatus=2 4`, so systemd's `failed` means the machine failed.
+  Each run writes `/root/e2e-routines/<name>/results/<stamp>.env` and `last.env`; logs
+  are under `/var/log/e2e-<name>/`.
+- **Red reaches the destination**, per the routine's declared visibility: one open issue
+  per routine on `ISSUE_REPO` (label `routine:<name>`), commented on each red day and
+  closed by the first green one, and a Slack post. The publishing credentials are read
+  only by the report, never by the routine's work. Skipped, failed and blocked days, and
+  a red whose report failed, are said by the routine's watchdog.
+
+Installing one routine, e.g. `migration`:
+
+```sh
+cd /root/e2e-qa
+cp ops/systemd/e2e-routine-migration.service ops/systemd/e2e-routine-migration.timer \
+   ops/systemd/e2e-routine-migration-watchdog.timer ops/systemd/e2e-routine-watchdog@.service \
+   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now e2e-routine-migration.timer e2e-routine-migration-watchdog.timer
+```
+
+Rollback: `systemctl disable --now` the two timers. The routine's state and logs stay for
+whoever asks what it did.
 
 ## What is NOT here
 
