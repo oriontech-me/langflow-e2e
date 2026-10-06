@@ -122,6 +122,17 @@ main() {
       systemctl stop e2e-on-demand.service || echo "WARNING: could not stop e2e-on-demand.service"
       ;;
   esac
+  # And over every scheduled routine (ops/vm/lib/routine.sh), found by the unit name's
+  # pattern so a new routine needs no line here. They wait out the daily's window before
+  # they start, so on a normal day none is running; one started late, or held by a slow
+  # turn, is stopped here, and records itself as failed with the reason. The watchdog
+  # template (e2e-routine-watchdog@<routine>) matches the pattern and is not a routine.
+  local routine_unit
+  while read -r routine_unit _; do
+    case "$routine_unit" in '' | *@*) continue ;; esac
+    echo "stopping the routine $routine_unit before this run"
+    systemctl stop "$routine_unit" || echo "WARNING: could not stop $routine_unit"
+  done < <(systemctl list-units --plain --no-legend --state=activating,active,reloading,deactivating 'e2e-routine-*.service' 2>/dev/null || true)
 
   if [ -r "$SECRETS" ]; then
     # shellcheck disable=SC1090

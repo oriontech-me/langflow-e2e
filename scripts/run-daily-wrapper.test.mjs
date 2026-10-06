@@ -296,6 +296,33 @@ test("a running on-demand run is stopped before the official run, and only a run
   }
 });
 
+test("every running routine is stopped before the official run, found by name, and the watchdog template is not", () => {
+  // ops/vm/lib/routine.sh: routines wait out the daily's window, but one started late or
+  // held by a slow turn can still be going at 08:00. Found by the e2e-routine-* pattern
+  // so a new routine needs no line in the wrapper; a templated unit is never a routine.
+  const dir = makeTempDir("run-daily-routines-");
+  try {
+    const calls = join(dir, "systemctl.calls");
+    const listing = [
+      "e2e-routine-migration.service loaded activating start Migration",
+      "e2e-routine-validation.service loaded active running Validation",
+      "e2e-routine-watchdog@migration.service loaded activating start Alarm",
+    ].join("\\n");
+    const systemctl = `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\ncase "$1" in list-units) printf '${listing}\\n' ;; show) echo inactive ;; stop) [ "$2" = e2e-routine-validation.service ] && exit 1 ;; esac\nexit 0\n`;
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, {}, { systemctl });
+    const log = readFileSync(calls, "utf8");
+    assert.match(log, /^list-units --plain --no-legend --state=activating,active,reloading,deactivating e2e-routine-\*\.service$/m);
+    assert.match(log, /^stop e2e-routine-migration\.service$/m);
+    assert.match(log, /^stop e2e-routine-validation\.service$/m);
+    assert.doesNotMatch(log, /^stop e2e-routine-watchdog@/m, "the watchdog template was stopped as a routine");
+    // A failed stop is said and the daily goes on, as for the shadow.
+    assert.match(r.log, /WARNING: could not stop e2e-routine-validation\.service/);
+    assert.match(r.log, /could not resolve the version/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failed stop of the on-demand run is said and does not end the daily", () => {
   const dir = makeTempDir("run-daily-ondemand-");
   try {
