@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 730 `test()` calls carrying the `@stable` tag, distributed across 283 spec
+> 728 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2264,7 +2264,6 @@
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
 - [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
-- [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
 - [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
@@ -2308,7 +2307,6 @@
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
-- [x] flow appears as MCP tool in MCP Server tab and endpoint responds → `mcp-server-regression.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
