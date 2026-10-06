@@ -1284,8 +1284,10 @@ test("with specs selected, a would-be canary is never returned, and the advice s
   assert.deepEqual(r.canarySpecs, []);
   assert.equal(r.verdict, "dispatch", "the other lane using the action is still named");
   const { annotation, summaryLines } = dispatchAdvice(r);
-  assert.match(annotation, /the impacted specs run on THIS lane/);
-  assert.doesNotMatch(annotation, /exercise THIS lane/, "the specs may skip the very step this action is");
+  assert.match(annotation, /THIS lane selected the impacted specs instead of the canary/);
+  // Not "run": they may all be lane-gated (`@enterprise`/`@serving`), which is decided
+  // AFTER this verdict and skips the run entirely.
+  assert.doesNotMatch(annotation, /specs run on THIS lane|exercise THIS lane/);
   // The action IS this lane's wiring, and the canary that would have run it did not.
   assert.deepEqual(r.prLaneFiles, [".github/actions/wait-for-backend/action.yml"]);
   assert.match(annotation, /own wiring \(\.github\/actions\/wait-for-backend\/action\.yml\), and the canary did not run/);
@@ -1293,12 +1295,21 @@ test("with specs selected, a would-be canary is never returned, and the advice s
   assert.match(summaryLines.join("\n"), /a lane the impacted specs cannot exercise/);
 });
 
-test("with specs selected, a VM-only file is reported but 'nothing in CI' is not claimed", () => {
+test("with specs selected, a VM-only file still closes on 'nothing in CI', scoped to the CI part", () => {
+  // The specs a mixed diff selects never reach the VM, so their run proves nothing
+  // about this file — dropping the conclusion there would read as partial coverage.
   const r = classifyCiChange({ changed: ["scripts/remove-stable-from-failures.ts"], refs: vmRefs, specsSelected: true });
   assert.equal(r.verdict, "vm-only");
   const { annotation } = dispatchAdvice(r);
   assert.match(annotation, /runs only on the VM lane/);
-  assert.doesNotMatch(annotation, /Nothing in CI can prove/, "the impacted specs did run");
+  assert.match(annotation, /Nothing in CI can prove this change's CI part before merge — the impacted specs do not reach it/);
+  // …but not when this lane's own wiring changed too: those specs may exercise it.
+  const mixed = classifyCiChange({
+    changed: ["scripts/remove-stable-from-failures.ts", PR_LANE],
+    refs: vmRefs,
+    specsSelected: true,
+  });
+  assert.doesNotMatch(dispatchAdvice(mixed).annotation, /Nothing in CI can prove/);
 });
 
 test("with specs selected and only PR-lane surface, the unproven wiring is still named", () => {

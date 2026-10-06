@@ -458,8 +458,6 @@ jobs:
           #   vm-only  → the surface runs only on the QA VM lane (`ops/**` and the
           #              run-e2e shell script), outside Actions: nothing to dispatch,
           #              so the advice names the unit tests that cover it (#2173).
-          #              Never spell a `scripts/` path in a comment here: this file's
-          #              tokens ARE the PR lane, comments included.
           #              No branch below: like `dispatch`, it speaks through `.advice`.
           CANARY=false
           # Empty unless the classifier ran, so the renderer is only handed a file that

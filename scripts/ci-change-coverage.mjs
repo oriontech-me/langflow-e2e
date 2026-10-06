@@ -1049,7 +1049,7 @@ export function dispatchAdvice(result) {
     onCanary
       ? "The canary proves THIS lane boots; it does not exercise the other lanes this diff reaches."
       : ranSomething
-        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); the impacted specs run on THIS lane${targets.length > 0 || vmLane.length > 0 ? ", and do not exercise the other lanes it reaches" : ""}.`
+        ? `This diff also changes CI surface (${list(result.ciFiles ?? [])}); THIS lane selected the impacted specs instead of the canary${targets.length > 0 || vmLane.length > 0 ? ", and they do not exercise the other lanes it reaches" : ""}.`
         : result.verdict === "vm-only"
         ? `Change to ${list(result.ciFiles ?? [])}, which no GitHub workflow runs — nothing in CI proves it works.`
         : `CI-only change to ${list(result.ciFiles ?? [])}, which THIS lane does not run — nothing here proves it works.`,
@@ -1095,15 +1095,22 @@ export function dispatchAdvice(result) {
   // …and never on a canary, where something in CI demonstrably did run. A file only
   // the VM lane runs is as established as a workflow that cannot be dispatched: both
   // are facts about where it runs, not doubts about it.
+  //
+  // A mixed diff (#2192) gets the same conclusion, scoped to its CI part: the specs it
+  // selected do not reach another lane or the VM, so their run proves none of that. It
+  // is withheld when this lane's own wiring changed, which those specs may exercise.
   if (
-    !ranSomething &&
+    !onCanary &&
+    unprovenWiring.length === 0 &&
     yes.length === 0 &&
     (blocked.length > 0 || vmOnly.length > 0) &&
     unknown.length === 0 &&
     unverified.length === 0
   ) {
     sentences.push(
-      "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
+      result.specsSelected
+        ? "Nothing in CI can prove this change's CI part before merge — the impacted specs do not reach it: rely on the unit lanes and local verification, and watch the post-merge run (#1609)."
+        : "Nothing in CI can prove this change before merge: rely on the unit lanes and local verification, and watch the post-merge run (#1609).",
     );
   }
 
