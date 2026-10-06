@@ -466,7 +466,15 @@ jobs:
           # exists — `${CI_COVERAGE:+…}` then omits the flag entirely rather than passing
           # a path to nothing.
           CI_COVERAGE=""
-          if [ "$TOTAL" -eq 0 ]; then
+          # A MIXED diff — impacted specs AND CI surface — used to skip the classifier
+          # entirely, so a PR editing a spec beside a VM-only or another-lane script got
+          # no advice about the latter (#2192). It now runs whenever the diff touches a
+          # CI surface, with `--specs-selected` when specs were impacted: the specs run
+          # as before, the classifier never returns a canary, and only `.advice` is used.
+          CI_SURFACE='^(\.github/|scripts/|ops/|\.claude/skills/[^/]+/scripts/)'
+          SPECS_SELECTED=""
+          if [ "$TOTAL" -gt 0 ]; then SPECS_SELECTED="--specs-selected"; fi
+          if [ "$TOTAL" -eq 0 ] || grep -qE "$CI_SURFACE" /tmp/changed.txt; then
             # Two inputs the repository working tree cannot supply, both for the
             # `dispatch` verdict alone — so both are skipped unless the diff actually
             # touches a CI surface, and both are best-effort: losing either degrades
@@ -490,7 +498,7 @@ jobs:
             # nothing, where a naive `head -1` renders "could not read … ()" — a
             # warning naming nothing, in the one branch it exists for (#1012).
             reason() { sed -n '/[^[:space:]]/{p;q;}' "$1" 2>/dev/null | grep . || echo "$2"; }
-            if grep -qE '^(\.github/|scripts/)' /tmp/changed.txt; then
+            if grep -qE '^(\.github/|scripts/|\.claude/skills/[^/]+/scripts/)' /tmp/changed.txt; then
               # `-s` as well as the exit status: `gh` can exit 0 having written
               # nothing, and an empty listing is not a weak signal — absence from it
               # is read as "not on the default branch", so it would claim a 404 for
@@ -515,7 +523,7 @@ jobs:
                 echo "::warning::could not read $DEFAULT_BRANCH's workflows ($(reason /tmp/base-ci.err 'no error output')); trigger answers will come from this branch."
               fi
             fi
-            node scripts/ci-change-coverage.mjs --stdin --format=json $STATES $BASE_CI < /tmp/changed.txt > /tmp/ci-coverage.json \
+            node scripts/ci-change-coverage.mjs --stdin --format=json $STATES $BASE_CI $SPECS_SELECTED < /tmp/changed.txt > /tmp/ci-coverage.json \
               || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
             CI_COVERAGE=/tmp/ci-coverage.json
             VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
