@@ -16,8 +16,9 @@
 #      07:30-08:40 UTC), beside the daily or the image shadow, or while today's shadow
 #      request waits to be picked up -- the same rules run-on-demand.sh follows. It WAITS
 #      for its turn rather than refusing at once, because a routine has no requester to
-#      try again later: the next chance is tomorrow. And run-daily.sh stops any routine
-#      still going at 08:00, as it stops the shadow and the on-demand run.
+#      try again later: the next chance is tomorrow. And run-daily.sh stops a routine
+#      that holds its turn at 08:00, as it stops the shadow and the on-demand run; one
+#      still waiting is left to wait.
 #   2. One heavy lane at a time. A lane that starts Langflow or a browser takes
 #      $E2E_HEAVY_LOCK. The 2026-10-05 shadow comparison (#2159) saw `database is busy`
 #      503s and `socket hang up` with two suites on the machine; a migration cell beside
@@ -148,6 +149,12 @@ routine_wait_turn() {
 # One more KEY=VALUE for the result. Keys are upper-case words; values lose newlines.
 routine_set() {
   [[ "$1" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "WARNING: routine_set ignored bad key '$1'"; return 0; }
+  # The result's own fields: written before the extras, and every reader takes the LAST
+  # occurrence, so an extra named STATUS would replace the verdict (review of #2190).
+  case "$1" in
+    ROUTINE | STATUS | REASON | EXIT | STARTED | STARTED_EPOCH | FINISHED | LOG | REPORT)
+      echo "WARNING: routine_set ignored '$1': the result sets it itself"; return 0 ;;
+  esac
   RT_EXTRA+=("$1" "$2")
 }
 
@@ -241,6 +248,9 @@ routine_report() {
         # subshell, and never by the routine: its work starts Langflow and may run
         # third-party code, and a token in its environment would reach all of it.
         if (
+          # Without -u: a reference to an unset name inside these files must not abort
+          # the report, as the watchdog reads the same file (review of #2190).
+          set +u
           for f in "${E2E_ROUTINE_SECRETS:-/root/.e2e-secrets}" "${E2E_ROUTINE_LANE:-/root/.e2e-lane}"; do
             # shellcheck disable=SC1090
             [ -r "$f" ] && . "$f"

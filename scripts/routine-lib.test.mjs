@@ -307,3 +307,22 @@ test("a report that could not be delivered is recorded for the watchdog, and the
   assert.equal(r.last.STATUS, "red");
   assert.equal(r.last.REPORT, "failed");
 });
+
+test("an extra named like a field of the result is refused: it would replace the verdict", () => {
+  const r = routine("routine_set STATUS green; routine_set REASON fine; routine_set STARTED_EPOCH 0; routine_end red broken");
+  assert.equal(r.status, 1, r.log);
+  assert.equal(r.last.STATUS, "red");
+  assert.equal(r.last.REASON, "broken");
+  assert.notEqual(r.last.STARTED_EPOCH, "0");
+  assert.match(r.log, /routine_set ignored 'STATUS': the result sets it itself/);
+});
+
+test("an unset name inside the secrets file does not abort the report of a routine under set -u", () => {
+  const d = makeTempDir("routine-lib-secrets-");
+  const secrets = join(d, "secrets.env");
+  writeFileSync(secrets, "export GITHUB_TOKEN=secret-token\nexport EXTRA=${NOT_SET_ANYWHERE}/x\n");
+  const r = routine("routine_end red broken", { env: { ROUTINE_ISSUE: "1", E2E_ROUTINE_SECRETS: secrets } });
+  assert.ok(r.report, `the report never ran: ${r.log}`);
+  assert.equal(r.report.env.GITHUB_TOKEN, "secret-token");
+  assert.equal(r.last.REPORT, "ok");
+});

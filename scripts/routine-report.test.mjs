@@ -82,7 +82,7 @@ test("Slack's shape follows the URL: Block Kit for /services/, the trigger's thr
 });
 
 test("a red day with no open issue opens one, labelled for the routine, on the destination", async () => {
-  const { fn, calls } = fakeFetch({ [`GET ${ISSUES}?`]: [200, []], [`POST ${ISSUES}`]: [201, { html_url: "https://x/issues/5" }] });
+  const { fn, calls } = fakeFetch({ [`GET ${ISSUES}?`]: [200, []], [`POST ${ISSUES}`]: [201, { html_url: "https://x/issues/5", labels: [{ name: "routine-failure" }, { name: "routine:migration" }] }] });
   const r = await deliverVerdict(RED, ENV, { fetchFn: fn });
   assert.equal(r.ok, true, r.errors.join("; "));
   const get = calls.find((c) => c.method === "GET");
@@ -183,4 +183,24 @@ test("the alarm posts to Slack only, and says so when it cannot", async () => {
   assert.equal((await deliverAlarm("h", "b", ENV, { fetchFn: fn })).ok, true);
   assert.deepEqual(calls.map((c) => c.url), [ENV.SLACK_WEBHOOK_URL]);
   assert.equal((await deliverAlarm("h", "b", {}, { fetchFn: fn })).ok, false);
+});
+
+test("an issue created without its label is said: tomorrow could not find it", async () => {
+  // GitHub drops labels on create, silently, for a token without push access (review of #2190).
+  const { fn } = fakeFetch({ [`GET ${ISSUES}?`]: [200, []], [`POST ${ISSUES}`]: [201, { html_url: "https://x/issues/5", labels: [] }] });
+  const r = await deliverVerdict(RED, ENV, { fetchFn: fn });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join("; "), /without the label routine:migration/);
+  // The red day still reached Slack.
+  assert.ok(r.did.includes("slack"), r.did.join(","));
+});
+
+test("STARTED_EPOCH is a field of every result, not one of the routine's own", () => {
+  const md = renderDay({ ROUTINE: "m", STATUS: "red", REASON: "r", STARTED: "20261006T091500Z", STARTED_EPOCH: "1791278100" });
+  assert.doesNotMatch(md, /STARTED_EPOCH|\| Field/);
+});
+
+test("a Block Kit section is never empty: Slack refuses it", () => {
+  const blocks = slackPayload("https://hooks.slack.com/services/a", "h", "");
+  assert.equal(blocks.blocks[1].text.text, "(no reason recorded)");
 });

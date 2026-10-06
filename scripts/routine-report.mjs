@@ -44,7 +44,7 @@ export function dayOf(stamp = "") {
 }
 
 // Fields every result has, shown apart; the rest are the routine's own.
-const CORE = new Set(["ROUTINE", "STATUS", "REASON", "EXIT", "STARTED", "FINISHED", "LOG", "REPORT", "DETAIL"]);
+const CORE = new Set(["ROUTINE", "STATUS", "REASON", "EXIT", "STARTED", "STARTED_EPOCH", "FINISHED", "LOG", "REPORT", "DETAIL"]);
 
 /**
  * The markdown for one day. PURE. `detail` is the routine's own report (its DETAIL file),
@@ -82,7 +82,9 @@ export function slackPayload(url, headline, body, links = "") {
     return {
       blocks: [
         { type: "header", text: { type: "plain_text", text: headline.slice(0, 150) } },
-        { type: "section", text: { type: "mrkdwn", text: body.slice(0, 2900) } },
+        // Slack refuses an empty section text (invalid_blocks), and an empty REASON is
+        // reachable: the red day would go undelivered (review of #2190).
+        { type: "section", text: { type: "mrkdwn", text: (body.trim() ? body : "(no reason recorded)").slice(0, 2900) } },
       ],
     };
   }
@@ -153,6 +155,13 @@ export async function deliverVerdict(result, env, { fetchFn = fetch, detail = ""
             labels: LABELS(routine),
           });
           issueUrl = created.html_url ?? "";
+          // The label is how tomorrow finds this issue. GitHub drops labels on create,
+          // silently, for a token without push access: then every red day would open a
+          // new issue and no green day would close one. Said, so the watchdog says it.
+          const got = (created.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name));
+          if (!got.includes(labelFor(routine))) {
+            errors.push(`issue: created ${issueUrl || "an issue"} without the label ${labelFor(routine)}: the token cannot set labels, so the next red day would open another`);
+          }
         } else if (action === "close") {
           await gh(fetchFn, token, "POST", `${base}/${open.number}/comments`, {
             body: `Back to green on ${dayOf(result.STARTED)}, closing.\n\n${day}`,

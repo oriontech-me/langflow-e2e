@@ -101,7 +101,7 @@ elif [ -z "$exit_raw" ] || [ "$exit_raw" -lt "$start_raw" ]; then
   # By the exit timestamp, not ActiveState: a oneshot with RemainAfterExit=yes is
   # `active` forever after it ends (the daily's watchdog, first version).
   headline="Routine $ROUTINE: still running"
-  body="It started at $(hm "$start_raw") UTC and has not finished, $(( (NOW - start_raw) / 60 )) min later. The check is placed past its longest healthy run plus its wait for a turn, so this is stuck rather than slow, and today has no result until the unit's TimeoutStartSec ends it.
+  body="It started at $(hm "$start_raw") UTC and has not finished, $(( (NOW - start_raw) / 60 )) min later. The check is placed past its longest healthy run plus its wait for a turn, so this is stuck rather than slow. If the check also sits past the unit's TimeoutStartSec, systemd has already tried to stop it and failed; otherwise today has no result until that timeout ends it.
 Last log: $LOG_DIR/latest.log"
 else
   started="$(field STARTED)"

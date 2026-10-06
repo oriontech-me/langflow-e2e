@@ -123,13 +123,25 @@ main() {
       ;;
   esac
   # And over every scheduled routine (ops/vm/lib/routine.sh), found by the unit name's
-  # pattern so a new routine needs no line here. They wait out the daily's window before
-  # they start, so on a normal day none is running; one started late, or held by a slow
-  # turn, is stopped here, and records itself as failed with the reason. The watchdog
-  # template (e2e-routine-watchdog@<routine>) matches the pattern and is not a routine.
-  local routine_unit
+  # pattern so a new routine needs no line here. Only one that HOLDS its turn is working
+  # and is stopped (it records itself as failed with the reason). One still waiting for
+  # its turn is `activating` too, but it is doing nothing, and this run being active is
+  # what keeps it waiting: stopping it turned a routine whose timer fell in the daily's
+  # window into a failed day (review of #2190). The heavy-lane lock tells them apart --
+  # the on-demand run, its other holder, was stopped just above. A lock that cannot be
+  # probed, or a holder that cannot be read, falls back to stopping them all: this run's
+  # priority wins over a waiter's day. The watchdog template (e2e-routine-watchdog@<name>)
+  # matches the pattern and is not a routine.
+  local routine_unit routine_name heavy_lock="${E2E_HEAVY_LOCK:-/run/lock/e2e-heavy.lock}" lock_held=1 lock_holder=""
+  if command -v flock > /dev/null 2>&1 && flock -n "$heavy_lock" true 2> /dev/null; then lock_held=0; fi
+  lock_holder="$(sed -n '1s/ (pid .*//p' "$heavy_lock.holder" 2> /dev/null || true)"
   while read -r routine_unit _; do
     case "$routine_unit" in '' | *@*) continue ;; esac
+    routine_name="${routine_unit#e2e-routine-}"; routine_name="${routine_name%.service}"
+    if [ "$lock_held" = 0 ] || { [ -n "$lock_holder" ] && [ "$lock_holder" != "$routine_name" ]; }; then
+      echo "leaving the routine $routine_unit: it is waiting for its turn, and this run keeps it waiting"
+      continue
+    fi
     echo "stopping the routine $routine_unit before this run"
     systemctl stop "$routine_unit" || echo "WARNING: could not stop $routine_unit"
   done < <(systemctl list-units --plain --no-legend --state=activating,active,reloading,deactivating 'e2e-routine-*.service' 2>/dev/null || true)
