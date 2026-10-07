@@ -12,6 +12,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
+import { seedAssistantDiscovered } from "../../../../helpers/ui/assistant-onboarding";
 
 /**
  * Agent structured output (QA-CHECKLIST §6.5 "Agent returns output in
@@ -67,6 +68,16 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
     throw e;
   }
 }
+
+// Before the first document load, the only moment it can work (#1220): upstream
+// snapshots the flag at canvas mount and arms a 10 s timer, and this spec reloads
+// the editor up to three times per test, so each reload would otherwise re-arm the
+// assistant onboarding tooltip over the canvas controls. The inspector read below is
+// also scoped by testid (#2177), so it stays correct even if the seed ever stops
+// suppressing the tooltip.
+test.beforeEach(async ({ page }) => {
+  await seedAssistantDiscovered(page);
+});
 
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
