@@ -6,6 +6,7 @@ import { clearApiKeyBadges } from "../../../helpers/ui/clear-api-key-badges";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { fillSidebarSearch } from "../../../helpers/flows/fill-sidebar-search";
 import { providerSkipGate } from "../../../helpers/provider-setup/provider-health";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
@@ -41,6 +42,71 @@ test.afterEach(async ({ request }) => {
   }
 });
 
+// The ReactFlow pane, addressed the way this file always has.
+const CANVAS = '//*[@id="react-flow-id"]';
+
+// Every canvas node carries `rf__node-<id>`, so one count covers all three
+// component types — the OpenAI node's id comes from an extension type key
+// (`ext:openai:OpenAIModelComponent@official`), so a type-scoped prefix would be
+// a guess.
+const ANY_NODE = '[data-testid^="rf__node-"]';
+
+// How long the editor may stay read-only after it opens. Not a sleep: the wait
+// ends the moment the entry turns draggable — 1.2-3.1 s with the permissions
+// response held for 4 s (#2197). The budget covers the worst case upstream
+// documents instead of one round trip: a transient 5xx on the first permissions
+// call is retried 5 times with `min(1000 * 2 ** n, 30000)` backoff, which keeps
+// the editor read-only for roughly half a minute (langflow#14523).
+const EDITOR_READY_TIMEOUT_MS = 45000;
+
+/**
+ * Drags a component out of the sidebar onto the canvas, and only once the editor
+ * will accept it (#2197).
+ *
+ * A sidebar entry renders `draggable={!error && !isUnavailable}`, and upstream
+ * folds the flow's write-permission verdict into `isUnavailable`, failing CLOSED
+ * while `POST /api/v1/authz/me/permissions` is in flight (langflow#14068 for the
+ * add path, langflow#14523 for the affordance). A drag issued in that window
+ * starts no native drag session at all — no `dragstart`, no `drop` — so no node
+ * is created and nothing downstream of it can appear. Measured on
+ * 1.13.0.dev34: holding that response for 4 s lost the old bare drag 4 of 4;
+ * waiting for `draggable="true"` first landed it 5 of 5.
+ *
+ * The drag is issued ONCE. A blind second drag would also have "repaired" this,
+ * but would equally hide a drop the editor discards while the entry IS
+ * draggable — a real defect, so it fails here under its own name.
+ */
+async function dragFromSidebar(
+  page: Page,
+  term: string,
+  entryTestId: string,
+  targetPosition?: { x: number; y: number },
+): Promise<void> {
+  await fillSidebarSearch(page, term, entryTestId);
+
+  const entry = page.getByTestId(entryTestId);
+  await expect(
+    entry,
+    `the "${entryTestId}" sidebar entry never became draggable: the editor ` +
+      `stayed read-only. Upstream does that by design only while POST ` +
+      `/api/v1/authz/me/permissions is in flight (#2197) — a verdict that never ` +
+      `arrives, or one that denies write to the flow's own creator, is a defect`,
+  ).toHaveAttribute("draggable", "true", { timeout: EDITOR_READY_TIMEOUT_MS });
+
+  const nodes = page.locator(ANY_NODE);
+  const before = await nodes.count();
+  await entry.dragTo(
+    page.locator(CANVAS),
+    targetPosition ? { targetPosition } : undefined,
+  );
+  await expect(
+    nodes,
+    `dragging the draggable "${entryTestId}" entry onto the canvas added no ` +
+      `node — the entry accepted the gesture, so this is not #2197's ` +
+      `permission-pending window but a drop the editor discarded`,
+  ).toHaveCount(before + 1);
+}
+
 test(
   "should copy code from playground modal",
   {
@@ -66,32 +132,17 @@ test(
     await page.waitForSelector('[data-testid="sidebar-search-input"]', {
       timeout: 30000,
     });
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-
-    await page
-      .getByTestId("input_outputChat Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 400, y: 100 },
-      });
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("chat input");
-
-    await page
-      .getByTestId("input_outputChat Input")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 100 },
-      });
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("openai");
-
-    await page
-      .getByTestId("openaiOpenAI")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 200 },
-      });
+    // Distinct drop points so the three nodes do not stack and the handle clicks
+    // below each reach their own node.
+    await dragFromSidebar(page, "chat output", "input_outputChat Output", {
+      x: 400,
+      y: 100,
+    });
+    await dragFromSidebar(page, "chat input", "input_outputChat Input", {
+      x: 100,
+      y: 100,
+    });
+    await dragFromSidebar(page, "openai", "openaiOpenAI", { x: 100, y: 200 });
 
     await initialGPTsetup(page);
     await adjustScreenView(page);
@@ -174,12 +225,12 @@ test(
 // assertion wants. The modal is therefore asserted by its own dialog role/name.
 const PLAYGROUND_DIALOG = { role: "dialog" as const, name: "Playground" };
 
-// Quarantined for #2197: recurrent flake on the VM lane (2026-09-15 on 1.13.0.dev12, 2026-10-06 on
-// 1.13.0.dev34), the click on `playground-btn-flow-io` times out after the Chat Output is dropped.
-// Lifting it (drop `test.fixme`, restore `@stable`) is #2197's deliverable.
-test.fixme(
+// #2197: the click on `playground-btn-flow-io` timed out because the Chat Output
+// drag was issued while the editor was still read-only (see `dragFromSidebar`),
+// so no node landed and only the disabled twin was ever rendered.
+test(
   "playground button should be enabled or disabled",
-  { tag: ["@release", "@workspace", "@playground"] },
+  { tag: ["@stable", "@release", "@workspace", "@playground"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -190,23 +241,28 @@ test.fixme(
 
     await page.getByTestId("blank-flow").click();
 
-    await expect(page.getByTestId("playground-btn-flow")).toBeDisabled();
+    // The editor mounts twice on the way in, and between the two mounts the
+    // toolbar is not in the DOM at all — measured up to ~4.3 s unforced, which
+    // the 5 s default lost on 2026-09-22 (#2197). The trigger is still asserted
+    // as the disabled twin; it is only given the editor-mount budget.
+    await expect(page.getByTestId("playground-btn-flow")).toBeDisabled({
+      timeout: EDITOR_READY_TIMEOUT_MS,
+    });
 
     await expect(
       page.getByRole(PLAYGROUND_DIALOG.role, { name: PLAYGROUND_DIALOG.name }),
     ).toBeHidden();
 
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-
-    await page.waitForSelector('[data-testid="input_outputChat Output"]', {
-      timeout: 30000,
-    });
-    await page
-      .locator('//*[@id="input_outputChat Output"]')
-      .dragTo(page.locator('//*[@id="react-flow-id"]'));
+    await dragFromSidebar(page, "chat output", "input_outputChat Output");
+    await expect(
+      page.locator('[data-testid^="rf__node-ChatOutput-"]'),
+    ).toHaveCount(1);
 
     await adjustScreenView(page);
+
+    // The gate's state change is the assertion; the click only follows it.
+    await expect(page.getByTestId("playground-btn-flow-io")).toBeEnabled();
+    await expect(page.getByTestId("playground-btn-flow")).toHaveCount(0);
 
     await page.getByTestId("playground-btn-flow-io").click();
 
