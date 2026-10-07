@@ -38,6 +38,7 @@ import {
   apiUrlFor,
   createIssue,
   parseListingMissing,
+  readPartialUnexpectedPasses,
   readUnexpectedPasses,
   CC_DEFAULT,
 } from "./create-failure-issue.mjs";
@@ -1483,4 +1484,86 @@ test("TARGET_DRIFT_MD_FILE reaches the body through main() (#2063)", () => {
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(readFileSync(join(dir, "issue-body.md"), "utf8"), /### Target dependencies against the lock/);
+});
+
+// ─── #2217: a test.fail() whose body passed on SOME attempts ─────────────────
+
+/** The measured shape: VM dailies 2026-09-18 and 2026-10-07. */
+const PARTIAL_PASS_REPORT = {
+  config: {},
+  suites: [
+    {
+      title: "api/flows/workflows-v2-job-lifecycle.spec.ts",
+      file: "tests-automations/regression/api/flows/workflows-v2-job-lifecycle.spec.ts",
+      specs: [
+        {
+          title: "declared failing, passed on the first attempt",
+          file: "tests-automations/regression/api/flows/workflows-v2-job-lifecycle.spec.ts",
+          line: 304,
+          tests: [
+            {
+              status: "flaky",
+              expectedStatus: "failed",
+              results: [{ status: "passed" }, { status: "failed", error: { message: "Error: the declared bug" } }],
+            },
+          ],
+        },
+        {
+          title: "an ordinary flake",
+          file: "tests-automations/regression/api/flows/workflows-v2-job-lifecycle.spec.ts",
+          line: 400,
+          tests: [{ status: "flaky", results: [{ status: "failed", error: { message: "boom" } }, { status: "passed" }] }],
+        },
+      ],
+    },
+  ],
+};
+
+test("#2217 the report's partial unexpected passes are read, and only those", () => {
+  const dir = makeTempDir("partial-pass-");
+  const file = join(dir, "results.json");
+  writeFileSync(file, JSON.stringify(PARTIAL_PASS_REPORT));
+  assert.deepEqual(readPartialUnexpectedPasses(file, "/nowhere"), [
+    {
+      file: "tests-automations/regression/api/flows/workflows-v2-job-lifecycle.spec.ts",
+      line: 304,
+      title: "declared failing, passed on the first attempt",
+      attempts: 2,
+      passedAttempts: 1,
+    },
+  ]);
+  assert.deepEqual(readUnexpectedPasses(file, "/nowhere"), [], "not a full pass");
+  assert.deepEqual(readPartialUnexpectedPasses(join(dir, "missing.json")), []);
+});
+
+for (const [lane, base] of [["Actions", ACTIONS], ["VM", VM]]) {
+  test(`#2217 the ${lane} umbrella names a partial pass as neither a fix nor a flake`, () => {
+    const partialUnexpectedPasses = [{ file: "a.spec.ts", line: 304, title: "declared `x`", attempts: 2, passedAttempts: 1 }];
+    const { title, body } = renderIssue({ ...base, partialUnexpectedPasses });
+    assert.equal(title, renderIssue(base).title);
+    assert.match(body, /### ⚠️ 1 test\(s\) declared failing with `test\.fail\(\)` passed on SOME attempts/);
+    assert.match(body, /`error_signature: "expected to fail but passed on some attempts"`/);
+    assert.match(body, /- `a\.spec\.ts:304` — declared 'x' _\(passed on 1 of 2 attempt\(s\)\)_/);
+    assert.match(body, /never quarantine it as a recurrent flake/);
+    assert.doesNotMatch(body, /possible fix day/, "the full-pass section is not borrowed");
+    assert.ok(body.indexOf("SOME attempts") < body.indexOf("### Next steps"));
+  });
+}
+
+test("#2217 with no partial pass the body is exactly what it was", () => {
+  assert.equal(renderIssue({ ...VM, partialUnexpectedPasses: [] }).body, renderIssue(VM).body);
+});
+
+test("#2217 main() reads PLAYWRIGHT_JSON and names the partial pass in the body it writes", () => {
+  const runDir = makeTempDir("issue-body-partial-");
+  const report = join(runDir, "results.json");
+  writeFileSync(report, JSON.stringify(PARTIAL_PASS_REPORT));
+  const r = spawnSync(process.execPath, [SCRIPT], {
+    encoding: "utf-8",
+    env: { ...process.env, ISSUE_DRY_RUN: "1", RUN_DIR: runDir, RUN_ID: "1", AUTO_REMOVE_STATUS: "", LIVENESS_MD: "", PLAYWRIGHT_JSON: report },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const body = readFileSync(join(runDir, "issue-body.md"), "utf-8");
+  assert.match(body, /workflows-v2-job-lifecycle\.spec\.ts:304` — declared failing, passed on the first attempt/);
+  assert.doesNotMatch(body, /an ordinary flake/);
 });
