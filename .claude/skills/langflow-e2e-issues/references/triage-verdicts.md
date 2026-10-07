@@ -118,10 +118,32 @@ status/duration/error; (2) the big `playwright-report-daily-<run>` →
 `index.html` embeds a base64 zip (script tag `id="playwrightReportBase64"`)
 with per-test JSON naming each attempt's screenshot / `error-context.md` /
 trace under `data/`; the attempt's **stdout** (fixture `🚨 Backend Error`
-lines) and the error-context page snapshot are the highest-signal items;
+lines) and the error-context page snapshot are the highest-signal items —
+**the snapshot with one condition, below**;
 (3) cross-reference `reports/daily-history.jsonl` for the flaky-tests list
 per run. Count parallel-round results with `--reporter=json` + `jq .stats`,
 never by grepping `\r`-interleaved output.
+
+**`error-context.md` is teardown state, not failure-time DOM, whenever the
+spec's teardown navigates or reloads (#1509).** Playwright 1.58.2 writes that
+page snapshot from `_takePageSnapshot`, reached from `willCloseBrowserContext`
+and `didFinishTest` — both **after** the test function *and* its
+`afterEach`/`afterAll` hooks. So it is valid as failure-time DOM **only when
+the spec's teardown does not touch `page`** (a `{ request }`-only `afterEach`
+is fine; any `page.goto` / `page.reload` there is not). Check the spec's
+teardown before citing it — roughly a quarter of the suite navigates there
+(every playground spec, most canvas specs). Two consequences that already
+produced a wrong verdict (PR #1487): a snapshot of the home screen with
+`Loading...` says nothing about where the browser was when the test failed —
+a throw injected before any navigation at all produced exactly that — and
+since such a snapshot is deterministic, "byte-identical across two days" is
+**not** corroboration, two unrelated causes yield the same file. What is
+always failure-time: `test-failed-1.png` (`screenshot: only-on-failure` in CI,
+taken from `didFinishTestFunction`, before the hooks) and, on a retried
+attempt (`trace: on-first-retry`), the trace's per-action DOM snapshot at the
+failing call — the trace itself also records the teardown, so read the
+failing action, not the last frame. A conclusion resting on a teardown-state
+snapshot is re-derived from those two, never kept.
 
 **Issue claims a "confirmed bug" / says to gate `expected-fail`? Reproduce it on
 the live nightly FIRST — before designing.** A "confirmed bug" note can be stale:
