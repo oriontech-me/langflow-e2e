@@ -18,6 +18,7 @@ import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../../helpers/ui/open-advanced-options";
+import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { separateOverlappingNodes } from "../../../../helpers/ui/separate-overlapping-nodes";
 
 // Spec doc: docs/core-functionality/a2a/a2a-client-agent-external.md
@@ -50,6 +51,9 @@ const AGENT_CARD_DISPLAY = "data_display_data_display_agent_card";
 const AGENT_CARD_VIEW_BUTTON = "data_display_data_display_data_display_agent_card";
 const A2A_RESPONSE_HANDLE = "handle-a2aagent-shownode-response-right";
 const CHAT_OUTPUT_TARGET_HANDLE = "handle-chatoutput-noshownode-inputs-target";
+
+const PARAMETERS_BUTTON = "parameters-button";
+const APP_HEADER = "app-header";
 
 const RESTRICTED_CHIP = "Requires an API key";
 const COMPONENT_UPDATE_PATH = "/api/v1/custom_component/update";
@@ -152,6 +156,31 @@ async function inspectCard(
   await check(dialog);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden({ timeout: 10_000 });
+}
+
+/**
+ * Fails, naming the cause, when the selected node's toolbar sits under the app header.
+ *
+ * The toolbar renders above the node, so a node near the top of the pane takes
+ * `parameters-button` under the 48 px header. Playwright's scroll-into-view cannot
+ * pan a React Flow canvas, and the click then times out on "app-header intercepts
+ * pointer events" without saying why the button got there (#2182).
+ */
+async function expectToolbarClearOfHeader(page: Page): Promise<void> {
+  const button = page.getByTestId(PARAMETERS_BUTTON);
+  await expect(button).toBeVisible();
+  const buttonBox = await button.boundingBox();
+  const headerBox = await page.getByTestId(APP_HEADER).boundingBox();
+  expect(buttonBox, `${PARAMETERS_BUTTON} has no bounding box`).not.toBeNull();
+  expect(headerBox, `${APP_HEADER} has no bounding box`).not.toBeNull();
+  const headerBottom = headerBox!.y + headerBox!.height;
+  expect(
+    buttonBox!.y,
+    `the node's toolbar is under the app header (${PARAMETERS_BUTTON} top ` +
+      `${buttonBox!.y}px, header bottom ${headerBottom}px), so its click would be ` +
+      "intercepted. The canvas was not brought to a known position before the node " +
+      "was selected (#2182).",
+  ).toBeGreaterThanOrEqual(headerBottom);
 }
 
 async function readTargetMessages(
@@ -337,9 +366,18 @@ test.describe("A2A Client — A2AAgent component in External mode", () => {
         });
 
         await test.step("give the node the owner's key and a second sentinel", async () => {
+          // The wiring above ends its drags at the bottom edge of the pane, where
+          // React Flow auto-pans for as long as the pointer stays there. The amount
+          // depends on timing, and it lifts this tall node and its toolbar towards
+          // the header (#2182). Fit first so the node sits at a known place, and fit
+          // BEFORE selecting it: fitting after drops the selection and unmounts the
+          // toolbar (#867).
+          await adjustScreenView(page, { numberOfZoomOut: 0 });
+
           // `api_key` is an advanced field: it has no widget on the node until it is
           // added from the inspector.
           await page.getByTestId("title-A2A Agent").click();
+          await expectToolbarClearOfHeader(page);
           await openAdvancedOptions(page);
           await page.getByTestId(API_KEY_INSPECTOR_ADD).click();
           await closeAdvancedOptions(page);
