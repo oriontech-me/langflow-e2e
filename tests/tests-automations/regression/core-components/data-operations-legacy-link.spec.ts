@@ -7,6 +7,7 @@ import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-f
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { addLegacyComponents } from "../../../helpers/flows/add-legacy-components";
 import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
+import { outputInspectorDialog } from "../../../helpers/ui/output-inspector";
 
 // §3.10 Data Operations (1.11.0) — the OTHER half of the section: what happens to
 // the three components the unified node replaced. JSON Operations
@@ -310,7 +311,7 @@ test(
       await node
         .getByTestId("output-inspection-message-textoperations")
         .dispatchEvent("click");
-      const modal = page.locator('[role="dialog"]').last();
+      const modal = outputInspectorDialog(page); // never `.last()` (#2210)
       await expect(modal).toBeVisible({ timeout: 15000 });
       // `text_operations.py` → `_case_conversion` → `str.upper`.
       await expect(modal.locator("textarea").first()).toHaveValue(

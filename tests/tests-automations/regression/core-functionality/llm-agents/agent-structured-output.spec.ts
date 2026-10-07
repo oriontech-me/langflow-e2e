@@ -13,6 +13,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { seedAssistantDiscovered } from "../../../../helpers/ui/assistant-onboarding";
+import { outputInspectorDialog } from "../../../../helpers/ui/output-inspector";
 
 /**
  * Agent structured output (QA-CHECKLIST §6.5 "Agent returns output in
@@ -278,15 +279,10 @@ async function runAgentAndParseStructuredOutput(
   await expect(inspectButton).toBeEnabled({ timeout: 20000 });
   await inspectButton.click();
 
-  // Scoped to the inspector by its own header testid (`<nodeId>-<output>-output-modal`,
-  // outputModal/index.tsx), never by position: the assistant onboarding tooltip is a
-  // Radix popover that is also `role="dialog"` and mounts 10 s after the canvas does,
-  // so when it mounted AFTER the inspector opened, `.last()` read the promo instead of
-  // the payload (#2177 — "inspector payload contains JSON (got: Try the new Langflow
-  // Assistant!)"; reproduced on 1.13.0.dev34 by waiting for the promo past this point).
-  const dialog = page
-    .getByRole("dialog")
-    .filter({ has: page.locator('[data-testid$="-structured_response-output-modal"]') });
+  // By the inspector's own testid, never by position: when the assistant onboarding
+  // tooltip (also `role="dialog"`) mounted after the inspector, `.last()` read the
+  // promo instead of the payload (#2177). The helper documents the mechanism.
+  const dialog = outputInspectorDialog(page, "structured_response");
   await expect(dialog).toBeVisible({ timeout: 15000 });
   const raw = await dialog.innerText();
   const start = raw.indexOf("{");
