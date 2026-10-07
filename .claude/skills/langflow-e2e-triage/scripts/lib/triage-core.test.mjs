@@ -1163,6 +1163,54 @@ test('declared_fix_candidates count passes per variant, and never form a provide
   assert.deepEqual(ds.provider_wide_clusters.filter((k) => k.provider_wide), []);
 });
 
+// #2217 — a test.fail() whose body passed on SOME attempts is not a flake.
+test('buildDataset lifts a partial unexpected pass out of flakes into declared_partial_passes (#2217)', () => {
+  // The measured case: workflows-v2-job-lifecycle.spec.ts:304, attempts [passed, failed]
+  // on 2026-09-18 and 2026-10-07. Written before #2217 those rows carried the expected
+  // failure's message and the dataset filed the test as a recurrent flake.
+  const TITLE = 'a completed sync run answers its own status query';
+  const partial = {
+    test: TITLE, file: 'api/flows/w.spec.ts', line: 304, tags: ['@stable'], attempts: 2, passed_attempts: 1,
+    error_signature: 'expected to fail but passed on some attempts', infra_signature: null,
+    recurrence_keys: [], recurrence_key_version: 1,
+  };
+  const flake = {
+    test: 'an ordinary flake', file: 'b.spec.ts', line: 10, tags: ['@stable'], attempts: 2,
+    error_signature: 'Error: boom', infra_signature: null,
+    recurrence_keys: [{ head: 'error: boom', locator: null, file: 'b.spec.ts', source: 's' }],
+    recurrence_key_version: 1,
+  };
+  const day = (date, flaky, failures = []) => ({
+    date, run_id: date, totals: { passed: 10, failed: failures.length, flaky: flaky.length, skipped: 0 }, failures, flaky,
+  });
+  // A pre-#2217 row: same test, the expected failure as its signature. Not a partial pass.
+  const legacy = day('2026-09-18', [{ ...partial, error_signature: 'Error: a completed job must report the session', passed_attempts: undefined }]);
+  const fullPass = day('2026-09-25', [], [{ ...partial, attempts: 3, passed_attempts: undefined, error_signature: 'expected to fail but passed' }]);
+  const ds = buildDataset(
+    [legacy, day('2026-09-20', [partial]), fullPass, day('2026-10-07', [partial, flake, flake])],
+    [],
+  );
+
+  assert.deepEqual(ds.flakes.map((f) => f.test), ['an ordinary flake'], 'the partial pass is not a flake');
+  assert.deepEqual(ds.declared_fix_candidates, [], 'nor a fix day: the retry reproduced the bug');
+  assert.equal(ds.declared_partial_passes.length, 1);
+  const [p] = ds.declared_partial_passes;
+  assert.equal(p.test, TITLE);
+  assert.equal(p.actionable, false);
+  assert.equal(p.passed_attempts, 1);
+  assert.equal(p.attempts, 2);
+  assert.deepEqual(p.partial_passes, { count: 2, dates: ['2026-09-20', '2026-10-07'] }, 'the legacy row does not count');
+  assert.deepEqual(p.full_passes, { count: 1, dates: ['2026-09-25'] });
+  assert.equal('recurrence' in p, false, 'no "flaked again" figure a proposal could cite');
+  assert.match(p.action, /never quarantine/i);
+  assert.equal(ds.provider_wide_clusters.some((k) => JSON.stringify(k).includes(TITLE)), false);
+});
+
+test('buildDataset has an empty declared_partial_passes on a day with none (#2217)', () => {
+  const ds = buildDataset(parseHistory(fixture('history-sample.jsonl')), JSON.parse(fixture('issues-sample.json')));
+  assert.deepEqual(ds.declared_partial_passes, []);
+});
+
 // --- an umbrella in another repository ---------------------------------------
 //
 // The VM lane opens its umbrella on the destination host, and dedicated issues are

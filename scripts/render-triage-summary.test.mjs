@@ -127,3 +127,25 @@ test("a backtick in a title or signature cannot break out of its code span", () 
   const md = renderTriageSummary({ ...base, hard_failures: [entry("x", { error_signature: "expected `a` got `b`" })] });
   assert.match(md, /`expected 'a' got 'b'`/);
 });
+
+test("#2217 a partial unexpected pass is listed apart from the flakes, with both pass histories", () => {
+  const md = renderTriageSummary({
+    ...base,
+    flakes: [entry("plain")],
+    declared_partial_passes: [
+      {
+        ...entry("declared"),
+        partial_passes: { count: 2, dates: ["2026-09-18", "2026-10-07"] },
+        full_passes: { count: 0, dates: [] },
+      },
+    ],
+  });
+  assert.match(md, /\*\*Flakes \(1\)\*\*/);
+  assert.match(md, /\*\*Declared failing, passed on some attempts \(1\)\*\*/);
+  assert.match(md, /never quarantine on this evidence/);
+  assert.match(md, /passed on some attempts on 2 run\(s\): 2026-09-18, 2026-10-07 · passed outright on none in the window/);
+});
+
+test("#2217 with no partial pass the section is absent", () => {
+  assert.doesNotMatch(renderTriageSummary(base), /passed on some attempts/);
+});

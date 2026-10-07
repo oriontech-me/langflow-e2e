@@ -25,6 +25,8 @@
  *
  * `declared_fix_candidates` are not repeated: the umbrella already names them in its
  * own #2009 section, from the report rather than from the ledger.
+ * `declared_partial_passes` (#2217) ARE listed, because what the dataset adds to the
+ * umbrella's own section is their history: on which other days the body passed.
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -149,6 +151,26 @@ export function renderTriageSummary(dataset, { windowDays = 30 } = {}) {
   if (noted.length) {
     lines.push(`_Not recurrent (${noted.length}): note only; the retry budget absorbs single-run noise._`, "");
     for (const f of noted) lines.push(...entryLines(f));
+    lines.push("");
+  }
+
+  // #2217. Out of the flake count on purpose — the umbrella's own section says why —
+  // so a reader matching this list against `totals.flaky` needs to see where they went.
+  const partials = dataset.declared_partial_passes ?? [];
+  if (partials.length) {
+    lines.push(
+      `**Declared failing, passed on some attempts (${partials.length})**`,
+      "",
+      "_Not flakes and not a fix day: record the dates in the issue the `test.fail()` cites; never quarantine on this evidence (#2217)._",
+      "",
+    );
+    for (const p of partials) {
+      const days = (r) => (r?.count ? `${r.count} run(s): ${r.dates.join(", ")}` : "none in the window");
+      lines.push(
+        `- ${where(p)} — ${safe(p.test)}${variant(p)}`,
+        `  - passed on some attempts on ${days(p.partial_passes)} · passed outright on ${days(p.full_passes)}`,
+      );
+    }
     lines.push("");
   }
 

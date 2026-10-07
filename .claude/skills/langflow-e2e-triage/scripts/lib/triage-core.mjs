@@ -5,7 +5,7 @@
 // it is the SAME comparison the appender's keys were derived for (#1626).
 import { compareRecurrence } from '../../../../../scripts/lib/recurrence-key.mjs';
 // Same reason: the one predicate the appender wrote the row with (#2009/#2027).
-import { isUnexpectedPassEntry } from '../../../../../scripts/lib/unexpected-pass.mjs';
+import { isPartialUnexpectedPassEntry, isUnexpectedPassEntry } from '../../../../../scripts/lib/unexpected-pass.mjs';
 
 /** Parse JSONL history text into an array of run rows (chronological order). */
 export function parseHistory(text) {
@@ -688,12 +688,12 @@ export function assertDedicatedIssueBody(body, opts = {}) {
  * for a fix: google passing says nothing about whether openai's declared bug is
  * fixed. Pre-#2009 rows recorded the same case as `"unknown"` and do not count.
  */
-function passesOf(item, rowsInWindow) {
+function passesOf(item, rowsInWindow, { list = 'failures', isPass = isUnexpectedPassEntry } = {}) {
   const variant = item.param ?? null;
   const dates = [];
   for (const row of rowsInWindow) {
-    const hit = (row.failures || []).some(
-      (e) => e.test === item.test && (e.param ?? null) === variant && isUnexpectedPassEntry(e),
+    const hit = (row[list] || []).some(
+      (e) => e.test === item.test && (e.param ?? null) === variant && isPass(e),
     );
     if (hit) dates.push(row.date);
   }
@@ -819,6 +819,30 @@ export function buildDataset(rows, issues, opts = {}) {
     };
   });
 
+  // A partial unexpected pass (#2217) is a `flaky` row, so it arrives in `flaky[]` —
+  // a `test.fail()` body that passed on an earlier attempt and failed as declared on
+  // a later one. Left there it was a flake of the declared assertion, and a recurrent
+  // one went to a dedicated issue and quarantine on the evidence of the bug NOT
+  // reproducing. It is lifted out like the full passes above, with both counts beside
+  // it: the days its body passed on some attempts, and the days it passed outright.
+  // Neither confirms a fix — the retry reproduced the bug — so `action` says to record
+  // it in the issue the declaration cites and never to quarantine it.
+  const runFlaky = dedupeEntries(run.flaky);
+  const declared_partial_passes = runFlaky.filter(isPartialUnexpectedPassEntry).map((e) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { recurrence, ...rest } = withRecurrence(e);
+    return {
+      ...rest,
+      ...(e.passed_attempts !== undefined ? { passed_attempts: e.passed_attempts } : {}),
+      attempts: e.attempts,
+      partial_passes: passesOf(e, window, { list: 'flaky', isPass: isPartialUnexpectedPassEntry }),
+      full_passes: passesOf(e, window),
+      actionable: false,
+      action:
+        'the test.fail() body passed on some attempts and failed as declared on a later one: the declared bug reproduces intermittently, or is starting to go away. Not a fix day (the retry reproduced it) and not a flake of the assertion. Record the dates in the issue the test.fail() cites; never quarantine it as a recurrent flake on this evidence (#2217).',
+    };
+  });
+
   // A flake is actionable when it recurs under the same cause (the recurrence
   // key, #1626) — AND when the failure is the spec's own. #1031 exempted wedge collateral from `@stable`
   // auto-removal, but that path only ever sees hard failures, so a flake whose
@@ -832,7 +856,7 @@ export function buildDataset(rows, issues, opts = {}) {
   // Demoted, never dropped: the flake stays in `flakes[]` carrying why it was
   // excluded, so the proposal can note it against the run's outage instead of
   // silently shortening the list (#1012).
-  const flakes = dedupeEntries(run.flaky).map(withRecurrence).map((f) => {
+  const flakes = runFlaky.filter((e) => !isPartialUnexpectedPassEntry(e)).map(withRecurrence).map((f) => {
     const recurrent = f.recurrence.same_signature;
     // The second exemption, and it reads a MEASUREMENT where the first reads a
     // STRING (#1763). `infra_signature` can only ever see a failure that reports
@@ -921,6 +945,7 @@ export function buildDataset(rows, issues, opts = {}) {
     totals: run.totals,
     hard_failures,
     declared_fix_candidates,
+    declared_partial_passes,
     flakes,
     provider_wide_clusters,
     skips: [],

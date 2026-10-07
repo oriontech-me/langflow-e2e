@@ -125,7 +125,7 @@ via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
 `umbrella_issue`, `umbrella_url`, `guard_tripped`, `guard_count` (what the guard compared: the row's recorded `guard_count`, `totals.failed` minus unexpected passes since #2116; `totals.failed` on older rows), `totals`, `hard_failures[]`, `flakes[]`
 (each carrying `provider`/`model`, `recurrence`, and an `actionable` flag),
-`declared_fix_candidates[]` (see Phase 3), `provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
+`declared_fix_candidates[]` and `declared_partial_passes[]` (see Phase 3), `provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
 past run; `--results <json>` backfills provider labels + per-skip reasons.
 
 **Citing recurrence faithfully:** cite `recurrence.count` / `recurrence.dates`
@@ -172,7 +172,8 @@ Read the full dataset before doing anything else. Then report the panorama
 to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
 flakes (of Z total flakes) / W skips**, whether the **guard tripped** (and at
 what count), any **`declared_fix_candidates`** (a `test.fail()` body passed —
-possible fix day, Phase 3), and any **`provider_wide_clusters`** (same provider failing across
+possible fix day, Phase 3), any **`declared_partial_passes`** (a `test.fail()` body passed on
+some attempts — neither a flake nor a fix day, Phase 3), and any **`provider_wide_clusters`** (same provider failing across
 ≥2 spec files — a descriptive hint the cause is environment/package, e.g. a
 missing `langchain-<provider>`, not per-test rot; #899). This is the shared
 frame of reference for every phase below.
@@ -239,6 +240,23 @@ is a Phase 6 row of Kind `declared-fix`:
   the two conditions above;
 - or **create** one only when the declaration cites none, or the cited issue is
   closed. Say that it is about a possible fix, not a failure.
+
+**Set aside the partial passes too (#2217).** `declared_partial_passes[]` holds
+the tests declared failing whose body passed on **some** attempts and failed as
+declared on a later one (`error_signature: "expected to fail but passed on some
+attempts"`). Playwright reports them `flaky`, so they arrive in the row's
+`flaky[]`, but the dataset keeps them out of `flakes[]` and its recurrence: the
+attempt that went red was the pass, not the assertion. They are **not a fix
+day** either — the retry reproduced the bug — so `passes.count` does not apply;
+cite `partial_passes` (days its body passed on some attempts) and `full_passes`
+(days it passed outright). Same owner as a declared-fix candidate, the issue the
+`test.fail()` cites: a Phase 6 row of Kind `declared-partial`, **enrich** with the
+dates (or **create** only when it cites none, or the cited issue is closed).
+**Never quarantine it** as a recurrent flake on this evidence; whether the
+declaration needs a deterministic reproduction is that issue's call. Rows written
+before #2217 carry the expected failure's message instead and still land in
+`flakes[]`: a recurrent flake whose test is declared with `test.fail()` is worth
+checking against the runs' `results.json` before quarantining it.
 
 Removing `test.fail()`, restoring `@stable` and closing the bug are **that
 issue's deliverables**, done once both conditions hold — the same way lifting a
@@ -348,7 +366,7 @@ it to the user in PT-BR:
 
 | # | Cluster (symptom/area) | Kind | Action | Target |
 |---|---|---|---|---|
-| 1 | ... | hard-failure / flake / skip / declared-fix | create / enrich / note | new issue title, or existing #NNN |
+| 1 | ... | hard-failure / flake / skip / declared-fix / declared-partial | create / enrich / note | new issue title, or existing #NNN |
 
 Below the table, list the **quarantines the triage requires** (remove `@stable`
 + add `test.fixme`) as a separate block — one line per test
@@ -412,8 +430,8 @@ Only after the user approves the plan:
    since a bare `#N` there points at the issue host's own #N. Without `-R` the
    command acts on this repository's #N, which is a different issue.
 5. **Close the umbrella only when the triage is truly complete:** every needed
-   dedicated issue created/enriched — `declared-fix` rows included, so a
-   possible fix day always reaches the issue that owns it — **and** every criterion-required `@stable`
+   dedicated issue created/enriched — `declared-fix` and `declared-partial` rows
+   included, so a possible fix day always reaches the issue that owns it — **and** every criterion-required `@stable`
    removal **verified done** (tag absent on `main`, or its removal PR open and
    linked). If any required removal is still pending (not authorized, not
    opened), **leave the umbrella open** and tell the user exactly what remains
