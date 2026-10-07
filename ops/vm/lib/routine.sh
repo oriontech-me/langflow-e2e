@@ -46,6 +46,8 @@
 #   . "$REPO/ops/vm/lib/routine.sh"
 #   routine_start migration            # logs, result trap, signals
 #   routine_wait_turn 3600             # the daily's priority + the heavy-lane lock
+#                                      # (routine_wait_daily 3600: the priority alone,
+#                                      # for a routine that starts no Langflow or browser)
 #   ...                                # the work; long-lived children get 8>&-
 #   routine_set TARGET "$version"      # extra result fields, any number
 #   routine_end red "2 of 12 cells red: ..."
@@ -115,11 +117,12 @@ routine_daily_busy() {
   fi
 }
 
-# Wait for the routine's turn: the daily lane first, then the heavy-lane lock, within
-# one budget in seconds. Out of budget, the routine ends `skipped` with what it waited
-# on. The lock is then held on fd 8 until the routine exits.
-routine_wait_turn() {
-  local budget="$1" start=$SECONDS why left
+# Wait for the daily lane alone, within a budget in seconds. Out of budget, the routine
+# ends `skipped` with what it waited on. A light routine -- one that starts neither
+# Langflow nor a browser -- calls this and takes no lock: it cannot disturb a heavy lane,
+# and queueing it behind one would only delay it.
+routine_wait_daily() {
+  local budget="$1" start=$SECONDS why
   while why="$(routine_daily_busy)"; [ -n "$why" ]; do
     if [ $((SECONDS - start)) -ge "$budget" ]; then
       routine_end skipped "its turn never came within ${budget}s: $why"
@@ -127,6 +130,14 @@ routine_wait_turn() {
     echo "waiting: $why"
     sleep "$RT_POLL_S"
   done
+}
+
+# Wait for the routine's turn: the daily lane first, then the heavy-lane lock, within
+# one budget in seconds. Out of budget, the routine ends `skipped` with what it waited
+# on. The lock is then held on fd 8 until the routine exits.
+routine_wait_turn() {
+  local budget="$1" start=$SECONDS why left
+  routine_wait_daily "$budget"
   command -v flock > /dev/null 2>&1 || routine_end failed "flock is not on this machine, and without it two heavy lanes could share it"
   mkdir -p "$(dirname "$RT_HEAVY_LOCK")"
   exec 8>> "$RT_HEAVY_LOCK" || routine_end failed "cannot open the heavy-lane lock $RT_HEAVY_LOCK"

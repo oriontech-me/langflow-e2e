@@ -1,0 +1,14 @@
+[Unit]
+Description=Schedule for the coverage-matrix routine's absence alarm, 10:30 UTC on weekdays
+
+[Timer]
+# After the unit's TimeoutStartSec (90 min from 08:45, so 10:15): at 10:30 "still running"
+# means systemd failed to stop it, not that it was slow.
+OnCalendar=Mon..Fri 10:30 UTC
+# An alarm that catches up still tells the truth.
+Persistent=true
+AccuracySec=1min
+Unit=e2e-routine-watchdog@coverage-matrix.service
+
+[Install]
+WantedBy=timers.target

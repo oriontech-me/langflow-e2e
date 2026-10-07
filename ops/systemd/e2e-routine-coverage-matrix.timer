@@ -1,0 +1,16 @@
+[Unit]
+Description=Schedule for the E2E coverage-matrix routine, 08:45 UTC on weekdays
+
+[Timer]
+# After the daily (08:00) has written its history row to main (#2164), which is the input
+# that moves the matrix's test-health axis. If the shadow still runs, the routine waits
+# for it like every routine. A day with no daily still runs: the checklist moves on its
+# own, and that is what the Actions workflow's Monday fallback existed for.
+OnCalendar=Mon..Fri 08:45 UTC
+# A routine that catches up gives a result for a day it did not observe.
+Persistent=false
+AccuracySec=1min
+Unit=e2e-routine-coverage-matrix.service
+
+[Install]
+WantedBy=timers.target

@@ -175,7 +175,9 @@ reference. In short:
 - **One heavy lane at a time.** Every lane that starts Langflow or a browser (the
   routines and the on-demand run) takes `/run/lock/e2e-heavy.lock`; who holds it is in
   `/run/lock/e2e-heavy.lock.holder`. A routine waits for it, the on-demand run refuses.
-  The daily and the shadow take no lock: they have priority by stopping the others.
+  The daily and the shadow take no lock: they have priority by stopping the others. A
+  **light** routine, one that starts neither (`coverage-matrix`), waits for the daily
+  lane alone and takes no lock.
 - **An honest exit.** 0 green, 1 red, 2 skipped, 3 failed, 4 blocked. The service
   declares `SuccessExitStatus=2 4`, so systemd's `failed` means the machine failed.
   Each run writes `/root/e2e-routines/<name>/results/<stamp>.env` and `last.env`; logs
@@ -184,7 +186,20 @@ reference. In short:
   per routine on `ISSUE_REPO` (label `routine:<name>`), commented on each red day and
   closed by the first green one, and a Slack post. The publishing credentials are read
   only by the report, never by the routine's work. Skipped, failed and blocked days, and
-  a red whose report failed, are said by the routine's watchdog.
+  a red whose report failed, are said by the routine's watchdog. So is a verdict with an
+  `ALARM` line: something the routine must say that is not its verdict.
+
+| Routine | Wrapper | When (UTC, weekdays) | Lock | Watchdog |
+|---|---|---|---|---|
+| `migration` | `ops/vm/run-migration.sh` | 09:15 | heavy | 12:30 |
+| `coverage-matrix` | `ops/vm/run-coverage-matrix.sh` | 08:45 | none | 10:30 |
+
+`coverage-matrix` commits to the **source's** `main` with `SOURCE_PUSH_TOKEN`, the
+credential the daily's auto-removal and history already use, on a tree of its own: the
+clone is never touched. It sends the dashboard feed to the QA platform only when
+`QA_COVERAGE_MATRIX_ENDPOINT` is set in `/root/.e2e-secrets` (the token,
+`QA_E2E_AUTOMATION_TOKEN`, is already there). `MATRIX_DRY_RUN=1` computes and stops
+before the push and the POST.
 
 Installing one routine, e.g. `migration` (each routine's units ship with the routine itself):
 

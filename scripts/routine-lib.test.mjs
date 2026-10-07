@@ -220,6 +220,17 @@ test("a routine waits for the daily to end and then runs, within its budget", ()
   assert.equal((r.log.match(/waiting: e2e-daily\.service is active/g) ?? []).length, 3);
 });
 
+test("a light routine waits for the daily lane alone: no lock taken, a busy one ignored", () => {
+  const waited = routine("routine_wait_daily 60; routine_end green ran", { busyFor: 2, heavyBusy: true });
+  assert.equal(waited.status, 0, waited.log);
+  assert.equal((waited.log.match(/waiting: e2e-daily\.service is active/g) ?? []).length, 2);
+  assert.equal(waited.holder, null, "a light routine named itself holder of the heavy-lane lock");
+  // The daily's priority is the same as a heavy routine's.
+  const windowed = routine("routine_wait_daily 0; routine_end green ran", { now: "2 0800" });
+  assert.equal(windowed.status, 2, windowed.log);
+  assert.match(windowed.last.REASON, /^its turn never came within 0s: the daily's window/);
+});
+
 // ---------------------------------------------------------------------------
 // One heavy lane at a time
 // ---------------------------------------------------------------------------
