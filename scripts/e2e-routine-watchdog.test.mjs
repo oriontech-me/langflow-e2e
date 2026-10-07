@@ -126,6 +126,18 @@ test("green and red that were delivered are quiet, and the quiet is logged", { s
   }
 });
 
+test("a delivered verdict with an ALARM is said, with the verdict beside it", { skip: !SAFE && "too close to UTC midnight" }, () => {
+  const r = watchdog({
+    props: ranToday(),
+    last: resultToday({ STATUS: "green", REASON: "refreshed: 2 file(s)", REPORT: "ok", ALARM: "the QA platform refused its feed: HTTP 500" }),
+  });
+  assert.equal(r.headline, "Routine demo: green today, with something to say");
+  assert.match(r.body, /^the QA platform refused its feed: HTTP 500\nThe verdict stands \(refreshed: 2 file\(s\)\)/);
+  // A report that failed is still the louder of the two.
+  const both = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "x", REPORT: "failed", ALARM: "y" }) });
+  assert.match(both.headline, /^Routine demo: red, and the report was not fully delivered/);
+});
+
 test("a result from an earlier run the same day does not answer for this one", { skip: !SAFE && "too close to UTC midnight" }, () => {
   // A manual run at 03:00 went green; the timer's run started later and was killed
   // before writing anything. The 03:00 result must not make that day quiet.

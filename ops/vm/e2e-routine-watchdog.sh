@@ -29,6 +29,9 @@
 #   ended with no result         ran today, no result written for today
 #   skipped / failed / blocked   the result says so; its REASON is the message
 #   a red nobody heard           REPORT=failed in the result
+#   a verdict with a caveat      ALARM=<text> in the result: the routine gave its verdict
+#                                and has one more thing to say that is not one (a delivery
+#                                of its own that failed, beside a product that succeeded)
 #
 # The calendar of the watchdog's timer is the routine's calendar: it checks only on the
 # days the routine is due, so no branch in here decides what a weekend is.
@@ -110,6 +113,7 @@ else
   status="$(field STATUS)"
   reason="$(field REASON)"
   report="$(field REPORT)"
+  alarm="$(field ALARM)"
   # This run's, not merely today's: a result is the one systemd's last start produced
   # only when it began at or after that start. A manual run at 03:00 must not answer
   # for a 09:15 run that was killed before writing anything.
@@ -126,6 +130,11 @@ Last log: $LOG_DIR/latest.log"
           headline="Routine $ROUTINE: $status, and the report was not fully delivered (${report:-no record})"
           body="$reason
 The result is on the machine, and the issue or the Slack post it asked for is missing or incomplete (an issue created without its label counts: tomorrow could not find it). The routine's log names which.
+Last log: $LOG_DIR/latest.log"
+        elif [ -n "$alarm" ]; then
+          headline="Routine $ROUTINE: $status today, with something to say"
+          body="$alarm
+The verdict stands ($reason). This is a part of the run that is not the verdict.
 Last log: $LOG_DIR/latest.log"
         else
           say "quiet: $status today, report=${report:-none}"
