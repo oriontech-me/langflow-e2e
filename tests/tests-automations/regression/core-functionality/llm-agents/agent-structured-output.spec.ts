@@ -267,7 +267,15 @@ async function runAgentAndParseStructuredOutput(
   await expect(inspectButton).toBeEnabled({ timeout: 20000 });
   await inspectButton.click();
 
-  const dialog = page.locator('[role="dialog"]').last();
+  // Scoped to the inspector by its own header testid (`<nodeId>-<output>-output-modal`,
+  // outputModal/index.tsx), never by position: the assistant onboarding tooltip is a
+  // Radix popover that is also `role="dialog"` and mounts 10 s after the canvas does,
+  // so when it mounted AFTER the inspector opened, `.last()` read the promo instead of
+  // the payload (#2177 — "inspector payload contains JSON (got: Try the new Langflow
+  // Assistant!)"; reproduced on 1.13.0.dev34 by waiting for the promo past this point).
+  const dialog = page
+    .getByRole("dialog")
+    .filter({ has: page.locator('[data-testid$="-structured_response-output-modal"]') });
   await expect(dialog).toBeVisible({ timeout: 15000 });
   const raw = await dialog.innerText();
   const start = raw.indexOf("{");
@@ -290,12 +298,9 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Structured Output [${label}]`, () => {
-    // Quarantined for #2177: recurrent flake on the VM lane (2026-10-01 on 1.13.0.dev29, 2026-10-05 on
-    // 1.13.0.dev33), the inspector payload reads "Try the new Langflow Assistant!" instead of the JSON.
-    // Lifting it (drop `test.fixme`, restore `@stable`) is #2177's deliverable.
-    test.fixme(
+    test(
       "output_schema fields come back as typed JSON keys on the structured response",
-      { tag: ["@regression", "@agents", "@components"] },
+      { tag: ["@stable", "@regression", "@agents", "@components"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
