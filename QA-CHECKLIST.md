@@ -1461,8 +1461,8 @@
 > through the `@serving` lane selector and
 > `./scripts/start-langflow-serving-identity.sh` (#1582).
 
-> **Three files because there are three container states**, one per row of the
-> contract — a spec cannot restart its own instance, and a single file that
+> **One file per container state**, one per row of the contract (plus a second
+> trusted-state file for the job boundary, § 23.4) — a spec cannot restart its own instance, and a single file that
 > detected the state would have to branch inside its tests, hiding which row was
 > actually asserted. Every file opens with a **fail-closed configuration guard**:
 > the configuration is exposed by no API, so it is probed by running the flow, and
@@ -1491,9 +1491,17 @@
 - [-] Configuration guard: an identity-less request is refused while an identified one is scoped → `serving/end-user-identity-required.spec.ts`
 - [-] `POST /api/v2/workflows`: an identified run is `200`, scoped and persisted; an identity-less one is `401` with `detail.code: "END_USER_IDENTITY_REQUIRED"`; a whitespace-only value is refused the same way. Asserted on the **code**, not the sentence — the code is what a gateway branches on — plus one property of the message: that it **names the configured header**, since an operator running a non-default name needs the error to say which one is missing → `serving/end-user-identity-required.spec.ts`
 - [-] `POST /api/v1/run/{id}` refuses with the same code and accepts an identified run — the accepted half is asserted because a guard that refuses everything is as broken as one that refuses nothing, and would pass a spec that only checked the `401`s → `serving/end-user-identity-required.spec.ts`
-- [ ] Job-lifecycle gating by end user (#14550 phase 3) — `GET /api/v2/workflows`, `/stop` and `/resume` refusing another end user's job. The natural follow-up now that the lane exists; kept out so the memory boundary landed first
 - [ ] `serving_internal_mcp_hosts` (#14550 phase 4) — the fail-closed outbound allowlist that forwards the identity only to operator-allowlisted internal hosts. Needs an internal MCP host to point at
 - [ ] `serving_trace_end_user` and the end-user span link (#14616) — needs an OTLP collector, which this repo has none of (`otlp|opentelemetry` returns zero matches across `tests/`, `docs/`, `scripts/` and `.github/`)
+
+#### 23.4 Job lifecycle, when trusted — another end user's job is refused (#14550 phase 3)
+
+> A second file on the **trusted** container (#2047). The end user lives in `job_metadata['end_user_id']` because `job.user_id` is the shared service account for everybody, and every call carries the auto-login **superuser** on purpose: on the serving plane the service account is a superuser, so the bypass upstream suppresses when the feature is on is exactly what is under test. The job is a Human Input run parked at `suspended`, so a refused stop or resume can be checked for side effects. Each refusal is asserted for `bob` **and** an anonymous caller, and compared **whole-body** against the response for a job id that never existed — `404`, not `403`, is how upstream avoids revealing that the job exists. The configuration guard runs in `beforeAll`: on a default or untrusted instance `bob` *reads* `alice`'s job, so without it every refusal would go red as a false leak.
+
+- [-] Status read and enumeration: `GET /api/v2/workflows?job_id=` answers the owner `200 suspended` and everyone else the never-existed job's `404 JOB_NOT_FOUND`; `GET /api/v2/workflows/pending?flow_id=` lists the job (with `session_id: "alice::S"`) for its owner and `[]` for everyone else — the empty list is the check that matters most, since that door needs no job id at all → `serving/end-user-job-lifecycle-gating.spec.ts`
+- [-] `POST /api/v2/workflows/stop` is refused with the never-existed job's `404`, the job is **still suspended and still listed** for its owner afterwards, and the owner's identical stop cancels it — without that positive control, a stop that 404s everyone passes every refusal → `serving/end-user-job-lifecycle-gating.spec.ts`
+- [-] `POST /api/v2/workflows/{job_id}/resume` with the **real** `request_id` and an allowed decision is refused the same way and leaves the job suspended; the owner's identical resume is then accepted and completes the run — the pending request is single-use, so that `200` proves the refused resume consumed nothing (an accepted-behind-a-404 resume would leave her a `409 NOT_RESUMABLE`) → `serving/end-user-job-lifecycle-gating.spec.ts`
+- [-] `GET /api/v2/workflows/{job_id}/events` (re-attach) is refused the same way on a finished job, while the owner's replay carries her own `add_message` in `alice::S` — the content the `404` withholds. Not in #14550's phase 3 list, but the same guard upstream applies to the fourth door, and a partial rollout across doors is the likely regression → `serving/end-user-job-lifecycle-gating.spec.ts`
 
 ## integrations/ — Dedicated Integrations (1.13)
 

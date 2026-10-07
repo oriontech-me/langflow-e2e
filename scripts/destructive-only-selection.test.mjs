@@ -5,6 +5,7 @@ import {
   classifySelection,
   isDestructiveOnlySource,
   isEnterpriseOnlySource,
+  isServingOnlySource,
 } from "./destructive-only-selection.mjs";
 
 const DESTRUCTIVE_SPEC = `
@@ -19,6 +20,10 @@ const MIXED_SPEC = `
 
 const ENTERPRISE_SPEC = `
   test("the deployment's policy is authoritative", { tag: ["@enterprise", "@api", "@governance"] }, async () => {});
+`;
+
+const SERVING_SPEC = `
+  test("another end user cannot stop a job", { tag: ["@api", "@regression", "@serving"] }, async () => {});
 `;
 
 const NORMAL_SPEC = `
@@ -173,6 +178,9 @@ describe("pr-validation.yml wiring", () => {
     // those specs, so the destructive wording would claim a coverage that does
     // not exist.
     assert.match(workflow, /::warning::@enterprise specs in this PR are NOT executed by CI/);
+    // Same reason for @serving (#2047): no serving-identity container on the
+    // runner, so nothing here executes those specs either.
+    assert.match(workflow, /::warning::@serving specs in this PR are NOT executed by CI/);
   });
 
   it("the normal run still fails on an empty match it did not predict", () => {
@@ -229,5 +237,51 @@ describe("the @enterprise lane (#1483)", () => {
     );
     assert.equal(verdict.excludedOnly, false);
     assert.deepEqual(verdict.runnable, ["n.spec.ts"]);
+  });
+});
+
+describe("the @serving lane (#2047)", () => {
+  it("is excluded from the normal run, and not conflated with the other two selectors", () => {
+    assert.equal(isServingOnlySource(SERVING_SPEC), true);
+    assert.equal(isServingOnlySource(NORMAL_SPEC), false);
+    assert.equal(isServingOnlySource(ENTERPRISE_SPEC), false);
+    assert.equal(isServingOnlySource(DESTRUCTIVE_SPEC), false);
+    assert.equal(isDestructiveOnlySource(SERVING_SPEC), false);
+    assert.equal(isEnterpriseOnlySource(SERVING_SPEC), false);
+  });
+
+  it("a serving-only selection skips the normal lane and is reported as executed by nobody", () => {
+    // Measured on PR #2169: a selection of one @serving spec reached
+    // `npx playwright test`, the lane's grepInvert removed every test, and the job
+    // went red on `Error: No tests found.` — the #1494 red, by a third selector.
+    const verdict = classifySelection(
+      ["s.spec.ts"],
+      sources({ "s.spec.ts": SERVING_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, true, "the normal run would match nothing");
+    assert.equal(verdict.destructiveOnly, false, "the destructive step does not run @serving specs");
+    assert.deepEqual(verdict.serving, ["s.spec.ts"]);
+    assert.deepEqual(verdict.enterprise, []);
+    assert.deepEqual(verdict.runnable, []);
+  });
+
+  it("one runnable spec keeps the normal lane running", () => {
+    const verdict = classifySelection(
+      ["s.spec.ts", "n.spec.ts"],
+      sources({ "s.spec.ts": SERVING_SPEC, "n.spec.ts": NORMAL_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, false);
+    assert.deepEqual(verdict.runnable, ["n.spec.ts"]);
+  });
+
+  it("the suite's real serving specs are serving-only", () => {
+    // Committed sources, so a spec that gains a non-@serving test — and with it
+    // something the normal lane can run — fails here instead of being skipped.
+    for (const spec of [
+      "tests/tests-automations/regression/serving/end-user-identity-isolation.spec.ts",
+      "tests/tests-automations/regression/serving/end-user-job-lifecycle-gating.spec.ts",
+    ]) {
+      assert.equal(isServingOnlySource(readFileSync(spec, "utf8")), true, spec);
+    }
   });
 });
