@@ -1628,7 +1628,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 732 `test()` calls carrying the `@stable` tag, distributed across 283 spec
+> 727 `test()` calls carrying the `@stable` tag, distributed across 283 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1992,7 +1992,6 @@
 - [x] Full RAG pipeline grounds the model answer on the retrieved chunk → `rag-pipeline.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
-- [x] Knowledge Base indexes the ingested document chunks (available for query) → `vector-store-index-query.spec.ts`
 - [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
@@ -2320,13 +2319,9 @@
 - [x] two tools with the same action name are both callable and each runs its own flow → `mcp-server-tool-naming.spec.ts`
 - [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
-- [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
-- [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] mcp server tools should be refreshed when editing a server → `mcp-server.spec.ts`
 - [x] Streamable HTTP MCP server with server-everything should load tools correctly → `mcp-server.spec.ts`
 - [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
-- [x] a registered MCP server is read back individually with the fields it was created with → `mcp-server.spec.ts`
-- [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`
 
 #### security/
 - [x] validating a crafted default-argument payload does not execute it → `code-execution-endpoints.spec.ts`

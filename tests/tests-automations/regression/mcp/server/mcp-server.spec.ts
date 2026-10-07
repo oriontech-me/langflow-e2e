@@ -465,7 +465,7 @@ test("user must be able to add and delete MCP server from sidebar",
 );
 
 test("STDIO MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -630,7 +630,7 @@ test("STDIO MCP server fields should persist after saving and editing",
 );
 
 test("HTTP/SSE MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -1445,7 +1445,7 @@ async function mcpApiHeaders(page: Page): Promise<Record<string, string>> {
 }
 
 test("a registered MCP server is read back individually with the fields it was created with",
-  { tag: ["@api", "@mcp", "@stable"] },
+  { tag: ["@api", "@mcp"] },
   async ({ page }) => {
     const serverName = `read-back-${API_PROBE_UNIQUE}`;
     const path = `/api/v2/mcp/servers/${serverName}`;
@@ -1510,7 +1510,7 @@ test("a registered MCP server is read back individually with the fields it was c
 );
 
 test("PATCH updates a registered server, merges at the top level, and refuses to rename it",
-  { tag: ["@api", "@mcp", "@stable"] },
+  { tag: ["@api", "@mcp"] },
   async ({ page }) => {
     const serverName = `update-${API_PROBE_UNIQUE}`;
     const path = `/api/v2/mcp/servers/${serverName}`;
