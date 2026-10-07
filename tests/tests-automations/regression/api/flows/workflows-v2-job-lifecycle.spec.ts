@@ -301,9 +301,12 @@ test.describe("Workflows v2 — the job lifecycle", () => {
     },
   );
 
-  test(
+  // Quarantined for #2216: recurrent flake (VM dailies 2026-09-18 and 2026-10-07), the
+  // declared-failing body passed on the first attempt both days, so the test.fail() below
+  // is not deterministic. Lifting it (drop `test.fixme`, restore `@stable`) is #2216's deliverable.
+  test.fixme(
     "a completed sync run answers its own status query with the session and outputs it returned",
-    { tag: ["@stable", "@api", "@regression"] },
+    { tag: ["@api", "@regression"] },
     async ({ request }) => {
       // DECLARED FAILING, and the declaration is the alarm in both directions.
       //
