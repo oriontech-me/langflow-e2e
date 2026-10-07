@@ -1109,3 +1109,27 @@ test("#2217 a declared test that never passed stays an ordinary flake", () => {
   assert.equal(plain.passed_attempts, undefined, "an ordinary flake carries no pass count");
   assert.ok(plain.recurrence_keys.length > 0, "an ordinary flake keeps its keys");
 });
+
+test("#2217 a declared test's expected failure never becomes a recurrence key", () => {
+  // `[timedOut, failed]` under test.fail(): the timeout is the flake, the failure is
+  // the declared bug reproducing. Keyed, the expected failure would match two
+  // unrelated timeouts of the test on different days — and every pre-#2217 partial
+  // row, which carries exactly that key — and send the test to quarantine.
+  const declaredTimeout = (timeout) =>
+    append(
+      report([
+        {
+          title: "declared, timed out first",
+          status: "flaky",
+          expectedStatus: "failed",
+          results: [result("timedOut", timeout), result("failed", DECLARED)],
+        },
+      ]),
+    ).flaky[0];
+  const a = declaredTimeout("Test timeout of 30000ms exceeded.");
+  const b = declaredTimeout(TRANSPORT);
+  assert.ok(a.recurrence_keys.length > 0, "the timeout is still keyed");
+  for (const k of [...a.recurrence_keys, ...b.recurrence_keys]) {
+    assert.doesNotMatch(k.head, /a completed job must report/, "the expected failure is not a key");
+  }
+});

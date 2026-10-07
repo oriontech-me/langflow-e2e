@@ -388,10 +388,20 @@ function outageOverlapField(file, title, param, test) {
 // A partial unexpected pass (#2217) records none either: its only failed attempts
 // are the EXPECTED failures, so their keys would describe the declared bug
 // reproducing — the opposite of what made the test flaky.
+//
+// And no test declared failing is keyed by a `failed` attempt (#2217): under
+// `test.fail()` that attempt is the declared bug reproducing, the one outcome that
+// is NOT the flake. A key matches when any key matches, so a declared
+// `[timedOut, failed]` keyed by its expected failure recurred with every other
+// timeout of the test, whatever its cause, and with every pre-#2217 partial row.
 function recurrenceFields(test) {
   const signedByThePass = isUnexpectedPass(test) || isPartialUnexpectedPass(test);
+  const keyed =
+    test?.expectedStatus === "failed"
+      ? { ...test, results: (test.results || []).filter((r) => r?.status !== "failed") }
+      : test;
   return {
-    recurrence_keys: signedByThePass ? [] : recurrenceKeysForTest(test, process.cwd()),
+    recurrence_keys: signedByThePass ? [] : recurrenceKeysForTest(keyed, process.cwd()),
     recurrence_key_version: RECURRENCE_KEY_VERSION,
   };
 }

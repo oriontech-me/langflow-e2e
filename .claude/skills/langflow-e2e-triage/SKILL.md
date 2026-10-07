@@ -173,7 +173,8 @@ to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
 flakes (of Z total flakes) / W skips**, whether the **guard tripped** (and at
 what count), any **`declared_fix_candidates`** (a `test.fail()` body passed —
 possible fix day, Phase 3), any **`declared_partial_passes`** (a `test.fail()` body passed on
-some attempts — neither a flake nor a fix day, Phase 3), and any **`provider_wide_clusters`** (same provider failing across
+some attempts — neither a flake nor a fix day, Phase 3; counted in `totals.flaky` but
+not in `flakes[]`, so say so when the two figures differ), and any **`provider_wide_clusters`** (same provider failing across
 ≥2 spec files — a descriptive hint the cause is environment/package, e.g. a
 missing `langchain-<provider>`, not per-test rot; #899). This is the shared
 frame of reference for every phase below.
