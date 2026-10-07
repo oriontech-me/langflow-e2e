@@ -122,8 +122,9 @@ the enabled trigger does not open the Playground dialog.
   `awaitBootstrapTest`, `fillSidebarSearch`.
 - `POST /api/v1/authz/me/permissions` — the editor's write-permission verdict.
   Every sidebar drag in both tests waits for it, read off the entry's
-  `draggable` attribute (`sidebarDraggableComponent.tsx` and
-  `contexts/permissionsContext.tsx` upstream).
+  `draggable` attribute — upstream
+  `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarDraggableComponent.tsx`
+  and `src/frontend/src/contexts/permissionsContext.tsx`.
 - Core I/O components (Chat Input / Chat Output) + the OpenAI model bundle node.
 
 ---
