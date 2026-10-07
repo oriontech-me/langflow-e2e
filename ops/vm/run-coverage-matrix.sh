@@ -30,8 +30,10 @@
 #
 #   green    computed and current on main: committed now, or nothing had moved
 #   red      the repository's own refresh or feed check failed: data a human must look at
-#   failed   this machine: fetch, unpack or push, or no push credential
-#   skipped  the daily lane held the machine past the budget
+#   failed   this machine: fetch, unpack or push, no push credential, or the refresh's
+#            tools (a module missing from the clone's node_modules, a full disk)
+#   skipped  the daily lane held the machine past the budget, or another run of this
+#            routine was going
 #
 # The POST is not the verdict. Its endpoint does not exist yet (the variable was never
 # set, on Actions either): unset, PLATFORM says not-configured and nothing alarms, since
@@ -50,6 +52,9 @@
 #   MATRIX_DRY_RUN=1   computes, keeps the work tree, and stops before the push and the
 #                      POST: the result names the files that would change. This is how the
 #                      port was compared with the workflow, byte for byte on one commit.
+#                      Give it its own E2E_ROUTINE_STATE_ROOT and E2E_ROUTINE_LOG_ROOT: in
+#                      the routine's own, its result would answer for the scheduled run at
+#                      the watchdog's check.
 set -uo pipefail
 
 REPO="${E2E_ROUTINE_REPO:-/root/e2e-qa}"
@@ -58,7 +63,6 @@ REPO="${E2E_ROUTINE_REPO:-/root/e2e-qa}"
 
 MX_SOURCE_URL="${SOURCE_REMOTE_URL:-https://github.com/oriontech-me/langflow-e2e}"
 MX_BRANCH="${SOURCE_PUSH_BRANCH:-main}"
-MX_REF="refs/e2e-matrix/source"
 MX_DIR="docs/coverage-heatmap"
 # The identity of the VM lane's commits on the source (run-e2e.sh's auto-removal and
 # history), so the robot's commits read as one robot.
@@ -84,11 +88,21 @@ main() {
     ROUTINE_SLACK=never
   fi
   local attempts="${MATRIX_PUSH_ATTEMPTS:-3}" budget="${MATRIX_WAIT_BUDGET_S:-3600}"
+  # One run at a time per state directory: two would share the work tree and remove it
+  # from under each other (review of #2212). Held on fd 9 until the process exits.
+  exec 9>> "$RT_STATE/run.lock" || routine_end failed "cannot open $RT_STATE/run.lock"
+  flock -n 9 || routine_end skipped "another run of this routine is going, in $RT_STATE"
+  # Per run, not per routine: a dry run with its own state directory shares this clone's
+  # refs, and must not delete the scheduled run's ref. Removed by the EXIT trap.
+  MX_REF="refs/e2e-matrix/$RT_STAMP-$$"
 
   routine_wait_daily "$budget"
 
   rm -rf "${MX_WORK:?}"; mkdir -p "$MX_WORK"
-  [ -d "$REPO/node_modules" ] || routine_end failed "no node_modules in $REPO: the refresh runs on the clone's installed tools"
+  # The tools the refresh runs on are the machine's: their absence is failed, never a red
+  # charged to the repository (review of #2212).
+  [ -x "$REPO/node_modules/.bin/ts-node" ] || routine_end failed "no node_modules/.bin/ts-node in $REPO: the refresh runs on the clone's installed tools"
+  command -v npm > /dev/null 2>&1 || routine_end failed "npm is not on PATH"
   # Read here, kept in a shell variable that is never exported: the refresh runs the
   # repository's own code and has no business with a push credential.
   local token
@@ -146,10 +160,10 @@ matrix_compute() {
   git -C "$REPO" archive "$sha" | tar -x -C "$tree" || routine_end failed "could not unpack ${sha:0:12} into $tree"
   ln -s "$REPO/node_modules" "$tree/node_modules"
   if ! (cd "$tree" && npm run --silent coverage:refresh) > "$MX_WORK/refresh.log" 2>&1; then
-    routine_end red "npm run coverage:refresh failed on ${sha:0:12}: $(matrix_tail "$MX_WORK/refresh.log")"
+    routine_end "$(matrix_npm_verdict "$MX_WORK/refresh.log")" "npm run coverage:refresh failed on ${sha:0:12}: $(matrix_tail "$MX_WORK/refresh.log")"
   fi
   if ! (cd "$tree" && npm run --silent coverage:feed -- --check) > "$MX_WORK/feed-check.log" 2>&1; then
-    routine_end red "the feed disagrees with data.json after the refresh, on ${sha:0:12}: $(matrix_tail "$MX_WORK/feed-check.log")"
+    routine_end "$(matrix_npm_verdict "$MX_WORK/feed-check.log")" "the feed disagrees with data.json after the refresh, on ${sha:0:12}: $(matrix_tail "$MX_WORK/feed-check.log")"
   fi
   MX_CHANGED=""; MX_N=0
   while IFS= read -r f; do
@@ -220,10 +234,21 @@ matrix_secret() {
   sed -n "s/^\(export \)\{0,1\}$1=//p" "${E2E_ROUTINE_SECRETS:-/root/.e2e-secrets}" 2> /dev/null | tail -n 1 | sed "s/^[\"']//; s/[\"']$//"
 }
 
+# A failed npm step is the repository's (red) unless its log names the machine: a module
+# the clone's node_modules lacks (main gained a dependency the clone's lockfile has not
+# installed yet), a tool not found, a full disk, a permission (review of #2212).
+matrix_npm_verdict() {
+  if grep -qE "Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|command not found|: not found|ENOSPC|No space left on device|EACCES" "$1" 2> /dev/null; then
+    echo failed
+  else
+    echo red
+  fi
+}
+
 matrix_tail() { tail -n 3 "$1" 2> /dev/null | tr '\n' ' ' | cut -c1-300; }
 
 routine_cleanup() {
-  git -C "$REPO" update-ref -d "$MX_REF" 2> /dev/null || true
+  [ -z "${MX_REF:-}" ] || git -C "$REPO" update-ref -d "$MX_REF" 2> /dev/null || true
   rm -f "${MX_WORK:-/nonexistent}/post.headers" "${MX_WORK:-/nonexistent}/index"
   # The tree is a whole checkout; it is kept only when a dry run asked to compare it.
   [ "${MX_DRY_RUN:-0}" = "1" ] || rm -rf "${MX_WORK:-/nonexistent}/tree"

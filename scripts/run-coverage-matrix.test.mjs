@@ -34,7 +34,7 @@ const HEATMAP = "docs/coverage-heatmap";
  * post:    null (endpoint not configured) | HTTP code the fake curl answers
  * token:   the push credential in the secrets file, or "" for none
  */
-function matrix({ refresh = "same", check = "ok", moveOnce = false, post = null, token = "push-token", dryRun = false, heavyBusy = false, sourceUrl = null } = {}) {
+function matrix({ refresh = "same", check = "ok", moveOnce = false, post = null, token = "push-token", dryRun = false, heavyBusy = false, runBusy = false, tsNode = true, sourceUrl = null } = {}) {
   const dir = makeTempDir("run-coverage-matrix-");
   const control = join(dir, "control.json");
   writeFileSync(control, q({ refresh, check, moveOnce, moved: false }));
@@ -58,6 +58,7 @@ import { execFileSync } from "node:child_process";
 const c = JSON.parse(readFileSync(${q(control)}, "utf8"));
 writeFileSync(${q(join(dir, "refresh-env.json"))}, JSON.stringify(process.env));
 if (c.refresh === "fail") { console.error("refreshAreas: a judged axis would change"); process.exit(1); }
+if (c.refresh === "nomodule") { console.error("Error: Cannot find module 'yaml'"); process.exit(1); }
 if (c.moveOnce && !c.moved) {
   c.moved = true; writeFileSync(${q(control)}, JSON.stringify(c));
   const env = { ...process.env, ${Object.entries(GIT_ID).map(([k, v]) => `${k}: ${q(v)}`).join(", ")} };
@@ -92,7 +93,8 @@ if (process.argv.includes("--check") && c.check === "fail") { console.error("das
     mkdirSync(dirname(join(repo, rel)), { recursive: true });
     copyFileSync(join(ROOT, rel), join(repo, rel));
   }
-  mkdirSync(join(repo, "node_modules"));
+  mkdirSync(join(repo, "node_modules", ".bin"), { recursive: true });
+  if (tsNode) stub(join(repo, "node_modules", ".bin"), "ts-node", "exit 0");
   mkdirSync(join(repo, "scripts"));
   const reportOut = join(dir, "report.out");
   writeFileSync(join(repo, "scripts", "routine-report.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${q(reportOut)}, process.argv.slice(2).join(" "));\n`);
@@ -102,7 +104,8 @@ if (process.argv.includes("--check") && c.check === "fail") { console.error("das
   const bin = join(home, ".local", "bin");
   mkdirSync(bin, { recursive: true });
   stub(bin, "systemctl", "echo inactive");
-  stub(bin, "flock", `exit ${heavyBusy ? 1 : 0}`);
+  // fd 8 is the heavy-lane lock, fd 9 this routine's own run lock.
+  stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *9) exit ${runBusy ? 1 : 0} ;; esac\nexit 0`);
   const curlLog = join(dir, "curl.log");
   // The fake platform: records its argv and the headers file it was handed (read while it
   // still exists), and answers the configured code.
@@ -228,6 +231,25 @@ test("no push credential, or a source that cannot be read, is the machine's: fai
   assert.equal(gone.status, 3, gone.log);
   assert.equal(gone.last.STATUS, "failed");
   assert.match(gone.last.REASON, /could not read main from the source/);
+});
+
+test("the refresh's tools missing is the machine's: failed, never a red charged to the repository", () => {
+  const noTs = matrix({ tsNode: false });
+  assert.equal(noTs.status, 3, noTs.log);
+  assert.match(noTs.last.REASON, /no node_modules\/\.bin\/ts-node/);
+  const noModule = matrix({ refresh: "nomodule" });
+  assert.equal(noModule.status, 3, noModule.log);
+  assert.equal(noModule.last.STATUS, "failed");
+  assert.match(noModule.last.REASON, /Cannot find module 'yaml'/);
+  assert.equal(noModule.report, null, "a machine failure reached the issue and Slack");
+});
+
+test("a second run while one is going is skipped and touches nothing", () => {
+  const r = matrix({ refresh: "change", runBusy: true });
+  assert.equal(r.status, 2, r.log);
+  assert.match(r.last.REASON, /^another run of this routine is going/);
+  assert.equal(r.source("rev-parse", "main"), r.seedSha);
+  assert.equal(r.refreshEnv, null, "the refresh ran");
 });
 
 test("no credential reaches the repository's own refresh", () => {
