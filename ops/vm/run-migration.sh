@@ -68,7 +68,8 @@
 #   - Other Postgres versions than 16, replicas, and a database shared by two instances.
 #   - Branches with no published build: a target must be on PyPI and Docker Hub (a
 #     second phase would build it, as the on-demand run does).
-#   - The Enterprise edition, which has its own routine (stage 3, task 11).
+#   - The Enterprise edition: outside this routine and outside the migration plan, as a
+#     study of its own (decided 2026-10-07).
 #   - What only the UI shows: components flagged for update, the canvas. The checks are
 #     the API's; the daily suite covers the UI on the target.
 #   - The credential witness proves one Credential decrypts with one provider (OpenAI);
