@@ -903,7 +903,7 @@
 - [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
 - [x] Flow exposed as MCP server — verify generated endpoint, and that the transport takes an API key: the same `initialize` with no credential is refused `403` (#1522) → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
-- [x] A flow created MCP-enabled is exposed end to end — it is listed by name in the MCP Server tab's tool list, the JSON config advertises the project's `mcp/project/<id>/streamable` URL, and that endpoint answers a JSON-RPC `initialize` with `200` when carrying an `x-api-key` → `mcp/server/mcp-server-regression.spec.ts`
+- [x] A flow created MCP-enabled is exposed end to end, in a project of its own — the project's tool listing names exactly that flow, the MCP Server tab shows exactly its `tool_<action name>` badge, the JSON config advertises that project's `mcp/project/<id>/streamable` URL, and that endpoint answers a JSON-RPC `initialize` with `200` when carrying an `x-api-key`. Not in the shared default project: the tab renders at most 20 badges and lists in insertion order, so a new flow behind 20 others was never shown (#2198) → `mcp/server/mcp-server-regression.spec.ts`
 - [x] Register an external MCP server through the stdio form — `command` + `args` resolves the server's real tools into the MCPTools node → `mcp/server/mcp-server.spec.ts`
 - [x] Add-server modal fields persist across save → reopen-for-edit — stdio (name, command, 4 args, 2 env pairs) and HTTP/SSE (name, URL, 2 headers, 2 env pairs) → `mcp/server/mcp-server.spec.ts`
 - [x] Tool list refreshes when a registered server is edited to run a different package → `mcp/server/mcp-server.spec.ts`
