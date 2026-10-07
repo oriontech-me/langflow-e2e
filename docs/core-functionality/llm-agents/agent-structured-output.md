@@ -1,6 +1,6 @@
 # Agent structured output — output_schema returns schema-shaped JSON
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev15`, #1743; earlier 1.11.0.dev38, #724)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev34`, #2177; earlier 1.13.0.dev15, #1743; 1.11.0.dev38, #724)
 
 ---
 
@@ -55,7 +55,11 @@ output — the structured-output contract (§6.5) is broken.
 `@stable` `@regression` `@agents` `@components`
 
 `@stable` added after 4 clean `--retries=0` runs on the fresh nightly (issue
-#491's "Done when" includes `@stable`). `@regression` — guards the
+#491's "Done when" includes `@stable`). Test 1 was quarantined (`@stable`
+removed, `test.fixme` added) in #2180 after recurrent VM-daily failures. It
+was restored in #2177 after the inspector-locator fix, with 5 clean
+`--retries=0` runs of the whole spec on nightly `1.13.0.dev34` (6/6 each).
+`@regression` — guards the
 output_schema → structured_response wiring; `@agents` — Agent surface;
 `@components` — the assert reads the node's output inspector on the canvas.
 
@@ -156,6 +160,23 @@ persisted output — never on the model's wording.
     model in the widget, waiting for autosave, and reloading persists the
     selection correctly on the nightly; the flake was entirely the test's own
     write-clobber, now fixed.
+- **The payload is read from the inspector itself, never "the last dialog"
+  (#2177).** The assistant onboarding tooltip ("Try the new Langflow
+  Assistant!") is a Radix popover that also carries `role="dialog"` and
+  mounts 10 s after the canvas does. When it mounted AFTER the inspector
+  opened, `[role="dialog"].last()` resolved to the promo and the parse read
+  its text. The JSON was already rendered, so this was neither a product
+  regression nor a race: the locator read the wrong element. The helper now
+  selects the dialog that contains the inspector's own header testid
+  (`<nodeId>-structured_response-output-modal`). A promo mounting mid-test
+  can no longer be parsed as the payload, and an inspector that never opens
+  still fails on visibility. Reproduced on `1.13.0.dev34` by waiting for the
+  promo after opening the inspector: the old locator fails with the daily's
+  exact message, while the scoped one passes. The spec also seeds
+  `seedAssistantDiscovered` in `beforeEach` (#1220), so the tooltip does not
+  mount at all during the test. The two defences are independent: the seed
+  keeps the overlay off the canvas controls across the spec's reloads, and
+  the scoped locator keeps the read correct if the seed ever stops working.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — test 1 expects a key
   absent from the schema (`city`) ⇒ must fail; M2 — test 1 expects `age` to
   be a string (wrong type) ⇒ must fail; M3 — test 2 expects `colors` NOT to
