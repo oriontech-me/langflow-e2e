@@ -18,6 +18,25 @@
  *  recurrence key, so it must not carry anything that varies between runs. */
 export const UNEXPECTED_PASS_SIGNATURE = "expected to fail but passed";
 
+// A PARTIAL unexpected pass (#2217): the same declaration, whose body passed on SOME
+// attempts and failed as declared on a later one. A passing attempt is the one that
+// is not ok under `test.fail()`, and the last attempt decides, so Playwright reports
+// `status: "flaky"` — measured on the VM dailies of 2026-09-18 and 2026-10-07,
+// `workflows-v2-job-lifecycle.spec.ts:304`: `expectedStatus: "failed"`, attempts
+// `[passed, failed]`. Every flake consumer took its signature from the first attempt
+// carrying a message, which here is the EXPECTED failure: the row read "this assertion
+// fails intermittently" when the declared bug had in fact not reproduced once, and the
+// triage filed it as a recurrent flake for quarantine.
+//
+// It is neither a fix day (the retry reproduced the bug) nor a flake of the
+// assertion: the declared bug reproduces intermittently, or is starting to go away.
+// A sibling of the full signature rather than the same string, because the two lead
+// to different actions and the triage must not count one as the other.
+
+/** The `error_signature` recorded for a partial unexpected pass. Fixed for the same
+ *  reason as UNEXPECTED_PASS_SIGNATURE. */
+export const PARTIAL_UNEXPECTED_PASS_SIGNATURE = "expected to fail but passed on some attempts";
+
 /**
  * Whether a Playwright JSON `test` entry is an unexpected pass: its status is
  * `unexpected` and its LAST attempt passed. The last attempt, as the issue frames it,
@@ -32,20 +51,28 @@ export function isUnexpectedPass(test) {
 }
 
 /**
- * Every unexpected pass in a merged Playwright JSON report, in report order, as
- * `{ file, line, title, attempts, passedAttempts }`. `file` is the report's own
- * spelling (relative to the config's rootDir). Tolerant of a partial or malformed
- * report: a node it cannot read contributes nothing rather than throwing, because the
- * umbrella that calls this must still open on a day the report is damaged.
+ * Whether a Playwright JSON `test` entry is a partial unexpected pass: declared
+ * failing (`expectedStatus: "failed"`), reported `flaky`, and at least one attempt
+ * `passed`. The passed attempt is what separates it from a genuine flake of a
+ * declared test — `[timedOut, failed]` is also `flaky` under `test.fail()` (a
+ * `timedOut` is not the `failed` it expects), and that one stays an ordinary flake
+ * with the timeout as its signature.
  */
-export function collectUnexpectedPasses(report) {
+export function isPartialUnexpectedPass(test) {
+  if (test?.status !== "flaky" || test?.expectedStatus !== "failed") return false;
+  const results = Array.isArray(test.results) ? test.results : [];
+  return results.some((r) => r?.status === "passed");
+}
+
+/** Every test of a report that `predicate` accepts, as the collectors below return them. */
+function collect(report, predicate) {
   const out = [];
   const visit = (node, inheritedFile) => {
     if (!node || typeof node !== "object") return;
     const nodeFile = node.file || inheritedFile || "";
     for (const spec of Array.isArray(node.specs) ? node.specs : []) {
       for (const t of Array.isArray(spec?.tests) ? spec.tests : []) {
-        if (!isUnexpectedPass(t)) continue;
+        if (!predicate(t)) continue;
         const results = t.results;
         out.push({
           file: spec.file || spec.location?.file || nodeFile,
@@ -63,6 +90,22 @@ export function collectUnexpectedPasses(report) {
 }
 
 /**
+ * Every unexpected pass in a merged Playwright JSON report, in report order, as
+ * `{ file, line, title, attempts, passedAttempts }`. `file` is the report's own
+ * spelling (relative to the config's rootDir). Tolerant of a partial or malformed
+ * report: a node it cannot read contributes nothing rather than throwing, because the
+ * umbrella that calls this must still open on a day the report is damaged.
+ */
+export function collectUnexpectedPasses(report) {
+  return collect(report, isUnexpectedPass);
+}
+
+/** Every partial unexpected pass (#2217), in the same shape and with the same tolerance. */
+export function collectPartialUnexpectedPasses(report) {
+  return collect(report, isPartialUnexpectedPass);
+}
+
+/**
  * Whether a HISTORY ROW entry (`reports/daily-history.jsonl`, `failures[]`) records an
  * unexpected pass. The row keeps no attempts, so the signature the appender wrote is
  * the only evidence — read here, beside the constant, so the triage never carries its
@@ -71,4 +114,13 @@ export function collectUnexpectedPasses(report) {
  */
 export function isUnexpectedPassEntry(entry) {
   return String(entry?.error_signature ?? "").trim() === UNEXPECTED_PASS_SIGNATURE;
+}
+
+/**
+ * Whether a HISTORY ROW entry (`flaky[]`) records a partial unexpected pass (#2217).
+ * Rows written before #2217 carry the expected failure's message for the same case
+ * and answer false: the row kept no attempts, so nothing can tell them apart.
+ */
+export function isPartialUnexpectedPassEntry(entry) {
+  return String(entry?.error_signature ?? "").trim() === PARTIAL_UNEXPECTED_PASS_SIGNATURE;
 }
