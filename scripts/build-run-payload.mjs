@@ -8,7 +8,12 @@
 // function uploads it to Storage and stores only the URL (the DB keeps no base64).
 import { readFileSync, existsSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass } from "./lib/unexpected-pass.mjs";
+import {
+  PARTIAL_UNEXPECTED_PASS_SIGNATURE,
+  UNEXPECTED_PASS_SIGNATURE,
+  isPartialUnexpectedPass,
+  isUnexpectedPass,
+} from "./lib/unexpected-pass.mjs";
 
 const reportPath = process.env.PLAYWRIGHT_JSON || "results.json";
 if (!existsSync(reportPath)) { console.error(`[payload] no ${reportPath}`); process.exit(1); }
@@ -118,8 +123,15 @@ function visit(node) {
       // is blank: there the ledger may name a different attempt, and this file records
       // "unknown" or a blank signature. failures[] has carried the same difference all
       // along; aligning the two rules is a change of its own.
-      const flakeAttempt = status === "flaky" ? results.find((r) => firstErr(r)) : undefined;
+      //
+      // A partial unexpected pass (#2217) — a `test.fail()` body that passed on an
+      // earlier attempt — has no failed attempt of its own: the attempts carrying a
+      // message are the EXPECTED failures. It is signed by the pass, as the ledger row
+      // is, so the platform does not read the declared bug reproducing as the flake.
+      const partialPass = isPartialUnexpectedPass(t);
+      const flakeAttempt = status === "flaky" && !partialPass ? results.find((r) => firstErr(r)) : undefined;
       if (flakeAttempt) entry.error = fullErr(flakeAttempt);
+      if (partialPass) entry.error = PARTIAL_UNEXPECTED_PASS_SIGNATURE;
       tests.push(entry);
 
       // Existing aggregate arrays — unchanged contract (also feed the JSONL script).
@@ -129,7 +141,8 @@ function visit(node) {
         totals.flaky++;
         // Same field and fallback as failures[] below and the ledger's flaky rows. The
         // platform does not read it (its facts come from tests[]); it is here for parity.
-        flaky.push({ test: title, file, line, tags, attempts, error_signature: firstErr(flakeAttempt) || "unknown" });
+        const error_signature = partialPass ? PARTIAL_UNEXPECTED_PASS_SIGNATURE : firstErr(flakeAttempt) || "unknown";
+        flaky.push({ test: title, file, line, tags, attempts, error_signature });
         continue;
       }
       totals.failed++;

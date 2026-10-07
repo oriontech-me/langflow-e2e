@@ -53,7 +53,7 @@ function report(specs) {
           file: `tests/tests-automations/regression/smoke/a.spec.ts`,
           line: 10 + i,
           tags: s.tags ?? ["@stable"],
-          tests: [{ status: s.status, results: s.results }],
+          tests: [{ status: s.status, ...(s.expectedStatus ? { expectedStatus: s.expectedStatus } : {}), results: s.results }],
         })),
       },
     ],
@@ -1039,4 +1039,73 @@ test("#2125 a run with no report carries no skips field — unknown is not 'none
   const entry = appendWithNoReport();
   assert.equal(entry.report_missing, true);
   assert.equal(entry.skips, undefined);
+});
+
+// --- #2217: a test.fail() whose body passed on SOME attempts ---
+//
+// The measured shape (VM dailies 2026-09-18 and 2026-10-07,
+// workflows-v2-job-lifecycle.spec.ts:304): `status: "flaky"`, `expectedStatus:
+// "failed"`, attempts `[passed, failed]`. The only attempt with a message is the
+// EXPECTED failure, which the flake rule recorded as the flake's signature.
+
+const DECLARED = "Error: a completed job must report the session it was submitted with";
+
+test("#2217 a partial unexpected pass is signed by the pass, not by the expected failure", () => {
+  const entry = append(
+    report([
+      {
+        title: "declared, passed first",
+        status: "flaky",
+        expectedStatus: "failed",
+        results: [result("passed"), result("failed", DECLARED)],
+      },
+    ]),
+  );
+  assert.deepEqual(entry.totals, { passed: 0, failed: 0, flaky: 1, skipped: 0 }, "still a flake in the totals");
+  const [row] = entry.flaky;
+  assert.equal(row.error_signature, "expected to fail but passed on some attempts");
+  assert.equal(row.passed_attempts, 1);
+  assert.equal(row.attempts, 2);
+  assert.deepEqual(row.recurrence_keys, [], "the expected failure's keys would describe the bug reproducing");
+  assert.equal(row.infra_signature, null, "no attempt was neither a pass nor the expected failure");
+  assert.equal(entry.guard_count, 0);
+});
+
+test("#2217 a timeout between the pass and the expected failure still gives the infra verdict", () => {
+  const entry = append(
+    report([
+      {
+        title: "declared, passed, then wedged",
+        status: "flaky",
+        expectedStatus: "failed",
+        results: [result("passed"), result("timedOut", TRANSPORT), result("failed", DECLARED)],
+      },
+    ]),
+  );
+  const [row] = entry.flaky;
+  assert.equal(row.error_signature, "expected to fail but passed on some attempts");
+  assert.equal(row.passed_attempts, 1);
+  assert.notEqual(row.infra_signature, null, "the timeout is a not-ok attempt of its own");
+});
+
+test("#2217 a declared test that never passed stays an ordinary flake", () => {
+  // `[timedOut, failed]` is also `flaky` under test.fail(): the timeout is not the
+  // failure it expects. No attempt passed, so the timeout is the flake's cause.
+  const entry = append(
+    report([
+      {
+        title: "declared, timed out first",
+        status: "flaky",
+        expectedStatus: "failed",
+        results: [result("timedOut", "Test timeout of 30000ms exceeded."), result("failed", DECLARED)],
+      },
+      { title: "plain flake", status: "flaky", results: [result("failed", SPEC_ERROR), result("passed")] },
+    ]),
+  );
+  const [declared, plain] = entry.flaky;
+  assert.equal(declared.error_signature, "Test timeout of 30000ms exceeded.");
+  assert.equal(declared.passed_attempts, undefined);
+  assert.equal(plain.error_signature, SPEC_ERROR);
+  assert.equal(plain.passed_attempts, undefined, "an ordinary flake carries no pass count");
+  assert.ok(plain.recurrence_keys.length > 0, "an ordinary flake keeps its keys");
 });

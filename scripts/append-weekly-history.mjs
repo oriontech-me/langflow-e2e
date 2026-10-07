@@ -182,7 +182,13 @@ import { classifyInfraError } from "./lib/infra-signatures.mjs";
 import { loadOutagePayload, overlapForEntry } from "./lib/outage-overlap.mjs";
 import { paramFromSuitePath } from "./lib/spec-param.mjs";
 import { collectSkips } from "./lib/skip-reasons.mjs";
-import { UNEXPECTED_PASS_SIGNATURE, isUnexpectedPass, isUnexpectedPassEntry } from "./lib/unexpected-pass.mjs";
+import {
+  PARTIAL_UNEXPECTED_PASS_SIGNATURE,
+  UNEXPECTED_PASS_SIGNATURE,
+  isPartialUnexpectedPass,
+  isUnexpectedPass,
+  isUnexpectedPassEntry,
+} from "./lib/unexpected-pass.mjs";
 import { RECURRENCE_KEY_VERSION, recurrenceKeysForTest } from "./lib/recurrence-key.mjs";
 
 const SCHEMA_VERSION = 1;
@@ -378,9 +384,14 @@ function outageOverlapField(file, title, param, test) {
 // a recurrence of the old timeout and miss every other day the declared bug
 // passed. With an empty list the comparison falls back to the signature's head,
 // so unexpected passes match each other and nothing else.
+//
+// A partial unexpected pass (#2217) records none either: its only failed attempts
+// are the EXPECTED failures, so their keys would describe the declared bug
+// reproducing — the opposite of what made the test flaky.
 function recurrenceFields(test) {
+  const signedByThePass = isUnexpectedPass(test) || isPartialUnexpectedPass(test);
   return {
-    recurrence_keys: isUnexpectedPass(test) ? [] : recurrenceKeysForTest(test, process.cwd()),
+    recurrence_keys: signedByThePass ? [] : recurrenceKeysForTest(test, process.cwd()),
     recurrence_key_version: RECURRENCE_KEY_VERSION,
   };
 }
@@ -417,7 +428,18 @@ function visit(node, suitePath = []) {
         // attempt that may precede the real failure.
         // Hold on to the RESULT, not just its signature: `infra_signature` has to
         // be classified from that same attempt's full error text (#1310).
-        const firstFailedResult = (test.results || []).find((r) => firstErrorMessage(r));
+        //
+        // A partial unexpected pass (#2217) is the exception: a test declared failing
+        // whose body PASSED on an earlier attempt. The attempts that carry a message
+        // are the expected failures, so the rule above recorded the declared bug
+        // reproducing as if it were the flake. It is signed by the pass instead, with
+        // the passing attempts counted, and its infra verdict is read only from an
+        // attempt that was neither a pass nor the expected failure (a `timedOut` in
+        // between) — on `[passed, failed]` there is none, and the verdict is null.
+        const partialPass = isPartialUnexpectedPass(test);
+        const firstFailedResult = (test.results || []).find(
+          (r) => firstErrorMessage(r) && !(partialPass && r.status === "failed"),
+        );
         const firstFailedSignature = firstErrorMessage(firstFailedResult);
         flaky.push({
           test: title,
@@ -425,7 +447,10 @@ function visit(node, suitePath = []) {
           line,
           tags,
           attempts,
-          error_signature: firstFailedSignature || "unknown",
+          error_signature: partialPass ? PARTIAL_UNEXPECTED_PASS_SIGNATURE : firstFailedSignature || "unknown",
+          ...(partialPass
+            ? { passed_attempts: (test.results || []).filter((r) => r.status === "passed").length }
+            : {}),
           infra_signature: infraSignatureId(firstFailedResult),
           infra_signature_any_attempt: infraSignatureAnyAttempt(test),
           ...recurrenceFields(test),

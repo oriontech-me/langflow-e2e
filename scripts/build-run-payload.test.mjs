@@ -287,3 +287,24 @@ test("the daily's payload step passes the same suite commit as its history step"
   assert.equal(shaOf(step("Build run payload")), "${{ github.sha }}");
   assert.equal(shaOf(step("Build run payload")), shaOf(step("Append daily history")));
 });
+
+// --- #2217: a test.fail() whose body passed on SOME attempts ---
+
+test("#2217 a partial unexpected pass is signed by the pass in tests[] and flaky[]", () => {
+  const payload = buildFrom(
+    withTests([
+      [
+        "declared, passed first",
+        { status: "flaky", expectedStatus: "failed", results: [PASSED, failedWith("Error: the declared bug")] },
+      ],
+      ["plain flake", flake([failedWith("Error: first attempt"), PASSED])],
+    ]),
+  );
+  assert.deepEqual(payload.totals, { passed: 0, failed: 0, flaky: 2, skipped: 0 });
+  const [partial, plain] = payload.tests;
+  assert.equal(partial.status, "flaky");
+  assert.equal(partial.error, "expected to fail but passed on some attempts", "not the expected failure's message");
+  assert.equal(payload.flaky[0].error_signature, "expected to fail but passed on some attempts");
+  assert.match(plain.error, /^Error: first attempt/, "an ordinary flake is unchanged");
+  assert.equal(payload.flaky[1].error_signature, "Error: first attempt");
+});
