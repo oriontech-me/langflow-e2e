@@ -1,8 +1,8 @@
 # A2A Client — the `A2AAgent` component in External mode: calling an agent by its URL
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev12`)
+**Last validated:** Langflow 1.12.x (`1.12.5`) and 1.13.x (nightly `1.13.0.dev34`)
 
-**Issue:** #1855 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C2**) ·
+**Issue:** #1855 (toolbar under the app header: #2182) · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **C2**) ·
 **Follows:** #1354 (C1, Internal mode) · **Jira:** epic `LE-1588`, regression `LE-1845`
 
 ---
@@ -72,6 +72,12 @@ holding an `A2AAgent` node in External mode:
 | 3 | `GET /api/v1/monitor/messages?flow_id=<A>` | a `User` message whose text is the sentinel, with a `session_id` that is two UUIDs joined by `:` — the A2A server's composite — and does **not** contain `:a2a:` |
 | 4 | the card viewer, after A moves into an `auth_type=apikey` project and `agent_url` is re-pointed at A's base URL | dialog text contains `Requires an API key` |
 | 5 | the flow B run with the owner's key in `api_key` | `chat-message-AI-<sentinel2>`, and A stored `sentinel2` |
+
+Before assertion 5 can be reached, the spec opens the node's Parameters panel, and that
+step carries a precondition of its own (#2182): with the canvas fitted and the node
+selected, the top of `parameters-button` is **at or below the bottom of
+`app-header`**. It is not a product assertion — it names the cause when the node's
+toolbar would render under the header, instead of a 20 s click timeout.
 
 Assertions 1 and 4 are the same flow, one project apart: 1 is the negative control
 that makes 4 mean something.
@@ -149,7 +155,11 @@ One test. Every flow, key and project it creates is deleted in `finally`.
     accepts both forms (`_agent_base_url` normalises them); the value change is what
     makes it fetch the card again.
 14. Open the viewer and assert assertion 4; close it.
-15. Select the node, open its Parameters panel (`parameters-button`), add the advanced
+15. Fit the canvas (`adjustScreenView`, no zoom-out), **then** select the node and
+    assert the toolbar precondition above. Fit first because the wiring in step 9
+    pans the canvas by a timing-dependent amount (see *Measurements*), and fit before
+    selecting because fitting after it drops the selection and unmounts the toolbar
+    (#867). Open its Parameters panel (`parameters-button`), add the advanced
     `api_key` field to the node (`inspector-add-api_key`) and fill
     `popover-anchor-input-api_key` with the owner's key. Fill
     `textarea_str_input_value` with a second sentinel.
@@ -205,6 +215,31 @@ instance, none invented.
 - **The node is 481 px tall in External mode with the card display** (401 px in
   Internal, per C1), and the sidebar drops `Chat Output` inside it — the separation
   step must exceed that height.
+- **The wiring step pans the canvas, by an amount that depends on timing (#2182).**
+  Measured at the default 1280×720 viewport, the separation drag ends `Chat Output`
+  ~540 px lower, at the bottom edge of the pane, and React Flow auto-pans while a drag
+  sits near an edge: the viewport transform went from `translate(0, 0)` to
+  `translate(0, -75.75px)` on `1.12.5` and `translate(0, -66.75px)` on `1.13.0.dev34`
+  in back-to-back local runs. How far it pans depends on how long the pointer spends
+  near the edge, so it varies with the machine's timing — which is how the same
+  `1.12.5` build passed locally and failed on the QA VM. The A2A node rides up
+  with it, and its toolbar sits ~43 px above the node: locally `parameters-button`
+  ended **25 px** below the 48 px header on `1.12.5` (34 px on the nightly). On the
+  QA VM's on-demand run of `release-1.12.5` it ended under the header on 3 of 3
+  attempts, and the click failed with *"`<span data-testid="flow_name">` from `<header
+  data-testid="app-header">` subtree intercepts pointer events"*. Playwright's
+  scroll-into-view cannot pan a React Flow canvas, so nothing recovers it.
+- **A fit view puts the toolbar clear of the header whatever the pan was.** With the
+  pan left as it fell, `fit_view` gave both builds the identical transform
+  `translate(42.62px, -60.73px) scale(0.977)` and `parameters-button` 38 px below the
+  header. With an extra pane drag injected first to mimic a larger auto-pan (total
+  pans of -131 and -186 px on `1.12.5`), the fit landed on `scale(0.95)`–`scale(0.99)` —
+  the dragged `Chat Output` rides the pan, so the bounds move a little — and the
+  button stayed 37–40 px below the header. The same injected pan **without** the fit
+  put the button's top at y = 24, under the 48 px header, and reproduced the QA VM's
+  error verbatim. A zoom-out on top is
+  not used: fit alone clears the header, and one zoom-out after it is **not** a known
+  position — it landed on `scale(0.79)` on `1.12.5` and `scale(0.65)` on the nightly.
 - **Session namespaces tell the two modes apart.** External: `<uuid>:<contextId>`,
   minted by the A2A server (measured, e.g.
   `b99120e7-…-8992690ee53f:ef8681bc-…-5166084354b3`). Internal:
