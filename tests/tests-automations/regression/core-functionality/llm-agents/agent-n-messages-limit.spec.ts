@@ -4,6 +4,8 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
 import { clearCanvasBottomOverlay } from "../../../../helpers/ui/clear-canvas-bottom-overlay";
+import { outputInspectorDialog } from "../../../../helpers/ui/output-inspector";
+import { seedAssistantDiscovered } from "../../../../helpers/ui/assistant-onboarding";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import {
@@ -167,7 +169,9 @@ async function retrieveViaMessageHistory(
   await expect(inspectButton).toBeEnabled({ timeout: 20000 });
   await inspectButton.click();
 
-  const dialog = page.locator('[role="dialog"]').last();
+  // By the inspector's own testid, never `[role="dialog"].last()`: the assistant
+  // onboarding tooltip is a dialog too and can mount after the inspector (#2210).
+  const dialog = outputInspectorDialog(page, "messages_text");
   const textarea = dialog.getByTestId("textarea");
   await expect(textarea).toBeVisible({ timeout: 15000 });
   return textarea.inputValue();
@@ -176,6 +180,13 @@ async function retrieveViaMessageHistory(
 function countOccurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
+
+// Before the first document load, the only moment it can work (#1220): upstream
+// snapshots the flag at canvas mount and arms a 10 s timer, so without it the
+// assistant onboarding tooltip mounts over the canvas controls mid-test (#2210).
+test.beforeEach(async ({ page }) => {
+  await seedAssistantDiscovered(page);
+});
 
 test.describe("Message History n_messages limit", () => {
   test(

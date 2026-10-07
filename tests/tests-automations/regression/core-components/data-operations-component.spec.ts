@@ -7,6 +7,7 @@ import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-f
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
+import { outputInspectorDialog } from "../../../helpers/ui/output-inspector";
 import { separateOverlappingNodes } from "../../../helpers/ui/separate-overlapping-nodes";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 
@@ -206,14 +207,16 @@ async function openOutputInspector(
   // Dispatched for the same reason as in `runNode`, and guarded the same way:
   // the modal becoming visible is what proves the dispatch landed.
   await node.getByTestId(outputTestId).dispatchEvent("click");
-  const modal = page.locator('[role="dialog"]').last();
+  // No output name: this component's outputs are generated at runtime, and only
+  // one inspector is open at a time. Never `[role="dialog"].last()` (#2210).
+  const modal = outputInspectorDialog(page);
   await expect(modal).toBeVisible({ timeout: 15000 });
   return modal;
 }
 
-// Wait for the modal to be GONE, not just clicked away: `openOutputInspector`
-// resolves `[role="dialog"]` by `.last()`, so a dialog still animating out would
-// be a live candidate for the next open. `btn-close-modal` is the precise
+// Wait for the modal to be GONE, not just clicked away: a dialog still animating
+// out carries the same header testid, so it would be a live candidate for the
+// next `openOutputInspector`. `btn-close-modal` is the precise
 // signal — it belongs to this modal only, unlike `[role="dialog"]`, which the
 // assistant onboarding tooltip also carries.
 async function closeOutputInspector(page: Page): Promise<void> {
@@ -233,7 +236,10 @@ async function fillMultilineText(
   await node
     .getByTestId("button_open_text_area_modal_textarea_str_text_input")
     .click();
-  const modal = page.locator('[role="dialog"]').last();
+  // Scoped by the modal's own content, not by position (#2210).
+  const modal = page
+    .getByRole("dialog")
+    .filter({ has: page.getByTestId("text-area-modal") });
   await modal.getByTestId("text-area-modal").fill(value);
   await modal.getByTestId("genericModalBtnSave").click();
   await expect(modal).toBeHidden({ timeout: 15000 });

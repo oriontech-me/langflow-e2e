@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/data-operations-component.spec.ts`
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev34`, #2210; earlier 1.12.x)
 
 ---
 
