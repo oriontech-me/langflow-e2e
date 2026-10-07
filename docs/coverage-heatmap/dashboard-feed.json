@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-02",
+ "refreshed": "2026-10-07",
  "refreshWindow": {
-  "testHealthSince": "2026-08-18",
+  "testHealthSince": "2026-08-23",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -39,20 +39,20 @@
   "newThisGeneration": 3,
   "cappedByProduct": 2,
   "bullets": 816,
-  "bulletsAutomatedUnwatched": 121,
-  "residualRiskTotal": 100.4
+  "bulletsAutomatedUnwatched": 119,
+  "residualRiskTotal": 108.6
  },
  "areas": [
   {
    "key": "agents",
    "label": "6 Agents / LLM execution",
    "rank": 1,
-   "residualRisk": 9,
+   "residualRisk": 9.3,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.64,
-   "mitigationBulletDerived": 0.71,
+   "mitigation": 0.63,
+   "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
@@ -63,8 +63,8 @@
    },
    "bullets": {
     "total": 46,
-    "validated": 39,
-    "automatedUnwatched": 3,
+    "validated": 41,
+    "automatedUnwatched": 1,
     "partial": 1,
     "flaky": 0,
     "empty": 3
@@ -74,10 +74,10 @@
     "stable": 36
    },
    "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 7,
+    "chronicHardFailures": 1,
+    "chronicFlaky": 9,
     "stableSpecs": 36,
-    "penalty": 0.069
+    "penalty": 0.101
    },
    "upstreamBugsByYear": {
     "2024": 29,
@@ -91,7 +91,7 @@
     "mitigation": 0.7
    },
    "delta": {
-    "residualRisk": 1.6,
+    "residualRisk": 1.9,
     "rank": 3,
     "direction": "worsened"
    },
@@ -107,12 +107,12 @@
    "key": "mcp",
    "label": "13/14 MCP",
    "rank": 2,
-   "residualRisk": 7.5,
+   "residualRisk": 8.5,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
-   "mitigation": 0.7,
-   "mitigationBulletDerived": 0.7,
+   "mitigation": 0.66,
+   "mitigationBulletDerived": 0.69,
    "mitigationOverride": null,
    "axes": {
     "bugQuintile": 5,
@@ -123,8 +123,8 @@
    },
    "bullets": {
     "total": 34,
-    "validated": 29,
-    "automatedUnwatched": 1,
+    "validated": 28,
+    "automatedUnwatched": 2,
     "partial": 1,
     "flaky": 0,
     "empty": 3
@@ -135,9 +135,9 @@
    },
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 0,
+    "chronicFlaky": 1,
     "stableSpecs": 12,
-    "penalty": 0
+    "penalty": 0.029
    },
    "upstreamBugsByYear": {
     "2025": 51,
@@ -150,7 +150,7 @@
     "mitigation": 0.58
    },
    "delta": {
-    "residualRisk": -3,
+    "residualRisk": -2,
     "rank": 0,
     "direction": "improved"
    },
@@ -211,9 +211,67 @@
    "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
   },
   {
+   "key": "security",
+   "label": "NEW security",
+   "rank": 4,
+   "residualRisk": 6.9,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.54,
+   "mitigationBulletDerived": 0.69,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 6.6,
+    "weightedChurn": 0.59
+   },
+   "bullets": {
+    "total": 30,
+    "validated": 26,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 4
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 2,
+    "stableSpecs": 7,
+    "penalty": 0.148
+   },
+   "upstreamBugsByYear": {
+    "2024": 2,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 1,
+    "residualRisk": 15,
+    "inherentRisk": 15,
+    "mitigation": 0
+   },
+   "delta": {
+    "residualRisk": -8.1,
+    "rank": -3,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "SSRF/secret exposure; not a checklist area at all"
+  },
+  {
    "key": "enterprise-authz",
    "label": "22 Enterprise / authz",
-   "rank": 4,
+   "rank": 5,
    "residualRisk": 6.6,
    "inherentRisk": 10,
    "probability": 2,
@@ -262,7 +320,7 @@
   {
    "key": "graph-engine",
    "label": "12.6 Build / graph engine",
-   "rank": 5,
+   "rank": 6,
    "residualRisk": 5.6,
    "inherentRisk": 20,
    "probability": 4,
@@ -305,7 +363,7 @@
    },
    "delta": {
     "residualRisk": -0.4,
-    "rank": 2,
+    "rank": 1,
     "direction": "improved"
    },
    "isNew": false,
@@ -317,67 +375,127 @@
    "rationale": "If a run fails nothing else in the product matters; async graph execution"
   },
   {
-   "key": "security",
-   "label": "NEW security",
-   "rank": 6,
-   "residualRisk": 5.4,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.64,
-   "mitigationBulletDerived": 0.69,
+   "key": "observability",
+   "label": "8 Observability",
+   "rank": 7,
+   "residualRisk": 5.6,
+   "inherentRisk": 12,
+   "probability": 4,
+   "impact": 3,
+   "mitigation": 0.53,
+   "mitigationBulletDerived": 0.8,
    "mitigationOverride": null,
    "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 6.6,
-    "weightedChurn": 0.59
+    "bugQuintile": 4,
+    "churnQuintile": 4,
+    "fragility": 4,
+    "weightedBugs": 34.1,
+    "weightedChurn": 2.02
    },
    "bullets": {
-    "total": 30,
-    "validated": 26,
+    "total": 24,
+    "validated": 24,
     "automatedUnwatched": 0,
     "partial": 0,
     "flaky": 0,
-    "empty": 4
+    "empty": 0
    },
    "specs": {
-    "specs": 7,
-    "stable": 7
+    "specs": 9,
+    "stable": 9
    },
    "testHealth": {
-    "chronicHardFailures": 1,
+    "chronicHardFailures": 6,
     "chronicFlaky": 0,
-    "stableSpecs": 7,
-    "penalty": 0.049
+    "stableSpecs": 9,
+    "penalty": 0.267
    },
    "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 5,
-    "2026": 3
+    "2023": 1,
+    "2024": 7,
+    "2025": 20,
+    "2026": 14
    },
    "previous": {
-    "rank": 1,
-    "residualRisk": 15,
-    "inherentRisk": 15,
-    "mitigation": 0
+    "rank": 19,
+    "residualRisk": 2.4,
+    "inherentRisk": 12,
+    "mitigation": 0.8
    },
    "delta": {
-    "residualRisk": -9.6,
-    "rank": -5,
-    "direction": "improved"
+    "residualRisk": 3.2,
+    "rank": 12,
+    "direction": "worsened"
    },
    "isNew": false,
    "cappedByProduct": false,
    "instrumentCaveat": null,
    "platformItems": [],
-   "rationale": "SSRF/secret exposure; not a checklist area at all"
+   "rationale": "Diagnostic — does not block building or running"
+  },
+  {
+   "key": "a2a",
+   "label": "16 A2A",
+   "rank": 8,
+   "residualRisk": 5.3,
+   "inherentRisk": 12,
+   "probability": 3,
+   "impact": 4,
+   "mitigation": 0.56,
+   "mitigationBulletDerived": 0.59,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 2,
+    "churnQuintile": 2,
+    "fragility": 4,
+    "weightedBugs": 5,
+    "weightedChurn": 0.29
+   },
+   "bullets": {
+    "total": 18,
+    "validated": 13,
+    "automatedUnwatched": 0,
+    "partial": 1,
+    "flaky": 0,
+    "empty": 4
+   },
+   "specs": {
+    "specs": 11,
+    "stable": 11
+   },
+   "testHealth": {
+    "chronicHardFailures": 1,
+    "chronicFlaky": 0,
+    "stableSpecs": 11,
+    "penalty": 0.027
+   },
+   "upstreamBugsByYear": {
+    "2026": 4
+   },
+   "previous": {
+    "rank": 6,
+    "residualRisk": 6.3,
+    "inherentRisk": 8,
+    "mitigation": 0.21
+   },
+   "delta": {
+    "residualRisk": -1,
+    "rank": -2,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": true,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2837,
+    2838
+   ],
+   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
   },
   {
    "key": "canvas-ui",
    "label": "15 Canvas / UI",
-   "rank": 7,
+   "rank": 9,
    "residualRisk": 5,
    "inherentRisk": 20,
    "probability": 4,
@@ -424,7 +542,7 @@
    },
    "delta": {
     "residualRisk": -0.1,
-    "rank": 3,
+    "rank": 1,
     "direction": "improved"
    },
    "isNew": false,
@@ -434,68 +552,69 @@
    "rationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
   },
   {
-   "key": "a2a",
-   "label": "16 A2A",
-   "rank": 8,
-   "residualRisk": 4.9,
-   "inherentRisk": 12,
-   "probability": 3,
+   "key": "memory-base",
+   "label": "20 Memory Base",
+   "rank": 10,
+   "residualRisk": 4.8,
+   "inherentRisk": 16,
+   "probability": 4,
    "impact": 4,
-   "mitigation": 0.59,
-   "mitigationBulletDerived": 0.59,
+   "mitigation": 0.7,
+   "mitigationBulletDerived": 0.8,
    "mitigationOverride": null,
    "axes": {
-    "bugQuintile": 2,
-    "churnQuintile": 2,
+    "bugQuintile": 3,
+    "churnQuintile": 4,
     "fragility": 4,
-    "weightedBugs": 5,
-    "weightedChurn": 0.29
+    "weightedBugs": 9.3,
+    "weightedChurn": 1.74
    },
    "bullets": {
-    "total": 18,
-    "validated": 13,
+    "total": 16,
+    "validated": 16,
     "automatedUnwatched": 0,
-    "partial": 1,
+    "partial": 0,
     "flaky": 0,
-    "empty": 4
+    "empty": 0
    },
    "specs": {
-    "specs": 11,
-    "stable": 10
+    "specs": 4,
+    "stable": 4
    },
    "testHealth": {
-    "chronicHardFailures": 0,
+    "chronicHardFailures": 1,
     "chronicFlaky": 0,
-    "stableSpecs": 10,
-    "penalty": 0
+    "stableSpecs": 4,
+    "penalty": 0.1
    },
    "upstreamBugsByYear": {
-    "2026": 4
+    "2024": 2,
+    "2025": 2,
+    "2026": 6
    },
    "previous": {
-    "rank": 6,
-    "residualRisk": 6.3,
+    "rank": 3,
+    "residualRisk": 8,
     "inherentRisk": 8,
-    "mitigation": 0.21
+    "mitigation": 0
    },
    "delta": {
-    "residualRisk": -1.4,
-    "rank": -2,
+    "residualRisk": -3.2,
+    "rank": -7,
     "direction": "improved"
    },
    "isNew": false,
-   "cappedByProduct": true,
+   "cappedByProduct": false,
    "instrumentCaveat": null,
    "platformItems": [
-    2837,
-    2838
+    2832
    ],
-   "rationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
+   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
   },
   {
    "key": "component-config",
    "label": "2 Component config",
-   "rank": 9,
+   "rank": 11,
    "residualRisk": 4.4,
    "inherentRisk": 20,
    "probability": 5,
@@ -542,7 +661,7 @@
    },
    "delta": {
     "residualRisk": -0.2,
-    "rank": 4,
+    "rank": 2,
     "direction": "improved"
    },
    "isNew": false,
@@ -552,9 +671,126 @@
    "rationale": "Every flow is built out of configured components"
   },
   {
+   "key": "flow-lifecycle",
+   "label": "12 Flow lifecycle",
+   "rank": 12,
+   "residualRisk": 4.2,
+   "inherentRisk": 20,
+   "probability": 4,
+   "impact": 5,
+   "mitigation": 0.79,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 5,
+    "churnQuintile": 3,
+    "fragility": 2,
+    "weightedBugs": 34.8,
+    "weightedChurn": 0.89
+   },
+   "bullets": {
+    "total": 26,
+    "validated": 26,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 38,
+    "stable": 38
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 1,
+    "stableSpecs": 38,
+    "penalty": 0.011
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 41,
+    "2025": 26,
+    "2026": 6
+   },
+   "previous": {
+    "rank": 11,
+    "residualRisk": 4.8,
+    "inherentRisk": 20,
+    "mitigation": 0.76
+   },
+   "delta": {
+    "residualRisk": -0.6,
+    "rank": -1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Cannot create/save/import a flow = product unusable"
+  },
+  {
+   "key": "rest-api",
+   "label": "1 REST API / endpoints",
+   "rank": 13,
+   "residualRisk": 4.2,
+   "inherentRisk": 15,
+   "probability": 3,
+   "impact": 5,
+   "mitigation": 0.72,
+   "mitigationBulletDerived": 0.76,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 3,
+    "churnQuintile": 4,
+    "fragility": 2,
+    "weightedBugs": 9.5,
+    "weightedChurn": 2.61
+   },
+   "bullets": {
+    "total": 102,
+    "validated": 96,
+    "automatedUnwatched": 1,
+    "partial": 2,
+    "flaky": 1,
+    "empty": 2
+   },
+   "specs": {
+    "specs": 38,
+    "stable": 38
+   },
+   "testHealth": {
+    "chronicHardFailures": 2,
+    "chronicFlaky": 2,
+    "stableSpecs": 38,
+    "penalty": 0.04
+   },
+   "upstreamBugsByYear": {
+    "2024": 10,
+    "2025": 5,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 14,
+    "residualRisk": 4.4,
+    "inherentRisk": 20,
+    "mitigation": 0.78
+   },
+   "delta": {
+    "residualRisk": -0.2,
+    "rank": 1,
+    "direction": "improved"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
+   "platformItems": [],
+   "rationale": "'Flow as an API' is the advertised deploy path"
+  },
+  {
    "key": "playground",
    "label": "9 Playground / chat",
-   "rank": 10,
+   "rank": 14,
    "residualRisk": 4,
    "inherentRisk": 20,
    "probability": 5,
@@ -601,7 +837,7 @@
    },
    "delta": {
     "residualRisk": -0.7,
-    "rank": 2,
+    "rank": -2,
     "direction": "improved"
    },
    "isNew": false,
@@ -611,68 +847,9 @@
    "rationale": "The user's main verification loop; SSE streaming"
   },
   {
-   "key": "flow-lifecycle",
-   "label": "12 Flow lifecycle",
-   "rank": 11,
-   "residualRisk": 4,
-   "inherentRisk": 20,
-   "probability": 4,
-   "impact": 5,
-   "mitigation": 0.8,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 5,
-    "churnQuintile": 3,
-    "fragility": 2,
-    "weightedBugs": 34.8,
-    "weightedChurn": 0.89
-   },
-   "bullets": {
-    "total": 26,
-    "validated": 26,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 38,
-    "stable": 38
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 38,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2023": 1,
-    "2024": 41,
-    "2025": 26,
-    "2026": 6
-   },
-   "previous": {
-    "rank": 11,
-    "residualRisk": 4.8,
-    "inherentRisk": 20,
-    "mitigation": 0.76
-   },
-   "delta": {
-    "residualRisk": -0.8,
-    "rank": 0,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "Cannot create/save/import a flow = product unusable"
-  },
-  {
    "key": "model-providers",
    "label": "7 Model providers",
-   "rank": 12,
+   "rank": 15,
    "residualRisk": 4,
    "inherentRisk": 16,
    "probability": 4,
@@ -719,7 +896,7 @@
    },
    "delta": {
     "residualRisk": 0.1,
-    "rank": 3,
+    "rank": 0,
     "direction": "worsened"
    },
    "isNew": false,
@@ -731,7 +908,7 @@
   {
    "key": "governance-policy",
    "label": "21 Governance / policy",
-   "rank": 13,
+   "rank": 16,
    "residualRisk": 3.8,
    "inherentRisk": 6,
    "probability": 2,
@@ -774,127 +951,9 @@
    "rationale": "OSS operator surface, instance-global: a policy that fails open makes a blocked component placeable. Not an advertised promise, so impact is blast radius only."
   },
   {
-   "key": "rest-api",
-   "label": "1 REST API / endpoints",
-   "rank": 14,
-   "residualRisk": 3.8,
-   "inherentRisk": 15,
-   "probability": 3,
-   "impact": 5,
-   "mitigation": 0.75,
-   "mitigationBulletDerived": 0.76,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 2,
-    "weightedBugs": 9.5,
-    "weightedChurn": 2.61
-   },
-   "bullets": {
-    "total": 102,
-    "validated": 96,
-    "automatedUnwatched": 1,
-    "partial": 2,
-    "flaky": 1,
-    "empty": 2
-   },
-   "specs": {
-    "specs": 38,
-    "stable": 38
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 1,
-    "stableSpecs": 38,
-    "penalty": 0.01
-   },
-   "upstreamBugsByYear": {
-    "2024": 10,
-    "2025": 5,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 14,
-    "residualRisk": 4.4,
-    "inherentRisk": 20,
-    "mitigation": 0.78
-   },
-   "delta": {
-    "residualRisk": -0.6,
-    "rank": 0,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": "Inherent 20 -> 15 is the REBUILT CLASSIFIER, not the product: it under-matches this area at ratio 0.31 against the recorded August weight. Treat the drop as unproven; the 101 bullets and 0.76 mitigation are solid.",
-   "platformItems": [],
-   "rationale": "'Flow as an API' is the advertised deploy path"
-  },
-  {
-   "key": "memory-base",
-   "label": "20 Memory Base",
-   "rank": 15,
-   "residualRisk": 3.7,
-   "inherentRisk": 16,
-   "probability": 4,
-   "impact": 4,
-   "mitigation": 0.77,
-   "mitigationBulletDerived": 0.77,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 3,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 9.3,
-    "weightedChurn": 1.74
-   },
-   "bullets": {
-    "total": 16,
-    "validated": 15,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 1,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 4,
-    "stable": 4
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 4,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2024": 2,
-    "2025": 2,
-    "2026": 6
-   },
-   "previous": {
-    "rank": 3,
-    "residualRisk": 8,
-    "inherentRisk": 8,
-    "mitigation": 0
-   },
-   "delta": {
-    "residualRisk": -4.3,
-    "rank": -12,
-    "direction": "improved"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [
-    2832
-   ],
-   "rationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
-  },
-  {
    "key": "auth",
    "label": "4 Auth / users",
-   "rank": 16,
+   "rank": 17,
    "residualRisk": 3.3,
    "inherentRisk": 15,
    "probability": 3,
@@ -941,7 +1000,7 @@
    },
    "delta": {
     "residualRisk": -2.1,
-    "rank": -7,
+    "rank": -8,
     "direction": "improved"
    },
    "isNew": false,
@@ -951,9 +1010,68 @@
    "rationale": "Largest blast radius: broken auth = 100% of the product unreachable"
   },
   {
+   "key": "knowledge-files",
+   "label": "5 Knowledge / files",
+   "rank": 18,
+   "residualRisk": 3.1,
+   "inherentRisk": 12,
+   "probability": 4,
+   "impact": 3,
+   "mitigation": 0.74,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 4,
+    "churnQuintile": 3,
+    "fragility": 3,
+    "weightedBugs": 27.7,
+    "weightedChurn": 0.72
+   },
+   "bullets": {
+    "total": 8,
+    "validated": 8,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": {
+    "specs": 7,
+    "stable": 7
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 1,
+    "stableSpecs": 7,
+    "penalty": 0.057
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2024": 21,
+    "2025": 25,
+    "2026": 4
+   },
+   "previous": {
+    "rank": 20,
+    "residualRisk": 2.4,
+    "inherentRisk": 12,
+    "mitigation": 0.8
+   },
+   "delta": {
+    "residualRisk": 0.7,
+    "rank": 2,
+    "direction": "worsened"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Core file surface only after the bundle exclusion"
+  },
+  {
    "key": "templates",
    "label": "11 Templates / starter",
-   "rank": 17,
+   "rank": 19,
    "residualRisk": 2.9,
    "inherentRisk": 8,
    "probability": 2,
@@ -998,7 +1116,7 @@
    },
    "delta": {
     "residualRisk": -4.5,
-    "rank": -12,
+    "rank": -14,
     "direction": "improved"
    },
    "isNew": false,
@@ -1006,124 +1124,6 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "'Hundreds of pre-built flows' is advertised; the onboarding path"
-  },
-  {
-   "key": "observability",
-   "label": "8 Observability",
-   "rank": 18,
-   "residualRisk": 2.4,
-   "inherentRisk": 12,
-   "probability": 4,
-   "impact": 3,
-   "mitigation": 0.8,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 4,
-    "churnQuintile": 4,
-    "fragility": 4,
-    "weightedBugs": 34.1,
-    "weightedChurn": 2.02
-   },
-   "bullets": {
-    "total": 24,
-    "validated": 24,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 9,
-    "stable": 9
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 9,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2023": 1,
-    "2024": 7,
-    "2025": 20,
-    "2026": 14
-   },
-   "previous": {
-    "rank": 19,
-    "residualRisk": 2.4,
-    "inherentRisk": 12,
-    "mitigation": 0.8
-   },
-   "delta": {
-    "residualRisk": 0,
-    "rank": 1,
-    "direction": "flat"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "Diagnostic — does not block building or running"
-  },
-  {
-   "key": "knowledge-files",
-   "label": "5 Knowledge / files",
-   "rank": 19,
-   "residualRisk": 2.4,
-   "inherentRisk": 12,
-   "probability": 4,
-   "impact": 3,
-   "mitigation": 0.8,
-   "mitigationBulletDerived": 0.8,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 4,
-    "churnQuintile": 3,
-    "fragility": 3,
-    "weightedBugs": 27.7,
-    "weightedChurn": 0.72
-   },
-   "bullets": {
-    "total": 8,
-    "validated": 8,
-    "automatedUnwatched": 0,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": {
-    "specs": 7,
-    "stable": 7
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 7,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2023": 1,
-    "2024": 21,
-    "2025": 25,
-    "2026": 4
-   },
-   "previous": {
-    "rank": 20,
-    "residualRisk": 2.4,
-    "inherentRisk": 12,
-    "mitigation": 0.8
-   },
-   "delta": {
-    "residualRisk": 0,
-    "rank": 1,
-    "direction": "flat"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "Core file surface only after the bundle exclusion"
   },
   {
    "key": "loop-control-flow",
@@ -1236,63 +1236,9 @@
    "rationale": "Network-dependent component, widely used but replaceable"
   },
   {
-   "key": "model-parameters",
-   "label": "7.7 Model parameters",
-   "rank": 22,
-   "residualRisk": 1.8,
-   "inherentRisk": 6,
-   "probability": 2,
-   "impact": 3,
-   "mitigation": 0.7,
-   "mitigationBulletDerived": 0.7,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 1,
-    "churnQuintile": 1,
-    "fragility": 3,
-    "weightedBugs": 4.1,
-    "weightedChurn": 0
-   },
-   "bullets": {
-    "total": 4,
-    "validated": 3,
-    "automatedUnwatched": 1,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 0
-   },
-   "specs": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 0,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {
-    "2023": 1,
-    "2026": 3
-   },
-   "previous": {
-    "rank": 23,
-    "residualRisk": 1.2,
-    "inherentRisk": 6,
-    "mitigation": 0.8
-   },
-   "delta": {
-    "residualRisk": 0.6,
-    "rank": 1,
-    "direction": "worsened"
-   },
-   "isNew": false,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [],
-   "rationale": "Wrong params silently change model behaviour"
-  },
-  {
    "key": "global-variables",
    "label": "4.3 Global variables",
-   "rank": 23,
+   "rank": 22,
    "residualRisk": 1.6,
    "inherentRisk": 8,
    "probability": 2,
@@ -1335,7 +1281,7 @@
    },
    "delta": {
     "residualRisk": -1.1,
-    "rank": -6,
+    "rank": -5,
     "direction": "improved"
    },
    "isNew": false,
@@ -1343,6 +1289,60 @@
    "instrumentCaveat": null,
    "platformItems": [],
    "rationale": "Blocks provider configuration for every flow"
+  },
+  {
+   "key": "model-parameters",
+   "label": "7.7 Model parameters",
+   "rank": 23,
+   "residualRisk": 1.2,
+   "inherentRisk": 6,
+   "probability": 2,
+   "impact": 3,
+   "mitigation": 0.8,
+   "mitigationBulletDerived": 0.8,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 3,
+    "weightedBugs": 4.1,
+    "weightedChurn": 0
+   },
+   "bullets": {
+    "total": 4,
+    "validated": 4,
+    "automatedUnwatched": 0,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 0
+   },
+   "specs": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {
+    "2023": 1,
+    "2026": 3
+   },
+   "previous": {
+    "rank": 23,
+    "residualRisk": 1.2,
+    "inherentRisk": 6,
+    "mitigation": 0.8
+   },
+   "delta": {
+    "residualRisk": 0,
+    "rank": 0,
+    "direction": "flat"
+   },
+   "isNew": false,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [],
+   "rationale": "Wrong params silently change model behaviour"
   },
   {
    "key": "hitl",
