@@ -85,7 +85,12 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { withoutCommittedClaim } from "./lib/auto-remove-claim.mjs";
-import { UNEXPECTED_PASS_SIGNATURE, collectUnexpectedPasses } from "./lib/unexpected-pass.mjs";
+import {
+  PARTIAL_UNEXPECTED_PASS_SIGNATURE,
+  UNEXPECTED_PASS_SIGNATURE,
+  collectPartialUnexpectedPasses,
+  collectUnexpectedPasses,
+} from "./lib/unexpected-pass.mjs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -227,6 +232,9 @@ export function renderIssue({
   // #2009: `{ file, line, title, attempts, passedAttempts }` per test declared failing
   // with `test.fail()` whose body passed — from `collectUnexpectedPasses`.
   unexpectedPasses = [],
+  // #2217: the same records for a `test.fail()` whose body passed on SOME attempts and
+  // failed as declared on a later one — from `collectPartialUnexpectedPasses`.
+  partialUnexpectedPasses = [],
   cc = CC_DEFAULT,
 } = {}) {
   // Which lane rendered this. `RUN_URL` is the only honest discriminator: it is
@@ -619,6 +627,36 @@ export function renderIssue({
       ]
     : [];
 
+  // #2217. The same declaration, passing on SOME attempts and failing as declared on a
+  // later one: Playwright reports it `flaky`, and a flake's signature used to be its
+  // first attempt carrying a message — here the EXPECTED failure. Read as a flake of
+  // that assertion, it was filed as a recurrent flake for quarantine, when what
+  // happened is the opposite: the declared bug did not reproduce on one attempt. Not
+  // a fix day either — the retry reproduced it — so it gets its own section and its
+  // own wording, beside the one above.
+  const partials = Array.isArray(partialUnexpectedPasses) ? partialUnexpectedPasses : [];
+  const partialPassSection = partials.length
+    ? [
+        `### ⚠️ ${partials.length} test(s) declared failing with \`test.fail()\` passed on SOME attempts`,
+        "",
+        "Playwright reports these as `flaky`. **The attempt that went red is the pass**: the",
+        "declared bug did not reproduce on it, and a later attempt failed as declared. Recorded",
+        `with \`error_signature: "${PARTIAL_UNEXPECTED_PASS_SIGNATURE}"\`, not with the expected`,
+        "failure's message.",
+        "",
+        ...partials.map(
+          (p) =>
+            `- \`${safe(p.file)}${p.line ? `:${p.line}` : ""}\` — ${safe(p.title)} ` +
+            `_(passed on ${p.passedAttempts} of ${p.attempts} attempt(s))_`,
+        ),
+        "",
+        "**Not a fix day and not a flake of the assertion**: the declared bug reproduces",
+        "intermittently, or is starting to go away. Record it in the issue the `test.fail()`",
+        "cites; never quarantine it as a recurrent flake on this evidence.",
+        "",
+      ]
+    : [];
+
   // #2031. AFTER the per-test section, because it classifies what that section names —
   // it is the second reading, not the first. Scoped away from the shapes whose bodies
   // say there is no per-test material (`empty`, `mergeFailed`, `uncovered`): a dataset
@@ -671,6 +709,7 @@ export function renderIssue({
     ...accountBanner,
     ...listingBanner,
     ...unexpectedPassSection,
+    ...partialPassSection,
     ...section,
     ...triageSection,
     ...driftSection,
@@ -781,7 +820,7 @@ export function parseListingMissing(raw) {
  * exactly what the `empty` and `mergeFailed` shapes describe — must not stop it.
  * Returning none there is true: a report nobody can read names no test.
  */
-export function readUnexpectedPasses(path, repoRoot = REPO_ROOT) {
+export function readUnexpectedPasses(path, repoRoot = REPO_ROOT, collector = collectUnexpectedPasses) {
   if (!path) return [];
   try {
     const report = JSON.parse(readFileSync(path, "utf8"));
@@ -806,10 +845,15 @@ export function readUnexpectedPasses(path, repoRoot = REPO_ROOT) {
       const conventional = resolve(repoRoot, "tests", file);
       return existsSync(conventional) ? insideRepo(conventional) || file : file;
     };
-    return collectUnexpectedPasses(report).map((p) => ({ ...p, file: toRepo(p.file) }));
+    return collector(report).map((p) => ({ ...p, file: toRepo(p.file) }));
   } catch {
     return [];
   }
+}
+
+/** `readUnexpectedPasses` for the partial ones (#2217): same anchoring, same tolerance. */
+export function readPartialUnexpectedPasses(path, repoRoot = REPO_ROOT) {
+  return readUnexpectedPasses(path, repoRoot, collectPartialUnexpectedPasses);
 }
 
 /**
@@ -897,6 +941,7 @@ async function main() {
     triage: readTriageSummary(env.TRIAGE_MD_FILE),
     targetDrift: readTriageSummary(env.TARGET_DRIFT_MD_FILE),
     unexpectedPasses: readUnexpectedPasses(env.PLAYWRIGHT_JSON),
+    partialUnexpectedPasses: readPartialUnexpectedPasses(env.PLAYWRIGHT_JSON),
     cc: env.ISSUE_CC === undefined ? CC_DEFAULT : env.ISSUE_CC,
   });
 
