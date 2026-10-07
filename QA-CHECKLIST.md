@@ -1618,9 +1618,9 @@
 | `memory/` — Memory Base Registration | 16 | 16 | 0 | 0 | 0 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 13 | 0 | 1 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
-| `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
+| `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **740** | **653 (88%)** | **35 (5%)** | **13 (2%)** | **39 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **743** | **653 (88%)** | **39 (5%)** | **13 (2%)** | **38 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
