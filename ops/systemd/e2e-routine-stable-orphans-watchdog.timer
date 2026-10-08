@@ -1,0 +1,14 @@
+[Unit]
+Description=Schedule for the stable-orphans routine's absence alarm, 11:45 UTC on Mondays
+
+[Timer]
+# After the unit's TimeoutStartSec (90 min from 10:00, so 11:30): at 11:45 "still running"
+# means systemd failed to stop it, not that it was slow.
+OnCalendar=Mon 11:45 UTC
+# An alarm that catches up still tells the truth.
+Persistent=true
+AccuracySec=1min
+Unit=e2e-routine-watchdog@stable-orphans.service
+
+[Install]
+WantedBy=timers.target
