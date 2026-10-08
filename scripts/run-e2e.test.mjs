@@ -3832,14 +3832,39 @@ test("no shard pinned is 'all', shards that disagree are 'mixed', and no line at
   assert.equal(modelUsed([null, null]).used, "");
 });
 
+test("a shard file with no tab is no record, not an unpinned shard", () => {
+  // A foreign or unreadable line must not turn a one-provider run into "mixed".
+  const pinned = "openai\tgpt-4o-mini\n";
+  assert.equal(modelUsed([pinned, "", pinned]).used, "openai\tgpt-4o-mini");
+  assert.equal(modelUsed([pinned, "garbage\n"]).used, "openai\tgpt-4o-mini");
+});
+
+test("the shards' own lines read in shard order, ten and up included", () => {
+  const lines = Array.from({ length: 10 }, (_, i) => (i === 9 ? "anthropic\tclaude-sonnet-5\n" : "openai\tgpt-4o-mini\n"));
+  const { byShard } = modelUsed(lines);
+  assert.equal(byShard.split(" ").map((x) => x.split("=")[0]).join(","), "1,2,3,4,5,6,7,8,9,10");
+});
+
+test("a reused run dir starts without the previous run's provider records", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const made = src.indexOf('mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}');
+  assert.ok(made > 0);
+  assert.match(src.slice(made, made + 400), /rm -f "\$RUN_DIR"\/logs\/shard-\*\.model-target "\$RUN_DIR\/model-used"/);
+});
+
 test("each shard records what its agent specs run against, after the pin and before the round", () => {
   const src = readFileSync(SCRIPT, "utf8");
   const body = src.slice(src.indexOf("run_shard() {"));
   const pin = body.indexOf('pin_model_target "$idx"');
-  const record = body.indexOf('"$RUN_DIR/logs/shard-$idx.model-target"');
+  // The pin lands in gh_env; the shard only holds it once that file is sourced. A
+  // record before the sourcing would read empty values and call every pinned day "all".
+  const sourcedEnv = body.indexOf('. "$gh_env"');
+  const record = body.indexOf("printf '%s\\t%s\\n' \"${MODEL_TEST_PROVIDER:-}\" \"${MODEL_TEST_ID:-}\"");
   const round = body.indexOf('npx playwright test --grep "@stable"');
-  assert.ok(pin > 0 && record > pin && round > record, "the record sits between the pin and the round");
-  assert.match(body.slice(pin, record + 60), /printf '%s\\t%s\\n' "\$\{MODEL_TEST_PROVIDER:-\}" "\$\{MODEL_TEST_ID:-\}"/);
+  assert.ok(pin > 0 && sourcedEnv > pin && record > sourcedEnv && round > record,
+    "the record sits after the pin is sourced and before the round");
+  // A diagnostic never costs the shard its round: the write is guarded.
+  assert.match(body.slice(record, record + 400), /\|\| warn "shard \$idx: could not record its provider/);
 });
 
 test("the metadata and the model-used line carry what the run used", () => {

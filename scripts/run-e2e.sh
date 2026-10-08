@@ -889,6 +889,8 @@ model_used_target() {
   for f in "$RUN_DIR"/logs/shard-*.model-target; do
     [ -f "$f" ] || continue
     line="$(head -n 1 "$f" 2>/dev/null || true)"
+    # No tab is no record (an unreadable or foreign file), not "unpinned".
+    [[ "$line" == *$'\t'* ]] || continue
     [ "${line%%$'\t'*}" = "" ] && line="all"$'\t'
     if [ "$first" = "1" ]; then seen="$line"; first=0
     elif [ "$line" != "$seen" ]; then seen="mixed"$'\t'; break
@@ -902,9 +904,14 @@ model_used_target() {
 # metadata: "mixed" says the shards disagreed, this says how.
 model_targets_by_shard() {
   local f line idx out=""
-  for f in "$RUN_DIR"/logs/shard-*.model-target; do
-    [ -f "$f" ] || continue
-    idx="${f##*/shard-}"; idx="${idx%.model-target}"
+  # In shard order, not glob order: shard-10 sorts before shard-2 as text. The
+  # numbers alone are sorted, so nothing else in the path can split them.
+  local idxs
+  idxs="$(for f in "$RUN_DIR"/logs/shard-*.model-target; do
+    [ -f "$f" ] || continue; f="${f##*/shard-}"; printf '%s\n' "${f%.model-target}"
+  done | sort -n)"
+  for idx in $idxs; do
+    f="$RUN_DIR/logs/shard-$idx.model-target"
     line="$(head -n 1 "$f" 2>/dev/null || true)"
     out+="${out:+ }$idx=${line%%$'\t'*}/${line#*$'\t'}"
   done
@@ -1570,6 +1577,9 @@ phase_preflight() {
   fi
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
+  # What a previous run under the same RUN_ID recorded of its provider must not be
+  # read as this one's: a rerun with fewer shards would turn "mixed" (#2226).
+  rm -f "$RUN_DIR"/logs/shard-*.model-target "$RUN_DIR/model-used"
   info "run dir: $RUN_DIR"
 
   # Pulled ONCE, here. Left to the starter, four shards 10 s apart would pull the same
@@ -2181,7 +2191,11 @@ run_shard() {
   # provider and model, or both empty when nothing is pinned and every active provider
   # runs. Written before the round, so a shard that dies in it still says. The run's
   # one answer is model_used_target's (#2226).
-  printf '%s\t%s\n' "${MODEL_TEST_PROVIDER:-}" "${MODEL_TEST_ID:-}" > "$RUN_DIR/logs/shard-$idx.model-target"
+  # Written whole and renamed, so a shard killed mid-write leaves no half line; and
+  # guarded, because a diagnostic must never cost the shard its round.
+  { printf '%s\t%s\n' "${MODEL_TEST_PROVIDER:-}" "${MODEL_TEST_ID:-}" > "$RUN_DIR/logs/shard-$idx.model-target.tmp" \
+      && mv -f "$RUN_DIR/logs/shard-$idx.model-target.tmp" "$RUN_DIR/logs/shard-$idx.model-target"; } 2>/dev/null \
+    || warn "shard $idx: could not record its provider (the run's will read as unknown or partial)"
 
   TOKENS_BASE_URL="http://${host}:${port}" \
   TOKENS_OUT="$wd/token-probes-${idx}.jsonl" \
