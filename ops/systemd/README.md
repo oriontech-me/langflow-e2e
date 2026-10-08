@@ -212,7 +212,9 @@ issues live in both until stage 4 moves the backlog. Its report is ONE issue on
 `ISSUE_REPO` under a fixed title, replaced each run and closed when nothing is left;
 Slack hears only about an orphan the last published run did not list. Findings are not
 red: red means the reconciler itself refused. `ORPHANS_DRY_RUN=1` reconciles and stops
-before the issue and Slack.
+before the issue and Slack. It needs `gh` on the machine, for the reconciler's lookup of
+gate references: installed on the qa on 2026-10-08 from GitHub's apt repository
+(`/etc/apt/sources.list.d/github-cli.list`), so it moves with the system's upgrades.
 
 Installing one routine, e.g. `migration` (each routine's units ship with the routine itself):
 
