@@ -138,8 +138,9 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
         failures.push(`${step}: ${String(e)}`);
       }
     };
-    // Each user's knowledge bases go first, as that user: deleting the user does not
-    // remove a knowledge base's storage. Then the user, which takes its variables.
+    // Each user's knowledge bases go first, as that user: on 1.12.x deleting the user
+    // does not remove a knowledge base's storage (1.13's background erase does, #2228).
+    // Then the user, which takes its variables.
     for (const { user, kbs } of users) {
       for (const kb of kbs) {
         await attempt(`delete knowledge base ${kb}`, () =>
@@ -326,7 +327,7 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
 
   test(
     "should fail an ingestion whose embedding provider cannot be reached, naming the provider",
-    { tag: ["@api", "@files"] },
+    { tag: ["@stable", "@api", "@files"] },
     async ({ request, playwright }) => {
       const owner = await newUser(
         request,
@@ -362,7 +363,7 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
 
   test(
     "should send an Ollama ingestion to the server OLLAMA_BASE_URL names",
-    { tag: ["@regression", "@api", "@files"] },
+    { tag: ["@stable", "@regression", "@api", "@files"] },
     async ({ request, playwright }) => {
       // Regression for langflow-ai/langflow#13883: ingestion built its embeddings
       // with the component's localhost default, which outranked OLLAMA_BASE_URL.
