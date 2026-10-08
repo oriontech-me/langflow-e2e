@@ -77,10 +77,14 @@ the geometry above was measured.
 > so a drained Anthropic key — every call answering
 > `400 … credit balance is too low` — failed this test as
 > `message(s) with wrong context_id: [{"sender":"Agent","context_id":null}]`
-> and was first filed as a provider-dependent product defect. It is not one:
-> Langflow tags every message it is meant to tag, on every provider, and
-> nothing here goes upstream. The fixture's flow-error gate does not catch
-> that case either, because it reads `credit balance is too low` as a provider
+> and was first filed as a provider-dependent product defect. It is not one,
+> and nothing here goes upstream: on the providers measured (openai, anthropic
+> and google, `1.13.0.dev35`) every message a healthy run persists carries the
+> tag, and the error row carries none because Langflow's `ErrorMessage` is
+> built without one. Neither gate in front of this spec covers that case. The
+> provider-health gate skips the test only when `collect-models` recorded the
+> key as unusable, so a key that drains after the sweep still runs here; and
+> the fixture's flow-error gate reads `credit balance is too low` as a provider
 > outage and leaves it unevaluated by design. The tag checks therefore consult
 > `describeRunErrorRows` (`tests/helpers/flows/describe-run-error-rows.ts`)
 > first, and an error row fails the test as
