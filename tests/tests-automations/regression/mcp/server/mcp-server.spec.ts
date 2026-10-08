@@ -17,7 +17,10 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { waitForMcpToolOption } from "../../../../helpers/mcp/wait-for-mcp-tool-option";
-import { waitForMcpToolsCount } from "../../../../helpers/mcp/wait-for-mcp-tools-count";
+import {
+  waitForMcpCredentialRefused,
+  waitForMcpToolsCount,
+} from "../../../../helpers/mcp/wait-for-mcp-tools-count";
 
 /**
  * Add-MCP-Server modal: stdio / HTTP registration, field persistence and tool
@@ -51,6 +54,14 @@ const PKG_SEQUENTIAL = "@modelcontextprotocol/server-sequential-thinking";
 // budget for the same reason (#463); the 30 s this file carried was never
 // exercised in CI, because none of these tests were `@stable` until #1091.
 const TOOL_LIST_TIMEOUT = 120_000;
+
+// What every MCP management response returns in place of a stored env or header
+// value since langflow-ai/langflow#15529 (`MCP_CONFIG_VALUE_MASK`, #2215). It
+// masks every NON-EMPTY value of those maps, secret or not (`application/json`
+// included), and an empty value reads back as `""` — so reading exactly the mask
+// is also the evidence that a value was stored at all. No read can show the
+// stored value itself; test 10 proves it by what the credential does.
+const MASK = "********";
 
 // Flow ids observed on `POST /api/v1/flows` 201, plus the MCP servers each test
 // registered. Pattern A from authoring-conventions: `awaitBootstrapTest` runs
@@ -465,7 +476,7 @@ test("user must be able to add and delete MCP server from sidebar",
 );
 
 test("STDIO MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -577,7 +588,9 @@ test("STDIO MCP server fields should persist after saving and editing",
       timeout: 30000,
     });
 
-    // Verify all fields persisted correctly
+    // Verify all fields persisted correctly: structural fields and env KEYS
+    // verbatim, env VALUES as exactly the mask (#2215) — never the plaintext,
+    // and never empty, which is how a value the save dropped would read back.
     expect(await page.getByTestId("stdio-name-input").inputValue()).toBe(
       testName,
     );
@@ -595,13 +608,13 @@ test("STDIO MCP server fields should persist after saving and editing",
     );
     expect(
       await page.getByTestId("stdio-env-value-0").last().inputValue(),
-    ).toBe(testEnvValue1);
+    ).toBe(MASK);
     expect(await page.getByTestId("stdio-env-key-1").last().inputValue()).toBe(
       testEnvKey2,
     );
     expect(
       await page.getByTestId("stdio-env-value-1").last().inputValue(),
-    ).toBe(testEnvValue2);
+    ).toBe(MASK);
 
     // Clean up - cancel the edit modal
     await page.keyboard.press("Escape");
@@ -630,7 +643,7 @@ test("STDIO MCP server fields should persist after saving and editing",
 );
 
 test("HTTP/SSE MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -758,7 +771,10 @@ test("HTTP/SSE MCP server fields should persist after saving and editing",
       },
     );
 
-    // Verify all fields persisted correctly
+    // Verify all fields persisted correctly: name, URL and every header/env KEY
+    // verbatim, every header/env VALUE as exactly the mask (#2215). The
+    // redaction is per map, not per value, so `application/json` and `30000`
+    // read back masked as well as the bearer token.
     expect(await page.getByTestId("http-name-input").inputValue()).toBe(
       testName,
     );
@@ -772,7 +788,7 @@ test("HTTP/SSE MCP server fields should persist after saving and editing",
         .getByTestId("popover-anchor-http-headers-value-0")
         .first()
         .inputValue(),
-    ).toBe(testHeaderValue1);
+    ).toBe(MASK);
     expect(await page.getByTestId("http-headers-key-1").inputValue()).toBe(
       testHeaderKey2,
     );
@@ -781,19 +797,15 @@ test("HTTP/SSE MCP server fields should persist after saving and editing",
         .getByTestId("popover-anchor-http-headers-value-1")
         .first()
         .inputValue(),
-    ).toBe(testHeaderValue2);
+    ).toBe(MASK);
     expect(await page.getByTestId("http-env-key-0").inputValue()).toBe(
       testEnvKey1,
     );
-    expect(await page.getByTestId("http-env-value-0").inputValue()).toBe(
-      testEnvValue1,
-    );
+    expect(await page.getByTestId("http-env-value-0").inputValue()).toBe(MASK);
     expect(await page.getByTestId("http-env-key-1").inputValue()).toBe(
       testEnvKey2,
     );
-    expect(await page.getByTestId("http-env-value-1").inputValue()).toBe(
-      testEnvValue2,
-    );
+    expect(await page.getByTestId("http-env-value-1").inputValue()).toBe(MASK);
 
     // Clean up - cancel the edit modal
     await page.keyboard.press("Escape");
@@ -1445,17 +1457,19 @@ async function mcpApiHeaders(page: Page): Promise<Record<string, string>> {
 }
 
 test("a registered MCP server is read back individually with the fields it was created with",
-  { tag: ["@api", "@mcp"] },
+  { tag: ["@api", "@mcp", "@stable"] },
   async ({ page }) => {
     const serverName = `read-back-${API_PROBE_UNIQUE}`;
     const path = `/api/v2/mcp/servers/${serverName}`;
-    // `env` is stored encrypted and returned decrypted, so asserting it here also
-    // covers that round trip — a read that returned the ciphertext would fail.
     const config = {
       command: NPX,
       args: [PKG_PROBE_A],
       env: { MCP_PROBE_TOKEN: "probe-value" },
     };
+    // What a management read returns for that config since #15529 (#2215): the
+    // env value masked, everything else — the env KEY included — as posted. A
+    // read that disclosed the plaintext or the ciphertext would fail here.
+    const masked = { ...config, env: { MCP_PROBE_TOKEN: MASK } };
     const headers = await mcpApiHeaders(page);
 
     await test.step("Pre-clean: drop anything a crashed retry left under this name", async () => {
@@ -1476,9 +1490,17 @@ test("a registered MCP server is read back individually with the fields it was c
         created.status(),
         `Registering a fresh name should succeed (2xx). Body: ${await created.text()}`,
       ).toBeLessThan(300);
+      // The write's echo is a management response too: it must not disclose the
+      // value it was just given. Persistence is asserted below with a fresh GET,
+      // never from this body.
+      const echoed = (await created.json()) as { env?: Record<string, string> };
+      expect(
+        echoed.env,
+        "the create response must mask the env value it was sent",
+      ).toEqual({ MCP_PROBE_TOKEN: MASK });
     });
 
-    await test.step("GET /servers/{name} returns exactly the stored config", async () => {
+    await test.step("GET /servers/{name} returns exactly the stored config, credential masked", async () => {
       const resp = await page.request.get(path, { headers });
       expect(resp.status(), "the single-server read must answer 200").toBe(200);
 
@@ -1495,10 +1517,10 @@ test("a registered MCP server is read back individually with the fields it was c
 
       expect(
         stored,
-        "the single read must return the config as posted. Deep equality, not " +
-          "per-field checks: a body that quietly gained a `name`, a transport " +
-          "label or any other key must fail here",
-      ).toEqual(config);
+        "the single read must return the config as posted, with the env value " +
+          "masked. Deep equality, not per-field checks: a body that quietly " +
+          "gained a `name`, a transport label or any other key must fail here",
+      ).toEqual(masked);
     });
 
     await test.step("The same server is visible in the list endpoint", async () => {
@@ -1510,7 +1532,7 @@ test("a registered MCP server is read back individually with the fields it was c
 );
 
 test("PATCH updates a registered server, merges at the top level, and refuses to rename it",
-  { tag: ["@api", "@mcp"] },
+  { tag: ["@api", "@mcp", "@stable"] },
   async ({ page }) => {
     const serverName = `update-${API_PROBE_UNIQUE}`;
     const path = `/api/v2/mcp/servers/${serverName}`;
@@ -1520,10 +1542,11 @@ test("PATCH updates a registered server, merges at the top level, and refuses to
       expect(resp.status(), "the read-back must answer 200").toBe(200);
       const body = (await resp.json()) as Record<string, unknown> | null;
       // Checked, not assumed (the convention `listMcpServerNames` sets above):
-      // this endpoint answers 200 with a `null` body for a name it does not
-      // know, so an unguarded read would die as `Cannot read properties of
-      // null` inside whichever assertion called this, hiding the fact that the
-      // server went missing mid-test.
+      // `1.12.0.dev20` answered 200 with a `null` body for a name it did not
+      // know (`1.13.0.dev35` answers 404, which the status assertion above
+      // already reports), so an unguarded read would die as `Cannot read
+      // properties of null` inside whichever assertion called this, hiding the
+      // fact that the server went missing mid-test.
       expect(
         body,
         "the server vanished mid-test — GET answered 200 with a null body",
@@ -1576,11 +1599,13 @@ test("PATCH updates a registered server, merges at the top level, and refuses to
         stored.command,
         "command must survive a patch that never mentioned it",
       ).toBe(NPX);
+      // Masked (#2215), and still informative: the key survived and still holds
+      // a NON-EMPTY value — an emptied one reads back as `""`, not as the mask.
       expect(
         stored.env,
         "a key the patch did not mention must survive — the merge is per " +
           "top-level key, not a whole-document replace",
-      ).toEqual({ MCP_PROBE_TOKEN: "probe-value" });
+      ).toEqual({ MCP_PROBE_TOKEN: MASK });
     });
 
     await test.step("PATCH replaces a key's value wholesale rather than deep-merging it", async () => {
@@ -1598,11 +1623,43 @@ test("PATCH updates a registered server, merges at the top level, and refuses to
         stored.env,
         "env must be REPLACED by the patched object, not merged into it — a " +
           "deep merge would leave MCP_PROBE_TOKEN behind",
-      ).toEqual({ MCP_PROBE_OTHER: "second-value" });
+      ).toEqual({ MCP_PROBE_OTHER: MASK });
       expect(stored.command, "command must survive an env-only patch").toBe(NPX);
       expect(stored.args, "args must survive an env-only patch").toEqual([
         PKG_PROBE_B,
       ]);
+    });
+
+    await test.step("PATCH refuses a mask for a key that holds no stored value, and changes nothing", async () => {
+      // A mask may only stand for a credential Langflow already holds (#2215,
+      // langflow-ai/langflow#15529). Accepting one for a new key would store the
+      // placeholder as the credential. The known key rides along masked on
+      // purpose: that half alone is accepted (the edit modal sends exactly that
+      // on every untouched save), so the 422 is about the orphan, not about
+      // masks in general.
+      const orphan = await page.request.patch(path, {
+        headers,
+        data: { env: { MCP_PROBE_OTHER: MASK, MCP_PROBE_NEW: MASK } },
+      });
+      expect(
+        orphan.status(),
+        `a mask for a key with no stored value must be refused with 422. Body: ${await orphan.text()}`,
+      ).toBe(422);
+      const detail = (await orphan.json()) as { detail?: unknown };
+      expect(
+        typeof detail?.detail === "string" ? detail.detail : "",
+        "the 422 must be the orphan-mask rule, not an unrelated validation error",
+      ).toMatch(/can only preserve an existing value/i);
+
+      const stored = await readStored();
+      expect(
+        stored,
+        "a refused patch must leave the stored config untouched",
+      ).toEqual({
+        command: NPX,
+        args: [PKG_PROBE_B],
+        env: { MCP_PROBE_OTHER: MASK },
+      });
     });
 
     await test.step("PATCH cannot rename the server, and a refused patch changes nothing", async () => {
@@ -1631,8 +1688,150 @@ test("PATCH updates a registered server, merges at the top level, and refuses to
       ).toEqual({
         command: NPX,
         args: [PKG_PROBE_B],
-        env: { MCP_PROBE_OTHER: "second-value" },
+        env: { MCP_PROBE_OTHER: MASK },
       });
+    });
+  },
+);
+
+// ─── The stored credential, proven by effect (#2215) ─────────────────────────
+//
+// Since langflow-ai/langflow#15529 no MCP management response discloses a stored
+// env or header value, so a body can never tell "Langflow holds the real key"
+// from "Langflow holds `********`". The edit modal makes that the live question:
+// it renders the masks, and an untouched save sends them straight back (measured
+// on 1.13.0.dev35: `PATCH {url, env: {…: "********"}, headers: {…: "********"}}`).
+// What answers it is the credential's EFFECT. The server registered here is the
+// instance's own project transport, which takes an API key as `x-api-key` and
+// nothing else (#1522), so `?action_count=true` connects only if the stored
+// header is the real key — and the refused control below is what keeps that
+// effect from passing against a transport that stopped checking (1.12.0.dev31
+// answered a keyless request with 200).
+
+// A value that is not an API key, for the control. It must never connect.
+const NOT_AN_API_KEY = "e2e-not-an-api-key";
+
+test("an untouched edit keeps the stored MCP credential — Langflow still authenticates to itself",
+  { tag: ["@regression", "@mcp", "@settings", "@stable"] },
+  async ({ page }) => {
+    const serverName = `credential-keep-${API_PROBE_UNIQUE}`;
+    const path = `/api/v2/mcp/servers/${serverName}`;
+    const headers = await mcpApiHeaders(page);
+
+    const apiKey = await createApiKey(
+      page.request,
+      { Authorization: headers.Authorization },
+      { namePrefix: "e2e-mcp-credential-keep" },
+    );
+    createdApiKeyIds.push(apiKey.id);
+
+    // The first project's own transport, derived from PLAYWRIGHT_BASE_URL so the
+    // URL Langflow calls is the one the suite reaches (test 6's derivation).
+    const projectsResp = await page.request.get("/api/v1/projects/", { headers });
+    expect(projectsResp.status(), "listing projects must succeed").toBe(200);
+    const projectsRaw = await projectsResp.json();
+    const projects: Array<{ id: string }> = Array.isArray(projectsRaw)
+      ? projectsRaw
+      : (projectsRaw.folders ?? []);
+    expect(projects.length, "the instance must have a project to expose").toBeGreaterThan(0);
+    const url = new URL(
+      `/api/v1/mcp/project/${projects[0].id}/streamable`,
+      process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:7860/",
+    ).toString();
+
+    await test.step("Pre-clean: drop anything a crashed retry left under this name", async () => {
+      await page.request.delete(path, { headers });
+    });
+
+    await test.step("Register the server with the real key as its only credential", async () => {
+      const created = await page.request.post(path, {
+        headers,
+        data: { url, headers: { "x-api-key": apiKey.key } },
+      });
+      // Registered for `afterEach` before the assertion, for the reason the
+      // read-back test above spells out.
+      registeredServers.push(serverName);
+      expect(
+        created.status(),
+        `Registering a fresh name should succeed (2xx). Body: ${await created.text()}`,
+      ).toBeLessThan(300);
+    });
+
+    await test.step("The management read masks the credential and keeps the URL", async () => {
+      const resp = await page.request.get(path, { headers });
+      expect(resp.status(), "the single-server read must answer 200").toBe(200);
+      expect(
+        await resp.json(),
+        "the read must return the URL verbatim and the key as the mask, nothing else",
+      ).toEqual({ url, headers: { "x-api-key": MASK } });
+    });
+
+    await test.step("Settings → MCP Servers → Edit shows the mask, not the key", async () => {
+      await page.goto("/settings/mcp-servers");
+      await page.waitForSelector('[data-testid="add-mcp-server-button-page"]', {
+        timeout: 30000,
+      });
+      await expect(mcpServerRow(page, serverName)).toBeVisible({ timeout: 10000 });
+      await page
+        .getByTestId(`mcp-server-menu-button-${serverName}`)
+        .click({ timeout: 10000 });
+      await page.getByText("Edit", { exact: true }).first().click({ timeout: 10000 });
+      await page.waitForSelector('[data-testid="add-mcp-server-button"]', {
+        state: "visible",
+        timeout: 30000,
+      });
+
+      await expect(page.getByTestId("http-url-input")).toHaveValue(url);
+      await expect(page.getByTestId("http-headers-key-0")).toHaveValue("x-api-key");
+      await expect(
+        page.getByTestId("popover-anchor-http-headers-value-0").first(),
+      ).toHaveValue(MASK);
+    });
+
+    await test.step("Saving the modal untouched is accepted", async () => {
+      const patched = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PATCH" &&
+          new URL(r.url()).pathname === path,
+        { timeout: 30000 },
+      );
+      await page.getByTestId("add-mcp-server-button").click();
+      const resp = await patched;
+      expect(
+        resp.status(),
+        `the untouched save must succeed. Body: ${await resp.text()}`,
+      ).toBe(200);
+      await expect(page.getByTestId("add-mcp-server-button")).toBeHidden({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Effect: Langflow still authenticates to itself with the stored key", async () => {
+      // Resolves only with a NUMBER of tools, which requires the transport to
+      // have accepted the stored `x-api-key`. Had the save stored the mask
+      // itself, every probe would report the credential as refused and this
+      // wait would fail saying so. Zero is a valid count — a project with no
+      // flows still answers.
+      const count = await waitForMcpToolsCount(page, serverName, { timeout: 90_000 });
+      expect(count, "a connection reports a tool count").toBeGreaterThanOrEqual(0);
+    });
+
+    await test.step("Control: the same server with a wrong key is refused", async () => {
+      // Without this, the effect above would also pass against a transport that
+      // answered without checking — and then prove nothing about the stored key.
+      const patched = await page.request.patch(path, {
+        headers,
+        data: { headers: { "x-api-key": NOT_AN_API_KEY } },
+      });
+      expect(
+        patched.status(),
+        `patching the header must succeed. Body: ${await patched.text()}`,
+      ).toBe(200);
+
+      const refusal = await waitForMcpCredentialRefused(page, serverName, {
+        timeout: 90_000,
+      });
+      expect(refusal).toMatch(/the configured credential was refused/i);
     });
   },
 );

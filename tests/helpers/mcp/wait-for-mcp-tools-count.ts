@@ -187,3 +187,109 @@ export async function waitForMcpToolsCount(
     }),
   );
 }
+
+/**
+ * The phrase Langflow reports when an MCP server it connects to refuses the
+ * stored credential. Matched on the phrase and not on the status code it
+ * carries: that code was 403 on `1.12.0.dev33` (#1522) and is 401 on
+ * `1.13.0.dev35` (#2215), for the same refusal.
+ */
+export const MCP_CREDENTIAL_REFUSED = /the configured credential was refused/i;
+
+/** What one readiness probe says about `serverName`'s stored credential. */
+export type McpCredentialVerdict =
+  | { state: "refused"; error: string }
+  | { state: "connected"; toolsCount: number }
+  | { state: "pending"; error: string | null };
+
+/**
+ * Classifies one `?action_count=true` body for `serverName` (#2215).
+ *
+ * A number is a connection whatever accompanies it — a project with no flows
+ * reports `toolsCount: 0` and "No tools found", and the credential was still
+ * accepted. Only the refusal phrase is a refusal; every other error (a timeout
+ * under load, #1266) says nothing about the credential and stays pending, as
+ * does a server absent from the list or a body that is not an array.
+ */
+export function credentialVerdictOf(body: unknown, serverName: string): McpCredentialVerdict {
+  if (!Array.isArray(body)) return { state: "pending", error: null };
+  const entry = (
+    body as Array<{ name?: string; toolsCount?: number | null; error?: string }>
+  ).find((s) => s?.name === serverName);
+  if (typeof entry?.toolsCount === "number") {
+    return { state: "connected", toolsCount: entry.toolsCount };
+  }
+  const error = typeof entry?.error === "string" ? entry.error : null;
+  if (error !== null && MCP_CREDENTIAL_REFUSED.test(error)) {
+    return { state: "refused", error };
+  }
+  return { state: "pending", error };
+}
+
+/**
+ * Polls the readiness endpoint until `serverName` is reported as refusing its
+ * stored credential, and resolves with that report (#2215).
+ *
+ * This is the CONTROL for an effect-based credential check: a positive "it
+ * connected" proves the stored credential only if a wrong one is refused. A
+ * connection therefore fails at once — waiting cannot turn an accepting
+ * transport into a checking one — while a failed probe or an unrelated error is
+ * "not decided yet", exactly as in `waitForMcpToolsCount`.
+ */
+export async function waitForMcpCredentialRefused(
+  page: Page,
+  serverName: string,
+  options: {
+    timeout?: number;
+    probeTimeoutMs?: number;
+    intervalMs?: number;
+  } = {},
+): Promise<string> {
+  const timeout = options.timeout ?? MCP_TOOLS_COUNT_TIMEOUT_MS;
+  const probeTimeoutMs = options.probeTimeoutMs ?? MCP_TOOLS_COUNT_PROBE_TIMEOUT_MS;
+  const intervalMs = options.intervalMs ?? MCP_TOOLS_COUNT_INTERVAL_MS;
+  const deadline = Date.now() + timeout;
+
+  let probes = 0;
+  // Sticky, for the reason `waitForMcpToolsCount` gives: the last probe is often
+  // an undecided one, and overwriting with `null` would hide what was seen.
+  let lastSeen: string | null = null;
+
+  for (;;) {
+    probes += 1;
+    try {
+      const resp = await page.request.get(MCP_SERVERS_ACTION_COUNT_URL, {
+        timeout: probeTimeoutMs,
+      });
+      if (!resp.ok()) {
+        lastSeen = `HTTP ${resp.status()} — ${await resp.text()}`;
+      } else {
+        const verdict = credentialVerdictOf(await resp.json(), serverName);
+        if (verdict.state === "refused") return verdict.error;
+        if (verdict.state === "connected") {
+          throw new Error(
+            `[waitForMcpCredentialRefused] MCP server "${serverName}" connected ` +
+              `(toolsCount ${verdict.toolsCount}) with a credential that must be ` +
+              `refused. The transport no longer checks the credential, so a ` +
+              `successful connection proves nothing about which value is stored.`,
+          );
+        }
+        if (verdict.error !== null) lastSeen = verdict.error;
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("[waitForMcpCredentialRefused]")) {
+        throw e;
+      }
+      lastSeen = String(e).split("\n")[0];
+    }
+
+    if (Date.now() >= deadline) break;
+    await page.waitForTimeout(intervalMs);
+  }
+
+  throw new Error(
+    `[waitForMcpCredentialRefused] MCP server "${serverName}" never reported a ` +
+      `refused credential within ${timeout}ms, across ${probes} probe(s) of ` +
+      `${MCP_SERVERS_ACTION_COUNT_URL}. Last thing seen: ${lastSeen ?? "no error at all"}.`,
+  );
+}

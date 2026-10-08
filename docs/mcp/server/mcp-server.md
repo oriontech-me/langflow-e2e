@@ -3,7 +3,8 @@
 **Last validated:** Langflow 1.13.x (tests 1–7 on nightly `1.12.0.dev9`; tests 8–9 on
 `1.12.0.dev20`; tests 1 and 6 re-validated on `1.12.0.dev39` under #1266; test 5's
 auto-binding assertion and the node-scoped `openAddMcpServerModal` on `1.13.0.dev30`
-under #1447)
+under #1447; tests 3, 4, 8 and 9 rewritten to the masked read-back contract, and test 10
+added, on `1.13.0.dev35` under #2215)
 
 ---
 
@@ -17,9 +18,12 @@ enforces (QA-CHECKLIST §14.1):
    `command` + `args` resolves its tools into the MCPTools node's
    `dropdown_str_tool`, renders the selected tool's inputs on the node, appears
    in Settings → MCP Servers, and can be edited and deleted from there.
-2. **Field persistence** — every stdio field (name, command, N args, N env
-   pairs) and every HTTP/SSE field (name, URL, N headers, N env pairs) survives
-   save → reopen-for-edit.
+2. **Field persistence under the masked read-back contract** (#2215) — every
+   stdio field (name, command, N args, N env pairs) and every HTTP/SSE field
+   (name, URL, N headers, N env pairs) survives save → reopen-for-edit: the
+   structural fields and every env/header **key** come back verbatim, and every
+   env/header **value** comes back as the literal mask `********` — never the
+   plaintext, never empty.
 3. **Tool-list refresh on edit** — changing which package a registered server
    runs makes the node's tool list reflect the *new* server, not the cached one.
 4. **The stdio command/args contract** — `command` must be a single executable;
@@ -30,14 +34,21 @@ enforces (QA-CHECKLIST §14.1):
    exposes the project's flows as tools.
 6. **The single-server read-back and update API** (#1397) — a registered server
    is readable on its own at `GET /api/v2/mcp/servers/{name}` with exactly the
-   fields it was created with, and `PATCH /api/v2/mcp/servers/{name}` updates
-   them, merging at the top level and refusing to rename.
+   fields it was created with (env values masked, #2215), and
+   `PATCH /api/v2/mcp/servers/{name}` updates them, merging at the top level,
+   refusing to rename, and refusing a mask that names no stored value.
+7. **An untouched edit keeps the stored credential** (#2215) — saving the edit
+   modal without touching a masked header leaves Langflow holding the real
+   credential, proven by an **effect** that uses it (Langflow authenticating to
+   its own MCP transport), never by a response body, which can only ever show
+   the mask.
 
 If this fails, external MCP servers can no longer be registered from the UI, the
 modal loses field state, the tool list serves stale data after an edit, the
 stdio input-shape validation that keeps every policy layer seeing the same argv
-has been dropped, or the API the modal's edit path is built on stops returning
-what it stored.
+has been dropped, the API the modal's edit path is built on stops returning what
+it stored, a management response discloses a stored credential again, or an
+untouched edit overwrites a credential with its own mask.
 
 ---
 
@@ -45,7 +56,7 @@ what it stored.
 
 `@release` `@workspace` `@components` `@mcp` `@stable`
 (plus `@regression` on the command/args contract test, and `@api` on the
-read-back/update tests)
+read-back/update tests; test 10 is `@regression` `@mcp` `@settings` `@stable`)
 
 - `@stable` — promoted under #1091 after the file was brought back to green on
   nightly `1.12.0.dev9` with repeated `--workers=1 --retries=0` runs and a
@@ -68,6 +79,16 @@ read-back/update tests)
   (#1258) and restored in the #1266 fix PR, re-validated per `CONTRIBUTING.md` on
   nightly `1.12.0.dev39`. The quarantine was `test.fixme` + tag removal, so the
   test ran in no lane at all while it stood.
+- `@stable` on tests 3, 4, 8 and 9 was **removed by the daily's auto-removal**
+  (`8b8d2a487`, VM lane run `20261007T080014Z`, `1.13.0.dev35`) after all four
+  read back `"********"` where they expected the value they saved, and restored
+  in the #2215 fix PR once they asserted the masked contract instead. Nothing
+  was quarantined (no `test.fixme`).
+- Test 10 carries `@regression` because it guards an upstream security fix
+  (langflow-ai/langflow#15529, the same reasoning as the contract test above),
+  `@settings` because it drives Settings → MCP Servers, and ships `@stable`:
+  it needs no subprocess, no npm registry and no LLM — only the instance's own
+  MCP transport, which test 6 already depends on in every lane.
 - `@workspace`/`@components` — drives the flow canvas, sidebar and MCPTools
   node; `@mcp` — MCP server area; `@release` — happy-path MCP registration.
 
@@ -134,15 +155,20 @@ read-back/update tests)
    test asserts form persistence, not connectivity, and registration is accepted
    independently of whether the subprocess starts.)
 3. Save; Settings → MCP Servers → Edit.
-4. Assert every field round-tripped: name, command, `stdio-args_0..3`, and both
-   env key/value pairs.
+4. Assert every field round-tripped: name, command, `stdio-args_0..3` and both
+   env **keys** verbatim, and both env **values** as exactly `********` (#2215 —
+   see *Validation criterion* for why exactly the mask, and not merely "not the
+   plaintext").
 5. Escape the modal and delete the server.
 
 ### 4 — `HTTP/SSE MCP server fields should persist after saving and editing`
 
 Unchanged by #1091 (no stdio surface). Registers an HTTP server with two headers
-and two env pairs, reopens it for edit, and asserts all ten field values
-round-tripped; then deletes it.
+and two env pairs, reopens it for edit, and asserts all ten fields round-tripped:
+name, URL and the four keys verbatim, and the four values (two headers, two env)
+as exactly `********` (#2215); then deletes it. Two of those values are not
+secrets (`application/json`, `30000`) and are masked anyway: the redaction is
+per map, not per value — every non-empty value of `env` and `headers` is masked.
 
 ### 5 — `mcp server tools should be refreshed when editing a server`
 
@@ -252,11 +278,15 @@ and nothing is fetched from the npm registry.
 
 1. Pre-clean the per-worker name (a crashed retry could have left it behind).
 2. `POST /api/v2/mcp/servers/{name}` with `command: npx`,
-   `args: ["mcp-server-read-back-probe"]` and one `env` pair; assert 2xx.
+   `args: ["mcp-server-read-back-probe"]` and one `env` pair; assert 2xx, and
+   that the **create response** already carries the env value as `********` —
+   the write's echo is a management response too, and #15529 masks all three
+   (`GET`, `POST`, `PATCH`).
 3. `GET /api/v2/mcp/servers/{name}`: assert **200** and that the body is exactly
-   the config that was posted — `command`, `args` and `env` equal, and no extra
-   keys. The `env` value round-trips through the encrypted column, so this also
-   covers decryption on read.
+   the posted config **with the env value replaced by `********`** — `command`,
+   `args` and the env key equal, and no extra keys (#2215). Before #15529 this
+   read returned the decrypted value; it now never discloses it, so decryption is
+   no longer observable here — test 10 proves the stored credential by effect.
 4. Assert the single read carries **no `name`** field: the name is owned by the
    URL path, not the body (this is the same rule test 9 pins from the write side).
 5. Assert the server is also listed by `GET /api/v2/mcp/servers`, so a single-read
@@ -270,13 +300,49 @@ and nothing is fetched from the npm registry.
    even if nothing were persisted.
 3. Assert `command` **and** `env` survived: neither was mentioned by the patch, so
    both surviving is the evidence that the merge is per top-level key rather than
-   a whole-document replace.
+   a whole-document replace. `env` reads back as `{MCP_PROBE_TOKEN: "********"}`
+   (#2215): the key survived and still holds a non-empty value — an empty one
+   would read back as `""`, not as the mask.
 4. `PATCH` with only `env` (a different single pair): assert `command`/`args`
    survive and the previous `env` pair is **gone** — the merge replaces a key's
-   value wholesale, it does not deep-merge into it.
-5. `PATCH` with a body `name` that disagrees with the URL: assert **422** and a
+   value wholesale, it does not deep-merge into it (`{MCP_PROBE_OTHER: "********"}`).
+5. `PATCH` whose `env` sends `********` for a key that holds **no** stored value
+   (#2215): assert **422** with a detail matching
+   `/can only preserve an existing value/i`, then assert via `GET` that the stored
+   config is untouched. A mask may only stand for a credential Langflow already
+   holds; accepting one for a new key would store the placeholder itself.
+6. `PATCH` with a body `name` that disagrees with the URL: assert **422** and a
    detail matching `/name is immutable/i`, then assert via `GET` that the stored
    config is untouched and carries no stray `name` key.
+
+### 10 — `an untouched edit keeps the stored MCP credential — Langflow still authenticates to itself` *(new, #2215)*
+
+No subprocess, no npm registry, no LLM: the registered server is the instance's
+**own** project transport, the same self-call test 6 makes, because it is the
+only MCP server this suite can reach whose answer depends on the stored header.
+
+1. Mint an API key (`createApiKey`) and derive the first project's
+   `/api/v1/mcp/project/{id}/streamable` URL from `PLAYWRIGHT_BASE_URL`.
+2. `POST /api/v2/mcp/servers/{name}` with that `url` and
+   `headers: {"x-api-key": <key>}`; assert 2xx.
+3. `GET /api/v2/mcp/servers/{name}`: assert the body is exactly
+   `{url, headers: {"x-api-key": "********"}}` — the URL verbatim, the credential
+   masked.
+4. Settings → MCP Servers → **Edit** the server: assert `http-url-input` is the
+   URL, `http-headers-key-0` is `x-api-key`, and
+   `popover-anchor-http-headers-value-0` reads `********`.
+5. Save the modal **without touching anything**; wait for its
+   `PATCH /api/v2/mcp/servers/{name}` and assert **200** (the modal resends the
+   masks it was shown — measured on `1.13.0.dev35`, see *Notes*).
+6. **Effect:** `waitForMcpToolsCount` resolves with a number — Langflow
+   connected to itself with the stored header, so the mask resolved to the real
+   key. Had the save stored `********` literally, the transport would refuse it.
+7. **Control:** `PATCH` the header to a value that is not a key; assert the
+   server is then reported as refused (`the configured credential was refused`)
+   by `waitForMcpCredentialRefused`. Without this step, step 6 would also pass
+   against a transport that stopped checking credentials — the shape `1.12.0.dev31`
+   had, where a keyless request answered 200 (#1522).
+8. Delete the server and the key (`afterEach`, id-scoped).
 
 ---
 
@@ -296,7 +362,12 @@ and nothing is fetched from the npm registry.
   (echo), `anchor-popover-anchor-input-thought` + `int_int_thoughtnumber`
   (sequentialthinking).
 - **Every modal field round-trips** save → edit: stdio name/command/`args_0..3`
-  + 2 env pairs; HTTP name/URL + 2 headers + 2 env pairs.
+  + 2 env keys; HTTP name/URL + 2 header keys + 2 env keys — all verbatim — and
+  every env/header **value** reads exactly `********` (#2215). Exactly the mask,
+  not "anything but the plaintext": Langflow masks only a **non-empty** value
+  (an empty one reads back as `""`), so the mask is also the evidence that a
+  value was stored at all, and a looser check would pass on a field the modal
+  dropped.
 - **The node's own modal binds the node.** When the Add MCP Server modal opened
   from the MCP Tools node closes, `mcp-server-dropdown` reads the name of the
   server that modal just created — asserted before the test touches the server
@@ -307,16 +378,27 @@ and nothing is fetched from the npm registry.
   satisfied only by the option's own testid appearing — never by the tool
   control merely becoming enabled, which happens before any list exists and
   happens in the error state as well (#1422).
-- **The single-server read returns what was stored, and only that.**
-  `GET /api/v2/mcp/servers/{name}` answers 200 with a body deep-equal to the
-  posted config — including the `env` pair, decrypted — with no `name` key and no
-  extra keys, and the same server appears in the list endpoint.
-- **`PATCH` persists, merges per top-level key, and cannot rename.** A changed
-  `args` is visible on a subsequent `GET` and leaves `env` intact; a subsequent
-  `env`-only patch leaves `command`/`args` intact and *replaces* the whole `env`
-  object; a body `name` disagreeing with the URL is refused with 422 and changes
-  nothing. Each patch names as few keys as possible, so what survives is evidence
-  about the merge rather than about the patch echoing itself back.
+- **The single-server read returns what was stored, and only that — with the
+  credential masked.** `GET /api/v2/mcp/servers/{name}` answers 200 with a body
+  deep-equal to the posted config with each env value replaced by `********`, no
+  `name` key and no extra keys; the create response is masked the same way; the
+  same server appears in the list endpoint.
+- **`PATCH` persists, merges per top-level key, refuses an orphan mask, and
+  cannot rename.** A changed `args` is visible on a subsequent `GET` and leaves
+  `env` intact (still masked, still non-empty); a subsequent `env`-only patch
+  leaves `command`/`args` intact and *replaces* the whole `env` object; an `env`
+  carrying `********` for a key with no stored value is refused with 422
+  (`/can only preserve an existing value/i`) and changes nothing; a body `name`
+  disagreeing with the URL is refused with 422 and changes nothing. Each patch
+  names as few keys as possible, so what survives is evidence about the merge
+  rather than about the patch echoing itself back.
+- **An untouched edit keeps the credential, proven by effect, with a control.**
+  After the edit modal is saved untouched (`PATCH` 200), `waitForMcpToolsCount`
+  resolves with a number for a server whose only credential is the masked
+  `x-api-key`; after that header is patched to a non-key, the same server is
+  reported with `the configured credential was refused`. The pair is the
+  criterion — the first half alone cannot tell a preserved credential from a
+  transport that stopped checking one.
 
 ## Guarding against false positives *(how)*
 
@@ -358,6 +440,16 @@ and nothing is fetched from the npm registry.
 - **Deep equality, not field spot-checks**, on the read-back: an endpoint that
   quietly added a `name`, a `transport` label or a stray body key would pass a
   per-field check and fail this one.
+- **No response body is ever the evidence for a stored credential** (#2215).
+  Since #15529 every management read answers `********` whether Langflow holds
+  the real value or the mask itself, so a body cannot tell the two apart. Test 10
+  proves it by what the credential *does* — Langflow authenticating to its own
+  transport — and pairs that with a refused control, because a transport that
+  answered without checking (`1.12.0.dev31`, #1522) would make the effect pass
+  on any stored value.
+- **The orphan-mask refusal sits next to an accepted mask**, for the same reason
+  test 7 asserts both directions: the 422 alone would pass against an endpoint
+  that refused every masked write, which would break the modal's whole edit path.
 - **Force-failure check** (CONTRIBUTING §2) executed per test during VERIFY.
 
 ---
@@ -383,6 +475,17 @@ and nothing is fetched from the npm registry.
   and the env blocklist are **not** covered here; test 7 covers only the
   command-shape rule.
 - `uvx`-launched MCP servers that actually start. See *Notes*.
+- **The stored value of an `env` entry** (#2215). No management read discloses it
+  any more, and no MCP server this suite can reach makes it observable — a stdio
+  child would have to echo its environment through a tool call. The env half of
+  the restore logic is covered by **shape only** (tests 3, 8, 9: the key survives
+  and holds a non-empty value; an orphan mask is refused); its value is proven by
+  effect only for `headers` (test 10). Both maps go through the same
+  `restore_mcp_config_secrets` loop upstream, which is the argument — not a
+  measurement — that one effect stands for both.
+- **The mask in `mcp-proxy --headers NAME VALUE` arguments**, which #15529 also
+  redacts and restores by header name and occurrence. No spec here registers a
+  server through `mcp-proxy`.
 
 ---
 
@@ -420,10 +523,26 @@ and nothing is fetched from the npm registry.
   points open; it writes the new server into the `useGetMCPServers` cache before
   calling `onSuccess`.
 - `src/backend/base/langflow/api/v2/mcp.py` — the MCP v2 server API behind tests
-  8 and 9: `get_server_endpoint` (the single read, which returns the *decrypted*
-  config), `update_server(..., merge_existing=True)` (the PATCH merge and its
-  version guard) and `_enforce_immutable_server_name` (the 422 whose detail test 9
-  matches).
+  8, 9 and 10: `get_server_endpoint`, `add_server` and `update_server_endpoint`
+  (each returns `redact_mcp_config(...)` since langflow-ai/langflow#15529),
+  `update_server(..., merge_existing=True)` (the PATCH merge and its version
+  guard), `_restore_config_secrets` (the orphan-mask 422 test 9 matches) and
+  `_enforce_immutable_server_name` (the immutable-name 422 test 9 matches).
+- `src/backend/base/langflow/services/auth/mcp_encryption.py` —
+  `MCP_CONFIG_VALUE_MASK` (`"********"`), `redact_mcp_config` (masks every
+  non-empty value of the `env`/`headers` maps and of `mcp-proxy --headers`
+  arguments) and `restore_mcp_config_secrets` (a mask resolves to the latest
+  stored value of the same key; a mask for a key with no stored value raises the
+  `can only preserve an existing value` error). Introduced by
+  langflow-ai/langflow#15529 (*fix(mcp): redact server credentials from
+  management responses*, merged to `release-1.12.5` on 2026-10-04 and into the
+  1.13 line between `1.13.0.dev34` and `1.13.0.dev35`) — the contract tests 3, 4,
+  8, 9 and 10 assert (#2215).
+- `src/frontend/src/modals/addMcpServerModal/index.tsx` — on edit it renders the
+  masked values as plain text and its save (`usePatchMCPServer`) resends them
+  verbatim; test 10's untouched save depends on that round trip.
+- `src/backend/base/langflow/api/v1/mcp_projects.py` — the project transport test
+  10 registers; its API-key gate is what makes the stored header observable.
 - `src/backend/base/langflow/api/v2/schemas.py` — `MCPServerConfig`, the PATCH/POST
   request model. Its `extra="allow"` is precisely why the immutable-name rule has
   to exist, and its `_validate_stdio_security` validator is what refuses an
@@ -435,7 +554,8 @@ and nothing is fetched from the npm registry.
   `helpers/flows/add-component-from-sidebar.ts`
   (`addComponentFromSidebarWithoutSearch`),
   `helpers/mcp/wait-for-mcp-tool-option.ts` (`waitForMcpToolOption`),
-  `helpers/mcp/wait-for-mcp-tools-count.ts` (`waitForMcpToolsCount`).
+  `helpers/mcp/wait-for-mcp-tools-count.ts` (`waitForMcpToolsCount`,
+  `waitForMcpCredentialRefused`), `helpers/auth/create-api-key.ts`.
 
 ---
 
@@ -472,10 +592,57 @@ and nothing is fetched from the npm registry.
   test 8's deep equality is the assertion that will say so.
 - If the PATCH merge changes granularity (deep-merging `env` instead of
   replacing it), or `_enforce_immutable_server_name` stops answering 422.
+- If `MCP_CONFIG_VALUE_MASK` changes, or the redaction narrows to the values it
+  judges secret (today `application/json` and `30000` are masked too — tests 3
+  and 4 would then fail on those fields, and the right response is to re-read
+  the redaction rule, not to unmask the assertion wholesale).
+- If the edit modal stops resending the masks it shows (e.g. it starts rendering
+  credentials as empty password fields): an untouched save would then send `""`
+  or omit the map, and test 10's effect is the assertion that decides whether the
+  credential survived it.
+- If the project transport's refusal stops reading `the configured credential
+  was refused` — measured as **HTTP 401** on `1.13.0.dev35` (it was 403 on
+  `1.12.0.dev33`, #1522), which is why the control matches the phrase and not
+  the status code.
 
 ---
 
 ## Notes *(optional)*
+
+- **#2215 — four tests read back `"********"`, and the product was right.** On
+  the first day of `1.13.0.dev35` (VM lane run `20261007T080014Z`, 2026-10-07)
+  tests 3, 4, 8 and 9 failed 3/3 attempts each, every one on an env or header
+  value reading the literal mask, and lost `@stable` to the auto-removal. The
+  `v1.13.0.dev34...v1.13.0.dev35` range carries langflow-ai/langflow#15529, which
+  masks credentials in every MCP management response by design. Measured on a
+  fresh `1.13.0.dev35` container before any test changed:
+
+  | Request | Answer |
+  |---|---|
+  | `POST` stdio with `env: {T: "probe-value", EMPTY: ""}` | 200, `env: {T: "********", EMPTY: ""}` — an empty value stays `""` |
+  | `GET` of the same server | identical to the create response |
+  | `PATCH {args}` (args only) | 200, `env` still `{T: "********", …}` — key and value survived |
+  | `PATCH {env: {T: "********"}}` (mask for a stored key) | 200, value preserved |
+  | `PATCH {env: {T: "********", NEW: "********"}}` | **422** `A redacted MCP credential can only preserve an existing value.` |
+  | `POST` with `env: {K: "********"}` | **422**, same detail, and no server is created |
+  | `GET` of an unknown name | **404** `Server not found.` |
+
+  The question that decides *regression* vs *intended* is whether the mask can
+  leak into the **stored** config, so it was answered by effect, with the
+  instance's own project transport registered behind an `x-api-key` header: with
+  the real key it connects (`toolsCount: 0` — the fresh project had no flows —
+  and no credential error); after a `PATCH` resending only masks it still
+  connects; after the header is patched to a non-key it is refused
+  (`rejected the request with HTTP 401: the configured credential was
+  refused`); and a mask sent after that keeps the **latest** stored value, so it
+  stays refused. Driven through the UI, the edit modal renders every env/header
+  value as `********` in an ordinary text input, an untouched save sends
+  `PATCH {url, env: {…: "********"}, headers: {…: "********"}}`, the backend
+  answers 200 and the server still connects. No leak on any path — so the four
+  tests were asserting a contract the product deliberately withdrew (plaintext
+  read-back), and are rewritten to the one it offers instead: keys and
+  structural fields verbatim, values masked, an orphan mask refused, and the
+  credential proven by what it does (test 10).
 
 - **#1266 — the readiness poll could not survive the slowness it existed to wait
   out, and the test paid for load it was itself creating.** Tests 1 and 6 waited
