@@ -82,6 +82,8 @@ export interface TrackerRef {
   url: string;
   /** `title` is a stronger claim of ownership than `path`; both are reported. */
   matchedOn: "title" | "path";
+  /** `owner/name` when trackers come from more than one repository. */
+  repo?: string;
 }
 
 /** A declared, deliberate, permanent absence — see rule 4. */
@@ -413,7 +415,7 @@ function trackerCell(row: ReconcileRow): string {
   return row.trackers
     .map(
       (t) =>
-        `[#${t.number}](${t.url})` +
+        `[${t.repo ?? ""}#${t.number}](${t.url})` +
         (t.matchedOn === "title" ? " — quotes the test" : " — names the file only"),
     )
     .join("<br>");

@@ -193,6 +193,7 @@ reference. In short:
 |---|---|---|---|---|
 | `migration` | `ops/vm/run-migration.sh` | 09:15 | heavy | 12:30 |
 | `coverage-matrix` | `ops/vm/run-coverage-matrix.sh` | 08:45 | none | 10:30 |
+| `stable-orphans` | `ops/vm/run-stable-orphans.sh` | Mondays 10:00 | none | Mondays 11:45 |
 
 `coverage-matrix` commits to the **source's** `main` with `SOURCE_PUSH_TOKEN`, the
 credential the daily's auto-removal and history already use, on a tree of its own: the
@@ -200,6 +201,20 @@ clone is never touched. It sends the dashboard feed to the QA platform only when
 `QA_COVERAGE_MATRIX_ENDPOINT` is set in `/root/.e2e-secrets` (the token,
 `QA_E2E_AUTOMATION_TOKEN`, is already there). `MATRIX_DRY_RUN=1` computes and stops
 before the push and the POST.
+
+`stable-orphans` reconciles `@stable` removals against the open issues that own their
+restore (#1746, #2224). It only reads the source, which is public: `SOURCE_READ_TOKEN`, a
+token with no permission at all, is what it uses and what reaches the reconciler, with
+`SOURCE_PUSH_TOKEN` as the fallback until it exists (the result's `READ_TOKEN` says which).
+It reads `main` into a detached worktree of the clone, removed when the run ends, and reads the open issues of
+every repository in `ORPHAN_TRACKER_REPOS` (default `source destination`): dedicated
+issues live in both until stage 4 moves the backlog. Its report is ONE issue on
+`ISSUE_REPO` under a fixed title, replaced each run and closed when nothing is left;
+Slack hears only about an orphan the last published run did not list. Findings are not
+red: red means the reconciler itself refused. `ORPHANS_DRY_RUN=1` reconciles and stops
+before the issue and Slack. It needs `gh` on the machine, for the reconciler's lookup of
+gate references: installed on the qa on 2026-10-08 from GitHub's apt repository
+(`/etc/apt/sources.list.d/github-cli.list`), so it moves with the system's upgrades.
 
 Installing one routine, e.g. `migration` (each routine's units ship with the routine itself):
 

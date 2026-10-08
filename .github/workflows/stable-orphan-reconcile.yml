@@ -32,6 +32,14 @@
 #    the RUN is broken (an unreadable declarations file, an empty spec parse):
 #    a check that cannot decide must not look like a check that found nothing
 #    (#1012).
+#
+# ─── Moving to the QA VM (#2224) ──────────────────────────────────────────────
+#
+# The same reconciler runs as a routine on the VM (ops/vm/run-stable-orphans.sh),
+# with its report issue on the destination and trackers read from both
+# repositories. This workflow is disabled when the routine's first report issue
+# opens there, and #2083 is closed with a link to it, so the two never publish
+# at once. Way back: `gh workflow enable stable-orphan-reconcile.yml`.
 name: Reconcile @stable orphans
 
 on:

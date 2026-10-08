@@ -479,6 +479,19 @@ describe("renderGateSection", () => {
     assert.match(md, /CONTEXT, not ownership/);
   });
 
+  it("names a context issue's repository when it carries one", () => {
+    const v = classifyGates(
+      input({
+        justifications: {
+          "a/x.spec.ts": { spec: "a/x.spec.ts", sources: [source("gated on #818")] },
+        },
+        refStates: { "#818": { kind: "closed" } },
+        trackedSpecs: { "a/x.spec.ts": [{ number: 8, url: "u", repo: "d/r" }] },
+      }),
+    );
+    assert.match(renderGateSection(v, opts), /\[d\/r#8\]\(u\)/);
+  });
+
   it("says a clean run is clean without inventing a table", () => {
     const md = renderGateSection(classifyGates(input()), opts);
     assert.match(md, /\*\*0 expired\*\*/);

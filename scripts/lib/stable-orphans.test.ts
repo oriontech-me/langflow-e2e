@@ -373,6 +373,26 @@ test("the report names the removing commit and its date for every orphan", () =>
   assert.match(md, /\*\*1 orphaned\*\*/);
 });
 
+test("a tracker from a named repository renders as owner/name#N, a plain one as #N", () => {
+  // The VM routine reads trackers from two repositories (#2224), where #8 alone
+  // would not say which one; the Actions workflow reads one and stays `#N`.
+  const t = declared();
+  const v = reconcile({
+    tests: [t],
+    history: historyFor(t, REMOVED),
+    trackers: {
+      [historyKey(t.relativePath, t.title)]: [
+        { number: 8, title: "i", url: "https://d/8", matchedOn: "path", repo: "d/r" },
+        { number: 9, title: "i", url: "https://s/9", matchedOn: "title" },
+      ],
+    },
+    exemptions: [],
+  });
+  const md = renderReport(v, RENDER);
+  assert.match(md, /\[d\/r#8\]\(https:\/\/d\/8\)/);
+  assert.match(md, /\[#9\]\(https:\/\/s\/9\)/);
+});
+
 test("a title containing a pipe or a newline cannot break the table", () => {
   const t = declared({ title: "a | b\nc" });
   const v = reconcile({

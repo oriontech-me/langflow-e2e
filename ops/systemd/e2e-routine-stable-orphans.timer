@@ -1,0 +1,15 @@
+[Unit]
+Description=Schedule for the E2E stable-orphans routine, 10:00 UTC on Mondays
+
+[Timer]
+# Weekly, as on Actions: the state it measures moves in weeks (#1746, decision 2). After
+# the week's first daily, so a removal made that morning is already on main. The hour is
+# the calendar's (stage 3, task 3).
+OnCalendar=Mon 10:00 UTC
+# A routine that catches up gives a result for a day it did not observe.
+Persistent=false
+AccuracySec=1min
+Unit=e2e-routine-stable-orphans.service
+
+[Install]
+WantedBy=timers.target

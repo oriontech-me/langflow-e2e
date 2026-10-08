@@ -41,6 +41,7 @@
  *   npx ts-node scripts/reconcile-stable-orphans.ts [--markdown out.md]
  *                                                   [--json out.json]
  *                                                   [--no-trackers]
+ *                                                   [--issues-file F ...]
  *                                                   [--max-revisions N]
  */
 
@@ -437,6 +438,11 @@ export interface RawIssue {
   body?: string | null;
   html_url: string;
   pull_request?: unknown;
+  /**
+   * `owner/name`, set only when the issues come from more than one repository
+   * (`--issues-file`): a bare `#8` would then not say which repository's #8.
+   */
+  repo?: string;
 }
 
 /**
@@ -484,6 +490,7 @@ export function buildTrackerIndex(
         title: issue.title,
         url: issue.html_url,
         matchedOn: haystack.includes(test.title) ? "title" : "path",
+        ...(issue.repo ? { repo: issue.repo } : {}),
       });
     }
     if (refs.length > 0) {
@@ -535,6 +542,29 @@ export function fetchOpenIssues(): RawIssue[] {
   return withoutReportIssues(pages.flat());
 }
 
+/**
+ * Open issues read from files instead of from `gh`, for a run that owns its
+ * trackers in more than one repository (the VM routine, #2224: dedicated issues
+ * live on the source and on the destination while stage 4 moves the backlog).
+ *
+ * Each file is one JSON array of issues, already fetched by the caller with the
+ * credential for its host; `gh` here can only reach one. A file that is missing,
+ * unparseable or not an array THROWS, which the caller records as a failed
+ * tracker lookup: an unreadable list of owners decides nothing, and an empty one
+ * would make every removal read as orphaned.
+ */
+export function readIssueFiles(files: string[]): RawIssue[] {
+  const all: RawIssue[] = [];
+  for (const file of files) {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error(`${file} is not a JSON array of issues`);
+    }
+    all.push(...(parsed as RawIssue[]));
+  }
+  return withoutReportIssues(all);
+}
+
 // ─── Gate justifications (#1783) ─────────────────────────────────────────────
 
 /**
@@ -575,7 +605,11 @@ export function buildSpecTrackerIndex(
     for (const issue of real) {
       const haystack = `${issue.title}\n${issue.body ?? ""}`;
       if (!haystack.includes(spec) && !pattern.test(haystack)) continue;
-      refs.push({ number: issue.number, url: issue.html_url });
+      refs.push({
+        number: issue.number,
+        url: issue.html_url,
+        ...(issue.repo ? { repo: issue.repo } : {}),
+      });
     }
     if (refs.length > 0) index[spec] = refs;
   }
@@ -841,8 +875,17 @@ function argValue(argv: string[], flag: string): string | undefined {
   return i === -1 ? undefined : argv[i + 1];
 }
 
+function argValues(argv: string[], flag: string): string[] {
+  const out: string[] = [];
+  argv.forEach((a, i) => {
+    if (a === flag && argv[i + 1] !== undefined) out.push(argv[i + 1]);
+  });
+  return out;
+}
+
 export function run(argv: string[]): number {
   const noTrackers = argv.includes("--no-trackers");
+  const issueFiles = argValues(argv, "--issues-file");
   const maxRevisions = Number(
     argValue(argv, "--max-revisions") ?? DEFAULT_MAX_REVISIONS,
   );
@@ -899,7 +942,8 @@ export function run(argv: string[]): number {
     trackerLookupError = "tracker lookup was disabled with --no-trackers";
   } else {
     try {
-      openIssues = fetchOpenIssues();
+      openIssues =
+        issueFiles.length > 0 ? readIssueFiles(issueFiles) : fetchOpenIssues();
       trackers = buildTrackerIndex(openIssues, candidates);
     } catch (e) {
       trackerLookupError = (e as Error).message.split("\n")[0];

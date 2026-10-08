@@ -1,0 +1,21 @@
+[Unit]
+# The stable-orphans routine (stage 3, task 6, #2224): every @stable removal reconciled
+# against the open issues that own its restore, on the source and the destination, and
+# the report kept current as one issue on the destination. See
+# ops/vm/run-stable-orphans.sh; the shape every routine shares is ops/vm/lib/routine.sh.
+Description=E2E stable-orphans routine: reconcile @stable removals against their trackers (VM lane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service (#1715).
+Environment=HOME=/root
+ExecStart=/root/e2e-qa/ops/vm/run-stable-orphans.sh
+# 2 = skipped (the daily lane held the machine past the budget), 4 = blocked: said by
+# the watchdog, and not a broken unit. This routine never ends blocked; 4 is declared
+# because every routine's unit reads the same (scripts/ops-units.test.mjs).
+SuccessExitStatus=2 4
+# Up to 60 min waiting for the daily lane, then about a minute of work. Well above both.
+TimeoutStartSec=90min
+TimeoutStopSec=2min

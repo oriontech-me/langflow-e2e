@@ -33,6 +33,7 @@ import {
   parseGateDeclarations,
   parseGitLogRaw,
   readBlobs,
+  readIssueFiles,
   resolveRefStates,
   walkSpec,
   withoutReportIssues,
@@ -40,6 +41,7 @@ import {
   type Revision,
 } from "./reconcile-stable-orphans";
 import { OWNERSHIP_ISSUE_TITLE } from "./lib/stable-ownership";
+import { makeTempDir } from "./lib/tmp-dir.mjs";
 import { REPO_ROOT, type DeclaredTest } from "./lib/stable-tests";
 import { historyKey } from "./lib/stable-orphans";
 import {
@@ -479,6 +481,42 @@ test("an issue naming a different spec owns nothing", () => {
     [c],
   );
   assert.deepEqual(index, {});
+});
+
+// ─── Trackers from files (#2224) ─────────────────────────────────────────────
+
+test("readIssueFiles merges every repository's list and drops both report issues", () => {
+  const dir = makeTempDir("issues-file-");
+  const a = path.join(dir, "source.json");
+  const b = path.join(dir, "destination.json");
+  fs.writeFileSync(a, JSON.stringify([issue({ number: 8, repo: "s/r" }), issue({ number: 9, title: ORPHAN_ISSUE_TITLE, repo: "s/r" })]));
+  fs.writeFileSync(b, JSON.stringify([issue({ number: 8, repo: "d/r" }), issue({ number: 3, title: OWNERSHIP_ISSUE_TITLE, repo: "d/r" })]));
+  // The same number in two repositories is two issues, kept apart by `repo`.
+  assert.deepEqual(readIssueFiles([a, b]).map((i) => `${i.repo}#${i.number}`), ["s/r#8", "d/r#8"]);
+});
+
+test("readIssueFiles THROWS on a list it cannot read, never returns an empty one", () => {
+  // An empty tracker list makes every removal an orphan: the caller must see a
+  // failed lookup instead.
+  const dir = makeTempDir("issues-file-");
+  const notArray = path.join(dir, "object.json");
+  fs.writeFileSync(notArray, "{}");
+  const broken = path.join(dir, "broken.json");
+  fs.writeFileSync(broken, "[{");
+  assert.throws(() => readIssueFiles([notArray]), /is not a JSON array of issues/);
+  assert.throws(() => readIssueFiles([broken]));
+  assert.throws(() => readIssueFiles([path.join(dir, "missing.json")]));
+});
+
+test("a tracker from a named repository carries the name, so its number is unambiguous", () => {
+  const c = candidate();
+  const index = buildTrackerIndex([issue({ number: 8, body: "example.spec.ts", repo: "d/r" })], [c]);
+  assert.equal(index[historyKey(SPEC, TITLE)][0].repo, "d/r");
+  const bySpec = buildSpecTrackerIndex([issue({ number: 8, body: SPEC, repo: "d/r" })], [SPEC]);
+  assert.deepEqual(bySpec[SPEC], [{ number: 8, url: "https://example.invalid/1", repo: "d/r" }]);
+  // Without one, nothing changes for the Actions workflow's single repository.
+  const plain = buildTrackerIndex([issue({ number: 8, body: "example.spec.ts" })], [c]);
+  assert.equal("repo" in plain[historyKey(SPEC, TITLE)][0], false);
 });
 
 // ─── Wiring ──────────────────────────────────────────────────────────────────
