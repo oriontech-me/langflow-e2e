@@ -40,9 +40,11 @@
 # STATUS is one of:
 #
 #   refused       the request cannot be served as asked: malformed (when it still
-#                 names a usable id), the daily's window, a branch that is not
-#                 upstream's, or a declared provider collect-models did not find
-#                 active -- the one refusal that comes after the build
+#                 names a usable id), the daily's window, a declared provider whose
+#                 key or model the provider turned down when asked before the build
+#                 (scripts/probe-declared-model.mjs), a branch that is not upstream's,
+#                 or a declared provider collect-models did not find active -- the
+#                 one refusal that comes after the build
 #   build_failed  the commit could not be built the nightly's way, or built wrong
 #   failed        the machine could not do its part (upstream unreachable, no
 #                 tomllib, a build status the script does not use), the run says
@@ -131,6 +133,9 @@ main() {
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
   OD_USED_PROVIDER=""; OD_USED_MODEL=""
   OD_STARTED="$STAMP"; OD_HEAVY_LOCK=""; OD_CLEANING=0; OD_TOUCHED=0; OD_PARSE_ERR=""; OD_LOG_DIR="$LOG_DIR"
+  # What can publish, unset wherever the secrets file is read: the provider pre-check and
+  # the run.
+  OD_PUBLISHING=(SOURCE_PUSH_TOKEN GH_TOKEN GITHUB_TOKEN QA_E2E_AUTOMATION_TOKEN SUPABASE_SERVICE_ROLE_KEY SLACK_WEBHOOK_URL GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN)
 
   # --- one run at a time ------------------------------------------------------------
   # Before the request is read: a second start while one runs must not consume the
@@ -270,6 +275,31 @@ main() {
   # working copy's .env (#1764): linked, as the shadow does, so all lanes read one file.
   [ -f "$REPO/.env" ] && ln -sfn "$REPO/.env" "$OD_WT/.env"
 
+  # --- a declared provider, asked before the build ------------------------------------
+  # One minimal completion, with the key the run would use: a dry key or a
+  # model the account cannot reach is refused now, in seconds, instead of after the
+  # build, with the queue's one slot held. Only a certain answer refuses; anything else
+  # (the network, a 5xx, a probe missing from this suite commit) lets the run go on, and
+  # collect-models decides after the build as before. The keys stay in the subshell.
+  if [ -n "$OD_PROVIDER" ] && [ -r "$SECRETS" ]; then
+    local probe_out probe_rc=0 probe_reason
+    # The locks closed INSIDE the substitution: on the assignment they would not reach it.
+    # Sourced as the run sources it, with no `set -a`: a line with no `export` reaches
+    # neither, and the probe, like playwright's dotenv, then reads the worktree's .env.
+    probe_out="$(
+      exec 9>&- 8>&-
+      # shellcheck disable=SC1090
+      . "$SECRETS"
+      unset "${OD_PUBLISHING[@]}"
+      cd "$OD_WT" && node scripts/probe-declared-model.mjs --provider "$OD_PROVIDER" ${OD_MODEL:+--model "$OD_MODEL"}
+    )" || probe_rc=$?
+    echo "provider pre-check (exit $probe_rc): ${probe_out:-no answer}"
+    if [ "$probe_rc" = "2" ]; then
+      probe_reason="$(node -p "try{JSON.parse(process.argv[1]).reason||''}catch{''}" "$probe_out" 2>/dev/null || true)"
+      ondemand_refuse "the declared provider cannot be used, checked before the build: ${probe_reason:-the pre-check said no without a reason}"
+    fi
+  fi
+
   # --- the image of the branch's commit ---------------------------------------------
   local built rc=0 build_err="$STATE/build-stderr.$$" said
   # 9>&- on everything that can leave a process behind: a daemon that inherited the
@@ -316,8 +346,7 @@ main() {
   else
     ondemand_fail 3 failed "$SECRETS is missing or unreadable"
   fi
-  unset SOURCE_PUSH_TOKEN GH_TOKEN GITHUB_TOKEN QA_E2E_AUTOMATION_TOKEN SUPABASE_SERVICE_ROLE_KEY SLACK_WEBHOOK_URL
-  unset GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+  unset "${OD_PUBLISHING[@]}"
   mkdir -p "$STATE/no-gh-login"
   export GH_CONFIG_DIR="$STATE/no-gh-login"
 
