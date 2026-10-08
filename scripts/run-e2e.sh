@@ -868,6 +868,59 @@ declared_model_refusal() {
   return 0
 }
 
+# The provider and model the run's agent specs used, as one "<provider>\t<model>" line,
+# from what each shard recorded (shard-N.model-target). What was DECLARED is not the
+# answer: with nothing declared it is the day's rotation, which only the shards
+# resolve, and its fallback moves the slot when a key is dry — so "which provider did
+# this run use?" could not be answered afterwards (#2226).
+#
+#   every shard pinned the same target  -> that provider and model
+#   no shard pinned anything            -> "all": the rotation failed, so the lane
+#                                          stayed multi-provider and every active
+#                                          provider ran
+#   shards disagree, pinned or not      -> "mixed": no one value is true of the run;
+#                                          the shards' own lines are in the metadata
+#   no shard recorded one               -> nothing: none reached its pin
+#
+# "all" and "mixed" are no provider's name, and fit the on-demand result's provider
+# shape, so the executor can report them as they are.
+model_used_target() {
+  local f line seen="" first=1
+  for f in "$RUN_DIR"/logs/shard-*.model-target; do
+    [ -f "$f" ] || continue
+    line="$(head -n 1 "$f" 2>/dev/null || true)"
+    # No tab is no record (an unreadable or foreign file), not "unpinned".
+    [[ "$line" == *$'\t'* ]] || continue
+    [ "${line%%$'\t'*}" = "" ] && line="all"$'\t'
+    if [ "$first" = "1" ]; then seen="$line"; first=0
+    elif [ "$line" != "$seen" ]; then seen="mixed"$'\t'; break
+    fi
+  done
+  [ -n "$seen" ] && printf '%s\n' "$seen"
+  return 0
+}
+
+# Every shard's own line, "<shard>=<provider>/<model>" joined by spaces, for the
+# metadata: "mixed" says the shards disagreed, this says how.
+model_targets_by_shard() {
+  local f line idx out=""
+  # In shard order, not glob order: shard-10 sorts before shard-2 as text. The
+  # numbers alone are sorted, so nothing else in the path can split them.
+  local idxs
+  idxs="$(for f in "$RUN_DIR"/logs/shard-*.model-target; do
+    [ -f "$f" ] || continue; f="${f##*/shard-}"; printf '%s\n' "${f%.model-target}"
+  done | sort -n)"
+  for idx in $idxs; do
+    f="$RUN_DIR/logs/shard-$idx.model-target"
+    line="$(head -n 1 "$f" 2>/dev/null || true)"
+    # The same rule as model_used_target: no tab is no record, so it is not listed.
+    [[ "$line" == *$'\t'* ]] || continue
+    out+="${out:+ }$idx=${line%%$'\t'*}/${line#*$'\t'}"
+  done
+  printf '%s' "$out"
+  return 0
+}
+
 # The two switches a run command silently collides with, warned about once, in the
 # phase where there is still time to act.
 #
@@ -1526,6 +1579,9 @@ phase_preflight() {
   fi
 
   mkdir -p "$RUN_DIR"/{logs,all-blobs,all-liveness,all-tokens}
+  # What a previous run under the same RUN_ID recorded of its provider must not be
+  # read as this one's: a rerun with fewer shards would turn "mixed" (#2226).
+  rm -f "$RUN_DIR"/logs/shard-*.model-target "$RUN_DIR/model-used"
   info "run dir: $RUN_DIR"
 
   # Pulled ONCE, here. Left to the starter, four shards 10 s apart would pull the same
@@ -2133,6 +2189,15 @@ run_shard() {
   pin_model_target "$idx" "$gh_env" "$log" || return 1
   # shellcheck disable=SC1090
   if [ -s "$gh_env" ]; then set -a; . "$gh_env"; set +a; fi
+  # What this shard's agent specs run against, as they will read it: the pinned
+  # provider and model, or both empty when nothing is pinned and every active provider
+  # runs. Written before the round, so a shard that dies in it still says. The run's
+  # one answer is model_used_target's (#2226).
+  # Written whole and renamed, so a shard killed mid-write leaves no half line; and
+  # guarded, because a diagnostic must never cost the shard its round.
+  { printf '%s\t%s\n' "${MODEL_TEST_PROVIDER:-}" "${MODEL_TEST_ID:-}" > "$RUN_DIR/logs/shard-$idx.model-target.tmp" \
+      && mv -f "$RUN_DIR/logs/shard-$idx.model-target.tmp" "$RUN_DIR/logs/shard-$idx.model-target"; } 2>/dev/null \
+    || warn "shard $idx: could not record its provider (the run's will read as unknown or partial)"
 
   TOKENS_BASE_URL="http://${host}:${port}" \
   TOKENS_OUT="$wd/token-probes-${idx}.jsonl" \
@@ -2351,6 +2416,17 @@ phase_merge() {
     esac
   fi
 
+  # The provider and model the run used (#2226), beside the declared ones below; and
+  # the same line alone in model-used, for the on-demand executor, which reads plain
+  # files from the run and parses no JSON.
+  local model_used
+  model_used="$(model_used_target)"
+  MODEL_USED_PROVIDER="${model_used%%$'\t'*}"; MODEL_USED_ID="${model_used#*$'\t'}"
+  MODEL_TARGETS_BY_SHARD="$(model_targets_by_shard)"
+  if [ -n "$model_used" ]; then
+    { printf '%s\n' "$model_used" > "$RUN_DIR/model-used"; } 2>/dev/null || warn "could not write $RUN_DIR/model-used"
+  fi
+
   # Both versions in one place, because the whole point of this lane is comparing a
   # verdict with the CI's and neither number is guessable afterwards.
   #
@@ -2420,6 +2496,9 @@ phase_merge() {
     langflow_image_label_sha "${TARGET_IMAGE_LABEL_SHA:-}" \
     model_declared_provider "${DECLARED_MODEL_PROVIDER:-}" \
     model_declared_id "${DECLARED_MODEL_ID:-}" \
+    model_used_provider "${MODEL_USED_PROVIDER:-}" \
+    model_used_id "${MODEL_USED_ID:-}" \
+    model_targets_by_shard "${MODEL_TARGETS_BY_SHARD:-}" \
     langflow_prepare_seconds "${TARGET_PREPARE_S:-}" \
     langflow_target_run_cmd "${LANGFLOW_SRC_RUN_CMD:-}" \
     target_kind "$TARGET_KIND" \

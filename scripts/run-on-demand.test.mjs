@@ -119,6 +119,53 @@ test("a run takes the heavy-lane lock, names itself as holder, and clears only i
   assert.equal(r.heavyHolder, null, "the run left its holder line behind");
 });
 
+// PROVIDER and MODEL are what the run USED, in the queue contract's words (#2226):
+// with nothing declared that is the day's rotation, which only the run resolves.
+const ROTATION = "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_REQUESTED_BY=victor\n";
+
+test("a run on the day's rotation reports the provider and model the run used, not the request's ''", () => {
+  const r = onDemand({ request: ROTATION, modelUsed: "google\tgemini-2.5-flash\n" });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.result["req-1"].PROVIDER, "google");
+  assert.equal(r.result["req-1"].MODEL, "gemini-2.5-flash");
+});
+
+test("a declared provider is reported with the model the run resolved for it", () => {
+  const r = onDemand({ modelUsed: "anthropic\tclaude-sonnet-5\n" });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.result["req-1"].PROVIDER, "anthropic");
+  assert.equal(r.result["req-1"].MODEL, "claude-sonnet-5");
+});
+
+test("more than one provider is reported in run-e2e.sh's words, all or mixed, with no model", () => {
+  for (const word of ["all", "mixed"]) {
+    const r = onDemand({ request: ROTATION, modelUsed: `${word}\t\n` });
+    assert.equal(r.status, 0, r.log);
+    assert.equal(r.result["req-1"].PROVIDER, word);
+    assert.equal(r.result["req-1"].MODEL, "");
+  }
+});
+
+test("a run that left no model-used line keeps what was requested", () => {
+  const rotation = onDemand({ request: ROTATION });
+  assert.equal(rotation.result["req-1"].PROVIDER, "");
+  assert.equal(rotation.result["req-1"].MODEL, "");
+  // A refused declaration never pins, so it never writes one: the result names what
+  // was refused.
+  const refused = onDemand({ modelRefused: 'the declared provider "anthropic" is not usable', runExit: 1 });
+  assert.equal(refused.result["req-1"].STATUS, "refused");
+  assert.equal(refused.result["req-1"].PROVIDER, "anthropic");
+});
+
+test("a model-used line outside the request's shapes is not reported, so the result stays one the platform takes", () => {
+  for (const line of ["Anthropic;x\tclaude\n", "anthropic\tclaude sonnet\n", "anthropic\n", "\tclaude\n", `${"a".repeat(41)}\tm\n`]) {
+    const r = onDemand({ request: ROTATION, modelUsed: line });
+    assert.equal(r.status, 0, r.log);
+    assert.equal(r.result["req-1"].PROVIDER, "", `reported ${JSON.stringify(line)}`);
+    assert.equal(r.result["req-1"].MODEL, "");
+  }
+});
+
 test("a green run is done/green, exit 0, and the result names the run and the target", () => {
   const r = onDemand();
   assert.equal(r.status, 0, r.log);
