@@ -129,6 +129,7 @@ main() {
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
+  OD_USED_PROVIDER=""; OD_USED_MODEL=""
   OD_STARTED="$STAMP"; OD_HEAVY_LOCK=""; OD_CLEANING=0; OD_TOUCHED=0; OD_PARSE_ERR=""; OD_LOG_DIR="$LOG_DIR"
 
   # --- one run at a time ------------------------------------------------------------
@@ -366,6 +367,7 @@ main() {
   # ondemand_finish classifies only an exit with no STATUS, so a SIGTERM between a
   # STATUS and its EXIT left a result the platform refuses (EXIT is required).
   local verdict_errs last_err model_refused
+  ondemand_read_model_used "$RUNS_ROOT/$OD_RUN_ID/model-used"
   verdict_errs="$(ondemand_run_errors verdict)"
   last_err="$(ondemand_run_errors last)"
   model_refused="$(cat "$RUNS_ROOT/$OD_RUN_ID"/logs/shard-*.model-refused 2>/dev/null | head -n 1)"
@@ -430,6 +432,25 @@ ondemand_parse_request() {
   if [ -n "$OD_MODEL" ] && [ -z "$OD_PROVIDER" ]; then
     OD_PARSE_ERR="ONDEMAND_MODEL needs ONDEMAND_PROVIDER: a model is declared for a provider"; return 1
   fi
+  return 0
+}
+
+# The provider and model the run's agent specs used, from the run's model-used line
+# ("<provider>\t<model>", written by run-e2e.sh's phase_merge; "all" and "mixed" are
+# its words for more than one). PROVIDER and MODEL in the result are "what was
+# actually used" in the queue contract, and a run on the day's rotation used to echo
+# the request's '' instead (#2226). Absent, or not in the request's own shapes, the
+# result keeps what was requested: a value the platform refuses would cost the whole
+# result, not just this field.
+ondemand_read_model_used() {
+  local file="$1" line provider model
+  [ -f "$file" ] || return 0
+  line="$(head -n 1 "$file" 2>/dev/null || true)"
+  [[ "$line" == *$'\t'* ]] || return 0
+  provider="${line%%$'\t'*}"; model="${line#*$'\t'}"
+  [[ "$provider" =~ ^[a-z0-9-]{1,40}$ ]] || return 0
+  [[ "$model" =~ ^[A-Za-z0-9._:/-]{0,120}$ ]] || return 0
+  OD_USED_PROVIDER="$provider"; OD_USED_MODEL="$model"
   return 0
 }
 
@@ -550,8 +571,14 @@ ondemand_write_result() {
     ondemand_kv TARGET_VERSION "$OD_TARGET_VERSION"
     ondemand_kv BUILD_S "$OD_BUILD_S"
     ondemand_kv SUITE_SHA "$OD_SUITE_SHA"
-    ondemand_kv PROVIDER "$OD_PROVIDER"
-    ondemand_kv MODEL "$OD_MODEL"
+    # What was used when the run said (#2226), else what was requested.
+    if [ -n "$OD_USED_PROVIDER" ]; then
+      ondemand_kv PROVIDER "$OD_USED_PROVIDER"
+      ondemand_kv MODEL "$OD_USED_MODEL"
+    else
+      ondemand_kv PROVIDER "$OD_PROVIDER"
+      ondemand_kv MODEL "$OD_MODEL"
+    fi
     ondemand_kv REQUESTED_BY "$OD_BY"
     ondemand_kv CLEANUP "$1"
     ondemand_kv STARTED "$OD_STARTED"

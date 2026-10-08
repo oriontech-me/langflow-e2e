@@ -47,6 +47,9 @@ export function setup({
   verdict = [],
   preError = null,
   modelRefused = null,
+  // The run's model-used line as phase_merge writes it, "<provider>\t<model>" (\t
+  // and \n are expanded); null writes none, as a run that never reached its merge.
+  modelUsed = null,
   orphans = [],
   termOnConsume = false,
 } = {}) {
@@ -71,6 +74,7 @@ sleep ${runSleep}
 ${preError ? `printf '\\033[1;31m::error:: %s\\033[0m\\n' ${q(preError)} >&2` : ""}
 ${writeResults ? 'mkdir -p "$RUNS_ROOT/$RUN_ID" && echo "{}" > "$RUNS_ROOT/$RUN_ID/results.json"' : ""}
 ${modelRefused ? `mkdir -p "$RUNS_ROOT/$RUN_ID/logs" && echo ${q(modelRefused)} > "$RUNS_ROOT/$RUN_ID/logs/shard-2.model-refused"` : ""}
+${modelUsed !== null ? `mkdir -p "$RUNS_ROOT/$RUN_ID" && printf '%b' ${q(modelUsed)} > "$RUNS_ROOT/$RUN_ID/model-used"` : ""}
 ${verdict.length ? `printf '\\n\\033[1;36m==> %s\\033[0m\\n' Verdict\n${verdict.map((v) => `printf '\\033[1;31m::error:: %s\\033[0m\\n' ${q(v)} >&2`).join("\n")}` : ""}
 exit ${runExit}
 `,
