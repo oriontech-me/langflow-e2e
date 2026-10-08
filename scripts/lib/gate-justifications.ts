@@ -185,6 +185,8 @@ export interface GateInput {
 export interface TrackedBy {
   number: number;
   url: string;
+  /** `owner/name` when trackers come from more than one repository. */
+  repo?: string;
 }
 
 // ─── Verdict ─────────────────────────────────────────────────────────────────
@@ -642,7 +644,9 @@ export function renderGateSection(
     for (const r of v.expired) {
       const context =
         r.trackedBy.length > 0
-          ? r.trackedBy.map((t) => `[#${t.number}](${t.url})`).join(", ")
+          ? r.trackedBy
+              .map((t) => `[${t.repo ?? ""}#${t.number}](${t.url})`)
+              .join(", ")
           : "—";
       lines.push(
         `| \`${r.spec}\` | ${refCell(r.refs)} | ${sourceCell(r.sources)} | ${context} |`,
