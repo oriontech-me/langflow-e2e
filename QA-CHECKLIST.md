@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-07
+> **Last updated:** 2026-10-08
 
 ---
 
@@ -1611,7 +1611,7 @@
 | `core-functionality/a2a/` | 18 | 13 | 0 | 1 | 4 |
 | `flow-functionality/` | 37 | 34 | 0 | 2 | 1 |
 | `mcp/client/` | 15 | 12 | 1 | 0 | 2 |
-| `mcp/server/` | 19 | 16 | 1 | 1 | 1 |
+| `mcp/server/` | 20 | 17 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 48 | 44 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 11 | 10 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 30 | 26 | 0 | 0 | 4 |
@@ -1621,7 +1621,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **743** | **653 (88%)** | **39 (5%)** | **13 (2%)** | **38 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **744** | **654 (88%)** | **39 (5%)** | **13 (2%)** | **38 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1637,7 +1637,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 726 `test()` calls carrying the `@stable` tag, distributed across 283 spec
+> 731 `test()` calls carrying the `@stable` tag, distributed across 283 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2327,9 +2327,14 @@
 - [x] two tools with the same action name are both callable and each runs its own flow → `mcp-server-tool-naming.spec.ts`
 - [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
+- [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
+- [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] mcp server tools should be refreshed when editing a server → `mcp-server.spec.ts`
 - [x] Streamable HTTP MCP server with server-everything should load tools correctly → `mcp-server.spec.ts`
 - [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
+- [x] a registered MCP server is read back individually with the fields it was created with → `mcp-server.spec.ts`
+- [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`
+- [x] an untouched edit keeps the stored MCP credential — Langflow still authenticates to itself → `mcp-server.spec.ts`
 
 #### security/
 - [x] validating a crafted default-argument payload does not execute it → `code-execution-endpoints.spec.ts`
