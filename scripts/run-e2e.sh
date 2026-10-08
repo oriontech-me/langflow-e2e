@@ -913,6 +913,8 @@ model_targets_by_shard() {
   for idx in $idxs; do
     f="$RUN_DIR/logs/shard-$idx.model-target"
     line="$(head -n 1 "$f" 2>/dev/null || true)"
+    # The same rule as model_used_target: no tab is no record, so it is not listed.
+    [[ "$line" == *$'\t'* ]] || continue
     out+="${out:+ }$idx=${line%%$'\t'*}/${line#*$'\t'}"
   done
   printf '%s' "$out"
@@ -2422,7 +2424,7 @@ phase_merge() {
   MODEL_USED_PROVIDER="${model_used%%$'\t'*}"; MODEL_USED_ID="${model_used#*$'\t'}"
   MODEL_TARGETS_BY_SHARD="$(model_targets_by_shard)"
   if [ -n "$model_used" ]; then
-    printf '%s\n' "$model_used" > "$RUN_DIR/model-used" 2>/dev/null || warn "could not write $RUN_DIR/model-used"
+    { printf '%s\n' "$model_used" > "$RUN_DIR/model-used"; } 2>/dev/null || warn "could not write $RUN_DIR/model-used"
   fi
 
   # Both versions in one place, because the whole point of this lane is comparing a

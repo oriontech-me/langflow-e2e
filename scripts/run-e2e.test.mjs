@@ -3837,6 +3837,7 @@ test("a shard file with no tab is no record, not an unpinned shard", () => {
   const pinned = "openai\tgpt-4o-mini\n";
   assert.equal(modelUsed([pinned, "", pinned]).used, "openai\tgpt-4o-mini");
   assert.equal(modelUsed([pinned, "garbage\n"]).used, "openai\tgpt-4o-mini");
+  assert.equal(modelUsed([pinned, "garbage\n", "\t\n"]).byShard, "1=openai/gpt-4o-mini 3=/", "nor listed as one");
 });
 
 test("the shards' own lines read in shard order, ten and up included", () => {
