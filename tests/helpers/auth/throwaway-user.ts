@@ -70,7 +70,14 @@ export async function createThrowawayUser(
   return user;
 }
 
-/** Deletes the user (its global variables go with it) and disposes its context. */
+/**
+ * Deletes the user (its global variables go with it) and disposes its context.
+ *
+ * 1.12.x answers 200. Since langflow-ai/langflow#15470 (1.13.0.dev36) the delete is
+ * asynchronous: 202 "User deletion started", the account deactivated at once and its
+ * data erased in the background. The user is unique to the test, so nothing waits
+ * for the erase (#2228).
+ */
 export async function deleteThrowawayUser(
   request: APIRequestContext,
   superHeaders: Record<string, string>,
@@ -78,7 +85,7 @@ export async function deleteThrowawayUser(
 ): Promise<void> {
   try {
     const res = await request.delete(`/api/v1/users/${user.id}`, { headers: superHeaders });
-    if (res.status() !== 200 && res.status() !== 404) {
+    if (res.status() !== 200 && res.status() !== 202 && res.status() !== 404) {
       throw new Error(`DELETE /api/v1/users/${user.id} failed: ${res.status()} — ${await res.text()}`);
     }
   } finally {
