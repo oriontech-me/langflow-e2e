@@ -59,11 +59,17 @@ test.describe("Models API — the selection write surface", () => {
     const res = await request.delete(`/api/v1/users/${throwawayUserId}`, {
       headers: superHeaders,
     });
-    if (res.status() !== 200) {
+    // 1.12.x deletes in the request (200); since langflow-ai/langflow#15470 the
+    // delete is asynchronous (202) and the account is deactivated at once (#2228).
+    const expectedDetail: Record<number, string> = {
+      200: "User deleted",
+      202: "User deletion started",
+    };
+    if (!(res.status() in expectedDetail)) {
       console.warn(`⚠️ Orphan user left behind (${throwawayUserId}): ${await res.text()}`);
       return;
     }
-    expect((await res.json()).detail).toBe("User deleted");
+    expect((await res.json()).detail).toBe(expectedDetail[res.status()]);
   });
 
   const defaultModel = async (
