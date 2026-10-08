@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev34`, #2210; earlier 1.13.0.dev29, #2123)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev35`, #1689; `1.13.0.dev34`, #2210; earlier 1.13.0.dev29, #2123)
 
 ---
 
@@ -63,21 +63,21 @@ the geometry above was measured.
 
 ---
 
-> **The parametrized test currently fails on some providers (#1689).** On
-> `anthropic / claude-haiku-4-5` the message the Agent persists for its own turn
-> carries `context_id: null` while every other message of the same session
-> carries the configured one — 6 failures out of 6 across `1.12.0.dev45` and
-> `1.13.0.dev1`, and **downstream** of the #1060 confirmed-write gate, which
-> passes and so excludes a reverted write. On `openai / gpt-4o-mini`, against
-> the **same** build `1.13.0.dev1`, the same test passes (3 attempts, twice over
-> — measured on CI, which pins openai per #1169). The image is therefore held
-> constant and the provider is the axis; what the two paths do differently is
-> open in #1689. The related source fact — `agent.py` threads `context_id`
-> through the read path (`get_memory_data`) while `_construct_agent_message`
-> builds the stored Message without it and `lfx/base/agents/events.py` never
-> mentions it — is true but cannot be the whole cause, since it would fail both
-> providers. **No annotation is applied:** the test reports the truth per
-> provider, red where the defect reproduces and green where it does not.
+> **A failed run is reported as a failed run, not as a tagging failure (#1689).**
+> An agent run that errors persists an **error row** in the session
+> (`category: "error"`, the provider's message in `text`) with
+> `context_id: null`. The tag check used to count it as an untagged message,
+> so a drained Anthropic key — every call answering
+> `400 … credit balance is too low` — failed this test as
+> `message(s) with wrong context_id: [{"sender":"Agent","context_id":null}]`
+> and was first filed as a provider-dependent product defect. It is not one:
+> Langflow tags every message it is meant to tag, on every provider, and
+> nothing here goes upstream. The fixture's flow-error gate does not catch
+> that case either, because it reads `credit balance is too low` as a provider
+> outage and leaves it unevaluated by design. The tag checks therefore consult
+> `describeRunErrorRows` (`tests/helpers/flows/describe-run-error-rows.ts`)
+> first, and an error row fails the test as
+> `RUN_ERRORED: … [Agent] "<the provider's error>"` before any tag verdict.
 
 ## Preconditions *(optional)*
 
@@ -195,6 +195,11 @@ string checks on persisted/rendered data — no model judgment anywhere.
   seeding separates "seed failed" from "retrieval broken".
 - **Unique CTX + session per run** — monitor rows persist across flow
   deletion; per-run identifiers pin every lookup to THIS run.
+- **A failed run cannot read as a tagging verdict** (#1689) — an error row in
+  the session fails the test as `RUN_ERRORED`, quoting the provider's error,
+  before the tag check runs. Force-failed on `1.13.0.dev35` by writing an
+  invalid `api_key` into the Agent: the test fails naming the provider's 401,
+  where the pre-fix check failed with `wrong context_id`.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — test 1 expects
   `context_id === "wrong-ctx"` ⇒ must fail; M2 — test 2 asserts `S-CTRL`
   present (inverted negative) ⇒ must fail; M3 — test 2 expects a 4th,

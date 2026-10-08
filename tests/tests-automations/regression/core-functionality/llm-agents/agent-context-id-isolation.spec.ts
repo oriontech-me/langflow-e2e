@@ -561,8 +561,9 @@ const targets = resolveTestTargets({ tier: "any-completion" });
 // describe rather than on the file (#1690). File-level `mode: "serial"` makes a
 // failure skip every LATER test in the file, and the two describes here share
 // nothing: the retrieval describe resolves no provider at all. Measured on
-// 1.13.0.dev1 — with the parametrized test failing (it does on
-// `anthropic / claude-haiku-4-5`, see #1689), every run reported `skipped=0`
+// 1.13.0.dev1 — with the parametrized test failing (on
+// `anthropic / claude-haiku-4-5`, whose key was drained at the time — #1689),
+// every run reported `skipped=0`
 // and the model-free coverage still reported its own verdict.
 // Cleanup is id-scoped; nothing here wipes flows.
 
