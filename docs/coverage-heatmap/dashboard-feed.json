@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-07",
+ "refreshed": "2026-10-08",
  "refreshWindow": {
-  "testHealthSince": "2026-08-23",
+  "testHealthSince": "2026-08-24",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -38,9 +38,9 @@
   "areas": 26,
   "newThisGeneration": 3,
   "cappedByProduct": 2,
-  "bullets": 816,
-  "bulletsAutomatedUnwatched": 119,
-  "residualRiskTotal": 108.6
+  "bullets": 820,
+  "bulletsAutomatedUnwatched": 123,
+  "residualRiskTotal": 108.2
  },
  "areas": [
   {
@@ -122,8 +122,8 @@
     "weightedChurn": 1.36
    },
    "bullets": {
-    "total": 34,
-    "validated": 28,
+    "total": 35,
+    "validated": 29,
     "automatedUnwatched": 2,
     "partial": 1,
     "flaky": 0,
@@ -164,56 +164,9 @@
    "rationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async"
   },
   {
-   "key": "serving-identity",
-   "label": "23 Serving / end-user id",
-   "rank": 3,
-   "residualRisk": 6.9,
-   "inherentRisk": 10,
-   "probability": 2,
-   "impact": 5,
-   "mitigation": 0.31,
-   "mitigationBulletDerived": 0.31,
-   "mitigationOverride": null,
-   "axes": {
-    "bugQuintile": 1,
-    "churnQuintile": 1,
-    "fragility": 4,
-    "weightedBugs": 0,
-    "weightedChurn": 0.01
-   },
-   "bullets": {
-    "total": 13,
-    "validated": 0,
-    "automatedUnwatched": 10,
-    "partial": 0,
-    "flaky": 0,
-    "empty": 3
-   },
-   "specs": {
-    "specs": 3,
-    "stable": 0
-   },
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 0,
-    "penalty": 0
-   },
-   "upstreamBugsByYear": {},
-   "previous": null,
-   "delta": null,
-   "isNew": true,
-   "cappedByProduct": false,
-   "instrumentCaveat": null,
-   "platformItems": [
-    2835
-   ],
-   "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
-  },
-  {
    "key": "security",
    "label": "NEW security",
-   "rank": 4,
+   "rank": 3,
    "residualRisk": 6.9,
    "inherentRisk": 15,
    "probability": 3,
@@ -259,7 +212,7 @@
    },
    "delta": {
     "residualRisk": -8.1,
-    "rank": -3,
+    "rank": -2,
     "direction": "improved"
    },
    "isNew": false,
@@ -271,7 +224,7 @@
   {
    "key": "enterprise-authz",
    "label": "22 Enterprise / authz",
-   "rank": 5,
+   "rank": 4,
    "residualRisk": 6.6,
    "inherentRisk": 10,
    "probability": 2,
@@ -316,6 +269,53 @@
     2835
    ],
    "rationale": "A wrong allow in the deny matrix exposes another tenant's flows — maximum blast radius. Fragility: RBAC is a property of the database (bootstrap writes assignments at startup, no way back), and three surfaces already disagree about inherited access (#1532)."
+  },
+  {
+   "key": "serving-identity",
+   "label": "23 Serving / end-user id",
+   "rank": 5,
+   "residualRisk": 6.5,
+   "inherentRisk": 10,
+   "probability": 2,
+   "impact": 5,
+   "mitigation": 0.35,
+   "mitigationBulletDerived": 0.35,
+   "mitigationOverride": null,
+   "axes": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 4,
+    "weightedBugs": 0,
+    "weightedChurn": 0.01
+   },
+   "bullets": {
+    "total": 16,
+    "validated": 0,
+    "automatedUnwatched": 14,
+    "partial": 0,
+    "flaky": 0,
+    "empty": 2
+   },
+   "specs": {
+    "specs": 4,
+    "stable": 0
+   },
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "upstreamBugsByYear": {},
+   "previous": null,
+   "delta": null,
+   "isNew": true,
+   "cappedByProduct": false,
+   "instrumentCaveat": null,
+   "platformItems": [
+    2835
+   ],
+   "rationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200."
   },
   {
    "key": "graph-engine",

@@ -153,9 +153,9 @@
     "penalty": 0.029
    },
    "mitigation": 0.66,
-   "checklistBullets": 34,
+   "checklistBullets": 35,
    "bulletStates": {
-    "x": 28,
+    "x": 29,
     "-": 2,
     " ": 3,
     "~": 1
@@ -175,42 +175,6 @@
    "specCounts": {
     "specs": 13,
     "stable": 12
-   }
-  },
-  {
-   "area": "23 Serving / end-user id",
-   "residualRisk": 6.9,
-   "inherentRisk": 10,
-   "probability": 2,
-   "impact": 5,
-   "inputs": {
-    "bugQuintile": 1,
-    "churnQuintile": 1,
-    "fragility": 4,
-    "weightedBugs": 0,
-    "weightedChurn": 0.01
-   },
-   "mitigationBulletDerived": 0.31,
-   "mitigationOverride": null,
-   "testHealth": {
-    "chronicHardFailures": 0,
-    "chronicFlaky": 0,
-    "stableSpecs": 0,
-    "penalty": 0
-   },
-   "mitigation": 0.31,
-   "checklistBullets": 13,
-   "bulletStates": {
-    "-": 10,
-    " ": 3
-   },
-   "previous": null,
-   "judgementRationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200.",
-   "upstreamBugsByYear": {},
-   "upstreamBugCount": 0,
-   "specCounts": {
-    "specs": 3,
-    "stable": 0
    }
   },
   {
@@ -295,6 +259,42 @@
    "upstreamBugCount": 1,
    "specCounts": {
     "specs": 21,
+    "stable": 0
+   }
+  },
+  {
+   "area": "23 Serving / end-user id",
+   "residualRisk": 6.5,
+   "inherentRisk": 10,
+   "probability": 2,
+   "impact": 5,
+   "inputs": {
+    "bugQuintile": 1,
+    "churnQuintile": 1,
+    "fragility": 4,
+    "weightedBugs": 0,
+    "weightedChurn": 0.01
+   },
+   "mitigationBulletDerived": 0.35,
+   "mitigationOverride": null,
+   "testHealth": {
+    "chronicHardFailures": 0,
+    "chronicFlaky": 0,
+    "stableSpecs": 0,
+    "penalty": 0
+   },
+   "mitigation": 0.35,
+   "checklistBullets": 16,
+   "bulletStates": {
+    "-": 14,
+    " ": 2
+   },
+   "previous": null,
+   "judgementRationale": "The cross-user memory boundary: a leak means one end user reads another's chat history. Fragility: three container-level configurations, one of which (TRUST=0) is fail-closed AND fail-silent while runs still answer 200.",
+   "upstreamBugsByYear": {},
+   "upstreamBugCount": 0,
+   "specCounts": {
+    "specs": 4,
     "stable": 0
    }
   },
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-07",
+ "refreshed": "2026-10-08",
  "refreshWindow": {
-  "testHealthSince": "2026-08-23",
+  "testHealthSince": "2026-08-24",
   "days": 45
  }
 }
