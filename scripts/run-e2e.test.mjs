@@ -1824,7 +1824,7 @@ function metadataFrom(env, after = "") {
   );
   const file = join(dir, "run-metadata.json");
   assert.ok(existsSync(file), `phase_merge wrote no metadata\n${r.stdout}\n${r.stderr}`);
-  return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr };
+  return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr, dir };
 }
 
 test("phase_merge survives a served-version output file it cannot read", (t) => {
@@ -3804,6 +3804,58 @@ test("a refused declared provider fails the verdict with the reason, not as anon
   assert.equal(Number(r.stdout.match(/EXIT=(\d+)/)?.[1]), 1);
   assert.match(r.stderr, /the declared provider could not be used: the declared provider "anthropic" is not usable/);
   assert.equal(r.stderr.match(/could not be used/g).length, 1, "stated once, not once per shard");
+});
+
+/** model_used_target over shard-N.model-target files holding `lines` (index = shard - 1; null = no file). */
+function modelUsed(lines) {
+  const dir = makeTempDir("run-e2e-used-");
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  lines.forEach((l, i) => { if (l !== null) writeFileSync(join(dir, "logs", `shard-${i + 1}.model-target`), l); });
+  const r = sourced(`RUN_DIR=${JSON.stringify(dir)}\nprintf '[%s]' "$(model_used_target)"; printf '{%s}' "$(model_targets_by_shard)"`);
+  assert.equal(r.status, 0, r.stderr);
+  return { used: r.stdout.match(/\[(.*)\]/s)[1], byShard: r.stdout.match(/\{(.*)\}/s)[1] };
+}
+
+test("the run's provider is the one every shard pinned, with its model (#2226)", () => {
+  const pinned = "google\tgemini-2.5-flash\n";
+  assert.equal(modelUsed([pinned, pinned, pinned, pinned]).used, "google\tgemini-2.5-flash");
+  // A shard that never reached its pin left no line, and does not make the run mixed.
+  assert.equal(modelUsed([pinned, null, pinned, pinned]).used, "google\tgemini-2.5-flash");
+});
+
+test("no shard pinned is 'all', shards that disagree are 'mixed', and no line at all is nothing", () => {
+  assert.equal(modelUsed(["\t\n", "\t\n"]).used, "all\t", "the rotation failed: every active provider ran");
+  const split = modelUsed(["openai\tgpt-4o-mini\n", "anthropic\tclaude-sonnet-5\n"]);
+  assert.equal(split.used, "mixed\t");
+  assert.equal(split.byShard, "1=openai/gpt-4o-mini 2=anthropic/claude-sonnet-5", "the metadata says how they differed");
+  assert.equal(modelUsed(["openai\tgpt-4o-mini\n", "\t\n"]).used, "mixed\t", "one pinned and one not is no single value");
+  assert.equal(modelUsed([null, null]).used, "");
+});
+
+test("each shard records what its agent specs run against, after the pin and before the round", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const body = src.slice(src.indexOf("run_shard() {"));
+  const pin = body.indexOf('pin_model_target "$idx"');
+  const record = body.indexOf('"$RUN_DIR/logs/shard-$idx.model-target"');
+  const round = body.indexOf('npx playwright test --grep "@stable"');
+  assert.ok(pin > 0 && record > pin && round > record, "the record sits between the pin and the round");
+  assert.match(body.slice(pin, record + 60), /printf '%s\\t%s\\n' "\$\{MODEL_TEST_PROVIDER:-\}" "\$\{MODEL_TEST_ID:-\}"/);
+});
+
+test("the metadata and the model-used line carry what the run used", () => {
+  const { meta, dir } = metadataFrom({}, [
+    `printf 'openai\\tgpt-4o-mini\\n' > "$RUN_DIR/logs/shard-1.model-target"`,
+    `printf 'openai\\tgpt-4o-mini\\n' > "$RUN_DIR/logs/shard-2.model-target"`,
+  ].join("\n"));
+  assert.equal(meta.model_used_provider, "openai");
+  assert.equal(meta.model_used_id, "gpt-4o-mini");
+  assert.equal(meta.model_targets_by_shard, "1=openai/gpt-4o-mini 2=openai/gpt-4o-mini");
+  assert.equal(readFileSync(join(dir, "model-used"), "utf8"), "openai\tgpt-4o-mini\n");
+  // No shard got that far: empty fields, and no line for the executor to misread.
+  const none = metadataFrom({});
+  assert.equal(none.meta.model_used_provider, "");
+  assert.equal(none.meta.model_used_id, "");
+  assert.equal(existsSync(join(none.dir, "model-used")), false);
 });
 
 test("the metadata carries what was declared, beside what was served", () => {
