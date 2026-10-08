@@ -103,15 +103,15 @@ main() {
   # (SOURCE_READ_TOKEN) is enough, and it is what reaches the repository's own code. The
   # push token is the fallback until that one exists, and the result says which was used
   # (review of #2225).
-  local token sha
+  local token sha which=SOURCE_READ_TOKEN
   token="$(orphans_secret SOURCE_READ_TOKEN)"
-  if [ -n "$token" ]; then
-    routine_set READ_TOKEN SOURCE_READ_TOKEN
-  else
+  if [ -z "$token" ]; then
     token="$(orphans_secret SOURCE_PUSH_TOKEN)"
-    routine_set READ_TOKEN "SOURCE_PUSH_TOKEN (no SOURCE_READ_TOKEN in the secrets file)"
+    which="SOURCE_PUSH_TOKEN (no SOURCE_READ_TOKEN in the secrets file)"
   fi
   [ -n "$token" ] || routine_end failed "neither SOURCE_READ_TOKEN nor SOURCE_PUSH_TOKEN is in the secrets file: the source can be neither read nor asked about its references"
+  # Only once a token is in hand: a failed run must not claim one was used (review of #2225).
+  routine_set READ_TOKEN "$which"
 
   orphans_git "$token" fetch -q --no-write-fetch-head "$OR_SOURCE_URL" "+refs/heads/$OR_BRANCH:$OR_REF" \
     || routine_end failed "could not read $OR_BRANCH from the source"

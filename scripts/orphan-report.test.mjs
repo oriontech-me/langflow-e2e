@@ -247,7 +247,10 @@ test("a Slack post that failed is owed again next run: the seen list does not mo
 test("an unreadable seen list counts as a first run, never as 'all seen'", async () => {
   const stateDir = makeTempDir("orphan-report-");
   writeFileSync(join(stateDir, "orphans-seen.json"), "{not json");
-  const r = await run(fakeNet(), { stateDir });
+  const net = fakeNet();
+  const r = await run(net, { stateDir });
   assert.equal(r.fields.NEW_ORPHANS, "1");
+  // Said as what it is, not as a first run.
+  assert.match(net.state.slack[0].blocks[0].text.text, /announced again because the list of those already announced could not be read/);
   assert.deepEqual(JSON.parse(readFileSync(join(stateDir, "orphans-seen.json"), "utf8")), ["a.spec.ts::t"]);
 });

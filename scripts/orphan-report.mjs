@@ -82,11 +82,15 @@ export function issueAction(outputs, openIssue) {
  * is "new" to it: that is said, rather than passed off as this week's (review of #2225).
  * Deliberate: the report these orphans stood in on the source went unread.
  */
-export function slackText(rows, issueUrl, { firstRun = false } = {}) {
+export function slackText(rows, issueUrl, { seen = "read" } = {}) {
   const n = rows.length;
-  const headline = firstRun
-    ? `@stable: ${n} orphan${n === 1 ? "" : "s"} standing, first report from the VM: test${n === 1 ? "" : "s"} out of the daily that nobody holds`
-    : `@stable: ${n} new orphan${n === 1 ? "" : "s"}, a test out of the daily that nobody holds`;
+  const s = n === 1 ? "" : "s";
+  const headline =
+    seen === "absent"
+      ? `@stable: ${n} orphan${s} standing, first report from the VM: test${s} out of the daily that nobody holds`
+      : seen === "unreadable"
+        ? `@stable: ${n} orphan${s} standing, announced again because the list of those already announced could not be read`
+        : `@stable: ${n} new orphan${s}, a test out of the daily that nobody holds`;
   const list = rows.slice(0, 10).map((r) => `• ${r.title} (\`${r.relativePath}\`)`);
   if (n > 10) list.push(`• and ${n - 10} more`);
   const body = [...list, "", "Restore the tag, open an issue that owns the restore, or declare the absence.", issueUrl ? `Report: ${issueUrl}` : ""]
@@ -136,12 +140,23 @@ async function findReportIssues({ fetchFn, token, host, repo, title }) {
   return open.filter((i) => i.title === title && !i.pull_request).sort((a, b) => b.number - a.number);
 }
 
+/**
+ * The keys the last published run listed, and how they were found: "read", "absent" (a
+ * first run), or "unreadable". The two without keys announce everything; they are kept
+ * apart so the second is not called a first run, week after week (review of #2225).
+ */
 function readSeen(stateDir) {
+  let text;
   try {
-    const parsed = JSON.parse(readFileSync(join(stateDir, "orphans-seen.json"), "utf8"));
-    return Array.isArray(parsed) ? parsed : null;
+    text = readFileSync(join(stateDir, "orphans-seen.json"), "utf8");
+  } catch (e) {
+    return { keys: null, state: e.code === "ENOENT" ? "absent" : "unreadable" };
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? { keys: parsed, state: "read" } : { keys: null, state: "unreadable" };
   } catch {
-    return null;
+    return { keys: null, state: "unreadable" };
   }
 }
 
@@ -221,12 +236,12 @@ export async function publish({ outputs, report, stateDir, env, fetchFn = fetch 
   }
   const current = report?.orphans?.orphaned ?? [];
   const seen = readSeen(stateDir);
-  const fresh = newOrphans(current, seen);
+  const fresh = newOrphans(current, seen.keys);
   fields.NEW_ORPHANS = String(fresh.length);
   if (fresh.length === 0) {
     fields.SLACK = "none";
   } else {
-    const { headline, body: text } = slackText(fresh, issueUrl, { firstRun: seen === null });
+    const { headline, body: text } = slackText(fresh, issueUrl, { seen: seen.state });
     const r = await deliverAlarm(headline, text, env, { fetchFn });
     fields.SLACK = r.ok ? "sent" : `failed: ${r.errors.join("; ")}`.slice(0, 300);
     if (!r.ok) return { ok: true, fields };

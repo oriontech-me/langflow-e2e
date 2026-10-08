@@ -32,7 +32,7 @@ const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encodi
  * issues:    { source: "ok"|"fail", destination: "ok"|"fail" }
  * publish:   "ok" | "fail" | "slackfail"
  */
-function orphans({ reconcile = "findings", issues = {}, publish = "ok", token = "push-token", readToken = "", dryRun = false, runBusy = false, trackers = null, shallow = false, staleRef = false } = {}) {
+function orphans({ reconcile = "findings", issues = {}, publish = "ok", token = "push-token", readToken = "", dryRun = false, runBusy = false, trackers = null, shallow = false, staleRef = false, lockedLeftover = false } = {}) {
   const dir = makeTempDir("run-stable-orphans-");
   const control = join(dir, "control.json");
   writeFileSync(control, q({ reconcile, issues: { source: "ok", destination: "ok", ...issues }, publish }));
@@ -106,6 +106,17 @@ process.exit(2);
     git(repo, "update-ref", "refs/e2e-orphans/20200101T100000Z-1", "HEAD");
     git(repo, "update-ref", "refs/e2e-orphans/29990101T100000Z-1", "HEAD");
   }
+  const state = join(dir, "state");
+  if (lockedLeftover) {
+    // What a run killed inside `git worktree add` leaves: a registration, locked
+    // ("initializing"), whose directory is gone. Prune keeps a locked entry, and the next
+    // add on the same path fails unless it is unlocked first.
+    const tree = join(state, "stable-orphans", "work", "tree");
+    mkdirSync(dirname(tree), { recursive: true });
+    git(repo, "worktree", "add", "-q", "--detach", tree, "HEAD");
+    git(repo, "worktree", "lock", "--reason", "initializing", tree);
+    execFileSync("rm", ["-rf", tree]);
+  }
   const cloneBefore = { head: git(repo, "rev-parse", "HEAD"), status: git(repo, "status", "--porcelain") };
 
   const home = join(dir, "home");
@@ -121,7 +132,6 @@ process.exit(2);
   );
   const lane = join(dir, "lane.env");
   writeFileSync(lane, "ISSUE_HOST=dest.example.invalid\nISSUE_REPO=o/r\nISSUE_CC=\n");
-  const state = join(dir, "state");
   const r = spawnSync("bash", [SCRIPT], {
     encoding: "utf8",
     env: {
@@ -348,8 +358,16 @@ test("a shallow clone is the machine's: failed before any walk", () => {
 test("no source credential, or a second run while one is going, touches nothing", () => {
   const none = orphans({ token: "" });
   assert.equal(none.last.STATUS, "failed");
+  assert.equal(none.last.READ_TOKEN, undefined, "a failed run claimed a token");
   assert.match(none.last.REASON, /^neither SOURCE_READ_TOKEN nor SOURCE_PUSH_TOKEN is in the secrets file/);
   const busy = orphans({ runBusy: true });
   assert.equal(busy.last.STATUS, "skipped");
   assert.equal(busy.reconcile, null);
+});
+
+test("a locked leftover registration from a run killed mid-add is cleared, and the run goes on", () => {
+  const r = orphans({ lockedLeftover: true });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.last.STATUS, "green");
+  assert.equal(r.clone.worktrees, 1, "the leftover registration outlived the run");
 });
