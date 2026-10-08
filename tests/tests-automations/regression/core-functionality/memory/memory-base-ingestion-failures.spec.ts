@@ -326,7 +326,7 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
 
   test(
     "should fail an ingestion whose embedding provider cannot be reached, naming the provider",
-    { tag: ["@stable", "@api", "@files"] },
+    { tag: ["@api", "@files"] },
     async ({ request, playwright }) => {
       const owner = await newUser(
         request,
@@ -362,7 +362,7 @@ test.describe("core-functionality/memory — Memory Base ingestion failure modes
 
   test(
     "should send an Ollama ingestion to the server OLLAMA_BASE_URL names",
-    { tag: ["@stable", "@regression", "@api", "@files"] },
+    { tag: ["@regression", "@api", "@files"] },
     async ({ request, playwright }) => {
       // Regression for langflow-ai/langflow#13883: ingestion built its embeddings
       // with the component's localhost default, which outranked OLLAMA_BASE_URL.

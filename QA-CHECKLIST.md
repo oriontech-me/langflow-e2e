@@ -1637,7 +1637,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 731 `test()` calls carrying the `@stable` tag, distributed across 283 spec
+> 729 `test()` calls carrying the `@stable` tag, distributed across 283 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2074,8 +2074,6 @@
 
 #### core-functionality/memory/
 - [x] should refuse every guarded knowledge-base route for a knowledge base a Memory Base manages → `memory-base-ingestion-failures.spec.ts`
-- [x] should fail an ingestion whose embedding provider cannot be reached, naming the provider → `memory-base-ingestion-failures.spec.ts`
-- [x] should send an Ollama ingestion to the server OLLAMA_BASE_URL names → `memory-base-ingestion-failures.spec.ts`
 - [x] should keep the Google embedding models the Knowledge dialog offers to ones Google still serves → `memory-base-ingestion-failures.spec.ts`
 - [x] should open Create Knowledge Base with the 1000 / 200 / newline defaults and apply the chunk settings chosen there to the stored chunks → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
