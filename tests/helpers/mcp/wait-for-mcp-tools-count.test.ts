@@ -21,8 +21,10 @@ import assert from "node:assert/strict";
 import type { Page } from "@playwright/test";
 import {
   MCP_TOOLS_COUNT_PROBE_TIMEOUT_MS,
+  credentialVerdictOf,
   missingMcpToolsCountMessage,
   toolsCountOf,
+  waitForMcpCredentialRefused,
   waitForMcpToolsCount,
 } from "./wait-for-mcp-tools-count";
 
@@ -171,4 +173,82 @@ test("the failure message separates a dead transport from a server that never se
   assert.match(mixed, /2 of 6/);
   assert.match(mixed, /HTTP 503 — upstream unavailable/);
   assert.match(mixed, /never reported a tool count/i);
+});
+
+// ─── Credential refusal (#2215) ──────────────────────────────────────────────
+//
+// The control half of `mcp-server.spec.ts`'s test 10. Since langflow-ai/langflow#15529
+// no response body discloses a stored MCP credential, so the spec proves one by
+// what it DOES: Langflow authenticating to its own project transport. That proof
+// is only worth something if a wrong credential is refused — `1.12.0.dev31`
+// answered a keyless request with 200 (#1522), and against such a transport the
+// effect would pass on any stored value, the mask itself included. The verdict
+// strings below are the ones measured on `1.13.0.dev35`.
+
+const REFUSED =
+  "Connection failed: MCP server 'srv' at http://localhost:7875/api/v1/mcp/project/p/streamable " +
+  "rejected the request with HTTP 401: the configured credential was refused. " +
+  "Cause: unhandled errors in a TaskGroup (1 sub-exception)";
+
+const checked = (entry: Record<string, unknown>) => ({
+  status: 200,
+  body: [{ name: "lf-starter_project", mode: null, toolsCount: null }, { name: "srv", ...entry }],
+});
+
+test("credentialVerdictOf reads a refusal, a connection, and everything else as pending", () => {
+  assert.deepEqual(
+    credentialVerdictOf([{ name: "srv", toolsCount: null, error: REFUSED }], "srv"),
+    { state: "refused", error: REFUSED },
+  );
+  // Zero tools is still a connection: a fresh project exposes no flows, and
+  // Langflow reports that as `toolsCount: 0` plus "No tools found" — the
+  // credential was accepted all the same (measured, 1.13.0.dev35).
+  assert.deepEqual(
+    credentialVerdictOf([{ name: "srv", toolsCount: 0, error: "No tools found" }], "srv"),
+    { state: "connected", toolsCount: 0 },
+  );
+  // Any other failure says nothing about the credential — a timeout under load
+  // is exactly what #1266 measured on this endpoint.
+  assert.deepEqual(
+    credentialVerdictOf([{ name: "srv", toolsCount: null, error: "Timeout when checking server tools" }], "srv"),
+    { state: "pending", error: "Timeout when checking server tools" },
+  );
+  assert.deepEqual(credentialVerdictOf([{ name: "srv", toolsCount: null }], "srv"), { state: "pending", error: null });
+  assert.deepEqual(credentialVerdictOf([{ name: "other", error: REFUSED }], "srv"), { state: "pending", error: null });
+  assert.deepEqual(credentialVerdictOf({ detail: "Not authenticated" }, "srv"), { state: "pending", error: null });
+});
+
+test("the refusal wait resolves with the refusal, after failed and undecided probes", async () => {
+  const { page, probes } = fakePage([
+    { throws: "apiRequestContext.get: Timeout 45000ms exceeded." },
+    checked({ toolsCount: null, error: "Timeout when checking server tools" }),
+    checked({ toolsCount: null, error: REFUSED }),
+  ]);
+
+  const error = await waitForMcpCredentialRefused(page, "srv", { timeout: 30_000, intervalMs: 10 });
+
+  assert.equal(error, REFUSED);
+  assert.equal(probes.length, 3);
+  assert.equal(probes[0].options?.timeout, MCP_TOOLS_COUNT_PROBE_TIMEOUT_MS);
+});
+
+test("a connection is an immediate failure, never something to wait out", async () => {
+  // The whole reason the control exists: a transport that accepts the wrong key
+  // makes the positive effect meaningless, and no amount of waiting changes that.
+  const { page, probes } = fakePage([checked({ toolsCount: 3 })]);
+
+  await assert.rejects(
+    () => waitForMcpCredentialRefused(page, "srv", { timeout: 30_000, intervalMs: 10 }),
+    /connected .*credential that must be refused/i,
+  );
+  assert.equal(probes.length, 1, "a connection must not be polled again");
+});
+
+test("the refusal wait goes red when no refusal arrives, naming the last thing it saw", async () => {
+  const { page } = fakePage([checked({ toolsCount: null, error: "Timeout when checking server tools" })]);
+
+  await assert.rejects(
+    () => waitForMcpCredentialRefused(page, "srv", { timeout: 30, intervalMs: 10 }),
+    /never reported a refused credential.*Timeout when checking server tools/is,
+  );
 });
