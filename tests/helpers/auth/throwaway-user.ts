@@ -75,8 +75,10 @@ export async function createThrowawayUser(
  *
  * 1.12.x answers 200. Since langflow-ai/langflow#15470 (1.13.0.dev36) the delete is
  * asynchronous: 202 "User deletion started", the account deactivated at once and its
- * data erased in the background. The user is unique to the test, so nothing waits
- * for the erase (#2228).
+ * data erased in the background, the user row last. A 202 alone proves only that the
+ * request was taken: an erase that stalls, or a worker that never started, still
+ * answers 202 and leaks the user. So on 202 this waits for the user to answer 404,
+ * as upstream's own E2E helper does (#2228).
  */
 export async function deleteThrowawayUser(
   request: APIRequestContext,
@@ -88,7 +90,29 @@ export async function deleteThrowawayUser(
     if (res.status() !== 200 && res.status() !== 202 && res.status() !== 404) {
       throw new Error(`DELETE /api/v1/users/${user.id} failed: ${res.status()} — ${await res.text()}`);
     }
+    if (res.status() === 202) await waitForUserErased(request, superHeaders, user.id);
   } finally {
     await user.request.dispose();
   }
+}
+
+const ERASE_TIMEOUT_MS = 30_000;
+const ERASE_POLL_MS = 500;
+
+async function waitForUserErased(
+  request: APIRequestContext,
+  superHeaders: Record<string, string>,
+  userId: string,
+): Promise<void> {
+  const deadline = Date.now() + ERASE_TIMEOUT_MS;
+  let last = "";
+  while (Date.now() < deadline) {
+    const res = await request.get(`/api/v1/users/${userId}`, { headers: superHeaders });
+    if (res.status() === 404) return;
+    last = `${res.status()}`;
+    await new Promise((resolve) => setTimeout(resolve, ERASE_POLL_MS));
+  }
+  throw new Error(
+    `DELETE /api/v1/users/${userId} answered 202 but the user was not erased within ${ERASE_TIMEOUT_MS / 1000}s (last GET: ${last})`,
+  );
 }
