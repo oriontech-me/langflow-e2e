@@ -22,6 +22,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
+import { describeRunErrorRows } from "../../../../helpers/flows/describe-run-error-rows";
 
 /**
  * Agent context_id continuity (QA-CHECKLIST §6.3 "Agent uses custom
@@ -160,12 +161,18 @@ async function openPlaygroundAndSend(page: Page, task: string): Promise<void> {
 // Monitor-API check: every message persisted for the nonce's session carries
 // context_id === expected. Requires at least the user+AI pair so a lone user
 // row cannot pass the assert early.
+//
+// A failed run is reported as a failed run, not as a tagging failure (#1689):
+// Langflow persists an error row with context_id null, so the tag check alone
+// read a drained provider key as a product defect. An error row ends the poll
+// and its text is thrown below, ahead of any tag verdict.
 async function expectSessionTaggedWithContext(
   request: APIRequestContext,
   nonce: string,
   expectedContext: string,
 ): Promise<void> {
   const bearer = await getAuthToken(request);
+  let runError: string | null = null;
   await expect
     .poll(
       async () => {
@@ -184,6 +191,8 @@ async function expectSessionTaggedWithContext(
         const sessionMsgs = messages.filter(
           (m: any) => m.session_id === userMsg.session_id,
         );
+        runError = describeRunErrorRows(sessionMsgs);
+        if (runError) return "all-session-messages-tagged";
         if (sessionMsgs.length < 2) return `only ${sessionMsgs.length} session message(s) persisted yet`;
 
         const badly = sessionMsgs.filter((m: any) => m.context_id !== expectedContext);
@@ -194,6 +203,7 @@ async function expectSessionTaggedWithContext(
       { timeout: 30000 },
     )
     .toBe("all-session-messages-tagged");
+  if (runError) throw new Error(runError);
 }
 
 // ---------- test 2 machinery (model-free; mirrors agent-n-messages-limit) ----------

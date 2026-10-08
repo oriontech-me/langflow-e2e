@@ -23,6 +23,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
+import { describeRunErrorRows } from "../../../../helpers/flows/describe-run-error-rows";
 
 /**
  * Agent context_id isolation (QA-CHECKLIST §6.3 "Switching context_id
@@ -257,6 +258,8 @@ interface MonitorMessage {
   text?: string;
   session_id: string;
   context_id?: string;
+  category?: string;
+  properties?: { icon?: string };
 }
 
 async function getMonitorMessages(
@@ -275,6 +278,11 @@ async function getMonitorMessages(
 // context_id === expected. Returns the turn's message ids + session, so the
 // turn-2 check can partition new messages from old by id (message counts per
 // agent turn are not fixed — id partition beats counting).
+//
+// Both checks report a failed run as a failed run, not as a tagging failure
+// (#1689): Langflow persists an error row with context_id null, so the tag
+// check alone read a drained provider key as a product defect. An error row
+// ends the poll and its text is thrown below, ahead of any tag verdict.
 async function expectTurnTaggedAndCollect(
   request: APIRequestContext,
   nonce: string,
@@ -283,6 +291,7 @@ async function expectTurnTaggedAndCollect(
   const bearer = await getAuthToken(request);
   let sessionId = "";
   let messageIds: string[] = [];
+  let runError: string | null = null;
   await expect
     .poll(
       async () => {
@@ -295,6 +304,8 @@ async function expectTurnTaggedAndCollect(
         if (!userMsg) return "user message with nonce not persisted yet";
 
         const sessionMsgs = messages.filter((m) => m.session_id === userMsg.session_id);
+        runError = describeRunErrorRows(sessionMsgs);
+        if (runError) return "all-turn-messages-tagged";
         if (sessionMsgs.length < 2) return `only ${sessionMsgs.length} session message(s) persisted yet`;
 
         const badly = sessionMsgs.filter((m) => m.context_id !== expectedContext);
@@ -308,6 +319,7 @@ async function expectTurnTaggedAndCollect(
       { timeout: 30000 },
     )
     .toBe("all-turn-messages-tagged");
+  if (runError) throw new Error(runError);
   return { sessionId, messageIds };
 }
 
@@ -323,6 +335,7 @@ async function expectSwitchedTurnTagging(
 ): Promise<void> {
   const bearer = await getAuthToken(request);
   const turn1Ids = new Set(turn1.messageIds);
+  let runError: string | null = null;
   await expect
     .poll(
       async () => {
@@ -336,6 +349,8 @@ async function expectSwitchedTurnTagging(
           (m) => m.sender !== "Machine" && (m.text ?? "").includes(nonce2),
         );
         if (!user2) return "turn-2 user message not persisted yet";
+        runError = describeRunErrorRows(newMsgs);
+        if (runError) return "turns-tagged-with-their-own-context";
         if (newMsgs.length < 2) return `only ${newMsgs.length} turn-2 message(s) persisted yet`;
 
         const badNew = newMsgs.filter((m) => m.context_id !== turn2Context);
@@ -352,6 +367,7 @@ async function expectSwitchedTurnTagging(
       { timeout: 30000 },
     )
     .toBe("turns-tagged-with-their-own-context");
+  if (runError) throw new Error(runError);
 }
 
 // ---------- test 1 machinery (model-free; mirrors agent-context-id-continuity) ----------
