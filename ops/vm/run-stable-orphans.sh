@@ -89,12 +89,29 @@ main() {
   rm -rf "${OR_WORK:?}"; mkdir -p "$OR_WORK"
   [ -x "$REPO/node_modules/.bin/ts-node" ] || routine_end failed "no node_modules/.bin/ts-node in $REPO: the reconciler runs on the clone's installed tools"
   command -v node > /dev/null 2>&1 || routine_end failed "node is not on PATH"
+  # The reconciler asks GitHub about gate references through gh. Absent, every reference
+  # reads lookup-failed and the run fails each week with a reason that hides why (review
+  # of #2225).
+  command -v gh > /dev/null 2>&1 || routine_end failed "gh is not on PATH: the reconciler looks up gate references with it"
 
+  # A run killed by SIGKILL (TimeoutStopSec) leaves its private ref; refs from an earlier
+  # day belong to no live run (review of #2225).
+  orphans_prune_refs
   # The source token, read here and never exported. It reads main, the source's issues
   # and the gate references; the source is public, so reading is all it is used for.
+  # Read, never written: the source is public, so a token with no permission at all
+  # (SOURCE_READ_TOKEN) is enough, and it is what reaches the repository's own code. The
+  # push token is the fallback until that one exists, and the result says which was used
+  # (review of #2225).
   local token sha
-  token="$(orphans_secret SOURCE_PUSH_TOKEN)"
-  [ -n "$token" ] || routine_end failed "SOURCE_PUSH_TOKEN is not in the secrets file: the source can be neither read nor asked about its references"
+  token="$(orphans_secret SOURCE_READ_TOKEN)"
+  if [ -n "$token" ]; then
+    routine_set READ_TOKEN SOURCE_READ_TOKEN
+  else
+    token="$(orphans_secret SOURCE_PUSH_TOKEN)"
+    routine_set READ_TOKEN "SOURCE_PUSH_TOKEN (no SOURCE_READ_TOKEN in the secrets file)"
+  fi
+  [ -n "$token" ] || routine_end failed "neither SOURCE_READ_TOKEN nor SOURCE_PUSH_TOKEN is in the secrets file: the source can be neither read nor asked about its references"
 
   orphans_git "$token" fetch -q --no-write-fetch-head "$OR_SOURCE_URL" "+refs/heads/$OR_BRANCH:$OR_REF" \
     || routine_end failed "could not read $OR_BRANCH from the source"
@@ -119,6 +136,9 @@ main() {
     fi
     files+=(--issues-file "$OR_WORK/issues-$n.json")
   done
+  # A blank list would send the reconciler back to its own gh sweep of the source alone,
+  # silently (review of #2225).
+  [ "$n" -gt 0 ] || routine_end failed "ORPHAN_TRACKER_REPOS names no repository: ownership would be read from the source alone"
   routine_set TRACKERS "${ORPHAN_TRACKER_REPOS:-source destination}"
 
   # The reconciler. The source token reaches it for `gh api graphql`, the gate
@@ -133,7 +153,7 @@ main() {
       --markdown "$OR_WORK/report.md" --json "$OR_WORK/report.json"
   ) > "$OR_WORK/reconcile.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
-    routine_end "$(orphans_verdict "$OR_WORK/reconcile.log")" "the reconciler ended with status $rc on ${sha:0:12}: $(orphans_tail "$OR_WORK/reconcile.log")"
+    routine_end "$(orphans_verdict "$OR_WORK/reconcile.log" "$rc")" "the reconciler ended with status $rc on ${sha:0:12}: $(orphans_tail "$OR_WORK/reconcile.log")"
   fi
 
   local orphans findings tracker_failed gate_failed
@@ -157,15 +177,19 @@ main() {
     routine_end failed "the report issue could not be made current on the destination: $(orphans_field PUBLISH_ERROR "$out")"
   fi
   echo "$out"
-  local issue slack
+  local issue slack warning
   issue="$(orphans_field ISSUE "$out")"
   slack="$(orphans_field SLACK "$out")"
   routine_set ISSUE "$issue"
   routine_set NEW_ORPHANS "$(orphans_field NEW_ORPHANS "$out")"
   routine_set SLACK "$slack"
+  warning="$(orphans_field LABEL_WARNING "$out")"
+  [ -z "$warning" ] || routine_set LABEL_WARNING "$warning"
   case "$slack" in
     failed*) routine_set ALARM "the orphan report is current ($issue), but its Slack post for new orphans failed: ${slack#failed: }" ;;
   esac
+  warning="$(orphans_field SEEN_WARNING "$out")"
+  [ -z "$warning" ] || routine_set ALARM "the orphan report is current ($issue), but $warning"
   routine_end green "$orphans orphan(s), $findings finding(s) on ${sha:0:12}; report issue: $issue"
 }
 
@@ -177,15 +201,15 @@ orphans_issues() {
   local spec="$1" token="$2" out="$3"
   case "$spec" in
     source)
-      ORPHAN_ISSUES_HOST=github.com ORPHAN_ISSUES_REPO="$OR_SOURCE_REPO" ORPHAN_ISSUES_TOKEN="$token" \
-        node "$REPO/scripts/orphan-report.mjs" issues "$out" ;;
+      orphans_node ORPHAN_ISSUES_HOST=github.com ORPHAN_ISSUES_REPO="$OR_SOURCE_REPO" ORPHAN_ISSUES_TOKEN="$token" \
+        -- issues "$out" ;;
     destination)
       (
         set +u
         orphans_load_publishing
         [ -n "${ISSUE_HOST:-}" ] && [ -n "${ISSUE_REPO:-}" ] || { echo "ISSUE_HOST and ISSUE_REPO are not in the lane file"; exit 1; }
-        ORPHAN_ISSUES_HOST="$ISSUE_HOST" ORPHAN_ISSUES_REPO="$ISSUE_REPO" ORPHAN_ISSUES_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}" \
-          node "$REPO/scripts/orphan-report.mjs" issues "$out"
+        orphans_node ORPHAN_ISSUES_HOST="$ISSUE_HOST" ORPHAN_ISSUES_REPO="$ISSUE_REPO" ORPHAN_ISSUES_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}" \
+          -- issues "$out"
       ) ;;
     *) echo "unknown tracker repository '$spec' in ORPHAN_TRACKER_REPOS (source or destination)"; return 1 ;;
   esac
@@ -196,9 +220,23 @@ orphans_publish() {
   (
     set +u
     orphans_load_publishing
-    export ISSUE_HOST ISSUE_REPO GITHUB_TOKEN GH_TOKEN SLACK_WEBHOOK_URL 2> /dev/null
-    node "$REPO/scripts/orphan-report.mjs" publish "$OR_WORK/outputs" "$OR_WORK/report.json" "$RT_STATE"
+    orphans_node ISSUE_HOST="${ISSUE_HOST:-}" ISSUE_REPO="${ISSUE_REPO:-}" GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}" \
+      SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}" -- publish "$OR_WORK/outputs" "$OR_WORK/report.json" "$RT_STATE"
   )
+}
+
+# orphan-report.mjs with exactly the names given before `--` and nothing else: the
+# secrets file is `export X=` lines, and sourcing it would hand node every secret on the
+# machine, the push token included (review of #2225).
+orphans_node() {
+  local vars=() v
+  # Trust settings are not secrets, and a destination behind a private CA needs them.
+  for v in NODE_EXTRA_CA_CERTS SSL_CERT_FILE SSL_CERT_DIR; do
+    [ -z "${!v:-}" ] || vars+=("$v=${!v}")
+  done
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do vars+=("$1"); shift; done
+  shift
+  env -i PATH="$PATH" HOME="$HOME" "${vars[@]}" node "$REPO/scripts/orphan-report.mjs" "$@"
 }
 
 orphans_load_publishing() {
@@ -210,13 +248,18 @@ orphans_load_publishing() {
 }
 
 # One key of the reconciler's $GITHUB_OUTPUT (single-line keys only).
-orphans_output() { sed -n "s/^$1=//p" "$OR_WORK/outputs" | tail -n 1; }
+# The first occurrence, before any `key<<DELIM` body: the report's own text follows, and a
+# line in it must not answer for a key (review of #2225).
+orphans_output() { sed -n '/^[A-Za-z_][A-Za-z0-9_]*<</q; p' "$OR_WORK/outputs" | sed -n "s/^$1=//p" | head -n 1; }
 # One KEY=VALUE of orphan-report.mjs's output.
 orphans_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | tail -n 1; }
 
-# The reconciler refusing is the repository's (red) unless its log names the machine.
+# The reconciler refusing is the repository's (red) unless it was killed by a signal (an
+# OOM kill is 137) or its log names the machine.
 orphans_verdict() {
-  if grep -qE "Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|command not found|: not found|ENOSPC|No space left on device|EACCES|spawnSync gh ENOENT" "$1" 2> /dev/null; then
+  if [ "${2:-1}" -ge 128 ]; then
+    echo failed
+  elif grep -qE "Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|command not found|: not found|ENOSPC|No space left on device|EACCES|spawnSync gh ENOENT|heap out of memory" "$1" 2> /dev/null; then
     echo failed
   else
     echo red
@@ -241,9 +284,24 @@ orphans_tail() { tail -n 3 "$1" 2> /dev/null | tr '\n' ' ' | cut -c1-300; }
 orphans_cleanup_tree() {
   [ -n "${OR_TREE:-}" ] || return 0
   if [ -e "$OR_TREE" ]; then
+    git -C "$REPO" worktree unlock "$OR_TREE" 2> /dev/null || true
     git -C "$REPO" worktree remove --force "$OR_TREE" 2> /dev/null || rm -rf "$OR_TREE"
   fi
+  # A registration whose directory is gone; locked, prune would keep it and the next
+  # `worktree add` on this path would fail (review of #2225).
+  git -C "$REPO" worktree unlock "$OR_TREE" 2> /dev/null || true
   git -C "$REPO" worktree prune 2> /dev/null || true
+}
+
+# Private refs left by a run of an earlier day: no live run holds one, since a run lasts
+# under two hours and a dry run is removed by its own trap.
+orphans_prune_refs() {
+  local ref stamp today
+  today="${RT_STAMP%%T*}"
+  while IFS= read -r ref; do
+    stamp="${ref#refs/e2e-orphans/}"; stamp="${stamp%%T*}"
+    [[ "$stamp" =~ ^[0-9]{8}$ ]] && [ "$stamp" \< "$today" ] && git -C "$REPO" update-ref -d "$ref"
+  done < <(git -C "$REPO" for-each-ref --format='%(refname)' refs/e2e-orphans/ 2> /dev/null)
 }
 
 routine_cleanup() {

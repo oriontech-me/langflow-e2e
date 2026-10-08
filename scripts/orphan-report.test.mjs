@@ -142,6 +142,17 @@ test("findings and an open report issue: its body is replaced, not a second issu
   assert.equal(net.state.issues.length, 3);
 });
 
+test("duplicates: the newest is refreshed, as the workflow did, and a close closes every one", async () => {
+  const two = () => fakeNet({ issues: [{ number: 7, title: TITLE, body: "old", html_url: "https://d/7" }, { number: 11, title: TITLE, body: "old", html_url: "https://d/11" }] });
+  const net = two();
+  const r = await run(net, { out: outputs({ summary_md: "new" }) });
+  assert.equal(r.fields.ISSUE, "refresh https://d/11");
+  assert.deepEqual(net.state.issues.map((i) => i.body), ["old", "new"]);
+  const closing = two();
+  await run(closing, { out: outputs({ has_findings: "false" }), orphaned: [] });
+  assert.deepEqual(closing.state.issues.map((i) => i.state), ["closed", "closed"]);
+});
+
 test("nothing left: the report issue says so and closes; with none open nothing happens", async () => {
   const net = fakeNet({ issues: [{ number: 7, title: TITLE, html_url: "https://d/7" }] });
   const r = await run(net, { out: outputs({ has_findings: "false", summary_md: "**0 orphaned**" }), orphaned: [] });
@@ -200,6 +211,7 @@ test("Slack hears about an orphan once: the first run announces it, the next one
   assert.equal(first.fields.SLACK, "sent");
   assert.equal(net.state.slack.length, 1);
   assert.match(net.state.slack[0].blocks[1].text.text, /a\.spec\.ts/);
+  assert.match(net.state.slack[0].blocks[0].text.text, /^@stable: 1 orphan standing, first report from the VM/);
   assert.match(net.state.slack[0].blocks[1].text.text, /Report: https:\/\/dest\.example\.invalid\/o\/r\/issues\/100/);
   const second = await run(net, { stateDir });
   assert.equal(second.fields.NEW_ORPHANS, "0");
@@ -208,6 +220,7 @@ test("Slack hears about an orphan once: the first run announces it, the next one
   const third = await run(net, { stateDir, orphaned: [row("a.spec.ts"), row("b.spec.ts")] });
   assert.equal(third.fields.NEW_ORPHANS, "1");
   assert.doesNotMatch(net.state.slack[1].blocks[1].text.text, /a\.spec\.ts/);
+  assert.match(net.state.slack[1].blocks[0].text.text, /^@stable: 1 new orphan,/);
 });
 
 test("an orphan restored and orphaned again is announced again", async () => {

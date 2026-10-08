@@ -203,8 +203,10 @@ clone is never touched. It sends the dashboard feed to the QA platform only when
 before the push and the POST.
 
 `stable-orphans` reconciles `@stable` removals against the open issues that own their
-restore (#1746, #2224). It reads `main` from the source with `SOURCE_PUSH_TOKEN` into a
-detached worktree of the clone, removed when the run ends, and reads the open issues of
+restore (#1746, #2224). It only reads the source, which is public: `SOURCE_READ_TOKEN`, a
+token with no permission at all, is what it uses and what reaches the reconciler, with
+`SOURCE_PUSH_TOKEN` as the fallback until it exists (the result's `READ_TOKEN` says which).
+It reads `main` into a detached worktree of the clone, removed when the run ends, and reads the open issues of
 every repository in `ORPHAN_TRACKER_REPOS` (default `source destination`): dedicated
 issues live in both until stage 4 moves the backlog. Its report is ONE issue on
 `ISSUE_REPO` under a fixed title, replaced each run and closed when nothing is left;

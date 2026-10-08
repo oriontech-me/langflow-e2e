@@ -77,10 +77,16 @@ export function issueAction(outputs, openIssue) {
   return "untouched";
 }
 
-/** The Slack words for new orphans. PURE. */
-export function slackText(rows, issueUrl) {
+/**
+ * The Slack words for new orphans. PURE. On the routine's first run every standing orphan
+ * is "new" to it: that is said, rather than passed off as this week's (review of #2225).
+ * Deliberate: the report these orphans stood in on the source went unread.
+ */
+export function slackText(rows, issueUrl, { firstRun = false } = {}) {
   const n = rows.length;
-  const headline = `@stable: ${n} new orphan${n === 1 ? "" : "s"}, a test out of the daily that nobody holds`;
+  const headline = firstRun
+    ? `@stable: ${n} orphan${n === 1 ? "" : "s"} standing, first report from the VM: test${n === 1 ? "" : "s"} out of the daily that nobody holds`
+    : `@stable: ${n} new orphan${n === 1 ? "" : "s"}, a test out of the daily that nobody holds`;
   const list = rows.slice(0, 10).map((r) => `• ${r.title} (\`${r.relativePath}\`)`);
   if (n > 10) list.push(`• and ${n - 10} more`);
   const body = [...list, "", "Restore the tag, open an issue that owns the restore, or declare the absence.", issueUrl ? `Report: ${issueUrl}` : ""]
@@ -120,11 +126,14 @@ export async function fetchOpenIssues({ fetchFn = fetch, host, repo, token }) {
   return all.map((i) => ({ number: i.number, title: i.title, body: i.body ?? "", html_url: i.html_url, pull_request: i.pull_request, repo }));
 }
 
-/** The open report issue under exactly this title, or null. */
-async function findReportIssue({ fetchFn, token, host, repo, title }) {
+/**
+ * Every open report issue under exactly this title, NEWEST first: the workflow refreshed
+ * the first the API listed, which is the newest, and a close must close them all, or a
+ * duplicate stays open and stale (review of #2225).
+ */
+async function findReportIssues({ fetchFn, token, host, repo, title }) {
   const open = await fetchOpenIssues({ fetchFn, host, repo, token });
-  const hits = open.filter((i) => i.title === title && !i.pull_request).sort((a, b) => a.number - b.number);
-  return hits[0] ?? null;
+  return open.filter((i) => i.title === title && !i.pull_request).sort((a, b) => b.number - a.number);
 }
 
 function readSeen(stateDir) {
@@ -166,7 +175,8 @@ export async function publish({ outputs, report, stateDir, env, fetchFn = fetch 
   let issueUrl = "";
   let action;
   try {
-    const open = await findReportIssue({ fetchFn, token, host, repo, title });
+    const all = await findReportIssues({ fetchFn, token, host, repo, title });
+    const open = all[0] ?? null;
     action = issueAction(outputs, open);
     const base = apiUrlFor(host, repo);
     if (action === "refresh") {
@@ -183,16 +193,18 @@ export async function publish({ outputs, report, stateDir, env, fetchFn = fetch 
         fields.LABEL_WARNING = `opened without the qa-infra label: ${e.message}`.slice(0, 300);
       }
     } else if (action === "close") {
-      await gh(fetchFn, token, "POST", `${base}/${open.number}/comments`, {
-        body: [
-          "Every `@stable` removal now has an owner, a declaration, or the tag back.",
-          "",
-          body,
-          "",
-          "Closing. A new finding opens a fresh issue rather than reopening this one, so the body always describes one reconciliation.",
-        ].join("\n"),
-      });
-      await gh(fetchFn, token, "PATCH", `${base}/${open.number}`, { state: "closed", state_reason: "completed" });
+      for (const issue of all) {
+        await gh(fetchFn, token, "POST", `${base}/${issue.number}/comments`, {
+          body: [
+            "Every `@stable` removal now has an owner, a declaration, or the tag back.",
+            "",
+            body,
+            "",
+            "Closing. A new finding opens a fresh issue rather than reopening this one, so the body always describes one reconciliation.",
+          ].join("\n"),
+        });
+        await gh(fetchFn, token, "PATCH", `${base}/${issue.number}`, { state: "closed", state_reason: "completed" });
+      }
       issueUrl = open.html_url;
     }
   } catch (e) {
@@ -208,12 +220,13 @@ export async function publish({ outputs, report, stateDir, env, fetchFn = fetch 
     return { ok: true, fields };
   }
   const current = report?.orphans?.orphaned ?? [];
-  const fresh = newOrphans(current, readSeen(stateDir));
+  const seen = readSeen(stateDir);
+  const fresh = newOrphans(current, seen);
   fields.NEW_ORPHANS = String(fresh.length);
   if (fresh.length === 0) {
     fields.SLACK = "none";
   } else {
-    const { headline, body: text } = slackText(fresh, issueUrl);
+    const { headline, body: text } = slackText(fresh, issueUrl, { firstRun: seen === null });
     const r = await deliverAlarm(headline, text, env, { fetchFn });
     fields.SLACK = r.ok ? "sent" : `failed: ${r.errors.join("; ")}`.slice(0, 300);
     if (!r.ok) return { ok: true, fields };

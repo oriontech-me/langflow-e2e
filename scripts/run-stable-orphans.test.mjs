@@ -32,7 +32,7 @@ const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encodi
  * issues:    { source: "ok"|"fail", destination: "ok"|"fail" }
  * publish:   "ok" | "fail" | "slackfail"
  */
-function orphans({ reconcile = "findings", issues = {}, publish = "ok", token = "push-token", dryRun = false, runBusy = false, trackers = null, shallow = false } = {}) {
+function orphans({ reconcile = "findings", issues = {}, publish = "ok", token = "push-token", readToken = "", dryRun = false, runBusy = false, trackers = null, shallow = false, staleRef = false } = {}) {
   const dir = makeTempDir("run-stable-orphans-");
   const control = join(dir, "control.json");
   writeFileSync(control, q({ reconcile, issues: { source: "ok", destination: "ok", ...issues }, publish }));
@@ -66,13 +66,14 @@ fs.writeFileSync(${q(join(rec, "reconcile.json"))}, JSON.stringify({ env: proces
 const arg = (f) => process.argv[process.argv.indexOf(f) + 1];
 if (c.reconcile === "refuse") { console.error("No declared tests found under tests/. Refusing to report a clean reconciliation from an empty parse."); process.exit(1); }
 if (c.reconcile === "nomodule") { console.error("Error: Cannot find module 'typescript'"); process.exit(1); }
+if (c.reconcile === "killed") { process.kill(process.pid, "SIGKILL"); }
 const findings = c.reconcile !== "clean";
 fs.writeFileSync(arg("--markdown"), "# the report\\n");
 fs.writeFileSync(arg("--json"), JSON.stringify({ orphans: { orphaned: findings ? [{ relativePath: "a.spec.ts", title: "t" }] : [] }, gates: {} }));
 fs.appendFileSync(process.env.GITHUB_OUTPUT, [
   "orphan_count=" + (findings ? 1 : 0), "finding_count=" + (findings ? 2 : 0), "has_findings=" + findings,
   "gate_lookup_failed=" + (c.reconcile === "gatefail"), "tracker_lookup_failed=" + (c.reconcile === "trackerfail"),
-  "issue_title=[@stable] report", "summary_md<<EOF", "body", "EOF", ""].join("\\n"));
+  "issue_title=[@stable] report", "summary_md<<EOF", "body", "tracker_lookup_failed=true", "orphan_count=99", "EOF", ""].join("\\n"));
 `,
     { mode: 0o755 },
   );
@@ -84,7 +85,7 @@ const c = JSON.parse(readFileSync(${q(control)}, "utf8"));
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "issues") {
   const which = process.env.ORPHAN_ISSUES_HOST === "github.com" ? "source" : "destination";
-  appendFileSync(${q(join(rec, "issues.jsonl"))}, JSON.stringify({ which, host: process.env.ORPHAN_ISSUES_HOST, repo: process.env.ORPHAN_ISSUES_REPO, token: process.env.ORPHAN_ISSUES_TOKEN, out: rest[0] }) + "\\n");
+  appendFileSync(${q(join(rec, "issues.jsonl"))}, JSON.stringify({ which, host: process.env.ORPHAN_ISSUES_HOST, repo: process.env.ORPHAN_ISSUES_REPO, token: process.env.ORPHAN_ISSUES_TOKEN, out: rest[0], envHasPush: Object.values(process.env).join("\\n").includes("push-token") }) + "\\n");
   if (c.issues[which] === "fail") { console.error("HTTP 502"); process.exit(1); }
   writeFileSync(rest[0], "[]\\n");
   process.exit(0);
@@ -95,11 +96,16 @@ if (cmd === "publish") {
   console.log("ISSUE=create https://dest.example.invalid/o/r/issues/9");
   console.log("NEW_ORPHANS=1");
   console.log(c.publish === "slackfail" ? "SLACK=failed: slack: HTTP 500" : "SLACK=sent");
+  if (c.publish === "warnings") { console.log("LABEL_WARNING=opened without the qa-infra label: HTTP 422"); console.log("SEEN_WARNING=the seen list was not saved, so these orphans will be announced again: EACCES"); }
   process.exit(0);
 }
 process.exit(2);
 `,
   );
+  if (staleRef) {
+    git(repo, "update-ref", "refs/e2e-orphans/20200101T100000Z-1", "HEAD");
+    git(repo, "update-ref", "refs/e2e-orphans/29990101T100000Z-1", "HEAD");
+  }
   const cloneBefore = { head: git(repo, "rev-parse", "HEAD"), status: git(repo, "status", "--porcelain") };
 
   const home = join(dir, "home");
@@ -111,7 +117,7 @@ process.exit(2);
   const secrets = join(dir, "secrets.env");
   writeFileSync(
     secrets,
-    [token ? `export SOURCE_PUSH_TOKEN=${token}` : "", "export GITHUB_TOKEN=issue-token", "export SLACK_WEBHOOK_URL=https://hooks.example.invalid/services/x"].join("\n") + "\n",
+    [token ? `export SOURCE_PUSH_TOKEN=${token}` : "", readToken ? `export SOURCE_READ_TOKEN=${readToken}` : "", "export GITHUB_TOKEN=issue-token", "export SLACK_WEBHOOK_URL=https://hooks.example.invalid/services/x"].join("\n") + "\n",
   );
   const lane = join(dir, "lane.env");
   writeFileSync(lane, "ISSUE_HOST=dest.example.invalid\nISSUE_REPO=o/r\nISSUE_CC=\n");
@@ -159,6 +165,8 @@ process.exit(2);
 test("findings are green: the report is published and the run says what it found", () => {
   const r = orphans({ reconcile: "findings" });
   assert.equal(r.status, 0, r.log);
+  // The body holds `orphan_count=99` and `tracker_lookup_failed=true`: only the keys
+  // before it answer.
   assert.equal(r.last.STATUS, "green");
   assert.match(r.last.REASON, /^1 orphan\(s\), 2 finding\(s\) on [0-9a-f]{12}; report issue: create https:\/\/dest\.example\.invalid\/o\/r\/issues\/9$/);
   assert.equal(r.last.SOURCE_SHA, r.sourceSha);
@@ -260,10 +268,56 @@ test("each credential reaches only its own call", () => {
     assert.ok(!recValues.includes(secret), `${secret} reached the reconciler`);
   }
   assert.deepEqual(Object.keys(r.reconcile.env).filter((k) => /^GIT_CONFIG/.test(k)), []);
-  // The publisher has the destination's credentials, and not the source's.
+  // The publisher has the destination's credentials, and not the source's: the secrets
+  // file is `export X=` lines, and sourcing it would hand node all of them.
   assert.equal(r.publish.env.GITHUB_TOKEN, "issue-token");
   assert.equal(r.publish.env.ISSUE_REPO, "o/r");
   assert.match(r.publish.env.SLACK_WEBHOOK_URL, /hooks\.example\.invalid/);
+  assert.ok(!Object.values(r.publish.env).join("\n").includes("push-token"), "the push token reached the publisher");
+  assert.equal(r.last.READ_TOKEN, "SOURCE_PUSH_TOKEN (no SOURCE_READ_TOKEN in the secrets file)");
+});
+
+test("a read token, when there is one, is what reads the source and reaches the reconciler", () => {
+  const r = orphans({ readToken: "read-token" });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.last.READ_TOKEN, "SOURCE_READ_TOKEN");
+  assert.equal(r.reconcile.env.GH_TOKEN, "read-token");
+  assert.equal(r.issues.find((i) => i.which === "source").token, "read-token");
+  assert.ok(!Object.values(r.reconcile.env).join("\n").includes("push-token"), "the push token reached the reconciler");
+});
+
+test("the destination's issue reader gets its own names only", () => {
+  const r = orphans();
+  const dest = r.issues.find((i) => i.which === "destination");
+  assert.equal(dest.token, "issue-token");
+  assert.equal(dest.envHasPush, false, "the push token reached the destination reader");
+});
+
+test("a blank tracker list fails the run instead of falling back to the source alone", () => {
+  const r = orphans({ trackers: " " });
+  assert.equal(r.last.STATUS, "failed");
+  assert.match(r.last.REASON, /^ORPHAN_TRACKER_REPOS names no repository/);
+  assert.equal(r.reconcile, null);
+});
+
+test("a reconciler killed by a signal is the machine's, never a red", () => {
+  const r = orphans({ reconcile: "killed" });
+  assert.equal(r.last.STATUS, "failed");
+  assert.match(r.last.REASON, /^the reconciler ended with status 137/);
+});
+
+test("the publisher's warnings reach the result: the label as a field, the seen list as an ALARM", () => {
+  const r = orphans({ publish: "warnings" });
+  assert.equal(r.last.STATUS, "green");
+  assert.equal(r.last.LABEL_WARNING, "opened without the qa-infra label: HTTP 422");
+  assert.match(r.last.ALARM, /^the orphan report is current \(create .*\), but the seen list was not saved/);
+});
+
+test("a private ref left by an earlier day's killed run is pruned; today's are left alone", () => {
+  const r = orphans({ staleRef: true });
+  assert.equal(r.status, 0, r.log);
+  assert.doesNotMatch(r.clone.refs, /20200101T100000Z/);
+  assert.match(r.clone.refs, /29990101T100000Z/, "a ref that is not from an earlier day was removed");
 });
 
 test("the clone is left as it was: same HEAD and status, no private ref, no extra worktree", () => {
@@ -294,7 +348,7 @@ test("a shallow clone is the machine's: failed before any walk", () => {
 test("no source credential, or a second run while one is going, touches nothing", () => {
   const none = orphans({ token: "" });
   assert.equal(none.last.STATUS, "failed");
-  assert.match(none.last.REASON, /^SOURCE_PUSH_TOKEN is not in the secrets file/);
+  assert.match(none.last.REASON, /^neither SOURCE_READ_TOKEN nor SOURCE_PUSH_TOKEN is in the secrets file/);
   const busy = orphans({ runBusy: true });
   assert.equal(busy.last.STATUS, "skipped");
   assert.equal(busy.reconcile, null);
