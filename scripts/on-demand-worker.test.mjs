@@ -618,12 +618,28 @@ test("a 413 resends the result with summary null", async () => {
 test("the request.env the worker writes is one the executor parses back to the same fields", () => {
   const dir = makeTempDir("od-worker-");
   const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
-  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" || { echo "ERR=$OD_PARSE_ERR"; exit 1; }\nprintf 'id=%s\\nref=%s\\nprovider=%s\\nmodel=%s\\nby=%s\\n' "$OD_ID" "$OD_REF" "$OD_PROVIDER" "$OD_MODEL" "$OD_BY"\n`);
-  for (const req of [REQ(), REQ({ provider: "", requested_by: "" }), REQ({ provider: "openai", model: "gpt-4o-mini", ref: "feat/x_y.z" })]) {
+  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" || { echo "ERR=$OD_PARSE_ERR"; exit 1; }\nprintf 'id=%s\\nref=%s\\nprovider=%s\\nmodel=%s\\nby=%s\\nsuite=%s\\n' "$OD_ID" "$OD_REF" "$OD_PROVIDER" "$OD_MODEL" "$OD_BY" "$OD_SUITE_REF"\n`);
+  // A platform from before the suite ref sends none: the line is written empty.
+  for (const req of [REQ(), REQ({ provider: "", requested_by: "" }), REQ({ provider: "openai", model: "gpt-4o-mini", ref: "feat/x_y.z" }), REQ({ suite_ref: "fix/issue-2230-x" }), REQ({ suite_ref: "" })]) {
     writeFileSync(join(dir, "request.env"), requestEnv(req));
     const r = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stdout);
-    assert.deepEqual(kv(r.stdout), { id: req.id, ref: req.ref, provider: req.provider, model: req.model, by: req.requested_by });
+    assert.deepEqual(kv(r.stdout), { id: req.id, ref: req.ref, provider: req.provider, model: req.model, by: req.requested_by, suite: req.suite_ref ?? "" });
+  }
+});
+
+test("the worker and the executor agree on every suite ref: what one takes, the other takes", () => {
+  // A ref the worker passes and the executor refuses would cost a claim; one the
+  // executor would take and the worker refuses would refuse a good request.
+  const dir = makeTempDir("od-worker-");
+  const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
+  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" && echo ok || echo no\n`);
+  for (const ref of ["", "main", "fix/issue-2230-x", "suite-1.12.5", "refs/tags/v1", "a_b.c", "--upload-pack=x", "a..b", "a//b", "/a", "a/", "x.lock", ".x", "a/.x", "a b", "a;b", "x".repeat(201)]) {
+    const req = { ...REQ(), claim_token: TOKEN, suite_ref: ref };
+    writeFileSync(join(dir, "request.env"), requestEnv(req));
+    const exec = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" }).stdout.trim();
+    const workerOk = claimedRequestError(req) === null;
+    assert.equal(workerOk, exec === "ok", `${JSON.stringify(ref)}: worker ${workerOk ? "takes" : "refuses"}, executor says ${exec}`);
   }
 });
 
@@ -636,6 +652,7 @@ test("a claimed request is checked field by field before it reaches the slot", (
     [{ claim_token: TOKEN.toUpperCase() }, "claim_token"], [{ provider: 7 }, "provider"],
     [{ ref: "a..b" }, "branch"], [{ ref: "a//b" }, "branch"], [{ ref: ".hidden" }, "branch"], [{ ref: "x.lock" }, "branch"], [{ ref: "a/./b" }, "branch"],
     [{ provider: "", model: "gpt-4o" }, "model needs provider"],
+    [{ suite_ref: "a\nONDEMAND_REF=x" }, "suite_ref"], [{ suite_ref: 7 }, "suite_ref"], [{ suite_ref: "-x" }, "suite_ref"],
   ]) {
     assert.match(claimedRequestError({ ...ok, ...over }) ?? "", new RegExp(field), JSON.stringify(over));
   }
