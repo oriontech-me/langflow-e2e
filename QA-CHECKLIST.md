@@ -1637,7 +1637,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 729 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 728 `test()` calls carrying the `@stable` tag, distributed across 281 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1857,7 +1857,6 @@
 - [x] user must be able to see api key in webhook component when auto login is disabled → `general-bugs-component-webhook-api-key-display.spec.ts`
 - [x] user must be able to not see api key in webhook component when auto login is enabled → `general-bugs-component-webhook-api-key-display.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
-- [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
 - [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
 - [x] a stale refresh response does not revert a committed User Action → `human-input-node-config.spec.ts`
@@ -2273,7 +2272,6 @@
 - [x] user must be able to send an image on chat using advanced tool on ChatInputComponent → `general-bugs-shard-3836.spec.ts`
 - [x] user must be able to create a new flow clicking on New Flow button → `general-bugs-shard-3909.spec.ts`
 - [x] should copy code from playground modal → `generalBugs-shard-3.spec.ts`
-- [x] playground button should be enabled or disabled → `generalBugs-shard-3.spec.ts`
 - [x] should be able to see error when something goes wrong on Code Modal → `generalBugs-shard-6.spec.ts`
 - [x] should be able to select all with ctrl + A on a node input → `generalBugs-shard-7.spec.ts`
 - [x] the canvas refuses a cycle-closing connection and accepts a non-cycle one to the same port → `graph-execution-canvas.spec.ts`
@@ -2355,6 +2353,7 @@
 - [x] a non-http(s) scheme is refused, naming the scheme → `model-provider-base-url-ssrf.spec.ts`
 - [x] the same policy guards the Anthropic component through its differently-named field → `model-provider-base-url-ssrf.spec.ts`
 - [x] an allow-listed private base URL is admitted through the provider seam → `model-provider-base-url-ssrf.spec.ts`
+- [x] the provider's own endpoint skips the policy on both components → `model-provider-base-url-ssrf.spec.ts`
 - [x] a loopback address is refused, and the refusal names the allow-list → `ssrf-url-validation.spec.ts`
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
