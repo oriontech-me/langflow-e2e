@@ -221,7 +221,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "the provider's own endpoint skips the policy on both components",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // `_is_provider_default` treats an empty value AND the provider's canonical
       // endpoint as nothing to constrain: no client minted, no DNS round trip.
