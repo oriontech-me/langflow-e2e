@@ -281,18 +281,23 @@ main() {
   # pre-check are the machine's part and run from the clone, as the executor does.
   if [ -n "$OD_SUITE_REF" ]; then
     local fetch_err="$STATE/suite-fetch.$$" fetched=0 anc=0
-    git -C "$REPO" fetch --no-tags -q origin "+$OD_SUITE_REF:refs/on-demand/suite" 9>&- 8>&- 2> "$fetch_err" && fetched=1
+    # Never FETCH_HEAD: the daily's `git pull` reads it. A stalled transfer gives up
+    # after a minute below 1 KB/s, instead of holding the slot and the heavy lock.
+    # A name that is both a branch and a tag fetches the tag (git's own order:
+    # refs/<name>, refs/tags/<name>, refs/heads/<name>); refs/heads/<name> says which.
+    git -C "$REPO" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 \
+      fetch --no-tags --no-write-fetch-head -q origin "+$OD_SUITE_REF:refs/on-demand/suite" 9>&- 8>&- 2> "$fetch_err" && fetched=1
     said="$(tr '\n' ' ' < "$fetch_err" 2>/dev/null | cut -c1-300)"
     rm -f "$fetch_err"
     if [ "$fetched" = "0" ]; then
       case "$said" in
-        *"find remote ref"* | *"invalid refspec"* | *"not a valid ref"*)
+        *"find remote ref"* | *"invalid refspec"* | *"not a valid ref"* | *"not our ref"*)
           ondemand_refuse "the suite ref '$OD_SUITE_REF' is not on the langflow-e2e mirror the qa fetches from; the mirror syncs from GitHub hourly, so a branch or tag pushed in the last hour may not be there yet" ;;
         *) ondemand_fail 3 failed "could not fetch the suite ref '$OD_SUITE_REF' from the mirror, the machine or the network, not the ref: ${said:-no reason given}" ;;
       esac
     fi
     OD_SUITE_SHA="$(git -C "$REPO" rev-parse --verify -q 'refs/on-demand/suite^{commit}' 2>/dev/null)" || OD_SUITE_SHA=""
-    [[ "$OD_SUITE_SHA" =~ ^[0-9a-f]{40}$ ]] || ondemand_fail 3 failed "the suite ref '$OD_SUITE_REF' was fetched but names no commit"
+    [[ "$OD_SUITE_SHA" =~ ^[0-9a-f]{40}$ ]] || ondemand_refuse "the suite ref '$OD_SUITE_REF' names no commit (a tag of a tree or a blob)"
     git -C "$REPO" merge-base --is-ancestor "$SUITE_FLOOR" "$OD_SUITE_SHA" 2>/dev/null || anc=$?
     case "$anc" in
       0) ;;
@@ -319,7 +324,7 @@ main() {
   # One minimal completion, with the key the run would use: a dry key or a
   # model the account cannot reach is refused now, in seconds, instead of after the
   # build, with the queue's one slot held. Only a certain answer refuses; anything else
-  # (the network, a 5xx, a probe missing from this suite commit) lets the run go on, and
+  # (the network, a 5xx, a clone from before the probe) lets the run go on, and
   # collect-models decides after the build as before. The keys stay in the subshell.
   if [ -n "$OD_PROVIDER" ] && [ -r "$SECRETS" ]; then
     local probe_out probe_rc=0 probe_reason
@@ -500,8 +505,9 @@ ondemand_parse_request() {
         # A git ref name, or '' for the daily's: the shape of ONDEMAND_REF, minus what
         # git refuses or a fetch would read as something else.
         [[ "$value" =~ ^[A-Za-z0-9._/-]{0,200}$ ]] && [[ "$value" != -* ]] && [[ "$value" != *..* ]] \
-          && [[ "$value" != */ ]] && [[ "$value" != /* ]] && [[ "$value" != *//* ]] && [[ "$value" != *.lock ]] \
-          && [[ "$value" != .* ]] && [[ "$value" != */.* ]] \
+          && [[ "$value" != */ ]] && [[ "$value" != /* ]] && [[ "$value" != *//* ]] \
+          && [[ "$value" != .* ]] && [[ "$value" != */.* ]] && [[ "$value" != *. ]] && [[ "$value" != *./* ]] \
+          && [[ "$value" != *.lock ]] && [[ "$value" != *.lock/* ]] \
           || { OD_PARSE_ERR="ONDEMAND_SUITE_REF is not a branch or tag name: '${value:0:80}'"; return 1; }
         OD_SUITE_REF="$value" ;;
       *) OD_PARSE_ERR="unknown key '${key:0:40}'"; return 1 ;;

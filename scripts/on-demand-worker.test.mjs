@@ -634,7 +634,7 @@ test("the worker and the executor agree on every suite ref: what one takes, the 
   const dir = makeTempDir("od-worker-");
   const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
   writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" && echo ok || echo no\n`);
-  for (const ref of ["", "main", "fix/issue-2230-x", "suite-1.12.5", "refs/tags/v1", "a_b.c", "--upload-pack=x", "a..b", "a//b", "/a", "a/", "x.lock", ".x", "a/.x", "a b", "a;b", "x".repeat(201)]) {
+  for (const ref of ["", "main", "fix/issue-2230-x", "suite-1.12.5", "refs/tags/v1", "a_b.c", "v1.2.lockfile", "--upload-pack=x", "a..b", "a//b", "/a", "a/", "x.lock", ".x", "a/.x", "a.", "a./b", "a.lock/b", "a b", "a;b", "x".repeat(201)]) {
     const req = { ...REQ(), claim_token: TOKEN, suite_ref: ref };
     writeFileSync(join(dir, "request.env"), requestEnv(req));
     const exec = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" }).stdout.trim();

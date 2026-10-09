@@ -146,7 +146,7 @@ export function claimedRequestError(req) {
   if (req.suite_ref !== undefined && req.suite_ref !== null) {
     if (typeof req.suite_ref !== "string" || !SHAPES.suiteRef.test(req.suite_ref)) return `suite_ref does not have the executor's shape: ${JSON.stringify(String(req.suite_ref).slice(0, 80))}`;
     const s = req.suite_ref;
-    if (s !== "" && (s.startsWith("-") || s.startsWith("/") || s.endsWith("/") || s.includes("..") || s.includes("//") || s.endsWith(".lock") || s.split("/").some((seg) => seg.startsWith(".")))) return `suite_ref is not a branch or tag name: ${JSON.stringify(s)}`;
+    if (s !== "" && (s.startsWith("-") || s.startsWith("/") || s.endsWith("/") || s.includes("..") || s.includes("//") || s.split("/").some((seg) => seg.startsWith(".") || seg.endsWith(".") || seg.endsWith(".lock")))) return `suite_ref is not a branch or tag name: ${JSON.stringify(s)}`;
   }
   return null;
 }

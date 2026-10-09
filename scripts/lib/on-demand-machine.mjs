@@ -101,7 +101,7 @@ exit ${runExit}
       `import { appendFileSync, existsSync, fstatSync, statSync } from "node:fs";
 // Whether the fd is THAT lock, by inode: node opens low fds of its own.
 const holds = (fd, path) => { try { return fstatSync(fd).ino === statSync(path).ino; } catch { return false; } };
-appendFileSync(${q(probeLog)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env).filter((k) => /KEY|TOKEN|WEBHOOK/.test(k)).sort(), built: existsSync(${q(buildArgs)}), fd8: holds(8, ${q(join(dir, "heavy.lock"))}), fd9: holds(9, ${q(join(dir, "state", "lock"))}) }) + "\\n");
+appendFileSync(${q(probeLog)}, JSON.stringify({ script: process.argv[1], args: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env).filter((k) => /KEY|TOKEN|WEBHOOK/.test(k)).sort(), built: existsSync(${q(buildArgs)}), fd8: holds(8, ${q(join(dir, "heavy.lock"))}), fd9: holds(9, ${q(join(dir, "state", "lock"))}) }) + "\\n");
 process.stdout.write(${q(probe.out)} + "\\n");
 process.exit(${probe.exit});
 `,
@@ -126,13 +126,15 @@ process.exit(${probe.exit});
     git(...id, "add", "NEW_SUITE");
     git(...id, "commit", "-qm", "a newer suite");
     suites["new-suite"] = git("rev-parse", "HEAD");
+    // An annotated tag of it: fetched, it is a tag object, and the run needs the commit.
+    git(...id, "tag", "-a", "-m", "a suite tag", "suite-tag");
     git("checkout", "-q", "--orphan", "old-suite");
     git(...id, "commit", "-qm", "a suite older than the floor");
     suites["old-suite"] = git("rev-parse", "HEAD");
-    git("push", "-q", "origin", "new-suite", "old-suite");
+    git("push", "-q", "origin", "new-suite", "old-suite", "refs/tags/suite-tag");
     // Back on the clone's commit, with the two branches gone from the clone itself:
     // the executor must find them on the mirror, not locally.
-    git("checkout", "-q", "-f", head);
+    git("checkout", "-q", "-f", "-");
     git("branch", "-q", "-D", "new-suite", "old-suite");
   }
   writeFileSync(join(repo, ".env"), "SOME_PROVIDER_API_KEY=from-dotenv\n");
