@@ -1638,7 +1638,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 731 `test()` calls carrying the `@stable` tag, distributed across 282 spec
+> 732 `test()` calls carrying the `@stable` tag, distributed across 283 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1858,6 +1858,7 @@
 - [x] user must be able to see api key in webhook component when auto login is disabled → `general-bugs-component-webhook-api-key-display.spec.ts`
 - [x] user must be able to not see api key in webhook component when auto login is enabled → `general-bugs-component-webhook-api-key-display.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
 - [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
 - [x] a stale refresh response does not revert a committed User Action → `human-input-node-config.spec.ts`
