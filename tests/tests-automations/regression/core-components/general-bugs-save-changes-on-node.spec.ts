@@ -8,6 +8,7 @@ import { addComponentFromSidebar } from "../../../helpers/flows/add-component-fr
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { retryOnDroppedConnection } from "../../../helpers/enterprise/rbac";
 import {
   trackCreatedFlows,
   type FlowTracker,
@@ -51,15 +52,23 @@ test.afterEach(async ({ request }) => {
  * backend hiccup on ONE poll iteration could block for up to 30 s — longer than
  * the poll's own 20 s timeout — and the failure would then read as "the autosave
  * never persisted" when the real cause was auth.
+ *
+ * The read is re-dialled ONCE on a dropped connection (#2236). `expect.poll`
+ * propagates a throw from its poller instead of polling again, so a reset socket
+ * ended the poll on a transport error rather than on its condition. Only a THROWN
+ * request is retried; a response that arrived, whatever its status, is passed
+ * through untouched, so a real backend refusal still fails the poll.
  */
 async function readPersistedInputValue(
   request: APIRequestContext,
   bearer: string,
   flowId: string,
 ): Promise<unknown> {
-  const response = await request.get(`/api/v1/flows/${flowId}`, {
-    headers: bearer ? { Authorization: bearer } : undefined,
-  });
+  const response = await retryOnDroppedConnection(() =>
+    request.get(`/api/v1/flows/${flowId}`, {
+      headers: bearer ? { Authorization: bearer } : undefined,
+    }),
+  );
   if (!response.ok()) return `GET /api/v1/flows/${flowId} → ${response.status()}`;
   const body = await response.json();
   const nodes = body?.data?.nodes ?? [];
@@ -103,10 +112,19 @@ async function verifyTextareaValue(
   await expect(textarea).toHaveValue(value);
 
   // The autosave — not the exit — must be what commits it.
+  //
+  // Every interval stays under 2 s, and that is measured, not stylistic (#2236).
+  // On Linux Langflow runs under gunicorn, whose `UvicornWorker` takes its
+  // `timeout_keep_alive` from gunicorn's `keepalive` — 2 s by default, and Langflow
+  // does not override it. A request that reuses the pooled socket at the instant
+  // the server closes it dies with `read ECONNRESET` / `socket hang up`. Measured on
+  // `1.13.0.dev35`, 15 reads per idle gap: 5 of 15 dropped at 2000 ms, none at
+  // 1500, 1950, 2050 or 3000 ms. The old `[500, 1000, 2000]` cadence repeats its
+  // last interval, so every poll that outlived 3.5 s landed on that edge.
   await expect
     .poll(() => readPersistedInputValue(request, bearer, flowId), {
       timeout: 20000,
-      intervals: [500, 1000, 2000],
+      intervals: [500, 1000],
       message: "the debounced autosave should persist the typed value",
     })
     .toBe(value);
@@ -143,11 +161,8 @@ async function verifyTextareaValue(
   });
 }
 
-// Quarantined for #2236: recurrent flake on the VM lane (2026-09-22, 2026-09-23 and 2026-10-09 on
-// 1.13.0.dev37), `GET /api/v1/flows/{id}` in `readPersistedInputValue` is reset by the backend with
-// no outage measured. Lifting it (drop `test.fixme`, restore `@stable`) is #2236's deliverable.
-test.fixme("any changes on the node must be saved on user interaction",
-  { tag: ["@release", "@components", "@ui-ux"] },
+test("any changes on the node must be saved on user interaction",
+  { tag: ["@stable", "@release", "@components", "@ui-ux"] },
   async ({ page, request }) => {
     const randomValues = Array.from({ length: 4 }, () =>
       Math.random().toString(36).substring(2, 8),

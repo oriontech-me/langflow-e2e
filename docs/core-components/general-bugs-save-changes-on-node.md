@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/general-bugs-save-changes-on-node.spec.ts`
 
-**Last validated:** Langflow 1.12.x (migrated and validated on `1.12.0.dev10`)
+**Last validated:** Langflow 1.13.x (re-validated on `1.13.0.dev35` for #2236; migrated on `1.12.0.dev10`)
 
 ---
 
@@ -125,7 +125,11 @@ file in. A spec no lane runs cannot catch a regression.
 - **Flows list** — `list-card-open-button` anchored by the flow id via `aria-labelledby`, the
   same pattern `helpers/flows/setup-blank-flow.ts` uses.
 - **Helpers** — `awaitBootstrapTest`, `adjustScreenView`, `renameFlow`,
-  `trackCreatedFlows`.
+  `trackCreatedFlows`, `retryOnDroppedConnection` (`helpers/enterprise/rbac.ts`).
+- **Server keep-alive** — the poll cadence depends on the idle timeout the backend applies
+  to a kept-alive connection. On Linux `langflow run` starts gunicorn with
+  `LangflowUvicornWorker` (`src/backend/base/langflow/__main__.py`), which passes no
+  `keepalive` option, so uvicorn inherits gunicorn's default of **2 s**. See *Notes*.
 
 ---
 
@@ -155,3 +159,20 @@ file in. A spec no lane runs cannot catch a regression.
   the flow" under load) would otherwise surface as an empty id list and read as a tracker bug.
 - Sibling reference for the fixture-free blank-flow shape:
   `core-components/singleton-components.spec.ts`.
+- **The persistence poll stays under 2 s between reads, and re-dials once on a dropped
+  connection (#2236).** The spec was quarantined after six dailies in 30 days died on
+  `apiRequestContext.get: read ECONNRESET` / `socket hang up` inside the poll, every one with
+  no backend outage measured. The cause is the poll, not the product: the backend closes an
+  idle keep-alive connection at 2 s (see *External dependencies*), and the old
+  `[500, 1000, 2000]` intervals repeat their last value, so any poll that outlived 3.5 s
+  reused the pooled socket on exactly that edge. Measured on `1.13.0.dev35`, 15 reads per
+  idle gap through a Playwright `APIRequestContext`: **5 of 15 dropped at 2000 ms** (4
+  `socket hang up`, 1 `read ECONNRESET` — both of the issue's signatures), **0 of 15** at
+  1500, 1950, 2050 and 3000 ms. Restoring the old cadence with the poll forced to run its
+  full 20 s reproduced `socket hang up` in the spec itself. `expect.poll` propagates a throw
+  from its poller, so the drop ended the poll on a transport error instead of on its
+  condition. The intervals are now `[500, 1000]`, and the read goes through
+  `retryOnDroppedConnection`, which retries only a thrown request, once — a response that
+  arrived is passed through whatever its status, so a real backend refusal still fails.
+- The first attempt of the 2026-10-09 daily failed earlier, on `canvas_controls_dropdown`
+  inside `adjustScreenView`. That is a different failure and is not addressed here.
