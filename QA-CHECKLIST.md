@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-10-08
+> **Last updated:** 2026-10-09
 
 ---
 
@@ -1637,7 +1637,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 729 `test()` calls carrying the `@stable` tag, distributed across 283 spec
+> 729 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2074,6 +2074,8 @@
 
 #### core-functionality/memory/
 - [x] should refuse every guarded knowledge-base route for a knowledge base a Memory Base manages → `memory-base-ingestion-failures.spec.ts`
+- [x] should fail an ingestion whose embedding provider cannot be reached, naming the provider → `memory-base-ingestion-failures.spec.ts`
+- [x] should send an Ollama ingestion to the server OLLAMA_BASE_URL names → `memory-base-ingestion-failures.spec.ts`
 - [x] should keep the Google embedding models the Knowledge dialog offers to ones Google still serves → `memory-base-ingestion-failures.spec.ts`
 - [x] should open Create Knowledge Base with the 1000 / 200 / newline defaults and apply the chunk settings chosen there to the stored chunks → `memory-base-ingestion.spec.ts`
 - [x] should store exactly the chunks preview-chunks promised when every line fits the chunk size → `memory-base-ingestion.spec.ts`
@@ -2353,7 +2355,6 @@
 - [x] a non-http(s) scheme is refused, naming the scheme → `model-provider-base-url-ssrf.spec.ts`
 - [x] the same policy guards the Anthropic component through its differently-named field → `model-provider-base-url-ssrf.spec.ts`
 - [x] an allow-listed private base URL is admitted through the provider seam → `model-provider-base-url-ssrf.spec.ts`
-- [x] the provider's own endpoint skips the policy on both components → `model-provider-base-url-ssrf.spec.ts`
 - [x] a loopback address is refused, and the refusal names the allow-list → `ssrf-url-validation.spec.ts`
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
@@ -2401,7 +2402,6 @@
 - [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
 - [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
 - [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
-- [x] editing the Duplicate shortcut persists and triggers the action on canvas → `settings-shortcuts-edit.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
 - [x] dragging a sidebar component drops the node at the pointer → `sidebar-add-component.spec.ts`

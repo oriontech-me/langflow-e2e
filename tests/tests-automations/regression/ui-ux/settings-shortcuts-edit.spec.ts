@@ -47,7 +47,7 @@ test.describe("Settings — Edit Shortcut", () => {
 
   test(
     "editing the Duplicate shortcut persists and triggers the action on canvas",
-    { tag: ["@stable", "@release", "@regression", "@settings", "@ui-ux"] },
+    { tag: ["@release", "@regression", "@settings", "@ui-ux"] },
     async ({ page }) => {
       await test.step("load home", async () => {
         await awaitBootstrapTest(page, { skipModal: true });
