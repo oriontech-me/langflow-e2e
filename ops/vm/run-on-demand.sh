@@ -29,6 +29,25 @@
 #                                    of the day's rotation (DECLARED_MODEL_PROVIDER)
 #   ONDEMAND_MODEL         optional  a model of that provider (DECLARED_MODEL_ID)
 #   ONDEMAND_REQUESTED_BY  optional  who asked; carried into the result, never trusted
+#   ONDEMAND_SUITE_REF     optional  a branch or tag of langflow-e2e to run instead of
+#                                    the commit the daily left the clone on; fetched
+#                                    from the clone's origin (the mirror), and refused
+#                                    when it is not there or is older than SUITE_FLOOR
+#
+# A suite ref is TRUSTED CODE. Its run-e2e.sh, config and specs run as root on this
+# machine, so they reach anything on it: /root/.e2e-secrets (publishing tokens
+# included: the run's environment drops them, a file read does not), the worker's
+# platform token, the git credentials for the mirror, the daily's clone with this
+# executor in it, and the units -- all of which they could change for the next run
+# or the next daily. Before it, only the mirror's main ran here as root. Accepted on
+# 2026-10-09: the code comes from the GHES mirror, and whoever can push a branch
+# there can already change the main the daily runs as root (on GitHub, main has no
+# branch protection either); and only an admin can ask for a run.
+#
+# The provider pre-check is the clone's, not the suite ref's: with no model declared,
+# it asks the clone's candidates, so a suite branch that changes CANDIDATE_PREFS is
+# checked against the old list (a refusal needs every candidate turned down the same
+# way, which a retired model, named in its own error, does not give).
 #
 # The request is consumed when it is read -- moved to $STATE/requests/<id>.env -- so
 # each start answers exactly one request, and the result says how.
@@ -40,7 +59,8 @@
 # STATUS is one of:
 #
 #   refused       the request cannot be served as asked: malformed (when it still
-#                 names a usable id), the daily's window, a declared provider whose
+#                 names a usable id), the daily's window, a suite ref the mirror does
+#                 not have or that is older than SUITE_FLOOR, a declared provider whose
 #                 key or model the provider turned down when asked before the build
 #                 (scripts/probe-declared-model.mjs), a branch that is not upstream's,
 #                 or a declared provider collect-models did not find active -- the
@@ -84,7 +104,8 @@
 #                                                  shadow   7880-7883/8090/11444)
 #             Not 7890-7893: those are the Enterprise scripts' and serving-identity's
 #             defaults in this repository, and the machine has an Enterprise image.
-#   suite     its own worktree, detached at the commit the clone holds, removed after
+#   suite     its own worktree, detached at the commit the clone holds (or the suite
+#             ref's, fetched into refs/on-demand/suite), both removed after
 #   image     langflow-ondemand:<commit>, removed after, with the build cache
 #   ledger    a fresh COPY of the official ledger per run, removed after: the triage
 #             summary reads recurrence against the daily's history, and the official
@@ -96,7 +117,8 @@
 #
 # On every exit, including a stop by the daily: the four backend containers removed and
 # checked gone, echo and ollama stopped on this lane's ports, every langflow-ondemand
-# image removed, the build cache pruned, the worktree and the ledger copy removed.
+# image removed, the build cache pruned, the worktree, the ledger copy and the suite
+# ref's lane ref removed.
 # `docker builder prune -af` is MACHINE-WIDE: it takes any build cache on the qa, not
 # only this lane's. No other lane builds today; one that starts to must change this.
 # Never `docker system prune`, which would take the other lanes' images. A cleanup that could not confirm the containers gone says so in the result.
@@ -116,6 +138,13 @@ main() {
   local HEAVY_LOCK="${E2E_HEAVY_LOCK:-/run/lock/e2e-heavy.lock}"
   # "<ISO weekday 1-7> <HHMM>", UTC. Tests only: the window is otherwise the clock's.
   local NOW="${E2E_ONDEMAND_NOW:-$(date -u '+%u %H%M')}"
+  local said
+  # The oldest suite this executor can run: a requested suite ref must contain it.
+  # 1ba92b40 (2026-10-02) is where run-e2e.sh passes LANGFLOW_HOSTS_FILE to the
+  # containers; before it the SSRF spec fails on every run here (#2181), and the
+  # declared target and provider it also relies on are older still (#2111). Tests only
+  # override it, as they have no such commit.
+  local SUITE_FLOOR="${E2E_ONDEMAND_SUITE_FLOOR:-1ba92b4079d656ddec051c6ef871e8f4e0cbb632}"
 
   mkdir -p "$LOG_DIR" "$STATE/requests" "$STATE/results"
   local STAMP LOG
@@ -127,7 +156,7 @@ main() {
   # Globals, not locals: the EXIT trap runs after main has returned, when a local is out
   # of scope (build-target-image.sh lost its cleanup to exactly that).
   OD_STATE="$STATE"; OD_REPO="$REPO"; OD_LOG="$LOG"
-  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""
+  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
@@ -209,7 +238,7 @@ main() {
   trap ondemand_finish EXIT
   mv -f "$REQ" "$STATE/requests/$OD_ID.env"
   [ "$parsed" = "1" ] || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$STATE/requests/$OD_ID.env"
-  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} by=${OD_BY:-<unnamed>}"
+  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} suite=${OD_SUITE_REF:-<the daily commit>} by=${OD_BY:-<unnamed>}"
 
   # --- the daily's window -----------------------------------------------------------
   local dow="${NOW%% *}" hm="${NOW##* }"
@@ -256,13 +285,48 @@ main() {
   ondemand_clear_images
   rm -rf "$STATE"/builds/src-* "$STATE"/ledger-*
 
-  # --- the suite: the clone's commit, in a worktree of its own ----------------------
-  # The commit the daily left the clone on: on a green day the suite it ran, on a red
-  # day that suite minus the @stable it removed, which is the suite the next daily runs.
-  # Either way SUITE_SHA in the result names it, and a comparison with a daily has to
-  # match on it rather than assume. Not pulled: the clone and its pull are the daily's.
-  OD_SUITE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || OD_SUITE_SHA=""
-  [[ "$OD_SUITE_SHA" =~ ^[0-9a-f]{40}$ ]] || ondemand_fail 3 failed "the clone at $REPO has no commit to run"
+  # --- the suite: the clone's commit, or the ref asked for, in a worktree of its own --
+  # By default, the commit the daily left the clone on: on a green day the suite it
+  # ran, on a red day that suite minus the @stable it removed, which is the suite the
+  # next daily runs. Either way SUITE_SHA in the result names it, and a comparison with
+  # a daily has to match on it rather than assume. Not pulled: the clone and its pull
+  # are the daily's.
+  #
+  # A requested suite ref is fetched from the clone's origin, the mirror, into a ref of
+  # this lane's own -- never into the clone's branches, HEAD or working tree -- and must
+  # contain SUITE_FLOOR. Only the suite comes from it: the build and the provider
+  # pre-check are the machine's part and run from the clone, as the executor does.
+  if [ -n "$OD_SUITE_REF" ]; then
+    local fetch_err="$STATE/suite-fetch.$$" fetched=0 anc=0
+    # Never FETCH_HEAD, which the daily's `git pull` reads, and never the clone's
+    # refs/remotes (--refmap= turns off git's opportunistic update of them). Five minutes
+    # at most, whatever the transport: a stalled fetch would otherwise hold the slot
+    # and the heavy lock until the unit's TimeoutStartSec, 90 minutes.
+    # A name that is both a branch and a tag fetches the tag (git's own order:
+    # refs/<name>, refs/tags/<name>, refs/heads/<name>); refs/heads/<name> says which.
+    timeout 300 git -C "$REPO" fetch --no-tags --no-write-fetch-head --refmap= -q origin \
+      "+$OD_SUITE_REF:refs/on-demand/suite" 9>&- 8>&- 2> "$fetch_err" && fetched=1
+    said="$(tr '\n' ' ' < "$fetch_err" 2>/dev/null | cut -c1-300)"
+    rm -f "$fetch_err"
+    if [ "$fetched" = "0" ]; then
+      case "$said" in
+        *"find remote ref"* | *"invalid refspec"* | *"not a valid ref"* | *"not our ref"*)
+          ondemand_refuse "the suite ref '$OD_SUITE_REF' is not on the langflow-e2e mirror the qa fetches from; the mirror syncs from GitHub hourly, so a branch or tag pushed in the last hour may not be there yet" ;;
+        *) ondemand_fail 3 failed "could not fetch the suite ref '$OD_SUITE_REF' from the mirror, the machine or the network, not the ref: ${said:-no reason given}" ;;
+      esac
+    fi
+    OD_SUITE_SHA="$(git -C "$REPO" rev-parse --verify -q 'refs/on-demand/suite^{commit}' 2>/dev/null)" || OD_SUITE_SHA=""
+    [[ "$OD_SUITE_SHA" =~ ^[0-9a-f]{40}$ ]] || ondemand_refuse "the suite ref '$OD_SUITE_REF' names no commit (a tag of a tree or a blob)"
+    git -C "$REPO" merge-base --is-ancestor "$SUITE_FLOOR" "$OD_SUITE_SHA" 2>/dev/null || anc=$?
+    case "$anc" in
+      0) ;;
+      1) ondemand_refuse "the suite at '$OD_SUITE_REF' (${OD_SUITE_SHA:0:12}) is older than this executor can run: it must contain ${SUITE_FLOOR:0:12} (2026-10-02, localhost on both loopbacks in the run containers); base it on a newer main" ;;
+      *) ondemand_fail 3 failed "could not tell whether the suite at '$OD_SUITE_REF' contains ${SUITE_FLOOR:0:12} (git merge-base exited $anc)" ;;
+    esac
+  else
+    OD_SUITE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || OD_SUITE_SHA=""
+    [[ "$OD_SUITE_SHA" =~ ^[0-9a-f]{40}$ ]] || ondemand_fail 3 failed "the clone at $REPO has no commit to run"
+  fi
   OD_WT="$STATE/wt"
   git -C "$REPO" worktree prune
   if [ -e "$OD_WT" ]; then
@@ -279,7 +343,7 @@ main() {
   # One minimal completion, with the key the run would use: a dry key or a
   # model the account cannot reach is refused now, in seconds, instead of after the
   # build, with the queue's one slot held. Only a certain answer refuses; anything else
-  # (the network, a 5xx, a probe missing from this suite commit) lets the run go on, and
+  # (the network, a 5xx, a clone from before the probe) lets the run go on, and
   # collect-models decides after the build as before. The keys stay in the subshell.
   if [ -n "$OD_PROVIDER" ] && [ -r "$SECRETS" ]; then
     local probe_out probe_rc=0 probe_reason
@@ -291,7 +355,7 @@ main() {
       # shellcheck disable=SC1090
       . "$SECRETS"
       unset "${OD_PUBLISHING[@]}"
-      cd "$OD_WT" && node scripts/probe-declared-model.mjs --provider "$OD_PROVIDER" ${OD_MODEL:+--model "$OD_MODEL"}
+      cd "$OD_WT" && node "$REPO/scripts/probe-declared-model.mjs" --provider "$OD_PROVIDER" ${OD_MODEL:+--model "$OD_MODEL"}
     )" || probe_rc=$?
     echo "provider pre-check (exit $probe_rc): ${probe_out:-no answer}"
     if [ "$probe_rc" = "2" ]; then
@@ -302,7 +366,7 @@ main() {
   fi
 
   # --- the image of the branch's commit ---------------------------------------------
-  local built rc=0 build_err="$STATE/build-stderr.$$" said
+  local built rc=0 build_err="$STATE/build-stderr.$$"
   # 9>&- on everything that can leave a process behind: a daemon that inherited the
   # lock's descriptor would hold the lock after this run, and refuse every next one.
   #
@@ -310,7 +374,9 @@ main() {
   # last `build-target-image:` line, and the RESULT has to carry it. "See the line above"
   # pointed at a line only the log had (qa, 2026-10-01), and the result is what the
   # platform will show.
-  built="$(BUILD_ROOT="$STATE/builds" "$OD_WT/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 8>&- 2> "$build_err")" || rc=$?
+  # From the clone, not the suite's worktree: a requested suite ref chooses the tests,
+  # never how the machine builds the target.
+  built="$(BUILD_ROOT="$STATE/builds" "$REPO/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 8>&- 2> "$build_err")" || rc=$?
   cat "$build_err" 2>/dev/null
   said="$(grep '^build-target-image: ' "$build_err" 2>/dev/null | tail -n 1)"
   said="${said#build-target-image: }"
@@ -427,10 +493,10 @@ main() {
 # Parses the request into the OD_* globals. On a malformed one, sets OD_PARSE_ERR and
 # fails. Not called in $( ): the globals it sets would be lost with the subshell.
 # Never sources, never evaluates: each line is split at its first '=' and the key must
-# be one of five.
+# be one of six.
 ondemand_parse_request() {
   local raw="$1" line key value seen=" "
-  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""
+  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | '#'*) continue ;; esac
@@ -454,6 +520,15 @@ ondemand_parse_request() {
       ONDEMAND_REQUESTED_BY)
         [[ "$value" =~ ^[A-Za-z0-9._@+-]{0,128}$ ]] || { OD_PARSE_ERR="ONDEMAND_REQUESTED_BY has characters a login cannot: '${value:0:80}'"; return 1; }
         OD_BY="$value" ;;
+      ONDEMAND_SUITE_REF)
+        # A git ref name, or '' for the daily's: the shape of ONDEMAND_REF, minus what
+        # git refuses or a fetch would read as something else.
+        [[ "$value" =~ ^[A-Za-z0-9._/-]{0,200}$ ]] && [[ "$value" != -* ]] && [[ "$value" != *..* ]] \
+          && [[ "$value" != */ ]] && [[ "$value" != /* ]] && [[ "$value" != *//* ]] \
+          && [[ "$value" != .* ]] && [[ "$value" != */.* ]] && [[ "$value" != *. ]] && [[ "$value" != *./* ]] \
+          && [[ "$value" != *.lock ]] && [[ "$value" != *.lock/* ]] \
+          || { OD_PARSE_ERR="ONDEMAND_SUITE_REF is not a branch or tag name: '${value:0:80}'"; return 1; }
+        OD_SUITE_REF="$value" ;;
       *) OD_PARSE_ERR="unknown key '${key:0:40}'"; return 1 ;;
     esac
   done <<< "$raw"
@@ -569,6 +644,7 @@ ondemand_finish() {
     git -C "$OD_REPO" worktree prune 2>/dev/null || true
   fi
   [ -z "$OD_LEDGER" ] || rm -rf "$OD_LEDGER"
+  git -C "$OD_REPO" update-ref -d refs/on-demand/suite 2>/dev/null || true
   echo "cleanup: $cleanup"
   fi
 

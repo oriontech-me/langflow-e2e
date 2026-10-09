@@ -87,6 +87,7 @@ export const SHAPES = {
   provider: /^[a-z0-9-]{0,40}$/,
   model: /^[A-Za-z0-9._:/-]{0,120}$/,
   requestedBy: /^[A-Za-z0-9._@+-]{0,128}$/,
+  suiteRef: /^[A-Za-z0-9._/-]{0,200}$/,
   workerId: /^[A-Za-z0-9._-]{1,64}$/,
   claimToken: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   stamp: /^\d{8}T\d{6}Z$/,
@@ -141,6 +142,12 @@ export function claimedRequestError(req) {
   const segs = req.ref.split("/");
   if (req.ref.includes("..") || segs.some((s) => s === "" || s === "." || s.startsWith(".") || s.endsWith(".lock"))) return `ref is not a branch name: ${JSON.stringify(req.ref)}`;
   if (req.model !== "" && req.provider === "") return "model needs provider: a model is declared for a provider";
+  // Optional: a platform from before the suite ref sends none, which is the daily's.
+  if (req.suite_ref !== undefined && req.suite_ref !== null) {
+    if (typeof req.suite_ref !== "string" || !SHAPES.suiteRef.test(req.suite_ref)) return `suite_ref does not have the executor's shape: ${JSON.stringify(String(req.suite_ref).slice(0, 80))}`;
+    const s = req.suite_ref;
+    if (s !== "" && (s.startsWith("-") || s.startsWith("/") || s.endsWith("/") || s.includes("..") || s.includes("//") || s.split("/").some((seg) => seg.startsWith(".") || seg.endsWith(".") || seg.endsWith(".lock")))) return `suite_ref is not a branch or tag name: ${JSON.stringify(s)}`;
+  }
   return null;
 }
 
@@ -152,6 +159,7 @@ export function requestEnv(req) {
     `ONDEMAND_PROVIDER=${req.provider}`,
     `ONDEMAND_MODEL=${req.model}`,
     `ONDEMAND_REQUESTED_BY=${req.requested_by}`,
+    `ONDEMAND_SUITE_REF=${req.suite_ref ?? ""}`,
   ].join("\n") + "\n";
 }
 
@@ -178,7 +186,9 @@ export const slotId = (text) => text.split(/\r?\n/).find((l) => l.startsWith("ON
  * request's; otherwise whether the build has started and, once the suite has, its
  * run id, the version and the build seconds (the "built:" line).
  *
- * The build starts right after "suite at:", which comes after every refusal. Not on
+ * The build starts soon after "suite at:", which comes after every refusal but the
+ * provider pre-check's (langflow-e2e#2230): that one asks the provider in seconds,
+ * between the two, so a request it refuses may show `building` for that long. Not on
  * build-target-image.sh's own "building" line: its stderr reaches the log only once
  * the build has ended. The full SHA is not here either: the log carries 12 characters
  * of it and the terminal result all 40, so `running` goes without it, as the contract

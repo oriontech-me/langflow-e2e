@@ -268,6 +268,76 @@ test("a provider the pre-check turned down is refused before the build, in the p
   assert.equal(r.heavyHolder, null, "the refused run left its holder line");
 });
 
+// The suite ref: a branch or tag of langflow-e2e instead of the commit the daily left.
+const SUITE = (ref) => `ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_SUITE_REF=${ref}\n`;
+
+test("a suite ref runs that commit of the suite, fetched from the mirror, and the clone is left as it was", () => {
+  const r = onDemand({ mirror: true, request: SUITE("new-suite") });
+  assert.equal(r.status, 0, r.log);
+  const want = r.suites["new-suite"];
+  assert.equal(r.env.match(/head=(\S+)/)[1], want, "run-e2e.sh ran another commit of the suite");
+  assert.equal(r.result["req-1"].SUITE_SHA, want);
+  assert.match(r.log, /suite=new-suite/);
+  // The daily's clone: same commit, no branch of it, and the lane's ref gone.
+  assert.equal(r.cloneHead, r.head, "the clone moved");
+  assert.equal(r.laneRef, null, "refs/on-demand/suite was left in the clone");
+  assert.equal(r.remoteRefs, "", "the fetch wrote the clone's refs/remotes");
+  assert.match(r.timeouts, /^300 git -C$/m, "the fetch is not bounded");
+  assert.ok(r.build, "no build ran");
+});
+
+test("an annotated tag runs the commit it tags", () => {
+  const r = onDemand({ mirror: true, request: SUITE("suite-tag") });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.result["req-1"].SUITE_SHA, r.suites["new-suite"]);
+  assert.equal(r.laneRef, null);
+});
+
+test("the build and the provider pre-check come from the clone, not from the requested suite", () => {
+  // build-target-image.sh is how the machine builds the target; a suite ref chooses
+  // the tests. The build stub records its own path ($0), the probe stub its argv[1].
+  const r = onDemand({ mirror: true, request: `${SUITE("new-suite")}ONDEMAND_PROVIDER=anthropic\n` });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(realpathSync(r.buildScript), realpathSync(join(r.repo, "ops", "vm", "build-target-image.sh")));
+  assert.equal(realpathSync(r.probes[0].script), realpathSync(join(r.repo, "scripts", "probe-declared-model.mjs")));
+});
+
+test("a suite ref the mirror does not have is refused before the build, and says the mirror lags", () => {
+  const r = onDemand({ mirror: true, request: SUITE("no-such-branch") });
+  assert.equal(r.status, 2, r.log);
+  assert.equal(r.result["req-1"].STATUS, "refused");
+  assert.match(r.result["req-1"].REASON, /'no-such-branch' is not on the langflow-e2e mirror.*hourly/);
+  assert.equal(r.build, null, "a build ran for a suite that does not exist");
+  assert.equal(r.env, null);
+  assert.equal(r.laneRef, null);
+});
+
+test("a suite older than the floor is refused before the build, naming the floor", () => {
+  const r = onDemand({ mirror: true, request: SUITE("old-suite") });
+  assert.equal(r.status, 2, r.log);
+  assert.equal(r.result["req-1"].STATUS, "refused");
+  assert.match(r.result["req-1"].REASON, new RegExp(`'old-suite' \\(${r.suites["old-suite"].slice(0, 12)}\\) is older than this executor can run: it must contain ${r.head.slice(0, 12)}`));
+  assert.equal(r.build, null);
+  assert.equal(r.env, null);
+  assert.equal(r.laneRef, null, "the lane's ref was left after a refusal");
+});
+
+test("a mirror the clone cannot reach is the machine's failure, not a refusal of the ref", () => {
+  // No origin at all: the fetch fails for want of a remote, which says nothing about the ref.
+  const r = onDemand({ request: SUITE("new-suite") });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.result["req-1"].STATUS, "failed");
+  assert.match(r.result["req-1"].REASON, /could not fetch the suite ref 'new-suite' from the mirror/);
+  assert.equal(r.build, null);
+});
+
+test("an empty suite ref is the daily's commit, as no suite ref is", () => {
+  const r = onDemand({ mirror: true, request: SUITE("") });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.result["req-1"].SUITE_SHA, r.head);
+  assert.equal(r.env.match(/head=(\S+)/)[1], r.head);
+});
+
 test("a pre-check with no certain answer, or none at all, lets the run go on to the build", () => {
   const undecided = onDemand({ probe: { exit: 3, out: '{"verdict":"undecided","reason":"no answer from anthropic: fetch failed"}' } });
   assert.equal(undecided.status, 0, undecided.log);
@@ -394,6 +464,9 @@ test("a malformed request is refused before anything runs, and its contents neve
     ["ONDEMAND_ID=../../etc\nONDEMAND_REF=release-1.13.0\n", /ONDEMAND_ID must be/],
     ["ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_MODEL=claude-x\n", /needs ONDEMAND_PROVIDER/],
     ["ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=Anthropic;x\n", /ONDEMAND_PROVIDER has characters/],
+    // A suite ref git would read as an option, a range or a path out of refs.
+    ...["--upload-pack=touch", "main..evil", "a/../b", "/abs", "tail/", "a//b", "x.lock", ".hidden", "a/.b", "$(id)", "a.", "a./b", "a.lock/b"].map((ref) =>
+      [`ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_SUITE_REF=${ref}\n`, /ONDEMAND_SUITE_REF is not a branch or tag name/]),
   ]) {
     const r = onDemand({ request });
     assert.equal(r.status, 2, `${request}\n${r.log}`);
