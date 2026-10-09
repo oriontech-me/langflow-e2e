@@ -8,7 +8,7 @@ import { addComponentFromSidebar } from "../../../helpers/flows/add-component-fr
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
-import { retryOnDroppedConnection } from "../../../helpers/enterprise/rbac";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 import {
   trackCreatedFlows,
   type FlowTracker,

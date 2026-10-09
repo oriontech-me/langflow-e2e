@@ -125,7 +125,7 @@ file in. A spec no lane runs cannot catch a regression.
 - **Flows list** — `list-card-open-button` anchored by the flow id via `aria-labelledby`, the
   same pattern `helpers/flows/setup-blank-flow.ts` uses.
 - **Helpers** — `awaitBootstrapTest`, `adjustScreenView`, `renameFlow`,
-  `trackCreatedFlows`, `retryOnDroppedConnection` (`helpers/enterprise/rbac.ts`).
+  `trackCreatedFlows`, `retryOnDroppedConnection` (`helpers/api/retry-on-dropped-connection.ts`).
 - **Server keep-alive** — the poll cadence depends on the idle timeout the backend applies
   to a kept-alive connection. On Linux `langflow run` builds the gunicorn options in
   `src/backend/base/langflow/__main__.py` with no `keepalive`, and starts

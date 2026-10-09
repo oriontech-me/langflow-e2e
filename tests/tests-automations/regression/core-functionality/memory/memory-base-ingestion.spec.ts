@@ -1,7 +1,7 @@
 import type { APIRequestContext, Page, Request } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { retryOnDroppedConnection } from "../../../../helpers/enterprise/rbac";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {

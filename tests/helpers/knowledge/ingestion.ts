@@ -1,5 +1,5 @@
 import type { APIRequestContext } from "@playwright/test";
-import { retryOnDroppedConnection } from "../enterprise/rbac";
+import { retryOnDroppedConnection } from "../api/retry-on-dropped-connection";
 import type { FolderAttempt } from "./folder-source";
 
 /**

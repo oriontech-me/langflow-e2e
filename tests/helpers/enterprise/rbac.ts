@@ -3,6 +3,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { retryOnDroppedConnection } from "../api/retry-on-dropped-connection";
+
+// Re-exported so the enterprise specs keep one import site. The helper itself moved
+// to `helpers/api/` (#2243): it is a transport concern with callers in every area,
+// not an RBAC one.
+export { retryOnDroppedConnection };
 
 /**
  * Helpers for the Enterprise RBAC instance variant.
@@ -148,39 +154,6 @@ export async function requireAuthzAdminUi(
   );
 
   return status;
-}
-
-/**
- * Run one API call, re-dialling ONCE if the request fails at the transport layer.
- *
- * `socket hang up` / `ECONNRESET` is the class this repo's own tooling treats as
- * an environment abort rather than as a verdict (the pipeline records such runs
- * `infra-void` and re-runs them). Observed on this lane against a container that
- * never restarted, never OOM-killed anything (`oom_kill 0` in its cgroup, no
- * memory limit) and logged nothing — so the cause sits below the application and
- * outside what a spec can assert about. It is load-dependent: 10 consecutive
- * local runs never reproduced it while a loaded machine hit it on the first.
- *
- * It matters because `expect.poll` PROPAGATES a throw from its poller. A poll
- * written to tolerate timing cannot tolerate the one error that actually shows
- * up, so the run dies on a dropped connection instead of re-reading a moment
- * later.
- *
- * Deliberately narrow, so nothing here softens an assertion: only a THROWN
- * request is retried, and only once. A response that arrived carrying a non-2xx
- * is a statement about the product and is passed straight through.
- */
-export async function retryOnDroppedConnection<T>(call: () => Promise<T>): Promise<T> {
-  try {
-    return await call();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|socket disconnected/i.test(message)) {
-      throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    return await call();
-  }
 }
 
 export interface RoleAssignment {
