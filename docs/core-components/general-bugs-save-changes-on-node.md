@@ -70,7 +70,7 @@ file in. A spec no lane runs cannot catch a regression.
 
 ## Preconditions
 
-- Langflow running at `PLAYWRIGHT_BASE_URL` (validated on the nightly, `1.12.0.dev10`).
+- Langflow running at `PLAYWRIGHT_BASE_URL` (last validated on the nightly, `1.13.0.dev35`).
 - No provider credentials — nothing here runs the flow.
 - Autosave **on** (the default). The sibling `flow-functionality/auto-save-off.spec.ts`
   covers the opposite configuration (manual save with `auto_save` off) and is a different
@@ -127,9 +127,12 @@ file in. A spec no lane runs cannot catch a regression.
 - **Helpers** — `awaitBootstrapTest`, `adjustScreenView`, `renameFlow`,
   `trackCreatedFlows`, `retryOnDroppedConnection` (`helpers/enterprise/rbac.ts`).
 - **Server keep-alive** — the poll cadence depends on the idle timeout the backend applies
-  to a kept-alive connection. On Linux `langflow run` starts gunicorn with
-  `LangflowUvicornWorker` (`src/backend/base/langflow/__main__.py`), which passes no
-  `keepalive` option, so uvicorn inherits gunicorn's default of **2 s**. See *Notes*.
+  to a kept-alive connection. On Linux `langflow run` builds the gunicorn options in
+  `src/backend/base/langflow/__main__.py` with no `keepalive`, and starts
+  `LangflowApplication` with `LangflowUvicornWorker` (`src/backend/base/langflow/server.py`).
+  The worker passes gunicorn's `keepalive` on as uvicorn's `timeout_keep_alive`, so it is
+  gunicorn's default of **2 s**. `LangflowApplication.load_config` also reads
+  `GUNICORN_CMD_ARGS`, which could override it; no lane in this repo sets it. See *Notes*.
 
 ---
 
@@ -160,9 +163,13 @@ file in. A spec no lane runs cannot catch a regression.
 - Sibling reference for the fixture-free blank-flow shape:
   `core-components/singleton-components.spec.ts`.
 - **The persistence poll stays under 2 s between reads, and re-dials once on a dropped
-  connection (#2236).** The spec was quarantined after six dailies in 30 days died on
-  `apiRequestContext.get: read ECONNRESET` / `socket hang up` inside the poll, every one with
-  no backend outage measured. The cause is the poll, not the product: the backend closes an
+  connection (#2236).** The spec was quarantined after six VM-lane dailies in 30 days
+  (2026-09-17 to 2026-10-09) hit `apiRequestContext.get: read ECONNRESET` / `socket hang up`
+  inside the poll. The Actions lane recorded the same `socket hang up` on five more dailies in
+  that window (2026-09-10, 09-17, 09-24, 09-25, 10-02), which is nine distinct days across both
+  lanes, all on Linux/gunicorn. Every occurrence that recorded `outage_overlap` reads `clear`;
+  three recorded none (VM 2026-09-17, Actions 2026-09-10 and 09-17) and are unmeasured, not
+  clear. The cause is the poll, not the product: the backend closes an
   idle keep-alive connection at 2 s (see *External dependencies*), and the old
   `[500, 1000, 2000]` intervals repeat their last value, so any poll that outlived 3.5 s
   reused the pooled socket on exactly that edge. Measured on `1.13.0.dev35`, 15 reads per
@@ -173,6 +180,9 @@ file in. A spec no lane runs cannot catch a regression.
   from its poller, so the drop ended the poll on a transport error instead of on its
   condition. The intervals are now `[500, 1000]`, and the read goes through
   `retryOnDroppedConnection`, which retries only a thrown request, once — a response that
-  arrived is passed through whatever its status, so a real backend refusal still fails.
+  arrived is passed through whatever its status, so a real backend refusal still fails. The
+  two are not redundant: the intervals only control the gaps BETWEEN reads, while the first
+  read of each poll follows a UI step whose idle gap since the previous request is arbitrary
+  and can land on 2 s. The retry is the only cover for that read.
 - The first attempt of the 2026-10-09 daily failed earlier, on `canvas_controls_dropdown`
   inside `adjustScreenView`. That is a different failure and is not addressed here.

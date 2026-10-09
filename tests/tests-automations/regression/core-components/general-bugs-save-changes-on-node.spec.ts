@@ -57,7 +57,10 @@ test.afterEach(async ({ request }) => {
  * propagates a throw from its poller instead of polling again, so a reset socket
  * ended the poll on a transport error rather than on its condition. Only a THROWN
  * request is retried; a response that arrived, whatever its status, is passed
- * through untouched, so a real backend refusal still fails the poll.
+ * through untouched, so a real backend refusal still fails the poll. It is not
+ * made redundant by the sub-2 s intervals in `verifyTextareaValue`: those control
+ * only the gaps between reads, while the FIRST read of each poll follows a UI
+ * step whose idle gap since the previous request is arbitrary.
  */
 async function readPersistedInputValue(
   request: APIRequestContext,
