@@ -228,9 +228,12 @@ const PLAYGROUND_DIALOG = { role: "dialog" as const, name: "Playground" };
 // #2197: the click on `playground-btn-flow-io` timed out because the Chat Output
 // drag was issued while the editor was still read-only (see `dragFromSidebar`),
 // so no node landed and only the disabled twin was ever rendered.
-test(
+// Quarantined for #2237: recurrent flake on the VM lane (2026-09-22, 2026-10-09 on 1.13.0.dev37),
+// the disabled `playground-btn-flow` is not rendered within the 45 s editor budget on a blank flow.
+// Lifting it (drop `test.fixme`, restore `@stable`) is #2237's deliverable.
+test.fixme(
   "playground button should be enabled or disabled",
-  { tag: ["@stable", "@release", "@workspace", "@playground"] },
+  { tag: ["@release", "@workspace", "@playground"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
