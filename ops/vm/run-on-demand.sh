@@ -295,7 +295,8 @@ main() {
     )" || probe_rc=$?
     echo "provider pre-check (exit $probe_rc): ${probe_out:-no answer}"
     if [ "$probe_rc" = "2" ]; then
-      probe_reason="$(node -p "try{JSON.parse(process.argv[1]).reason||''}catch{''}" "$probe_out" 2>/dev/null || true)"
+      # The last line: anything the secrets file printed comes before the probe's JSON.
+      probe_reason="$(node -p "try{JSON.parse(process.argv[1]).reason||''}catch{''}" "$(printf '%s\n' "$probe_out" | tail -n 1)" 2>/dev/null || true)"
       ondemand_refuse "the declared provider cannot be used, checked before the build: ${probe_reason:-the pre-check said no without a reason}"
     fi
   fi

@@ -31,7 +31,7 @@
  *
  * With no model declared, the run uses the model collect-models settles on, the first
  * of CANDIDATE_PREFS (tests/helpers/provider-setup/collect-models.ts) that validates.
- * The candidates here are the exact ids that list leads with, and the ones the
+ * The candidates here are the exact ids that list names, which include the ones the
  * platform's closed list offers (RUN_TARGETS in quality-platform's contract.ts).
  *
  * What a probe proves is ACCESS, as collect-models' own probe does: not that
@@ -51,10 +51,14 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+// Every exact id CANDIDATE_PREFS names, in its order, so a refusal with no model
+// declared takes three identical answers where a provider has three, as collect-models'
+// IDENTICAL_ERROR_LIMIT does ("three, not two"). anthropic's list names two; past them,
+// collect-models walks /haiku/ and /sonnet/ over the catalog.
 export const CANDIDATES = {
-  openai: ["gpt-4o-mini", "gpt-4o"],
+  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1"],
   anthropic: ["claude-haiku-4-5", "claude-sonnet-5"],
-  google: ["gemini-2.5-flash", "gemini-3.5-flash"],
+  google: ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest"],
 };
 
 // dotenv's own line grammar (dotenv/lib/main.js, `LINE`): KEY=VALUE or KEY: VALUE, an
@@ -164,8 +168,10 @@ export async function probeOnce(provider, model, key, fetchImpl = fetch) {
  * the masked one openai's 401 quotes ("Incorrect API key provided: sk-proj-****abcd").
  */
 export function cleanReason(text, secrets = []) {
-  let s = String(text).replace(/[\r\n]+/g, " ");
+  // The exact keys first: a key holding a newline would no longer match once flattened.
+  let s = String(text);
   for (const k of secrets) if (k && k.length >= 8) s = s.split(k).join("<key>");
+  s = s.replace(/[\r\n]+/g, " ");
   s = s.replace(/\b(?:sk-|AIza)[A-Za-z0-9_*-]+/g, "<key>");
   // Any other masked key a provider echoes, e.g. openai's "tes*****1234".
   s = s.replace(/[\w-]{0,12}\*{3,}[\w-]{0,12}/g, "<key>");

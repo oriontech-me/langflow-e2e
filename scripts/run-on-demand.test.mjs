@@ -108,6 +108,7 @@ test("a routine holding the heavy-lane lock refuses the run, names the holder, a
   assert.equal(r.result["req-1"].STATUS, "refused");
   assert.match(r.result["req-1"].REASON, /the machine is busy: migration \(pid 4242\)/);
   assert.equal(r.build, null, "a build ran beside a routine");
+  assert.deepEqual(r.probes, [], "a provider was asked beside a routine");
   assert.equal(r.docker, "", "docker was touched while refusing");
   // Refused, it must not erase the holder's line.
   assert.match(r.heavyHolder ?? "", /^migration \(pid 4242\)/);
@@ -279,6 +280,9 @@ test("a pre-check with no certain answer, or none at all, lets the run go on to 
   const garbled = onDemand({ probe: { exit: 2, out: "not json" } });
   assert.equal(garbled.result["req-1"].STATUS, "refused");
   assert.match(garbled.result["req-1"].REASON, /checked before the build: the pre-check said no without a reason/);
+  // Output ahead of the JSON (the secrets file printing) does not lose the reason.
+  const noisy = onDemand({ probe: { exit: 2, out: `sourced secrets\n${DRY.out}` } });
+  assert.match(noisy.result["req-1"].REASON, /checked before the build: anthropic turned down every candidate/);
 });
 
 test("a run that served another version is failed, never done/red, whatever its report says", () => {
@@ -456,6 +460,7 @@ test("no run starts on a weekday between 07:30 and 08:40 UTC, and the refusal is
       assert.match(r.result["req-1"].REASON, /window is closed/, now);
       assert.equal(r.build, null, `${now}: a build ran in the window`);
       assert.equal(r.docker, "", `${now}: docker was touched while refusing`);
+      assert.deepEqual(r.probes, [], `${now}: a provider was asked in the window`);
     } else {
       assert.equal(r.status, 0, `${now}: ${r.log}`);
     }

@@ -70,7 +70,7 @@ test("openai with no quota is refused, though it answers 429", async () => {
 });
 
 test("with no model, the first candidate that answers is enough, and the rest are not asked", async () => {
-  // google on 2026-10-08: the run settled on gemini-3.5-flash, the second preference.
+  // As the run settles: the first of the list that answers, not necessarily the first.
   const p = provider({ "gemini-2.5-flash": json(404, { error: { message: "models/gemini-2.5-flash is not found" } }), "gemini-3.5-flash": json(200, {}) });
   const d = await probeDeclared({ provider: "google", env: ENV, fetchImpl: p.fetchImpl });
   assert.equal(d.verdict, "usable");
@@ -84,6 +84,7 @@ test("with no model, candidates turned down for different reasons are undecided:
   const p = provider({
     "gpt-4o-mini": json(404, { error: { message: "The model `gpt-4o-mini` does not exist" } }),
     "gpt-4o": json(404, { error: { message: "The model `gpt-4o` does not exist" } }),
+    "gpt-4.1": json(404, { error: { message: "The model `gpt-4.1` does not exist" } }),
   });
   const d = await probeDeclared({ provider: "openai", env: ENV, fetchImpl: p.fetchImpl });
   assert.equal(d.verdict, "undecided");
@@ -179,6 +180,19 @@ test("importing the module with an argv[1] that does not exist does not throw", 
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(SCRIPT)}); console.log("ok")`, "no-such-file"], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^ok$/m);
+});
+
+test("a key holding a newline is redacted whole, before the reason is flattened", () => {
+  const key = "sk-abc123\ndef456";
+  assert.equal(cleanReason(`invalid header value: ${key}`, [key]), "invalid header value: <key>");
+});
+
+test("with no model, every listed candidate must agree before a refusal: three where the provider has three", async () => {
+  const dry = json(403, { error: { message: "Project does not have access" } });
+  const p = provider({ "gpt-4o-mini": dry, "gpt-4o": dry, "gpt-4.1": json(200, {}) });
+  const d = await probeDeclared({ provider: "openai", env: ENV, fetchImpl: p.fetchImpl });
+  assert.equal(d.verdict, "usable");
+  assert.equal(d.model, "gpt-4.1");
 });
 
 test("a reason is one line, bounded", () => {
