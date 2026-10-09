@@ -33,13 +33,15 @@ to end through this spec's flow:
 
 | Case | Chunk sequence | Merged `content` | Persisted `text` |
 |---|---|---|---|
-| Control | text dict, text dict | `[dict, dict]` | `"Echo: hello mcp (<sentinel>)"` (full) |
+| Control | text dict with a signature, text dict with a signature | `[dict, dict]` | `"Echo: hello mcp (<sentinel>)"` (full) |
 | String after dict | text dict with a signature, string | `[dict, str]` | `"Echo: hello m"` |
 | Empty dict after strings | string, string, empty text dict with a signature | `[str, dict]` | `""` |
 
 The issue that requested this spec described the control's merged content as a
 single dict. Measured, it stays two dicts. The persisted text is full either way, so
-the control's contract does not change.
+the control's contract does not change. The control's dicts carry the same signature
+as the defective cases' dicts, so the chunk shape (dict or string) is the only
+difference between the control and Tests 2 and 3.
 
 ---
 
@@ -57,16 +59,23 @@ the control's contract does not change.
   the #1896 pattern (`graph-execution-contract.spec.ts`).
 
 **Tests 2 and 3 are declared failing with `test.fail()` against LE-2919.** Their
-assertion is the correct contract, and it fails while the defect is live. The
+final assertion is the correct contract, and it fails while the defect is live. The
 declaration is the alarm in both directions. While the defect is live, the test
 passes by failing as expected. The day upstream fixes it, the run reports *"expected
-to fail, but passed"*, and the lift is: delete `test.fail()` and its comment, keep
-`@stable`, flip the §6.5 bullet, and record the fix in `REGRESSIONS.md`.
+to fail, but passed"*. The daily treats that as a hard failure and strips `@stable`
+from the test (`remove-stable-from-failures.ts` removes every `unexpected` status, an
+unexpected pass included). The lift is: delete the `declareKnownDefect()` call and its
+comment, restore `@stable` if the daily already removed it, flip the §6.5 `[!]` bullet
+to `[x]`, and record the fix in `REGRESSIONS.md`.
 
-`test.fail()` turns **any** failure green, including a broken harness. That is what
-Test 1 is for: it runs the identical harness (same component, same flow, same run,
-same read-back), and only the chunk sequence differs. A harness that stops working
-reddens Test 1, so a green Test 2 or 3 always means the defect, never the harness.
+`test.fail()` turns **any** failure after it is called green, so it is called
+**late**: only after the harness has worked (the run completed with no errors, the
+session holds exactly one message of this flow) and the stored text is either the
+known defective value or the full reply. A broken harness, or the defect turning
+into a third value, fails before the declaration and reddens Test 2 or 3 itself. A
+green Test 2 or 3 therefore means the known defect. Test 1 still runs the identical
+harness with signed dicts only, which attributes the defect to the chunk shape
+rather than to the signature.
 
 ---
 
@@ -115,6 +124,10 @@ The session id is unique per test, so the read-back cannot pick up another test'
 message. The message is found by session rather than by sentinel on purpose: in the
 defective cases the sentinel is exactly the part that gets dropped.
 
+Tests 2 and 3 additionally require, before declaring the failure, that the stored
+text is either the known defective value (`"Echo: hello m"` and `""`) or the full
+reply.
+
 Expected on the current nightly: Test 1 passes; Tests 2 and 3 fail on the last
 assertion (`"Echo: hello m"` and `""`), which `test.fail()` reports as passed.
 
@@ -136,6 +149,10 @@ assertion (`"Echo: hello m"` and `""`), which `test.fail()` reports as passed.
     *"expected to fail, but passed"*.
   - M3: Test 3's sequence is replaced by the all-dict one, with the same expectation
     as M2.
+  - M5: the run endpoint is misspelled, so all three tests must fail, Tests 2 and 3
+    included (the declaration is never reached).
+  - M6: Test 3's known defective value is changed, so the stored `""` is a third
+    value and Test 3 must fail.
   - M4: the Chat Output is removed from the flow, so `send_message` persists
     nothing, and Test 1 must fail on the message count (0, not 1). Removing only
     the edge is not this mutation: the Chat Output then fails the run with

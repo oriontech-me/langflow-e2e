@@ -34,17 +34,19 @@ function signedText(text: string): Record<string, unknown> {
 }
 
 /**
- * The probe's Python source. The chunk sequence is embedded as JSON, which is a
- * valid Python literal for the strings, lists and dicts used here.
+ * The probe's Python source. The chunk sequence crosses as a JSON string parsed by
+ * `json.loads`: a JSON literal pasted as Python breaks on `true`/`false`/`null`.
  */
 function probeCode(chunks: ChunkContent[]): string {
-  return `from langchain_core.messages import AIMessageChunk
+  return `import json
+
+from langchain_core.messages import AIMessageChunk
 from lfx.base.agents.events import process_agent_events
 from lfx.custom.custom_component.component import Component
 from lfx.io import Output
 from lfx.schema.message import Message
 
-CHUNKS = ${JSON.stringify(chunks)}
+CHUNKS = json.loads(${JSON.stringify(JSON.stringify(chunks))})
 
 
 class AgentReplyProbe(Component):
@@ -94,12 +96,13 @@ interface StoredMessage {
 
 test.describe("Agent reply persistence (LLM-free)", () => {
   let bearer: string;
+  // Identical for every test, so fetched once per worker (~524 KB).
   let catalog: Record<string, unknown>;
   const createdFlowIds: string[] = [];
 
   test.beforeEach(async ({ request }) => {
     bearer = await getAuthToken(request);
-    catalog = await fetchComponentCatalog(request, { Authorization: bearer });
+    catalog ??= await fetchComponentCatalog(request, { Authorization: bearer });
   });
 
   test.afterEach(async ({ request }) => {
@@ -175,17 +178,34 @@ test.describe("Agent reply persistence (LLM-free)", () => {
     return { flowId, messages };
   }
 
-  /** The one contract every test asserts: one message, this flow's, full text. */
-  function expectFullReplyStored(
-    stored: { flowId: string; messages: StoredMessage[] },
-    sentinel: string,
-  ): void {
+  /** One message, belonging to this flow: the harness worked. Returns its text. */
+  function storedReplyText(stored: { flowId: string; messages: StoredMessage[] }): unknown {
     expect(stored.messages, "the session holds exactly one stored message").toHaveLength(1);
     const [message] = stored.messages;
     expect(message.flow_id, "the stored message belongs to this flow").toBe(stored.flowId);
+    return message.text;
+  }
+
+  /** The contract: the stored text is the whole merged reply. */
+  function expectFullReply(text: unknown, sentinel: string): void {
     // Exact equality: the truncated text is a prefix of the full one, so a
     // `toContain` on the head would pass the defect.
-    expect(message.text, "the stored text is the whole merged reply").toBe(`${HEAD}cp (${sentinel})`);
+    expect(text, "the stored text is the whole merged reply").toBe(`${HEAD}cp (${sentinel})`);
+  }
+
+  /**
+   * Declares the LE-2919 failure only once the harness has worked and the stored
+   * text is either the known defective value or the full reply. Anything that
+   * fails before this call (catalog, flow, run, message count) or any third text
+   * is a plain red, so test.fail() can only ever absorb the known defect. A fixed
+   * defect still reports "expected to fail, but passed".
+   */
+  function declareKnownDefect(text: unknown, sentinel: string, defective: string): void {
+    expect(
+      [defective, `${HEAD}cp (${sentinel})`],
+      "the stored text is the known LE-2919 value or the full reply, nothing else",
+    ).toContain(text);
+    test.fail();
   }
 
   test(
@@ -195,13 +215,11 @@ test.describe("Agent reply persistence (LLM-free)", () => {
       apiCoverage.declare([WORKFLOWS_OP, MESSAGES_OP]);
       const sentinel = `probe-${Date.now()}`;
 
-      const stored = await runProbe(request, [
-        [{ type: "text", text: HEAD }],
-        [{ type: "text", text: `cp (${sentinel})` }],
-      ]);
+      // Signed dicts, like Tests 2 and 3: only the chunk SHAPE differs from them.
+      const stored = await runProbe(request, [[signedText(HEAD)], [signedText(`cp (${sentinel})`)]]);
 
       await test.step("the stored message carries the full reply", () => {
-        expectFullReplyStored(stored, sentinel);
+        expectFullReply(storedReplyText(stored), sentinel);
       });
     },
   );
@@ -212,18 +230,21 @@ test.describe("Agent reply persistence (LLM-free)", () => {
     async ({ request, apiCoverage }) => {
       // DECLARED FAILING (LE-2919, #2176). The merged content is [dict, str] and
       // `_coerce_ai_message_blocks` drops the str, so the stored text is "Echo: hello m".
-      // The assertion below is the CORRECT contract; it fails today, and test.fail()
-      // expects that. The day upstream fixes it, this reports "expected to fail, but
-      // passed": delete test.fail() and this comment, keep @stable, flip the §6.5
-      // bullet, and record the fix in REGRESSIONS.md.
-      test.fail();
+      // The final assertion is the CORRECT contract; it fails today, and the
+      // declaration expects that. The day upstream fixes it, this reports "expected
+      // to fail, but passed", which the daily treats as a hard failure and strips
+      // @stable. The lift: delete the declareKnownDefect() call and this comment,
+      // restore @stable if the daily removed it, flip the §6.5 bullet to [x], and
+      // record the fix in REGRESSIONS.md.
       apiCoverage.declare([WORKFLOWS_OP, MESSAGES_OP]);
       const sentinel = `probe-${Date.now()}`;
 
       const stored = await runProbe(request, [[signedText(HEAD)], `cp (${sentinel})`]);
 
       await test.step("the stored message carries the full reply", () => {
-        expectFullReplyStored(stored, sentinel);
+        const text = storedReplyText(stored);
+        declareKnownDefect(text, sentinel, HEAD);
+        expectFullReply(text, sentinel);
       });
     },
   );
@@ -235,14 +256,15 @@ test.describe("Agent reply persistence (LLM-free)", () => {
       // DECLARED FAILING (LE-2919, #2176). The merged content is [str, dict] with an
       // empty dict text, so the coercion keeps nothing and the stored text is "".
       // Lifted the same way as the test above, in the same PR.
-      test.fail();
       apiCoverage.declare([WORKFLOWS_OP, MESSAGES_OP]);
       const sentinel = `probe-${Date.now()}`;
 
       const stored = await runProbe(request, [HEAD, `cp (${sentinel})`, [signedText("")]]);
 
       await test.step("the stored message carries the full reply", () => {
-        expectFullReplyStored(stored, sentinel);
+        const text = storedReplyText(stored);
+        declareKnownDefect(text, sentinel, "");
+        expectFullReply(text, sentinel);
       });
     },
   );
