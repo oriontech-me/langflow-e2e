@@ -1603,7 +1603,7 @@
 | `core-components/` — Core Components | 94 | 92 | 1 | 0 | 1 |
 | `core-functionality/auth/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 42 | 37 | 1 | 1 | 3 |
+| `core-functionality/llm-agents/` | 43 | 38 | 1 | 1 | 3 |
 | `core-functionality/model-provider/` | 36 | 33 | 2 | 0 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 56 | 56 | 0 | 0 | 0 |
@@ -1622,7 +1622,7 @@
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 104 | 0 | 84 | 7 | 13 |
 | `serving/` — Serving-Plane End-User Identity | 16 | 0 | 14 | 0 | 2 |
 | `integrations/` — Dedicated Integrations | 33 | 26 | 0 | 0 | 7 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **744** | **654 (88%)** | **39 (5%)** | **13 (2%)** | **38 (5%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **745** | **655 (88%)** | **39 (5%)** | **13 (2%)** | **38 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1638,7 +1638,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 728 `test()` calls carrying the `@stable` tag, distributed across 281 spec
+> 731 `test()` calls carrying the `@stable` tag, distributed across 282 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -2029,6 +2029,9 @@
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
+- [x] an all-dict streamed reply is stored whole (attribution control) → `agent-reply-content-persistence.spec.ts`
+- [x] a string chunk after a list-content chunk is stored, not dropped → `agent-reply-content-persistence.spec.ts`
+- [x] string chunks followed by an empty signed text block are stored, not emptied → `agent-reply-content-persistence.spec.ts`
 - [x] output_schema fields come back as typed JSON keys on the structured response → `agent-structured-output.spec.ts`
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
