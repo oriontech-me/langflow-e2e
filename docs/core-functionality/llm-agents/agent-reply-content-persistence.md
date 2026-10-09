@@ -1,6 +1,6 @@
 # Agent reply persistence — every text item of a merged reply reaches the stored message
 
-**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev35`, #2200)
+**Last validated:** Langflow 1.13.x (nightly `1.13.0.dev37`, #2200)
 
 ---
 
@@ -11,13 +11,19 @@ asserts that the stored message carries **all** of that reply's text, whatever s
 the provider's chunks took. It is the deterministic, LLM-free coverage for #2176
 (upstream [LE-2919](https://datastax.jira.com/browse/LE-2919)).
 
-**The defect.** `handle_on_chat_model_end` builds a round's stored text through
-`_coerce_ai_message_blocks`, which keeps only the `dict` items of a list
-`AIMessage.content` and drops every plain-string item. LangChain's `merge_content`
+**The defect, fixed upstream.** Before langflow#15650, `handle_on_chat_model_end` built a round's stored text through
+`_coerce_ai_message_blocks`, which kept only the `dict` items of a list
+`AIMessage.content` and dropped every plain-string item. LangChain's `merge_content`
 produces a mixed list when a list-content chunk is followed by a string chunk, or
 the other way round. `langchain-google-genai` switches shape mid-answer (a part
 carrying a thought signature is a dict, the rest are strings), so a Gemini reply was
 stored as `"Echo: hello m"`, or as `""`, while the trace kept the full text.
+
+langflow#15650 (merged into `release-1.13.0` on 2026-10-08, first in nightly
+`1.13.0.dev37`) makes the coercion keep plain strings as text. This spec was written
+against the defect with Tests 2 and 3 declared failing, and those declarations
+reported *"expected to fail, but passed"* on the first `dev37` run, so they were
+lifted in the same PR: all three tests now assert the full reply and pass.
 
 **Why a custom component and not a model.** That provider trigger did not reproduce
 on demand (0 of about 175 runs), so the only spec able to see it,
@@ -28,14 +34,14 @@ best. This spec removes the provider. A custom component builds the exact merged
 component's own `send_message`. Everything after the event (the handler, the
 coercion, `Message.text`, the database write) is Langflow's code, unchanged.
 
-Measured inside the nightly container (`lfx` `1.13.0.dev35`), both in Python and end
-to end through this spec's flow:
+Measured inside the nightly container, both in Python and end to end through this
+spec's flow. The defective values are from `1.13.0.dev35`, before the fix:
 
-| Case | Chunk sequence | Merged `content` | Persisted `text` |
-|---|---|---|---|
-| Control | text dict with a signature, text dict with a signature | `[dict, dict]` | `"Echo: hello mcp (<sentinel>)"` (full) |
-| String after dict | text dict with a signature, string | `[dict, str]` | `"Echo: hello m"` |
-| Empty dict after strings | string, string, empty text dict with a signature | `[str, dict]` | `""` |
+| Case | Chunk sequence | Merged `content` | Persisted `text`, `dev35` | Persisted `text`, `dev37` |
+|---|---|---|---|---|
+| Control | text dict with a signature, text dict with a signature | `[dict, dict]` | `"Echo: hello mcp (<sentinel>)"` (full) | full |
+| String after dict | text dict with a signature, string | `[dict, str]` | `"Echo: hello m"` | full |
+| Empty dict after strings | string, string, empty text dict with a signature | `[str, dict]` | `""` | full |
 
 The issue that requested this spec described the control's merged content as a
 single dict. Measured, it stays two dicts. The persisted text is full either way, so
@@ -54,31 +60,14 @@ difference between the control and Tests 2 and 3.
 - `@agents`: the behavior under test is the agent event pipeline
   (`process_agent_events`).
 - `@regression`: guards a filed upstream regression (LE-2919, introduced by
-  langflow#13391).
-- `@stable`: every test carries it, including the two declared failing, following
-  the #1896 pattern (`graph-execution-contract.spec.ts`).
+  langflow#13391, fixed by langflow#15650).
+- `@stable`: every test carries it.
 
-**Tests 2 and 3 are declared failing with `test.fail()` against LE-2919.** Their
-final assertion is the correct contract, and it fails while the defect is live. The
-declaration is the alarm in both directions. While the defect is live, the test
-passes by failing as expected. The day upstream fixes it, the run reports *"expected
-to fail, but passed"*. The daily treats that as a hard failure and strips `@stable`
-from the test (`remove-stable-from-failures.ts` removes every `unexpected` status, an
-unexpected pass included). The lift is: delete the `declareKnownDefect()` call and its
-comment, restore `@stable` if the daily already removed it, flip the §6.5 `[!]` bullet
-to `[x]`, and record the fix in `REGRESSIONS.md`.
-
-`test.fail()` turns **any** failure after it is called green, so it is called
-**late**: only after the harness has worked (the run completed with no errors, the
-session holds exactly one message of this flow) and the stored text is either the
-known defective value or the full reply. A broken harness, or the defect turning
-into a third value, fails before the declaration and reddens Test 2 or 3 itself. A
-green Test 2 or 3 therefore means the known defect, as far as the test body goes:
-once declared, a failure in `afterEach` (the flow cleanup) or in fixture teardown is
-absorbed too, and on the day of the fix it would hide the *"passed"* alarm for that
-run. Test 1 still runs the identical
-harness with signed dicts only, which attributes the defect to the chunk shape
-rather than to the signature.
+Test 1 is the attribution control: it runs the identical harness (same component,
+same flow, same run, same read-back) with signed dicts only, so the chunk shape
+(dict or string) is the only difference from Tests 2 and 3. If Tests 2 and 3 go red
+while Test 1 stays green, the regression is back; if all three go red, the harness
+or the persistence path broke.
 
 ---
 
@@ -127,12 +116,9 @@ The session id is unique per test, so the read-back cannot pick up another test'
 message. The message is found by session rather than by sentinel on purpose: in the
 defective cases the sentinel is exactly the part that gets dropped.
 
-Tests 2 and 3 additionally require, before declaring the failure, that the stored
-text is either the known defective value (`"Echo: hello m"` and `""`) or the full
-reply.
-
-Expected on the current nightly: Test 1 passes; Tests 2 and 3 fail on the last
-assertion (`"Echo: hello m"` and `""`), which `test.fail()` reports as passed.
+Expected on the current nightly (`dev37` onward): all three pass. On an image
+without langflow#15650, Tests 2 and 3 fail on the last assertion with
+`"Echo: hello m"` and `""`.
 
 ---
 
@@ -148,14 +134,8 @@ assertion (`"Echo: hello m"` and `""`), which `test.fail()` reports as passed.
   identical on every run, and a provider outage cannot skip or redden it.
 - **Force-failure checks** (CONTRIBUTING §2):
   - M1: Test 1 expects a different sentinel, so it must fail.
-  - M2: Test 2's sequence is replaced by the all-dict one, so it must report
-    *"expected to fail, but passed"*.
-  - M3: Test 3's sequence is replaced by the all-dict one, with the same expectation
-    as M2.
-  - M5: the run endpoint is misspelled, so all three tests must fail, Tests 2 and 3
-    included (the declaration is never reached).
-  - M6: Test 3's known defective value is changed, so the stored `""` is a third
-    value and Test 3 must fail.
+  - M2: on `dev35` (before langflow#15650), Tests 2 and 3 must fail on the text
+    assertion with `"Echo: hello m"` and `""`, while Test 1 passes. Measured.
   - M4: the Chat Output is removed from the flow, so `send_message` persists
     nothing, and Test 1 must fail on the message count (0, not 1). Removing only
     the edge is not this mutation: the Chat Output then fails the run with

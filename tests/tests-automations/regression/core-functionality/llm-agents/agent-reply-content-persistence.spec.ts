@@ -11,7 +11,8 @@ import {
 import { CUSTOM_COMPONENT_TYPE } from "../../../../helpers/flows/build-custom-component-graph";
 
 // Agent reply persistence: every text item of a merged reply reaches the stored
-// message (issue #2200, the deterministic coverage for #2176 / LE-2919).
+// message (issue #2200, the deterministic coverage for #2176 / LE-2919, fixed
+// upstream by langflow#15650 and first green on nightly 1.13.0.dev37).
 // Spec doc: docs/core-functionality/llm-agents/agent-reply-content-persistence.md
 //
 // No model is involved. A custom component builds the merged `AIMessageChunk` that
@@ -178,35 +179,17 @@ test.describe("Agent reply persistence (LLM-free)", () => {
     return { flowId, messages };
   }
 
-  /** One message, belonging to this flow: the harness worked. Returns its text. */
-  function storedReplyText(stored: { flowId: string; messages: StoredMessage[] }): unknown {
+  /** The contract: one message, this flow's, carrying the whole merged reply. */
+  function expectFullReplyStored(
+    stored: { flowId: string; messages: StoredMessage[] },
+    sentinel: string,
+  ): void {
     expect(stored.messages, "the session holds exactly one stored message").toHaveLength(1);
     const [message] = stored.messages;
     expect(message.flow_id, "the stored message belongs to this flow").toBe(stored.flowId);
-    return message.text;
-  }
-
-  /** The contract: the stored text is the whole merged reply. */
-  function expectFullReply(text: unknown, sentinel: string): void {
     // Exact equality: the truncated text is a prefix of the full one, so a
     // `toContain` on the head would pass the defect.
-    expect(text, "the stored text is the whole merged reply").toBe(`${HEAD}cp (${sentinel})`);
-  }
-
-  /**
-   * Declares the LE-2919 failure only once the harness has worked and the stored
-   * text is either the known defective value or the full reply. Anything that
-   * fails before this call (catalog, flow, run, message count) or any third text
-   * is a plain red, so within the test body test.fail() absorbs only the known
-   * defect. A fixed defect still reports "expected to fail, but passed". Once
-   * declared, a failure in afterEach or fixture teardown is absorbed too.
-   */
-  function declareKnownDefect(text: unknown, sentinel: string, defective: string): void {
-    expect(
-      [defective, `${HEAD}cp (${sentinel})`],
-      "the stored text is the known LE-2919 value or the full reply, nothing else",
-    ).toContain(text);
-    test.fail();
+    expect(message.text, "the stored text is the whole merged reply").toBe(`${HEAD}cp (${sentinel})`);
   }
 
   test(
@@ -220,7 +203,7 @@ test.describe("Agent reply persistence (LLM-free)", () => {
       const stored = await runProbe(request, [[signedText(HEAD)], [signedText(`cp (${sentinel})`)]]);
 
       await test.step("the stored message carries the full reply", () => {
-        expectFullReply(storedReplyText(stored), sentinel);
+        expectFullReplyStored(stored, sentinel);
       });
     },
   );
@@ -229,23 +212,16 @@ test.describe("Agent reply persistence (LLM-free)", () => {
     "a string chunk after a list-content chunk is stored, not dropped",
     { tag: ["@api", "@regression", "@agents", "@stable"] },
     async ({ request, apiCoverage }) => {
-      // DECLARED FAILING (LE-2919, #2176). The merged content is [dict, str] and
-      // `_coerce_ai_message_blocks` drops the str, so the stored text is "Echo: hello m".
-      // The final assertion is the CORRECT contract; it fails today, and the
-      // declaration expects that. The day upstream fixes it, this reports "expected
-      // to fail, but passed", which the daily treats as a hard failure and strips
-      // @stable. The lift: delete the declareKnownDefect() call and this comment,
-      // restore @stable if the daily removed it, flip the §6.5 bullet to [x], and
-      // record the fix in REGRESSIONS.md.
+      // LE-2919 (#2176): the merged content is [dict, str], and before
+      // langflow#15650 `_coerce_ai_message_blocks` dropped the str, so the stored
+      // text was "Echo: hello m".
       apiCoverage.declare([WORKFLOWS_OP, MESSAGES_OP]);
       const sentinel = `probe-${Date.now()}`;
 
       const stored = await runProbe(request, [[signedText(HEAD)], `cp (${sentinel})`]);
 
       await test.step("the stored message carries the full reply", () => {
-        const text = storedReplyText(stored);
-        declareKnownDefect(text, sentinel, HEAD);
-        expectFullReply(text, sentinel);
+        expectFullReplyStored(stored, sentinel);
       });
     },
   );
@@ -254,18 +230,15 @@ test.describe("Agent reply persistence (LLM-free)", () => {
     "string chunks followed by an empty signed text block are stored, not emptied",
     { tag: ["@api", "@regression", "@agents", "@stable"] },
     async ({ request, apiCoverage }) => {
-      // DECLARED FAILING (LE-2919, #2176). The merged content is [str, dict] with an
-      // empty dict text, so the coercion keeps nothing and the stored text is "".
-      // Lifted the same way as the test above, in the same PR.
+      // LE-2919 (#2176): the merged content is [str, dict] with an empty dict text,
+      // and before langflow#15650 the coercion kept nothing, so the stored text was "".
       apiCoverage.declare([WORKFLOWS_OP, MESSAGES_OP]);
       const sentinel = `probe-${Date.now()}`;
 
       const stored = await runProbe(request, [HEAD, `cp (${sentinel})`, [signedText("")]]);
 
       await test.step("the stored message carries the full reply", () => {
-        const text = storedReplyText(stored);
-        declareKnownDefect(text, sentinel, "");
-        expectFullReply(text, sentinel);
+        expectFullReplyStored(stored, sentinel);
       });
     },
   );
