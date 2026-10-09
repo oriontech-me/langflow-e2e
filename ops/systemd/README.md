@@ -79,7 +79,10 @@ known keys, each checked against its shape, anything else refused (see the heade
 `ops/vm/run-on-demand.sh`). `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's
-`SUITE_FLOOR`, or the request is refused before the build.
+`SUITE_FLOOR`, or the request is refused before the build. **A suite ref is trusted
+code:** its scripts and specs run as root beside `/root/.e2e-secrets`, publishing
+tokens included, and the daily's clone. Accepted on 2026-10-09, because whoever can push
+a branch here can already merge to main; see the header of `run-on-demand.sh`.
 
 ```sh
 mkdir -p /root/e2e-on-demand

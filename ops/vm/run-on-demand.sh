@@ -34,6 +34,13 @@
 #                                    from the clone's origin (the mirror), and refused
 #                                    when it is not there or is older than SUITE_FLOOR
 #
+# A suite ref is TRUSTED CODE. Its run-e2e.sh, config and specs run as root on this
+# machine, beside /root/.e2e-secrets (publishing tokens included: the run's
+# environment drops them, a file read does not) and the daily's clone, which they
+# could change for the next daily. Before it, only main ran here as root. Accepted
+# on 2026-10-09: the repository is private and takes no fork, so whoever can push a
+# branch can already merge to main, and only an admin can ask for a run.
+#
 # The request is consumed when it is read -- moved to $STATE/requests/<id>.env -- so
 # each start answers exactly one request, and the result says how.
 #
