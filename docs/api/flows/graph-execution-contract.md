@@ -49,8 +49,9 @@ whose regular-port cycle, and the node downstream of it, never built — and lis
 that downstream node in `outputs` as completed with null content. The declaration
 is the alarm in both directions: while the defect is live the test passes by
 failing as expected; the day upstream fixes it, the run reports *"expected to
-fail, but passed"* and the lift is: delete `test.fail()` and this note, keep
-`@stable`, flip the §12.6 bullet, and close #1896. An **attribution control**
+fail, but passed"* and the lift is: delete `test.fail()` and this note, restore
+`@stable` if the daily already removed it (the daily treats the unexpected pass as a
+hard failure), flip the §12.6 bullet, and close #1896. An **attribution control**
 (Test 4's sibling, not declared failing) builds the *acyclic* equivalent through
 the same helpers and asserts the downstream node builds and is reported
 `completed` with its real output — so a red Test 4 is the cycle defect, never a

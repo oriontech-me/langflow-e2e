@@ -45,7 +45,8 @@ Test 2: `@workspace` `@ui-ux` `@playground` `@regression` `@stable`
 (#1896). While the defect is live it passes by failing as expected; the day
 upstream fixes it (the failed node is flagged / completed branches render) it
 reports *"expected to fail, but passed"* — then drop `test.fail()` and this note,
-keep `@stable`, and flip the §12.6 canvas bullet. Test 1 is the attribution
+restore `@stable` if the daily already removed it (the daily treats the unexpected
+pass as a hard failure), and flip the §12.6 canvas bullet. Test 1 is the attribution
 control's role here: a green Test 1 proves the harness drives the canvas, so a red
 Test 2 is the product defect, not a broken scout.
 

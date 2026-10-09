@@ -155,7 +155,8 @@ mode; the fix is plausibly one line per call site
 - The serial sibling *"the run resolves the credential without echoing it"* runs
   normally.
 - The lift, once the fix is in `langflowai/langflow-nightly:latest`: remove the
-  `test.fail()` call and its comment, keep `@stable`, flip the `QA-CHECKLIST.md`
+  `test.fail()` call and its comment, restore `@stable` if the daily already removed
+  it (the daily treats the unexpected pass as a hard failure), flip the `QA-CHECKLIST.md`
   §17.3 binding bullet to `[x]`, mark LE-2649's `REGRESSIONS.md` row `Fixed`, close #1546.
 
 ## 6. Re-check log, and why re-measuring is not the next step

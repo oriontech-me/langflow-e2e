@@ -259,7 +259,9 @@ test(
       // HERE, after the stored-chunk proof, so a broken bootstrap or ingest
       // above still fails as an unexpected red instead of hiding behind it. The
       // day upstream fixes it, this reports "expected to fail, but passed" —
-      // then delete test.fail() and this comment, keep @stable, and close #2186.
+      // then delete test.fail() and this comment, restore @stable if the daily
+      // already removed it (it treats the unexpected pass as a hard failure), and
+      // close #2186.
       test.fail();
       const headers = await authHeaders(page);
       const kb = await getKnowledgeBase(page.request, kbName, { headers });
