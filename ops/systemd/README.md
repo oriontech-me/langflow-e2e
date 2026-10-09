@@ -80,9 +80,11 @@ known keys, each checked against its shape, anything else refused (see the heade
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's
 `SUITE_FLOOR`, or the request is refused before the build. **A suite ref is trusted
-code:** its scripts and specs run as root beside `/root/.e2e-secrets`, publishing
-tokens included, and the daily's clone. Accepted on 2026-10-09, because whoever can push
-a branch here can already merge to main; see the header of `run-on-demand.sh`.
+code:** its scripts and specs run as root, so they reach anything on the machine:
+`/root/.e2e-secrets` (publishing tokens included), the worker's token, the mirror's git
+credentials, the daily's clone and its units. Accepted on 2026-10-09, because whoever
+can push a branch to the mirror can already change the `main` the daily runs as root;
+see the header of `run-on-demand.sh`.
 
 ```sh
 mkdir -p /root/e2e-on-demand

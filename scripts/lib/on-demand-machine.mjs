@@ -136,6 +136,9 @@ process.exit(${probe.exit});
     // the executor must find them on the mirror, not locally.
     git("checkout", "-q", "-f", "-");
     git("branch", "-q", "-D", "new-suite", "old-suite");
+    // The push left tracking refs; the real clone has none for these, and a test
+    // checks the executor's fetch writes none.
+    for (const b of ["new-suite", "old-suite"]) git("update-ref", "-d", `refs/remotes/origin/${b}`);
   }
   writeFileSync(join(repo, ".env"), "SOME_PROVIDER_API_KEY=from-dotenv\n");
 
@@ -158,6 +161,8 @@ ${stateCases}
   *) echo inactive ;;
 esac`);
   // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
+  // coreutils' timeout, which the VM has and macOS does not: runs the command as is.
+  stub(bin, "timeout", `echo "$1 $2 $3" >> ${q(join(dir, "timeout.log"))}\nshift\nexec "$@"`);
   stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.
@@ -235,6 +240,8 @@ esac`);
       buildScript: readIf(join(dir, "build.script"))?.trim() ?? null,
       laneRef: (() => { try { return git("rev-parse", "--verify", "-q", "refs/on-demand/suite"); } catch { return null; } })(),
       cloneHead: git("rev-parse", "HEAD"),
+      remoteRefs: git("for-each-ref", "--format=%(refname)", "refs/remotes"),
+      timeouts: readIf(join(dir, "timeout.log")) ?? "",
     };
   };
   return { env, collect };

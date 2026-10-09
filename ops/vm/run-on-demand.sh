@@ -35,11 +35,19 @@
 #                                    when it is not there or is older than SUITE_FLOOR
 #
 # A suite ref is TRUSTED CODE. Its run-e2e.sh, config and specs run as root on this
-# machine, beside /root/.e2e-secrets (publishing tokens included: the run's
-# environment drops them, a file read does not) and the daily's clone, which they
-# could change for the next daily. Before it, only main ran here as root. Accepted
-# on 2026-10-09: the repository is private and takes no fork, so whoever can push a
-# branch can already merge to main, and only an admin can ask for a run.
+# machine, so they reach anything on it: /root/.e2e-secrets (publishing tokens
+# included: the run's environment drops them, a file read does not), the worker's
+# platform token, the git credentials for the mirror, the daily's clone with this
+# executor in it, and the units -- all of which they could change for the next run
+# or the next daily. Before it, only the mirror's main ran here as root. Accepted on
+# 2026-10-09: the code comes from the GHES mirror, and whoever can push a branch
+# there can already change the main the daily runs as root (on GitHub, main has no
+# branch protection either); and only an admin can ask for a run.
+#
+# The provider pre-check is the clone's, not the suite ref's: with no model declared,
+# it asks the clone's candidates, so a suite branch that changes CANDIDATE_PREFS is
+# checked against the old list (a refusal needs every candidate turned down the same
+# way, which a retired model, named in its own error, does not give).
 #
 # The request is consumed when it is read -- moved to $STATE/requests/<id>.env -- so
 # each start answers exactly one request, and the result says how.
@@ -96,7 +104,8 @@
 #                                                  shadow   7880-7883/8090/11444)
 #             Not 7890-7893: those are the Enterprise scripts' and serving-identity's
 #             defaults in this repository, and the machine has an Enterprise image.
-#   suite     its own worktree, detached at the commit the clone holds, removed after
+#   suite     its own worktree, detached at the commit the clone holds (or the suite
+#             ref's, fetched into refs/on-demand/suite), both removed after
 #   image     langflow-ondemand:<commit>, removed after, with the build cache
 #   ledger    a fresh COPY of the official ledger per run, removed after: the triage
 #             summary reads recurrence against the daily's history, and the official
@@ -108,7 +117,8 @@
 #
 # On every exit, including a stop by the daily: the four backend containers removed and
 # checked gone, echo and ollama stopped on this lane's ports, every langflow-ondemand
-# image removed, the build cache pruned, the worktree and the ledger copy removed.
+# image removed, the build cache pruned, the worktree, the ledger copy and the suite
+# ref's lane ref removed.
 # `docker builder prune -af` is MACHINE-WIDE: it takes any build cache on the qa, not
 # only this lane's. No other lane builds today; one that starts to must change this.
 # Never `docker system prune`, which would take the other lanes' images. A cleanup that could not confirm the containers gone says so in the result.
@@ -288,12 +298,14 @@ main() {
   # pre-check are the machine's part and run from the clone, as the executor does.
   if [ -n "$OD_SUITE_REF" ]; then
     local fetch_err="$STATE/suite-fetch.$$" fetched=0 anc=0
-    # Never FETCH_HEAD: the daily's `git pull` reads it. A stalled transfer gives up
-    # after a minute below 1 KB/s, instead of holding the slot and the heavy lock.
+    # Never FETCH_HEAD, which the daily's `git pull` reads, and never the clone's
+    # refs/remotes (--refmap= turns off git's opportunistic update of them). Five minutes
+    # at most, whatever the transport: a stalled fetch would otherwise hold the slot
+    # and the heavy lock until the unit's TimeoutStartSec, 90 minutes.
     # A name that is both a branch and a tag fetches the tag (git's own order:
     # refs/<name>, refs/tags/<name>, refs/heads/<name>); refs/heads/<name> says which.
-    git -C "$REPO" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 \
-      fetch --no-tags --no-write-fetch-head -q origin "+$OD_SUITE_REF:refs/on-demand/suite" 9>&- 8>&- 2> "$fetch_err" && fetched=1
+    timeout 300 git -C "$REPO" fetch --no-tags --no-write-fetch-head --refmap= -q origin \
+      "+$OD_SUITE_REF:refs/on-demand/suite" 9>&- 8>&- 2> "$fetch_err" && fetched=1
     said="$(tr '\n' ' ' < "$fetch_err" 2>/dev/null | cut -c1-300)"
     rm -f "$fetch_err"
     if [ "$fetched" = "0" ]; then

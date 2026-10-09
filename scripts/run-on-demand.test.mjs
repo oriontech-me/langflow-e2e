@@ -281,6 +281,8 @@ test("a suite ref runs that commit of the suite, fetched from the mirror, and th
   // The daily's clone: same commit, no branch of it, and the lane's ref gone.
   assert.equal(r.cloneHead, r.head, "the clone moved");
   assert.equal(r.laneRef, null, "refs/on-demand/suite was left in the clone");
+  assert.equal(r.remoteRefs, "", "the fetch wrote the clone's refs/remotes");
+  assert.match(r.timeouts, /^300 git -C$/m, "the fetch is not bounded");
   assert.ok(r.build, "no build ran");
 });
 
