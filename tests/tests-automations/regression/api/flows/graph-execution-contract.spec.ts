@@ -292,7 +292,9 @@ test.describe("Graph execution contract — order, partial failure, skipped bran
       // is out of scope, see the doc). The assertion below is the CORRECT contract;
       // it fails today, and test.fail() expects that. The day upstream fixes it,
       // this reports "expected to fail, but passed" — then delete test.fail() and
-      // this comment, keep @stable, flip the QA-CHECKLIST §12.6 bullet, close #1896.
+      // this comment, restore @stable if the daily already removed it (it treats
+      // the unexpected pass as a hard failure), flip the QA-CHECKLIST §12.6
+      // bullet, close #1896.
       test.fail();
       apiCoverage.declare([WORKFLOWS_OP]);
 

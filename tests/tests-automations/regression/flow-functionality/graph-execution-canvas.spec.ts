@@ -109,7 +109,9 @@ test.describe("Graph execution on the canvas — cycle refusal and partial-failu
       // assertion below is the correct contract — a completed branch (Tail) shows
       // as built — which fails today; test.fail() expects that. The day upstream
       // stops treating a component error as terminal, Tail renders and this flips
-      // to an unexpected pass: drop test.fail(), flip the §12.6 canvas bullet.
+      // to an unexpected pass: drop test.fail(), restore @stable if the daily
+      // already removed it (it treats the unexpected pass as a hard failure),
+      // flip the §12.6 canvas bullet.
       test.fail();
       (page as PageWithFlowHooks).allowFlowErrors();
 

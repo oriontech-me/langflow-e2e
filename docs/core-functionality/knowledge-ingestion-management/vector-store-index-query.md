@@ -310,7 +310,9 @@ backend, the API reports a KB that stores 5 chunks as `"empty"`, and the PR
 announces no change to it. Tracked by #2186 and upstream as
 [LE-2912](https://datastax.jira.com/browse/LE-2912). **To lift:**
 when Test 1 reports *"expected to fail, but passed"*, delete `test.fail()` and its
-comment, keep `@stable`, move the `REGRESSIONS.md` entry to *Fixed*, and close #2186.
+comment, restore `@stable` if the daily already removed it (the daily treats the
+unexpected pass as a hard failure), move the `REGRESSIONS.md` entry to *Fixed*, and
+close #2186.
 
 ---
 
