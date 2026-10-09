@@ -73,7 +73,10 @@ to `[x]`, and record the fix in `REGRESSIONS.md`.
 session holds exactly one message of this flow) and the stored text is either the
 known defective value or the full reply. A broken harness, or the defect turning
 into a third value, fails before the declaration and reddens Test 2 or 3 itself. A
-green Test 2 or 3 therefore means the known defect. Test 1 still runs the identical
+green Test 2 or 3 therefore means the known defect, as far as the test body goes:
+once declared, a failure in `afterEach` (the flow cleanup) or in fixture teardown is
+absorbed too, and on the day of the fix it would hide the *"passed"* alarm for that
+run. Test 1 still runs the identical
 harness with signed dicts only, which attributes the defect to the chunk shape
 rather than to the signature.
 

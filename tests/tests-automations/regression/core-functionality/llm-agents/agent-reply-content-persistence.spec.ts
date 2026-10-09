@@ -197,8 +197,9 @@ test.describe("Agent reply persistence (LLM-free)", () => {
    * Declares the LE-2919 failure only once the harness has worked and the stored
    * text is either the known defective value or the full reply. Anything that
    * fails before this call (catalog, flow, run, message count) or any third text
-   * is a plain red, so test.fail() can only ever absorb the known defect. A fixed
-   * defect still reports "expected to fail, but passed".
+   * is a plain red, so within the test body test.fail() absorbs only the known
+   * defect. A fixed defect still reports "expected to fail, but passed". Once
+   * declared, a failure in afterEach or fixture teardown is absorbed too.
    */
   function declareKnownDefect(text: unknown, sentinel: string, defective: string): void {
     expect(
