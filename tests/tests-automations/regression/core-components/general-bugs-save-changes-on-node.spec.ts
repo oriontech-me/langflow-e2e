@@ -143,8 +143,11 @@ async function verifyTextareaValue(
   });
 }
 
-test("any changes on the node must be saved on user interaction",
-  { tag: ["@stable", "@release", "@components", "@ui-ux"] },
+// Quarantined for #2236: recurrent flake on the VM lane (2026-09-22, 2026-09-23 and 2026-10-09 on
+// 1.13.0.dev37), `GET /api/v1/flows/{id}` in `readPersistedInputValue` is reset by the backend with
+// no outage measured. Lifting it (drop `test.fixme`, restore `@stable`) is #2236's deliverable.
+test.fixme("any changes on the node must be saved on user interaction",
+  { tag: ["@release", "@components", "@ui-ux"] },
   async ({ page, request }) => {
     const randomValues = Array.from({ length: 4 }, () =>
       Math.random().toString(36).substring(2, 8),
