@@ -48,7 +48,9 @@ export interface ProviderModelUnderTest {
   dummyApiKey: string;
   /**
    * A fragment of the provider's OWN refusal of `dummyApiKey`, measured on
-   * 1.12.0.dev38.
+   * 1.12.0.dev38. The wording belongs to the provider, not to Langflow, so it can
+   * change under an unchanged build: Anthropic's did between the 2026-10-08 and
+   * 2026-10-09 dailies (#2234).
    *
    * This is what the skip-path control asserts, and it has to be the provider's
    * words rather than a bare `401`: the claim is that the request left the box and
@@ -73,7 +75,11 @@ export const ANTHROPIC_MODEL: ProviderModelUnderTest = {
   baseUrlField: "base_url",
   canonicalBaseUrl: "https://api.anthropic.com",
   dummyApiKey: "sk-ant-dummy-not-a-real-key",
-  authRefusalFragment: "API key is invalid",
+  // Was "API key is invalid" until 2026-10-08. Measured on 2026-10-09 against
+  // `/v1/messages` and `/v1/models` with this dummy key: `authentication_error`,
+  // "invalid x-api-key". Langflow's own refusal is "Invalid API key", so this
+  // cannot be satisfied by Langflow rejecting the run before it leaves the box.
+  authRefusalFragment: "invalid x-api-key",
 };
 
 interface TemplateField {
