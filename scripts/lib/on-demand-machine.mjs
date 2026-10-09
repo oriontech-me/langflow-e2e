@@ -55,6 +55,10 @@ export function setup({
   // The provider pre-check's answer: its exit status and its JSON line; null leaves
   // the script out of the suite commit, as a commit from before it.
   probe = { exit: 0, out: '{"verdict":"usable","reason":"answered"}' },
+  // A mirror for the suite ref: an origin holding `new-suite` (the clone's commit plus
+  // one) and `old-suite` (a history without the clone's commit), with the clone's
+  // commit as SUITE_FLOOR. Off, the clone has no origin, as no default run fetches.
+  mirror = false,
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -86,7 +90,7 @@ exit ${runExit}
   );
   writeFileSync(
     join(repo, "ops", "vm", "build-target-image.sh"),
-    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\necho "::error:: an error line from before the run" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
+    `#!/usr/bin/env bash\necho "$* BUILD_ROOT=$BUILD_ROOT" > ${q(buildArgs)}\necho "$0" > ${q(join(dir, "build.script"))}\necho "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(buildArgs)}\necho "build-target-image: building something; log: x" >&2\necho "noise from docker" >&2\necho "build-target-image: some refusal line" >&2\necho "::error:: an error line from before the run" >&2\ncat ${q(join(dir, "build.out"))}\nexit ${buildExit}\n`,
     { mode: 0o755 },
   );
   writeFileSync(join(dir, "build.out"), buildOut ? `${buildOut}\n` : "");
@@ -111,6 +115,26 @@ process.exit(${probe.exit});
   git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", ".");
   git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "suite");
   const head = git("rev-parse", "HEAD");
+  const suites = {};
+  if (mirror) {
+    const origin = join(dir, "origin.git");
+    execFileSync(REAL_GIT, ["init", "-q", "--bare", origin]);
+    git("remote", "add", "origin", origin);
+    const id = ["-c", "user.email=t@example.invalid", "-c", "user.name=t"];
+    git("checkout", "-q", "-b", "new-suite");
+    writeFileSync(join(repo, "NEW_SUITE"), "1\n");
+    git(...id, "add", "NEW_SUITE");
+    git(...id, "commit", "-qm", "a newer suite");
+    suites["new-suite"] = git("rev-parse", "HEAD");
+    git("checkout", "-q", "--orphan", "old-suite");
+    git(...id, "commit", "-qm", "a suite older than the floor");
+    suites["old-suite"] = git("rev-parse", "HEAD");
+    git("push", "-q", "origin", "new-suite", "old-suite");
+    // Back on the clone's commit, with the two branches gone from the clone itself:
+    // the executor must find them on the mirror, not locally.
+    git("checkout", "-q", "-f", head);
+    git("branch", "-q", "-D", "new-suite", "old-suite");
+  }
   writeFileSync(join(repo, ".env"), "SOME_PROVIDER_API_KEY=from-dotenv\n");
 
   const home = join(dir, "home");
@@ -177,6 +201,7 @@ esac`);
     E2E_ONDEMAND_NOW: now,
     E2E_SHADOW_STATE: shadowState,
     E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
+    ...(mirror ? { E2E_ONDEMAND_SUITE_FLOOR: head } : {}),
   };
   const collect = (status) => {
     const readIf = (p) => (existsSync(p) ? readFileSync(p, "utf8") : null);
@@ -204,6 +229,10 @@ esac`);
       ledgers: readdirSync(state).filter((f) => f.startsWith("ledger-")),
       worktrees: git("worktree", "list"),
       heavyHolder: readIf(join(dir, "heavy.lock.holder")),
+      suites,
+      buildScript: readIf(join(dir, "build.script"))?.trim() ?? null,
+      laneRef: (() => { try { return git("rev-parse", "--verify", "-q", "refs/on-demand/suite"); } catch { return null; } })(),
+      cloneHead: git("rev-parse", "HEAD"),
     };
   };
   return { env, collect };

@@ -74,9 +74,12 @@ shadow's rollback, and the daily then logs `shadow: NOT requested — … not in
 
 ### Asking for an on-demand run by hand
 
-Write the request, then start the unit. The request is **parsed, never sourced**: five
+Write the request, then start the unit. The request is **parsed, never sourced**: six
 known keys, each checked against its shape, anything else refused (see the header of
-`ops/vm/run-on-demand.sh`).
+`ops/vm/run-on-demand.sh`). `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
+repository instead of the commit the daily left the clone on: it is fetched from the
+clone's origin (the GHES mirror, synced hourly) and must contain the executor's
+`SUITE_FLOOR`, or the request is refused before the build.
 
 ```sh
 mkdir -p /root/e2e-on-demand
