@@ -45,7 +45,7 @@ The whole describe block is `test.skip`-ped when OpenAI cannot serve a live call
 2. Create an API key (`POST /api/v1/api_key/` with Bearer auth, name `traces-detail-llm-span-test-<timestamp>`); capture `api_key` + `id`
 3. Create a flow (`POST /api/v1/flows/` with `x-api-key` auth) from `tests/assets/flows/basic-prompting-trace-fixture.json`, name suffixed with the timestamp; expect HTTP 201; capture `flowId`
 4. Run the flow (`POST /api/v1/run/{flowId}` with `x-api-key` auth) injecting the provider via `tweaks` on the `LanguageModelComponent` node (id resolved from the fixture at runtime): `model: [{ name: "gpt-4o-mini", provider: "OpenAI" }]` and `api_key: process.env.OPENAI_API_KEY`. Unlike the sibling shape spec, this run must **succeed** — assert HTTP **200** (a 500 means the LLM call failed and the span attributes would be empty)
-5. Poll `GET /api/v1/monitor/traces?flow_id=<flowId>` (Bearer auth) with intervals `[500, 1000, 2000]` ms up to 30 s until `body.traces[0].id` is not null; capture `traceId`
+5. Poll `GET /api/v1/monitor/traces?flow_id=<flowId>` (Bearer auth) with intervals `[500, 1000]` ms up to 30 s (kept off the backend's 2 s keep-alive close, and each read re-dialled once on a dropped connection — #2243) until `body.traces[0].id` is not null; capture `traceId`
 
 **`afterAll`** — delete the flow (Bearer) and the API key (Bearer) via `Promise.allSettled`.
 

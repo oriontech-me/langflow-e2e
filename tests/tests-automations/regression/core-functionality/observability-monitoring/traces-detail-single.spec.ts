@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 const TRACE_FIXTURE = JSON.parse(
   readFileSync(
@@ -107,16 +108,17 @@ test.describe("Single trace shape — seeded flow", () => {
     await expect
       .poll(
         async () => {
-          const res = await request.get(
-            `/api/v1/monitor/traces?flow_id=${flowId}`,
-            { headers: { Authorization: bearerToken } },
+          const res = await retryOnDroppedConnection(() =>
+            request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, {
+              headers: { Authorization: bearerToken },
+            }),
           );
           if (res.status() !== 200) return null;
           const body = await res.json();
           polledTraceId = body.traces?.[0]?.id ?? null;
           return polledTraceId;
         },
-        { timeout: 30000, intervals: [500, 1000, 2000] },
+        { timeout: 30000, intervals: [500, 1000] },
       )
       .not.toBeNull();
 

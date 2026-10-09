@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 const TRACE_FIXTURE = JSON.parse(
   readFileSync(
@@ -125,15 +126,16 @@ test.describe("Transaction record shape — seeded flow", () => {
     await expect
       .poll(
         async () => {
-          const res = await request.get(
-            `/api/v1/monitor/transactions?flow_id=${flowId}`,
-            { headers: { Authorization: bearerToken } },
+          const res = await retryOnDroppedConnection(() =>
+            request.get(`/api/v1/monitor/transactions?flow_id=${flowId}`, {
+              headers: { Authorization: bearerToken },
+            }),
           );
           if (res.status() !== 200) return 0;
           const body = await res.json();
           return body.items?.length ?? 0;
         },
-        { timeout: 30000, intervals: [500, 1000, 2000] },
+        { timeout: 30000, intervals: [500, 1000] },
       )
       .toBeGreaterThan(0);
   });

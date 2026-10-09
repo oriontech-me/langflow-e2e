@@ -248,7 +248,7 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
         {
           message: `background job ${jobId} never reached a terminal event — nothing was measured`,
           timeout: 60_000,
-          intervals: [500, 1_000, 2_000, 4_000],
+          intervals: [500, 1_000, 1_500, 4_000],
         },
       )
       .not.toBeNull();

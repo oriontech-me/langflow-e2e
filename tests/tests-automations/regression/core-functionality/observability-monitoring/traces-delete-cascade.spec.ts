@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 // Same provider-less Basic Prompting fixture used by traces-delete.spec.ts and
 // the traces-detail-* specs: its run fails (no model configured) but STILL emits
@@ -101,9 +102,10 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
     await expect
       .poll(
         async () => {
-          const listRes = await request.get(
-            `/api/v1/monitor/traces?flow_id=${flowId}`,
-            { headers: { Authorization: bearerToken } },
+          const listRes = await retryOnDroppedConnection(() =>
+            request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, {
+              headers: { Authorization: bearerToken },
+            }),
           );
           if (listRes.status() !== 200) return 0;
           const list = await listRes.json();
@@ -111,9 +113,10 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
           if (!first?.id) return 0;
           traceId = first.id;
 
-          const detailRes = await request.get(
-            `/api/v1/monitor/traces/${traceId}`,
-            { headers: { Authorization: bearerToken } },
+          const detailRes = await retryOnDroppedConnection(() =>
+            request.get(`/api/v1/monitor/traces/${traceId}`, {
+              headers: { Authorization: bearerToken },
+            }),
           );
           if (detailRes.status() !== 200) return 0;
           const detail = await detailRes.json();
@@ -126,7 +129,7 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
           lastCount = current;
           return stableConfirms;
         },
-        { timeout: 30000, intervals: [500, 500, 1000, 1000, 2000] },
+        { timeout: 30000, intervals: [500, 500, 1000, 1000] },
       )
       .toBeGreaterThanOrEqual(1);
     spanCount = lastCount;

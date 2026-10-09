@@ -6,6 +6,7 @@ import {
   RESOLVED_LEN_PREFIX,
   type CredentialConsumerField,
 } from "../../../helpers/flows/create-credential-consumer-flow-via-api";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 // The value of a Credential-type global variable, once resolved into a component
 // at run time, must not reach the trace detail, the exported flow JSON, or the
@@ -240,9 +241,10 @@ test.describe("Credential secret exposure", () => {
         await expect
           .poll(
             async () => {
-              const res = await request.get(
-                `/api/v1/monitor/traces?flow_id=${flowId}`,
-                { headers: { Authorization: bearerToken } },
+              const res = await retryOnDroppedConnection(() =>
+                request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, {
+                  headers: { Authorization: bearerToken },
+                }),
               );
               if (res.status() !== 200) return 0;
               const body = await res.json();
@@ -252,7 +254,7 @@ test.describe("Credential secret exposure", () => {
             },
             {
               timeout: 30000,
-              intervals: [500, 1000, 2000],
+              intervals: [500, 1000],
               message:
                 "No trace was written for this run. An instance started with " +
                 "LANGFLOW_DEACTIVATE_TRACING=true writes none at all — that is a " +
@@ -305,9 +307,10 @@ test.describe("Credential secret exposure", () => {
         await expect
           .poll(
             async () => {
-              const res = await request.get(
-                `/api/v1/monitor/transactions?flow_id=${flowId}`,
-                { headers: { Authorization: bearerToken } },
+              const res = await retryOnDroppedConnection(() =>
+                request.get(`/api/v1/monitor/transactions?flow_id=${flowId}`, {
+                  headers: { Authorization: bearerToken },
+                }),
               );
               if (res.status() !== 200) return 0;
               txText = await res.text();
@@ -315,7 +318,7 @@ test.describe("Credential secret exposure", () => {
             },
             {
               timeout: 30000,
-              intervals: [500, 1000, 2000],
+              intervals: [500, 1000],
               message:
                 "No transaction row was written for this run — the vertices did " +
                 "not execute, so nothing here proves the secret was withheld.",

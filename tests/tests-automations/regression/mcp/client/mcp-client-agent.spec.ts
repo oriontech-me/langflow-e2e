@@ -141,7 +141,7 @@ async function waitForAgentCredentialSettled(
       );
     }).toPass({
       timeout: CREDENTIAL_SETTLE_TIMEOUT_MS,
-      intervals: [500, 1000, 2000],
+      intervals: [500, 1000],
     });
   } catch {
     // Re-thrown as the shared, self-describing diagnostic. A bare `toBe` mismatch

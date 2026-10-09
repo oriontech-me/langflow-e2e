@@ -11,6 +11,7 @@ import { PERMISSIONS_GATE_TIMEOUT_MS } from "../../../helpers/flows/permissions-
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { tableFieldTrigger } from "../../../helpers/ui/table-field-trigger";
 import { watchNodeRefresh } from "../../../helpers/ui/watch-node-refresh";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
@@ -954,7 +955,9 @@ test("API Request component — flow state persists in database after autosave (
         await expect
           .poll(
             async () => {
-              const res = await page.request.get(`/api/v1/flows/${flowId}`);
+              const res = await retryOnDroppedConnection(() =>
+                page.request.get(`/api/v1/flows/${flowId}`),
+              );
               if (!res.ok()) return null;
               const flow = await res.json();
               // `node.data.type` is written as the component's Python class
@@ -991,7 +994,7 @@ test("API Request component — flow state persists in database after autosave (
               }
               return null;
             },
-            { timeout: 20000, intervals: [500, 1000, 2000] },
+            { timeout: 20000, intervals: [500, 1000] },
           )
           .toBe("persisted");
       },

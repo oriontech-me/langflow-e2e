@@ -103,7 +103,7 @@ async function openDialog(trigger: Locator, dialog: Locator): Promise<void> {
   await expect(async () => {
     if (!(await dialog.isVisible())) await trigger.click();
     await expect(dialog).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 20_000, intervals: [0, 500, 1_000, 2_000] });
+  }).toPass({ timeout: 20_000, intervals: [0, 500, 1_000] });
 }
 
 test.describe("Enterprise — the Access Control operator screen", () => {

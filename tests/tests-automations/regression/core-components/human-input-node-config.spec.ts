@@ -36,6 +36,7 @@ import {
   COMPONENT_REFRESH_PATH,
   watchNodeRefresh,
 } from "../../../helpers/ui/watch-node-refresh";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 // Sidebar search term + add button for the component under test, kept together
 // so a testid can't drift from the term that filters it into view.
@@ -165,9 +166,8 @@ async function expectPersistedOutputs(
   await expect
     .poll(
       async () => {
-        const res = await page.request.get(
-          `/api/v1/flows/${flowId}`,
-          authOptions,
+        const res = await retryOnDroppedConnection(() =>
+          page.request.get(`/api/v1/flows/${flowId}`, authOptions),
         );
         if (!res.ok()) return `GET /api/v1/flows/${flowId} → ${res.status()}`;
         const body = await res.json();
@@ -179,7 +179,7 @@ async function expectPersistedOutputs(
           (o: { name: string }) => o.name,
         );
       },
-      { timeout: 30000, intervals: [500, 1000, 2000] },
+      { timeout: 30000, intervals: [500, 1000] },
     )
     .toEqual(expected);
 }
