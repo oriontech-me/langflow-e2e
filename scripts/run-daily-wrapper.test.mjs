@@ -49,12 +49,13 @@ function makeLane(dir, laneLines, files = {}, binStubs = {}) {
   const bin = join(home, ".local", "bin");
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "curl"), "#!/bin/sh\nexit 22\n", { mode: 0o755 });
-  for (const [name, body] of Object.entries(binStubs)) writeFileSync(join(bin, name), body, { mode: 0o755 });
   writeFileSync(
     join(bin, "git"),
     `#!/bin/sh\n[ "$1" = ls-remote ] && exit 2\nexec ${JSON.stringify(REAL_GIT)} "$@"\n`,
     { mode: 0o755 },
   );
+  // After the default git, so a test's own git stub replaces it.
+  for (const [name, body] of Object.entries(binStubs)) writeFileSync(join(bin, name), body, { mode: 0o755 });
 
   const secrets = join(dir, "secrets.env");
   writeFileSync(secrets, "\n");
@@ -151,6 +152,73 @@ test("the pass that pulls hands over to the wrapper main holds, once", () => {
   assert.equal((r.log.match(/=== daily start/g) || []).length, 1);
   assert.match(r.log, /wrapper at: [0-9a-f]+ wrapper/);
   assert.doesNotMatch(r.log, /YESTERDAY at:/, "the second pass ran from the pre-pull copy");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// The pull that changes the on-demand worker's code restarts it: the worker is the one
+// long-running process the clone feeds, and nothing else restarts it. The git stub's
+// pull commits a change to `touches`, as a pull bringing that change would.
+function pullThatChanges(touches, calls) {
+  const id = "-c user.email=t@example.invalid -c user.name=t";
+  return {
+    git: `#!/bin/sh\n[ "$1" = ls-remote ] && exit 2\nif [ "$1" = pull ]; then\n${touches.map((f) => `  echo changed >> ${JSON.stringify(f)}`).join("\n")}\n  ${JSON.stringify(REAL_GIT)} ${id} commit -qam pulled\n  exit 0\nfi\nexec ${JSON.stringify(REAL_GIT)} "$@"\n`,
+    systemctl: `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\n[ "$1" = show ] && echo inactive\nexit 0\n`,
+  };
+}
+const WORKER_FILES = { "ops/vm/on-demand-worker.mjs": "// worker\n", "scripts/lib/on-demand-summary.mjs": "// summary\n", "scripts/lib/unexpected-pass.mjs": "// unexpected pass\n", "README.md": "readme\n" };
+
+test("the daily watches every repo module the worker imports, and only those", () => {
+  // A module the worker imports and the daily does not watch is code the worker keeps
+  // running stale after a pull. Static imports only: neither file uses import().
+  const seen = new Set();
+  const walk = (rel) => {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    assert.doesNotMatch(src, /\bimport\(/, `${rel} imports dynamically; the walk would miss it`);
+    for (const [, spec] of src.matchAll(/^import[^"']*["'](\.{1,2}\/[^"']+)["']/gm)) {
+      walk(join(dirname(rel), spec).replace(/\\/g, "/"));
+    }
+  };
+  walk("ops/vm/on-demand-worker.mjs");
+  const watched = readFileSync(WRAPPER, "utf8").match(/git diff --quiet "\$pre_pull" HEAD -- ([^\n]*(?:\\\n[^\n]*)*?) 2>\/dev\/null/)[1]
+    .replace(/\\\n/g, " ").trim().split(/\s+/);
+  assert.deepEqual([...watched].sort(), [...seen].sort());
+});
+
+for (const touched of ["ops/vm/on-demand-worker.mjs", "scripts/lib/on-demand-summary.mjs", "scripts/lib/unexpected-pass.mjs"]) {
+  test(`a pull that changes ${touched} restarts the on-demand worker, once, and only if it runs`, () => {
+    const dir = makeTempDir("wrapper-worker-restart");
+    const calls = join(dir, "systemctl.calls");
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, WORKER_FILES, pullThatChanges([touched], calls));
+    const restarts = readFileSync(calls, "utf8").split("\n").filter((l) => l.includes("e2e-on-demand-worker"));
+    assert.deepEqual(restarts, ["try-restart e2e-on-demand-worker.service"], r.log);
+    assert.match(r.log, /the on-demand worker's code changed in this pull: restarting it/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
+test("a pull that leaves the worker's code alone, or no pull at all, does not restart it", () => {
+  for (const touches of [["README.md"], []]) {
+    const dir = makeTempDir("wrapper-worker-norestart");
+    const calls = join(dir, "systemctl.calls");
+    const stubs = touches.length ? pullThatChanges(touches, calls) : { systemctl: pullThatChanges([], calls).systemctl };
+    const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, WORKER_FILES, stubs);
+    const all = existsSync(calls) ? readFileSync(calls, "utf8") : "";
+    assert.doesNotMatch(all, /on-demand-worker/, `${JSON.stringify(touches)}: ${r.log}`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a restart that fails is a warning, and the daily goes on", () => {
+  const dir = makeTempDir("wrapper-worker-restart-fails");
+  const calls = join(dir, "systemctl.calls");
+  const stubs = pullThatChanges(["ops/vm/on-demand-worker.mjs"], calls);
+  stubs.systemctl = `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\n[ "$1" = try-restart ] && exit 1\n[ "$1" = show ] && echo inactive\nexit 0\n`;
+  const r = runWrapper(dir, COMPLETE_LANE, WRAPPER, WORKER_FILES, stubs);
+  assert.match(r.log, /WARNING: could not restart e2e-on-demand-worker\.service/);
+  // Past it: the run reaches the resolver, as every run in this file does.
+  assert.match(r.log, /could not resolve|target should be/);
   rmSync(dir, { recursive: true, force: true });
 });
 

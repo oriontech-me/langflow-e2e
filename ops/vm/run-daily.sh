@@ -79,6 +79,8 @@ main() {
     echo "=== daily start $STAMP — target: published distribution ==="
 
     cd "$REPO" || { echo "FATAL: $REPO is missing"; exit 1; }
+    # Handed to the second pass, which runs main's code and so knows what to compare.
+    export E2E_DAILY_PRE_PULL="$(git rev-parse -q --verify HEAD 2>/dev/null || true)"
     git pull --ff-only || echo "WARNING: pull failed — running the suite as it stands"
     echo "suite at: $(git log --oneline -1)"
 
@@ -91,6 +93,33 @@ main() {
   # --- second pass: the wrapper as main holds it after the pull ---------------------
   cd "$REPO" || { echo "FATAL: $REPO is missing"; exit 1; }
   echo "wrapper at: $(git log --oneline -1 -- ops/vm/run-daily.sh)"
+
+  # The on-demand worker is the one long-running process this clone feeds: the
+  # executor, the build and the pre-check start fresh on every run, but the worker keeps
+  # the code it started with until it restarts, and nothing restarted it (2026-10-09:
+  # the suite-ref field reached the clone and the worker ignored it until a restart by
+  # hand). So the pull that changes its code restarts it. try-restart: a worker that is
+  # not running stays stopped. It holds nothing in the daily's window, and a restart
+  # reads its claim back from disk, so this never costs a run. Never fatal.
+  # E2E_DAILY_PRE_PULL is empty when the first pass predates this check, or the clone
+  # had no commit: then nothing is compared, as before.
+  local pre_pull="${E2E_DAILY_PRE_PULL:-}"
+  if [ -n "$pre_pull" ] && [ "$pre_pull" != "$(git rev-parse -q --verify HEAD 2>/dev/null)" ]; then
+    local worker_diff=0
+    # The worker and every repo module it imports, statically (a test walks the imports
+    # and holds this list to them).
+    git diff --quiet "$pre_pull" HEAD -- ops/vm/on-demand-worker.mjs scripts/lib/on-demand-summary.mjs \
+      scripts/lib/unexpected-pass.mjs 2>/dev/null || worker_diff=$?
+    case "$worker_diff" in
+      0) ;;
+      1)
+        echo "the on-demand worker's code changed in this pull: restarting it"
+        systemctl try-restart e2e-on-demand-worker.service \
+          || echo "WARNING: could not restart e2e-on-demand-worker.service — it runs the code from before the pull until restarted"
+        ;;
+      *) echo "WARNING: could not compare the on-demand worker's code with ${pre_pull:0:12} (git diff exited $worker_diff) — not restarted" ;;
+    esac
+  fi
 
   # This lane has priority over the image shadow (#2093). There is no lock between them,
   # so a daily re-run by hand while the shadow is still going stops it first, instead of
