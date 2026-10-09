@@ -2,9 +2,9 @@
  "schema": "coverage-matrix-feed",
  "version": 1,
  "generated": "2026-09-21",
- "refreshed": "2026-10-08",
+ "refreshed": "2026-10-09",
  "refreshWindow": {
-  "testHealthSince": "2026-08-24",
+  "testHealthSince": "2026-08-25",
   "days": 45
  },
  "previousGeneration": "2026-08-06",
@@ -520,12 +520,12 @@
    },
    "specs": {
     "specs": 27,
-    "stable": 27
+    "stable": 26
    },
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 27,
+    "stableSpecs": 26,
     "penalty": 0
    },
    "upstreamBugsByYear": {
