@@ -165,9 +165,28 @@ function pullThatChanges(touches, calls) {
     systemctl: `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\n[ "$1" = show ] && echo inactive\nexit 0\n`,
   };
 }
-const WORKER_FILES = { "ops/vm/on-demand-worker.mjs": "// worker\n", "scripts/lib/on-demand-summary.mjs": "// summary\n", "README.md": "readme\n" };
+const WORKER_FILES = { "ops/vm/on-demand-worker.mjs": "// worker\n", "scripts/lib/on-demand-summary.mjs": "// summary\n", "scripts/lib/unexpected-pass.mjs": "// unexpected pass\n", "README.md": "readme\n" };
 
-for (const touched of ["ops/vm/on-demand-worker.mjs", "scripts/lib/on-demand-summary.mjs"]) {
+test("the daily watches every repo module the worker imports, and only those", () => {
+  // A module the worker imports and the daily does not watch is code the worker keeps
+  // running stale after a pull. Static imports only: neither file uses import().
+  const seen = new Set();
+  const walk = (rel) => {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    assert.doesNotMatch(src, /\bimport\(/, `${rel} imports dynamically; the walk would miss it`);
+    for (const [, spec] of src.matchAll(/^import[^"']*["'](\.{1,2}\/[^"']+)["']/gm)) {
+      walk(join(dirname(rel), spec).replace(/\\/g, "/"));
+    }
+  };
+  walk("ops/vm/on-demand-worker.mjs");
+  const watched = readFileSync(WRAPPER, "utf8").match(/git diff --quiet "\$pre_pull" HEAD -- ([^\n]*(?:\\\n[^\n]*)*?) 2>\/dev\/null/)[1]
+    .replace(/\\\n/g, " ").trim().split(/\s+/);
+  assert.deepEqual([...watched].sort(), [...seen].sort());
+});
+
+for (const touched of ["ops/vm/on-demand-worker.mjs", "scripts/lib/on-demand-summary.mjs", "scripts/lib/unexpected-pass.mjs"]) {
   test(`a pull that changes ${touched} restarts the on-demand worker, once, and only if it runs`, () => {
     const dir = makeTempDir("wrapper-worker-restart");
     const calls = join(dir, "systemctl.calls");

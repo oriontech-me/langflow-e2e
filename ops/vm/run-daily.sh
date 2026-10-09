@@ -106,7 +106,10 @@ main() {
   local pre_pull="${E2E_DAILY_PRE_PULL:-}"
   if [ -n "$pre_pull" ] && [ "$pre_pull" != "$(git rev-parse -q --verify HEAD 2>/dev/null)" ]; then
     local worker_diff=0
-    git diff --quiet "$pre_pull" HEAD -- ops/vm/on-demand-worker.mjs scripts/lib/on-demand-summary.mjs 2>/dev/null || worker_diff=$?
+    # The worker and every repo module it imports, statically (a test walks the imports
+    # and holds this list to them).
+    git diff --quiet "$pre_pull" HEAD -- ops/vm/on-demand-worker.mjs scripts/lib/on-demand-summary.mjs \
+      scripts/lib/unexpected-pass.mjs 2>/dev/null || worker_diff=$?
     case "$worker_diff" in
       0) ;;
       1)
