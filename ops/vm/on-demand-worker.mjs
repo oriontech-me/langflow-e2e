@@ -406,8 +406,12 @@ export class Worker {
     // instead of lapsing. start() checks again, for a state file from elsewhere.
     if (err) this.refuse(req.id, err);
     this.state.claim_token = req.claim_token;
+    // Every field the slot carries: request.env is written from this, not from the
+    // claim. suite_ref was left out of it once, and every suite-ref run silently ran
+    // the daily's suite (2026-10-09, the canary run). A platform without it sends none.
     this.state.held = {
       id: req.id, ref: req.ref, provider: req.provider, model: req.model, requested_by: req.requested_by,
+      suite_ref: req.suite_ref ?? "",
       claim_token: req.claim_token, held_since: isoUtc(this.cfg.now()),
       reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0,
     };

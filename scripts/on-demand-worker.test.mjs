@@ -60,7 +60,8 @@ async function fakePlatform() {
   const calls = [];
   const overrides = { claim: [], report: [], heartbeat: [] };
   const refuse = (status, code, extra = {}) => ({ status, json: { success: false, code, error: code, ...extra } });
-  const view = (r) => ({ id: r.id, ref: r.ref, provider: r.provider, model: r.model, requested_by: r.requested_by, claim_token: r.claim_token, created_at: "2026-09-30T14:59:00Z", lease_expires_at: "2026-09-30T15:15:00Z" });
+  // The platform's ClaimedRequest: suite_ref always present, '' for the daily's suite.
+  const view = (r) => ({ id: r.id, ref: r.ref, provider: r.provider, model: r.model, suite_ref: r.suite_ref ?? "", requested_by: r.requested_by, claim_token: r.claim_token, created_at: "2026-09-30T14:59:00Z", lease_expires_at: "2026-09-30T15:15:00Z" });
   const handle = {
     claim(b) {
       const mine = requests.find((r) => r.claim_token === b.claim_token);
@@ -433,6 +434,25 @@ test("a request a killed run consumed is answered by a start with an empty slot"
     assert.deepEqual(m.collect(2).requests.sort(), [`${REQ().id}.env`, "unparsed-20260101T000000Z-1.env"], "the slot was written for a consumed request");
     assert.match(p.requests[0].result.REASON, /^interrupted/);
     assert.equal(p.requests[0].result.CLEANUP, "by the next run");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a claimed suite ref reaches the slot, through the worker's own state", async () => {
+  // The slot is written from the state the claim was saved into, not from the claim:
+  // a field the state leaves out is lost on the way, silently (the canary, 2026-10-09).
+  // Through a restart too: the slot is rewritten from the state file alone.
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ({ suite_ref: "test/on-demand-suite-ref-canary" }));
+    const w = worker(m, p, { clock: () => WED_1500 });
+    await w.step();
+    const slot = join(m.env.E2E_ONDEMAND_STATE, "request.env");
+    assert.match(readFileSync(slot, "utf8"), /^ONDEMAND_SUITE_REF=test\/on-demand-suite-ref-canary$/m);
+    const saved = JSON.parse(readFileSync(join(m.env.E2E_ONDEMAND_STATE, "worker", "state.json"), "utf8"));
+    assert.equal(saved.held.suite_ref, "test/on-demand-suite-ref-canary", "the state file lost the suite ref");
   } finally {
     await p.close();
   }
