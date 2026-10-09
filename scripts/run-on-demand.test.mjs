@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 import { ROOT, ONDEMAND, TARGET_SHA, IMAGE, PUBLISHING, GOOD_REQUEST, stub, q, setup, kv } from "./lib/on-demand-machine.mjs";
@@ -108,6 +108,7 @@ test("a routine holding the heavy-lane lock refuses the run, names the holder, a
   assert.equal(r.result["req-1"].STATUS, "refused");
   assert.match(r.result["req-1"].REASON, /the machine is busy: migration \(pid 4242\)/);
   assert.equal(r.build, null, "a build ran beside a routine");
+  assert.deepEqual(r.probes, [], "a provider was asked beside a routine");
   assert.equal(r.docker, "", "docker was touched while refusing");
   // Refused, it must not erase the holder's line.
   assert.match(r.heavyHolder ?? "", /^migration \(pid 4242\)/);
@@ -216,6 +217,72 @@ test("a declared provider run-e2e.sh refused is the request's fault: refused, ev
   // Even with a report: no agent spec ran, so it is not a product verdict.
   const withReport = onDemand({ runExit: 1, modelRefused: "antropic is not active" });
   assert.equal(withReport.result["req-1"].STATUS, "refused");
+});
+
+// The provider pre-check: asked before the build, so a dry key does not hold the slot
+// through five to eight minutes of build to be refused by collect-models after it.
+const DRY = { exit: 2, out: JSON.stringify({ verdict: "refused", provider: "anthropic", model: null, reason: "anthropic turned down every candidate the same way: HTTP 400: Your credit balance is too low" }) };
+
+test("a declared provider is asked before the build, from the suite's worktree, with the provider keys and no publisher", () => {
+  const r = onDemand({ request: "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=anthropic\nONDEMAND_MODEL=claude-haiku-4-5\n" });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.probes.length, 1, r.log);
+  const [p] = r.probes;
+  assert.deepEqual(p.args, ["--provider", "anthropic", "--model", "claude-haiku-4-5"]);
+  // Gone after the run, so the state directory is what resolves (macOS: /private/var).
+  assert.equal(p.cwd, join(realpathSync(r.state), "wt"));
+  assert.equal(p.built, false, "the pre-check ran after the build");
+  assert.ok(p.keys.includes("OPENAI_API_KEY"), "the provider keys did not reach the pre-check");
+  // A line of the secrets file with no `export` reaches the run no more than the probe:
+  // the two must see one key, or the probe judges a key the run never uses.
+  assert.ok(!p.keys.includes("ANTHROPIC_API_KEY"), "an unexported key reached the pre-check, and it does not reach the run");
+  assert.ok(!("ANTHROPIC_API_KEY" in kv(r.env)), "an unexported key reached the run");
+  assert.equal(p.fd8, false, "the pre-check held the heavy-lane lock");
+  assert.equal(p.fd9, false, "the pre-check held the run's lock");
+  for (const k of [...PUBLISHING, "GH_ENTERPRISE_TOKEN"]) assert.ok(!p.keys.includes(k), `${k} reached the pre-check`);
+  assert.match(r.log, /provider pre-check \(exit 0\)/);
+});
+
+test("with no model declared, the pre-check is asked for the provider alone", () => {
+  const r = onDemand();
+  assert.deepEqual(r.probes[0].args, ["--provider", "anthropic"]);
+});
+
+test("the day's rotation has nothing to pre-check", () => {
+  const r = onDemand({ request: "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\n" });
+  assert.equal(r.status, 0, r.log);
+  assert.deepEqual(r.probes, []);
+});
+
+test("a provider the pre-check turned down is refused before the build, in the provider's words, and cleaned up", () => {
+  const r = onDemand({ probe: DRY });
+  assert.equal(r.status, 2, r.log);
+  const res = r.result["req-1"];
+  assert.equal(res.STATUS, "refused");
+  assert.equal(res.EXIT, "2");
+  assert.equal(res.REASON, "the declared provider cannot be used, checked before the build: anthropic turned down every candidate the same way: HTTP 400: Your credit balance is too low");
+  assert.equal(r.build, null, "the build ran after a refusal");
+  assert.equal(r.env, null, "the suite ran after a refusal");
+  assert.equal(res.CLEANUP, "ok");
+  assert.equal(r.wtLeft, false, "the worktree was left behind");
+  assert.equal(r.heavyHolder, null, "the refused run left its holder line");
+});
+
+test("a pre-check with no certain answer, or none at all, lets the run go on to the build", () => {
+  const undecided = onDemand({ probe: { exit: 3, out: '{"verdict":"undecided","reason":"no answer from anthropic: fetch failed"}' } });
+  assert.equal(undecided.status, 0, undecided.log);
+  assert.ok(undecided.env, "an undecided pre-check stopped the run");
+  // A suite commit from before the pre-check: node cannot find the script.
+  const missing = onDemand({ probe: null });
+  assert.equal(missing.status, 0, missing.log);
+  assert.ok(missing.env, "a missing pre-check stopped the run");
+  // A refusal exit with output that is not its JSON still refuses, with a reason.
+  const garbled = onDemand({ probe: { exit: 2, out: "not json" } });
+  assert.equal(garbled.result["req-1"].STATUS, "refused");
+  assert.match(garbled.result["req-1"].REASON, /checked before the build: the pre-check said no without a reason/);
+  // Output ahead of the JSON (the secrets file printing) does not lose the reason.
+  const noisy = onDemand({ probe: { exit: 2, out: `sourced secrets\n${DRY.out}` } });
+  assert.match(noisy.result["req-1"].REASON, /checked before the build: anthropic turned down every candidate/);
 });
 
 test("a run that served another version is failed, never done/red, whatever its report says", () => {
@@ -393,6 +460,7 @@ test("no run starts on a weekday between 07:30 and 08:40 UTC, and the refusal is
       assert.match(r.result["req-1"].REASON, /window is closed/, now);
       assert.equal(r.build, null, `${now}: a build ran in the window`);
       assert.equal(r.docker, "", `${now}: docker was touched while refusing`);
+      assert.deepEqual(r.probes, [], `${now}: a provider was asked in the window`);
     } else {
       assert.equal(r.status, 0, `${now}: ${r.log}`);
     }

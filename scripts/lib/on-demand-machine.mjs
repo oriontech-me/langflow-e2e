@@ -52,6 +52,9 @@ export function setup({
   modelUsed = null,
   orphans = [],
   termOnConsume = false,
+  // The provider pre-check's answer: its exit status and its JSON line; null leaves
+  // the script out of the suite commit, as a commit from before it.
+  probe = { exit: 0, out: '{"verdict":"usable","reason":"answered"}' },
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -60,6 +63,7 @@ export function setup({
   const envOut = join(dir, "run-e2e.env");
   const buildArgs = join(dir, "build.args");
   const stopLog = join(dir, "stop.log");
+  const probeLog = join(dir, "probe.log");
   writeFileSync(
     join(repo, "scripts", "run-e2e.sh"),
     `#!/usr/bin/env bash
@@ -86,6 +90,19 @@ exit ${runExit}
     { mode: 0o755 },
   );
   writeFileSync(join(dir, "build.out"), buildOut ? `${buildOut}\n` : "");
+  if (probe) {
+    // What it was asked and with which keys, and whether the build had started yet.
+    writeFileSync(
+      join(repo, "scripts", "probe-declared-model.mjs"),
+      `import { appendFileSync, existsSync, fstatSync, statSync } from "node:fs";
+// Whether the fd is THAT lock, by inode: node opens low fds of its own.
+const holds = (fd, path) => { try { return fstatSync(fd).ino === statSync(path).ino; } catch { return false; } };
+appendFileSync(${q(probeLog)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env).filter((k) => /KEY|TOKEN|WEBHOOK/.test(k)).sort(), built: existsSync(${q(buildArgs)}), fd8: holds(8, ${q(join(dir, "heavy.lock"))}), fd9: holds(9, ${q(join(dir, "state", "lock"))}) }) + "\\n");
+process.stdout.write(${q(probe.out)} + "\\n");
+process.exit(${probe.exit});
+`,
+    );
+  }
   writeFileSync(join(dir, "leftover"), leftover);
   writeFileSync(join(repo, "scripts", "stop-echo-source.sh"), `echo "echo $ECHO_PORT" >> ${q(stopLog)}\n`);
   writeFileSync(join(repo, "scripts", "stop-ollama-source.sh"), `echo "ollama $OLLAMA_PORT" >> ${q(stopLog)}\n`);
@@ -121,7 +138,7 @@ esac`);
   if (termOnConsume) stub(bin, "mv", `/bin/mv "$@"; rc=$?\ncase "$*" in *"/request.env "*) kill -TERM $PPID ;; esac\nexit $rc`);
 
   const secrets = join(dir, "secrets.env");
-  writeFileSync(secrets, [...PUBLISHING.map((n) => `export ${n}=secret-${n}`), "export GH_ENTERPRISE_TOKEN=ghe", "export OPENAI_API_KEY=provider-key"].join("\n") + "\n");
+  writeFileSync(secrets, [...PUBLISHING.map((n) => `export ${n}=secret-${n}`), "export GH_ENTERPRISE_TOKEN=ghe", "export OPENAI_API_KEY=provider-key", "ANTHROPIC_API_KEY=unexported-provider-key"].join("\n") + "\n");
 
   const official = join(dir, "official-ledger");
   mkdirSync(official);
@@ -175,6 +192,7 @@ esac`);
       log: readIf(join(dir, "logs", "latest.log")) ?? "",
       env: readIf(envOut),
       build: readIf(buildArgs),
+      probes: (readIf(probeLog) ?? "").split("\n").filter(Boolean).map((l) => JSON.parse(l)),
       docker: readIf(dockerLog) ?? "",
       systemctl: readIf(systemctlLog) ?? "",
       stops: readIf(stopLog) ?? "",
