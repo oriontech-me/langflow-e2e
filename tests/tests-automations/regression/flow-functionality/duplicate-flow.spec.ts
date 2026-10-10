@@ -3,6 +3,7 @@ import { leaveFlowEditor } from "../../../helpers/flows/leave-flow-editor";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 const FLOW_BASE = {
   description: "Flow duplicate test",
@@ -66,13 +67,15 @@ test(
     await expect
       .poll(
         async () => {
-          const res = await request.get("/api/v1/flows/", {
-            headers: { Authorization: authToken },
-          });
+          const res = await retryOnDroppedConnection(() =>
+            request.get("/api/v1/flows/", {
+              headers: { Authorization: authToken },
+            }),
+          );
           const flows = (await res.json()) as Array<{ id: string }>;
           return flows.some((f) => f.id === duplicateId);
         },
-        { timeout: 10000, intervals: [500, 1000, 2000] },
+        { timeout: 10000, intervals: [500, 1000] },
       )
       .toBe(true);
   },

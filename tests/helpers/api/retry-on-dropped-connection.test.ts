@@ -19,7 +19,7 @@
 // not a transport error — an assertion failure above all.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { retryOnDroppedConnection } from "./rbac";
+import { retryOnDroppedConnection } from "./retry-on-dropped-connection";
 
 /** A call that throws `messages[i]` on attempt i, then returns `value`. */
 function throwingTimes(messages: string[], value = "ok") {

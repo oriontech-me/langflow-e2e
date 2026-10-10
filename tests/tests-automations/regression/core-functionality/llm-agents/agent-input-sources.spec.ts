@@ -12,6 +12,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 /**
  * Validates that the Agent component accepts its `input_value` from either of
@@ -99,9 +100,11 @@ async function expectSentinelPersistedInFlows(
   await expect
     .poll(
       async () => {
-        const res = await request.get("/api/v1/flows/", {
-          headers: { Authorization: bearer },
-        });
+        const res = await retryOnDroppedConnection(() =>
+          request.get("/api/v1/flows/", {
+            headers: { Authorization: bearer },
+          }),
+        );
         if (!res.ok()) return `GET flows -> ${res.status()}`;
         const flows = await res.json();
         return JSON.stringify(flows).includes(sentinel)
@@ -110,7 +113,12 @@ async function expectSentinelPersistedInFlows(
       },
       // Explicit, backing-off intervals: GET /api/v1/flows/ returns every flow's
       // full graph, so avoid hammering it with the default aggressive cadence.
-      { timeout: 15000, intervals: [500, 1000, 2000] },
+      // The backoff steps OVER 2000 ms rather than stopping short of it: the backend
+      // closes an idle keep-alive socket at 2 s, a read reusing it at that instant
+      // is dropped, and `expect.poll` sleeps after the callback, so this heavy
+      // listing's own parse time adds to the gap — 1500 could drift onto the edge,
+      // 3000 cannot (#2243).
+      { timeout: 15000, intervals: [500, 1000, 3000] },
     )
     .toBe("persisted");
 }

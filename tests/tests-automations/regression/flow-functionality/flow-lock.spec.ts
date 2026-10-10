@@ -187,7 +187,7 @@ test.describe("Flow Lock Feature", () => {
       // switch state, both asserted below.
       await expect(async () => {
         expect(await readLocked()).toBe(false);
-      }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
+      }).toPass({ timeout: 15000, intervals: [500, 1000] });
 
       const lockSwitch = page.getByTestId("lock-flow-switch");
       const nameInput = page.getByTestId("input-flow-name");
@@ -218,7 +218,7 @@ test.describe("Flow Lock Feature", () => {
       // its switch state from the editor's copy of the flow (#684, #2075).
       await expect(async () => {
         expect(await readLocked()).toBe(true);
-      }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
+      }).toPass({ timeout: 15000, intervals: [500, 1000] });
 
       await test.step("reopen: the lock is still on and the metadata is read-only", async () => {
         await openFlowSettings(page);
@@ -249,7 +249,7 @@ test.describe("Flow Lock Feature", () => {
       // `locked` flag is the true, deterministic unlock signal (#684).
       await expect(async () => {
         expect(await readLocked()).toBe(false);
-      }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
+      }).toPass({ timeout: 15000, intervals: [500, 1000] });
     },
   );
 

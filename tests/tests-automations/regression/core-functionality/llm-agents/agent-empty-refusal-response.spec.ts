@@ -12,6 +12,7 @@ import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import { sendAndAwaitPlaygroundTurn } from "../../../../helpers/ui/playground-turn";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 /**
  * Agent robustness on a degenerate model output (QA-CHECKLIST §6.5,
@@ -126,9 +127,11 @@ async function expectMarkerInPersistedReply(
   await expect
     .poll(
       async () => {
-        const res = await request.get("/api/v1/monitor/messages", {
-          headers: { Authorization: bearer },
-        });
+        const res = await retryOnDroppedConnection(() =>
+          request.get("/api/v1/monitor/messages", {
+            headers: { Authorization: bearer },
+          }),
+        );
         if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
         const messages = await res.json();
         if (!Array.isArray(messages)) return "monitor payload not a list";
@@ -140,7 +143,7 @@ async function expectMarkerInPersistedReply(
           ? "marker-persisted"
           : "marker not yet in any persisted Machine reply";
       },
-      { timeout: 60000, intervals: [500, 1000, 2000] },
+      { timeout: 60000, intervals: [500, 1000] },
     )
     .toBe("marker-persisted");
 }

@@ -6,6 +6,7 @@ import {
 } from "../../../helpers/ui/prompt-template";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 // Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
 // (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
@@ -228,7 +229,9 @@ test(
         await expect
           .poll(
             async () => {
-              const res = await page.request.get(`/api/v1/flows/${flowId}`);
+              const res = await retryOnDroppedConnection(() =>
+                page.request.get(`/api/v1/flows/${flowId}`),
+              );
               if (!res.ok()) return null;
               const flow = await res.json();
               // The frontend sets `node.data.type` to the human-readable name
@@ -240,7 +243,7 @@ test(
               );
               return promptNode?.data?.node?.template?.template?.value ?? null;
             },
-            { timeout: 15000, intervals: [500, 1000, 2000] },
+            { timeout: 15000, intervals: [500, 1000] },
           )
           .toBe(expected);
       },

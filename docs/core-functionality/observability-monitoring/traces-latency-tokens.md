@@ -30,7 +30,7 @@ The 3 tests share a single `beforeAll` setup and run in `serial` mode so the see
 2. Create an API key (`POST /api/v1/api_key/` with bearer auth, name `traces-latency-test-<timestamp>`) and capture `api_key` + `id`
 3. Create a flow (`POST /api/v1/flows/` with `x-api-key` auth) from `tests/assets/flows/basic-prompting-trace-fixture.json`, name suffixed with the timestamp; expect HTTP 201; capture `flowId`
 4. Run the flow once (`POST /api/v1/run/{flowId}` with `x-api-key` auth, `input_value: "trace-probe"`, `input_type: "chat"`, `output_type: "chat"`). The fixture has no provider configured, so the LanguageModelComponent fails with "A model selection is required" — the failure is **intentional**: it still emits a trace entry with `totalLatencyMs` and `totalTokens`, which is what the suite validates. Accept HTTP 200 or 500; anything outside that range means the run never reached the graph executor.
-5. Poll `GET /api/v1/monitor/traces?flow_id=<flowId>` (Bearer auth) with intervals `[500, 1000, 2000]` ms up to 30 s until `body.traces.length > 0` — trace writes are asynchronous, so downstream tests must wait for them to land
+5. Poll `GET /api/v1/monitor/traces?flow_id=<flowId>` (Bearer auth) with intervals `[500, 1000]` ms up to 30 s (kept off the backend's 2 s keep-alive close, and each read re-dialled once on a dropped connection — #2243) until `body.traces.length > 0` — trace writes are asynchronous, so downstream tests must wait for them to land
 
 **`afterAll`** — delete the flow (`x-api-key`) and the API key (Bearer).
 

@@ -208,7 +208,7 @@ on the first.
 So the reads are wrapped in `retryOnDroppedConnection`, which re-dials **once** on a thrown
 request and passes a response that arrived straight through, whatever its status — no
 assertion is softened by it. It is pinned by unit test rather than by a green run
-(`tests/helpers/enterprise/rbac.test.ts`), because the mechanism does not reproduce on
+(`tests/helpers/api/retry-on-dropped-connection.test.ts`), because the mechanism does not reproduce on
 demand and because the risk in a retry helper is not that it fails to retry but that it
 quietly retries a real product refusal.
 

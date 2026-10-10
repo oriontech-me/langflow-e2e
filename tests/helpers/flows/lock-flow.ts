@@ -26,7 +26,7 @@ async function setLockState(
     await expect(lockSwitch).toHaveAttribute("data-state", state, {
       timeout: 2000,
     });
-  }).toPass({ timeout: 15000, intervals: [300, 700, 1500] });
+  }).toPass({ timeout: 15000, intervals: [300, 700, 1000] });
 
   // Save only when there is a pending change. If the switch already matched the
   // persisted state (e.g. the reopened flow loaded already in the target state),

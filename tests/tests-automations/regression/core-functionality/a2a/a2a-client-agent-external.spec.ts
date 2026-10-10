@@ -5,8 +5,9 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createApiKey, deleteApiKey } from "../../../../helpers/auth/create-api-key";
 import { requireA2aEnabled } from "../../../../helpers/a2a/require-a2a-enabled";
 // The suite's one narrow transport re-dial (#1562): retries a THROWN request once,
-// never a response. Lives with the RBAC helpers that needed it first.
-import { retryOnDroppedConnection } from "../../../../helpers/enterprise/rbac";
+// never a response. Lives in `helpers/api/` since #2243 — it first lived with the
+// RBAC helpers, which needed it first.
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
 import { createFlow } from "../../../../helpers/flows/create-flow";

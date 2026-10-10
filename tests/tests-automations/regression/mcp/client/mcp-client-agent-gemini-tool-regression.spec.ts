@@ -13,6 +13,7 @@ import {
   readSessionLlmCalls,
   toolOutputText,
 } from "../../../../helpers/flows/describe-agent-reply-loss";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 /**
  * MCP Client – Gemini tool-calling regression (upstream Langflow #440).
@@ -337,10 +338,12 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
         await expect
           .poll(
             async () => {
-              turn = await fetchPersistedAgentTurn(request, nonce);
+              turn = await retryOnDroppedConnection(() =>
+                fetchPersistedAgentTurn(request, nonce),
+              );
               return turn ? "persisted" : "waiting";
             },
-            { timeout: 60000, intervals: [2000] },
+            { timeout: 60000, intervals: [3000] },
           )
           .toBe("persisted");
 

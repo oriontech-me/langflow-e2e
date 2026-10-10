@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 /**
  * Dedicated proof of the "create a blank flow" journey (QA-CHECKLIST §12.1):
@@ -74,9 +75,11 @@ test.describe("Flow Functionality — Create Blank Flow", () => {
         await expect
           .poll(
             async () => {
-              const res = await request.get(`/api/v1/flows/${createdFlowId}`, {
-                headers: { Authorization: authToken },
-              });
+              const res = await retryOnDroppedConnection(() =>
+                request.get(`/api/v1/flows/${createdFlowId}`, {
+                  headers: { Authorization: authToken },
+                }),
+              );
               if (res.status() !== 200) return null;
               const flow = (await res.json()) as {
                 data?: { nodes?: unknown[]; edges?: unknown[] };
@@ -86,7 +89,7 @@ test.describe("Flow Functionality — Create Blank Flow", () => {
                 edges: flow.data?.edges?.length ?? -1,
               };
             },
-            { timeout: 10000, intervals: [500, 1000, 2000] },
+            { timeout: 10000, intervals: [500, 1000] },
           )
           .toEqual({ nodes: 0, edges: 0 });
       });

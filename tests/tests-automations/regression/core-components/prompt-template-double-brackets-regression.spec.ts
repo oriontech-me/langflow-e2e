@@ -12,6 +12,7 @@ import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 // Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
 // (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
@@ -219,7 +220,9 @@ test(
 // Hoisted out of the test body so the `if (!res.ok())` guard does not trip the
 // `playwright/no-conditional-in-test` ESLint rule.
 async function readUseDoubleBrackets(page: Page, flowId: string) {
-  const res = await page.request.get(`/api/v1/flows/${flowId}`);
+  const res = await retryOnDroppedConnection(() =>
+    page.request.get(`/api/v1/flows/${flowId}`),
+  );
   if (!res.ok()) return null;
   const flow = await res.json();
   const promptNode = (flow?.data?.nodes ?? []).find(
@@ -244,7 +247,7 @@ test(
         await expect
           .poll(() => readUseDoubleBrackets(page, flowId), {
             timeout: 15000,
-            intervals: [500, 1000, 2000],
+            intervals: [500, 1000],
           })
           .toBe(false);
       },
@@ -260,7 +263,7 @@ test(
         await expect
           .poll(() => readUseDoubleBrackets(page, flowId), {
             timeout: 15000,
-            intervals: [500, 1000, 2000],
+            intervals: [500, 1000],
           })
           .toBe(true);
       },

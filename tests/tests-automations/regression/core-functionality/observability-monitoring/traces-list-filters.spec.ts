@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 const ERROR_FIXTURE = JSON.parse(
   readFileSync(
@@ -118,15 +119,16 @@ test.describe("Trace list filters — status / start_time / query / session_id",
       await expect
         .poll(
           async () => {
-            const res = await request.get(
-              `/api/v1/monitor/traces?flow_id=${fId}`,
-              { headers: { Authorization: bearerToken } },
+            const res = await retryOnDroppedConnection(() =>
+              request.get(`/api/v1/monitor/traces?flow_id=${fId}`, {
+                headers: { Authorization: bearerToken },
+              }),
             );
             if (res.status() !== 200) return 0;
             const body = await res.json();
             return body.traces?.length ?? 0;
           },
-          { timeout: 30000, intervals: [500, 1000, 2000] },
+          { timeout: 30000, intervals: [500, 1000] },
         )
         .toBeGreaterThan(0);
     }

@@ -4,6 +4,7 @@ import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
+import { retryOnDroppedConnection } from "../../../helpers/api/retry-on-dropped-connection";
 
 // Ids of every flow created by a test — the blank host flow AND the saved
 // component (itself an is_component flow) — deleted id-scoped in afterEach (repo
@@ -147,7 +148,9 @@ test.describe("save component tests", () => {
         await expect
           .poll(
             async () => {
-              created = (await listSavedComponents(request, bearer)).filter(
+              created = (
+                await retryOnDroppedConnection(() => listSavedComponents(request, bearer))
+              ).filter(
                 (f) => !savedBefore.has(f.id),
               );
               return created.length;
@@ -156,7 +159,7 @@ test.describe("save component tests", () => {
               message:
                 "exactly one new saved component should be created by the save",
               timeout: 20000,
-              intervals: [200, 300, 500, 1000, 2000],
+              intervals: [200, 300, 500, 1000],
             },
           )
           .toBe(1);

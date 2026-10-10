@@ -159,14 +159,11 @@ test.describe("MCP Server — flow-file resources protocol", () => {
       await expect
         .poll(
           async () => {
-            const resp = await mcpCall(
-              request,
-              streamableUrl,
-              credential,
-              "resources/list",
-              {},
-              2,
-            );
+            // Re-dialled inside `mcpCall`, around the POST only: a dropped socket is
+            // retried once, a non-2xx answer is never re-sent.
+            const resp = await mcpCall(request, streamableUrl, credential, "resources/list", {}, 2, {
+              retryDroppedConnection: true,
+            });
             const resources = (resp.result?.resources ?? []) as Array<{
               name: string;
               uri: string;
@@ -178,7 +175,7 @@ test.describe("MCP Server — flow-file resources protocol", () => {
             );
             return Boolean(matched);
           },
-          { timeout: 30000, intervals: [1000, 2000, 3000, 5000] },
+          { timeout: 30000, intervals: [500, 1000, 3000] },
         )
         .toBeTruthy();
 

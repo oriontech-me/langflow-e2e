@@ -227,7 +227,9 @@ running instance.
   poller is not retried, so the poll ended on the transport error instead of on its
   condition. Measured against the local nightly behind Colima's port forward: the
   socket is dropped at an idle gap of ~2 s, which the `[500, 1000, 2000]` intervals
-  hit exactly. Every API poll here keeps its intervals under 2 s, and the reads — all
+  hit exactly. Every API poll here keeps its intervals at or under 1 s (the gap the
+  server sees is the interval plus the client's processing, so the repo's guard
+  forbids 1000–2100 ms, #2243), and the reads — all
   idempotent — are re-dialled once through `retryOnDroppedConnection` (#1562), which
   retries only a thrown request and passes any response through untouched.
 - **The new edge embeds both node ids** — `…A2AAgent-<id>…-Agent-<id>…` — so the

@@ -37,7 +37,7 @@ Both tests (negative and happy path) carry the same tag set.
 2. Create an API key (`POST /api/v1/api_key/` with Bearer auth, name `traces-detail-single-test-<timestamp>`); capture `api_key` + `id`
 3. Create a flow (`POST /api/v1/flows/` with `x-api-key` auth) from `tests/assets/flows/basic-prompting-trace-fixture.json`, name suffixed with the timestamp; expect HTTP 201; capture `flowId`
 4. Run the flow once (`POST /api/v1/run/{flowId}` with `x-api-key` auth, `input_value: "single-trace-probe"`, `input_type: "chat"`, `output_type: "chat"`). The fixture has no provider configured, so the LanguageModelComponent fails — the failure is **intentional**: the trace still lands. Accept HTTP 200 or 500
-5. Poll `GET /api/v1/monitor/traces?flow_id=<flowId>` (Bearer auth) with intervals `[500, 1000, 2000]` ms up to 30 s until `body.traces[0].id` is not null — trace writes are asynchronous
+5. Poll `GET /api/v1/monitor/traces?flow_id=<flowId>` (Bearer auth) with intervals `[500, 1000]` ms up to 30 s (kept off the backend's 2 s keep-alive close, and each read re-dialled once on a dropped connection — #2243) until `body.traces[0].id` is not null — trace writes are asynchronous
 6. Re-fetch the list and capture `traceId = body.traces[0].id`
 
 **`afterAll`** — delete the flow (`x-api-key`) and the API key (Bearer).

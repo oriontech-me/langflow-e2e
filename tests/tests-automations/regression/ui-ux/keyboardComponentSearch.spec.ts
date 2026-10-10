@@ -109,7 +109,7 @@ async function focusSearchWithSlash(page: Page): Promise<void> {
     if (!alreadyFocused) await page.keyboard.press("/");
 
     await expect(search).toBeFocused({ timeout: 2000 });
-  }).toPass({ timeout: 20000, intervals: [250, 500, 1000, 2000] });
+  }).toPass({ timeout: 20000, intervals: [250, 500, 1000] });
 }
 
 test.describe("ui-ux — keyboard component search", () => {
