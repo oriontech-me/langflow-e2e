@@ -721,6 +721,12 @@ export interface DeclaredStableSpecs {
  */
 export function declaredStableSpecFiles(
   root: string = TESTS_ROOT,
+  /**
+   * The run's own --grep, when it narrows @stable to some areas (run-e2e.sh's
+   * STABLE_AREAS): only a test it selects is owed to the listing. Matched over the
+   * string Playwright greps, as the lane exclusion is. Absent, the whole @stable.
+   */
+  grep?: RegExp,
 ): DeclaredStableSpecs {
   const files: string[] = [];
   const laneOnly: string[] = [];
@@ -753,7 +759,7 @@ export function declaredStableSpecFiles(
     const rel = path.relative(root, abs).split(path.sep).join("/");
     const tests = parseDeclaredTests(abs, fs.readFileSync(abs, "utf-8"));
     if (tests.some((t) => t.unparseableTags)) unparseable.push(rel);
-    const stable = tests.filter((t) => t.stable);
+    const stable = tests.filter((t) => t.stable && (!grep || grep.test(`${rel} ${t.grepTitle}`)));
     if (stable.length === 0) continue;
     // An unreadable tag option leaves the lane question UNDECIDABLE, so such a
     // test votes for neither bucket: claiming the file should have been listed

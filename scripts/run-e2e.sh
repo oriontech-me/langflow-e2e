@@ -359,6 +359,17 @@ TARGET_DECLARED_REF="${TARGET_DECLARED_REF:-}"
 # anthropic that quietly used openai answers a question nobody asked.
 DECLARED_MODEL_PROVIDER="${DECLARED_MODEL_PROVIDER:-}"
 DECLARED_MODEL_ID="${DECLARED_MODEL_ID:-}"
+# Areas that NARROW the run: @stable AND one of these (space-separated tags, e.g.
+# "@mcp @api"). Empty, the default, is the whole @stable, exactly as before. A run
+# aimed at what a change touched: a PR on the MCP server runs @stable's MCP tests. The
+# filter is composed by scripts/build-grep-filter.mjs, as the Actions lane composes its
+# own (#1275): an alternation spliced in by hand narrowed a release run unnoticed. The
+# lane tags (@destructive, @enterprise, @serving) need an environment of their own and
+# are refused here; @stable is the base, not an area.
+STABLE_AREAS="${STABLE_AREAS:-}"
+# Composed in phase_prep from STABLE_AREAS; @stable alone until then, so a shard never
+# runs with an empty --grep.
+STABLE_GREP="@stable"
 # Whether the run OBEYS the resolution instead of only reporting it. Reporting was
 # step 16's first half and was deliberately not fatal: failing at 08:00 over a clone
 # somebody had to move by hand threw away a day of data. This is the second half —
@@ -776,6 +787,36 @@ check_declared_target() {
   fi
   [ "$CHECK_TARGET_VERSION" = "1" ] || die "a declared target with CHECK_TARGET_VERSION=0: the declaration is exactly what this run exists to check. Drop the declaration, or the override."
   return 0
+}
+
+# The areas (STABLE_AREAS), refused before anything runs when malformed. Whether they
+# select anything is only known from the listing; see phase_prep.
+check_stable_areas() {
+  [ -n "$STABLE_AREAS" ] || return 0
+  local tag n=0
+  for tag in $STABLE_AREAS; do
+    n=$((n + 1))
+    [[ "$tag" =~ ^@[a-z0-9][a-z0-9-]{0,39}$ ]] || die "STABLE_AREAS has a tag that is not one: '$tag'."
+    case "$tag" in
+      @stable) die "STABLE_AREAS names @stable: it is the base every run keeps, not an area." ;;
+      @destructive | @enterprise | @serving) die "STABLE_AREAS names $tag, a lane tag: its tests need an environment of their own and this lane excludes them." ;;
+    esac
+  done
+  [ "$n" -le 25 ] || die "STABLE_AREAS names $n tags; at most 25."
+  return 0
+}
+
+# The --grep a run uses: @stable alone, verbatim as before, or @stable AND any of the
+# areas. Each area must end where the tag ends, so @api does not select @api-keys.
+stable_grep() {
+  if [ -z "$STABLE_AREAS" ]; then
+    echo "@stable"
+    return 0
+  fi
+  local alt
+  # shellcheck disable=SC2086  # one tag per word, already checked by check_stable_areas
+  alt="$(printf '%s\n' $STABLE_AREAS | sort -u | paste -sd '|' -)"
+  node scripts/build-grep-filter.mjs --tag=@stable "--grep=(?:${alt})(?![A-Za-z0-9_-])"
 }
 
 # The declared provider and model (DECLARED_MODEL_*), refused before anything runs when
@@ -1545,6 +1586,8 @@ phase_preflight() {
   check_target_kind
   check_declared_target
   check_declared_model
+  check_stable_areas
+  [ -n "$STABLE_AREAS" ] && info "areas: @stable AND any of $STABLE_AREAS (the rest of @stable does not run)"
   info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
   [ -n "$TARGET_DECLARED_SHA" ] && info "target declared: ${TARGET_DECLARED_REF:-<no ref>} @ ${TARGET_DECLARED_SHA:0:10}, version $TARGET_DECLARED_VERSION"
   [ -n "$DECLARED_MODEL_PROVIDER" ] && info "provider declared: $DECLARED_MODEL_PROVIDER${DECLARED_MODEL_ID:+ / $DECLARED_MODEL_ID} (no rotation, no fallback)"
@@ -1937,7 +1980,20 @@ phase_prep() {
 
   # `--list` stdout is a machine contract: playwright.config.ts sends its warnings to
   # stderr precisely because of this (#1024).
-  npx playwright test --grep "@stable" --list --reporter=json > "$RUN_DIR/stable-list.json"
+  STABLE_GREP="$(stable_grep)" || die "could not compose the --grep for STABLE_AREAS='$STABLE_AREAS'."
+  [ -n "$STABLE_AREAS" ] && info "grep: $STABLE_GREP"
+  npx playwright test --grep "$STABLE_GREP" --list --reporter=json > "$RUN_DIR/stable-list.json"
+  if [ -n "$STABLE_AREAS" ]; then
+    # Areas that select nothing would run every shard green over zero tests. Said in
+    # these words, which the on-demand executor reads as the request's fault.
+    local selected
+    selected="$(node -e '
+      const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      let n = 0; const walk = (s) => { for (const sp of s.specs || []) n += (sp.tests || []).length; for (const c of s.suites || []) walk(c); };
+      for (const s of j.suites || []) walk(s); process.stdout.write(String(n));' "$RUN_DIR/stable-list.json" 2>/dev/null || echo "")"
+    [ "$selected" = "0" ] && die "the areas $STABLE_AREAS select no @stable test in this suite."
+    info "areas select ${selected:-an unknown number of} @stable test(s)"
+  fi
 
   # Which timings balance the matrix: the ledger's own with USE_LEDGER_DURATIONS=1
   # (the VM daily, since the Actions daily stopped, #2159), the tracked file otherwise.
@@ -1969,7 +2025,9 @@ phase_prep() {
   # the two failures land in the same place. (This said "`|| true`" until #1826 — the
   # Actions-side copy of the same sentence was corrected and this one was not, which is
   # the two-copies-drift shape the repo keeps recording.)
-  if ! npx ts-node scripts/declared-stable-specs.ts > "$RUN_DIR/declared-specs.json"; then
+  # With areas, only the @stable files THEY select are owed to the listing; the rest of
+  # @stable is left out on purpose, not lost.
+  if ! npx ts-node scripts/declared-stable-specs.ts ${STABLE_AREAS:+"--grep=$STABLE_GREP"} > "$RUN_DIR/declared-specs.json"; then
     warn "could not derive the declared @stable spec set — this run cannot verify that its"
     warn "listing contained every spec file that declares one (#1812). The verdict fails on"
     warn "it at the end; the run continues so the day is still diagnosable."
@@ -2211,7 +2269,7 @@ run_shard() {
   # shellcheck disable=SC2086
   ( PLAYWRIGHT_RETRIES="$RETRIES" \
     TOKENS_ATTRIB="$wd/token-attrib-${idx}.jsonl" \
-    npx playwright test --grep "@stable" --pass-with-no-tests $files ) >> "$log" 2>&1 || status=$?
+    npx playwright test --grep "$STABLE_GREP" --pass-with-no-tests $files ) >> "$log" 2>&1 || status=$?
 
   # ---- Collection (what upload-artifact did) ------------------------------
   kill "$liveness_pid" 2>/dev/null || true
@@ -2494,6 +2552,7 @@ phase_merge() {
     langflow_prepared_reason "${TARGET_REBUILD_REASON:-}" \
     langflow_declared_ref "${TARGET_DECLARED_REF:-}" \
     langflow_image_label_sha "${TARGET_IMAGE_LABEL_SHA:-}" \
+    stable_areas "${STABLE_AREAS:-}" \
     model_declared_provider "${DECLARED_MODEL_PROVIDER:-}" \
     model_declared_id "${DECLARED_MODEL_ID:-}" \
     model_used_provider "${MODEL_USED_PROVIDER:-}" \

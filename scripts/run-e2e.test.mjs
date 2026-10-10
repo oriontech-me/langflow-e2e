@@ -260,7 +260,8 @@ test("phase_prep passes the declaration to the partitioner and cannot die derivi
   // never costs the artefacts that make the day diagnosable — the asymmetry with the
   // collection gate, which DOES stop the run, is argued in the script.
   const src = readFileSync(SCRIPT, "utf8");
-  assert.match(src, /scripts\/declared-stable-specs\.ts > "\$RUN_DIR\/declared-specs\.json"/);
+  // With areas, the declaration is narrowed to the run's own grep (STABLE_AREAS).
+  assert.match(src, /scripts\/declared-stable-specs\.ts \$\{STABLE_AREAS:\+"--grep=\$STABLE_GREP"\} > "\$RUN_DIR\/declared-specs\.json"/);
   assert.match(src, /--declared "\$RUN_DIR\/declared-specs\.json"/);
   const prep = src.slice(src.indexOf("phase_prep() {"), src.indexOf("start_backend_for_shard() {"));
   assert.match(prep, /if ! npx ts-node scripts\/declared-stable-specs\.ts/);
@@ -3664,6 +3665,48 @@ test("a declared model needs its provider, and both are refused when malformed",
   }
 });
 
+test("areas narrow @stable: well-formed tags pass, @stable and the lane tags are refused", () => {
+  const run = (areas) => sourced("check_stable_areas && echo ok", { STABLE_AREAS: areas });
+  for (const ok of ["", "@mcp", "@mcp @api", "@model-provider @ui-ux @a2a"]) assert.equal(run(ok).stdout.trim(), "ok", ok);
+  for (const [areas, message] of [
+    ["@stable", /names @stable/],
+    ["@mcp @enterprise", /@enterprise, a lane tag/],
+    ["@serving", /@serving, a lane tag/],
+    ["@destructive", /@destructive, a lane tag/],
+    ["mcp", /not one: 'mcp'/],
+    ["@MCP", /not one/],
+    ["@mcp;rm", /not one/],
+    [Array.from({ length: 26 }, (_, i) => `@a${i}`).join(" "), /at most 25/],
+  ]) {
+    const r = run(areas);
+    assert.equal(r.status, 1, areas);
+    assert.match(r.stderr, message, areas);
+  }
+});
+
+test("the grep is @stable alone without areas, and @stable AND any area with them, each tag whole", () => {
+  const grep = (areas) => sourced("stable_grep", { STABLE_AREAS: areas }).stdout.trim();
+  assert.equal(grep(""), "@stable", "the whole @stable changed its --grep");
+  const g = new RegExp(grep("@mcp @api"));
+  // Playwright greps "<file> <titles and tags>"; @stable is declared first, an area after.
+  for (const [target, want] of [
+    ["mcp/server.spec.ts MCP server @stable @regression @mcp", true],
+    ["api/flows.spec.ts flows @stable @api", true],
+    ["x.spec.ts both @api @stable", true],
+    ["x.spec.ts not stable @mcp", false],
+    ["x.spec.ts another area @stable @agents", false],
+    ["x.spec.ts a longer tag @stable @api-keys", false],
+    ["api/path-only.spec.ts @stable", false],
+  ]) assert.equal(g.test(target), want, target);
+});
+
+test("the listing and the round both use the composed grep, never a literal @stable", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const calls = src.split("\n").filter((l) => /npx playwright test .*--grep/.test(l) && !/^\s*#/.test(l));
+  assert.ok(calls.length >= 2, calls.join("\n"));
+  for (const l of calls) assert.match(l, /--grep "\$STABLE_GREP"/, l);
+});
+
 test("the image label decides match, mismatch or absent, and <no value> is never a match", () => {
   const verdictFor = (label) => sourced(`declared_image_verdict ${JSON.stringify(label)}`, declaredEnv()).stdout.trim();
   assert.equal(verdictFor(DECLARED_SHA), "match");
@@ -3861,7 +3904,7 @@ test("each shard records what its agent specs run against, after the pin and bef
   // record before the sourcing would read empty values and call every pinned day "all".
   const sourcedEnv = body.indexOf('. "$gh_env"');
   const record = body.indexOf("printf '%s\\t%s\\n' \"${MODEL_TEST_PROVIDER:-}\" \"${MODEL_TEST_ID:-}\"");
-  const round = body.indexOf('npx playwright test --grep "@stable"');
+  const round = body.indexOf('npx playwright test --grep "$STABLE_GREP"');
   assert.ok(pin > 0 && sourcedEnv > pin && record > sourcedEnv && round > record,
     "the record sits after the pin is sourced and before the round");
   // A diagnostic never costs the shard its round: the write is guarded.
