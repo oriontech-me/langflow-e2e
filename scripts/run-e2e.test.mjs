@@ -3687,7 +3687,8 @@ test("areas narrow @stable: well-formed tags pass, @stable and the lane tags are
 test("the grep is @stable alone without areas, and @stable AND any area with them, each tag whole", () => {
   const grep = (areas) => sourced("stable_grep", { STABLE_AREAS: areas }).stdout.trim();
   assert.equal(grep(""), "@stable", "the whole @stable changed its --grep");
-  const g = new RegExp(grep("@mcp @api"));
+  // Playwright compiles a CLI --grep case-insensitively.
+  const g = new RegExp(grep("@mcp @api"), "i");
   // Playwright greps "<file> <titles and tags>"; @stable is declared first, an area after.
   for (const [target, want] of [
     ["mcp/server.spec.ts MCP server @stable @regression @mcp", true],
@@ -3697,7 +3698,36 @@ test("the grep is @stable alone without areas, and @stable AND any area with the
     ["x.spec.ts another area @stable @agents", false],
     ["x.spec.ts a longer tag @stable @api-keys", false],
     ["api/path-only.spec.ts @stable", false],
+    ["x.spec.ts mail dev@api.io @stable", false],
+    ["x.spec.ts suffixed @stable @api:v2", false],
+    ["x.spec.ts upper case @stable @MCP", true],
   ]) assert.equal(g.test(target), want, target);
+});
+
+test("never more shards than spec files, and an unknown count keeps the shards asked for", () => {
+  const n = (files, shards) => sourced(`shards_for_files ${JSON.stringify(files)} ${shards}`).stdout.trim();
+  assert.equal(n("1", 4), "1");
+  assert.equal(n("3", 4), "3");
+  assert.equal(n("4", 4), "4");
+  assert.equal(n("170", 4), "4");
+  for (const unknown of ["", "0", "x"]) assert.equal(n(unknown, 4), "4", JSON.stringify(unknown));
+});
+
+test("a narrowed run on a lane that publishes is refused: it would speak for the whole @stable", () => {
+  for (const sw of ["CREATE_ISSUE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "AUTO_REMOVE", "HISTORY_TO_SOURCE"]) {
+    const r = sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", [sw]: "1" });
+    assert.equal(r.status, 1, sw);
+    assert.match(r.stderr, new RegExp(`STABLE_AREAS with ${sw}=1`), sw);
+    // The whole @stable on the same lane is untouched.
+    assert.equal(sourced("check_stable_areas && echo ok", { STABLE_AREAS: "", [sw]: "1" }).stdout.trim(), "ok", sw);
+  }
+});
+
+test("phase_prep shards no wider than the listing and names an area that selects nothing", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const prep = src.slice(src.indexOf("phase_prep() {"), src.indexOf("start_backend_for_shard() {"));
+  assert.match(prep, /partition-shards\.mjs matrix \\\n\s*"\$RUN_DIR\/stable-list\.json" "\$durations" "\$partition_shards"/);
+  assert.match(prep, /die "the areas \$empty_areas select no @stable test in this suite\."/);
 });
 
 test("the listing and the round both use the composed grep, never a literal @stable", () => {

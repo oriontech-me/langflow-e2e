@@ -803,11 +803,29 @@ check_stable_areas() {
     esac
   done
   [ "$n" -le 25 ] || die "STABLE_AREAS names $n tags; at most 25."
+  # A narrowed run is a part of @stable: its history rows, durations, payload and any
+  # removal would read as the whole suite's. Only a lane that publishes nothing narrows.
+  local sw
+  for sw in CREATE_ISSUE NOTIFY_SLACK NOTIFY_SLACK_ALWAYS POST_QA_PLATFORM AUTO_REMOVE HISTORY_TO_SOURCE; do
+    [ "${!sw:-0}" = "0" ] || die "STABLE_AREAS with $sw=${!sw}: a narrowed run publishes nothing, or it would speak for the whole @stable."
+  done
   return 0
 }
 
+# The shard count for a listing of $1 spec files with $2 shards asked: never more shards
+# than files. An unknown count keeps the shards asked for.
+shards_for_files() {
+  local files="$1" shards="$2"
+  if [[ "$files" =~ ^[0-9]+$ ]] && [ "$files" -ge 1 ] && [ "$files" -lt "$shards" ]; then
+    echo "$files"
+  else
+    echo "$shards"
+  fi
+}
+
 # The --grep a run uses: @stable alone, verbatim as before, or @stable AND any of the
-# areas. Each area must end where the tag ends, so @api does not select @api-keys.
+# areas. Playwright greps the file, titles and tags joined by spaces, so an area is
+# bounded by whitespace on both sides: @api selects neither @api-keys nor dev@api.io.
 stable_grep() {
   if [ -z "$STABLE_AREAS" ]; then
     echo "@stable"
@@ -816,7 +834,7 @@ stable_grep() {
   local alt
   # shellcheck disable=SC2086  # one tag per word, already checked by check_stable_areas
   alt="$(printf '%s\n' $STABLE_AREAS | sort -u | paste -sd '|' -)"
-  node scripts/build-grep-filter.mjs --tag=@stable "--grep=(?:${alt})(?![A-Za-z0-9_-])"
+  node scripts/build-grep-filter.mjs --tag=@stable "--grep=(?<!\S)(?:${alt})(?!\S)"
 }
 
 # The declared provider and model (DECLARED_MODEL_*), refused before anything runs when
@@ -1983,17 +2001,38 @@ phase_prep() {
   STABLE_GREP="$(stable_grep)" || die "could not compose the --grep for STABLE_AREAS='$STABLE_AREAS'."
   [ -n "$STABLE_AREAS" ] && info "grep: $STABLE_GREP"
   npx playwright test --grep "$STABLE_GREP" --list --reporter=json > "$RUN_DIR/stable-list.json"
+  # How many spec files and tests the listing selected, and per area which select none.
+  # Read from the listing itself, so it is what Playwright will run.
+  local listed files tests empty_areas
+  listed="$(node -e '
+    const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const areas = (process.argv[2] || "").split(" ").filter(Boolean);
+    const files = new Set(); let tests = 0; const per = Object.fromEntries(areas.map((a) => [a, 0]));
+    const walk = (s) => {
+      for (const sp of s.specs || []) {
+        files.add(sp.file); tests += (sp.tests || []).length;
+        const tags = new Set((sp.tags || []).map((t) => "@" + String(t).replace(/^@/, "")));
+        for (const a of areas) if (tags.has(a) || new RegExp("(?<!\\S)" + a + "(?!\\S)", "i").test(sp.title)) per[a] += (sp.tests || []).length;
+      }
+      for (const c of s.suites || []) walk(c);
+    };
+    for (const s of j.suites || []) walk(s);
+    process.stdout.write([files.size, tests, areas.filter((a) => per[a] === 0).join(" ")].join("\t"));' \
+    "$RUN_DIR/stable-list.json" "$STABLE_AREAS" 2>/dev/null || true)"
+  IFS=$'\t' read -r files tests empty_areas <<< "$listed"
   if [ -n "$STABLE_AREAS" ]; then
-    # Areas that select nothing would run every shard green over zero tests. Said in
-    # these words, which the on-demand executor reads as the request's fault.
-    local selected
-    selected="$(node -e '
-      const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-      let n = 0; const walk = (s) => { for (const sp of s.specs || []) n += (sp.tests || []).length; for (const c of s.suites || []) walk(c); };
-      for (const s of j.suites || []) walk(s); process.stdout.write(String(n));' "$RUN_DIR/stable-list.json" 2>/dev/null || echo "")"
-    [ "$selected" = "0" ] && die "the areas $STABLE_AREAS select no @stable test in this suite."
-    info "areas select ${selected:-an unknown number of} @stable test(s)"
+    # Areas that select nothing would run every shard green over zero tests, or quietly
+    # drop the area named wrong. Said in these words, which the on-demand executor
+    # reads as the request's fault.
+    [ -n "$empty_areas" ] && die "the areas $empty_areas select no @stable test in this suite."
+    info "areas select ${tests:-an unknown number of} @stable test(s) in ${files:-?} file(s)"
   fi
+  # Never more shards than files: a shard with none is skipped, and its missing blob
+  # would read as an INCOMPLETE run. Only a narrowed run gets that small; the whole
+  # @stable has far more files than shards.
+  local partition_shards
+  partition_shards="$(shards_for_files "${files:-}" "$SHARDS")"
+  [ "$partition_shards" = "$SHARDS" ] || info "only $files spec file(s): $partition_shards shard(s) instead of $SHARDS"
 
   # Which timings balance the matrix: the ledger's own with USE_LEDGER_DURATIONS=1
   # (the VM daily, since the Actions daily stopped, #2159), the tracked file otherwise.
@@ -2034,7 +2073,7 @@ phase_prep() {
   fi
 
   node scripts/partition-shards.mjs matrix \
-    "$RUN_DIR/stable-list.json" "$durations" "$SHARDS" \
+    "$RUN_DIR/stable-list.json" "$durations" "$partition_shards" \
     --declared "$RUN_DIR/declared-specs.json" > "$RUN_DIR/matrix.json"
 
   SHARD_TOTAL="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).shard_total" "$RUN_DIR/matrix.json")"
