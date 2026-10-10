@@ -59,8 +59,14 @@ export interface LoadSimpleAgentOptions {
  */
 const CREDENTIAL_SETTLE_TIMEOUT_MS = 20_000;
 
-/** Read spacing; the last entry repeats until the budget ends. */
-const CREDENTIAL_SETTLE_INTERVALS_MS = [250, 500, 1000, 2000];
+/**
+ * Read spacing; the last entry repeats until the budget ends. It stops at 1000, not
+ * 2000: a repeated 2 s gap reuses the pooled socket at the instant gunicorn's 2 s
+ * keep-alive closes it, which dropped 5 of 15 reads when measured (#2236, #2243). A
+ * dropped read here is caught and costs a whole interval, so on the old cadence a
+ * settle could run out its budget on transport errors alone.
+ */
+const CREDENTIAL_SETTLE_INTERVALS_MS = [250, 500, 1000];
 
 /**
  * Above this, a SUCCESSFUL settle is still reported to the run output. A near-miss
