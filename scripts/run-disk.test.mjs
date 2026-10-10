@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
@@ -29,12 +29,15 @@ const GB = 1024 * 1024; // in KB, du's unit
  * duAfterFails: du cannot read the cache once it has been cleaned
  * cacheMissing: `uv cache dir` names a directory that does not exist
  * slowSurvey: du on the survey's largest entry never finishes
- * lockPct:   df's use% from the moment the lock is taken (another lane wrote while it was awaited)
+ * lockPct:   df's use% once the lock wait is over, taken or not (another lane wrote meanwhile)
+ * dailyBusyOnce: the daily is running at the first look and gone at the next
+ * dailyPct:  df's use% once the daily is gone
+ * cleanRemovesDir: the clean removes the cache directory itself, as uv 0.9.17 does
  * clean:     "ok" | "fail"   what `uv cache clean` does
  * uv:        false removes uv from PATH
  * env:       extra environment for the routine
  */
-function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, slowSurvey = false, duAfterFails = false, cacheMissing = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
+function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, dailyBusyOnce = false, dailyPct = null, cleanRemovesDir = false, heavyBusy = false, slowSurvey = false, duAfterFails = false, cacheMissing = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
   const dir = makeTempDir("run-disk-");
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm", "lib"), { recursive: true });
@@ -56,9 +59,10 @@ function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heav
   const bin = join(home, ".local", "bin");
   mkdirSync(bin, { recursive: true });
   const calls = join(dir, "calls.log");
-  stub(bin, "systemctl", "echo inactive");
+  const dailySeen = join(dir, "daily-seen");
+  stub(bin, "systemctl", dailyBusyOnce ? `[ -e ${q(dailySeen)} ] && { echo inactive; exit 0; }; touch ${q(dailySeen)}; echo active` : "echo inactive");
   const lockMark = join(dir, "lock-taken");
-  stub(bin, "flock", `echo "flock $*" >> ${q(calls)}\ncase "$*" in *8) ${heavyBusy ? "exit 1" : `touch ${q(lockMark)}; exit 0`} ;; esac\nexit 0`);
+  stub(bin, "flock", `echo "flock $*" >> ${q(calls)}\ncase "$*" in *8) touch ${q(lockMark)}; exit ${heavyBusy ? 1 : 0} ;; esac\nexit 0`);
   if (uv) {
     stub(
       bin,
@@ -66,7 +70,7 @@ function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heav
       `echo "uv $*" >> ${q(calls)}
 case "$*" in
   "cache dir") echo ${q(cacheNamed)} ;;
-  "cache clean") ${clean === "ok" ? `rm -f ${q(join(cache, "big"))}; echo "Removed 4120 files"` : `echo "error: failed to remove the cache: Permission denied" >&2; exit 2`} ;;
+  "cache clean") ${clean === "ok" ? `rm ${cleanRemovesDir ? "-rf " + q(cache) : "-f " + q(join(cache, "big"))}; echo "Removed 4120 files"` : `echo "error: failed to remove the cache: Permission denied" >&2; exit 2`} ;;
   *) exit 64 ;;
 esac`,
     );
@@ -88,41 +92,45 @@ esac; done`,
     "df",
     dfBroken
       ? "echo 'df: cannot read' >&2; exit 1"
-      : `pct=${usedPct}; ${lockPct === null ? "" : `[ -e ${q(lockMark)} ] && pct=${lockPct};`} [ -e ${q(join(cache, "big"))} ] || pct=${after}
+      : `pct=${usedPct}; ${dailyPct === null ? "" : `[ -e ${q(dailySeen)} ] && pct=${dailyPct};`} ${lockPct === null ? "" : `[ -e ${q(lockMark)} ] && pct=${lockPct};`} [ -e ${q(join(cache, "big"))} ] || pct=${after}
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
 echo "/dev/mapper/root 260046848 59768832 $(( (100 - pct) * 2600468 )) \${pct}% /"`,
   );
 
   const state = join(dir, "state");
-  const r = spawnSync("bash", [SCRIPT], {
-    encoding: "utf8",
-    env: {
-      // uv: false works by not stubbing it; /usr/bin and /bin carry no uv on the test hosts.
-      PATH: `${bin}:/usr/bin:/bin`,
-      HOME: home,
-      E2E_ROUTINE_REPO: repo,
-      E2E_ROUTINE_STATE_ROOT: state,
-      E2E_ROUTINE_LOG_ROOT: join(dir, "log"),
-      E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
-      E2E_SHADOW_STATE: join(dir, "shadow"),
-      E2E_ROUTINE_POLL_S: "0",
-      // A Saturday noon: outside the daily's window, so only the lock decides.
-      E2E_ROUTINE_NOW: "6 1200",
-      E2E_ROUTINE_SECRETS: join(dir, "no-secrets"),
-      E2E_ROUTINE_LANE: join(dir, "no-lane"),
-      DISK_SURVEY_ROOT: survey,
-      DISK_WAIT_BUDGET_S: "0",
-      ...env,
-    },
-  });
   const lastEnv = join(state, "disk", "last.env");
-  return {
-    r,
-    result: existsSync(lastEnv) ? kv(readFileSync(lastEnv, "utf8")) : {},
-    calls: existsSync(calls) ? readFileSync(calls, "utf8") : "",
-    reported: existsSync(reportOut),
-    cacheKept: existsSync(join(cache, "big")),
+  // Another day on the same machine: same state, same cache, same fakes.
+  const run = () => {
+    const r = spawnSync("bash", [SCRIPT], {
+      encoding: "utf8",
+      env: {
+        // uv: false works by not stubbing it; /usr/bin and /bin carry no uv on the test hosts.
+        PATH: `${bin}:/usr/bin:/bin`,
+        HOME: home,
+        E2E_ROUTINE_REPO: repo,
+        E2E_ROUTINE_STATE_ROOT: state,
+        E2E_ROUTINE_LOG_ROOT: join(dir, "log"),
+        E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
+        E2E_SHADOW_STATE: join(dir, "shadow"),
+        E2E_ROUTINE_POLL_S: "0",
+        // A Saturday noon: outside the daily's window, so only the lock decides.
+        E2E_ROUTINE_NOW: "6 1200",
+        E2E_ROUTINE_SECRETS: join(dir, "no-secrets"),
+        E2E_ROUTINE_LANE: join(dir, "no-lane"),
+        DISK_SURVEY_ROOT: survey,
+        DISK_WAIT_BUDGET_S: "0",
+        ...env,
+      },
+    });
+    return {
+      r,
+      result: existsSync(lastEnv) ? kv(readFileSync(lastEnv, "utf8")) : {},
+      calls: existsSync(calls) ? readFileSync(calls, "utf8") : "",
+      reported: existsSync(reportOut),
+      cacheKept: existsSync(join(cache, "big")),
+    };
   };
+  return { ...run(), again: run, cache };
 }
 
 test("under the cap and under the alarm: green, measured, nothing cleaned, no lock taken", () => {
@@ -165,6 +173,23 @@ test("a cache du cannot read after the clean is unknown, never a measured 0", ()
   assert.equal(result.STATUS, "green");
   assert.match(result.UV_CLEANED, /^yes, 16384 MB to unknown MB \(du could not read it after the clean\), 15237 MB returned/);
   assert.doesNotMatch(result.UV_CLEANED, /to 0 MB/);
+});
+
+test("the day after a clean, an absent cache is the clean's, not a wrong place", () => {
+  const day1 = disk({ cacheGb: 16, cleanRemovesDir: true });
+  assert.equal(day1.result.STATUS, "green", day1.result.REASON);
+  assert.match(day1.result.UV_CLEANED, /^yes, 16384 MB to 0 MB/);
+  // Nothing installed through uv since: the directory is still gone.
+  const day2 = day1.again();
+  assert.equal(day2.result.STATUS, "green", day2.result.REASON);
+  assert.equal(day2.result.UV_CACHE_MB, "0");
+  // uv installs again, the marker is dropped, and a later absence is a wrong place again.
+  mkdirSync(day1.cache);
+  assert.equal(day1.again().result.STATUS, "green");
+  rmSync(day1.cache, { recursive: true });
+  const day4 = day1.again();
+  assert.equal(day4.result.STATUS, "failed");
+  assert.match(day4.result.REASON, /did not clean it there/);
 });
 
 test("exactly at the cap is not over it: nothing is cleaned", () => {

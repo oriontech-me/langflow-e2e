@@ -30,16 +30,18 @@
 #   3. When the disk is at or over DISK_ALARM_PCT (70, same decision), leaves an ALARM line
 #      for the watchdog, with the largest directories under /root so the message says
 #      where to look. The disk is measured before any wait (the daily's priority
-#      included), again after each wait, and again after a clean; the ALARM comes from the last measure, on a skipped or failed day too, since
-#      a busy day is the one most likely to be filling the disk.
+#      included), again after each wait, and again after a clean; the ALARM comes from
+#      the last measure, on a skipped or failed day too, since a busy day is the one most
+#      likely to be filling the disk.
 #
 # ## Verdicts
 #
 #   green    measured, and cleaned when it had to: the disk filling is an ALARM beside a
 #            green day, never a red, because a full disk is not a product defect and a red
 #            would open the routine's issue on the destination for it
-#   failed   this machine: no uv, a cache directory uv names but that does not exist, a
-#            measurement that could not be read, or a clean that failed
+#   failed   this machine: no uv, a cache directory uv names that does not exist and that
+#            this routine did not clean, a measurement that could not be read, or a clean
+#            that failed
 #   skipped  the cache was over its cap and the heavy-lane lock never came within the
 #            budget; nothing was cleaned, and tomorrow tries again
 #
@@ -90,12 +92,22 @@ main() {
   local cache cache_mb
   cache="$(uv cache dir 2> /dev/null)"
   [ -n "$cache" ] || routine_end failed "uv did not say where its cache is (uv cache dir)"
-  # Absent before any clean is a wrong place, not an empty cache: every weekday installs
-  # through uv here, so a missing directory means this run is measuring somewhere uv does
-  # not write (another UV_CACHE_DIR, a HOME systemd did not set), and a green 0 every day
-  # would hide the real cache growing.
-  [ -d "$cache" ] || routine_end failed "uv names its cache at $cache and there is no such directory: this run would measure a place uv does not write (UV_CACHE_DIR, HOME)"
-  cache_mb="$(disk_dir_mb "$cache")" || routine_end failed "could not measure uv's cache at $cache"
+  # An absent cache is legitimate in exactly one case: this routine cleaned it and nothing
+  # has installed through uv since (`uv cache clean` removes the directory itself, and
+  # `uv cache dir` does not recreate it; measured on uv 0.9.17). The clean leaves a marker
+  # naming the path for that. Absent with no marker is this run measuring somewhere uv
+  # does not write (another UV_CACHE_DIR, a HOME systemd did not set) -- or a machine uv
+  # has never installed on -- and a green 0 every day would hide the real cache growing.
+  local marker="$RT_STATE/uv-cleaned"
+  if [ -d "$cache" ]; then
+    rm -f "$marker"
+    cache_mb="$(disk_dir_mb "$cache")" || routine_end failed "could not measure uv's cache at $cache"
+  elif [ "$(head -n 1 "$marker" 2> /dev/null)" = "$cache" ]; then
+    cache_mb=0
+    echo "uv cache absent at $cache: removed by this routine's clean ($(sed -n 2p "$marker")), nothing has installed since"
+  else
+    routine_end failed "uv names its cache at $cache and there is no such directory, and this routine did not clean it there: either this run measures a place uv does not write (UV_CACHE_DIR, HOME) or uv has never installed on this machine"
+  fi
   routine_set UV_CACHE "$cache"
   routine_set UV_CACHE_MB "$cache_mb"
   routine_set UV_CACHE_CAP_GB "$cap_gb"
@@ -115,6 +127,8 @@ main() {
     if ! uv cache clean > "$RT_STATE/uv-clean.log" 2>&1; then
       routine_end failed "uv cache clean failed with the cache at $cache_mb MB: $(tail -n 3 "$RT_STATE/uv-clean.log" | tr '\n' ' ' | cut -c1-300)"
     fi
+    printf '%s\n%s\n' "$cache" "$RT_STAMP" > "$marker" \
+      || echo "WARNING: could not write $marker: tomorrow, an absent cache will read as a wrong place"
     # Unread is unknown, never 0: a 0 here would read as a perfect clean (#1012).
     local after
     if after="$(disk_dir_mb "$cache")"; then after="$after MB"; else after="unknown MB (du could not read it after the clean)"; fi
