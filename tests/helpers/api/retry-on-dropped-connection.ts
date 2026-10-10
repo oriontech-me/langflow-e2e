@@ -10,17 +10,21 @@
  * reuses a pooled socket at the instant the server closes it dies with
  * `socket hang up` / `read ECONNRESET`. Measured on `1.13.0.dev35`: 5 of 15 reads
  * dropped at an idle gap of exactly 2000 ms, none at 1500, 1950, 2050 or 3000 ms.
- * The drop this helper was first written for (#1562) was on the Enterprise
- * variant, where the idle close measured ~5 s, and it was never attributed; it
- * is not claimed to be the same edge.
+ * This helper was first written for #1562, on the Enterprise lane, where the drop
+ * was load-dependent and its cause was not attributed at the time. The A2A
+ * client spec later measured the same symptom at an idle gap of ~2 s against the
+ * local nightly, on `[500, 1000, 2000]` intervals
+ * (`docs/core-functionality/a2a/a2a-client-agent-as-tool.md`) -- consistent with
+ * this edge, though the Enterprise case itself was never re-measured.
  *
  * It matters because `expect.poll` PROPAGATES a throw from its poller. A poll
  * written to tolerate timing cannot tolerate the one error that actually shows
  * up, so the run dies on a dropped connection instead of re-reading a moment
  * later. Keeping poll intervals off the 2 s edge makes a drop unlikely for the
- * gaps a poll controls (`scripts/lib/poll-keepalive-cadence.test.ts` pins that), though the
- * client's own processing still adds to each gap; this covers what is left, and
- * the gaps a poll does not control at all, like the first read after a UI step.
+ * gaps a poll controls (`scripts/lib/poll-keepalive-cadence.test.ts` pins that),
+ * though the client's own processing still adds to each gap; this covers what is
+ * left, and the gaps a poll does not control at all, like the first read after a
+ * UI step.
  *
  * Deliberately narrow, so nothing here softens an assertion: only a THROWN
  * request is retried, and only once. A response that arrived carrying a non-2xx
