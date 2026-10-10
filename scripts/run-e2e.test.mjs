@@ -3666,7 +3666,8 @@ test("a declared model needs its provider, and both are refused when malformed",
 });
 
 test("areas narrow @stable: well-formed tags pass, @stable and the lane tags are refused", () => {
-  const run = (areas) => sourced("check_stable_areas && echo ok", { STABLE_AREAS: areas });
+  // A ledger of its own, as the on-demand executor gives a narrowed run.
+  const run = (areas) => sourced("check_stable_areas && echo ok", { STABLE_AREAS: areas, LEDGER_DIR: "/tmp/a-ledger-copy" });
   for (const ok of ["", "@mcp", "@mcp @api", "@model-provider @ui-ux @a2a"]) assert.equal(run(ok).stdout.trim(), "ok", ok);
   for (const [areas, message] of [
     ["@stable", /names @stable/],
@@ -3715,12 +3716,45 @@ test("never more shards than spec files, and an unknown count keeps the shards a
 
 test("a narrowed run on a lane that publishes is refused: it would speak for the whole @stable", () => {
   for (const sw of ["CREATE_ISSUE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "AUTO_REMOVE", "HISTORY_TO_SOURCE"]) {
-    const r = sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", [sw]: "1" });
+    const r = sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", LEDGER_DIR: "/tmp/a-ledger-copy", [sw]: "1" });
     assert.equal(r.status, 1, sw);
     assert.match(r.stderr, new RegExp(`STABLE_AREAS with ${sw}=1`), sw);
     // The whole @stable on the same lane is untouched.
     assert.equal(sourced("check_stable_areas && echo ok", { STABLE_AREAS: "", [sw]: "1" }).stdout.trim(), "ok", sw);
   }
+});
+
+test("a narrowed run never writes the daily's own ledger, but may keep a copy or none", () => {
+  const home = makeTempDir("areas-ledger-");
+  const run = (env) => sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", HOME: home, XDG_STATE_HOME: "", ...env });
+  const daily = run({});
+  assert.equal(daily.status, 1, daily.stderr);
+  assert.match(daily.stderr, /STABLE_AREAS with the daily's ledger/);
+  assert.equal(run({ LEDGER_DIR: join(home, "copy") }).stdout.trim(), "ok", "a ledger copy was refused");
+  assert.equal(run({ KEEP_LEDGER: "0" }).stdout.trim(), "ok", "no ledger was refused");
+  // The whole @stable keeps the daily's ledger, as always.
+  assert.equal(sourced("check_stable_areas && echo ok", { STABLE_AREAS: "", HOME: home }).stdout.trim(), "ok");
+});
+
+test("phase_prep counts what the areas select by the @stable tag, and names an area that selects none", () => {
+  // The counting snippet itself, taken from the script and run on a listing.
+  const src = readFileSync(SCRIPT, "utf8");
+  const code = src.match(/listed="\$\(node -e '\n([\s\S]*?)' \\\n/)[1];
+  const dir = makeTempDir("areas-count-");
+  const spec = (file, tags, n = 1, title = "t") => ({ file, title, tags, tests: Array.from({ length: n }, () => ({})) });
+  writeFileSync(join(dir, "list.json"), JSON.stringify({ suites: [{ specs: [
+    spec("a.spec.ts", ["stable", "mcp"], 2),
+    spec("b.spec.ts", ["stable", "api"]),
+    spec("b.spec.ts", ["stable", "api"]),
+    spec("c.spec.ts", ["stable", "mcp"], 1, "@stable-ish title"),
+    spec("d.spec.ts", ["mcp"], 5),
+  ], suites: [{ specs: [spec("e.spec.ts", ["@stable", "@mcp"])] }] }] }));
+  const count = (areas) => spawnSync(process.execPath, ["-e", code, join(dir, "list.json"), areas], { encoding: "utf8" }).stdout.split("\t");
+  // d.spec.ts carries no @stable tag: the partitioner would not count it, nor does this.
+  assert.deepEqual(count("@mcp @api"), ["4", "6", ""]);
+  assert.deepEqual(count("@mcp @nope"), ["4", "6", "@nope"]);
+  // Tabs or several spaces between areas read as one separator.
+  assert.deepEqual(count("@mcp\t@nope"), ["4", "6", "@nope"]);
 });
 
 test("phase_prep shards no wider than the listing and names an area that selects nothing", () => {

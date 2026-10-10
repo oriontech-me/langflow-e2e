@@ -809,6 +809,12 @@ check_stable_areas() {
   for sw in CREATE_ISSUE NOTIFY_SLACK NOTIFY_SLACK_ALWAYS POST_QA_PLATFORM AUTO_REMOVE HISTORY_TO_SOURCE; do
     [ "${!sw:-0}" = "0" ] || die "STABLE_AREAS with $sw=${!sw}: a narrowed run publishes nothing, or it would speak for the whole @stable."
   done
+  # The same for the daily's own ledger: its history rows feed the rotation, the lane
+  # comparison and the coverage matrix. A narrowed run keeps a ledger of its own (the
+  # on-demand executor hands it a copy), or none.
+  if ledger_active && [ "$LEDGER_DIR" = "${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}" ]; then
+    die "STABLE_AREAS with the daily's ledger ($LEDGER_DIR): point LEDGER_DIR at a copy, or set KEEP_LEDGER=0."
+  fi
   return 0
 }
 
@@ -2006,12 +2012,15 @@ phase_prep() {
   local listed files tests empty_areas
   listed="$(node -e '
     const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const areas = (process.argv[2] || "").split(" ").filter(Boolean);
+    const areas = (process.argv[2] || "").split(/\s+/).filter(Boolean);
     const files = new Set(); let tests = 0; const per = Object.fromEntries(areas.map((a) => [a, 0]));
     const walk = (s) => {
       for (const sp of s.specs || []) {
-        files.add(sp.file); tests += (sp.tests || []).length;
         const tags = new Set((sp.tags || []).map((t) => "@" + String(t).replace(/^@/, "")));
+        // The partitioner counts a spec by its @stable TAG (partition-shards.mjs,
+        // stableFilesFromReport); counting the same way keeps the shard count its own.
+        if (!tags.has("@stable")) continue;
+        files.add(sp.file); tests += (sp.tests || []).length;
         for (const a of areas) if (tags.has(a) || new RegExp("(?<!\\S)" + a + "(?!\\S)", "i").test(sp.title)) per[a] += (sp.tests || []).length;
       }
       for (const c of s.suites || []) walk(c);
@@ -2021,6 +2030,9 @@ phase_prep() {
     "$RUN_DIR/stable-list.json" "$STABLE_AREAS" 2>/dev/null || true)"
   IFS=$'\t' read -r files tests empty_areas <<< "$listed"
   if [ -n "$STABLE_AREAS" ]; then
+    # A count that failed would drop a mistyped area silently and shard too wide.
+    [[ "${files:-}" =~ ^[0-9]+$ ]] && [[ "${tests:-}" =~ ^[0-9]+$ ]] \
+      || die "could not count what the areas $STABLE_AREAS select in $RUN_DIR/stable-list.json."
     # Areas that select nothing would run every shard green over zero tests, or quietly
     # drop the area named wrong. Said in these words, which the on-demand executor
     # reads as the request's fault.
