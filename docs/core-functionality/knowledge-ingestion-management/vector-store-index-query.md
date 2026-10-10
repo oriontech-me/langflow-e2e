@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 
-**Last validated:** Langflow 1.13.x (`1.13.0.dev33`)
+**Last validated:** Langflow 1.13.x (`1.13.0.dev38`)
 
 ---
 
@@ -20,8 +20,8 @@ It covers the two §5.2 checklist bullets that #673 deliberately left out:
   the **Knowledge (Ingest)** node embeds every chunk and indexes it in the KB. A
   broken embeddings key or a failed index build fails this — the chunks the KB
   stores are the causal proof that embeddings actually ran. The test then holds
-  the KB's **recorded** chunk count to the same number, which is the half that
-  is declared failing since `1.13.0.dev33` (see *Declared failing* below).
+  the KB's **recorded** chunk count to the same number (declared failing from
+  `1.13.0.dev33` to `1.13.0.dev34`; see *Fixed* below).
 - **§5.2.3 — Vector Store query returns the relevant chunk:** with the index
   built, running **Knowledge (Retrieve)** answers the static `search_query` and
   its single top result is the one chunk of the document that is actually about
@@ -132,13 +132,9 @@ delete it in teardown.
   chunks** (`total === 5`), one of which carries the sentinel `embedding
   vector`. Because the ingest embeds every chunk against the live key and writes
   them to the KB, the stored chunks are a causal proof the embeddings ran and the
-  document is indexed — a broken key or index build leaves none. Only then does
-  the test declare itself failing (`test.fail()`, called **after** those
-  assertions, so any failure up to here is still an unexpected red) and assert
-  the KB's recorded count: `GET /api/v1/knowledge_bases/{name}` reports
-  `chunks === 5`. That last assertion is the correct contract and fails today
-  (the record reads `chunks: 0`, `status: "empty"`); the day upstream fixes it,
-  Playwright reports *"expected to fail, but passed"* — the lift signal.
+  document is indexed — a broken key or index build leaves none. Then the KB's
+  recorded count: `GET /api/v1/knowledge_bases/{name}` reports `chunks === 5`
+  (the half that regressed in #2186, see *Fixed*).
 - **Test 2 — query (§5.2.3):** run Ingest (populate the KB), then run the
   Knowledge (Retrieve) node; open its `Results` output inspector. With
   `top_k = 1`, the ag-Grid shows **exactly one row**, and that row contains the
@@ -159,9 +155,10 @@ is both sharp and deterministic.
 
 `@stable` `@release` `@components` `@files`
 
-(`@stable` restored by #2175 after the 1.13.0.dev33 quarantine; Test 1 carries it
-while declared failing, the same shape as `api/flows/graph-execution-contract.spec.ts`,
-so the daily notices the day the defect is fixed. `@files`: knowledge-ingestion surface — functional. `@components`:
+(`@stable` restored by #2175 after the 1.13.0.dev33 quarantine. Test 1 lost it again
+on 2026-10-07, when its declared-failing body passed and the daily counted the
+unexpected pass as a hard failure (`8b8d2a487`); restored by #2186 once the fix was
+confirmed. `@files`: knowledge-ingestion surface — functional. `@components`:
 canvas-component configuration. `@stable`/`@release` cross-cutting. Second §5.2
 RAG spec, builds on #673; created `@stable` after deterministic validation on the
 fresh nightly. Core Knowledge component — no bundle guard; skips cleanly when
@@ -214,8 +211,7 @@ local `providers.json`.
 3. Assert `GET /api/v1/knowledge_bases/{dir_name}/chunks` (all pages,
    `listAllChunks`) reports `total === 5`, and exactly one stored chunk contains
    `embedding vector`.
-4. Declare the test failing (`test.fail()`), then assert
-   `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
+4. Assert `GET /api/v1/knowledge_bases/{dir_name}` reports `chunks === 5`.
 
 **Test 2 — Vector Store query returns the relevant chunk:**
 1. Run Ingest (as above); wait for its `node_duration_knowledge`.
@@ -256,7 +252,7 @@ local `providers.json`.
 - `src/lfx/src/lfx/components/files_and_knowledge/knowledge.py`,
   `src/backend/base/langflow/services/knowledge_base_storage/runtime.py` and
   `src/backend/base/langflow/api/utils/kb_helpers.py` — the three upstream files
-  the declared-failing assertion depends on (see *Declared failing*).
+  the recorded-count assertion depends on (see *Fixed*).
 - Flows API: `POST /api/v1/flows/` (fixture create), `DELETE /api/v1/flows/{id}`
   (scoped cleanup).
 - `tests/helpers/ui/clear-canvas-bottom-overlay.ts` — frees the canvas
@@ -283,7 +279,11 @@ local `providers.json`.
 
 ---
 
-## Declared failing — the recorded chunk count (#2186)
+## Fixed — the recorded chunk count (#2186)
+
+Kept as the record of a regression this spec caught (`REGRESSIONS.md`). Test 1's
+recorded-count assertion was declared failing (`test.fail()`) from `1.13.0.dev33`
+until the fix was confirmed.
 
 Measured on `1.13.0.dev33` (`langflowai/langflow-nightly:latest`, 2026-10-05):
 after the Knowledge (Ingest) node builds successfully against a `sqlite` KB,
@@ -308,11 +308,12 @@ Verdict: an **unintended regression** from #15509, not a product change — the
 component still calls the refresh whose docstring promises real numbers for every
 backend, the API reports a KB that stores 5 chunks as `"empty"`, and the PR
 announces no change to it. Tracked by #2186 and upstream as
-[LE-2912](https://datastax.jira.com/browse/LE-2912). **To lift:**
-when Test 1 reports *"expected to fail, but passed"*, delete `test.fail()` and its
-comment, restore `@stable` if the daily already removed it (the daily treats the
-unexpected pass as a hard failure), move the `REGRESSIONS.md` entry to *Fixed*, and
-close #2186.
+[LE-2912](https://datastax.jira.com/browse/LE-2912).
+
+**Fixed** by langflow-ai/langflow#15578 (*refresh statistics after flow
+ingestion*, in `1.13.0.dev35`). Confirmed by two passes of the declared body: the
+VM daily on `1.13.0.dev35` (2026-10-07) and the PR lane on `1.13.0.dev38`
+(2026-10-10). `test.fail()` was then removed and `@stable` restored (#2186).
 
 ---
 

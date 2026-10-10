@@ -311,11 +311,11 @@ test(
     await test.step("the Knowledge Base stores exactly the expected chunks", async () => {
       // Precondition proof the ingest embedded + indexed the document, so a later
       // answer failure is unambiguously answer-side rather than a broken ingest.
-      // It reads the STORED chunks, not the KB row's `chunks` total: since
-      // 1.13.0.dev33 a Knowledge-component ingest leaves that total at 0
-      // (#2186, LE-2912), a defect vector-store-index-query.spec.ts holds as declared
-      // failing — reading it here would block this spec's answer-side coverage
-      // on a defect another test already reports.
+      // It reads the STORED chunks, not the KB row's `chunks` total, which
+      // vector-store-index-query.spec.ts owns: from 1.13.0.dev33 to dev34 a
+      // Knowledge-component ingest left that total at 0 (#2186, LE-2912, fixed in
+      // dev35), and reading it here would have blocked this spec's answer-side
+      // coverage on a defect another test already reported.
       const kbName = createdKbNames[createdKbNames.length - 1];
       const headers = await authHeaders(page);
       const { total } = await listAllChunks(page.request, kbName, {}, { headers });
