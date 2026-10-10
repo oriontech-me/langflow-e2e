@@ -150,6 +150,10 @@ export function claimedRequestError(req) {
     const s = req.suite_ref;
     if (s !== "" && (s.startsWith("-") || s.startsWith("/") || s.endsWith("/") || s.includes("..") || s.includes("//") || s.split("/").some((seg) => seg.startsWith(".") || seg.endsWith(".") || seg.endsWith(".lock")))) return `suite_ref is not a branch or tag name: ${JSON.stringify(s)}`;
   }
+  // Optional: Playwright retries, 0 to 5; null or absent is the suite's default.
+  if (req.retries !== undefined && req.retries !== null && !(Number.isInteger(req.retries) && req.retries >= 0 && req.retries <= 5)) {
+    return `retries is not 0 to 5: ${JSON.stringify(req.retries).slice(0, 40)}`;
+  }
   // Optional too: a list of area tags, which the executor reads as @stable AND any.
   if (req.areas !== undefined && req.areas !== null) {
     if (!Array.isArray(req.areas) || req.areas.length > 25) return `areas is not a list of at most 25 tags: ${JSON.stringify(req.areas).slice(0, 80)}`;
@@ -171,6 +175,7 @@ export function requestEnv(req) {
     `ONDEMAND_REQUESTED_BY=${req.requested_by}`,
     `ONDEMAND_SUITE_REF=${req.suite_ref ?? ""}`,
     `ONDEMAND_AREAS=${(req.areas ?? []).join(" ")}`,
+    `ONDEMAND_RETRIES=${req.retries ?? ""}`,
   ].join("\n") + "\n";
 }
 
@@ -424,6 +429,7 @@ export class Worker {
       id: req.id, ref: req.ref, provider: req.provider, model: req.model, requested_by: req.requested_by,
       suite_ref: req.suite_ref ?? "",
       areas: req.areas ?? [],
+      retries: req.retries ?? null,
       claim_token: req.claim_token, held_since: isoUtc(this.cfg.now()),
       reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0,
     };
