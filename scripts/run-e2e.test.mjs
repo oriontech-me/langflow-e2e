@@ -1828,6 +1828,21 @@ function metadataFrom(env, after = "") {
   return { meta: JSON.parse(readFileSync(file, "utf8")), stdout: r.stdout, stderr: r.stderr, dir };
 }
 
+test("retries: empty is the config's default, 0 to 5 pass, anything else is refused", () => {
+  const run = (retries) => sourced("check_retries && echo ok", { RETRIES: retries });
+  for (const ok of ["", "0", "1", "2", "5"]) assert.equal(run(ok).stdout.trim(), "ok", JSON.stringify(ok));
+  for (const bad of ["6", "-1", "01", "1.5", "two", " 1", "1;id"]) {
+    const r = run(bad);
+    assert.equal(r.status, 1, JSON.stringify(bad));
+    assert.match(r.stderr, /is not 0 to 5/, JSON.stringify(bad));
+  }
+});
+
+test("the metadata records the retries the run used: the default when none was asked", () => {
+  assert.equal(metadataFrom({ RETRIES: "0" }).meta.retries, "0");
+  assert.equal(metadataFrom({ RETRIES: "" }).meta.retries, "2", "an unset RETRIES recorded something other than the CI default");
+});
+
 test("phase_merge survives a served-version output file it cannot read", (t) => {
   // #1964 lifted three `gh_out` reads out of `resolve_served_version` and beside its
   // call site, where they were unguarded — and `gh_out` guards a file's EXISTENCE and

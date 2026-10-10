@@ -128,6 +128,9 @@ BASE_PORT="${BASE_PORT:-7860}"
 ECHO_PORT="${ECHO_PORT:-8080}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 RETRIES="${RETRIES:-}"                        # empty = the config's default (2 in CI)
+# What a run's retries ARE, for the record: RETRIES when given, else the config's CI
+# default, which every shard runs under (run_shard exports CI=true).
+CONFIG_CI_RETRIES=2
 RECOVER_TIMEOUT_S="${RECOVER_TIMEOUT_S:-420}"
 BACKEND_START_TIMEOUT_S="${BACKEND_START_TIMEOUT_S:-300}"
 
@@ -786,6 +789,14 @@ check_declared_target() {
     [[ "$TARGET_DECLARED_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || die "TARGET_DECLARED_REF has characters a branch name cannot: '$TARGET_DECLARED_REF'."
   fi
   [ "$CHECK_TARGET_VERSION" = "1" ] || die "a declared target with CHECK_TARGET_VERSION=0: the declaration is exactly what this run exists to check. Drop the declaration, or the override."
+  return 0
+}
+
+# RETRIES, refused before anything runs unless empty or a small non-negative integer.
+# 0 measures honestly: a test that fails once is a failure, not a flake.
+check_retries() {
+  [ -z "$RETRIES" ] && return 0
+  [[ "$RETRIES" =~ ^[0-5]$ ]] || die "RETRIES='$RETRIES' is not 0 to 5 (empty is the config's default, $CONFIG_CI_RETRIES)."
   return 0
 }
 
@@ -1611,6 +1622,8 @@ phase_preflight() {
   check_declared_target
   check_declared_model
   check_stable_areas
+  check_retries
+  [ -n "$RETRIES" ] && info "retries: $RETRIES (the default is $CONFIG_CI_RETRIES)"
   [ -n "$STABLE_AREAS" ] && info "areas: @stable AND any of $STABLE_AREAS (the rest of @stable does not run)"
   info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
   [ -n "$TARGET_DECLARED_SHA" ] && info "target declared: ${TARGET_DECLARED_REF:-<no ref>} @ ${TARGET_DECLARED_SHA:0:10}, version $TARGET_DECLARED_VERSION"
@@ -2604,6 +2617,7 @@ phase_merge() {
     langflow_declared_ref "${TARGET_DECLARED_REF:-}" \
     langflow_image_label_sha "${TARGET_IMAGE_LABEL_SHA:-}" \
     stable_areas "${STABLE_AREAS:-}" \
+    retries "${RETRIES:-$CONFIG_CI_RETRIES}" \
     model_declared_provider "${DECLARED_MODEL_PROVIDER:-}" \
     model_declared_id "${DECLARED_MODEL_ID:-}" \
     model_used_provider "${MODEL_USED_PROVIDER:-}" \
