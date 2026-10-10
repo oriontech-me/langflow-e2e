@@ -130,7 +130,8 @@ Last log: $LOG_DIR/latest.log"
         if [ "$report" != "ok" ] && [ "$report" != "none" ]; then
           headline="Routine $ROUTINE: $status, and the report was not fully delivered (${report:-no record})"
           body="$reason
-The result is on the machine, and the issue or the Slack post it asked for is missing or incomplete (an issue created without its label counts: tomorrow could not find it). The routine's log names which.
+The result is on the machine, and the issue or the Slack post it asked for is missing or incomplete (an issue created without its label counts: tomorrow could not find it). The routine's log names which.${alarm:+
+$alarm}
 Last log: $LOG_DIR/latest.log"
         elif [ -n "$alarm" ]; then
           headline="Routine $ROUTINE: $status today, with something to say"

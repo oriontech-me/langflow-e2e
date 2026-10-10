@@ -146,6 +146,10 @@ test("a delivered verdict with an ALARM is said, with the verdict beside it", { 
   // A report that failed is still the louder of the two.
   const both = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "x", REPORT: "failed", ALARM: "y" }) });
   assert.match(both.headline, /^Routine demo: red, and the report was not fully delivered/);
+  // Louder, but not alone: the ALARM rides along here too, as it does on a day with no verdict.
+  assert.match(both.body, /names which\.\ny\nLast log:/);
+  const plain = watchdog({ props: ranToday(), last: resultToday({ STATUS: "red", REASON: "x", REPORT: "failed" }) });
+  assert.match(plain.body, /names which\.\nLast log:/, "no ALARM, no blank line");
 });
 
 test("a result from an earlier run the same day does not answer for this one", { skip: !SAFE && "too close to UTC midnight" }, () => {
