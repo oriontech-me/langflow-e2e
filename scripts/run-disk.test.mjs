@@ -26,13 +26,14 @@ const GB = 1024 * 1024; // in KB, du's unit
  * cacheGb:   uv's cache size before any clean, in GB (after a clean it is 0.1)
  * usedPct:   df's use% before a clean; afterPct, after one (defaults to usedPct)
  * heavyBusy: the heavy-lane lock never comes
+ * duAfterFails: du cannot read the cache once it has been cleaned
  * slowSurvey: du on the survey's largest entry never finishes
  * lockPct:   df's use% from the moment the lock is taken (another lane wrote while it was awaited)
  * clean:     "ok" | "fail"   what `uv cache clean` does
  * uv:        false removes uv from PATH
  * env:       extra environment for the routine
  */
-function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, slowSurvey = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
+function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, slowSurvey = false, duAfterFails = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
   const dir = makeTempDir("run-disk-");
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm", "lib"), { recursive: true });
@@ -74,7 +75,7 @@ esac`,
     "du",
     `last="\${@: -1}"
 for a in "$@"; do case "$a" in
-  ${q(cache)}) if [ -e ${q(join(cache, "big"))} ]; then printf '%s\\t%s\\n' ${Math.round(cacheGb * GB)} "$a"; else printf '%s\\t%s\\n' ${Math.round(0.1 * GB)} "$a"; fi ;;
+  ${q(cache)}) if [ -e ${q(join(cache, "big"))} ]; then printf '%s\\t%s\\n' ${Math.round(cacheGb * GB)} "$a"; else ${duAfterFails ? "exit 1;" : ""} printf '%s\\t%s\\n' ${Math.round(0.1 * GB)} "$a"; fi ;;
   */e2e-qa) ${slowSurvey ? "sleep 30;" : ""} printf '%s\\t%s\\n' ${15 * GB} "$a" ;;
   */rehearsal-1931) printf '%s\\t%s\\n' ${GB} "$a" ;;
 esac; done`,
@@ -155,6 +156,13 @@ test("what the clean gave back is counted from the lock, not from before the wai
   const { result } = disk({ cacheGb: 16, usedPct: 30, lockPct: 35, afterPct: 29 });
   assert.equal(result.STATUS, "green");
   assert.match(result.UV_CLEANED, /, 15237 MB returned to the disk$/);
+});
+
+test("a cache du cannot read after the clean is unknown, never a measured 0", () => {
+  const { result } = disk({ cacheGb: 16, usedPct: 30, afterPct: 24, duAfterFails: true });
+  assert.equal(result.STATUS, "green");
+  assert.match(result.UV_CLEANED, /^yes, 16384 MB to unknown MB \(du could not read it after the clean\), 15237 MB returned/);
+  assert.doesNotMatch(result.UV_CLEANED, /to 0 MB/);
 });
 
 test("exactly at the cap is not over it: nothing is cleaned", () => {

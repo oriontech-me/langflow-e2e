@@ -110,13 +110,14 @@ main() {
     if ! uv cache clean > "$RT_STATE/uv-clean.log" 2>&1; then
       routine_end failed "uv cache clean failed with the cache at $cache_mb MB: $(tail -n 3 "$RT_STATE/uv-clean.log" | tr '\n' ' ' | cut -c1-300)"
     fi
-    local after_mb
-    after_mb="$(disk_dir_mb "$cache")" || after_mb=0
+    # Unread is unknown, never 0: a 0 here would read as a perfect clean (#1012).
+    local after
+    if after="$(disk_dir_mb "$cache")"; then after="$after MB"; else after="unknown MB (du could not read it after the clean)"; fi
     disk_measure || routine_end failed "uv's cache was cleaned, and the disk usage of $path could not be read after it (df)"
     # What the filesystem got back, not what du counted: a cache file hard-linked into a
     # venv is counted by du and freed by nothing (measured 2026-10-10: no such link on the
     # qa, so the two agree today).
-    cleaned="yes, $cache_mb MB to $after_mb MB, $(( (DK_AVAIL_KB - before_kb) / 1024 )) MB returned to the disk"
+    cleaned="yes, $cache_mb MB to $after, $(( (DK_AVAIL_KB - before_kb) / 1024 )) MB returned to the disk"
     echo "uv cache cleaned: $cleaned"
   fi
   routine_set UV_CLEANED "$cleaned"
