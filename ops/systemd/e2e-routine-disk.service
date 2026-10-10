@@ -17,4 +17,6 @@ SuccessExitStatus=2 4
 # One 60 min budget shared by the wait for the daily lane and, when it must clean, for
 # the lock; then under a minute of work. Well above all of it.
 TimeoutStartSec=90min
+# The EXIT trap's survey of /root is cut at DISK_SURVEY_TIMEOUT_S (45 s by default), so a
+# stop leaves time to write the result before this SIGKILLs it.
 TimeoutStopSec=2min

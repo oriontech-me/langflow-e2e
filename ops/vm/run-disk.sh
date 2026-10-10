@@ -152,11 +152,31 @@ disk_dir_mb() {
   echo $(( kb / 1024 ))
 }
 
-# The five largest entries directly under /root, for the alarm's message. Best effort.
+# The five largest entries directly under /root, for the alarm's message. Best effort, and
+# BOUNDED: it runs from the EXIT trap, which a stopping unit gives only TimeoutStopSec
+# (2 min) before SIGKILL, and a cold walk of /root (57 GB) can take longer -- killed there,
+# the routine would write no result and its ALARM would be lost on the full-disk day.
+# Past DISK_SURVEY_TIMEOUT_S the walk is killed and the list says it is incomplete. KILL,
+# not TERM: routine_finish ignores TERM, and an ignored signal is inherited by du.
 disk_largest() {
-  du -xsk "${DISK_SURVEY_ROOT:-/root}"/* "${DISK_SURVEY_ROOT:-/root}"/.[!.]* 2> /dev/null \
-    | sort -rn | head -n 5 \
-    | awk -F'\t' '{ n = split($2, p, "/"); printf "%s%s %.1f GB", (NR > 1 ? ", " : ""), p[n], $1 / 1048576 }'
+  local root="${DISK_SURVEY_ROOT:-/root}" limit="${DISK_SURVEY_TIMEOUT_S:-45}" out pid waited=0 cut="" list
+  out="$(mktemp "${TMPDIR:-/tmp}/e2e-disk-survey.XXXXXX" 2> /dev/null)" || { printf 'not surveyed (no temp file)'; return 0; }
+  du -xsk "$root"/* "$root"/.[!.]* > "$out" 2> /dev/null &
+  pid=$!
+  while kill -0 "$pid" 2> /dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      kill -KILL "$pid" 2> /dev/null
+      cut=" (survey cut at ${limit}s, incomplete: the largest may be missing)"
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid" 2> /dev/null
+  list="$(sort -rn "$out" | head -n 5 \
+    | awk -F'\t' '{ n = split($2, p, "/"); printf "%s%s %.1f GB", (NR > 1 ? ", " : ""), p[n], $1 / 1048576 }')"
+  rm -f "$out"
+  printf '%s%s' "${list:-none measured}" "$cut"
 }
 
 main "$@"

@@ -26,12 +26,13 @@ const GB = 1024 * 1024; // in KB, du's unit
  * cacheGb:   uv's cache size before any clean, in GB (after a clean it is 0.1)
  * usedPct:   df's use% before a clean; afterPct, after one (defaults to usedPct)
  * heavyBusy: the heavy-lane lock never comes
+ * slowSurvey: du on the survey's largest entry never finishes
  * lockPct:   df's use% from the moment the lock is taken (another lane wrote while it was awaited)
  * clean:     "ok" | "fail"   what `uv cache clean` does
  * uv:        false removes uv from PATH
  * env:       extra environment for the routine
  */
-function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
+function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, slowSurvey = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
   const dir = makeTempDir("run-disk-");
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm", "lib"), { recursive: true });
@@ -74,7 +75,7 @@ esac`,
     `last="\${@: -1}"
 for a in "$@"; do case "$a" in
   ${q(cache)}) if [ -e ${q(join(cache, "big"))} ]; then printf '%s\\t%s\\n' ${Math.round(cacheGb * GB)} "$a"; else printf '%s\\t%s\\n' ${Math.round(0.1 * GB)} "$a"; fi ;;
-  */e2e-qa) printf '%s\\t%s\\n' ${15 * GB} "$a" ;;
+  */e2e-qa) ${slowSurvey ? "sleep 30;" : ""} printf '%s\\t%s\\n' ${15 * GB} "$a" ;;
   */rehearsal-1931) printf '%s\\t%s\\n' ${GB} "$a" ;;
 esac; done`,
   );
@@ -211,6 +212,16 @@ test("a filling disk is an ALARM beside a green day, never a red, and names wher
   assert.equal(result.STATUS, "green");
   assert.match(result.ALARM, /71% used, at or over the 70% alarm/);
   assert.match(result.ALARM, /e2e-qa 15\.0 GB, rehearsal-1931 1\.0 GB/);
+});
+
+test("the survey in the EXIT trap is bounded: a walk that does not finish is cut and said so", () => {
+  const t0 = Date.now();
+  const { r, result } = disk({ usedPct: 88, slowSurvey: true, env: { DISK_SURVEY_TIMEOUT_S: "1" } });
+  assert.ok(Date.now() - t0 < 15000, "the trap must not wait for du past its bound");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(result.STATUS, "green");
+  assert.match(result.ALARM, /88% used/);
+  assert.match(result.ALARM, /survey cut at 1s, incomplete/);
 });
 
 test("exactly at the alarm sounds it; one under does not", () => {
