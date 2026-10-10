@@ -27,13 +27,14 @@ const GB = 1024 * 1024; // in KB, du's unit
  * usedPct:   df's use% before a clean; afterPct, after one (defaults to usedPct)
  * heavyBusy: the heavy-lane lock never comes
  * duAfterFails: du cannot read the cache once it has been cleaned
+ * cacheMissing: `uv cache dir` names a directory that does not exist
  * slowSurvey: du on the survey's largest entry never finishes
  * lockPct:   df's use% from the moment the lock is taken (another lane wrote while it was awaited)
  * clean:     "ok" | "fail"   what `uv cache clean` does
  * uv:        false removes uv from PATH
  * env:       extra environment for the routine
  */
-function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, slowSurvey = false, duAfterFails = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
+function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, slowSurvey = false, duAfterFails = false, cacheMissing = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
   const dir = makeTempDir("run-disk-");
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm", "lib"), { recursive: true });
@@ -46,6 +47,7 @@ function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heav
   mkdirSync(cache);
   // The marker that makes the fake du answer "big"; the fake clean removes it.
   writeFileSync(join(cache, "big"), "");
+  const cacheNamed = cacheMissing ? join(dir, "elsewhere", "uv") : cache;
   const survey = join(dir, "root");
   mkdirSync(join(survey, "e2e-qa"), { recursive: true });
   mkdirSync(join(survey, "rehearsal-1931"), { recursive: true });
@@ -63,7 +65,7 @@ function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heav
       "uv",
       `echo "uv $*" >> ${q(calls)}
 case "$*" in
-  "cache dir") echo ${q(cache)} ;;
+  "cache dir") echo ${q(cacheNamed)} ;;
   "cache clean") ${clean === "ok" ? `rm -f ${q(join(cache, "big"))}; echo "Removed 4120 files"` : `echo "error: failed to remove the cache: Permission denied" >&2; exit 2`} ;;
   *) exit 64 ;;
 esac`,
@@ -263,6 +265,14 @@ test("a threshold with a leading zero is read in base 10, never as octal", () =>
   const eight = disk({ env: { UV_CACHE_CAP_GB: "08", DISK_ALARM_PCT: "070" } });
   assert.equal(eight.result.STATUS, "green", eight.result.REASON);
   assert.equal(eight.result.DISK_ALARM_PCT, "70");
+});
+
+test("a cache directory that does not exist is a wrong place, failed, never a green 0", () => {
+  const { r, result, calls } = disk({ cacheMissing: true });
+  assert.equal(r.status, 3);
+  assert.equal(result.STATUS, "failed");
+  assert.match(result.REASON, /no such directory/);
+  assert.doesNotMatch(calls, /cache clean/);
 });
 
 test("no uv on the machine, or no df answer, is failed", () => {

@@ -38,8 +38,8 @@
 #   green    measured, and cleaned when it had to: the disk filling is an ALARM beside a
 #            green day, never a red, because a full disk is not a product defect and a red
 #            would open the routine's issue on the destination for it
-#   failed   this machine: no uv, a measurement that could not be read, or a clean that
-#            failed
+#   failed   this machine: no uv, a cache directory uv names but that does not exist, a
+#            measurement that could not be read, or a clean that failed
 #   skipped  the cache was over its cap and the heavy-lane lock never came within the
 #            budget; nothing was cleaned, and tomorrow tries again
 #
@@ -90,6 +90,11 @@ main() {
   local cache cache_mb
   cache="$(uv cache dir 2> /dev/null)"
   [ -n "$cache" ] || routine_end failed "uv did not say where its cache is (uv cache dir)"
+  # Absent before any clean is a wrong place, not an empty cache: every weekday installs
+  # through uv here, so a missing directory means this run is measuring somewhere uv does
+  # not write (another UV_CACHE_DIR, a HOME systemd did not set), and a green 0 every day
+  # would hide the real cache growing.
+  [ -d "$cache" ] || routine_end failed "uv names its cache at $cache and there is no such directory: this run would measure a place uv does not write (UV_CACHE_DIR, HOME)"
   cache_mb="$(disk_dir_mb "$cache")" || routine_end failed "could not measure uv's cache at $cache"
   routine_set UV_CACHE "$cache"
   routine_set UV_CACHE_MB "$cache_mb"
@@ -147,7 +152,9 @@ routine_cleanup() {
   routine_set ALARM "the disk $DK_PATH is $DK_USED% used, at or over the $DK_ALARM_PCT% alarm, with $DK_AVAIL_GB GB free. Largest under /root: $(disk_largest). Run directories (30 per lane) and docker images already have rules; anything else there is a human's to remove."
 }
 
-# Size of a directory in MB, whole. Fails when it does not exist or du cannot read it.
+# Size of a directory in MB, whole. Prints 0 for a directory that does not exist (a
+# cleaned cache may be gone; main refuses an absent one before any clean). Fails when du
+# cannot read it.
 disk_dir_mb() {
   [ -d "$1" ] || { echo 0; return 0; }
   local kb
