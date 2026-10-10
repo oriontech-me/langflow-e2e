@@ -202,6 +202,7 @@ reference. In short:
 | `migration` | `ops/vm/run-migration.sh` | 09:15 | heavy | 12:30 |
 | `coverage-matrix` | `ops/vm/run-coverage-matrix.sh` | 08:45 | none | 10:30 |
 | `stable-orphans` | `ops/vm/run-stable-orphans.sh` | Mondays 10:00 | none | Mondays 11:45 |
+| `disk` | `ops/vm/run-disk.sh` | 10:45 | heavy, only to clean | 12:45 |
 
 `coverage-matrix` commits to the **source's** `main` with `SOURCE_PUSH_TOKEN`, the
 credential the daily's auto-removal and history already use, on a tree of its own: the
@@ -223,6 +224,23 @@ red: red means the reconciler itself refused. `ORPHANS_DRY_RUN=1` reconciles and
 before the issue and Slack. It needs `gh` on the machine, for the reconciler's lookup of
 gate references: installed on the qa on 2026-10-08 from GitHub's apt repository
 (`/etc/apt/sources.list.d/github-cli.list`), so it moves with the system's upgrades.
+
+`disk` keeps this machine's disk from filling silently (stage 3, task 8). What grows here
+and what bounds it:
+
+| Store | Bounded by |
+|---|---|
+| run directories of the daily, the on-demand run and the shadow | each keeps its last 30 (`RUNS_KEEP` in `scripts/run-e2e.sh`), about 470 MB a run |
+| logs | pruned by age in each wrapper and in `routine.sh` |
+| docker images | each lane removes what it pulled; the shadow keeps today's nightly |
+| uv's cache | **this routine**: over `UV_CACHE_CAP_GB` (15) it runs `uv cache clean` under the heavy-lane lock, so never beside an install. It grows about 300 MB a weekday |
+| anything else under `/root` | a human's (rehearsals, probes, spikes): never removed by a routine |
+
+Every weekday it records the disk's use and the cache's size in its result, and at or
+over `DISK_ALARM_PCT` (70) of `/` it leaves an `ALARM` naming the largest entries under
+`/root`, which the watchdog posts to Slack. A full disk is never a red: it is not the
+product's, and a red would open the routine's issue on the destination. It publishes
+nothing itself.
 
 Installing one routine, e.g. `migration` (each routine's units ship with the routine itself):
 
