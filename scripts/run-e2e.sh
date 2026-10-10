@@ -792,6 +792,17 @@ check_declared_target() {
   return 0
 }
 
+# Whether LEDGER_DIR is the daily's own ledger, however it is spelled: resolved, so a
+# trailing slash or a symlink to it is the same ledger.
+ledger_is_dailys() {
+  local daily="${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}"
+  [ -n "$daily" ] && [ -n "$LEDGER_DIR" ] || return 1
+  local a b
+  a="$(cd "$LEDGER_DIR" 2>/dev/null && pwd -P || printf '%s' "${LEDGER_DIR%/}")"
+  b="$(cd "$daily" 2>/dev/null && pwd -P || printf '%s' "${daily%/}")"
+  [ "$a" = "$b" ]
+}
+
 # RETRIES, refused before anything runs unless empty or a small non-negative integer.
 # 0 measures honestly: a test that fails once is a failure, not a flake.
 check_retries() {
@@ -805,7 +816,7 @@ check_retries() {
   for sw in CREATE_ISSUE NOTIFY_SLACK NOTIFY_SLACK_ALWAYS POST_QA_PLATFORM AUTO_REMOVE HISTORY_TO_SOURCE; do
     [ "${!sw:-0}" = "0" ] || die "RETRIES=$RETRIES with $sw=${!sw}: a run with other retries than the default publishes nothing."
   done
-  if ledger_active && [ "$LEDGER_DIR" = "${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}" ]; then
+  if ledger_active && ledger_is_dailys; then
     die "RETRIES=$RETRIES with the daily's ledger ($LEDGER_DIR): point LEDGER_DIR at a copy, or set KEEP_LEDGER=0."
   fi
   return 0
@@ -834,7 +845,7 @@ check_stable_areas() {
   # The same for the daily's own ledger: its history rows feed the rotation, the lane
   # comparison and the coverage matrix. A narrowed run keeps a ledger of its own (the
   # on-demand executor hands it a copy), or none.
-  if ledger_active && [ "$LEDGER_DIR" = "${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}" ]; then
+  if ledger_active && ledger_is_dailys; then
     die "STABLE_AREAS with the daily's ledger ($LEDGER_DIR): point LEDGER_DIR at a copy, or set KEEP_LEDGER=0."
   fi
   return 0

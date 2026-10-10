@@ -1850,12 +1850,22 @@ test("other retries than the default never reach a lane that publishes or the da
   const daily = sourced("check_retries && echo ok", { RETRIES: "0", HOME: home, XDG_STATE_HOME: "" });
   assert.equal(daily.status, 1, daily.stderr);
   assert.match(daily.stderr, /RETRIES=0 with the daily's ledger/);
+  // Spelled another way, or reached through a symlink, it is still the daily's.
+  mkdirSync(join(home, ".local", "state", "langflow-e2e"), { recursive: true });
+  symlinkSync(join(home, ".local", "state", "langflow-e2e"), join(home, "alias"));
+  for (const spelled of [join(home, ".local", "state", "langflow-e2e") + "/", join(home, "alias")]) {
+    const r = sourced("check_retries && echo ok", { RETRIES: "0", HOME: home, XDG_STATE_HOME: "", LEDGER_DIR: spelled });
+    assert.equal(r.status, 1, spelled);
+    const a = sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", HOME: home, XDG_STATE_HOME: "", LEDGER_DIR: spelled });
+    assert.equal(a.status, 1, `areas: ${spelled}`);
+  }
 });
 
 test("the default the metadata records is the config's own CI default", () => {
   // CONFIG_CI_RETRIES copies playwright.config.ts by hand; this keeps them one.
   const config = readFileSync(join(REPO_ROOT, "playwright.config.ts"), "utf8");
-  const m = config.match(/:\s*process\.env\.CI\s*\?\s*(\d+)\s*:/);
+  // From the retries key on, not the first CI ternary in the file: workers has one too.
+  const m = config.slice(config.indexOf("retries:")).match(/process\.env\.CI\s*\?\s*(\d+)\s*:/);
   assert.ok(m, "playwright.config.ts no longer reads its retries from process.env.CI");
   assert.equal(sourced("echo $CONFIG_CI_RETRIES").stdout.trim(), m[1]);
 });
