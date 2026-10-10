@@ -178,7 +178,7 @@ test.describe("MCP Server — flow-file resources protocol", () => {
             );
             return Boolean(matched);
           },
-          { timeout: 30000, intervals: [1000, 1500, 3000, 5000] },
+          { timeout: 30000, intervals: [500, 1000, 3000] },
         )
         .toBeTruthy();
 

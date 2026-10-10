@@ -15,48 +15,97 @@
 // `general-bugs-save-changes-on-node` was quarantined for one and fixed first
 // (#2236), and #2243 fixed the other 30. This guard is what stops a 32nd.
 //
-// The forbidden band is (1500, 2500) ms, exclusive. The measured window is far
-// narrower than that (1950 and 2050 were clean), so the band is margin, not the
-// measurement. `expect.poll` sleeps AFTER the callback returns, so the idle gap
-// the server sees is the interval PLUS the client's own processing of the last
-// response — on a heavy read (the full `GET /api/v1/flows/` listing) that can
-// add hundreds of ms. 1500 ms is therefore allowed by the guard but is the
-// closest clean value, measured clean on light reads only; prefer `[500, 1000]`,
-// or ≥3000 ms where the cadence must back off. Gaps of 3000 ms and longer are
-// clean against the gunicorn (Linux) instance, where the close is at 2 s; a
-// uvicorn-direct instance (`langflow run` on macOS) closes at uvicorn's default
-// 5 s instead, which no band here models — the `retryOnDroppedConnection` wrap
-// is what covers that.
+// The forbidden band is (1000, 2100) ms, exclusive, and it is deliberately NOT
+// centred on the edge. `expect.poll` sleeps AFTER the callback returns, so the idle
+// gap the server sees is the interval PLUS the client's own processing of the last
+// response -- never less than the interval. The risk therefore sits BELOW 2000: a
+// 1500 plus a few hundred ms of parsing a heavy body (the full `GET /api/v1/flows/`
+// listing) on a loaded runner lands on the edge. Above 2000 the gap only grows away
+// from it, so the upper bound is a thin margin over the measured-clean 2050. Prefer
+// `[500, 1000]`, or >=3000 ms where the cadence must back off -- and not a repeated
+// 5000: a uvicorn-direct instance (`langflow run` on macOS) closes at uvicorn's
+// default 5 s, which no band here models; `retryOnDroppedConnection` covers that.
+//
+// What it reads: every array literal assigned to `intervals` or to any identifier
+// whose name contains "intervals" (`CREDENTIAL_SETTLE_INTERVALS_MS = [...]` sat on
+// the edge for that reason alone). Brackets are matched, so a nested `[...]` does
+// not end the array early, and an element it cannot evaluate as a whole number
+// (`2 * 1000`, `TWO_SECONDS`, `2e3`) is reported rather than read as clean.
 //
 // Limits, stated so the guard is not read as stronger than it is:
-//  - it reads LITERAL interval arrays only. `intervals: SOME_CONSTANT` and a
-//    hand-written loop that sleeps 2 s between reads are invisible to it;
+//  - an interval passed by reference (`intervals: SOME_CONSTANT` where the constant
+//    has no "intervals" in its name) and a hand-written loop that sleeps a bare
+//    number between reads are invisible to it;
 //  - it flags UI-only polls too, which cannot hit the edge. That is deliberate:
 //    telling the two apart from source is a judgement this test cannot make, and
 //    the cost of not using 2000 ms in a UI poll is nothing.
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-export const BAND_LOW_MS = 1500;
-export const BAND_HIGH_MS = 2500;
+export const BAND_LOW_MS = 1000;
+export const BAND_HIGH_MS = 2100;
 
 export interface CadenceViolation {
   line: number;
-  value: number;
+  /** The interval in ms, or null when the element is not a whole-number literal. */
+  value: number | null;
+  /** The element as written. */
+  element: string;
   text: string;
 }
 
-/** Every literal `intervals: [...]` value inside the forbidden band. */
+const ARRAY_START = /\b\w*intervals\w*\s*[:=]\s*\[/gi;
+const OPEN = "[({";
+const CLOSE = "])}";
+
+/** The source between the `[` ending at `from` and its matching `]`. */
+function arrayBody(source: string, from: number): string {
+  let depth = 1;
+  let i = from;
+  for (; i < source.length && depth > 0; i++) {
+    if (OPEN.includes(source[i])) depth++;
+    else if (CLOSE.includes(source[i])) depth--;
+  }
+  return source.slice(from, depth === 0 ? i - 1 : i);
+}
+
+/** Split on the commas at nesting depth 0 only. */
+function topLevelElements(body: string): string[] {
+  const elements: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of body) {
+    if (OPEN.includes(ch)) depth++;
+    else if (CLOSE.includes(ch)) depth--;
+    if (ch === "," && depth === 0) {
+      elements.push(current);
+      current = "";
+    } else current += ch;
+  }
+  elements.push(current);
+  return elements.map((e) => e.trim()).filter((e) => e.length > 0);
+}
+
+/**
+ * Every interval array element inside the forbidden band, and every element that
+ * cannot be evaluated (reported with `value: null`: unknown is not clean).
+ */
 export function findKeepAliveEdgeIntervals(source: string): CadenceViolation[] {
   const violations: CadenceViolation[] = [];
-  for (const match of source.matchAll(/intervals\s*:\s*\[([^\]]*)\]/g)) {
+  for (const match of source.matchAll(ARRAY_START)) {
+    const start = (match.index ?? 0) + match[0].length;
+    const body = arrayBody(source, start);
     const line = source.slice(0, match.index).split("\n").length;
-    for (const token of match[1].split(",")) {
-      const trimmed = token.trim().replace(/_/g, "");
-      if (!/^\d+$/.test(trimmed)) continue;
-      const value = Number(trimmed);
+    const text = (match[0] + body + "]").replace(/\s+/g, " ");
+    for (const element of topLevelElements(body)) {
+      const digits = element.replace(/(\d)_(?=\d)/g, "$1");
+      if (!/^\d+$/.test(digits)) {
+        violations.push({ line, value: null, element, text });
+        continue;
+      }
+      const value = Number(digits);
       if (value > BAND_LOW_MS && value < BAND_HIGH_MS) {
-        violations.push({ line, value, text: match[0].replace(/\s+/g, " ") });
+        violations.push({ line, value, element, text });
       }
     }
   }
