@@ -56,7 +56,8 @@
 #             the cells' logs kept until the next run
 #   docker    containers, volumes and compose projects named e2e-migration-*, removed
 #             after; the Langflow images this run pulled (absent before it), removed
-#             after. The Postgres images are kept (task 8 decides retention)
+#             after. The Postgres image is kept: one tag, about 640 MB, and pulling it daily
+#             would cost more than keeping it (task 8, ops/vm/run-disk.sh)
 #
 # Never `docker system prune`: the other lanes' images are not this routine's.
 #
@@ -509,8 +510,8 @@ routine_cleanup() {
   migration_clear_docker
   ( cd "$REPO" && OLLAMA_PORT="$MIG_OLLAMA_PORT" bash scripts/stop-ollama-source.sh ) > /dev/null 2>&1 || true
   pkill -f "langflow run --host 127.0.0.1 --port 79(2[0-9]|3[01])" 2> /dev/null || true
-  # The images this run pulled, and only those: retention is task 8's decision, and until
-  # then a day's pulls do not accumulate. An image that was here before is another lane's
+  # The images this run pulled, and only those, so a day's pulls do not accumulate (task 8
+  # found this sufficient: ops/vm/run-disk.sh). An image that was here before is another lane's
   # -- the shadow keeps today's nightly on purpose, and the target is that same tag.
   local img
   for img in ${MIG_PULLED:-}; do
