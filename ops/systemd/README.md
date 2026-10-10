@@ -202,7 +202,7 @@ reference. In short:
 | `migration` | `ops/vm/run-migration.sh` | 09:15 | heavy | 12:30 |
 | `coverage-matrix` | `ops/vm/run-coverage-matrix.sh` | 08:45 | none | 10:30 |
 | `stable-orphans` | `ops/vm/run-stable-orphans.sh` | Mondays 10:00 | none | Mondays 11:45 |
-| `disk` | `ops/vm/run-disk.sh` | 10:45 | heavy, only to clean | 12:45 |
+| `disk` | `ops/vm/run-disk.sh` | 10:45 | daily's priority; heavy only to clean | 12:45 |
 
 `coverage-matrix` commits to the **source's** `main` with `SOURCE_PUSH_TOKEN`, the
 credential the daily's auto-removal and history already use, on a tree of its own: the
@@ -236,9 +236,12 @@ and what bounds it:
 | uv's cache | **this routine**: over `UV_CACHE_CAP_GB` (15) it runs `uv cache clean` under the heavy-lane lock, so never beside an install. It grows about 300 MB a weekday |
 | anything else under `/root` | a human's (rehearsals, probes, spikes): never removed by a routine |
 
-Every weekday it records the disk's use and the cache's size in its result, and at or
+It measures the disk before it waits for anything, then waits for the daily lane's
+priority (and, to clean, for the heavy-lane lock) within one 60 min budget, and measures
+again after each wait. Every weekday it records the disk's use and the cache's size in its result, and at or
 over `DISK_ALARM_PCT` (70) of `/` it leaves an `ALARM` naming the largest entries under
-`/root`, which the watchdog posts to Slack, beside the reason on a skipped or failed day
+`/root` (a survey cut at `DISK_SURVEY_TIMEOUT_S`, 45 s, and marked incomplete if it runs
+over), which the watchdog posts to Slack, beside the reason on a skipped or failed day
 too. A full disk is never a red: it is not the
 product's, and a red would open the routine's issue on the destination. It publishes
 nothing itself.
