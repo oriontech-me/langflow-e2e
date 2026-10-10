@@ -20,7 +20,7 @@ It covers the two §5.2 checklist bullets that #673 deliberately left out:
   the **Knowledge (Ingest)** node embeds every chunk and indexes it in the KB. A
   broken embeddings key or a failed index build fails this — the chunks the KB
   stores are the causal proof that embeddings actually ran. The test then holds
-  the KB's **recorded** chunk count to the same number (declared failing from
+  the KB's **recorded** chunk count to the same number (it regressed from
   `1.13.0.dev33` to `1.13.0.dev34`; see *Fixed* below).
 - **§5.2.3 — Vector Store query returns the relevant chunk:** with the index
   built, running **Knowledge (Retrieve)** answers the static `search_query` and
@@ -311,9 +311,11 @@ announces no change to it. Tracked by #2186 and upstream as
 [LE-2912](https://datastax.jira.com/browse/LE-2912).
 
 **Fixed** by langflow-ai/langflow#15578 (*refresh statistics after flow
-ingestion*, in `1.13.0.dev35`). Confirmed by two passes of the declared body: the
-VM daily on `1.13.0.dev35` (2026-10-07) and the PR lane on `1.13.0.dev38`
-(2026-10-10). `test.fail()` was then removed and `@stable` restored (#2186).
+ingestion*, in `1.13.0.dev35`). Confirmed by two passes of the declared body: one
+VM daily on `1.13.0.dev35` (2026-10-07) and, since that daily stripped `@stable`
+so no second daily could run it, the targeted run #2186 asked for, the PR lane on
+`1.13.0.dev38` (2026-10-10). `test.fail()` was then removed and `@stable`
+restored (#2186).
 
 ---
 
