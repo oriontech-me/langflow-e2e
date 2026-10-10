@@ -14,7 +14,7 @@ ExecStart=/root/e2e-qa/ops/vm/run-disk.sh
 # blocked: said by the watchdog, and not a broken unit. This routine never ends blocked;
 # 4 is declared because every routine's unit reads the same (scripts/ops-units.test.mjs).
 SuccessExitStatus=2 4
-# Up to 60 min waiting for the daily lane, then for the lock when it must clean, then
-# under a minute of work. Well above all of it.
+# One 60 min budget shared by the wait for the daily lane and, when it must clean, for
+# the lock; then under a minute of work. Well above all of it.
 TimeoutStartSec=90min
 TimeoutStopSec=2min

@@ -91,7 +91,8 @@ echo "/dev/mapper/root 260046848 59768832 $(( (100 - pct) * 2600468 )) \${pct}% 
   const r = spawnSync("bash", [SCRIPT], {
     encoding: "utf8",
     env: {
-      PATH: uv ? `${bin}:/usr/bin:/bin` : `${bin}:/usr/bin:/bin`,
+      // uv: false works by not stubbing it; /usr/bin and /bin carry no uv on the test hosts.
+      PATH: `${bin}:/usr/bin:/bin`,
       HOME: home,
       E2E_ROUTINE_REPO: repo,
       E2E_ROUTINE_STATE_ROOT: state,
@@ -131,11 +132,13 @@ test("under the cap and under the alarm: green, measured, nothing cleaned, no lo
   assert.doesNotMatch(calls, /flock/, "a light day must not queue behind a heavy lane");
 });
 
-test("over the cap: the clean runs under the heavy-lane lock, and the result says how much it freed", () => {
-  const { r, result, calls, cacheKept } = disk({ cacheGb: 16 });
+test("over the cap: the clean runs under the heavy-lane lock, and the result says what the disk got back", () => {
+  const { r, result, calls, cacheKept } = disk({ cacheGb: 16, usedPct: 30, afterPct: 24 });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(result.STATUS, "green");
-  assert.match(result.UV_CLEANED, /^yes, 16384 MB to 102 MB$/);
+  // du's count and df's delta, both: they differ when cache files are hard-linked into venvs.
+  assert.match(result.UV_CLEANED, /^yes, 16384 MB to 102 MB, 15237 MB returned to the disk$/);
+  assert.equal(result.DISK_USED_PCT, "24", "the result keeps the measure taken after the clean");
   assert.ok(!cacheKept);
   const lines = calls.split("\n");
   const lock = lines.findIndex((l) => /^flock .*8$/.test(l));
@@ -157,6 +160,24 @@ test("over the cap with the machine busy: skipped, and the cache is left alone",
   assert.match(result.REASON, /busy/);
   assert.ok(cacheKept);
   assert.doesNotMatch(calls, /cache clean/);
+});
+
+test("a skipped or failed day still carries the disk's numbers and its ALARM to the watchdog", () => {
+  const skipped = disk({ cacheGb: 16, heavyBusy: true, usedPct: 75 });
+  assert.equal(skipped.result.STATUS, "skipped");
+  assert.equal(skipped.result.DISK_USED_PCT, "75");
+  assert.match(skipped.result.ALARM, /75% used/);
+  const failed = disk({ cacheGb: 16, clean: "fail", usedPct: 75 });
+  assert.equal(failed.result.STATUS, "failed");
+  assert.match(failed.result.ALARM, /75% used/);
+});
+
+test("the daily has priority: inside its window the routine waits, and out of budget it is skipped untouched", () => {
+  const { r, result, calls } = disk({ cacheGb: 16, env: { E2E_ROUTINE_NOW: "1 0800" } });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(result.STATUS, "skipped");
+  assert.match(result.REASON, /the daily's window/);
+  assert.equal(calls, "", "neither uv nor the lock may be touched while the daily has the machine");
 });
 
 test("a clean that fails is the machine's: failed, with uv's words", () => {

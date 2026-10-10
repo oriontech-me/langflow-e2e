@@ -19,15 +19,19 @@
 #
 # ## What it does
 #
-#   1. Measures the disk and uv's cache, and records both in the result every day.
+#   1. Measures the disk and uv's cache, and records both in the result every day. The
+#      clean's result says what df got back, not only what du counted: a cache file
+#      hard-linked into a venv is counted and freed by nothing (none on the qa today).
 #   2. When the cache is over its cap (UV_CACHE_CAP_GB, 15 by decision of 2026-10-10),
 #      takes the heavy-lane lock and runs `uv cache clean`. The lock is what keeps it off
 #      an install in progress: every uv user on this machine is a heavy lane or the daily
 #      (prepare-target-dist.sh, run-migration.sh), and the daily's priority comes first.
 #      The cost is that the next install downloads again, about one day's worth.
 #   3. When the disk is at or over DISK_ALARM_PCT (70, same decision), leaves an ALARM line
-#      for the watchdog, measured after any cleaning, with the largest directories under
-#      /root so the message says where to look.
+#      for the watchdog, with the largest directories under /root so the message says
+#      where to look. The disk is measured before any wait for the lock and again after a
+#      clean; the ALARM comes from the last measure, on a skipped or failed day too, since
+#      a busy day is the one most likely to be filling the disk.
 #
 # ## Verdicts
 #
@@ -55,13 +59,25 @@ main() {
   ROUTINE_ISSUE=0
   ROUTINE_SLACK=never
 
-  local cap_gb="${UV_CACHE_CAP_GB:-15}" alarm_pct="${DISK_ALARM_PCT:-70}" path="${DISK_PATH:-/}"
+  local cap_gb="${UV_CACHE_CAP_GB:-15}" path="${DISK_PATH:-/}"
   local budget="${DISK_WAIT_BUDGET_S:-3600}"
+  # Globals, not locals: routine_cleanup reads them from the EXIT trap, after main.
+  DK_ALARM_PCT="${DISK_ALARM_PCT:-70}"; DK_PATH="$path"; DK_USED=""; DK_AVAIL_GB=""; DK_AVAIL_KB=""
   [[ "$cap_gb" =~ ^[0-9]+$ ]] && [ "$cap_gb" -gt 0 ] || routine_end failed "UV_CACHE_CAP_GB must be a positive whole number of GB, got '$cap_gb'"
-  [[ "$alarm_pct" =~ ^[0-9]+$ ]] && [ "$alarm_pct" -gt 0 ] && [ "$alarm_pct" -le 100 ] \
-    || routine_end failed "DISK_ALARM_PCT must be a whole percentage from 1 to 100, got '$alarm_pct'"
+  [[ "$DK_ALARM_PCT" =~ ^[0-9]+$ ]] && [ "$DK_ALARM_PCT" -gt 0 ] && [ "$DK_ALARM_PCT" -le 100 ] \
+    || { local bad="$DK_ALARM_PCT"; DK_ALARM_PCT=""; routine_end failed "DISK_ALARM_PCT must be a whole percentage from 1 to 100, got '$bad'"; }
+  routine_set DISK_PATH "$path"
+  routine_set DISK_ALARM_PCT "$DK_ALARM_PCT"
 
+  # One budget for every wait: the daily's priority now, the lock later. Two full budgets
+  # would outlast the unit's TimeoutStartSec, and a skipped day would end as SIGTERM's
+  # failed (review of task 8).
+  local t0=$SECONDS
   routine_wait_daily "$budget"
+
+  # The disk first, before any wait for the lock: a day that ends skipped or failed still
+  # carries its numbers, and its ALARM (routine_cleanup), to the watchdog.
+  disk_measure || routine_end failed "could not read the disk usage of $path (df)"
 
   command -v uv > /dev/null 2>&1 || routine_end failed "uv is not on PATH ($PATH): its cache cannot be measured or cleaned"
   local cache cache_mb
@@ -76,33 +92,47 @@ main() {
   local cleaned=no
   if [ "$cache_mb" -gt $((cap_gb * 1024)) ]; then
     echo "uv cache over its cap: waiting for the heavy-lane lock to clean it"
-    routine_wait_turn "$budget"
+    local left=$((budget - (SECONDS - t0)))
+    [ "$left" -ge 0 ] || left=0
+    routine_wait_turn "$left"
+    local before_kb="$DK_AVAIL_KB"
     if ! uv cache clean > "$RT_STATE/uv-clean.log" 2>&1; then
       routine_end failed "uv cache clean failed with the cache at $cache_mb MB: $(tail -n 3 "$RT_STATE/uv-clean.log" | tr '\n' ' ' | cut -c1-300)"
     fi
     local after_mb
     after_mb="$(disk_dir_mb "$cache")" || after_mb=0
-    cleaned="yes, $cache_mb MB to $after_mb MB"
-    echo "uv cache cleaned: $cache_mb MB -> $after_mb MB"
+    disk_measure || routine_end failed "uv's cache was cleaned, and the disk usage of $path could not be read after it (df)"
+    # What the filesystem got back, not what du counted: a cache file hard-linked into a
+    # venv is counted by du and freed by nothing (measured 2026-10-10: no such link on the
+    # qa, so the two agree today).
+    cleaned="yes, $cache_mb MB to $after_mb MB, $(( (DK_AVAIL_KB - before_kb) / 1024 )) MB returned to the disk"
+    echo "uv cache cleaned: $cleaned"
   fi
   routine_set UV_CLEANED "$cleaned"
 
-  local used avail
-  read -r used avail < <(disk_usage "$path") || routine_end failed "could not read the disk usage of $path (df)"
-  [[ "$used" =~ ^[0-9]+$ ]] && [[ "$avail" =~ ^[0-9]+$ ]] || routine_end failed "df gave an unreadable answer for $path: '$used' '$avail'"
-  routine_set DISK_PATH "$path"
-  routine_set DISK_USED_PCT "$used"
-  routine_set DISK_AVAIL_GB "$avail"
-  routine_set DISK_ALARM_PCT "$alarm_pct"
-  echo "disk $path: $used% used, $avail GB free (alarm at $alarm_pct%)"
-
-  if [ "$used" -ge "$alarm_pct" ]; then
-    routine_set ALARM "the disk $path is $used% used, at or over the $alarm_pct% alarm, with $avail GB free. Largest under /root: $(disk_largest). Run directories (30 per lane) and docker images already have rules; anything else there is a human's to remove."
-  fi
-
-  local what="disk $used% used, $avail GB free; uv cache $cache_mb MB"
+  local what="disk $DK_USED% used, $DK_AVAIL_GB GB free; uv cache $cache_mb MB"
   [ "$cleaned" = "no" ] || what="$what, cleaned ($cleaned)"
   routine_end green "$what"
+}
+
+# df on $DK_PATH into DK_USED (percent), DK_AVAIL_GB and DK_AVAIL_KB, and the result.
+# The result keeps the LAST of each key, so a measure after the clean replaces the first.
+disk_measure() {
+  local used avail_kb
+  read -r used avail_kb < <(df -Pk "$DK_PATH" 2> /dev/null | awk 'NR == 2 { sub(/%$/, "", $5); print $5, $4 }') || return 1
+  [[ "$used" =~ ^[0-9]+$ ]] && [[ "$avail_kb" =~ ^[0-9]+$ ]] || return 1
+  DK_USED="$used"; DK_AVAIL_KB="$avail_kb"; DK_AVAIL_GB=$((avail_kb / 1048576))
+  routine_set DISK_USED_PCT "$DK_USED"
+  routine_set DISK_AVAIL_GB "$DK_AVAIL_GB"
+  echo "disk $DK_PATH: $DK_USED% used, $DK_AVAIL_GB GB free (alarm at $DK_ALARM_PCT%)"
+}
+
+# The EXIT trap's hook, before the result is written: the ALARM is decided from the LAST
+# measure, whatever the verdict. A green, skipped or failed day all carry it.
+routine_cleanup() {
+  [ -n "${DK_USED:-}" ] && [ -n "${DK_ALARM_PCT:-}" ] || return 0
+  [ "$DK_USED" -ge "$DK_ALARM_PCT" ] || return 0
+  routine_set ALARM "the disk $DK_PATH is $DK_USED% used, at or over the $DK_ALARM_PCT% alarm, with $DK_AVAIL_GB GB free. Largest under /root: $(disk_largest). Run directories (30 per lane) and docker images already have rules; anything else there is a human's to remove."
 }
 
 # Size of a directory in MB, whole. Fails when it does not exist or du cannot read it.
@@ -114,16 +144,11 @@ disk_dir_mb() {
   echo $(( kb / 1024 ))
 }
 
-# "<used percent> <available GB>" for the filesystem holding $1, from POSIX df.
-disk_usage() {
-  df -Pk "$1" 2> /dev/null | awk 'NR == 2 { sub(/%$/, "", $5); printf "%s %d\n", $5, $4 / 1048576 }'
-}
-
 # The five largest entries directly under /root, for the alarm's message. Best effort.
 disk_largest() {
   du -xsk "${DISK_SURVEY_ROOT:-/root}"/* "${DISK_SURVEY_ROOT:-/root}"/.[!.]* 2> /dev/null \
     | sort -rn | head -n 5 \
-    | awk '{ n = split($2, p, "/"); printf "%s%s %.1f GB", (NR > 1 ? ", " : ""), p[n], $1 / 1048576 }'
+    | awk -F'\t' '{ n = split($2, p, "/"); printf "%s%s %.1f GB", (NR > 1 ? ", " : ""), p[n], $1 / 1048576 }'
 }
 
 main "$@"
