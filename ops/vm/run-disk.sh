@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# The disk routine: what e2e-routine-disk.service runs (stage 3, task 8). It keeps the
+# one store on this machine that grows with no bound, and says when the disk fills,
+# before a lane finds out by failing.
+#
+# ## What grows here, and what already has a rule (measured 2026-10-10, 57 of 248 GB)
+#
+#   run directories   the daily, the on-demand run and the shadow each keep their last 30
+#                     (run-e2e.sh's RUNS_KEEP): about 470 MB a run, so bounded at roughly
+#                     40 GB together. Logs are pruned by age in each wrapper.
+#   docker images     each lane removes what it pulled (run-shadow.sh keeps today's
+#                     nightly, run-migration.sh removes only the images absent before it,
+#                     run-on-demand.sh its own builds). Nothing accumulates.
+#   uv's cache        NO rule until this routine: every new target version installs again
+#                     (the daily's venv, the migration's twelve cells), about 300 MB per
+#                     weekday, 7.2 GB in its first three weeks. This routine caps it.
+#   anything else     a human's: rehearsals, probes, spikes. Never touched here; the
+#                     disk alarm below is what makes them visible when they matter.
+#
+# ## What it does
+#
+#   1. Measures the disk and uv's cache, and records both in the result every day.
+#   2. When the cache is over its cap (UV_CACHE_CAP_GB, 15 by decision of 2026-10-10),
+#      takes the heavy-lane lock and runs `uv cache clean`. The lock is what keeps it off
+#      an install in progress: every uv user on this machine is a heavy lane or the daily
+#      (prepare-target-dist.sh, run-migration.sh), and the daily's priority comes first.
+#      The cost is that the next install downloads again, about one day's worth.
+#   3. When the disk is at or over DISK_ALARM_PCT (70, same decision), leaves an ALARM line
+#      for the watchdog, measured after any cleaning, with the largest directories under
+#      /root so the message says where to look.
+#
+# ## Verdicts
+#
+#   green    measured, and cleaned when it had to: the disk filling is an ALARM beside a
+#            green day, never a red, because a full disk is not a product defect and a red
+#            would open the routine's issue on the destination for it
+#   failed   this machine: no uv, a measurement that could not be read, or a clean that
+#            failed
+#   skipped  the cache was over its cap and the heavy-lane lock never came within the
+#            budget; nothing was cleaned, and tomorrow tries again
+#
+# ## Visibility
+#
+# None of its own: no issue, no Slack post. The watchdog says skipped, failed and the
+# ALARM, which is everything here worth saying.
+set -uo pipefail
+
+REPO="${E2E_ROUTINE_REPO:-/root/e2e-qa}"
+# shellcheck source=lib/routine.sh
+. "$REPO/ops/vm/lib/routine.sh"
+
+main() {
+  routine_start disk
+  # Visibility, decided with the routine (2026-10-10): only the watchdog speaks.
+  ROUTINE_ISSUE=0
+  ROUTINE_SLACK=never
+
+  local cap_gb="${UV_CACHE_CAP_GB:-15}" alarm_pct="${DISK_ALARM_PCT:-70}" path="${DISK_PATH:-/}"
+  local budget="${DISK_WAIT_BUDGET_S:-3600}"
+  [[ "$cap_gb" =~ ^[0-9]+$ ]] && [ "$cap_gb" -gt 0 ] || routine_end failed "UV_CACHE_CAP_GB must be a positive whole number of GB, got '$cap_gb'"
+  [[ "$alarm_pct" =~ ^[0-9]+$ ]] && [ "$alarm_pct" -gt 0 ] && [ "$alarm_pct" -le 100 ] \
+    || routine_end failed "DISK_ALARM_PCT must be a whole percentage from 1 to 100, got '$alarm_pct'"
+
+  routine_wait_daily "$budget"
+
+  command -v uv > /dev/null 2>&1 || routine_end failed "uv is not on PATH ($PATH): its cache cannot be measured or cleaned"
+  local cache cache_mb
+  cache="$(uv cache dir 2> /dev/null)"
+  [ -n "$cache" ] || routine_end failed "uv did not say where its cache is (uv cache dir)"
+  cache_mb="$(disk_dir_mb "$cache")" || routine_end failed "could not measure uv's cache at $cache"
+  routine_set UV_CACHE "$cache"
+  routine_set UV_CACHE_MB "$cache_mb"
+  routine_set UV_CACHE_CAP_GB "$cap_gb"
+  echo "uv cache: $cache_mb MB at $cache (cap $cap_gb GB)"
+
+  local cleaned=no
+  if [ "$cache_mb" -gt $((cap_gb * 1024)) ]; then
+    echo "uv cache over its cap: waiting for the heavy-lane lock to clean it"
+    routine_wait_turn "$budget"
+    if ! uv cache clean > "$RT_STATE/uv-clean.log" 2>&1; then
+      routine_end failed "uv cache clean failed with the cache at $cache_mb MB: $(tail -n 3 "$RT_STATE/uv-clean.log" | tr '\n' ' ' | cut -c1-300)"
+    fi
+    local after_mb
+    after_mb="$(disk_dir_mb "$cache")" || after_mb=0
+    cleaned="yes, $cache_mb MB to $after_mb MB"
+    echo "uv cache cleaned: $cache_mb MB -> $after_mb MB"
+  fi
+  routine_set UV_CLEANED "$cleaned"
+
+  local used avail
+  read -r used avail < <(disk_usage "$path") || routine_end failed "could not read the disk usage of $path (df)"
+  [[ "$used" =~ ^[0-9]+$ ]] && [[ "$avail" =~ ^[0-9]+$ ]] || routine_end failed "df gave an unreadable answer for $path: '$used' '$avail'"
+  routine_set DISK_PATH "$path"
+  routine_set DISK_USED_PCT "$used"
+  routine_set DISK_AVAIL_GB "$avail"
+  routine_set DISK_ALARM_PCT "$alarm_pct"
+  echo "disk $path: $used% used, $avail GB free (alarm at $alarm_pct%)"
+
+  if [ "$used" -ge "$alarm_pct" ]; then
+    routine_set ALARM "the disk $path is $used% used, at or over the $alarm_pct% alarm, with $avail GB free. Largest under /root: $(disk_largest). Run directories (30 per lane) and docker images already have rules; anything else there is a human's to remove."
+  fi
+
+  local what="disk $used% used, $avail GB free; uv cache $cache_mb MB"
+  [ "$cleaned" = "no" ] || what="$what, cleaned ($cleaned)"
+  routine_end green "$what"
+}
+
+# Size of a directory in MB, whole. Fails when it does not exist or du cannot read it.
+disk_dir_mb() {
+  [ -d "$1" ] || { echo 0; return 0; }
+  local kb
+  kb="$(du -sk "$1" 2> /dev/null | cut -f1)"
+  [[ "$kb" =~ ^[0-9]+$ ]] || return 1
+  echo $(( kb / 1024 ))
+}
+
+# "<used percent> <available GB>" for the filesystem holding $1, from POSIX df.
+disk_usage() {
+  df -Pk "$1" 2> /dev/null | awk 'NR == 2 { sub(/%$/, "", $5); printf "%s %d\n", $5, $4 / 1048576 }'
+}
+
+# The five largest entries directly under /root, for the alarm's message. Best effort.
+disk_largest() {
+  du -xsk "${DISK_SURVEY_ROOT:-/root}"/* "${DISK_SURVEY_ROOT:-/root}"/.[!.]* 2> /dev/null \
+    | sort -rn | head -n 5 \
+    | awk '{ n = split($2, p, "/"); printf "%s%s %.1f GB", (NR > 1 ? ", " : ""), p[n], $1 / 1048576 }'
+}
+
+main "$@"

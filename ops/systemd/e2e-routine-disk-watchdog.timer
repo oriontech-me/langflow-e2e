@@ -1,0 +1,14 @@
+[Unit]
+Description=Schedule for the disk routine's absence alarm, 12:45 UTC on weekdays
+
+[Timer]
+# After the unit's TimeoutStartSec (90 min from 10:45, so 12:15): at 12:45 "still running"
+# means systemd failed to stop it, not that it was slow. It also carries the disk ALARM.
+OnCalendar=Mon..Fri 12:45 UTC
+# An alarm that catches up still tells the truth.
+Persistent=true
+AccuracySec=1min
+Unit=e2e-routine-watchdog@disk.service
+
+[Install]
+WantedBy=timers.target

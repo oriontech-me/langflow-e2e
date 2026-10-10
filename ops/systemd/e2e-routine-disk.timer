@@ -1,0 +1,15 @@
+[Unit]
+Description=Schedule for the E2E disk routine, 10:45 UTC on weekdays
+
+[Timer]
+# After the morning's installs: the daily (08:00) and the migration (09:15, about 18 min)
+# have filled uv's cache for the day, so the measure is the day's. If the migration still
+# holds the heavy-lane lock, a clean waits for it like every routine.
+OnCalendar=Mon..Fri 10:45 UTC
+# A routine that catches up gives a result for a day it did not observe.
+Persistent=false
+AccuracySec=1min
+Unit=e2e-routine-disk.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,20 @@
+[Unit]
+# The disk routine (stage 3, task 8): measures the disk and uv's cache every weekday,
+# caps the cache by cleaning it under the heavy-lane lock, and leaves an ALARM for the
+# watchdog when the disk fills. See ops/vm/run-disk.sh; the shape every routine shares is
+# ops/vm/lib/routine.sh.
+Description=E2E disk routine: cap uv's cache and alarm on a filling disk (VM lane)
+
+[Service]
+Type=oneshot
+# systemd sets no HOME for a system service (#1715).
+Environment=HOME=/root
+ExecStart=/root/e2e-qa/ops/vm/run-disk.sh
+# 2 = skipped (the heavy-lane lock never came while the cache was over its cap), 4 =
+# blocked: said by the watchdog, and not a broken unit. This routine never ends blocked;
+# 4 is declared because every routine's unit reads the same (scripts/ops-units.test.mjs).
+SuccessExitStatus=2 4
+# Up to 60 min waiting for the daily lane, then for the lock when it must clean, then
+# under a minute of work. Well above all of it.
+TimeoutStartSec=90min
+TimeoutStopSec=2min
