@@ -61,7 +61,7 @@ async function fakePlatform() {
   const overrides = { claim: [], report: [], heartbeat: [] };
   const refuse = (status, code, extra = {}) => ({ status, json: { success: false, code, error: code, ...extra } });
   // The platform's ClaimedRequest: suite_ref always present, '' for the daily's suite.
-  const view = (r) => ({ id: r.id, ref: r.ref, provider: r.provider, model: r.model, suite_ref: r.suite_ref ?? "", requested_by: r.requested_by, claim_token: r.claim_token, created_at: "2026-09-30T14:59:00Z", lease_expires_at: "2026-09-30T15:15:00Z" });
+  const view = (r) => ({ id: r.id, ref: r.ref, provider: r.provider, model: r.model, suite_ref: r.suite_ref ?? "", areas: r.areas ?? [], requested_by: r.requested_by, claim_token: r.claim_token, created_at: "2026-09-30T14:59:00Z", lease_expires_at: "2026-09-30T15:15:00Z" });
   const handle = {
     claim(b) {
       const mine = requests.find((r) => r.claim_token === b.claim_token);
@@ -638,13 +638,13 @@ test("a 413 resends the result with summary null", async () => {
 test("the request.env the worker writes is one the executor parses back to the same fields", () => {
   const dir = makeTempDir("od-worker-");
   const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
-  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" || { echo "ERR=$OD_PARSE_ERR"; exit 1; }\nprintf 'id=%s\\nref=%s\\nprovider=%s\\nmodel=%s\\nby=%s\\nsuite=%s\\n' "$OD_ID" "$OD_REF" "$OD_PROVIDER" "$OD_MODEL" "$OD_BY" "$OD_SUITE_REF"\n`);
+  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" || { echo "ERR=$OD_PARSE_ERR"; exit 1; }\nprintf 'id=%s\\nref=%s\\nprovider=%s\\nmodel=%s\\nby=%s\\nsuite=%s\\n' "$OD_ID" "$OD_REF" "$OD_PROVIDER" "$OD_MODEL" "$OD_BY" "$OD_SUITE_REF"\nprintf 'areas=%s\\n' "$OD_AREAS"\n`);
   // A platform from before the suite ref sends none: the line is written empty.
-  for (const req of [REQ(), REQ({ provider: "", requested_by: "" }), REQ({ provider: "openai", model: "gpt-4o-mini", ref: "feat/x_y.z" }), REQ({ suite_ref: "fix/issue-2230-x" }), REQ({ suite_ref: "" })]) {
+  for (const req of [REQ(), REQ({ provider: "", requested_by: "" }), REQ({ provider: "openai", model: "gpt-4o-mini", ref: "feat/x_y.z" }), REQ({ suite_ref: "fix/issue-2230-x" }), REQ({ suite_ref: "" }), REQ({ areas: ["@mcp", "@api"] }), REQ({ areas: [] })]) {
     writeFileSync(join(dir, "request.env"), requestEnv(req));
     const r = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stdout);
-    assert.deepEqual(kv(r.stdout), { id: req.id, ref: req.ref, provider: req.provider, model: req.model, by: req.requested_by, suite: req.suite_ref ?? "" });
+    assert.deepEqual(kv(r.stdout), { id: req.id, ref: req.ref, provider: req.provider, model: req.model, by: req.requested_by, suite: req.suite_ref ?? "", areas: (req.areas ?? []).join(" ") });
   }
 });
 
@@ -660,6 +660,36 @@ test("the worker and the executor agree on every suite ref: what one takes, the 
     const exec = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" }).stdout.trim();
     const workerOk = claimedRequestError(req) === null;
     assert.equal(workerOk, exec === "ok", `${JSON.stringify(ref)}: worker ${workerOk ? "takes" : "refuses"}, executor says ${exec}`);
+  }
+});
+
+test("the worker and the executor agree on every list of areas", () => {
+  const dir = makeTempDir("od-worker-");
+  const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
+  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" && echo ok || echo no\n`);
+  for (const areas of [[], ["@mcp"], ["@mcp", "@api"], ["@model-provider", "@ui-ux", "@a2a"], ["@stable"], ["@mcp", "@serving"],
+    ["@enterprise"], ["@destructive"], ["mcp"], ["@MCP"], ["@mcp;id"], ["@a b"], ["@" + "x".repeat(40)], ["@" + "x".repeat(41)],
+    Array.from({ length: 25 }, (_, i) => `@a${i}`), Array.from({ length: 26 }, (_, i) => `@a${i}`)]) {
+    const req = { ...REQ(), claim_token: TOKEN, areas };
+    writeFileSync(join(dir, "request.env"), requestEnv(req));
+    const exec = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" }).stdout.trim();
+    const workerOk = claimedRequestError(req) === null;
+    assert.equal(workerOk, exec === "ok", `${JSON.stringify(areas).slice(0, 60)}: worker ${workerOk ? "takes" : "refuses"}, executor says ${exec}`);
+  }
+});
+
+test("claimed areas reach the slot through the worker's own state", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ({ areas: ["@mcp", "@api"] }));
+    const w = worker(m, p, { clock: () => WED_1500 });
+    await w.step();
+    assert.match(readFileSync(join(m.env.E2E_ONDEMAND_STATE, "request.env"), "utf8"), /^ONDEMAND_AREAS=@mcp @api$/m);
+    const saved = JSON.parse(readFileSync(join(m.env.E2E_ONDEMAND_STATE, "worker", "state.json"), "utf8"));
+    assert.deepEqual(saved.held.areas, ["@mcp", "@api"], "the state file lost the areas");
+  } finally {
+    await p.close();
   }
 });
 
