@@ -15,7 +15,9 @@
  * client spec later measured the same symptom at an idle gap of ~2 s against the
  * local nightly, on `[500, 1000, 2000]` intervals
  * (`docs/core-functionality/a2a/a2a-client-agent-as-tool.md`) -- consistent with
- * this edge, though the Enterprise case itself was never re-measured.
+ * this edge. The Enterprise case is NOT explained by it: there the idle close
+ * measured ~5 s, and `APIRequestContext` answered 200 at idle gaps of 2/4/6/8 s
+ * (`docs/enterprise/authz/access-control-ui.md`), so it stays unattributed.
  *
  * It matters because `expect.poll` PROPAGATES a throw from its poller. A poll
  * written to tolerate timing cannot tolerate the one error that actually shows

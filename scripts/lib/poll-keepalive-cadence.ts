@@ -26,16 +26,28 @@
 // 5000: a uvicorn-direct instance (`langflow run` on macOS) closes at uvicorn's
 // default 5 s, which no band here models; `retryOnDroppedConnection` covers that.
 //
-// What it reads: every array literal assigned to `intervals` or to any identifier
-// whose name contains "intervals" (`CREDENTIAL_SETTLE_INTERVALS_MS = [...]` sat on
-// the edge for that reason alone). Brackets are matched, so a nested `[...]` does
-// not end the array early, and an element it cannot evaluate as a whole number
-// (`2 * 1000`, `TWO_SECONDS`, `2e3`) is reported rather than read as clean.
+// What it reads: an array literal that follows `intervals` or any identifier whose
+// name contains "intervals" DIRECTLY, as `name: [` or `name = [`
+// (`CREDENTIAL_SETTLE_INTERVALS_MS = [...]` sat on the edge for want of that).
+// `[`, `(` and `{` are matched, so a nested one does not end the array early, and
+// an element it cannot evaluate as a whole number (`2 * 1000`, `TWO_SECONDS`,
+// `2e3`, `...BASE`) is reported rather than read as clean.
 //
 // Limits, stated so the guard is not read as stronger than it is:
-//  - an interval passed by reference (`intervals: SOME_CONSTANT` where the constant
-//    has no "intervals" in its name) and a hand-written loop that sleeps a bare
-//    number between reads are invisible to it;
+//  - SILENT: anything between the name and the `[` hides the array -- a type
+//    annotation (`X_INTERVALS_MS: readonly number[] = [500, 2000]`), a ternary
+//    (`intervals: c ? [500] : [2000]`), a comment. The one typed declaration in
+//    tests/ today, `SHIPPED_AUTOSAVE_INTERVALS_MS` in
+//    `tests/helpers/flows/autosave-interval.ts`, is a record of shipped autosave
+//    settings, not a poll, so missing it is right -- widening the match to typed
+//    declarations would need an exemption for it;
+//  - SILENT: an interval passed by reference (`intervals: SOME_CONSTANT` where the
+//    constant has no "intervals" in its name), and a hand-written loop that sleeps
+//    a bare number between reads;
+//  - LOUD, not silent: a `]` inside a string or comment within the array ends it
+//    early, and the leftover is reported as unreadable; a comment inside a clean
+//    array, a type position (`{ intervals: [number, number] }`) and a code comment
+//    quoting an old cadence are flagged too;
 //  - it flags UI-only polls too, which cannot hit the edge. That is deliberate:
 //    telling the two apart from source is a judgement this test cannot make, and
 //    the cost of not using 2000 ms in a UI poll is nothing.

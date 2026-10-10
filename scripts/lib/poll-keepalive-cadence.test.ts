@@ -57,6 +57,16 @@ test("a nested bracket does not end the array early", () => {
   );
 });
 
+test("parentheses and braces nest like brackets: their commas do not split elements", () => {
+  // Proven for `[` above; without this, splitting on every comma, or letting only
+  // brackets nest, passed every test.
+  const found = findKeepAliveEdgeIntervals("intervals: [Math.max(500, 1000), { a: 1, b: 2 }, (2000)]");
+  assert.deepEqual(
+    found.map((v) => v.element),
+    ["Math.max(500, 1000)", "{ a: 1, b: 2 }", "(2000)"],
+  );
+});
+
 test("detector leaves the clean cadences alone", () => {
   for (const source of [
     "intervals: [500, 1000]",
