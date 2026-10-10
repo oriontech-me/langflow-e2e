@@ -29,8 +29,8 @@
 #      The cost is that the next install downloads again, about one day's worth.
 #   3. When the disk is at or over DISK_ALARM_PCT (70, same decision), leaves an ALARM line
 #      for the watchdog, with the largest directories under /root so the message says
-#      where to look. The disk is measured before any wait for the lock and again after a
-#      clean; the ALARM comes from the last measure, on a skipped or failed day too, since
+#      where to look. The disk is measured before any wait (the daily's priority
+#      included), again after each wait, and again after a clean; the ALARM comes from the last measure, on a skipped or failed day too, since
 #      a busy day is the one most likely to be filling the disk.
 #
 # ## Verdicts
@@ -73,10 +73,14 @@ main() {
   # would outlast the unit's TimeoutStartSec, and a skipped day would end as SIGTERM's
   # failed (review of task 8).
   local t0=$SECONDS
-  routine_wait_daily "$budget"
 
-  # The disk first, before any wait for the lock: a day that ends skipped or failed still
-  # carries its numbers, and its ALARM (routine_cleanup), to the watchdog.
+  # The disk first, before ANY wait, the daily's priority included: a day that ends
+  # skipped or failed still carries its numbers, and its ALARM (routine_cleanup), to the
+  # watchdog, and a day the daily keeps the machine is the likeliest to be filling it.
+  # df only reads, so it cannot disturb the daily. Measured again once the wait is over,
+  # since the wait can last the whole budget.
+  disk_measure || routine_end failed "could not read the disk usage of $path (df)"
+  routine_wait_daily "$budget"
   disk_measure || routine_end failed "could not read the disk usage of $path (df)"
 
   command -v uv > /dev/null 2>&1 || routine_end failed "uv is not on PATH ($PATH): its cache cannot be measured or cleaned"

@@ -180,6 +180,14 @@ test("the daily has priority: inside its window the routine waits, and out of bu
   assert.equal(calls, "", "neither uv nor the lock may be touched while the daily has the machine");
 });
 
+test("a day the daily keeps the machine is still measured, and still carries its ALARM", () => {
+  const { r, result } = disk({ usedPct: 82, env: { E2E_ROUTINE_NOW: "1 0800" } });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(result.STATUS, "skipped");
+  assert.equal(result.DISK_USED_PCT, "82", "df must run before the daily-priority wait, not after it");
+  assert.match(result.ALARM, /82% used/);
+});
+
 test("a clean that fails is the machine's: failed, with uv's words", () => {
   const { r, result } = disk({ cacheGb: 16, clean: "fail" });
   assert.equal(r.status, 3);
