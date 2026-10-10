@@ -99,6 +99,10 @@ main() {
     local left=$((budget - (SECONDS - t0)))
     [ "$left" -ge 0 ] || left=0
     routine_wait_turn "$left"
+    # The baseline for what the clean gave back is taken now, under the lock, not before
+    # the wait: up to an hour of another heavy lane writing or freeing would otherwise be
+    # counted as the clean's.
+    disk_measure || routine_end failed "could not read the disk usage of $path (df) once the lock was taken"
     local before_kb="$DK_AVAIL_KB"
     if ! uv cache clean > "$RT_STATE/uv-clean.log" 2>&1; then
       routine_end failed "uv cache clean failed with the cache at $cache_mb MB: $(tail -n 3 "$RT_STATE/uv-clean.log" | tr '\n' ' ' | cut -c1-300)"

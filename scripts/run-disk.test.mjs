@@ -26,11 +26,12 @@ const GB = 1024 * 1024; // in KB, du's unit
  * cacheGb:   uv's cache size before any clean, in GB (after a clean it is 0.1)
  * usedPct:   df's use% before a clean; afterPct, after one (defaults to usedPct)
  * heavyBusy: the heavy-lane lock never comes
+ * lockPct:   df's use% from the moment the lock is taken (another lane wrote while it was awaited)
  * clean:     "ok" | "fail"   what `uv cache clean` does
  * uv:        false removes uv from PATH
  * env:       extra environment for the routine
  */
-function disk({ cacheGb = 3, usedPct = 23, afterPct = null, heavyBusy = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
+function disk({ cacheGb = 3, usedPct = 23, afterPct = null, lockPct = null, heavyBusy = false, clean = "ok", uv = true, dfBroken = false, env = {} } = {}) {
   const dir = makeTempDir("run-disk-");
   const repo = join(dir, "repo");
   mkdirSync(join(repo, "ops", "vm", "lib"), { recursive: true });
@@ -52,7 +53,8 @@ function disk({ cacheGb = 3, usedPct = 23, afterPct = null, heavyBusy = false, c
   mkdirSync(bin, { recursive: true });
   const calls = join(dir, "calls.log");
   stub(bin, "systemctl", "echo inactive");
-  stub(bin, "flock", `echo "flock $*" >> ${q(calls)}\ncase "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; esac\nexit 0`);
+  const lockMark = join(dir, "lock-taken");
+  stub(bin, "flock", `echo "flock $*" >> ${q(calls)}\ncase "$*" in *8) ${heavyBusy ? "exit 1" : `touch ${q(lockMark)}; exit 0`} ;; esac\nexit 0`);
   if (uv) {
     stub(
       bin,
@@ -82,7 +84,7 @@ esac; done`,
     "df",
     dfBroken
       ? "echo 'df: cannot read' >&2; exit 1"
-      : `pct=${usedPct}; [ -e ${q(join(cache, "big"))} ] || pct=${after}
+      : `pct=${usedPct}; ${lockPct === null ? "" : `[ -e ${q(lockMark)} ] && pct=${lockPct};`} [ -e ${q(join(cache, "big"))} ] || pct=${after}
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
 echo "/dev/mapper/root 260046848 59768832 $(( (100 - pct) * 2600468 )) \${pct}% /"`,
   );
@@ -144,6 +146,14 @@ test("over the cap: the clean runs under the heavy-lane lock, and the result say
   const lock = lines.findIndex((l) => /^flock .*8$/.test(l));
   const clean = lines.findIndex((l) => l === "uv cache clean");
   assert.ok(lock >= 0 && clean > lock, `the lock must come before the clean:\n${calls}`);
+});
+
+test("what the clean gave back is counted from the lock, not from before the wait for it", () => {
+  // Another lane filled 5% of the disk while the lock was awaited: counted from the first
+  // measure, the clean would be credited with 1 point instead of 6.
+  const { result } = disk({ cacheGb: 16, usedPct: 30, lockPct: 35, afterPct: 29 });
+  assert.equal(result.STATUS, "green");
+  assert.match(result.UV_CLEANED, /, 15237 MB returned to the disk$/);
 });
 
 test("exactly at the cap is not over it: nothing is cleaned", () => {
