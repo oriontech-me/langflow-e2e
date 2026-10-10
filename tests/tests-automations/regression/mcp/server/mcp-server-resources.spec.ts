@@ -14,7 +14,6 @@ import {
   mcpCall,
   mcpHandshake,
 } from "../../../../helpers/mcp/mcp-streamable-client";
-import { retryOnDroppedConnection } from "../../../../helpers/api/retry-on-dropped-connection";
 
 /**
  * MCP Server — flow-file resources over the MCP protocol (QA-CHECKLIST §14.1
@@ -160,13 +159,11 @@ test.describe("MCP Server — flow-file resources protocol", () => {
       await expect
         .poll(
           async () => {
-            // `mcpCall` throws on a non-2xx with the response body in the message,
-            // so a 5xx whose body happens to name a transport error would be
-            // re-sent once too. Accepted here: `resources/list` is a read with no
-            // session, so a second send changes nothing.
-            const resp = await retryOnDroppedConnection(() =>
-              mcpCall(request, streamableUrl, credential, "resources/list", {}, 2),
-            );
+            // Re-dialled inside `mcpCall`, around the POST only: a dropped socket is
+            // retried once, a non-2xx answer is never re-sent.
+            const resp = await mcpCall(request, streamableUrl, credential, "resources/list", {}, 2, {
+              retryDroppedConnection: true,
+            });
             const resources = (resp.result?.resources ?? []) as Array<{
               name: string;
               uri: string;

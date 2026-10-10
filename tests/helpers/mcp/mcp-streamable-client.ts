@@ -1,4 +1,5 @@
 import type { APIRequestContext } from "@playwright/test";
+import { retryOnDroppedConnection } from "../api/retry-on-dropped-connection";
 
 /**
  * Minimal MCP client over the streamable-HTTP transport, backed by Playwright's
@@ -72,6 +73,18 @@ function parseSseData(body: string): JsonRpcResponse {
   return JSON.parse(line.replace(/^data:\s*/, "")) as JsonRpcResponse;
 }
 
+export interface McpCallOptions {
+  /**
+   * Re-dial ONCE when the POST itself fails at the transport layer (a dropped
+   * keep-alive socket, #2236). Off by default, and only for idempotent reads
+   * (`resources/list`, `tools/list`): a `tools/call` that reached the server before
+   * the connection dropped would run twice. The retry wraps the POST alone, never
+   * the status check below, so a non-2xx answer is never re-sent -- wrapping the
+   * whole call would re-send a 5xx whose body happens to name `ECONNREFUSED`.
+   */
+  retryDroppedConnection?: boolean;
+}
+
 /**
  * Send one JSON-RPC request to a streamable MCP endpoint and return the parsed
  * response. `credential` carries the API key the transport requires (see header).
@@ -83,11 +96,14 @@ export async function mcpCall(
   method: string,
   params?: Record<string, unknown>,
   id = 1,
+  options: McpCallOptions = {},
 ): Promise<JsonRpcResponse> {
-  const res = await request.post(url, {
-    headers: { ...MCP_HEADERS, "x-api-key": credential.apiKey },
-    data: { jsonrpc: "2.0", id, method, ...(params ? { params } : {}) },
-  });
+  const post = () =>
+    request.post(url, {
+      headers: { ...MCP_HEADERS, "x-api-key": credential.apiKey },
+      data: { jsonrpc: "2.0", id, method, ...(params ? { params } : {}) },
+    });
+  const res = options.retryDroppedConnection ? await retryOnDroppedConnection(post) : await post();
   if (!res.ok()) {
     throw new Error(`MCP ${method} HTTP ${res.status()}: ${await res.text()}`);
   }
