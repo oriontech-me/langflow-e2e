@@ -797,6 +797,17 @@ check_declared_target() {
 check_retries() {
   [ -z "$RETRIES" ] && return 0
   [[ "$RETRIES" =~ ^[0-5]$ ]] || die "RETRIES='$RETRIES' is not 0 to 5 (empty is the config's default, $CONFIG_CI_RETRIES)."
+  [ "$RETRIES" = "$CONFIG_CI_RETRIES" ] && return 0
+  # Other retries change what counts as a failure: with 0, one failure is a hard one,
+  # which the @stable removal and the history would read as the daily's. Only a lane
+  # that publishes nothing, and keeps a ledger of its own or none, runs them.
+  local sw
+  for sw in CREATE_ISSUE NOTIFY_SLACK NOTIFY_SLACK_ALWAYS POST_QA_PLATFORM AUTO_REMOVE HISTORY_TO_SOURCE; do
+    [ "${!sw:-0}" = "0" ] || die "RETRIES=$RETRIES with $sw=${!sw}: a run with other retries than the default publishes nothing."
+  done
+  if ledger_active && [ "$LEDGER_DIR" = "${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}" ]; then
+    die "RETRIES=$RETRIES with the daily's ledger ($LEDGER_DIR): point LEDGER_DIR at a copy, or set KEEP_LEDGER=0."
+  fi
   return 0
 }
 

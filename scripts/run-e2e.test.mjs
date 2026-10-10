@@ -1829,13 +1829,35 @@ function metadataFrom(env, after = "") {
 }
 
 test("retries: empty is the config's default, 0 to 5 pass, anything else is refused", () => {
-  const run = (retries) => sourced("check_retries && echo ok", { RETRIES: retries });
+  const run = (retries) => sourced("check_retries && echo ok", { RETRIES: retries, LEDGER_DIR: "/tmp/a-ledger-copy" });
   for (const ok of ["", "0", "1", "2", "5"]) assert.equal(run(ok).stdout.trim(), "ok", JSON.stringify(ok));
   for (const bad of ["6", "-1", "01", "1.5", "two", " 1", "1;id"]) {
     const r = run(bad);
     assert.equal(r.status, 1, JSON.stringify(bad));
     assert.match(r.stderr, /is not 0 to 5/, JSON.stringify(bad));
   }
+});
+
+test("other retries than the default never reach a lane that publishes or the daily's ledger", () => {
+  for (const sw of ["CREATE_ISSUE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "AUTO_REMOVE", "HISTORY_TO_SOURCE"]) {
+    const r = sourced("check_retries && echo ok", { RETRIES: "0", LEDGER_DIR: "/tmp/a-ledger-copy", [sw]: "1" });
+    assert.equal(r.status, 1, sw);
+    assert.match(r.stderr, new RegExp(`RETRIES=0 with ${sw}=1`), sw);
+    // The default, said out loud, is the daily's own and passes.
+    assert.equal(sourced("check_retries && echo ok", { RETRIES: "2", [sw]: "1" }).stdout.trim(), "ok", sw);
+  }
+  const home = makeTempDir("retries-ledger-");
+  const daily = sourced("check_retries && echo ok", { RETRIES: "0", HOME: home, XDG_STATE_HOME: "" });
+  assert.equal(daily.status, 1, daily.stderr);
+  assert.match(daily.stderr, /RETRIES=0 with the daily's ledger/);
+});
+
+test("the default the metadata records is the config's own CI default", () => {
+  // CONFIG_CI_RETRIES copies playwright.config.ts by hand; this keeps them one.
+  const config = readFileSync(join(REPO_ROOT, "playwright.config.ts"), "utf8");
+  const m = config.match(/:\s*process\.env\.CI\s*\?\s*(\d+)\s*:/);
+  assert.ok(m, "playwright.config.ts no longer reads its retries from process.env.CI");
+  assert.equal(sourced("echo $CONFIG_CI_RETRIES").stdout.trim(), m[1]);
 });
 
 test("the metadata records the retries the run used: the default when none was asked", () => {
