@@ -61,16 +61,18 @@ main() {
   ROUTINE_ISSUE=0
   ROUTINE_SLACK=never
 
-  local cap_gb="${UV_CACHE_CAP_GB:-15}" path="${DISK_PATH:-/}"
+  local cap_gb="${UV_CACHE_CAP_GB:-15}" alarm_pct="${DISK_ALARM_PCT:-70}" path="${DISK_PATH:-/}"
   local budget="${DISK_WAIT_BUDGET_S:-3600}"
   # Globals, not locals: routine_cleanup reads them from the EXIT trap, after main.
-  DK_ALARM_PCT="${DISK_ALARM_PCT:-70}"; DK_PATH="$path"; DK_USED=""; DK_AVAIL_GB=""; DK_AVAIL_KB=""
+  # DK_ALARM_PCT stays empty until BOTH thresholds are valid: the trap measures the disk
+  # whenever it is set, and must never judge it against a value nobody validated.
+  DK_ALARM_PCT=""; DK_PATH="$path"; DK_USED=""; DK_AVAIL_GB=""; DK_AVAIL_KB=""
   [[ "$cap_gb" =~ ^[0-9]+$ ]] && [ "$cap_gb" -gt 0 ] || routine_end failed "UV_CACHE_CAP_GB must be a positive whole number of GB, got '$cap_gb'"
-  [[ "$DK_ALARM_PCT" =~ ^[0-9]+$ ]] && [ "$DK_ALARM_PCT" -gt 0 ] && [ "$DK_ALARM_PCT" -le 100 ] \
-    || { local bad="$DK_ALARM_PCT"; DK_ALARM_PCT=""; routine_end failed "DISK_ALARM_PCT must be a whole percentage from 1 to 100, got '$bad'"; }
+  [[ "$alarm_pct" =~ ^[0-9]+$ ]] && [ "$alarm_pct" -gt 0 ] && [ "$alarm_pct" -le 100 ] \
+    || routine_end failed "DISK_ALARM_PCT must be a whole percentage from 1 to 100, got '$alarm_pct'"
   # Base 10 from here on: bash arithmetic reads a leading 0 as octal, so 015 would cap at
   # 13 GB and 08 would abort the shell before a verdict.
-  cap_gb=$((10#$cap_gb)); DK_ALARM_PCT=$((10#$DK_ALARM_PCT))
+  cap_gb=$((10#$cap_gb)); DK_ALARM_PCT=$((10#$alarm_pct))
   routine_set DISK_PATH "$path"
   routine_set DISK_ALARM_PCT "$DK_ALARM_PCT"
 
@@ -172,9 +174,9 @@ routine_cleanup() {
   routine_set ALARM "the disk $DK_PATH is $DK_USED% used, at or over the $DK_ALARM_PCT% alarm, with $DK_AVAIL_GB GB free. Largest under /root: $(disk_largest). Run directories (30 per lane) and docker images already have rules; anything else there is a human's to remove."
 }
 
-# Size of a directory in MB, whole. Prints 0 for a directory that does not exist (a
-# cleaned cache may be gone; main refuses an absent one before any clean). Fails when du
-# cannot read it.
+# Size of a directory in MB, whole. Prints 0 for a directory that does not exist, which
+# is right after a clean (uv removes the directory); before one, main decides an absence
+# itself, by the clean's marker. Fails when du cannot read it.
 disk_dir_mb() {
   [ -d "$1" ] || { echo 0; return 0; }
   local kb

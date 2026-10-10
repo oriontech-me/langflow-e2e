@@ -99,7 +99,8 @@ echo "/dev/mapper/root 260046848 59768832 $(( (100 - pct) * 2600468 )) \${pct}% 
 
   const state = join(dir, "state");
   const lastEnv = join(state, "disk", "last.env");
-  // Another day on the same machine: same state, same cache, same fakes.
+  // Another day on the same machine: same state, same cache, same fakes. The fakes' logs
+  // carry over too, so `calls` and `reported` after again() are cumulative over the days.
   const run = () => {
     const r = spawnSync("bash", [SCRIPT], {
       encoding: "utf8",
@@ -320,6 +321,13 @@ test("a cache directory that does not exist is a wrong place, failed, never a gr
   assert.equal(result.STATUS, "failed");
   assert.match(result.REASON, /no such directory/);
   assert.doesNotMatch(calls, /cache clean/);
+});
+
+test("a bad cap with a bad alarm threshold is failed without an ALARM judged against the unvalidated one", () => {
+  const { result } = disk({ usedPct: 57, env: { UV_CACHE_CAP_GB: "x", DISK_ALARM_PCT: "0" } });
+  assert.equal(result.STATUS, "failed");
+  assert.equal(result.ALARM, undefined);
+  assert.equal(result.DISK_USED_PCT, undefined, "nothing may be measured on a bad threshold");
 });
 
 test("no uv on the machine, or no df answer, is failed", () => {
