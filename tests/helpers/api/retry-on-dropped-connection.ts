@@ -18,7 +18,7 @@
  * written to tolerate timing cannot tolerate the one error that actually shows
  * up, so the run dies on a dropped connection instead of re-reading a moment
  * later. Keeping poll intervals off the 2 s edge makes a drop unlikely for the
- * gaps a poll controls (`poll-keepalive-cadence.test.ts` pins that), though the
+ * gaps a poll controls (`scripts/lib/poll-keepalive-cadence.test.ts` pins that), though the
  * client's own processing still adds to each gap; this covers what is left, and
  * the gaps a poll does not control at all, like the first read after a UI step.
  *
