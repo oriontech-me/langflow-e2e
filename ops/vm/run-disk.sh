@@ -66,6 +66,9 @@ main() {
   [[ "$cap_gb" =~ ^[0-9]+$ ]] && [ "$cap_gb" -gt 0 ] || routine_end failed "UV_CACHE_CAP_GB must be a positive whole number of GB, got '$cap_gb'"
   [[ "$DK_ALARM_PCT" =~ ^[0-9]+$ ]] && [ "$DK_ALARM_PCT" -gt 0 ] && [ "$DK_ALARM_PCT" -le 100 ] \
     || { local bad="$DK_ALARM_PCT"; DK_ALARM_PCT=""; routine_end failed "DISK_ALARM_PCT must be a whole percentage from 1 to 100, got '$bad'"; }
+  # Base 10 from here on: bash arithmetic reads a leading 0 as octal, so 015 would cap at
+  # 13 GB and 08 would abort the shell before a verdict.
+  cap_gb=$((10#$cap_gb)); DK_ALARM_PCT=$((10#$DK_ALARM_PCT))
   routine_set DISK_PATH "$path"
   routine_set DISK_ALARM_PCT "$DK_ALARM_PCT"
 

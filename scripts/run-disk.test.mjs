@@ -245,6 +245,18 @@ test("the thresholds come from the environment, and a bad one is refused before 
   }
 });
 
+test("a threshold with a leading zero is read in base 10, never as octal", () => {
+  // 015 as octal is 13 GB, and a 14 GB cache would be cleaned under it.
+  const octal = disk({ cacheGb: 14, env: { UV_CACHE_CAP_GB: "015" } });
+  assert.equal(octal.result.STATUS, "green");
+  assert.equal(octal.result.UV_CLEANED, "no");
+  assert.equal(octal.result.UV_CACHE_CAP_GB, "15");
+  // 08 is no octal number at all: it aborted the shell before a verdict.
+  const eight = disk({ env: { UV_CACHE_CAP_GB: "08", DISK_ALARM_PCT: "070" } });
+  assert.equal(eight.result.STATUS, "green", eight.result.REASON);
+  assert.equal(eight.result.DISK_ALARM_PCT, "70");
+});
+
 test("no uv on the machine, or no df answer, is failed", () => {
   assert.match(disk({ uv: false }).result.REASON, /uv is not on PATH/);
   assert.match(disk({ dfBroken: true }).result.REASON, /could not read the disk usage/);
