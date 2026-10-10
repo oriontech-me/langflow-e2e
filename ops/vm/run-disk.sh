@@ -138,7 +138,9 @@ disk_measure() {
   local used avail_kb
   read -r used avail_kb < <(df -Pk "$DK_PATH" 2> /dev/null | awk 'NR == 2 { sub(/%$/, "", $5); print $5, $4 }') || return 1
   [[ "$used" =~ ^[0-9]+$ ]] && [[ "$avail_kb" =~ ^[0-9]+$ ]] || return 1
-  DK_USED="$used"; DK_AVAIL_KB="$avail_kb"; DK_AVAIL_GB=$((avail_kb / 1048576))
+  # One decimal: a whole-GB division says '0 GB free' with 900 MB left, which reads as a
+  # parse failure on the day the figure matters most.
+  DK_USED="$used"; DK_AVAIL_KB="$avail_kb"; DK_AVAIL_GB="$(awk -v k="$avail_kb" 'BEGIN { printf "%.1f", k / 1048576 }')"
   routine_set DISK_USED_PCT "$DK_USED"
   routine_set DISK_AVAIL_GB "$DK_AVAIL_GB"
   echo "disk $DK_PATH: $DK_USED% used, $DK_AVAIL_GB GB free (alarm at $DK_ALARM_PCT%)"

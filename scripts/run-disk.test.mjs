@@ -234,6 +234,13 @@ test("the survey in the EXIT trap is bounded: a walk that does not finish is cut
   assert.match(result.ALARM, /survey cut at 1s, incomplete/);
 });
 
+test("the free space keeps one decimal, so a nearly full disk never reads '0 GB free'", () => {
+  // df's fake gives (100 - pct) * 2600468 KB free: 2.5 GB at 99%.
+  const { result } = disk({ usedPct: 99 });
+  assert.equal(result.DISK_AVAIL_GB, "2.5");
+  assert.match(result.ALARM, /with 2\.5 GB free/);
+});
+
 test("exactly at the alarm sounds it; one under does not", () => {
   assert.match(disk({ usedPct: 70 }).result.ALARM, /70% used/);
   assert.equal(disk({ usedPct: 69 }).result.ALARM, undefined);
