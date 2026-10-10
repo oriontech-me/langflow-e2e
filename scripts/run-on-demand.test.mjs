@@ -268,6 +268,37 @@ test("a provider the pre-check turned down is refused before the build, in the p
   assert.equal(r.heavyHolder, null, "the refused run left its holder line");
 });
 
+// Areas narrow the run to @stable AND any of them (run-e2e.sh's STABLE_AREAS).
+const AREAS = (areas) => `ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_AREAS=${areas}\n`;
+
+test("areas reach run-e2e.sh as STABLE_AREAS, and none is the whole @stable", () => {
+  const r = onDemand({ request: AREAS("@mcp @api") });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(kv(r.env).STABLE_AREAS, "@mcp @api");
+  assert.match(r.log, /areas=@mcp @api/);
+  const none = onDemand({ request: AREAS("") });
+  assert.equal(kv(none.env).STABLE_AREAS, "");
+  assert.match(none.log, /areas=<all of @stable>/);
+});
+
+test("a suite that cannot narrow to areas is refused before the build, not run whole", () => {
+  const r = onDemand({ request: AREAS("@mcp"), suiteKnowsAreas: false });
+  assert.equal(r.status, 2, r.log);
+  assert.equal(r.result["req-1"].STATUS, "refused");
+  assert.match(r.result["req-1"].REASON, /cannot narrow @stable to areas \(its run-e2e\.sh predates STABLE_AREAS\)/);
+  assert.equal(r.build, null, "a build ran for a suite that would ignore the areas");
+  // Without areas the same suite runs as it always has.
+  assert.equal(onDemand({ request: AREAS(""), suiteKnowsAreas: false }).status, 0);
+});
+
+test("areas that select no test are the request's fault: refused, in run-e2e.sh's words", () => {
+  const r = onDemand({ request: AREAS("@nothing-here"), runExit: 1, writeResults: false,
+    preError: "the areas @nothing-here select no @stable test in this suite." });
+  assert.equal(r.status, 2, r.log);
+  assert.equal(r.result["req-1"].STATUS, "refused");
+  assert.match(r.result["req-1"].REASON, /the areas asked for select no test in this suite: the areas @nothing-here select no @stable test/);
+});
+
 // The suite ref: a branch or tag of langflow-e2e instead of the commit the daily left.
 const SUITE = (ref) => `ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_SUITE_REF=${ref}\n`;
 
@@ -465,6 +496,9 @@ test("a malformed request is refused before anything runs, and its contents neve
     ["ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_MODEL=claude-x\n", /needs ONDEMAND_PROVIDER/],
     ["ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=Anthropic;x\n", /ONDEMAND_PROVIDER has characters/],
     // A suite ref git would read as an option, a range or a path out of refs.
+    // Areas: tags one space apart, never @stable or a lane tag.
+    ...["@stable", "@mcp @serving", "@enterprise", "mcp", "@mcp  @api", " @mcp", "@MCP", "@mcp;id"].map((areas) =>
+      [`ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_AREAS=${areas}\n`, /ONDEMAND_AREAS (is not tags|names @stable or a lane tag)/]),
     ...["--upload-pack=touch", "main..evil", "a/../b", "/abs", "tail/", "a//b", "x.lock", ".hidden", "a/.b", "$(id)", "a.", "a./b", "a.lock/b"].map((ref) =>
       [`ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_SUITE_REF=${ref}\n`, /ONDEMAND_SUITE_REF is not a branch or tag name/]),
   ]) {
