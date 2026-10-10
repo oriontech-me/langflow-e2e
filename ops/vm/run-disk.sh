@@ -30,9 +30,9 @@
 #   3. When the disk is at or over DISK_ALARM_PCT (70, same decision), leaves an ALARM line
 #      for the watchdog, with the largest directories under /root so the message says
 #      where to look. The disk is measured before any wait (the daily's priority
-#      included), again after each wait, and again after a clean; the ALARM comes from
-#      the last measure, on a skipped or failed day too, since a busy day is the one most
-#      likely to be filling the disk.
+#      included), again after each wait and after a clean, and once more as the routine
+#      ends: the ALARM comes from that last measure, on a skipped or failed day too, since
+#      a busy day is the one most likely to be filling the disk.
 #
 # ## Verdicts
 #
@@ -160,10 +160,14 @@ disk_measure() {
   echo "disk $DK_PATH: $DK_USED% used, $DK_AVAIL_GB GB free (alarm at $DK_ALARM_PCT%)"
 }
 
-# The EXIT trap's hook, before the result is written: the ALARM is decided from the LAST
-# measure, whatever the verdict. A green, skipped or failed day all carry it.
+# The EXIT trap's hook, before the result is written: the ALARM is decided from a measure
+# taken here, whatever the verdict, so a day that ends skipped at the lock is not judged
+# by a df up to an hour old. A green, skipped or failed day all carry it. A df that fails
+# here keeps the last good measure.
 routine_cleanup() {
-  [ -n "${DK_USED:-}" ] && [ -n "${DK_ALARM_PCT:-}" ] || return 0
+  [ -n "${DK_ALARM_PCT:-}" ] || return 0
+  disk_measure || echo "WARNING: df failed in the EXIT trap; the ALARM uses the last good measure"
+  [ -n "${DK_USED:-}" ] || return 0
   [ "$DK_USED" -ge "$DK_ALARM_PCT" ] || return 0
   routine_set ALARM "the disk $DK_PATH is $DK_USED% used, at or over the $DK_ALARM_PCT% alarm, with $DK_AVAIL_GB GB free. Largest under /root: $(disk_largest). Run directories (30 per lane) and docker images already have rules; anything else there is a human's to remove."
 }

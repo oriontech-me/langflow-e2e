@@ -192,6 +192,21 @@ test("the day after a clean, an absent cache is the clean's, not a wrong place",
   assert.match(day4.result.REASON, /did not clean it there/);
 });
 
+test("a day skipped at the lock is judged by the disk as it ends, not by the df before the wait", () => {
+  const { r, result } = disk({ cacheGb: 16, heavyBusy: true, usedPct: 60, lockPct: 75 });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(result.STATUS, "skipped");
+  assert.equal(result.DISK_USED_PCT, "75");
+  assert.match(result.ALARM, /75% used/);
+});
+
+test("the disk is measured again once the daily is gone, and the verdict says that measure", () => {
+  const { r, result } = disk({ dailyBusyOnce: true, usedPct: 40, dailyPct: 72, env: { DISK_WAIT_BUDGET_S: "60" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(result.STATUS, "green");
+  assert.match(result.REASON, /^disk 72% used/);
+});
+
 test("exactly at the cap is not over it: nothing is cleaned", () => {
   const { result, calls } = disk({ cacheGb: 15 });
   assert.equal(result.STATUS, "green");
