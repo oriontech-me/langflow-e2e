@@ -128,6 +128,9 @@ BASE_PORT="${BASE_PORT:-7860}"
 ECHO_PORT="${ECHO_PORT:-8080}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 RETRIES="${RETRIES:-}"                        # empty = the config's default (2 in CI)
+# What a run's retries ARE, for the record: RETRIES when given, else the config's CI
+# default, which every shard runs under (run_shard exports CI=true).
+CONFIG_CI_RETRIES=2
 RECOVER_TIMEOUT_S="${RECOVER_TIMEOUT_S:-420}"
 BACKEND_START_TIMEOUT_S="${BACKEND_START_TIMEOUT_S:-300}"
 
@@ -789,6 +792,36 @@ check_declared_target() {
   return 0
 }
 
+# Whether LEDGER_DIR is the daily's own ledger, however it is spelled: resolved, so a
+# trailing slash or a symlink to it is the same ledger.
+ledger_is_dailys() {
+  local daily="${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}"
+  [ -n "$daily" ] && [ -n "$LEDGER_DIR" ] || return 1
+  local a b
+  a="$(cd "$LEDGER_DIR" 2>/dev/null && pwd -P || printf '%s' "${LEDGER_DIR%/}")"
+  b="$(cd "$daily" 2>/dev/null && pwd -P || printf '%s' "${daily%/}")"
+  [ "$a" = "$b" ]
+}
+
+# RETRIES, refused before anything runs unless empty or a small non-negative integer.
+# 0 measures honestly: a test that fails once is a failure, not a flake.
+check_retries() {
+  [ -z "$RETRIES" ] && return 0
+  [[ "$RETRIES" =~ ^[0-5]$ ]] || die "RETRIES='$RETRIES' is not 0 to 5 (empty is the config's default, $CONFIG_CI_RETRIES)."
+  [ "$RETRIES" = "$CONFIG_CI_RETRIES" ] && return 0
+  # Other retries change what counts as a failure: with 0, one failure is a hard one,
+  # which the @stable removal and the history would read as the daily's. Only a lane
+  # that publishes nothing, and keeps a ledger of its own or none, runs them.
+  local sw
+  for sw in CREATE_ISSUE NOTIFY_SLACK NOTIFY_SLACK_ALWAYS POST_QA_PLATFORM AUTO_REMOVE HISTORY_TO_SOURCE; do
+    [ "${!sw:-0}" = "0" ] || die "RETRIES=$RETRIES with $sw=${!sw}: a run with other retries than the default publishes nothing."
+  done
+  if ledger_active && ledger_is_dailys; then
+    die "RETRIES=$RETRIES with the daily's ledger ($LEDGER_DIR): point LEDGER_DIR at a copy, or set KEEP_LEDGER=0."
+  fi
+  return 0
+}
+
 # The areas (STABLE_AREAS), refused before anything runs when malformed. Whether they
 # select anything is only known from the listing; see phase_prep.
 check_stable_areas() {
@@ -812,7 +845,7 @@ check_stable_areas() {
   # The same for the daily's own ledger: its history rows feed the rotation, the lane
   # comparison and the coverage matrix. A narrowed run keeps a ledger of its own (the
   # on-demand executor hands it a copy), or none.
-  if ledger_active && [ "$LEDGER_DIR" = "${LEDGER_HOME:+$LEDGER_HOME/langflow-e2e}" ]; then
+  if ledger_active && ledger_is_dailys; then
     die "STABLE_AREAS with the daily's ledger ($LEDGER_DIR): point LEDGER_DIR at a copy, or set KEEP_LEDGER=0."
   fi
   return 0
@@ -1611,6 +1644,8 @@ phase_preflight() {
   check_declared_target
   check_declared_model
   check_stable_areas
+  check_retries
+  [ -n "$RETRIES" ] && info "retries: $RETRIES (the default is $CONFIG_CI_RETRIES)"
   [ -n "$STABLE_AREAS" ] && info "areas: @stable AND any of $STABLE_AREAS (the rest of @stable does not run)"
   info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
   [ -n "$TARGET_DECLARED_SHA" ] && info "target declared: ${TARGET_DECLARED_REF:-<no ref>} @ ${TARGET_DECLARED_SHA:0:10}, version $TARGET_DECLARED_VERSION"
@@ -2604,6 +2639,7 @@ phase_merge() {
     langflow_declared_ref "${TARGET_DECLARED_REF:-}" \
     langflow_image_label_sha "${TARGET_IMAGE_LABEL_SHA:-}" \
     stable_areas "${STABLE_AREAS:-}" \
+    retries "${RETRIES:-$CONFIG_CI_RETRIES}" \
     model_declared_provider "${DECLARED_MODEL_PROVIDER:-}" \
     model_declared_id "${DECLARED_MODEL_ID:-}" \
     model_used_provider "${MODEL_USED_PROVIDER:-}" \
