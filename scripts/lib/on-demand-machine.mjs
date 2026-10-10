@@ -59,6 +59,9 @@ export function setup({
   // one) and `old-suite` (a history without the clone's commit), with the clone's
   // commit as SUITE_FLOOR. Off, the clone has no origin, as no default run fetches.
   mirror = false,
+  // Whether the suite's run-e2e.sh knows STABLE_AREAS: the executor refuses areas for
+  // a suite that does not, which would run the whole @stable instead.
+  suiteKnowsAreas = true,
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -71,6 +74,7 @@ export function setup({
   writeFileSync(
     join(repo, "scripts", "run-e2e.sh"),
     `#!/usr/bin/env bash
+${suiteKnowsAreas ? "# knows STABLE_AREAS" : ""}
 env | sort > ${q(envOut)}
 echo "cwd=$PWD head=$(git rev-parse HEAD)" >> ${q(envOut)}
 echo "dotenv=$(readlink .env || echo none)" >> ${q(envOut)}

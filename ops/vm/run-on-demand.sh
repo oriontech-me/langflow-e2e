@@ -29,6 +29,9 @@
 #                                    of the day's rotation (DECLARED_MODEL_PROVIDER)
 #   ONDEMAND_MODEL         optional  a model of that provider (DECLARED_MODEL_ID)
 #   ONDEMAND_REQUESTED_BY  optional  who asked; carried into the result, never trusted
+#   ONDEMAND_AREAS         optional  area tags, space-separated ("@mcp @api"): the run
+#                                    is @stable AND any of them (run-e2e.sh's
+#                                    STABLE_AREAS); empty is the whole @stable
 #   ONDEMAND_SUITE_REF     optional  a branch or tag of langflow-e2e to run instead of
 #                                    the commit the daily left the clone on; fetched
 #                                    from the clone's origin (the mirror), and refused
@@ -59,7 +62,9 @@
 # STATUS is one of:
 #
 #   refused       the request cannot be served as asked: malformed (when it still
-#                 names a usable id), the daily's window, a suite ref the mirror does
+#                 names a usable id), the daily's window, areas the suite cannot
+#                 narrow to (it predates STABLE_AREAS) or that select no @stable test
+#                 -- the latter after the build, a suite ref the mirror does
 #                 not have or that is older than SUITE_FLOOR, a declared provider whose
 #                 key or model the provider turned down when asked before the build
 #                 (scripts/probe-declared-model.mjs), a branch that is not upstream's,
@@ -156,7 +161,7 @@ main() {
   # Globals, not locals: the EXIT trap runs after main has returned, when a local is out
   # of scope (build-target-image.sh lost its cleanup to exactly that).
   OD_STATE="$STATE"; OD_REPO="$REPO"; OD_LOG="$LOG"
-  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""
+  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""; OD_AREAS=""
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
@@ -238,7 +243,7 @@ main() {
   trap ondemand_finish EXIT
   mv -f "$REQ" "$STATE/requests/$OD_ID.env"
   [ "$parsed" = "1" ] || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$STATE/requests/$OD_ID.env"
-  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} suite=${OD_SUITE_REF:-<the daily commit>} by=${OD_BY:-<unnamed>}"
+  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} suite=${OD_SUITE_REF:-<the daily commit>} areas=${OD_AREAS:-<all of @stable>} by=${OD_BY:-<unnamed>}"
 
   # --- the daily's window -----------------------------------------------------------
   local dow="${NOW%% *}" hm="${NOW##* }"
@@ -335,6 +340,11 @@ main() {
   fi
   git -C "$REPO" worktree add -q --detach "$OD_WT" "$OD_SUITE_SHA" || ondemand_fail 3 failed "could not create the worktree at $OD_WT"
   echo "suite at: $(git -C "$OD_WT" log --oneline -1)"
+  # A suite from before STABLE_AREAS would ignore it and run the whole @stable, green
+  # over what nobody asked for. Refused instead, before the build.
+  if [ -n "$OD_AREAS" ] && ! grep -q 'STABLE_AREAS' "$OD_WT/scripts/run-e2e.sh" 2>/dev/null; then
+    ondemand_refuse "the suite at ${OD_SUITE_SHA:0:12} cannot narrow @stable to areas (its run-e2e.sh predates STABLE_AREAS); ask without areas, or for a newer suite"
+  fi
   # The provider keys that decide which spec files enter the suite are read from the
   # working copy's .env (#1764): linked, as the shadow does, so all lanes read one file.
   [ -f "$REPO/.env" ] && ln -sfn "$REPO/.env" "$OD_WT/.env"
@@ -433,6 +443,7 @@ main() {
   export LANGFLOW_IMAGE="$OD_IMAGE"
   export TARGET_DECLARED_SHA="$OD_TARGET_SHA" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION" TARGET_DECLARED_REF="$OD_REF"
   export DECLARED_MODEL_PROVIDER="$OD_PROVIDER" DECLARED_MODEL_ID="$OD_MODEL"
+  export STABLE_AREAS="$OD_AREAS"
   export BASE_PORT=7910 SHARDS=4 ECHO_PORT=8100 OLLAMA_PORT=11454
   export WORKFLOW_ID=on-demand-stable
   export LEDGER_DIR="$OD_LEDGER"
@@ -467,7 +478,12 @@ main() {
   verdict_errs="$(ondemand_run_errors verdict)"
   last_err="$(ondemand_run_errors last)"
   model_refused="$(cat "$RUNS_ROOT/$OD_RUN_ID"/logs/shard-*.model-refused 2>/dev/null | head -n 1)"
-  if [ -n "$model_refused" ]; then
+  if [ -n "$OD_AREAS" ] && printf '%s\n' "$last_err" | grep -q 'select no @stable test'; then
+    # The request's fault, as a declared provider nobody can use is: nothing ran.
+    OD_EXIT=2
+    OD_REASON="the areas asked for select no test in this suite: $last_err"
+    OD_STATUS=refused
+  elif [ -n "$model_refused" ]; then
     OD_EXIT=2
     OD_REASON="the declared provider could not be used, so the agent specs did not run: $model_refused"
     OD_STATUS=refused
@@ -493,10 +509,10 @@ main() {
 # Parses the request into the OD_* globals. On a malformed one, sets OD_PARSE_ERR and
 # fails. Not called in $( ): the globals it sets would be lost with the subshell.
 # Never sources, never evaluates: each line is split at its first '=' and the key must
-# be one of six.
+# be one of seven.
 ondemand_parse_request() {
   local raw="$1" line key value seen=" "
-  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""
+  OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""; OD_AREAS=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | '#'*) continue ;; esac
@@ -529,6 +545,16 @@ ondemand_parse_request() {
           && [[ "$value" != *.lock ]] && [[ "$value" != *.lock/* ]] \
           || { OD_PARSE_ERR="ONDEMAND_SUITE_REF is not a branch or tag name: '${value:0:80}'"; return 1; }
         OD_SUITE_REF="$value" ;;
+      ONDEMAND_AREAS)
+        # Tags, one space between: the shape run-e2e.sh's STABLE_AREAS checks, minus
+        # @stable (the base) and the lane tags (an environment of their own).
+        [[ "$value" =~ ^(@[a-z0-9][a-z0-9-]{0,39}( @[a-z0-9][a-z0-9-]{0,39}){0,24})?$ ]] \
+          || { OD_PARSE_ERR="ONDEMAND_AREAS is not tags separated by one space: '${value:0:80}'"; return 1; }
+        case " $value " in
+          *" @stable "* | *" @destructive "* | *" @enterprise "* | *" @serving "*)
+            OD_PARSE_ERR="ONDEMAND_AREAS names @stable or a lane tag, which are not areas: '${value:0:80}'"; return 1 ;;
+        esac
+        OD_AREAS="$value" ;;
       *) OD_PARSE_ERR="unknown key '${key:0:40}'"; return 1 ;;
     esac
   done <<< "$raw"

@@ -260,7 +260,8 @@ test("phase_prep passes the declaration to the partitioner and cannot die derivi
   // never costs the artefacts that make the day diagnosable — the asymmetry with the
   // collection gate, which DOES stop the run, is argued in the script.
   const src = readFileSync(SCRIPT, "utf8");
-  assert.match(src, /scripts\/declared-stable-specs\.ts > "\$RUN_DIR\/declared-specs\.json"/);
+  // With areas, the declaration is narrowed to the run's own grep (STABLE_AREAS).
+  assert.match(src, /scripts\/declared-stable-specs\.ts \$\{STABLE_AREAS:\+"--grep=\$STABLE_GREP"\} > "\$RUN_DIR\/declared-specs\.json"/);
   assert.match(src, /--declared "\$RUN_DIR\/declared-specs\.json"/);
   const prep = src.slice(src.indexOf("phase_prep() {"), src.indexOf("start_backend_for_shard() {"));
   assert.match(prep, /if ! npx ts-node scripts\/declared-stable-specs\.ts/);
@@ -3664,6 +3665,112 @@ test("a declared model needs its provider, and both are refused when malformed",
   }
 });
 
+test("areas narrow @stable: well-formed tags pass, @stable and the lane tags are refused", () => {
+  // A ledger of its own, as the on-demand executor gives a narrowed run.
+  const run = (areas) => sourced("check_stable_areas && echo ok", { STABLE_AREAS: areas, LEDGER_DIR: "/tmp/a-ledger-copy" });
+  for (const ok of ["", "@mcp", "@mcp @api", "@model-provider @ui-ux @a2a"]) assert.equal(run(ok).stdout.trim(), "ok", ok);
+  for (const [areas, message] of [
+    ["@stable", /names @stable/],
+    ["@mcp @enterprise", /@enterprise, a lane tag/],
+    ["@serving", /@serving, a lane tag/],
+    ["@destructive", /@destructive, a lane tag/],
+    ["mcp", /not one: 'mcp'/],
+    ["@MCP", /not one/],
+    ["@mcp;rm", /not one/],
+    [Array.from({ length: 26 }, (_, i) => `@a${i}`).join(" "), /at most 25/],
+  ]) {
+    const r = run(areas);
+    assert.equal(r.status, 1, areas);
+    assert.match(r.stderr, message, areas);
+  }
+});
+
+test("the grep is @stable alone without areas, and @stable AND any area with them, each tag whole", () => {
+  const grep = (areas) => sourced("stable_grep", { STABLE_AREAS: areas }).stdout.trim();
+  assert.equal(grep(""), "@stable", "the whole @stable changed its --grep");
+  // Playwright compiles a CLI --grep case-insensitively.
+  const g = new RegExp(grep("@mcp @api"), "i");
+  // Playwright greps "<file> <titles and tags>"; @stable is declared first, an area after.
+  for (const [target, want] of [
+    ["mcp/server.spec.ts MCP server @stable @regression @mcp", true],
+    ["api/flows.spec.ts flows @stable @api", true],
+    ["x.spec.ts both @api @stable", true],
+    ["x.spec.ts not stable @mcp", false],
+    ["x.spec.ts another area @stable @agents", false],
+    ["x.spec.ts a longer tag @stable @api-keys", false],
+    ["api/path-only.spec.ts @stable", false],
+    ["x.spec.ts mail dev@api.io @stable", false],
+    ["x.spec.ts suffixed @stable @api:v2", false],
+    ["x.spec.ts upper case @stable @MCP", true],
+  ]) assert.equal(g.test(target), want, target);
+});
+
+test("never more shards than spec files, and an unknown count keeps the shards asked for", () => {
+  const n = (files, shards) => sourced(`shards_for_files ${JSON.stringify(files)} ${shards}`).stdout.trim();
+  assert.equal(n("1", 4), "1");
+  assert.equal(n("3", 4), "3");
+  assert.equal(n("4", 4), "4");
+  assert.equal(n("170", 4), "4");
+  for (const unknown of ["", "0", "x"]) assert.equal(n(unknown, 4), "4", JSON.stringify(unknown));
+});
+
+test("a narrowed run on a lane that publishes is refused: it would speak for the whole @stable", () => {
+  for (const sw of ["CREATE_ISSUE", "NOTIFY_SLACK", "NOTIFY_SLACK_ALWAYS", "POST_QA_PLATFORM", "AUTO_REMOVE", "HISTORY_TO_SOURCE"]) {
+    const r = sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", LEDGER_DIR: "/tmp/a-ledger-copy", [sw]: "1" });
+    assert.equal(r.status, 1, sw);
+    assert.match(r.stderr, new RegExp(`STABLE_AREAS with ${sw}=1`), sw);
+    // The whole @stable on the same lane is untouched.
+    assert.equal(sourced("check_stable_areas && echo ok", { STABLE_AREAS: "", [sw]: "1" }).stdout.trim(), "ok", sw);
+  }
+});
+
+test("a narrowed run never writes the daily's own ledger, but may keep a copy or none", () => {
+  const home = makeTempDir("areas-ledger-");
+  const run = (env) => sourced("check_stable_areas && echo ok", { STABLE_AREAS: "@mcp", HOME: home, XDG_STATE_HOME: "", ...env });
+  const daily = run({});
+  assert.equal(daily.status, 1, daily.stderr);
+  assert.match(daily.stderr, /STABLE_AREAS with the daily's ledger/);
+  assert.equal(run({ LEDGER_DIR: join(home, "copy") }).stdout.trim(), "ok", "a ledger copy was refused");
+  assert.equal(run({ KEEP_LEDGER: "0" }).stdout.trim(), "ok", "no ledger was refused");
+  // The whole @stable keeps the daily's ledger, as always.
+  assert.equal(sourced("check_stable_areas && echo ok", { STABLE_AREAS: "", HOME: home }).stdout.trim(), "ok");
+});
+
+test("phase_prep counts what the areas select by the @stable tag, and names an area that selects none", () => {
+  // The counting snippet itself, taken from the script and run on a listing.
+  const src = readFileSync(SCRIPT, "utf8");
+  const code = src.match(/listed="\$\(node -e '\n([\s\S]*?)' \\\n/)[1];
+  const dir = makeTempDir("areas-count-");
+  const spec = (file, tags, n = 1, title = "t") => ({ file, title, tags, tests: Array.from({ length: n }, () => ({})) });
+  writeFileSync(join(dir, "list.json"), JSON.stringify({ suites: [{ specs: [
+    spec("a.spec.ts", ["stable", "mcp"], 2),
+    spec("b.spec.ts", ["stable", "api"]),
+    spec("b.spec.ts", ["stable", "api"]),
+    spec("c.spec.ts", ["stable", "mcp"], 1, "@stable-ish title"),
+    spec("d.spec.ts", ["mcp"], 5),
+  ], suites: [{ specs: [spec("e.spec.ts", ["@stable", "@mcp"])] }] }] }));
+  const count = (areas) => spawnSync(process.execPath, ["-e", code, join(dir, "list.json"), areas], { encoding: "utf8" }).stdout.split("\t");
+  // d.spec.ts carries no @stable tag: the partitioner would not count it, nor does this.
+  assert.deepEqual(count("@mcp @api"), ["4", "6", ""]);
+  assert.deepEqual(count("@mcp @nope"), ["4", "6", "@nope"]);
+  // Tabs or several spaces between areas read as one separator.
+  assert.deepEqual(count("@mcp\t@nope"), ["4", "6", "@nope"]);
+});
+
+test("phase_prep shards no wider than the listing and names an area that selects nothing", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const prep = src.slice(src.indexOf("phase_prep() {"), src.indexOf("start_backend_for_shard() {"));
+  assert.match(prep, /partition-shards\.mjs matrix \\\n\s*"\$RUN_DIR\/stable-list\.json" "\$durations" "\$partition_shards"/);
+  assert.match(prep, /die "the areas \$empty_areas select no @stable test in this suite\."/);
+});
+
+test("the listing and the round both use the composed grep, never a literal @stable", () => {
+  const src = readFileSync(SCRIPT, "utf8");
+  const calls = src.split("\n").filter((l) => /npx playwright test .*--grep/.test(l) && !/^\s*#/.test(l));
+  assert.ok(calls.length >= 2, calls.join("\n"));
+  for (const l of calls) assert.match(l, /--grep "\$STABLE_GREP"/, l);
+});
+
 test("the image label decides match, mismatch or absent, and <no value> is never a match", () => {
   const verdictFor = (label) => sourced(`declared_image_verdict ${JSON.stringify(label)}`, declaredEnv()).stdout.trim();
   assert.equal(verdictFor(DECLARED_SHA), "match");
@@ -3861,7 +3968,7 @@ test("each shard records what its agent specs run against, after the pin and bef
   // record before the sourcing would read empty values and call every pinned day "all".
   const sourcedEnv = body.indexOf('. "$gh_env"');
   const record = body.indexOf("printf '%s\\t%s\\n' \"${MODEL_TEST_PROVIDER:-}\" \"${MODEL_TEST_ID:-}\"");
-  const round = body.indexOf('npx playwright test --grep "@stable"');
+  const round = body.indexOf('npx playwright test --grep "$STABLE_GREP"');
   assert.ok(pin > 0 && sourcedEnv > pin && record > sourcedEnv && round > record,
     "the record sits after the pin is sourced and before the round");
   // A diagnostic never costs the shard its round: the write is guarded.

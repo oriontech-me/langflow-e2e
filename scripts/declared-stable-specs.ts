@@ -29,7 +29,10 @@ import { declaredStableSpecFiles } from "./lib/stable-tests";
 
 function main(): number {
   try {
-    const declared = declaredStableSpecFiles();
+    // --grep=<regex>: the run's own filter when it narrows @stable to some areas,
+    // case-insensitive as Playwright compiles a CLI --grep.
+    const grepArg = process.argv.slice(2).find((a) => a.startsWith("--grep="));
+    const declared = declaredStableSpecFiles(undefined, grepArg ? new RegExp(grepArg.slice("--grep=".length), "i") : undefined);
     // A floor, for the reason `snapshotCatalog` has `--min-categories`: the check
     // this feeds is ONE-SIDED. It sees the listing shrink; it cannot see THIS side
     // shrink, because an under-reported declaration yields `missing: []` and reads

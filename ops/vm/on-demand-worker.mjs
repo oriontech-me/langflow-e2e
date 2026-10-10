@@ -88,6 +88,8 @@ export const SHAPES = {
   model: /^[A-Za-z0-9._:/-]{0,120}$/,
   requestedBy: /^[A-Za-z0-9._@+-]{0,128}$/,
   suiteRef: /^[A-Za-z0-9._/-]{0,200}$/,
+  /** One area tag; a request carries up to 25 (run-e2e.sh's STABLE_AREAS). */
+  area: /^@[a-z0-9][a-z0-9-]{0,39}$/,
   workerId: /^[A-Za-z0-9._-]{1,64}$/,
   claimToken: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   stamp: /^\d{8}T\d{6}Z$/,
@@ -148,6 +150,14 @@ export function claimedRequestError(req) {
     const s = req.suite_ref;
     if (s !== "" && (s.startsWith("-") || s.startsWith("/") || s.endsWith("/") || s.includes("..") || s.includes("//") || s.split("/").some((seg) => seg.startsWith(".") || seg.endsWith(".") || seg.endsWith(".lock")))) return `suite_ref is not a branch or tag name: ${JSON.stringify(s)}`;
   }
+  // Optional too: a list of area tags, which the executor reads as @stable AND any.
+  if (req.areas !== undefined && req.areas !== null) {
+    if (!Array.isArray(req.areas) || req.areas.length > 25) return `areas is not a list of at most 25 tags: ${JSON.stringify(req.areas).slice(0, 80)}`;
+    for (const a of req.areas) {
+      if (typeof a !== "string" || !SHAPES.area.test(a)) return `areas has a tag that is not one: ${JSON.stringify(String(a)).slice(0, 80)}`;
+      if (["@stable", "@destructive", "@enterprise", "@serving"].includes(a)) return `areas names ${a}, which is not an area`;
+    }
+  }
   return null;
 }
 
@@ -160,6 +170,7 @@ export function requestEnv(req) {
     `ONDEMAND_MODEL=${req.model}`,
     `ONDEMAND_REQUESTED_BY=${req.requested_by}`,
     `ONDEMAND_SUITE_REF=${req.suite_ref ?? ""}`,
+    `ONDEMAND_AREAS=${(req.areas ?? []).join(" ")}`,
   ].join("\n") + "\n";
 }
 
@@ -412,6 +423,7 @@ export class Worker {
     this.state.held = {
       id: req.id, ref: req.ref, provider: req.provider, model: req.model, requested_by: req.requested_by,
       suite_ref: req.suite_ref ?? "",
+      areas: req.areas ?? [],
       claim_token: req.claim_token, held_since: isoUtc(this.cfg.now()),
       reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0,
     };
