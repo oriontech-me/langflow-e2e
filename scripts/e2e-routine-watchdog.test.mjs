@@ -116,6 +116,16 @@ test("skipped, failed and blocked are each said, with the routine's own reason",
   }
 });
 
+test("a day without a verdict still says its ALARM, under the reason", { skip: !SAFE && "too close to UTC midnight" }, () => {
+  for (const status of ["skipped", "failed"]) {
+    const r = watchdog({ props: ranToday(), last: resultToday({ STATUS: status, REASON: `why ${status}`, ALARM: "the disk / is 75% used" }) });
+    assert.equal(r.headline, `Routine demo: ${status} today`);
+    assert.match(r.body, new RegExp(`^why ${status}\nthe disk / is 75% used\nLast log:`, "m"));
+  }
+  const plain = watchdog({ props: ranToday(), last: resultToday({ STATUS: "skipped", REASON: "why" }) });
+  assert.match(plain.body, /^why\nLast log:/m, "no ALARM, no blank line");
+});
+
 test("green and red that were delivered are quiet, and the quiet is logged", { skip: !SAFE && "too close to UTC midnight" }, () => {
   for (const status of ["green", "red"]) {
     for (const report of ["ok", "none"]) {

@@ -238,7 +238,8 @@ and what bounds it:
 
 Every weekday it records the disk's use and the cache's size in its result, and at or
 over `DISK_ALARM_PCT` (70) of `/` it leaves an `ALARM` naming the largest entries under
-`/root`, which the watchdog posts to Slack. A full disk is never a red: it is not the
+`/root`, which the watchdog posts to Slack, beside the reason on a skipped or failed day
+too. A full disk is never a red: it is not the
 product's, and a red would open the routine's issue on the destination. It publishes
 nothing itself.
 

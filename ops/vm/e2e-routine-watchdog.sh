@@ -27,7 +27,8 @@
 #   still running                at the check, which the timer places well past the
 #                                routine's longest healthy run plus its wait budget
 #   ended with no result         ran today, no result written for today
-#   skipped / failed / blocked   the result says so; its REASON is the message
+#   skipped / failed / blocked   the result says so; its REASON is the message, and its
+#                                ALARM, if it carries one, follows it
 #   a red nobody heard           REPORT=failed in the result
 #   a verdict with a caveat      ALARM=<text> in the result: the routine gave its verdict
 #                                and has one more thing to say that is not one (a delivery
@@ -140,8 +141,11 @@ Last log: $LOG_DIR/latest.log"
           say "quiet: $status today, report=${report:-none}"
         fi ;;
       skipped | failed | blocked)
+        # An ALARM rides along: a day without a verdict can still have measured something
+        # worth saying (the disk routine's filling disk on a day the lock never came).
         headline="Routine $ROUTINE: $status today"
-        body="$reason
+        body="$reason${alarm:+
+$alarm}
 Last log: $LOG_DIR/latest.log" ;;
       *)
         headline="Routine $ROUTINE: a result this check does not know"
