@@ -271,6 +271,16 @@ test("a provider the pre-check turned down is refused before the build, in the p
 // Areas narrow the run to @stable AND any of them (run-e2e.sh's STABLE_AREAS).
 const AREAS = (areas) => `ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_AREAS=${areas}\n`;
 
+test("retries reach run-e2e.sh as RETRIES, and none is the suite's default", () => {
+  const r = onDemand({ request: "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_RETRIES=0\n" });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(kv(r.env).RETRIES, "0");
+  assert.match(r.log, /retries=0/);
+  const none = onDemand({ request: "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\n" });
+  assert.equal(kv(none.env).RETRIES, "");
+  assert.match(none.log, /retries=<default>/);
+});
+
 test("areas reach run-e2e.sh as STABLE_AREAS, and none is the whole @stable", () => {
   const r = onDemand({ request: AREAS("@mcp @api") });
   assert.equal(r.status, 0, r.log);
@@ -496,6 +506,8 @@ test("a malformed request is refused before anything runs, and its contents neve
     ["ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_MODEL=claude-x\n", /needs ONDEMAND_PROVIDER/],
     ["ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=Anthropic;x\n", /ONDEMAND_PROVIDER has characters/],
     // A suite ref git would read as an option, a range or a path out of refs.
+    ...["6", "-1", "01", "x", "1 2"].map((v) =>
+      [`ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_RETRIES=${v}\n`, /ONDEMAND_RETRIES is not 0 to 5/]),
     // Areas: tags one space apart, never @stable or a lane tag.
     ...["@stable", "@mcp @serving", "@enterprise", "mcp", "@mcp  @api", " @mcp", "@MCP", "@mcp;id"].map((areas) =>
       [`ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_AREAS=${areas}\n`, /ONDEMAND_AREAS (is not tags|names @stable or a lane tag)/]),
