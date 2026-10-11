@@ -202,9 +202,10 @@ export const slotId = (text) => text.split(/\r?\n/).find((l) => l.startsWith("ON
  * request's; otherwise whether the build has started and, once the suite has, its
  * run id, the version and the build seconds (the "built:" line).
  *
- * The build starts soon after "suite at:", which comes after every refusal but the
- * provider pre-check's (langflow-e2e#2230): that one asks the provider in seconds,
- * between the two, so a request it refuses may show `building` for that long. Not on
+ * The build starts soon after "suite at:", which comes after every refusal but three:
+ * areas the suite cannot narrow to, the provider pre-check (langflow-e2e#2230), which
+ * asks the provider in seconds, and the build's own (a branch that is not upstream's).
+ * A request one of them refuses shows `building` until its result. Not on
  * build-target-image.sh's own "building" line: its stderr reaches the log only once
  * the build has ended. The full SHA is not here either: the log carries 12 characters
  * of it and the terminal result all 40, so `running` goes without it, as the contract
