@@ -78,9 +78,17 @@ file before it starts (see *Operating the on-demand worker*):
 
 ```sh
 cp ops/systemd/e2e-on-demand-worker.service /etc/systemd/system/
-install -m 600 -o root -g root /dev/null /root/.e2e-on-demand-worker.env   # then fill it
+# Created empty only when it does not exist: never over a file that holds the token.
+[ -e /root/.e2e-on-demand-worker.env ] || install -m 600 -o root -g root /dev/null /root/.e2e-on-demand-worker.env
 systemctl daemon-reload
-systemctl enable --now e2e-on-demand-worker.service
+systemctl enable e2e-on-demand-worker.service
+```
+
+Fill the env file, then start it. Started on an empty file, it exits 78 and stays
+failed until restarted:
+
+```sh
+systemctl start e2e-on-demand-worker.service
 ```
 
 ### Asking for an on-demand run by hand
@@ -132,11 +140,14 @@ Three ceilings, each under the next:
 | Ceiling | Where | When it is hit |
 |---|---|---|
 | each upstream step 5 min, the `docker build` 30 min | `build-target-image.sh` (`UPSTREAM_TIMEOUT_S`, `BUILD_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, docker or the network, never the branch |
-| the run's deadline, 80 min from its start | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
+| the run's deadline, 80 min from the executor's start | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
 | 90 min | the unit's `TimeoutStartSec` | `failed`, "stopped by SIGTERM", which the daily's stop and `systemctl stop` also say |
 
-Over all three is the platform's `MAX_HOLD_SECONDS`, 2 h: past it, the platform releases
-the request as `abandoned` while the run would still be going. That is why none of the
+Over all three is the platform's `MAX_HOLD_SECONDS`, 2 h from the claim: past it, the
+platform releases the request as `abandoned` while the run would still be going. The
+deadline counts from the executor's start, not the claim, so a start the worker had to
+retry (the slot held by a run started by hand) can still pass it; the run's result is
+taken anyway, over the `abandoned`. That is why none of the
 ceilings grows with retries. The platform asks for at most the suite's default of 2;
 3 to 5, asked by hand, may reach the deadline on a very red branch.
 
@@ -198,7 +209,8 @@ the claim token, is `/root/e2e-on-demand/worker/state.json`. Each run's log is
 `/var/log/e2e-on-demand/<stamp>.log`, and `latest.log` points at the newest.
 
 **Exit 78: the configuration is wrong.** A key missing, an `API_BASE` that is not
-`https://<host>`, or the platform answering 401 to the token (wrong, or revoked). The
+`https://<host>`, a `WORKER_ID` of a shape the platform does not take, or the platform
+answering 401 to the token (wrong, or revoked). The
 unit does not restart on 78 (`RestartPreventExitStatus=78`): retrying a wrong token
 every 30 s fixes nothing. It stays `failed` until someone fixes the file. The journal
 names what is wrong (`::error::`). Fix it, then:
@@ -213,7 +225,8 @@ tokens, which is what a rotation needs. Tokens are issued and revoked by a platf
 admin, signed in with their own session (the routes and a terminal recipe are in the
 platform's contract, *Worker credential*):
 
-1. issue a new token;
+1. issue a new token (two already active refuse it: revoke the one that is not in use
+   first);
 2. replace `QA_ON_DEMAND_WORKER_TOKEN` in the env file, and `systemctl restart
    e2e-on-demand-worker.service`;
 3. check that the heartbeat lands (the journal, or the tab);
@@ -235,7 +248,8 @@ cancelled from the platform instead.
 **Stopping the worker.** `systemctl stop e2e-on-demand-worker.service`: nothing new is
 claimed, and a run already going finishes on its own. Started again, the worker
 forwards its result. While it is stopped, requests wait in the platform's queue, and
-one it held is released as `abandoned` after the 15 min lease. To keep it off across a
+one it held is released as `abandoned` after the 15 min lease: stopped longer than that
+mid-run, the run shows `abandoned` until the worker, started again, forwards its result. To keep it off across a
 reboot, `systemctl disable --now`.
 
 ## Rollback
