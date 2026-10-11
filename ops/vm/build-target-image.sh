@@ -28,7 +28,8 @@
 # build itself failed" without parsing text:
 #
 #   2  refused: not a branch name, or not a branch of upstream (a fork is never one)
-#   3  upstream unreachable, or the commit could not be fetched
+#   3  upstream unreachable, or the commit could not be fetched, or a step ran past its
+#      time limit (the machine or the network, never the branch)
 #   4  the commit has no readable [project].version, or no nightly Dockerfile
 #   5  docker build failed (the log is kept and named)
 #   6  the built image does not carry the commit it was built from
@@ -46,6 +47,16 @@
 # file". The source tree is removed on every exit; the image is the caller's to remove
 # after its run, and so is the build cache (`docker builder prune -af`), which saved
 # about 20 s per build for about 9 GB when it was measured.
+#
+# Every step that waits on the network or on docker has a time limit, so a hung step
+# ends the build in minutes with its own reason, rather than holding the machine until
+# the unit's TimeoutStartSec says only "SIGTERM". The limits are generous on purpose:
+# measured on the qa (runs of 2026-10-05 to 10-10), a build takes 316-353 s, and the
+# fetch of one commit seconds. A limit that is hit says the machine or the network is
+# wrong, so it is status 3, never 5: a build failure would read as the branch's.
+#
+#   UPSTREAM_TIMEOUT_S  the ls-remote and the fetch of upstream, each (default 300)
+#   BUILD_TIMEOUT_S     the docker build (default 1800, about five times the measured)
 main() {
   set -uo pipefail
   local branch="${1:-}"
@@ -54,6 +65,7 @@ main() {
   local image_repo="${IMAGE_REPO:-langflow-ondemand}"
   local docker="${DOCKER:-docker}"
   local dockerfile="docker/build_and_push.Dockerfile"
+  local upstream_s="${UPSTREAM_TIMEOUT_S:-300}" build_limit_s="${BUILD_TIMEOUT_S:-1800}"
 
   refuse() { echo "build-target-image: $2" >&2; exit "$1"; }
 
@@ -85,9 +97,12 @@ main() {
   # The branch can move during a five-minute build, and the image must describe one
   # commit. ls-remote patterns match on the tail of a ref, so the exact name is
   # filtered rather than trusted.
-  local listing sha
-  listing="$(git ls-remote --heads "$upstream" "refs/heads/$branch")" \
-    || refuse 3 "could not list the branches of $upstream."
+  [[ "$upstream_s" =~ ^[1-9][0-9]*$ ]] || refuse 7 "UPSTREAM_TIMEOUT_S='$upstream_s' is not a number of seconds."
+  [[ "$build_limit_s" =~ ^[1-9][0-9]*$ ]] || refuse 7 "BUILD_TIMEOUT_S='$build_limit_s' is not a number of seconds."
+  local listing sha rc=0
+  listing="$(timeout "$upstream_s" git ls-remote --heads "$upstream" "refs/heads/$branch")" || rc=$?
+  [ "$rc" = "124" ] && refuse 3 "listing the branches of $upstream did not answer in ${upstream_s}s."
+  [ "$rc" = "0" ] || refuse 3 "could not list the branches of $upstream."
   sha="$(printf '%s\n' "$listing" | awk -v ref="refs/heads/$branch" '$2 == ref { print $1 }')"
   [ -n "$sha" ] || refuse 2 "'$branch' is not a branch of $upstream. A fork's branch is never one, and a deleted or mistyped branch is not either."
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse 3 "$upstream answered '$sha' for $branch, which is not a commit."
@@ -111,8 +126,10 @@ main() {
   BUILD_TARGET_SRC="$src"
   trap 'rm -rf "${BUILD_TARGET_SRC:-}"' EXIT
   git init -q "$src" || refuse 3 "cannot create $src."
-  git -C "$src" fetch -q --depth 1 "$upstream" "$sha" \
-    || refuse 3 "could not fetch $sha from $upstream."
+  rc=0
+  timeout "$upstream_s" git -C "$src" fetch -q --depth 1 "$upstream" "$sha" || rc=$?
+  [ "$rc" = "124" ] && refuse 3 "fetching $sha from $upstream did not finish in ${upstream_s}s."
+  [ "$rc" = "0" ] || refuse 3 "could not fetch $sha from $upstream."
   git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD || refuse 3 "could not check out $sha."
   [ "$(git -C "$src" rev-parse HEAD)" = "$sha" ] || refuse 3 "the checkout is not at $sha."
 
@@ -137,9 +154,17 @@ with open(sys.argv[1], "rb") as f:
   local log="$build_root/build-${sha:0:12}-${src##*-}.log"
   local start=$SECONDS
   echo "build-target-image: building $branch @ ${sha:0:12} (version $version) as $image; log: $log" >&2
-  if ! "$docker" build -f "$src/$dockerfile" --target full \
+  rc=0
+  # -k: a client that does not stop on TERM is killed a minute later. timeout then
+  # answers 137, not 124 (coreutils: 128+9 when the KILL is sent), and so does a client
+  # killed for another reason, so 137 counts as the limit only once the limit has passed.
+  timeout -k 60 "$build_limit_s" "$docker" build -f "$src/$dockerfile" --target full \
       --label "org.langflow.sha=$sha" --label "org.langflow.ref=$branch" \
-      -t "$image" "$src" > "$log" 2>&1; then
+      -t "$image" "$src" > "$log" 2>&1 || rc=$?
+  if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$build_limit_s" ]; }; then
+    tail -n 15 "$log" >&2
+    refuse 3 "docker build of $branch @ ${sha:0:12} did not finish in ${build_limit_s}s, so it was stopped. A build takes about 6 minutes: this is the machine, docker or the network, not the branch; the log so far is $log."
+  elif [ "$rc" != "0" ]; then
     tail -n 15 "$log" >&2
     refuse 5 "docker build of $branch @ ${sha:0:12} failed after $((SECONDS - start))s. This is a build failure, not a test result; the full log is $log."
   fi

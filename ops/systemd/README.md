@@ -13,6 +13,7 @@ here, which is what makes `diff` a meaningful check (see *Verify*).
 | `e2e-mirror-freshness.service` + `.timer` | hourly: is the suite this lane checked out still what `main` holds? (#1947). **Records** the answer, never posts |
 | `e2e-shadow.service` | the **image shadow** (#2093): the same suite against the published image of the version the daily served, on its own ports, worktree, ledger and logs, publishing nothing. **No timer**: `ops/vm/request-shadow.sh` starts it with `--no-block` at the end of the daily **on the days its cadence is due** (every run through 2026-10-09, then the first run of each week from Monday; the knobs are in `run-daily.sh` and may be moved from the lane file), and `After=e2e-daily.service` holds it until the daily's unit has finished |
 | `e2e-on-demand.service` | the **on-demand run**: one `@stable` run against one branch of upstream, built into an image on this machine (`ops/vm/build-target-image.sh`) and served as a declared target (#2111), answering the request in `/root/e2e-on-demand/request.env`. Its own ports (7910-7913, echo 8100, ollama 11454; not 7890-7893, the Enterprise and serving-identity defaults), worktree, ledger copy and logs, publishing nothing. **No timer** and **no `Conflicts=`**: it refuses to start on weekdays 07:30-08:40 UTC or beside the daily or the shadow, and `run-daily.sh` stops it if it is still going at 08:00. It also refuses while a scheduled routine holds the heavy-lane lock (*Scheduled routines*) |
+| `e2e-on-demand-worker.service` | the **on-demand worker** (`ops/vm/on-demand-worker.mjs`): polls the QA platform's on-demand queue over outbound HTTPS, claims one request at a time, writes it into the run's slot, starts `e2e-on-demand.service` and forwards its result. The one long-running unit here, so the one with an `[Install]` section: it comes back after a reboot by itself. See *Operating the on-demand worker* |
 | `e2e-mirror-freshness-announce.service` + `.timer` | 07:30 UTC on weekdays, `Persistent=false`: posts only if the mirror is behind 30 minutes before the daily. The rest of the day reaches the channel as the `Mirror:` line of the daily's own message |
 | `e2e-routine-<name>.service` + `.timer` | a **scheduled routine** moved off Actions (stage 3): the shape is `ops/vm/lib/routine.sh`, see *Scheduled routines* below |
 | `e2e-routine-watchdog@.service` + `e2e-routine-<name>-watchdog.timer` | the **absence alarm** of one routine, the instance being its name; one template, one timer per routine |
@@ -72,11 +73,32 @@ either: it is installed and never enabled, and the daily asks for it. Removing i
 shadow's rollback, and the daily then logs `shadow: NOT requested — … not installed`.
 `e2e-on-demand.service` is the same: installed, never enabled, started for one request.
 
+`e2e-on-demand-worker.service` is the exception: it is enabled, and it needs its env
+file before it starts (see *Operating the on-demand worker*):
+
+```sh
+cp ops/systemd/e2e-on-demand-worker.service /etc/systemd/system/
+# Created empty only when it does not exist: never over a file that holds the token.
+[ -e /root/.e2e-on-demand-worker.env ] || install -m 600 -o root -g root /dev/null /root/.e2e-on-demand-worker.env
+systemctl daemon-reload
+systemctl enable e2e-on-demand-worker.service
+```
+
+Fill the env file, then start it. Started on an empty file, it exits 78 and stays
+failed until restarted:
+
+```sh
+systemctl start e2e-on-demand-worker.service
+```
+
 ### Asking for an on-demand run by hand
 
-Write the request, then start the unit. The request is **parsed, never sourced**: six
-known keys, each checked against its shape, anything else refused (see the header of
-`ops/vm/run-on-demand.sh`). `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
+Write the request, then start the unit. This is what the worker does for each request
+it claims, and the way to run one with the worker stopped. The request is **parsed,
+never sourced**: eight known keys (`ONDEMAND_ID`, `ONDEMAND_REF`, `ONDEMAND_PROVIDER`,
+`ONDEMAND_MODEL`, `ONDEMAND_REQUESTED_BY`, `ONDEMAND_AREAS`, `ONDEMAND_RETRIES`,
+`ONDEMAND_SUITE_REF`), each checked against its shape, anything else refused (see the
+header of `ops/vm/run-on-demand.sh`). `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's
 `SUITE_FLOOR`, or the request is refused before the build. **A suite ref is trusted
@@ -110,13 +132,33 @@ the target's ref, commit and version, the suite commit, and `CLEANUP` (`pending`
 cleanup was cut short, then `ok`, `incomplete` or `unconfirmed`). The log is
 `/var/log/e2e-on-demand/latest.log`.
 
+**How long a run takes, and its limits.** Measured on the qa from 2026-10-05 to 10-10: a
+whole run of `@stable` takes 26-33 min, 316-353 s of it the build and 17-24 min the
+suite. A run narrowed to one area takes about 10 min, almost all of it the build.
+Three ceilings, each under the next:
+
+| Ceiling | Where | When it is hit |
+|---|---|---|
+| each upstream step 5 min, the `docker build` 30 min | `build-target-image.sh` (`UPSTREAM_TIMEOUT_S`, `BUILD_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, docker or the network, never the branch |
+| the run's deadline, 80 min from the executor's start, plus up to 2 for the suite to stop | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
+| 90 min | the unit's `TimeoutStartSec` | `failed`, "stopped by SIGTERM", which the daily's stop and `systemctl stop` also say |
+
+Over all three is the platform's `MAX_HOLD_SECONDS`, 2 h from the claim: past it, the
+platform releases the request as `abandoned` while the run would still be going. The
+deadline counts from the executor's start, not the claim, so a start the worker had to
+retry (the slot held by a run started by hand), or one held while the daily has the
+machine (`paused_for_daily`, up to its 70 min window), can still pass it; the run's
+result is taken anyway, over the `abandoned`. That is why none of the
+ceilings grows with retries. The platform asks for at most the suite's default of 2;
+3 to 5, asked by hand, may reach the deadline on a very red branch.
+
 ## Verify
 
 ```sh
 for f in e2e-daily.service e2e-daily.timer e2e-daily-watchdog.service \
          e2e-daily-watchdog.timer e2e-mirror-freshness.service e2e-mirror-freshness.timer \
          e2e-mirror-freshness-announce.service e2e-mirror-freshness-announce.timer \
-         e2e-shadow.service e2e-on-demand.service; do
+         e2e-shadow.service e2e-on-demand.service e2e-on-demand-worker.service; do
   diff -q "ops/systemd/$f" "/etc/systemd/system/$f" || echo "$f DIFFERS"
 done
 diff -q ops/systemd/e2e-daily.service.d/10-target-dist.conf \
@@ -125,12 +167,91 @@ diff -q ops/systemd/e2e-daily.service.d/10-target-dist.conf \
 systemctl show e2e-daily.service -p LoadState -p Wants -p After --value
 systemctl list-timers e2e-daily.timer e2e-daily-watchdog.timer e2e-mirror-freshness.timer \
   e2e-mirror-freshness-announce.timer
+systemctl is-enabled e2e-on-demand-worker.service   # enabled
+systemctl is-active e2e-on-demand-worker.service    # active
 ```
 
 Existence is `LoadState=loaded`, never `ActiveState` — a unit that does not exist reports
 `ActiveState=inactive`, which reads like a unit that is merely stopped. And `active` does
 not mean running for a `oneshot`: compare `ExecMainExitTimestamp` with
 `ExecMainStartTimestamp` for that.
+
+## Operating the on-demand worker
+
+The worker is the bridge between the QA platform's on-demand queue and
+`e2e-on-demand.service`. The platform cannot reach this machine, so the worker pulls:
+every call is outbound HTTPS. The contract it speaks is the platform's
+(`oriontech-me/quality-platform`, `docs/ON_DEMAND_QUEUE_CONTRACT.md`); what it does on
+this machine is in the header of `ops/vm/on-demand-worker.mjs`.
+
+**Its env file**, `/root/.e2e-on-demand-worker.env`, mode 600, owned by root, outside
+the clone. `KEY=value` lines, read by systemd (`EnvironmentFile=`):
+
+| Key | Required | What |
+|---|---|---|
+| `QA_ON_DEMAND_API_BASE` | yes | the platform's API, `https://<host>`, no path |
+| `QA_ON_DEMAND_WORKER_TOKEN` | yes | the worker's credential: a token the platform issued (`odw_…`) |
+| `QA_ON_DEMAND_WORKER_ID` | no | the name the platform shows for this worker; `qa` when unset |
+
+The token is a secret: put it in the file straight from where it was issued. Never in
+a chat, an issue, a commit or a shell history you keep.
+
+**Is it working?**
+
+```sh
+systemctl status e2e-on-demand-worker.service
+journalctl -u e2e-on-demand-worker.service --since "1 hour ago"
+```
+
+The platform's On Demand tab shows the worker's state and when it was last seen. It
+sends a heartbeat every 60 s: "not responding" there means it stopped, or cannot reach
+the platform (the VPN, or the platform down). Its own state, the request it holds and
+the claim token, is `/root/e2e-on-demand/worker/state.json`. Each run's log is
+`/var/log/e2e-on-demand/<stamp>.log`, and `latest.log` points at the newest.
+
+**Exit 78: the configuration is wrong.** A key missing, an `API_BASE` that is not
+`https://<host>`, a `WORKER_ID` of a shape the platform does not take, or the platform
+answering 401 to the token (wrong, or revoked). The
+unit does not restart on 78 (`RestartPreventExitStatus=78`): retrying a wrong token
+every 30 s fixes nothing. It stays `failed` until someone fixes the file. The journal
+names what is wrong (`::error::`). Fix it, then:
+
+```sh
+systemctl restart e2e-on-demand-worker.service
+journalctl -u e2e-on-demand-worker.service -n 20   # no ::error::, and the tab sees it within a minute
+```
+
+**Rotating the token, without interrupting it.** The platform keeps at most two active
+tokens, which is what a rotation needs. Tokens are issued and revoked by a platform
+admin, signed in with their own session (the routes and a terminal recipe are in the
+platform's contract, *Worker credential*):
+
+1. issue a new token (two already active refuse it: revoke the one that is not in use
+   first);
+2. replace `QA_ON_DEMAND_WORKER_TOKEN` in the env file, and `systemctl restart
+   e2e-on-demand-worker.service`;
+3. check that the heartbeat lands (the journal, or the tab);
+4. revoke the old token.
+
+Restarting the worker never stops a run: the run lives in `e2e-on-demand.service`, and
+the worker reads the request it holds back from its state file.
+
+**After a pull by hand.** The daily's pull restarts the worker when its code changed
+(`systemctl try-restart`, in `run-daily.sh`). A pull by hand does not: restart it
+yourself, or it keeps running the code from before. A changed unit file is never
+installed by a pull: copy it and `systemctl daemon-reload`, as in *Install*.
+
+**Stopping a run.** `systemctl stop e2e-on-demand.service` is safe: its trap cleans up
+(containers, image, build cache, worktree) and writes the result `failed`, "stopped by
+SIGTERM", which the worker forwards to the platform. A run that is still queued is
+cancelled from the platform instead.
+
+**Stopping the worker.** `systemctl stop e2e-on-demand-worker.service`: nothing new is
+claimed, and a run already going finishes on its own. Started again, the worker
+forwards its result. While it is stopped, requests wait in the platform's queue, and
+one it held is released as `abandoned` after the 15 min lease: stopped longer than that
+mid-run, the run shows `abandoned` until the worker, started again, forwards its result. To keep it off across a
+reboot, `systemctl disable --now`.
 
 ## Rollback
 

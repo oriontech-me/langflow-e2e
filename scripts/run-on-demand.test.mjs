@@ -406,6 +406,57 @@ test("a run that served another version is failed, never done/red, whatever its 
   }
 });
 
+// The run's deadline: the suite gets what the steps before it left of 80 minutes, and
+// a suite stopped at it is answered as such, not as the unit's ambiguous SIGTERM.
+test("the suite runs under what is left of the run's deadline", () => {
+  const r = onDemand();
+  assert.equal(r.status, 0, r.log);
+  const line = r.timeouts.split("\n").find((t) => / \.\/scripts\/run-e2e\.sh/.test(t));
+  assert.ok(line, `run-e2e.sh unbounded: ${r.timeouts}`);
+  const s = Number(line.split(" ")[0]);
+  assert.ok(s > 4700 && s <= 4800, `the suite's limit is the deadline less what came before: ${s}`);
+  assert.match(line, / -k 120$/, "a suite that does not stop on TERM is never killed");
+});
+
+test("a suite stopped at the deadline is failed, and the reason says it ran past it", () => {
+  const r = onDemand({ suiteTimesOut: true, request: `${GOOD_REQUEST}ONDEMAND_RETRIES=5\n` });
+  assert.equal(r.status, 3, r.log);
+  const res = r.result["req-1"];
+  assert.equal(res.STATUS, "failed");
+  assert.equal(res.VERDICT ?? "", "", "a stopped suite has no verdict");
+  assert.match(res.REASON, /^the suite ran past the run's deadline and was stopped after \d+s \(80 min from the start, retries 5\)/);
+  assert.equal(res.CLEANUP, "ok", "the cleanup still runs");
+});
+
+test("a suite the deadline had to KILL (timeout's 137) is still the deadline, never a verdict", () => {
+  // run-e2e.sh's own cleanup hung after the TERM, with results.json already merged: a
+  // 137 read as an exit would be done/red, a red the branch never earned.
+  const r = onDemand({ suiteTimesOut: 137, suiteTimeoutSleep: 3, deadline: 3, minSuite: 1 });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.result["req-1"].STATUS, "failed");
+  assert.match(r.result["req-1"].REASON, /^the suite ran past the run's deadline/);
+});
+
+test("a suite killed before its deadline (137 early, as the OOM killer's) is not called the deadline", () => {
+  const r = onDemand({ suiteTimesOut: 137 });
+  assert.equal(r.status, 3, r.log);
+  assert.doesNotMatch(r.result["req-1"].REASON, /deadline/);
+});
+
+test("a deadline that is not seconds is refused as the machine's, before the suite", () => {
+  const r = onDemand({ deadline: "80m" });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.env, null);
+  assert.match(r.result["req-1"].REASON, /E2E_ONDEMAND_DEADLINE_S='80m' is not a number of seconds/);
+});
+
+test("steps that leave less than five minutes of the deadline do not start a suite", () => {
+  const r = onDemand({ deadline: 200 });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.env, null, "run-e2e.sh ran with no time left");
+  assert.match(r.result["req-1"].REASON, /of the run's 200s deadline, which leaves no time for a suite/);
+});
+
 test("a run with no results.json says why in run-e2e.sh's words: the verdict's, else its last error", () => {
   const merge = onDemand({ runExit: 1, writeResults: false, verdict: ["the shards RAN and the MERGE failed — there is no report to read, and the tests are not what broke."] });
   assert.equal(merge.result["req-1"].STATUS, "failed");
@@ -692,7 +743,12 @@ test("a container that survives removal is reported in the result, not hidden", 
 test("a run stopped by SIGTERM -- the daily starting -- still cleans up and answers failed", async () => {
   const { env, collect } = setup({ runSleep: 2 });
   const child = spawn("bash", [ONDEMAND], { env, stdio: "ignore" });
-  await new Promise((res) => setTimeout(res, 1000));
+  // Once the suite has started, as the daily's stop finds it: a fixed second was
+  // sometimes before the trap was armed on a slow machine, and the test flaked.
+  const log = join(env.E2E_ONDEMAND_LOG_DIR, "latest.log");
+  for (let i = 0; i < 200 && !/^=== run start /m.test(existsSync(log) ? readFileSync(log, "utf8") : ""); i++) {
+    await new Promise((res) => setTimeout(res, 50));
+  }
   child.kill("SIGTERM");
   const status = await new Promise((res) => child.on("exit", (code) => res(code)));
   const r = collect(status);

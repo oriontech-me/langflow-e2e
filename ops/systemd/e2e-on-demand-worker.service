@@ -18,8 +18,9 @@ Wants=network-online.target
 Type=simple
 # systemd sets no HOME for a system service (#1715).
 Environment=HOME=/root
-# QA_ON_DEMAND_API_BASE and QA_ON_DEMAND_WORKER_TOKEN, the same secret the platform's
-# api service holds. Root-only, outside the clone.
+# QA_ON_DEMAND_API_BASE and QA_ON_DEMAND_WORKER_TOKEN (a token the platform issued),
+# and optionally QA_ON_DEMAND_WORKER_ID. Root-only, outside the clone. How to fill it,
+# rotate the token and recover from exit 78: ops/systemd/README.md.
 EnvironmentFile=/root/.e2e-on-demand-worker.env
 ExecStart=/root/e2e-qa/ops/vm/on-demand-worker.mjs
 Restart=always

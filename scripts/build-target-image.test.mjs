@@ -52,8 +52,24 @@ const buildable = (version = "1.13.0") => ({
   "docker/build_and_push.Dockerfile": "FROM scratch AS runtime\nFROM runtime AS full\n",
 });
 
+/**
+ * coreutils' timeout, which the VM has and macOS does not: records its limit and the
+ * command, and runs it, or answers 124 as a limit that ran out when the command
+ * matches `timesOut` ("ls-remote", "fetch" or "build").
+ */
+function stubTimeout(bin, log, timesOut = null, status = 124, sleep = 0) {
+  writeFileSync(join(bin, "timeout"), `#!/usr/bin/env bash
+echo "$*" >> ${JSON.stringify(log)}
+[ "$1" = "-k" ] && shift 2
+shift
+${timesOut ? `case " $* " in *" ${timesOut} "*) sleep ${sleep}; exit ${status} ;; esac` : ""}
+exec "$@"
+`, { mode: 0o755 });
+}
+
 /** Runs the script against a local upstream and a stub docker. */
-function build(branch, { buildFails = false, label = null, snap = false, buildRoot = null, fork = false, oldPython = false } = {}) {
+function build(branch, { buildFails = false, label = null, snap = false, buildRoot = null, fork = false, oldPython = false,
+  timesOut = null, timeoutStatus = 124, timeoutSleep = 0, env = {} } = {}) {
   const dir = makeTempDir("build-target-image-");
   const upstream = join(dir, "upstream");
   const shas = makeRepo(upstream, {
@@ -89,6 +105,9 @@ esac`;
     writeFileSync(join(bin, "docker"), stubBody, { mode: 0o755 });
   }
 
+  const timeouts = join(dir, "timeout.log");
+  stubTimeout(bin, timeouts, timesOut, timeoutStatus, timeoutSleep);
+
   if (oldPython) {
     // A python3 that predates tomllib: the import fails, and --version says so.
     writeFileSync(join(bin, "python3"), `#!/usr/bin/env bash
@@ -105,6 +124,7 @@ exit 1
       UPSTREAM_REPO_URL: `file://${upstream}`,
       BUILD_ROOT: root,
       IMAGE_REPO: "langflow-ondemand",
+      ...env,
     },
   });
   const out = Object.fromEntries(
@@ -118,6 +138,7 @@ exit 1
     shas,
     calls: existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
     leftovers: existsSync(root) ? readdirSync(root).filter((n) => n.startsWith("src-")) : [],
+    timeouts: existsSync(timeouts) ? readFileSync(timeouts, "utf8").trim().split("\n") : [],
     root,
   };
 }
@@ -263,6 +284,7 @@ case "$1" in
   image) cat "$(ls ${JSON.stringify(join(dir, "root"))}/src-*.label | head -1)" ;;
 esac
 `, { mode: 0o755 });
+  stubTimeout(bin, join(dir, "timeout.log"));
   const env = { PATH: `${bin}:${process.env.PATH}`, UPSTREAM_REPO_URL: `file://${upstream}`, BUILD_ROOT: join(dir, "root") };
   const once = () =>
     new Promise((resolve) => {
@@ -275,4 +297,49 @@ esac
   assert.equal(a.code, 0, a.err);
   assert.equal(b.code, 0, b.err);
   assert.deepEqual(readdirSync(join(dir, "root")).filter((n) => n.startsWith("src-") && !n.endsWith(".label")), [], "both trees are removed");
+});
+
+// A hung step ends the build with its own reason, as the machine's or the network's
+// (status 3, which the executor answers as failed), never as the branch's build failure.
+test("the upstream listing, the fetch and the docker build each run under a time limit", () => {
+  const r = build("release-1.13.0");
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.timeouts.some((t) => /^300 git ls-remote /.test(t)), `ls-remote unbounded: ${r.timeouts}`);
+  assert.ok(r.timeouts.some((t) => /^300 git -C \S+ fetch /.test(t)), `fetch unbounded: ${r.timeouts}`);
+  assert.ok(r.timeouts.some((t) => /^-k 60 1800 docker build /.test(t)), `docker build unbounded, or never killed: ${r.timeouts}`);
+});
+
+test("the limits can be set, and a value that is not seconds is refused as the machine's", () => {
+  const r = build("release-1.13.0", { env: { UPSTREAM_TIMEOUT_S: "60", BUILD_TIMEOUT_S: "900" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.timeouts.some((t) => /^60 git ls-remote /.test(t)));
+  assert.ok(r.timeouts.some((t) => /^-k 60 900 docker build /.test(t)));
+  const bad = build("release-1.13.0", { env: { BUILD_TIMEOUT_S: "30m" } });
+  assert.equal(bad.status, 7, bad.stderr);
+  assert.match(bad.stderr, /BUILD_TIMEOUT_S='30m' is not a number of seconds/);
+});
+
+for (const [step, said] of [
+  ["ls-remote", /listing the branches of \S+ did not answer in 300s/],
+  ["fetch", /fetching [0-9a-f]{40} from \S+ did not finish in 300s/],
+  ["build", /docker build of release-1\.13\.0 @ [0-9a-f]{12} did not finish in 1800s, so it was stopped\. .*not the branch/],
+]) {
+  test(`a ${step} that runs past its limit is the machine's or the network's: status 3, not a build failure`, () => {
+    const r = build("release-1.13.0", { timesOut: step });
+    assert.equal(r.status, 3, r.stderr);
+    assert.match(r.stderr, said);
+    assert.equal(r.stdout, "", "a stopped build answered as if it had built");
+    assert.deepEqual(r.leftovers, [], "the source tree is removed");
+  });
+}
+
+test("a docker build the limit had to KILL (timeout's 137) is still the limit, not the branch's failure", () => {
+  const r = build("release-1.13.0", { timesOut: "build", timeoutStatus: 137, timeoutSleep: 2, env: { BUILD_TIMEOUT_S: "1" } });
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /did not finish in 1s, so it was stopped/);
+});
+
+test("a docker build killed before its limit (137 early) is a build failure, as any other exit", () => {
+  const r = build("release-1.13.0", { timesOut: "build", timeoutStatus: 137 });
+  assert.equal(r.status, 5, r.stderr);
 });
