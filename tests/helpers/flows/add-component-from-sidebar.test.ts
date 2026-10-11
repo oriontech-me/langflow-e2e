@@ -33,11 +33,14 @@ import assert from "node:assert/strict";
 import { classifyInfraError } from "../../../scripts/lib/infra-signatures";
 import {
   ADD_LANDED_TIMEOUT_MS,
+  DRAG_READY_TIMEOUT_MS,
   SEARCH_ENTRY_TIMEOUT_MS,
   classifyAddOutcome,
   classifySearchFill,
+  isDragReady,
   newNodeIds,
   noMatchingEntryMessage,
+  notDraggableMessage,
   searchResetMessage,
   swallowedAddMessage,
 } from "./add-component-from-sidebar";
@@ -162,6 +165,81 @@ test("a swallowed drag stays unclassifiable as infra, like the click one", () =>
     classifyInfraError(swallowedAddMessage({ ...DETAIL, gesture: "drag" })),
     null,
   );
+});
+
+// --- Drag readiness (#2235) -------------------------------------------------
+//
+// A sidebar entry renders `draggable={!error && !isUnavailable}`, and upstream
+// folds the flow's fail-closed permissions verdict into `isUnavailable`. A drag
+// issued while it reads "false" starts no native drag session, so nothing can
+// land — measured on 1.13.0.dev37 with the permissions response held 4 s: a bare
+// drag landed 0 of 4, waiting for draggable="true" first landed 4 of 4. On the
+// 2026-10-09 VM daily the entry still read "false" ~1 s AFTER the permissions
+// response, so readiness is read off the entry itself, never off the network.
+
+test("only an entry that reads draggable=\"true\" is ready to drag", () => {
+  assert.equal(isDragReady("true"), true);
+  assert.equal(isDragReady("false"), false);
+  // An absent attribute is not readiness: `!== "false"` would wave it through.
+  assert.equal(isDragReady(""), false);
+  // Nor is an entry that left the DOM.
+  assert.equal(isDragReady(null), false);
+});
+
+const NOT_DRAGGABLE = {
+  searchTerm: "ollama" as string | null,
+  componentTestId: "ollamaOllama",
+  waitedMs: DRAG_READY_TIMEOUT_MS,
+  lastDraggable: "false" as string | null,
+};
+
+test("the not-draggable message names the entry, the budget, the read-only window and #2197", () => {
+  const msg = notDraggableMessage(NOT_DRAGGABLE);
+
+  assert.match(msg, /getByTestId\("ollamaOllama"\)/);
+  assert.match(msg, new RegExp(`${DRAG_READY_TIMEOUT_MS}ms`));
+  assert.match(msg, /read-only/);
+  assert.match(msg, /POST \/api\/v1\/authz\/me\/permissions/);
+  assert.match(msg, /#2197/);
+  // No drag was issued, so it must not read as a swallowed drop.
+  assert.doesNotMatch(msg, /swallowed/);
+});
+
+test("the not-draggable message reports what it read, and tells a refusal from a missing entry", () => {
+  assert.match(notDraggableMessage(NOT_DRAGGABLE), /draggable="false"/);
+  assert.match(
+    notDraggableMessage({ ...NOT_DRAGGABLE, lastDraggable: "" }),
+    /carries no draggable attribute/,
+  );
+  assert.match(
+    notDraggableMessage({ ...NOT_DRAGGABLE, lastDraggable: null }),
+    /no longer in the DOM/,
+  );
+});
+
+test("the not-draggable message names the term it searched, and no term when there was none", () => {
+  assert.match(notDraggableMessage(NOT_DRAGGABLE), /search with "ollama"/);
+  const noSearch = notDraggableMessage({ ...NOT_DRAGGABLE, searchTerm: null });
+  assert.doesNotMatch(noSearch, /search with/);
+  assert.match(noSearch, /within 45000ms, so no drag was issued/);
+});
+
+test("the not-draggable message is NOT classifiable as an infra failure", () => {
+  // #1262's rule: an editor that never accepts a drag on a flow its creator owns
+  // is a product defect, and must stay eligible for @stable auto-removal.
+  for (const lastDraggable of ["false", "", null]) {
+    assert.equal(
+      classifyInfraError(notDraggableMessage({ ...NOT_DRAGGABLE, lastDraggable })),
+      null,
+    );
+  }
+});
+
+test("a swallowed drag says the entry WAS draggable, so it is not read as the #2197 window", () => {
+  const drag = swallowedAddMessage({ ...DETAIL, gesture: "drag" });
+  assert.match(drag, /reported draggable="true" before every drag/);
+  // The click surface has no such precondition and must not claim one.
+  assert.doesNotMatch(swallowedAddMessage(DETAIL), /draggable="true"/);
 });
 
 test("a tab with no search box reports no term and no input, not an empty one", () => {

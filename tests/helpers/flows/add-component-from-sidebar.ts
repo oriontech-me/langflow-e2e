@@ -248,7 +248,9 @@ export function swallowedAddMessage(d: AddFailureDetail): string {
   const evidence = isDrag
     ? `The drag(s) completed and the app never registered the add (issue #1304's ` +
       `class on the drag surface — measured 1/5 on nightly 1.12.0.dev18 in ` +
-      `mcp-server-tab.spec.ts, #1335)`
+      `mcp-server-tab.spec.ts, #1335). The entry reported draggable="true" ` +
+      `before every drag, so this is not the read-only window of #2197/#2235 ` +
+      `but a drop the editor accepted and discarded`
     : surface === "dedicated-button"
       ? `The click(s) were accepted by the DOM and the app never registered the ` +
         `add (issue #1301 — measured 9 of 10 first clicks producing no node ` +
@@ -287,6 +289,101 @@ const nodeIds = async (page: Page): Promise<string[]> =>
           el.getAttribute("data-testid") ?? el.getAttribute("data-id") ?? "",
       ),
     );
+
+/**
+ * How long a sidebar entry may refuse a drag before the wait is called broken
+ * (#2235). Not a sleep: it ends the moment the entry reads `draggable="true"`.
+ *
+ * Upstream renders the entry `draggable={!error && !isUnavailable}` and folds the
+ * flow's write-permission verdict into `isUnavailable`, failing CLOSED while
+ * `POST /api/v1/authz/me/permissions` resolves (langflow#14068, langflow#14523).
+ * A drag issued in that window starts no native drag session — no `dragstart`,
+ * no `drop` — so no node can land, and the #1304 repair below would only re-drag
+ * blind 12 s later. The 45 s is #2197's budget: a transient 5xx on the first
+ * permissions call is retried 5 times with `min(1000 * 2 ** n, 30000)` backoff,
+ * which keeps the editor read-only for roughly half a minute.
+ *
+ * Readiness is read off the ENTRY, never off the permissions response. On the
+ * 2026-10-09 VM daily (`1.13.0.dev37`) the response had arrived ~1 s before the
+ * drag and the entry still read `"false"` on a saturated page; it read `"true"`
+ * ten seconds later. Measured on the same build with the response held 4 s: a
+ * bare drag landed 0 of 4, waiting for `draggable="true"` first landed 4 of 4.
+ */
+export const DRAG_READY_TIMEOUT_MS = 45000;
+
+/**
+ * Whether a sidebar entry's `draggable` attribute, as read, accepts a drag.
+ * `""` is an entry with no attribute at all and `null` one that left the DOM;
+ * neither is readiness, which is why this is `=== "true"` and not `!== "false"`.
+ */
+export function isDragReady(draggable: string | null): boolean {
+  return draggable === "true";
+}
+
+type NotDraggableDetail = {
+  /** `null` when the drag was issued from a tab with no search box. */
+  searchTerm: string | null;
+  componentTestId: string;
+  waitedMs: number;
+  /** Last read: `null` when the entry left the DOM, `""` when it has no attribute. */
+  lastDraggable: string | null;
+};
+
+export function notDraggableMessage(d: NotDraggableDetail): string {
+  const observed =
+    d.lastDraggable === null
+      ? `the entry is no longer in the DOM`
+      : d.lastDraggable === ""
+        ? `the entry carries no draggable attribute`
+        : `the entry reads draggable="${d.lastDraggable}"`;
+  return (
+    `the sidebar entry getByTestId("${d.componentTestId}") never became ` +
+    `draggable within ${d.waitedMs}ms` +
+    (d.searchTerm === null
+      ? ``
+      : ` after filling the sidebar search with "${d.searchTerm}"`) +
+    `, so no drag was issued. Observed: ${observed}. The ` +
+    `editor keeps it read-only by design only while POST ` +
+    `/api/v1/authz/me/permissions is in flight (#2197, #2235) — a verdict that ` +
+    `never arrives, or one that denies write to the flow's own creator, is a ` +
+    `defect, not a slow surface.`
+  );
+}
+
+/**
+ * The entry's `draggable` attribute right now, without waiting for the entry:
+ * `null` when it is not in the DOM, `""` when it carries no attribute.
+ */
+const readDraggable = (page: Page, testId: string) =>
+  page
+    .getByTestId(testId)
+    .evaluateAll((els) =>
+      els.length === 0 ? null : (els[0].getAttribute("draggable") ?? ""),
+    );
+
+/** Polls the entry until it accepts a drag, or throws naming why it never did. */
+const waitUntilDraggable = async (
+  page: Page,
+  searchTerm: string | null,
+  componentTestId: string,
+) => {
+  const deadline = Date.now() + DRAG_READY_TIMEOUT_MS;
+  let draggable = await readDraggable(page, componentTestId);
+  while (!isDragReady(draggable) && Date.now() < deadline) {
+    await page.waitForTimeout(POLL_INTERVAL_MS);
+    draggable = await readDraggable(page, componentTestId);
+  }
+  if (!isDragReady(draggable)) {
+    throw new Error(
+      notDraggableMessage({
+        searchTerm,
+        componentTestId,
+        waitedMs: DRAG_READY_TIMEOUT_MS,
+        lastDraggable: draggable,
+      }),
+    );
+  }
+};
 
 /** Default drop target — the ReactFlow pane, addressed the way the specs do. */
 const CANVAS_SELECTOR = '//*[@id="react-flow-id"]';
@@ -371,6 +468,7 @@ const issueAdd = async (
     await fillSearchUntilEntryRenders(page, searchTerm, addButtonTestId);
   }
   if (gesture === "drag") {
+    await waitUntilDraggable(page, searchTerm, addButtonTestId);
     await page
       .getByTestId(addButtonTestId)
       .dragTo(page.locator(canvasSelector));
@@ -444,6 +542,12 @@ export const addComponentFromSidebarWithoutSearch = async (
  * `mcp-server-tab.spec.ts` ("use dragTo which is more reliable than click on
  * add-component-button") predates the #1304 repair and its premise no longer
  * holds — neither gesture is reliable bare, and both are reliable repaired.
+ *
+ * Every drag — the first and the repair — is issued only once the entry reads
+ * `draggable="true"` (#2235, see `DRAG_READY_TIMEOUT_MS`). The repair alone
+ * re-dragged blind 12 s later, which papers over the editor's read-only window
+ * instead of waiting it out; the click path needs no such gate, because
+ * Playwright already waits for the `disabled` "+" button to enable.
  */
 export const dragComponentFromSidebar = async (
   page: Page,

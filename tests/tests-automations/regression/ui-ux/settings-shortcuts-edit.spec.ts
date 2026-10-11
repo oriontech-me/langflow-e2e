@@ -1,4 +1,5 @@
 import { expect, test } from "../../../fixtures/fixtures";
+import { dragComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
@@ -47,7 +48,7 @@ test.describe("Settings — Edit Shortcut", () => {
 
   test(
     "editing the Duplicate shortcut persists and triggers the action on canvas",
-    { tag: ["@release", "@regression", "@settings", "@ui-ux"] },
+    { tag: ["@stable", "@release", "@regression", "@settings", "@ui-ux"] },
     async ({ page }) => {
       await test.step("load home", async () => {
         await awaitBootstrapTest(page, { skipModal: true });
@@ -119,18 +120,13 @@ test.describe("Settings — Edit Shortcut", () => {
       });
 
       await test.step("add one Ollama node to the canvas", async () => {
-        await page.getByTestId("sidebar-search-input").click();
-        await page.getByTestId("sidebar-search-input").fill("ollama");
-
-        await expect(page.getByTestId("ollamaOllama")).toBeVisible({
-          timeout: 5000,
-        });
-
-        await page
-          .getByTestId("ollamaOllama")
-          .dragTo(page.locator('//*[@id="react-flow-id"]'));
-        await page.mouse.up();
-        await page.mouse.down();
+        // The drag is a precondition of the shortcut check, not the behavior
+        // under test. The helper drags only once the entry reads
+        // draggable="true": a bare dragTo issued while the fresh editor was
+        // still read-only landed nothing on 3 of 3 attempts on the 2026-10-09
+        // VM daily (#2235), and a drop that still lands no node fails naming
+        // the add rather than a missing title-Ollama.
+        await dragComponentFromSidebar(page, "ollama", "ollamaOllama");
 
         await expect(page.getByTestId("title-Ollama")).toHaveCount(1, {
           timeout: 10000,
