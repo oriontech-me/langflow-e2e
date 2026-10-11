@@ -62,6 +62,11 @@ export function setup({
   // Whether the suite's run-e2e.sh knows STABLE_AREAS: the executor refuses areas for
   // a suite that does not, which would run the whole @stable instead.
   suiteKnowsAreas = true,
+  // The suite running past the run's deadline: timeout answers 124 for run-e2e.sh,
+  // as coreutils' does once it has stopped it.
+  suiteTimesOut = false,
+  // The run's deadline in seconds (E2E_ONDEMAND_DEADLINE_S); null is the executor's own.
+  deadline = null,
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -166,7 +171,7 @@ ${stateCases}
 esac`);
   // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
   // coreutils' timeout, which the VM has and macOS does not: runs the command as is.
-  stub(bin, "timeout", `echo "$1 $2 $3" >> ${q(join(dir, "timeout.log"))}\nshift\nexec "$@"`);
+  stub(bin, "timeout", `echo "$1 $2 $3" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? 'case "$1" in *run-e2e.sh) exit 124 ;; esac\n' : ""}exec "$@"`);
   stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.
@@ -213,6 +218,7 @@ esac`);
     E2E_SHADOW_STATE: shadowState,
     E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
     ...(mirror ? { E2E_ONDEMAND_SUITE_FLOOR: head } : {}),
+    ...(deadline !== null ? { E2E_ONDEMAND_DEADLINE_S: String(deadline) } : {}),
   };
   const collect = (status) => {
     const readIf = (p) => (existsSync(p) ? readFileSync(p, "utf8") : null);

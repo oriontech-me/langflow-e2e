@@ -406,6 +406,34 @@ test("a run that served another version is failed, never done/red, whatever its 
   }
 });
 
+// The run's deadline: the suite gets what the steps before it left of 80 minutes, and
+// a suite stopped at it is answered as such, not as the unit's ambiguous SIGTERM.
+test("the suite runs under what is left of the run's deadline", () => {
+  const r = onDemand();
+  assert.equal(r.status, 0, r.log);
+  const line = r.timeouts.split("\n").find((t) => / \.\/scripts\/run-e2e\.sh/.test(t));
+  assert.ok(line, `run-e2e.sh unbounded: ${r.timeouts}`);
+  const s = Number(line.split(" ")[0]);
+  assert.ok(s > 4700 && s <= 4800, `the suite's limit is the deadline less what came before: ${s}`);
+});
+
+test("a suite stopped at the deadline is failed, and the reason says it ran past it", () => {
+  const r = onDemand({ suiteTimesOut: true, request: `${GOOD_REQUEST}ONDEMAND_RETRIES=5\n` });
+  assert.equal(r.status, 3, r.log);
+  const res = r.result["req-1"];
+  assert.equal(res.STATUS, "failed");
+  assert.equal(res.VERDICT ?? "", "", "a stopped suite has no verdict");
+  assert.match(res.REASON, /^the suite ran past the run's deadline and was stopped after \d+s \(80 min from the start, retries 5\)/);
+  assert.equal(res.CLEANUP, "ok", "the cleanup still runs");
+});
+
+test("steps that leave less than five minutes of the deadline do not start a suite", () => {
+  const r = onDemand({ deadline: 200 });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.env, null, "run-e2e.sh ran with no time left");
+  assert.match(r.result["req-1"].REASON, /of the run's 200s deadline, which leaves no time for a suite/);
+});
+
 test("a run with no results.json says why in run-e2e.sh's words: the verdict's, else its last error", () => {
   const merge = onDemand({ runExit: 1, writeResults: false, verdict: ["the shards RAN and the MERGE failed — there is no report to read, and the tests are not what broke."] });
   assert.equal(merge.result["req-1"].STATUS, "failed");

@@ -19,8 +19,11 @@ Type=oneshot
 # systemd sets no HOME for a system service (#1715), and run-e2e.sh needs it.
 Environment=HOME=/root
 ExecStart=/root/e2e-qa/ops/vm/run-on-demand.sh
-# About 5 minutes of build and 18 of suite, measured 2026-09-30. Well above both, so a
-# slow run is not mistaken for a hung one.
+# A whole run takes 26-33 min (316-353 s of build, 17-24 min of suite), measured on
+# the qa from 2026-10-05 to 10-10. The wrapper's own deadline, 80 min, stops a long
+# suite first with a reason of its own; this is the backstop, whose SIGTERM says only
+# "stopped". Kept under the platform's MAX_HOLD_SECONDS (2 h), past which it releases
+# the request while the run would still be going: so it does not grow with retries.
 TimeoutStartSec=90min
 # The wrapper's cleanup runs on SIGTERM too -- containers, images, build cache,
 # worktree -- and must not be cut short by systemd's default 90 s.

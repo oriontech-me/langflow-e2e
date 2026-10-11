@@ -74,10 +74,11 @@
 #                 one refusal that comes after the build
 #   build_failed  the commit could not be built the nightly's way, or built wrong
 #   failed        the machine could not do its part (upstream unreachable, no
-#                 tomllib, a build status the script does not use), the run says
-#                 nothing about the declared target (it served another version, or
-#                 the version could not be checked), the suite never wrote a
-#                 results.json, or the run was killed before answering
+#                 tomllib, a build step past its time limit, a build status the
+#                 script does not use), the run says nothing about the declared
+#                 target (it served another version, or the version could not be
+#                 checked), the suite never wrote a results.json, the suite ran past
+#                 the run's deadline, or the run was killed before answering
 #   done          the suite ran; VERDICT says green or red, and RUN_ID finds it
 #
 # and the exit status follows it: 0 done/green, 1 done/red, 2 refused, 3 failed,
@@ -152,6 +153,17 @@ main() {
   # declared target and provider it also relies on are older still (#2111). Tests only
   # override it, as they have no such commit.
   local SUITE_FLOOR="${E2E_ONDEMAND_SUITE_FLOOR:-1ba92b4079d656ddec051c6ef871e8f4e0cbb632}"
+  # The run's own deadline, in seconds from this start: the suite is stopped when it
+  # would pass it, and the result says so. Three ceilings, each under the next:
+  #   this deadline        80 min, leaving 10 for the verdict and the cleanup
+  #   TimeoutStartSec      90 min (e2e-on-demand.service), whose SIGTERM says only
+  #                        "stopped", as the daily's stop and a hand's do
+  #   MAX_HOLD_SECONDS     2 h, after which the platform releases the request as
+  #                        abandoned while the run would still be going
+  # So neither of the first two grows with retries: measured on the qa (2026-10-05 to
+  # 10-10), a whole run takes 26-33 min at the suite's default of 2, which is the most
+  # the platform asks for; 3 to 5, asked by hand, may reach it on a very red branch.
+  local DEADLINE_S="${E2E_ONDEMAND_DEADLINE_S:-4800}"
 
   mkdir -p "$LOG_DIR" "$STATE/requests" "$STATE/results"
   local STAMP LOG
@@ -464,8 +476,15 @@ main() {
   printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$STATE/hosts"
   export LANGFLOW_HOSTS_FILE="$STATE/hosts"
 
+  # What is left of the deadline goes to the suite. Less than five minutes cannot hold
+  # one, so the run is not started to be stopped.
+  local suite_s=$((DEADLINE_S - SECONDS))
+  [ "$suite_s" -ge 300 ] \
+    || ondemand_fail 3 failed "the steps before the suite took ${SECONDS}s of the run's ${DEADLINE_S}s deadline, which leaves no time for a suite: the machine or the network, not the branch"
+  echo "suite time: ${suite_s}s, what is left of the run's ${DEADLINE_S}s deadline"
+  # A marker, parsed as is: by ondemand_run_errors here and by the worker's readProgress.
   echo "=== run start $OD_RUN_ID ==="
-  ( cd "$OD_WT" && ./scripts/run-e2e.sh ) 9>&- 8>&-
+  ( cd "$OD_WT" && timeout "$suite_s" ./scripts/run-e2e.sh ) 9>&- 8>&-
   rc=$?
   echo "=== run end, exit=$rc ==="
   # run-e2e.sh exits 1 for a red day, for a provider it refused, for a target that
@@ -481,7 +500,12 @@ main() {
   verdict_errs="$(ondemand_run_errors verdict)"
   last_err="$(ondemand_run_errors last)"
   model_refused="$(cat "$RUNS_ROOT/$OD_RUN_ID"/logs/shard-*.model-refused 2>/dev/null | head -n 1)"
-  if [ -n "$OD_AREAS" ] && printf '%s\n' "$last_err" | grep -q 'select no @stable test'; then
+  if [ "$rc" = "124" ]; then
+    # timeout's own status: the suite was stopped, so whatever it left is partial.
+    OD_EXIT=3
+    OD_REASON="the suite ran past the run's deadline and was stopped after ${suite_s}s ($((DEADLINE_S / 60)) min from the start, retries ${OD_RETRIES:-default}). A run takes about 30 min: a suite this long is hanging, or a very red branch with more retries than fit"
+    OD_STATUS=failed
+  elif [ -n "$OD_AREAS" ] && printf '%s\n' "$last_err" | grep -q 'select no @stable test'; then
     # The request's fault, as a declared provider nobody can use is: nothing ran.
     OD_EXIT=2
     OD_REASON="the areas asked for select no test in this suite: $last_err"
