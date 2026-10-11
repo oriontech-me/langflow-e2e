@@ -140,14 +140,15 @@ Three ceilings, each under the next:
 | Ceiling | Where | When it is hit |
 |---|---|---|
 | each upstream step 5 min, the `docker build` 30 min | `build-target-image.sh` (`UPSTREAM_TIMEOUT_S`, `BUILD_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, docker or the network, never the branch |
-| the run's deadline, 80 min from the executor's start | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
+| the run's deadline, 80 min from the executor's start, plus up to 2 for the suite to stop | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
 | 90 min | the unit's `TimeoutStartSec` | `failed`, "stopped by SIGTERM", which the daily's stop and `systemctl stop` also say |
 
 Over all three is the platform's `MAX_HOLD_SECONDS`, 2 h from the claim: past it, the
 platform releases the request as `abandoned` while the run would still be going. The
 deadline counts from the executor's start, not the claim, so a start the worker had to
-retry (the slot held by a run started by hand) can still pass it; the run's result is
-taken anyway, over the `abandoned`. That is why none of the
+retry (the slot held by a run started by hand), or one held while the daily has the
+machine (`paused_for_daily`, up to its 70 min window), can still pass it; the run's
+result is taken anyway, over the `abandoned`. That is why none of the
 ceilings grows with retries. The platform asks for at most the suite's default of 2;
 3 to 5, asked by hand, may reach the deadline on a very red branch.
 
