@@ -38,9 +38,21 @@
 # superuser. The set below is the product's own recipe, taken from its air-gap
 # certification harness rather than guessed.
 #
+# Since the 1.13 line, an unlicensed Enterprise instance fails CLOSED on its tier
+# gates (EE PR 336 / LE-2501, EE PR 344 / LE-2488): user, project and custom-role
+# creation and every governance route answer `503 Enterprise license validation
+# is unavailable` unless LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES is true.
+# This lane has no licence, so the flag is set below — see the docker run (#2259).
+#
+# Which EE revision gets built is part of the measurement. LANGFLOW_EE_REF builds
+# that ref through `git archive`, so the clone's checkout is never touched and the
+# image is labelled with the commit it came from; without it the script builds the
+# clone's working tree, as it always did, and says which commit that was.
+#
 # Usage:
 #   ./scripts/start-langflow-enterprise.sh                    # build if needed, then run
 #   ./scripts/start-langflow-enterprise.sh --rebuild          # force a rebuild
+#   LANGFLOW_EE_REF=origin/main ./scripts/start-langflow-enterprise.sh  # build that ref
 #   LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText ./scripts/start-langflow-enterprise.sh
 #   LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh # RBAC variant, port 7891
 #   LANGFLOW_EE_BYPASS=1 ./scripts/start-langflow-enterprise.sh # bypass variant, port 7892
@@ -111,9 +123,44 @@ if [ ! -d "${EE_REPO}" ]; then
   exit 2
 fi
 
-if [ "${REBUILD}" = "1" ] || ! docker image inspect "${IMAGE}" > /dev/null 2>&1; then
-  echo "Building ${IMAGE} from ${EE_REPO} (this takes ~20 min on a cold cache)..."
-  DOCKER_BUILDKIT=1 docker build -t "${IMAGE}" "${EE_REPO}"
+# The image carries the EE commit it was built from, because nothing else does:
+# the tag is a name chosen here, and the clone's checkout moves under it. Without
+# the label a run can only say "validated against whatever langflow-enterprise:local
+# was", which is how the 1.12 baseline went 588 commits stale unnoticed (#2259).
+REVISION_LABEL=io.langflow-e2e.ee-revision
+EE_REF="${LANGFLOW_EE_REF:-}"
+BUILT_REVISION="$(docker image inspect --format "{{ index .Config.Labels \"${REVISION_LABEL}\" }}" \
+  "${IMAGE}" 2>/dev/null || true)"
+if [ -n "${EE_REF}" ]; then
+  if ! EE_SHA="$(git -C "${EE_REPO}" rev-parse --verify --quiet "${EE_REF}^{commit}")"; then
+    echo "ERROR: ${EE_REF} does not resolve to a commit in ${EE_REPO}." >&2
+    echo "Fetch it first: git -C ${EE_REPO} fetch origin" >&2
+    exit 2
+  fi
+  # A different commit is a different product, so a stale image is rebuilt rather
+  # than reused under a name that no longer describes it.
+  if [ "${REBUILD}" = "1" ] || [ "${BUILT_REVISION}" != "${EE_SHA}" ]; then
+    echo "Building ${IMAGE} from ${EE_REPO} at ${EE_REF} (${EE_SHA}) — ~20 min on a cold cache..."
+    # `git archive` rather than a checkout: the clone may be someone's working
+    # branch, and the archive is exactly the commit, with no uncommitted edits.
+    git -C "${EE_REPO}" archive --format=tar "${EE_SHA}" \
+      | DOCKER_BUILDKIT=1 docker build -t "${IMAGE}" --label "${REVISION_LABEL}=${EE_SHA}" -
+  fi
+else
+  HEAD_SHA="$(git -C "${EE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [ -n "$(git -C "${EE_REPO}" status --porcelain 2>/dev/null)" ]; then
+    WORKTREE_REVISION="${HEAD_SHA}-dirty"
+  else
+    WORKTREE_REVISION="${HEAD_SHA}"
+  fi
+  if [ "${REBUILD}" = "1" ] || ! docker image inspect "${IMAGE}" > /dev/null 2>&1; then
+    echo "Building ${IMAGE} from the working tree of ${EE_REPO} (${WORKTREE_REVISION}) — ~20 min on a cold cache..."
+    DOCKER_BUILDKIT=1 docker build -t "${IMAGE}" --label "${REVISION_LABEL}=${WORKTREE_REVISION}" "${EE_REPO}"
+  elif [ "${BUILT_REVISION}" != "${WORKTREE_REVISION}" ]; then
+    echo "WARNING: reusing ${IMAGE}, built from ${BUILT_REVISION:-an unrecorded revision};"
+    echo "  the clone is now at ${WORKTREE_REVISION}. Pass --rebuild, or LANGFLOW_EE_REF=<ref>,"
+    echo "  to validate what the clone holds."
+  fi
 fi
 
 docker rm -f "${CONTAINER_NAME}" > /dev/null 2>&1 || true
@@ -210,6 +257,16 @@ echo "Starting Langflow Enterprise: ${IMAGE} on port ${PORT}..."
 #
 # LANGFLOW_PUBLIC_URL is mandatory: the shipped Compose file declares it with
 # `:?`, and the backend uses it as the canonical browser-visible origin.
+#
+# LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES opens the licence-tier gates and
+# nothing else. Without it, every spec that creates a user or a project, and every
+# one that reads governance policy, dies in setup on a 503 that names the licence.
+# It is set directly, never through LANGFLOW_ENV=local — the image's local profile
+# also sets LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_SSO, which turns /sso/entitlements
+# from 503 into 200 and makes entitlement-fail-closed.spec.ts skip every test,
+# reading green while testing nothing. The SSO entitlement stays closed here.
+# Overridable so a strict variant can measure the fail-closed posture itself.
+TIER_GATES="${LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES:-true}"
 docker run -d \
   --name "${CONTAINER_NAME}" \
   -p "${PORT}:7860" \
@@ -229,6 +286,7 @@ docker run -d \
   -e LANGFLOW_CATALOG_COMPONENT_BLOCKLIST="${LANGFLOW_CATALOG_COMPONENT_BLOCKLIST:-}" \
   -e LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST="${LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST:-}" \
   -e LANGFLOW_MODEL_BLOCKLIST="${LANGFLOW_MODEL_BLOCKLIST:-}" \
+  -e LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES="${TIER_GATES}" \
   ${AUTHZ_ARGS[@]+"${AUTHZ_ARGS[@]}"} \
   "${IMAGE}" > /dev/null
 
@@ -256,10 +314,15 @@ for _ in $(seq 1 60); do
       -d "username=${LANGFLOW_SUPERUSER:-langflow}&password=${EE_PASSWORD}" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || true)"
     ROTATION_PENDING=1
+    # The token the gate probe below uses. Kept from the logins this block makes
+    # anyway, because /api/v1/login is limited to 5 a minute per IP and the
+    # suite's first worker logs in the moment this script returns.
+    LANE_TOKEN=""
     if [ -n "${ROTATION_TOKEN}" ] && curl -sf \
          -H "Authorization: Bearer ${ROTATION_TOKEN}" \
          "http://localhost:${PORT}/api/v1/users/whoami" > /dev/null 2>&1; then
       ROTATION_PENDING=0
+      LANE_TOKEN="${ROTATION_TOKEN}"
     fi
     # Rotating to the password the container was seeded with is not a rotation,
     # and asking for it is how the credential-lifecycle spec asks for an
@@ -276,15 +339,40 @@ for _ in $(seq 1 60); do
         -d "username=${LANGFLOW_SUPERUSER:-langflow}&password=${BOOTSTRAP_PASSWORD}" \
         | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' || true)"
       if [ -n "${BOOTSTRAP_TOKEN}" ]; then
-        curl -sf -X POST "http://localhost:${PORT}/api/v1/account/force-password-change" \
+        # The rotation answers with fresh tokens; the bootstrap token dies with
+        # the old password (lf_pwdv), so the fresh one is the only usable token.
+        ROTATED="$(curl -sf -X POST "http://localhost:${PORT}/api/v1/account/force-password-change" \
           -H "Authorization: Bearer ${BOOTSTRAP_TOKEN}" \
           -H 'Content-Type: application/json' \
-          -d "{\"current_password\":\"${BOOTSTRAP_PASSWORD}\",\"new_password\":\"${EE_PASSWORD}\"}" \
-          > /dev/null && echo "Superuser password rotated to the EE lane password."
+          -d "{\"current_password\":\"${BOOTSTRAP_PASSWORD}\",\"new_password\":\"${EE_PASSWORD}\"}")" \
+          && echo "Superuser password rotated to the EE lane password." \
+          && LANE_TOKEN="$(printf '%s' "${ROTATED}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || true)"
       fi
     fi
 
     echo "Sign in with ${LANGFLOW_SUPERUSER:-langflow} / ${EE_PASSWORD}"
+    echo "Revisions: EE $(docker image inspect --format "{{ index .Config.Labels \"${REVISION_LABEL}\" }}" "${IMAGE}" 2>/dev/null || echo unrecorded)" \
+      "· OSS $(docker exec "${CONTAINER_NAME}" cat /app/LANGFLOW_OSS_REVISION 2>/dev/null || echo unrecorded)"
+    # A closed tier gate fails every creating spec in setup, each with its own
+    # status mismatch. Asking one gated route here names the cause once, before
+    # the suite runs. Images older than the tier gates answer 200 and pass.
+    if [ -n "${LANE_TOKEN}" ]; then
+      GATE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
+        -H "Authorization: Bearer ${LANE_TOKEN}" \
+        "http://localhost:${PORT}/api/v1/policy-bundle" || true)"
+      if [ "${GATE_STATUS}" = "503" ] && [ "${TIER_GATES}" = "true" ]; then
+        echo "ERROR: GET /api/v1/policy-bundle answered 503 with LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true." >&2
+        echo "The licence-tier gates are still closed, so every creating spec would fail in setup." >&2
+        docker logs --tail 40 "${CONTAINER_NAME}" >&2 || true
+        exit 4
+      elif [ "${GATE_STATUS}" = "503" ]; then
+        echo "Tier gates CLOSED (LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=${TIER_GATES}):"
+        echo "  user/project creation and governance routes answer 503 on this instance, by request."
+      fi
+    else
+      echo "Tier gate not probed: no usable superuser token (rotation pending or failed)."
+    fi
     if [ "${BYPASS}" = "1" ]; then
       echo "BYPASS variant: authorization ENFORCED, superuser bypass ON, audit ON."
       echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
