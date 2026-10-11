@@ -155,7 +155,8 @@ with open(sys.argv[1], "rb") as f:
   local start=$SECONDS
   echo "build-target-image: building $branch @ ${sha:0:12} (version $version) as $image; log: $log" >&2
   rc=0
-  timeout "$build_limit_s" "$docker" build -f "$src/$dockerfile" --target full \
+  # -k: a client that does not stop on TERM is killed a minute later; timeout still says 124.
+  timeout -k 60 "$build_limit_s" "$docker" build -f "$src/$dockerfile" --target full \
       --label "org.langflow.sha=$sha" --label "org.langflow.ref=$branch" \
       -t "$image" "$src" > "$log" 2>&1 || rc=$?
   if [ "$rc" = "124" ]; then

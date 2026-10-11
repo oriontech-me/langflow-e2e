@@ -415,6 +415,7 @@ test("the suite runs under what is left of the run's deadline", () => {
   assert.ok(line, `run-e2e.sh unbounded: ${r.timeouts}`);
   const s = Number(line.split(" ")[0]);
   assert.ok(s > 4700 && s <= 4800, `the suite's limit is the deadline less what came before: ${s}`);
+  assert.match(line, / -k 120$/, "a suite that does not stop on TERM is never killed");
 });
 
 test("a suite stopped at the deadline is failed, and the reason says it ran past it", () => {
@@ -425,6 +426,13 @@ test("a suite stopped at the deadline is failed, and the reason says it ran past
   assert.equal(res.VERDICT ?? "", "", "a stopped suite has no verdict");
   assert.match(res.REASON, /^the suite ran past the run's deadline and was stopped after \d+s \(80 min from the start, retries 5\)/);
   assert.equal(res.CLEANUP, "ok", "the cleanup still runs");
+});
+
+test("a deadline that is not seconds is refused as the machine's, before the suite", () => {
+  const r = onDemand({ deadline: "80m" });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.env, null);
+  assert.match(r.result["req-1"].REASON, /E2E_ONDEMAND_DEADLINE_S='80m' is not a number of seconds/);
 });
 
 test("steps that leave less than five minutes of the deadline do not start a suite", () => {

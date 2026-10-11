@@ -154,7 +154,9 @@ main() {
   # override it, as they have no such commit.
   local SUITE_FLOOR="${E2E_ONDEMAND_SUITE_FLOOR:-1ba92b4079d656ddec051c6ef871e8f4e0cbb632}"
   # The run's own deadline, in seconds from this start: the suite is stopped when it
-  # would pass it, and the result says so. Three ceilings, each under the next:
+  # would pass it, and the result says so. From this start, not the claim: a start the
+  # worker had to retry has used some of the platform's hold already. Three ceilings,
+  # each under the next:
   #   this deadline        80 min, leaving 10 for the verdict and the cleanup
   #   TimeoutStartSec      90 min (e2e-on-demand.service), whose SIGTERM says only
   #                        "stopped", as the daily's stop and a hand's do
@@ -478,13 +480,16 @@ main() {
 
   # What is left of the deadline goes to the suite. Less than five minutes cannot hold
   # one, so the run is not started to be stopped.
+  [[ "$DEADLINE_S" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_DEADLINE_S='$DEADLINE_S' is not a number of seconds"
   local suite_s=$((DEADLINE_S - SECONDS))
   [ "$suite_s" -ge 300 ] \
     || ondemand_fail 3 failed "the steps before the suite took ${SECONDS}s of the run's ${DEADLINE_S}s deadline, which leaves no time for a suite: the machine or the network, not the branch"
   echo "suite time: ${suite_s}s, what is left of the run's ${DEADLINE_S}s deadline"
   # A marker, parsed as is: by ondemand_run_errors here and by the worker's readProgress.
   echo "=== run start $OD_RUN_ID ==="
-  ( cd "$OD_WT" && timeout "$suite_s" ./scripts/run-e2e.sh ) 9>&- 8>&-
+  # -k: run-e2e.sh's EXIT cleanup runs on the TERM, and a wedged docker can hang it;
+  # two minutes later it is killed, still inside the unit's cap, and timeout still says 124.
+  ( cd "$OD_WT" && timeout -k 120 "$suite_s" ./scripts/run-e2e.sh ) 9>&- 8>&-
   rc=$?
   echo "=== run end, exit=$rc ==="
   # run-e2e.sh exits 1 for a red day, for a provider it refused, for a target that

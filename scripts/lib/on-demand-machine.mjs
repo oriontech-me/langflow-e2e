@@ -171,7 +171,7 @@ ${stateCases}
 esac`);
   // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
   // coreutils' timeout, which the VM has and macOS does not: runs the command as is.
-  stub(bin, "timeout", `echo "$1 $2 $3" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? 'case "$1" in *run-e2e.sh) exit 124 ;; esac\n' : ""}exec "$@"`);
+  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? 'case "$1" in *run-e2e.sh) exit 124 ;; esac\n' : ""}exec "$@"`);
   stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.

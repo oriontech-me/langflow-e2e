@@ -60,6 +60,7 @@ const buildable = (version = "1.13.0") => ({
 function stubTimeout(bin, log, timesOut = null) {
   writeFileSync(join(bin, "timeout"), `#!/usr/bin/env bash
 echo "$*" >> ${JSON.stringify(log)}
+[ "$1" = "-k" ] && shift 2
 shift
 ${timesOut ? `case " $* " in *" ${timesOut} "*) exit 124 ;; esac` : ""}
 exec "$@"
@@ -305,14 +306,14 @@ test("the upstream listing, the fetch and the docker build each run under a time
   assert.equal(r.status, 0, r.stderr);
   assert.ok(r.timeouts.some((t) => /^300 git ls-remote /.test(t)), `ls-remote unbounded: ${r.timeouts}`);
   assert.ok(r.timeouts.some((t) => /^300 git -C \S+ fetch /.test(t)), `fetch unbounded: ${r.timeouts}`);
-  assert.ok(r.timeouts.some((t) => /^1800 docker build /.test(t)), `docker build unbounded: ${r.timeouts}`);
+  assert.ok(r.timeouts.some((t) => /^-k 60 1800 docker build /.test(t)), `docker build unbounded, or never killed: ${r.timeouts}`);
 });
 
 test("the limits can be set, and a value that is not seconds is refused as the machine's", () => {
   const r = build("release-1.13.0", { env: { UPSTREAM_TIMEOUT_S: "60", BUILD_TIMEOUT_S: "900" } });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(r.timeouts.some((t) => /^60 git ls-remote /.test(t)));
-  assert.ok(r.timeouts.some((t) => /^900 docker build /.test(t)));
+  assert.ok(r.timeouts.some((t) => /^-k 60 900 docker build /.test(t)));
   const bad = build("release-1.13.0", { env: { BUILD_TIMEOUT_S: "30m" } });
   assert.equal(bad.status, 7, bad.stderr);
   assert.match(bad.stderr, /BUILD_TIMEOUT_S='30m' is not a number of seconds/);
