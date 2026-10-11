@@ -180,11 +180,11 @@ teardown.
    (`total === 5`) — a precondition proof that the document is embedded +
    indexed (so a later answer failure is unambiguously an answer-side failure,
    not a broken ingest). The precondition reads the **stored** chunks, not the
-   KB's recorded `chunks` total: since `1.13.0.dev33` the record stays at `0`
-   after a component-driven ingest (#2186, LE-2912 — `vector-store-index-query.spec.ts`
-   holds that contract, declared failing), so reading it here would block the
-   answer-side coverage this spec exists for on a defect another test already
-   reports.
+   KB's recorded `chunks` total, which `vector-store-index-query.spec.ts` owns: from
+   `1.13.0.dev33` to `1.13.0.dev34` that record stayed at `0` after a
+   component-driven ingest (#2186, LE-2912, fixed in `1.13.0.dev35`), and reading
+   it here would have blocked the answer-side coverage this spec exists for on a
+   defect another test already reported.
 2. Run the **Chat Output** node (which pulls the whole answer chain
    Retrieve → Parser → Prompt → Language Model → Chat Output; the ingest branch is
    *not* upstream of Chat Output, so it does not re-run). Its

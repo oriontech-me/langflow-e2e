@@ -226,7 +226,7 @@ test.afterEach(async ({ page }) => {
 
 test(
   "Knowledge Base indexes the ingested document chunks (available for query)",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);
@@ -249,20 +249,9 @@ test(
     });
 
     await test.step("the Knowledge Base records the same chunk count", async () => {
-      // DECLARED FAILING (#2186, LE-2912). Since langflow-ai/langflow#15509
-      // (1.13.0.dev33) a Knowledge-component ingest leaves the KB row at
-      // `chunks: 0` / `status: "empty"` while the chunks above are stored:
-      // `backend_for_name` returns the `_GuardedMethods` proxy, so
-      // `isinstance(backend, BaseVectorStoreBackend)` is False and
-      // `_refresh_kb_stats` never runs. The assertion below is the CORRECT
-      // contract; it fails today, and test.fail() expects that. It is declared
-      // HERE, after the stored-chunk proof, so a broken bootstrap or ingest
-      // above still fails as an unexpected red instead of hiding behind it. The
-      // day upstream fixes it, this reports "expected to fail, but passed" —
-      // then delete test.fail() and this comment, restore @stable if the daily
-      // already removed it (it treats the unexpected pass as a hard failure), and
-      // close #2186.
-      test.fail();
+      // Was declared failing from 1.13.0.dev33 (#2186, LE-2912: a Knowledge-
+      // component ingest left the KB row at `chunks: 0`); fixed upstream by
+      // langflow-ai/langflow#15578, in 1.13.0.dev35.
       const headers = await authHeaders(page);
       const kb = await getKnowledgeBase(page.request, kbName, { headers });
       expect(kb.chunks).toBe(EXPECTED_CHUNKS);

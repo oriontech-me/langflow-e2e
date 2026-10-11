@@ -458,7 +458,7 @@
 
 #### 5.2 Processing and Vectorization
 - [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
-- [x] Indexing in Vector Store — document available for query (the stored chunks; the KB's **recorded** chunk count is declared failing with `test.fail()` since `1.13.0.dev33` — a Knowledge-component ingest leaves it at `0`, upstream regression from langflow-ai/langflow#15509, #2186, LE-2912) → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
+- [x] Indexing in Vector Store — document available for query (the stored chunks and the KB's **recorded** chunk count; the recorded count regressed in `1.13.0.dev33` from langflow-ai/langflow#15509 and was fixed in `1.13.0.dev35`, #2186, LE-2912) → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 - [x] Vector Store query returns relevant chunks for the prompt → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 - [x] Complete RAG pipeline (ingest → embed → store → retrieve → answer) → `core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
