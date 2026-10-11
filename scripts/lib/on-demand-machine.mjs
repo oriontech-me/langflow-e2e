@@ -62,9 +62,13 @@ export function setup({
   // Whether the suite's run-e2e.sh knows STABLE_AREAS: the executor refuses areas for
   // a suite that does not, which would run the whole @stable instead.
   suiteKnowsAreas = true,
-  // The suite running past the run's deadline: timeout answers 124 for run-e2e.sh,
-  // as coreutils' does once it has stopped it.
+  // The suite running past the run's deadline: timeout answers this status for
+  // run-e2e.sh, 124 as coreutils' does once TERM stopped it, 137 once it needed the
+  // KILL (after `sleep` seconds, so the deadline has passed); false runs it.
   suiteTimesOut = false,
+  suiteTimeoutSleep = 0,
+  // The least suite time the executor starts (E2E_ONDEMAND_MIN_SUITE_S); null is its own.
+  minSuite = null,
   // The run's deadline in seconds (E2E_ONDEMAND_DEADLINE_S); null is the executor's own.
   deadline = null,
 } = {}) {
@@ -171,7 +175,7 @@ ${stateCases}
 esac`);
   // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
   // coreutils' timeout, which the VM has and macOS does not: runs the command as is.
-  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? 'case "$1" in *run-e2e.sh) exit 124 ;; esac\n' : ""}exec "$@"`);
+  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? `case "$1" in *run-e2e.sh) sleep ${suiteTimeoutSleep}; exit ${suiteTimesOut === true ? 124 : suiteTimesOut} ;; esac\n` : ""}exec "$@"`);
   stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.
@@ -219,6 +223,7 @@ esac`);
     E2E_HEAVY_LOCK: join(dir, "heavy.lock"),
     ...(mirror ? { E2E_ONDEMAND_SUITE_FLOOR: head } : {}),
     ...(deadline !== null ? { E2E_ONDEMAND_DEADLINE_S: String(deadline) } : {}),
+    ...(minSuite !== null ? { E2E_ONDEMAND_MIN_SUITE_S: String(minSuite) } : {}),
   };
   const collect = (status) => {
     const readIf = (p) => (existsSync(p) ? readFileSync(p, "utf8") : null);

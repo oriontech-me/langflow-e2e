@@ -155,11 +155,13 @@ with open(sys.argv[1], "rb") as f:
   local start=$SECONDS
   echo "build-target-image: building $branch @ ${sha:0:12} (version $version) as $image; log: $log" >&2
   rc=0
-  # -k: a client that does not stop on TERM is killed a minute later; timeout still says 124.
+  # -k: a client that does not stop on TERM is killed a minute later. timeout then
+  # answers 137, not 124 (coreutils: 128+9 when the KILL is sent), and so does a client
+  # killed for another reason, so 137 counts as the limit only once the limit has passed.
   timeout -k 60 "$build_limit_s" "$docker" build -f "$src/$dockerfile" --target full \
       --label "org.langflow.sha=$sha" --label "org.langflow.ref=$branch" \
       -t "$image" "$src" > "$log" 2>&1 || rc=$?
-  if [ "$rc" = "124" ]; then
+  if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$build_limit_s" ]; }; then
     tail -n 15 "$log" >&2
     refuse 3 "docker build of $branch @ ${sha:0:12} did not finish in ${build_limit_s}s, so it was stopped. A build takes about 6 minutes: this is the machine, docker or the network, not the branch; the log so far is $log."
   elif [ "$rc" != "0" ]; then

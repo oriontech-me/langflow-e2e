@@ -57,19 +57,19 @@ const buildable = (version = "1.13.0") => ({
  * command, and runs it, or answers 124 as a limit that ran out when the command
  * matches `timesOut` ("ls-remote", "fetch" or "build").
  */
-function stubTimeout(bin, log, timesOut = null) {
+function stubTimeout(bin, log, timesOut = null, status = 124, sleep = 0) {
   writeFileSync(join(bin, "timeout"), `#!/usr/bin/env bash
 echo "$*" >> ${JSON.stringify(log)}
 [ "$1" = "-k" ] && shift 2
 shift
-${timesOut ? `case " $* " in *" ${timesOut} "*) exit 124 ;; esac` : ""}
+${timesOut ? `case " $* " in *" ${timesOut} "*) sleep ${sleep}; exit ${status} ;; esac` : ""}
 exec "$@"
 `, { mode: 0o755 });
 }
 
 /** Runs the script against a local upstream and a stub docker. */
 function build(branch, { buildFails = false, label = null, snap = false, buildRoot = null, fork = false, oldPython = false,
-  timesOut = null, env = {} } = {}) {
+  timesOut = null, timeoutStatus = 124, timeoutSleep = 0, env = {} } = {}) {
   const dir = makeTempDir("build-target-image-");
   const upstream = join(dir, "upstream");
   const shas = makeRepo(upstream, {
@@ -106,7 +106,7 @@ esac`;
   }
 
   const timeouts = join(dir, "timeout.log");
-  stubTimeout(bin, timeouts, timesOut);
+  stubTimeout(bin, timeouts, timesOut, timeoutStatus, timeoutSleep);
 
   if (oldPython) {
     // A python3 that predates tomllib: the import fails, and --version says so.
@@ -332,3 +332,14 @@ for (const [step, said] of [
     assert.deepEqual(r.leftovers, [], "the source tree is removed");
   });
 }
+
+test("a docker build the limit had to KILL (timeout's 137) is still the limit, not the branch's failure", () => {
+  const r = build("release-1.13.0", { timesOut: "build", timeoutStatus: 137, timeoutSleep: 2, env: { BUILD_TIMEOUT_S: "1" } });
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /did not finish in 1s, so it was stopped/);
+});
+
+test("a docker build killed before its limit (137 early) is a build failure, as any other exit", () => {
+  const r = build("release-1.13.0", { timesOut: "build", timeoutStatus: 137 });
+  assert.equal(r.status, 5, r.stderr);
+});

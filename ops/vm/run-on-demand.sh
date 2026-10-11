@@ -153,11 +153,15 @@ main() {
   # declared target and provider it also relies on are older still (#2111). Tests only
   # override it, as they have no such commit.
   local SUITE_FLOOR="${E2E_ONDEMAND_SUITE_FLOOR:-1ba92b4079d656ddec051c6ef871e8f4e0cbb632}"
+  # The least time a suite is started with (see the deadline below). Tests only: they
+  # cannot wait five minutes for a deadline to pass.
+  local MIN_SUITE_S="${E2E_ONDEMAND_MIN_SUITE_S:-300}"
   # The run's own deadline, in seconds from this start: the suite is stopped when it
   # would pass it, and the result says so. From this start, not the claim: a start the
   # worker had to retry has used some of the platform's hold already. Three ceilings,
   # each under the next:
-  #   this deadline        80 min, leaving 10 for the verdict and the cleanup
+  #   this deadline        80 min, then up to 2 for the suite to stop (timeout -k),
+  #                        leaving about 8 for the verdict and the cleanup
   #   TimeoutStartSec      90 min (e2e-on-demand.service), whose SIGTERM says only
   #                        "stopped", as the daily's stop and a hand's do
   #   MAX_HOLD_SECONDS     2 h, after which the platform releases the request as
@@ -482,13 +486,16 @@ main() {
   # one, so the run is not started to be stopped.
   [[ "$DEADLINE_S" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_DEADLINE_S='$DEADLINE_S' is not a number of seconds"
   local suite_s=$((DEADLINE_S - SECONDS))
-  [ "$suite_s" -ge 300 ] \
+  [ "$suite_s" -ge "$MIN_SUITE_S" ] \
     || ondemand_fail 3 failed "the steps before the suite took ${SECONDS}s of the run's ${DEADLINE_S}s deadline, which leaves no time for a suite: the machine or the network, not the branch"
   echo "suite time: ${suite_s}s, what is left of the run's ${DEADLINE_S}s deadline"
   # A marker, parsed as is: by ondemand_run_errors here and by the worker's readProgress.
   echo "=== run start $OD_RUN_ID ==="
   # -k: run-e2e.sh's EXIT cleanup runs on the TERM, and a wedged docker can hang it;
-  # two minutes later it is killed, still inside the unit's cap, and timeout still says 124.
+  # two minutes later it is killed, still inside the unit's cap. timeout then answers
+  # 137, not 124, as a suite killed for another reason (the OOM killer) also would, so
+  # 137 counts as the deadline only once the suite's time has passed.
+  local suite_start=$SECONDS
   ( cd "$OD_WT" && timeout -k 120 "$suite_s" ./scripts/run-e2e.sh ) 9>&- 8>&-
   rc=$?
   echo "=== run end, exit=$rc ==="
@@ -505,7 +512,7 @@ main() {
   verdict_errs="$(ondemand_run_errors verdict)"
   last_err="$(ondemand_run_errors last)"
   model_refused="$(cat "$RUNS_ROOT/$OD_RUN_ID"/logs/shard-*.model-refused 2>/dev/null | head -n 1)"
-  if [ "$rc" = "124" ]; then
+  if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - suite_start)) -ge "$suite_s" ]; }; then
     # timeout's own status: the suite was stopped, so whatever it left is partial.
     OD_EXIT=3
     OD_REASON="the suite ran past the run's deadline and was stopped after ${suite_s}s ($((DEADLINE_S / 60)) min from the start, retries ${OD_RETRIES:-default}). A run takes about 30 min: a suite this long is hanging, or a very red branch with more retries than fit"

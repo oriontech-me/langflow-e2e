@@ -428,6 +428,21 @@ test("a suite stopped at the deadline is failed, and the reason says it ran past
   assert.equal(res.CLEANUP, "ok", "the cleanup still runs");
 });
 
+test("a suite the deadline had to KILL (timeout's 137) is still the deadline, never a verdict", () => {
+  // run-e2e.sh's own cleanup hung after the TERM, with results.json already merged: a
+  // 137 read as an exit would be done/red, a red the branch never earned.
+  const r = onDemand({ suiteTimesOut: 137, suiteTimeoutSleep: 3, deadline: 3, minSuite: 1 });
+  assert.equal(r.status, 3, r.log);
+  assert.equal(r.result["req-1"].STATUS, "failed");
+  assert.match(r.result["req-1"].REASON, /^the suite ran past the run's deadline/);
+});
+
+test("a suite killed before its deadline (137 early, as the OOM killer's) is not called the deadline", () => {
+  const r = onDemand({ suiteTimesOut: 137 });
+  assert.equal(r.status, 3, r.log);
+  assert.doesNotMatch(r.result["req-1"].REASON, /deadline/);
+});
+
 test("a deadline that is not seconds is refused as the machine's, before the suite", () => {
   const r = onDemand({ deadline: "80m" });
   assert.equal(r.status, 3, r.log);
