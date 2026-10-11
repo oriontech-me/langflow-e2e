@@ -728,7 +728,12 @@ test("a container that survives removal is reported in the result, not hidden", 
 test("a run stopped by SIGTERM -- the daily starting -- still cleans up and answers failed", async () => {
   const { env, collect } = setup({ runSleep: 2 });
   const child = spawn("bash", [ONDEMAND], { env, stdio: "ignore" });
-  await new Promise((res) => setTimeout(res, 1000));
+  // Once the suite has started, as the daily's stop finds it: a fixed second was
+  // sometimes before the trap was armed on a slow machine, and the test flaked.
+  const log = join(env.E2E_ONDEMAND_LOG_DIR, "latest.log");
+  for (let i = 0; i < 200 && !/^=== run start /m.test(existsSync(log) ? readFileSync(log, "utf8") : ""); i++) {
+    await new Promise((res) => setTimeout(res, 50));
+  }
   child.kill("SIGTERM");
   const status = await new Promise((res) => child.on("exit", (code) => res(code)));
   const r = collect(status);
