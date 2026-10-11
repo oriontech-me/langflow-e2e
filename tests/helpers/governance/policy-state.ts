@@ -1,4 +1,5 @@
 import type { APIRequestContext } from "@playwright/test";
+import { tierGateCause } from "../enterprise/tier-gate";
 
 /**
  * Shared plumbing for the catalog / model-provider governance specs.
@@ -86,8 +87,13 @@ async function okJson(
       ? await request.get(url, { headers: { Authorization: auth } })
       : await request.put(url, { headers: { Authorization: auth }, data });
   if (!response.ok()) {
+    const text = await response.text();
+    // OSS never answers the licence 503; an Enterprise 1.13+ instance does when
+    // its tier gates are closed, and naming the flag beats quoting the body.
+    const cause = tierGateCause(response.status(), text);
     throw new Error(
-      `${method.toUpperCase()} ${url} answered ${response.status()}: ${await response.text()}`,
+      `${method.toUpperCase()} ${url} answered ${response.status()}: ${text}` +
+        (cause ? ` — ${cause}` : ""),
     );
   }
   return (await response.json()) as Record<string, unknown>;

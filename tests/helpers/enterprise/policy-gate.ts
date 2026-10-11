@@ -1,4 +1,5 @@
 import { test, type APIRequestContext } from "@playwright/test";
+import { assertNotTierGated } from "./tier-gate";
 import {
   readPolicyBundle,
   type PolicyBundleResponse,
@@ -95,6 +96,16 @@ async function readDeclaredRevision(
   const response = await request.get("/api/v1/policy-bundle/history", {
     headers: { Authorization: auth },
   });
+  // A server error is not "no declaration". Returning undefined for it turned the
+  // caller's verdict into a SKIP — the spec reported the environment as merely
+  // the wrong one while the route was down, or tier-gated shut (#2259).
+  if (response.status() >= 500) {
+    const text = await response.text();
+    assertNotTierGated("GET /api/v1/policy-bundle/history", response.status(), text);
+    throw new Error(
+      `GET /api/v1/policy-bundle/history answered ${response.status()}: ${text.slice(0, 200)}`,
+    );
+  }
   if (!response.ok()) return undefined;
   const items = ((await response.json()) as { items?: PolicyBundleResponse[] })
     .items;

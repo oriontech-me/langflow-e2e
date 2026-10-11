@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { retryOnDroppedConnection } from "../api/retry-on-dropped-connection";
+import { assertNotTierGated } from "./tier-gate";
 
 // Re-exported so the enterprise specs keep one import site. The helper itself moved
 // to `helpers/api/` (#2243): it is a transport concern with callers in every area,
@@ -279,7 +280,9 @@ export async function createCustomRole(
     headers: { Authorization: auth },
     data: { name, description: "Created by the E2E suite.", permissions },
   });
-  expect(response.status(), await response.text()).toBe(201);
+  const text = await response.text();
+  assertNotTierGated("POST /api/v1/authz/roles", response.status(), text);
+  expect(response.status(), text).toBe(201);
   const body = (await response.json()) as CustomRole;
   return { id: body.id, name: body.name };
 }
@@ -368,7 +371,9 @@ export async function createRbacUser(
     headers: { Authorization: auth },
     data: { username, password: TEST_USER_PASSWORD },
   });
-  expect(created.status(), await created.text()).toBe(201);
+  const createdText = await created.text();
+  assertNotTierGated("POST /api/v1/users/", created.status(), createdText);
+  expect(created.status(), createdText).toBe(201);
   const { id } = (await created.json()) as { id: string };
 
   const login = await request.post("/api/v1/login", {
@@ -421,6 +426,9 @@ export interface AssignmentScope {
   domain_id?: string | null;
 }
 
+/** The 409 `detail` for a second role at a scope the user already holds one at. */
+export const SCOPE_CONFLICT_DETAIL = "A role already exists for this user with this scope.";
+
 /**
  * Grant `roleId` to `userId`, globally by default. Returns the assignment id, for
  * cleanup.
@@ -445,7 +453,21 @@ export async function assignRole(
       domain_id: scope.domain_id ?? null,
     },
   });
-  expect(response.status(), await response.text()).toBe(201);
+  const text = await response.text();
+  // One role per user per scope since the 1.13 line (langflow-ai/langflow#15426):
+  // a second grant at a scope the user already holds a role at answers 409 rather
+  // than stacking. Named, because it is almost always a grant an earlier test left
+  // on the shared subject — which reads as a product refusal otherwise.
+  if (response.status() === 409 && text.includes(SCOPE_CONFLICT_DETAIL)) {
+    throw new Error(
+      `POST /api/v1/authz/role-assignments answered 409: user ${userId} already ` +
+        `holds a role at ${scope.domain_type}${scope.domain_id ? `:${scope.domain_id}` : ""}. ` +
+        `Roles no longer stack at one scope — revoke the existing one first ` +
+        `(revokeAssignmentsFor), or pass the subject id to resetSubjectGrants so ` +
+        `a grant leaked by an earlier test is swept.`,
+    );
+  }
+  expect(response.status(), text).toBe(201);
   return ((await response.json()) as { id: string }).id;
 }
 
@@ -458,25 +480,39 @@ export interface InheritedGrant {
   domain_type: string;
   domain_id?: string | null;
   actions: string[];
+  /** Since the 1.13 line; absent on 1.12 images. */
+  is_superuser?: boolean;
+  /** Since the 1.13 line: a per-resource revocation exception covers this grant. */
+  is_revoked?: boolean;
+}
+
+/** Where `inherited-access` lives for a flow — the one place the path is spelled. */
+export function inheritedAccessPath(flowId: string): string {
+  return `/api/v1/authz/resources/flow/${flowId}/inherited-access`;
 }
 
 /**
  * Every assignment that reaches `flowId`, whatever scope it came from.
  *
- * Superuser-scoped: asked by the subject it describes, the endpoint answers
- * `404`, so callers pass the superuser's auth. Read by MEMBERSHIP, never by
- * length — the superuser's own global admin grant is always in this list, and so
- * is whatever else the container carries.
+ * The route was generalised to every shareable resource type on the 1.13 line
+ * (EE PR 355): `/authz/resources/{type}/{id}/inherited-access`. The old
+ * `/authz/flows/{id}/inherited-access` was REMOVED with no alias, and a removed
+ * route answers `404` — the same status a caller without access gets — so a
+ * spec still asking the old path can pass for the wrong reason (#2259).
+ *
+ * Gated by the resource's share-read check, so callers pass the superuser's
+ * auth. Read by MEMBERSHIP, never by length: whatever else the container carries
+ * is in this list too. The resource's OWNER is excluded since the same change —
+ * ownership is a separate access path, not a role-derived one.
  */
 export async function readInheritedAccess(
   request: APIRequestContext,
   auth: string,
   flowId: string,
 ): Promise<InheritedGrant[]> {
-  const response = await request.get(
-    `/api/v1/authz/flows/${flowId}/inherited-access`,
-    { headers: { Authorization: auth } },
-  );
+  const response = await request.get(inheritedAccessPath(flowId), {
+    headers: { Authorization: auth },
+  });
   expect(response.status(), await response.text()).toBe(200);
   return ((await response.json()) as { items: InheritedGrant[] }).items;
 }
@@ -635,7 +671,9 @@ export async function reconcilePolicy(
     `/api/v1/authz/policy/reconcile${repair ? "?repair=true" : ""}`,
     { headers: { Authorization: auth }, data: {} },
   );
-  expect(response.status(), await response.text()).toBe(200);
+  const text = await response.text();
+  assertNotTierGated("POST /api/v1/authz/policy/reconcile", response.status(), text);
+  expect(response.status(), text).toBe(200);
   return (await response.json()) as ReconcileVerdict;
 }
 
@@ -648,7 +686,9 @@ export async function syncPolicy(
     headers: { Authorization: auth },
     data: {},
   });
-  expect(response.status(), await response.text()).toBe(200);
+  const text = await response.text();
+  assertNotTierGated("POST /api/v1/authz/policy/sync", response.status(), text);
+  expect(response.status(), text).toBe(200);
   return (await response.json()) as {
     cleared?: boolean;
     counts?: Record<string, number>;
@@ -1026,6 +1066,9 @@ export async function getProjectOwnedBy(
     data: { name: SCOPE_PROBE_PROJECT_NAME },
   });
   if (created.ok()) return ((await created.json()) as { id: string }).id;
+  // Before the role-less fallback: the tier gate refuses the SUPERUSER here too,
+  // and it would otherwise surface as the generic "could not obtain" below.
+  assertNotTierGated("POST /api/v1/projects/", created.status(), await created.text());
 
   // A ROLE-LESS owner cannot create one, and that is not a failure of this
   // helper — `project:create` is still enforced for them, which is the control
@@ -1130,11 +1173,18 @@ export async function getSharedRbacSubject(
 /**
  * Return the shared subject to the state every test in this directory assumes:
  * no roles, no shares. Uses the superuser, so it costs no login.
+ *
+ * Pass `subjectId` to also sweep every assignment the subject holds, read from
+ * the admin listing. The tracked ids only cover what THIS test granted; a grant
+ * an earlier test leaked (a run killed before its afterEach) used to be harmless
+ * extra access, but since roles stopped stacking at one scope (1.13 line,
+ * langflow-ai/langflow#15426) it turns the next grant at that scope into a 409.
  */
 export async function resetSubjectGrants(
   request: APIRequestContext,
   auth: string,
   granted: { assignments: string[]; shares: string[] },
+  subjectId?: string,
 ): Promise<void> {
   const headers = { Authorization: auth };
   for (const id of granted.shares.splice(0)) {
@@ -1147,4 +1197,5 @@ export async function resetSubjectGrants(
       .delete(`/api/v1/authz/role-assignments/${id}`, { headers })
       .catch(() => undefined);
   }
+  if (subjectId) await revokeAssignmentsFor(request, auth, subjectId);
 }
