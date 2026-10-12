@@ -182,8 +182,8 @@ export async function deliverVerdict(result, env, { fetchFn = fetch, detail = ""
     if (!url) {
       errors.push("slack: SLACK_WEBHOOK_URL is not set");
     } else {
-      // A red leads with the mark the channel's other failure posts use, so it reads as
-      // bad news at a glance; a green (only under `always`) stays plain.
+      // A red leads with a cross mark, so it reads as bad news at a glance among the
+      // channel's posts; a green (only under `always`) stays plain.
       const mark = status === "red" ? "❌ " : "";
       const headline = `${mark}Routine ${routine}: ${status} (${dayOf(result.STARTED)})`;
       const body = `${result.REASON || ""}${issueUrl ? `\nIssue: ${issueUrl}` : ""}`;

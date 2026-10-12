@@ -136,7 +136,7 @@ test("Slack: red speaks when asked for red, green only when asked for always, ne
   const [post] = await slackCalls(RED, "red");
   assert.equal(post.body.headline, "❌ Routine migration: red (2026-10-06)");
   const [greenPost] = await slackCalls(GREEN, "always");
-  assert.equal(greenPost.body.headline.startsWith("Routine migration: green"), true);
+  assert.match(greenPost.body.headline, /^Routine migration: green/);
 });
 
 test("the Slack post links the issue it opened, so the two views of one red point at each other", async () => {
