@@ -155,7 +155,8 @@ one's result exists, and start the unit again.
 The answer is `/root/e2e-on-demand/results/<id>.env`: `STATUS` (`refused`,
 `build_failed`, `failed` or `done`), `VERDICT` for a run that reached one, `RUN_ID`,
 the target's ref, commit and version (a version's ref and commit are empty, and
-`BUILD_S` is its install), the suite commit, and `CLEANUP` (`pending` if the
+`BUILD_S` is its install or its pull; a published image's run adds `TARGET_IMAGE`, the
+digest that ran), the suite commit, and `CLEANUP` (`pending` if the
 cleanup was cut short, then `ok`, `incomplete` or `unconfirmed`). The log is
 `/var/log/e2e-on-demand/latest.log`.
 
