@@ -3732,6 +3732,38 @@ test("a declared published distribution is the version alone, on a venv that is 
   }
 });
 
+// A published image (the on-demand run's langflowai/langflow:<version>) declares the
+// version alone, and is named by its digest: its labels carry no Langflow commit.
+const DIGEST = `langflowai/langflow@sha256:${"a".repeat(64)}`;
+const publishedImageEnv = (extra = {}) => imageEnv({
+  LANGFLOW_IMAGE: DIGEST, PREPARE_TARGET: "", TARGET_DECLARED_SHA: "", TARGET_DECLARED_VERSION: "1.12.5rc1",
+  TARGET_DECLARED_REF: "", DECLARED_MODEL_PROVIDER: "", DECLARED_MODEL_ID: "", ...extra,
+});
+
+test("a declared published image is its version alone, named by its digest", () => {
+  const r = sourced("check_declared_target && declared_form", publishedImageEnv());
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "published-image");
+  const cases = [
+    // A tag can be pushed again: without a commit, only a digest names the image.
+    [{ LANGFLOW_IMAGE: "langflowai/langflow:1.12.5rc1" }, /or, for a published image, the version alone with LANGFLOW_IMAGE named by its digest/],
+    [{ LANGFLOW_IMAGE: "langflowai/langflow@sha256:abc" }, /named by its digest/],
+    [{ TARGET_DECLARED_VERSION: "1.12.5rc1; id" }, /characters a version cannot/],
+    // A branch on a published image would name something no check here reads.
+    [{ TARGET_DECLARED_REF: "release-1.12.5" }, /needs TARGET_DECLARED_SHA/],
+    [{ CHECK_TARGET_VERSION: "0" }, /CHECK_TARGET_VERSION=0/],
+  ];
+  for (const [extra, message] of cases) {
+    const d = sourced("check_declared_target && echo ok", publishedImageEnv(extra));
+    assert.equal(d.status, 1, `${JSON.stringify(extra)} must be refused`);
+    assert.match(d.stderr, message, JSON.stringify(extra));
+  }
+  // The other two forms keep their names.
+  assert.equal(sourced("declared_form", declaredEnv()).stdout.trim(), "built-image");
+  assert.equal(sourced("declared_form", distEnv()).stdout.trim(), "published-distribution");
+  assert.equal(sourced("declared_form", { TARGET_DECLARED_SHA: "", TARGET_DECLARED_VERSION: "", TARGET_DECLARED_REF: "" }).stdout.trim(), "");
+});
+
 test("a declared published distribution is not warned about comparing with the nightly", () => {
   const r = sourced("warn_target_cmd_conflicts", distEnv({ REQUIRE_TARGET_VERSION: "1" }));
   assert.equal(r.status, 0, r.stderr);
@@ -4119,6 +4151,13 @@ test("a declared published distribution is the expectation, with no commit, and 
   assert.equal(r.result, "1.13.1rc0||declared", r.stderr);
   assert.deepEqual(r.calls, [], "neither the registry nor github may be consulted for a declared version");
   assert.match(r.stdout + r.stderr, /the published distribution, by declared/);
+});
+
+test("a declared published image is the expectation, with no commit, and upstream is never asked", () => {
+  const r = resolveExpected(publishedImageEnv());
+  assert.equal(r.result, "1.12.5rc1||declared", r.stderr);
+  assert.deepEqual(r.calls, []);
+  assert.match(r.stdout + r.stderr, /the published image, by declared/);
 });
 
 test("with nothing declared the upstream resolution still runs, and off still means off", () => {

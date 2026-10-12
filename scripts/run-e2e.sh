@@ -348,13 +348,17 @@ REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
 # REQUIRE_TARGET_VERSION like any other mismatch. TARGET_DECLARED_REF is the branch the
 # SHA was resolved from; it is carried into the metadata and never checked out.
 #
-# Two forms, and nothing in between. An IMAGE built from a commit declares the commit,
+# Three forms, and nothing in between. An IMAGE built from a commit declares the commit,
 # the version, and optionally the branch. A PUBLISHED DISTRIBUTION (TARGET_KIND=source
 # with LANGFLOW_SRC_RUN_CMD, the on-demand run's `langflow==<version>`) declares the
 # version alone: it has no commit, so the version it serves, compared exactly, is the
 # whole check -- and the caller's installer has already refused a venv whose langflow
-# and langflow-base are not that version. A source CLONE declares nothing: the preparer
-# verifies its commit, and a declaration there would be a claim nothing here checks.
+# and langflow-base are not that version. A PUBLISHED IMAGE (TARGET_KIND=image, the
+# on-demand run's `langflowai/langflow:<version>`) declares the version alone too: its
+# labels name the base image's commit, never Langflow's (#2270), so it is named by its
+# DIGEST instead, which no push to the tag can change, and pulled like any image. A
+# source CLONE declares nothing: the preparer verifies its commit, and a declaration
+# there would be a claim nothing here checks.
 TARGET_DECLARED_SHA="${TARGET_DECLARED_SHA:-}"
 TARGET_DECLARED_VERSION="${TARGET_DECLARED_VERSION:-}"
 TARGET_DECLARED_REF="${TARGET_DECLARED_REF:-}"
@@ -794,7 +798,13 @@ check_declared_target() {
     [[ "$TARGET_DECLARED_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]] || die "TARGET_DECLARED_VERSION has characters a version cannot: '$TARGET_DECLARED_VERSION'."
     return 0
   fi
-  [ -n "$TARGET_DECLARED_SHA" ] || die "a declared target needs TARGET_DECLARED_SHA, the commit the image was built from. TARGET_DECLARED_VERSION or TARGET_DECLARED_REF alone names no build."
+  if [ -z "$TARGET_DECLARED_SHA" ] && [ -z "$TARGET_DECLARED_REF" ] && [[ "${LANGFLOW_IMAGE:-}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+    # A published image: its version, and the digest LANGFLOW_IMAGE pins it by.
+    [ -n "$TARGET_DECLARED_VERSION" ] || die "a declared published image needs TARGET_DECLARED_VERSION, the version its tag names."
+    [[ "$TARGET_DECLARED_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]] || die "TARGET_DECLARED_VERSION has characters a version cannot: '$TARGET_DECLARED_VERSION'."
+    return 0
+  fi
+  [ -n "$TARGET_DECLARED_SHA" ] || die "a declared target needs TARGET_DECLARED_SHA, the commit the image was built from; or, for a published image, the version alone with LANGFLOW_IMAGE named by its digest (<repo>@sha256:<64 hex>), which no push to a tag can change. TARGET_DECLARED_VERSION or TARGET_DECLARED_REF alone names no build."
   [[ "$TARGET_DECLARED_SHA" =~ ^[0-9a-f]{40}$ ]] || die "TARGET_DECLARED_SHA must be a full 40-character lowercase commit, got: '$TARGET_DECLARED_SHA'. A short one can match more than one commit."
   [ -n "$TARGET_DECLARED_VERSION" ] || die "a declared target needs TARGET_DECLARED_VERSION, the version in that commit's pyproject.toml: the commit is checked against the image's label, the version against what the instance reports, and neither check stands in for the other."
   [[ "$TARGET_DECLARED_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]] || die "TARGET_DECLARED_VERSION has characters a version cannot: '$TARGET_DECLARED_VERSION'."
@@ -802,6 +812,16 @@ check_declared_target() {
     [[ "$TARGET_DECLARED_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || die "TARGET_DECLARED_REF has characters a branch name cannot: '$TARGET_DECLARED_REF'."
   fi
   return 0
+}
+
+# Which declared form this run checks: built-image, published-image or
+# published-distribution; '' when nothing is declared. After check_declared_target.
+declared_form() {
+  target_is_declared || return 0
+  if [ "$TARGET_KIND" != "image" ]; then echo published-distribution
+  elif [ -n "$TARGET_DECLARED_SHA" ]; then echo built-image
+  else echo published-image
+  fi
 }
 
 # Whether the caller declared the target, in either form: anything declared at all,
@@ -1597,7 +1617,7 @@ resolve_expected_target() {
     if [ -n "$TARGET_EXPECTED_SHA" ]; then
       info "target should be: $TARGET_EXPECTED_VERSION (ref ${TARGET_EXPECTED_REF:-<none>}, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
     else
-      info "target should be: $TARGET_EXPECTED_VERSION (the published distribution, by $TARGET_RESOLUTION)"
+      info "target should be: $TARGET_EXPECTED_VERSION (the $(declared_form | tr '-' ' '), by $TARGET_RESOLUTION)"
     fi
   elif [ "$CHECK_TARGET_VERSION" = "1" ]; then
     local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
@@ -1673,7 +1693,8 @@ phase_preflight() {
   [ -n "$STABLE_AREAS" ] && info "areas: @stable AND any of $STABLE_AREAS (the rest of @stable does not run)"
   info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
   [ -n "$TARGET_DECLARED_SHA" ] && info "target declared: ${TARGET_DECLARED_REF:-<no ref>} @ ${TARGET_DECLARED_SHA:0:10}, version $TARGET_DECLARED_VERSION"
-  [ -z "$TARGET_DECLARED_SHA" ] && [ -n "$TARGET_DECLARED_VERSION" ] && info "target declared: the published distribution langflow==$TARGET_DECLARED_VERSION"
+  [ "$(declared_form)" = published-distribution ] && info "target declared: the published distribution langflow==$TARGET_DECLARED_VERSION"
+  [ "$(declared_form)" = published-image ] && info "target declared: the published image $LANGFLOW_IMAGE, version $TARGET_DECLARED_VERSION"
   [ -n "$DECLARED_MODEL_PROVIDER" ] && info "provider declared: $DECLARED_MODEL_PROVIDER${DECLARED_MODEL_ID:+ / $DECLARED_MODEL_ID} (no rotation, no fallback)"
   warn_target_cmd_conflicts
 
@@ -1716,9 +1737,12 @@ phase_preflight() {
   # read as four backends that never answered. Fatal, because an image run with no
   # image has nothing to measure; the pull's own output is filed, not printed.
   #
-  # A DECLARED image is the exception, and is never pulled: it was built on this
-  # machine, a registry holds nothing under its name, and one that did would be someone
-  # else's build. It is checked instead — present, and labelled with the declared commit.
+  # An image DECLARED by its commit is the exception, and is never pulled: it was built
+  # on this machine, a registry holds nothing under its name, and one that did would be
+  # someone else's build. It is checked instead — present, and labelled with the
+  # declared commit. A published image declared by its version is pulled as any other,
+  # by the digest it is named by: the caller pulled it already, so this is a no-op that
+  # only confirms the registry still serves those bytes.
   TARGET_IMAGE_LABEL_SHA=""
   if [ "$TARGET_KIND" = "image" ] && [ -n "$TARGET_DECLARED_SHA" ]; then
     verify_declared_image
@@ -2570,7 +2594,11 @@ phase_merge() {
       yes | cycle) info "target version: $TARGET_VERSION_MATCH — $TARGET_VERSION_REASON" ;;
       no)
         warn "TARGET VERSION MISMATCH (by $TARGET_RESOLUTION) — $TARGET_VERSION_REASON"
-        if [ "$TARGET_RESOLUTION" = "declared" ] && [ -z "$TARGET_EXPECTED_SHA" ]; then
+        if [ "$TARGET_RESOLUTION" = "declared" ] && [ "$(declared_form)" = published-image ]; then
+          warn "The image's tag names the declared version but it served another one, so the"
+          warn "tag and the image disagree. Nothing this run measured can be read as a result"
+          warn "about $LANGFLOW_IMAGE."
+        elif [ "$TARGET_RESOLUTION" = "declared" ] && [ -z "$TARGET_EXPECTED_SHA" ]; then
           warn "The venv was installed as the declared version but served another one, so"
           warn "the instance is not the venv's. Nothing this run measured can be read as a"
           warn "result about langflow==$TARGET_EXPECTED_VERSION."
