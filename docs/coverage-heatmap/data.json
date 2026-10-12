@@ -86,7 +86,7 @@
  "areas": [
   {
    "area": "6 Agents / LLM execution",
-   "residualRisk": 9.3,
+   "residualRisk": 9,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -100,15 +100,15 @@
    "mitigationBulletDerived": 0.73,
    "mitigationOverride": null,
    "testHealth": {
-    "chronicHardFailures": 1,
+    "chronicHardFailures": 0,
     "chronicFlaky": 9,
-    "stableSpecs": 36,
-    "penalty": 0.101
+    "stableSpecs": 37,
+    "penalty": 0.089
    },
-   "mitigation": 0.63,
-   "checklistBullets": 46,
+   "mitigation": 0.64,
+   "checklistBullets": 47,
    "bulletStates": {
-    "x": 41,
+    "x": 42,
     " ": 3,
     "-": 1,
     "~": 1
@@ -127,13 +127,13 @@
    },
    "upstreamBugCount": 90,
    "specCounts": {
-    "specs": 37,
-    "stable": 36
+    "specs": 38,
+    "stable": 37
    }
   },
   {
    "area": "13/14 MCP",
-   "residualRisk": 8.5,
+   "residualRisk": 7.8,
    "inherentRisk": 25,
    "probability": 5,
    "impact": 5,
@@ -148,11 +148,11 @@
    "mitigationOverride": null,
    "testHealth": {
     "chronicHardFailures": 0,
-    "chronicFlaky": 1,
+    "chronicFlaky": 0,
     "stableSpecs": 12,
-    "penalty": 0.029
+    "penalty": 0
    },
-   "mitigation": 0.66,
+   "mitigation": 0.69,
    "checklistBullets": 35,
    "bulletStates": {
     "x": 29,
@@ -244,10 +244,10 @@
     "penalty": 0
    },
    "mitigation": 0.34,
-   "checklistBullets": 104,
+   "checklistBullets": 105,
    "bulletStates": {
-    "!": 5,
-    "-": 84,
+    "!": 3,
+    "-": 87,
     " ": 13,
     "~": 2
    },
@@ -448,7 +448,7 @@
    "testHealth": {
     "chronicHardFailures": 0,
     "chronicFlaky": 0,
-    "stableSpecs": 26,
+    "stableSpecs": 27,
     "penalty": 0
    },
    "mitigation": 0.75,
@@ -473,7 +473,7 @@
    "upstreamBugCount": 54,
    "specCounts": {
     "specs": 27,
-    "stable": 26
+    "stable": 27
    }
   },
   {
@@ -1215,9 +1215,9 @@
    }
   }
  ],
- "refreshed": "2026-10-09",
+ "refreshed": "2026-10-12",
  "refreshWindow": {
-  "testHealthSince": "2026-08-25",
+  "testHealthSince": "2026-08-28",
   "days": 45
  }
 }
