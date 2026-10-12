@@ -104,9 +104,10 @@ is exactly one of `ONDEMAND_REF`, a branch of upstream built into an image, and
 `1.13.0.dev12`, as PyPI spells it), installed with the daily's
 `scripts/prepare-target-dist.sh` into `/root/e2e-on-demand/venv` and served from it.
 `langflow-base` and `lfx` are pinned to the same version where PyPI has them, Python is
-3.14 unless the release excludes it (then 3.13 or 3.12, which uv downloads once), a
-nightly `.devN` also gets pre-releases allowed, and versions before 1.12 are refused
-(their `langflow-base` was numbered 0.N); `ONDEMAND_VERSION_FROM` is `pypi` or
+3.14 unless the release excludes it (then 3.13 or 3.12, which uv downloads once), uv
+resolves under `--prerelease=if-necessary-or-explicit` whatever `UV_PRERELEASE` says
+(with uv 0.12.5, the qa's, that resolves rcs, finals and nightlies alike), and versions
+before 1.12 are refused (their `langflow-base` was numbered 0.N); `ONDEMAND_VERSION_FROM` is `pypi` or
 empty, which means it. `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's

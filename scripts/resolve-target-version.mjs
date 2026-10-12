@@ -280,9 +280,9 @@ export function resolveTargetVersion(refsText, imageTagsText = null, imageReques
  *
  * `declared` is exact, and for a stronger reason than the published image: the caller
  * built the target from one commit and read the version out of that commit's own
- * `pyproject.toml`, so there is no cycle to be lenient about. Nothing here resolves it;
- * A declared published distribution is exact for the same reason: its installer refused
- * a venv whose langflow and langflow-base are not that version. Nothing here resolves it;
+ * `pyproject.toml`, so there is no cycle to be lenient about. A declared published
+ * distribution is exact for the same reason: its installer refused a venv whose
+ * langflow and langflow-base are not that version. Nothing here resolves either;
  * run-e2e.sh takes it from TARGET_DECLARED_VERSION and names the strategy, so this
  * comparison and the verdict after it know which claim they are checking.
  *
