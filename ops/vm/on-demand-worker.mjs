@@ -84,6 +84,10 @@ export const RESULT_STATUSES = ["done", "failed", "build_failed", "refused"];
 export const SHAPES = {
   id: /^[A-Za-z0-9._-]{1,64}$/,
   ref: /^[A-Za-z0-9._/-]{1,200}$/,
+  /** A published version, PEP 440's normal form; at most 64 characters (checked apart). */
+  version: /^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$/,
+  /** Where a version comes from: pypi, the only one the executor installs from. */
+  versionFrom: /^(pypi)?$/,
   provider: /^[a-z0-9-]{0,40}$/,
   model: /^[A-Za-z0-9._:/-]{0,120}$/,
   requestedBy: /^[A-Za-z0-9._@+-]{0,128}$/,
@@ -135,14 +139,24 @@ export function pauseReason({ nowMs, states, shadowRequest }) {
 /** What is wrong with a claimed request, or null. The worker writes nothing it did not check. */
 export function claimedRequestError(req) {
   if (req === null || typeof req !== "object") return "the request is not an object";
-  const fields = [["id", SHAPES.id], ["ref", SHAPES.ref], ["provider", SHAPES.provider], ["model", SHAPES.model], ["requested_by", SHAPES.requestedBy], ["claim_token", SHAPES.claimToken]];
+  // A request names a branch or a published version, exactly one. A platform from
+  // before versions sends no version, which is a branch.
+  const version = req.version ?? "";
+  const versionFrom = req.version_from ?? "";
+  if (typeof version !== "string" || (version !== "" && (version.length > 64 || !SHAPES.version.test(version)))) return `version is not a version in PEP 440's normal form: ${JSON.stringify(String(version)).slice(0, 80)}`;
+  if (typeof versionFrom !== "string" || !SHAPES.versionFrom.test(versionFrom)) return `version_from is not a source the executor installs from (pypi): ${JSON.stringify(String(versionFrom)).slice(0, 80)}`;
+  if (versionFrom !== "" && version === "") return "version_from needs version: it says where a version comes from";
+  if (version !== "" && req.ref !== "" && req.ref !== null && req.ref !== undefined) return "ref and version are both given: a run has one target";
+  const fields = [["id", SHAPES.id], ...(version === "" ? [["ref", SHAPES.ref]] : []), ["provider", SHAPES.provider], ["model", SHAPES.model], ["requested_by", SHAPES.requestedBy], ["claim_token", SHAPES.claimToken]];
   for (const [key, re] of fields) {
     if (typeof req[key] !== "string" || !re.test(req[key])) return `${key} does not have the executor's shape: ${JSON.stringify(String(req[key]).slice(0, 80))}`;
   }
   // The executor refuses a ref git would refuse, through build-target-image.sh; the
   // platform refuses these too. Checked again so request.env never carries one.
-  const segs = req.ref.split("/");
-  if (req.ref.includes("..") || segs.some((s) => s === "" || s === "." || s.startsWith(".") || s.endsWith(".lock"))) return `ref is not a branch name: ${JSON.stringify(req.ref)}`;
+  if (version === "") {
+    const segs = req.ref.split("/");
+    if (req.ref.includes("..") || segs.some((s) => s === "" || s === "." || s.startsWith(".") || s.endsWith(".lock"))) return `ref is not a branch name: ${JSON.stringify(req.ref)}`;
+  }
   if (req.model !== "" && req.provider === "") return "model needs provider: a model is declared for a provider";
   // Optional: a platform from before the suite ref sends none, which is the daily's.
   if (req.suite_ref !== undefined && req.suite_ref !== null) {
@@ -169,7 +183,10 @@ export function claimedRequestError(req) {
 export function requestEnv(req) {
   return [
     `ONDEMAND_ID=${req.id}`,
-    `ONDEMAND_REF=${req.ref}`,
+    `ONDEMAND_REF=${req.ref ?? ""}`,
+    `ONDEMAND_VERSION=${req.version ?? ""}`,
+    // pypi whenever there is a version: the platform's '' (older rows) means it.
+    `ONDEMAND_VERSION_FROM=${req.version ? req.version_from || "pypi" : ""}`,
     `ONDEMAND_PROVIDER=${req.provider}`,
     `ONDEMAND_MODEL=${req.model}`,
     `ONDEMAND_REQUESTED_BY=${req.requested_by}`,
@@ -200,7 +217,8 @@ export const slotId = (text) => text.split(/\r?\n/).find((l) => l.startsWith("ON
 /**
  * What the executor's log says about request `id`: null when the log is another
  * request's; otherwise whether the build has started and, once the suite has, its
- * run id, the version and the build seconds (the "built:" line).
+ * run id, the version and the build seconds (the "built:" line, or a published
+ * version's "installed:", whose install stands where the build would).
  *
  * The build starts soon after "suite at:", which comes after every refusal but three:
  * areas the suite cannot narrow to, the provider pre-check (langflow-e2e#2230), which
@@ -215,12 +233,15 @@ export function readProgress(log, id) {
   if (!log.split("\n").some((l) => l.startsWith(`request: id=${id} `))) return null;
   const building = /^suite at: /m.test(log);
   const run = log.match(/^=== run start (\d{8}T\d{6}Z) ===$/m);
-  const built = log.match(/^built: .* @ [0-9a-f]{12}, version (\S+), (\d+)s, as /m);
+  // A branch's build, or a published version's install, which stands where it would.
+  const built = log.match(/^built: .* @ [0-9a-f]{12}, version (\S+), (\d+)s, as /m)
+    ?? log.match(/^installed: langflow==\S+, version (\S+), (\d+|\?)s, in /m);
   return {
     building,
     runId: run ? run[1] : null,
     version: built && /^[\x21-\x7e]{1,200}$/.test(built[1]) ? built[1] : null,
-    buildS: built ? Number(built[2]) : null,
+    // '?' when the installer reported no seconds: the version still stands.
+    buildS: built && built[2] !== "?" ? Number(built[2]) : null,
   };
 }
 
@@ -427,7 +448,7 @@ export class Worker {
     // claim. suite_ref was left out of it once, and every suite-ref run silently ran
     // the daily's suite (2026-10-09, the canary run). A platform without it sends none.
     this.state.held = {
-      id: req.id, ref: req.ref, provider: req.provider, model: req.model, requested_by: req.requested_by,
+      id: req.id, ref: req.ref ?? "", version: req.version ?? "", version_from: req.version_from ?? "", provider: req.provider, model: req.model, requested_by: req.requested_by,
       suite_ref: req.suite_ref ?? "",
       areas: req.areas ?? [],
       retries: req.retries ?? null,
@@ -437,7 +458,7 @@ export class Worker {
     this.save();
     this.said = "";
     if (err) return this.log(`${how} ${req.id}, and refused it: ${err}`);
-    this.log(`${how} ${req.id}: ref=${req.ref} provider=${req.provider || "<rotation>"} model=${req.model || "<default>"} by=${req.requested_by || "<unnamed>"}`);
+    this.log(`${how} ${req.id}: ${req.version ? `version=${req.version}` : `ref=${req.ref}`} provider=${req.provider || "<rotation>"} model=${req.model || "<default>"} by=${req.requested_by || "<unnamed>"}`);
   }
 
   /** results/<id>.env in the executor's format: the worker's own refusal. */

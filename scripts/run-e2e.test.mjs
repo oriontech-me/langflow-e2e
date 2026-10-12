@@ -3697,6 +3697,50 @@ test("a declaration this run cannot check is refused before anything runs", () =
   }
 });
 
+// A published distribution (the on-demand run's langflow==<version>) declares the
+// version alone: it has no commit and no branch.
+const distEnv = (extra = {}) => ({
+  TARGET_SSH: "local",
+  TARGET_KIND: "source",
+  LANGFLOW_IMAGE: "",
+  LANGFLOW_SRC_RUN_CMD: "/root/e2e-on-demand/venv/bin/langflow run",
+  PREPARE_TARGET: "0",
+  TARGET_DECLARED_SHA: "",
+  TARGET_DECLARED_VERSION: "1.13.1rc0",
+  TARGET_DECLARED_REF: "",
+  DECLARED_MODEL_PROVIDER: "",
+  DECLARED_MODEL_ID: "",
+  ...extra,
+});
+
+test("a declared published distribution is the version alone, on a venv that is not placed", () => {
+  const r = sourced("check_declared_target && echo ok", distEnv());
+  assert.equal(r.stdout.trim(), "ok", r.stderr);
+  const cases = [
+    [{ LANGFLOW_SRC_RUN_CMD: "" }, /or a published distribution \(LANGFLOW_SRC_RUN_CMD\)/],
+    [{ PREPARE_TARGET: "1" }, /PREPARE_TARGET=1/],
+    [{ TARGET_DECLARED_SHA: DECLARED_SHA }, /has no commit/],
+    [{ TARGET_DECLARED_REF: "release-1.13.0" }, /has no branch/],
+    [{ TARGET_DECLARED_VERSION: "1.13.1rc0 && curl x" }, /characters a version cannot/],
+    [{ CHECK_TARGET_VERSION: "0" }, /CHECK_TARGET_VERSION=0/],
+  ];
+  for (const [extra, message] of cases) {
+    const d = sourced("check_declared_target && echo ok", distEnv(extra));
+    assert.equal(d.status, 1, `${JSON.stringify(extra)} must be refused`);
+    assert.match(d.stderr, message, JSON.stringify(extra));
+    assert.doesNotMatch(d.stdout, /ok/);
+  }
+});
+
+test("a declared published distribution is not warned about comparing with the nightly", () => {
+  const r = sourced("warn_target_cmd_conflicts", distEnv({ REQUIRE_TARGET_VERSION: "1" }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /REQUIRE_TARGET_VERSION=1/);
+  // Undeclared, the same venv still is.
+  const undeclared = sourced("warn_target_cmd_conflicts", distEnv({ REQUIRE_TARGET_VERSION: "1", TARGET_DECLARED_VERSION: "" }));
+  assert.match(undeclared.stderr, /REQUIRE_TARGET_VERSION=1/);
+});
+
 test("a declared model needs its provider, and both are refused when malformed", () => {
   const run = (extra) => sourced("check_declared_model && echo ok", declaredEnv(extra));
   assert.equal(run({ DECLARED_MODEL_PROVIDER: "anthropic" }).stdout.trim(), "ok");
@@ -4068,6 +4112,13 @@ test("a declared target is the expectation, and upstream is never asked", () => 
   const r = resolveExpected(declaredEnv());
   assert.equal(r.result, `1.13.0|${DECLARED_SHA}|declared`, r.stderr);
   assert.deepEqual(r.calls, [], "neither the registry nor github may be consulted for a declared target");
+});
+
+test("a declared published distribution is the expectation, with no commit, and upstream is never asked", () => {
+  const r = resolveExpected(distEnv());
+  assert.equal(r.result, "1.13.1rc0||declared", r.stderr);
+  assert.deepEqual(r.calls, [], "neither the registry nor github may be consulted for a declared version");
+  assert.match(r.stdout + r.stderr, /the published distribution, by declared/);
 });
 
 test("with nothing declared the upstream resolution still runs, and off still means off", () => {

@@ -89,11 +89,33 @@
 #   TARGET_VERSION          required — the version to install, exactly
 #   LANGFLOW_DIST_VENV      where the venv goes (default: $HOME/venv-target)
 #   LANGFLOW_DIST_PYTHON    interpreter for the venv (default: 3.14)
+#   LANGFLOW_DIST_PIN       the sibling distributions also pinned to TARGET_VERSION,
+#                           space-separated, of `langflow-base` and `lfx` (default: none,
+#                           as the daily has always installed). For a version that is
+#                           not the newest of its series: a final release requires
+#                           langflow-base as a RANGE, so `langflow==1.12.3` alone
+#                           resolves langflow-base 1.12.5 and is refused below. Pinned
+#                           too, a pre-release resolves with uv's default pre-release
+#                           rule, which `--prerelease=allow` would otherwise replace,
+#                           pulling other projects' betas into the venv (measured on
+#                           1.12.5rc1, #2261 review). Each one pinned is checked after.
+#   LANGFLOW_DIST_PRERELEASE  uv's pre-release mode, passed as --prerelease=<mode>
+#                           (default empty: no flag, as the daily has always installed).
+#                           Named rather than left to uv's default, which UV_PRERELEASE
+#                           or a uv.toml would change without a word. The on-demand run
+#                           passes if-necessary-or-explicit: measured with the qa's uv
+#                           (0.12.5, 2026-10-12) it resolves a pinned rc, a final and a
+#                           nightly .devN (whose lfx requires a langflow-sdk .devM), the
+#                           same set with UV_PRERELEASE=allow set, and lets in no other
+#                           project's beta the daily's install does not already get.
+#                           uv 0.9 does not resolve a nightly under it.
 set -euo pipefail
 
 TARGET_VERSION="${TARGET_VERSION:-}"
 VENV="${LANGFLOW_DIST_VENV:-${HOME}/venv-target}"
 PYTHON_VERSION="${LANGFLOW_DIST_PYTHON:-3.14}"
+PIN="${LANGFLOW_DIST_PIN:-}"
+PRERELEASE="${LANGFLOW_DIST_PRERELEASE:-}"
 
 # uv lives in ~/.local/bin and cron does not load it — the same trap the orchestrator
 # already exports a PATH for. Repeated here because this script is also invoked over
@@ -111,6 +133,13 @@ die() { echo "ERROR: $*" >&2; exit 2; }
 # So this guard does not prevent a wrong install; it fails BEFORE the venv is
 # destroyed, and names the caller's mistake instead of handing over uv's parse error
 # for a string the caller never typed.
+case "${PRERELEASE}" in
+  "" | disallow | allow | if-necessary | explicit | if-necessary-or-explicit) ;;
+  *) die "LANGFLOW_DIST_PRERELEASE must be one of uv's pre-release modes (disallow, allow, if-necessary, explicit, if-necessary-or-explicit) or empty, got '${PRERELEASE}'. Nothing has been touched." ;;
+esac
+[[ "${PIN}" =~ ^((langflow-base|lfx)( (langflow-base|lfx))?)?$ ]] \
+  || die "LANGFLOW_DIST_PIN may name langflow-base and lfx, space-separated, got '${PIN}'.
+Nothing has been touched."
 [ -n "${TARGET_VERSION}" ] \
   || die "TARGET_VERSION is empty. This script does not pick a version:
 scripts/resolve-target-version.mjs does, from the published image. Refusing before
@@ -151,8 +180,12 @@ reason is above. Nothing is installed, so the target is serving
 nothing rather than something stale."
 
 T="$(date +%s)"
-say "installing..."
-uv pip install --python "${VENV}/bin/python" "langflow==${TARGET_VERSION}" >&2 \
+pins=()
+for p in ${PIN}; do pins+=("${p}==${TARGET_VERSION}"); done
+[ -n "${PRERELEASE}" ] && pins=("--prerelease=${PRERELEASE}" ${pins[@]+"${pins[@]}"})
+# Which uv, and what of its environment could change the resolution, on the record.
+say "installing with $(uv --version 2>/dev/null || echo 'uv of unknown version')${UV_PRERELEASE:+, UV_PRERELEASE=${UV_PRERELEASE}}...${pins[*]:+ (${pins[*]})}"
+uv pip install --python "${VENV}/bin/python" "langflow==${TARGET_VERSION}" ${pins[@]+"${pins[@]}"} >&2 \
   || die "could not install langflow==${TARGET_VERSION} — uv's reason is above.
 If the index does not carry this version, that is the published image and PyPI
 disagreeing, which is the case this preparation exists to catch; an unreachable index
@@ -202,12 +235,14 @@ locations = list(spec.submodule_search_locations or []) if spec else []
 facts = {
     "version": installed("langflow"),
     "base_version": installed("langflow-base"),
+    "lfx_version": installed("lfx"),
     "want_canon": canon(os.environ.get("TARGET_VERSION", "")),
     "package_dir": locations[0] if locations else "",
     "python_version": "%d.%d" % sys.version_info[:2],
 }
 facts["version_canon"] = canon(facts["version"])
 facts["base_version_canon"] = canon(facts["base_version"])
+facts["lfx_version_canon"] = canon(facts["lfx_version"])
 for key, value in facts.items():
     print("%s=%s" % (key, value))
 PY
@@ -246,6 +281,15 @@ built UI both come from langflow-base, so there is nothing here to serve."
 what serves the product. On a stable version the dependency is a range, so the
 resolver is free to pick a base the published image never contained — which would
 make the whole run describe a product nobody asked for."
+
+# lfx, when it was pinned: the pin asked for this version, so anything else is a
+# resolver that did not do what it was told.
+case " ${PIN} " in
+  *" lfx "*)
+    [ "$(probe lfx_version_canon)" = "${WANT_CANON}" ] \
+      || die "lfx was pinned to ${TARGET_VERSION} and is $(probe lfx_version) after the install."
+    ;;
+esac
 
 # --- Does it carry the built UI? -------------------------------------------------
 [ -n "${PACKAGE_DIR}" ] \

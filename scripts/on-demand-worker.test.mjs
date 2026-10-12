@@ -61,7 +61,9 @@ async function fakePlatform() {
   const overrides = { claim: [], report: [], heartbeat: [] };
   const refuse = (status, code, extra = {}) => ({ status, json: { success: false, code, error: code, ...extra } });
   // The platform's ClaimedRequest: suite_ref always present, '' for the daily's suite.
-  const view = (r) => ({ id: r.id, ref: r.ref, provider: r.provider, model: r.model, suite_ref: r.suite_ref ?? "", areas: r.areas ?? [], retries: r.retries ?? null, requested_by: r.requested_by, claim_token: r.claim_token, created_at: "2026-09-30T14:59:00Z", lease_expires_at: "2026-09-30T15:15:00Z" });
+  // A version and its source only when the request has one, as a platform from before
+  // versions sends neither.
+  const view = (r) => ({ id: r.id, ref: r.ref, ...(r.version !== undefined ? { version: r.version, version_from: r.version_from } : {}), provider: r.provider, model: r.model, suite_ref: r.suite_ref ?? "", areas: r.areas ?? [], retries: r.retries ?? null, requested_by: r.requested_by, claim_token: r.claim_token, created_at: "2026-09-30T14:59:00Z", lease_expires_at: "2026-09-30T15:15:00Z" });
   const handle = {
     claim(b) {
       const mine = requests.find((r) => r.claim_token === b.claim_token);
@@ -751,6 +753,125 @@ test("a claimed request the executor could not take is refused by the worker, an
     assert.equal(p.requests[0].status, "refused");
     assert.match(p.requests[0].result.REASON, /worker refused.*ref is not a branch name/);
     assert.equal(p.requests[0].result.EXIT, "2");
+  } finally {
+    await p.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A published version (#2261)
+// ---------------------------------------------------------------------------
+
+const VREQ = (over = {}) => REQ({ ref: "", version: "1.13.1rc0", version_from: "pypi", ...over });
+
+test("a version's request.env is one the executor parses back to the same target", () => {
+  const dir = makeTempDir("od-worker-");
+  const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
+  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" || { echo "ERR=$OD_PARSE_ERR"; exit 1; }\nprintf 'ref=%s\\nversion=%s\\nfrom=%s\\n' "$OD_REF" "$OD_VERSION" "$OD_VERSION_FROM"\n`);
+  for (const [req, want] of [
+    [VREQ(), { ref: "", version: "1.13.1rc0", from: "pypi" }],
+    // A platform row from before the source was named: '' is pypi.
+    [VREQ({ version_from: "" }), { ref: "", version: "1.13.1rc0", from: "pypi" }],
+    [VREQ({ ref: null }), { ref: "", version: "1.13.1rc0", from: "pypi" }],
+    // A platform from before versions sends neither field: a branch, as before.
+    [REQ(), { ref: "release-1.13.0", version: "", from: "" }],
+  ]) {
+    writeFileSync(join(dir, "request.env"), requestEnv(req));
+    const r = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout);
+    assert.deepEqual(kv(r.stdout), want, JSON.stringify(req));
+  }
+});
+
+test("the worker and the executor agree on every version and every pair of targets", () => {
+  const dir = makeTempDir("od-worker-");
+  const fn = readFileSync(ONDEMAND, "utf8").match(/^ondemand_parse_request\(\) \{[\s\S]*?^\}$/m)[0];
+  writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" && echo ok || echo no\n`);
+  const cases = [
+    ...["1.12.4", "1.13.0.dev12", "1.14.0a1", "1.14.0b2", "1.13.1rc0", "1.13.1.post1", "1", "v1.13.1rc0", "1.13.1-rc0", "1.13.1.rc0", "1.13.1rc0+local", "1!1.0", "1.13.1 ", "1.13.x", `1.${"1".repeat(70)}`, `1.${"1".repeat(62)}`].map((version) => VREQ({ version })),
+    VREQ({ ref: "release-1.13.0" }), VREQ({ version: "", version_from: "" }), VREQ({ version: "", version_from: "pypi" }), VREQ({ version_from: "docker" }),
+    REQ({ ref: "" }),
+  ];
+  for (const r0 of cases) {
+    const req = { ...r0, claim_token: TOKEN };
+    writeFileSync(join(dir, "request.env"), requestEnv(req));
+    const exec = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" }).stdout.trim();
+    const err = claimedRequestError(req);
+    // version_from is written as pypi whenever there is a version, so the worker alone
+    // sees a claimed docker: it must refuse it, and the executor never gets the chance.
+    if (req.version_from === "docker") { assert.match(err ?? "", /version_from is not a source/); continue; }
+    assert.equal(err === null, exec === "ok", `${JSON.stringify(r0)}: worker ${err === null ? "takes" : `refuses (${err})`}, executor says ${exec}`);
+  }
+});
+
+test("a claimed version is checked, and names its target alone", () => {
+  assert.equal(claimedRequestError({ ...VREQ(), claim_token: TOKEN }), null);
+  assert.equal(claimedRequestError({ ...VREQ({ version_from: undefined }), claim_token: TOKEN }), null);
+  for (const [over, why] of [
+    [{ ref: "release-1.13.0" }, /both given/],
+    [{ version: "1.13.1rc0\nONDEMAND_REF=x" }, /PEP 440's normal form/],
+    [{ version: 7 }, /PEP 440's normal form/],
+    [{ version: "", version_from: "pypi" }, /version_from needs version/],
+    [{ version_from: "docker" }, /version_from is not a source/],
+  ]) {
+    assert.match(claimedRequestError({ ...VREQ(over), claim_token: TOKEN }) ?? "", why, JSON.stringify(over));
+  }
+});
+
+test("a held version from the state file is written to the slot again, its source pypi", async () => {
+  // A worker restarted between the claim and the start: the slot is written from the
+  // held state, which a platform row with version_from '' left as ''.
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    const state = join(m.env.E2E_ONDEMAND_STATE, "worker");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "state.json"), JSON.stringify({
+      claim_token: TOKEN, claim_unanswered: false,
+      held: { ...VREQ({ version_from: "" }), suite_ref: "", areas: [], retries: null, claim_token: TOKEN, held_since: "2026-09-30T15:00:00Z", reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0 },
+    }));
+    p.enqueue(VREQ());
+    p.requests[0].status = "claimed";
+    p.requests[0].claim_token = TOKEN;
+    const w = worker(m, p);
+    await w.step();
+    await w.step();
+    const slot = readFileSync(join(m.env.E2E_ONDEMAND_STATE, "request.env"), "utf8");
+    assert.match(slot, /^ONDEMAND_REF=$/m);
+    assert.match(slot, /^ONDEMAND_VERSION=1\.13\.1rc0$/m);
+    assert.match(slot, /^ONDEMAND_VERSION_FROM=pypi$/m);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a version's install is read as the build is: the version and its seconds", () => {
+  const log = "request: id=od-1 version=1.13.1rc0 from=pypi provider=<rotation>\nsuite at: abc suite\ninstalling: langflow==1.13.1rc0 from pypi into /s/venv (at most 900s)\ninstalled: langflow==1.13.1rc0, version 1.13.1rc0, 95s, in /s/venv\n=== run start 20260930T150102Z ===\n";
+  assert.deepEqual(readProgress(log, "od-1"), { building: true, runId: "20260930T150102Z", version: "1.13.1rc0", buildS: 95 });
+  // An install whose seconds were not reported keeps its version, and no seconds are guessed.
+  assert.deepEqual(readProgress(log.replace(", 95s,", ", ?s,"), "od-1"), { building: true, runId: "20260930T150102Z", version: "1.13.1rc0", buildS: null });
+});
+
+test("a claimed version is run by the executor from the worker's own state, and its result forwarded", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ runSleep: 2 });
+    p.enqueue(VREQ());
+    const w = worker(m, p);
+    await until(w, () => p.requests[0].status === "done", "the terminal report");
+    const r = m.collect(0);
+    assert.match(r.dist ?? "", /^TARGET_VERSION=1\.13\.1rc0 /m, "the executor did not install the version");
+    assert.equal(r.build, null, "a version is never built");
+    const terminal = p.of("report").find((b) => b.result);
+    assert.equal(terminal.result.TARGET_REF, "");
+    assert.equal(terminal.result.TARGET_SHA, "");
+    assert.equal(terminal.result.TARGET_VERSION, "1.13.1rc0");
+    assert.equal(terminal.result.BUILD_S, "95");
+    const running = p.of("report").find((b) => b.status === "running");
+    assert.ok(running, `no running report:\n${w.lines.join("\n")}`);
+    assert.equal(running.target_version, "1.13.1rc0");
+    assert.equal(running.build_s, 95);
+    assert.ok(w.lines.some((l) => /claimed \S+: version=1\.13\.1rc0 /.test(l)), w.lines.join("\n"));
   } finally {
     await p.close();
   }

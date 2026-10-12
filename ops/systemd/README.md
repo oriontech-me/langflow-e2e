@@ -95,10 +95,20 @@ systemctl start e2e-on-demand-worker.service
 
 Write the request, then start the unit. This is what the worker does for each request
 it claims, and the way to run one with the worker stopped. The request is **parsed,
-never sourced**: eight known keys (`ONDEMAND_ID`, `ONDEMAND_REF`, `ONDEMAND_PROVIDER`,
-`ONDEMAND_MODEL`, `ONDEMAND_REQUESTED_BY`, `ONDEMAND_AREAS`, `ONDEMAND_RETRIES`,
-`ONDEMAND_SUITE_REF`), each checked against its shape, anything else refused (see the
-header of `ops/vm/run-on-demand.sh`). `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
+never sourced**: ten known keys (`ONDEMAND_ID`, `ONDEMAND_REF`, `ONDEMAND_VERSION`,
+`ONDEMAND_VERSION_FROM`, `ONDEMAND_PROVIDER`, `ONDEMAND_MODEL`, `ONDEMAND_REQUESTED_BY`,
+`ONDEMAND_AREAS`, `ONDEMAND_RETRIES`, `ONDEMAND_SUITE_REF`), each checked against its
+shape, anything else refused (see the header of `ops/vm/run-on-demand.sh`). The target
+is exactly one of `ONDEMAND_REF`, a branch of upstream built into an image, and
+`ONDEMAND_VERSION`, a version published on PyPI in PEP 440's normal form (`1.13.1rc0`,
+`1.13.0.dev12`, as PyPI spells it), installed with the daily's
+`scripts/prepare-target-dist.sh` into `/root/e2e-on-demand/venv` and served from it.
+`langflow-base` and `lfx` are pinned to the same version where PyPI has them, Python is
+3.14 unless the release excludes it (then 3.13 or 3.12, which uv downloads once), uv
+resolves under `--prerelease=if-necessary-or-explicit` whatever `UV_PRERELEASE` says
+(with uv 0.12.5, the qa's, that resolves rcs, finals and nightlies alike), and versions
+before 1.12 are refused (their `langflow-base` was numbered 0.N); `ONDEMAND_VERSION_FROM` is `pypi` or
+empty, which means it. `ONDEMAND_SUITE_REF`, optional, runs a branch or tag of this
 repository instead of the commit the daily left the clone on: it is fetched from the
 clone's origin (the GHES mirror, synced hourly) and must contain the executor's
 `SUITE_FLOOR`, or the request is refused before the build. **A suite ref is trusted
@@ -119,6 +129,16 @@ REQ
 systemctl start --no-block e2e-on-demand.service
 ```
 
+A published version instead of a branch:
+
+```sh
+cat > /root/e2e-on-demand/request.env <<'REQ'
+ONDEMAND_ID=hand-20261012-1
+ONDEMAND_VERSION=1.13.1rc0
+REQ
+systemctl start --no-block e2e-on-demand.service
+```
+
 Its cleanup runs `docker builder prune -af`, which is **machine-wide**: harmless while no
 other lane builds an image on the qa, and the first thing to change when one does.
 
@@ -128,7 +148,8 @@ one's result exists, and start the unit again.
 
 The answer is `/root/e2e-on-demand/results/<id>.env`: `STATUS` (`refused`,
 `build_failed`, `failed` or `done`), `VERDICT` for a run that reached one, `RUN_ID`,
-the target's ref, commit and version, the suite commit, and `CLEANUP` (`pending` if the
+the target's ref, commit and version (a version's ref and commit are empty, and
+`BUILD_S` is its install), the suite commit, and `CLEANUP` (`pending` if the
 cleanup was cut short, then `ok`, `incomplete` or `unconfirmed`). The log is
 `/var/log/e2e-on-demand/latest.log`.
 
@@ -140,6 +161,7 @@ Three ceilings, each under the next:
 | Ceiling | Where | When it is hit |
 |---|---|---|
 | each upstream step 5 min, the `docker build` 30 min | `build-target-image.sh` (`UPSTREAM_TIMEOUT_S`, `BUILD_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, docker or the network, never the branch |
+| a version's install 15 min | `run-on-demand.sh` (`E2E_ONDEMAND_INSTALL_TIMEOUT_S`) | `failed`, "did not finish in …": the machine, the network or the index, never the version |
 | the run's deadline, 80 min from the executor's start, plus up to 2 for the suite to stop | `run-on-demand.sh` (`E2E_ONDEMAND_DEADLINE_S`): the suite gets what is left | `failed`, "the suite ran past the run's deadline" |
 | 90 min | the unit's `TimeoutStartSec` | `failed`, "stopped by SIGTERM", which the daily's stop and `systemctl stop` also say |
 

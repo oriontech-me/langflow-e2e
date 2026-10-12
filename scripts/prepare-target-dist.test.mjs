@@ -67,6 +67,7 @@ function setup({
   packageDir = true,
   frontend = true,
   withPackaging = false,
+  lfxInstalled = null, // null → whatever lfx was pinned to, when it was
 } = {}) {
   const dir = makeTempDir("prepare-target-dist-test-");
   const uvBin = uvOnPathOnlyViaHome ? join(dir, ".local/bin") : join(dir, "uv-bin");
@@ -82,6 +83,7 @@ function setup({
     join(uvBin, "uv"),
     `#!/usr/bin/env bash
 # A stand-in for uv that is strict about the CALL and permissive about its shape.
+[ "\${1:-}" = "--version" ] && { echo "uv 0.0.0 (fake)"; exit 0; }
 echo "$*" >> "${uvLog}"
 echo "fake uv: chatter that must never reach stdout of the caller"
 sub="\${1:-}"; shift || true
@@ -113,11 +115,13 @@ if [ "$sub" = "pip" ]; then
   if [ "\${1:-}" != "install" ]; then echo "fake uv: unsupported pip subcommand: \${1:-}" >&2; exit 2; fi
   shift
   ${installFails ? 'echo "fake uv: refusing to install" >&2; exit 1' : ""}
-  py=""; spec=""
+  py=""; spec=""; lfx=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --python) py="$2"; shift 2 ;;
       --*) shift ;;
+      langflow-base==*) shift ;;
+      lfx==*) lfx="\${1#lfx==}"; shift ;;
       *)
         if [ -n "$spec" ]; then echo "fake uv: two specs given" >&2; exit 2; fi
         spec="$1"; shift ;;
@@ -150,6 +154,10 @@ if [ "$sub" = "pip" ]; then
   printf "Metadata-Version: 2.1\\nName: langflow-base\\nVersion: ${wantedBase}\\n" > "$b/METADATA"`
       : ""
   }
+  if [ -n "$lfx" ]; then
+    l="$site/lfx-x.dist-info"; mkdir -p "$l"
+    printf "Metadata-Version: 2.1\\nName: lfx\\nVersion: %s\\n" "${lfxInstalled ?? "$lfx"}" > "$l/METADATA"
+  fi
   ${
     withPackaging
       ? `mkdir -p "$site/packaging"
@@ -305,6 +313,66 @@ test("it installs exactly what it was told, pinned", () => {
   assert.equal(r.status, 0, r.stderr);
   const log = readFileSync(ctx.uvLog, "utf8");
   assert.match(log, /pip install --python \S+ langflow==1\.13\.0\.dev12/);
+});
+
+test("siblings are pinned to the version only when asked, and never with pre-releases allowed", () => {
+  const installLine = (env, opts = {}) => {
+    const ctx = setup(opts);
+    const r = run(ctx, env);
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(ctx.uvLog, "utf8").split("\n").find((l) => l.startsWith("pip install")) ?? "";
+  };
+  // The daily's call, unchanged.
+  assert.match(installLine({}), /--python \S+ langflow==1\.13\.0\.dev12$/);
+  assert.match(installLine({ TARGET_VERSION: "1.12.3", LANGFLOW_DIST_PIN: "langflow-base lfx" }), /langflow==1\.12\.3 langflow-base==1\.12\.3 lfx==1\.12\.3$/);
+  assert.match(installLine({ TARGET_VERSION: "1.13.1rc0", LANGFLOW_DIST_PIN: "langflow-base" }), /langflow==1\.13\.1rc0 langflow-base==1\.13\.1rc0$/);
+  for (const pin of ["", "langflow-base", "lfx langflow-base"]) assert.doesNotMatch(installLine({ LANGFLOW_DIST_PIN: pin }), /--prerelease/);
+});
+
+test("a pre-release mode is passed only when asked, and only one of uv's", () => {
+  const installLine = (env) => {
+    const ctx = setup();
+    const r = run(ctx, env);
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(ctx.uvLog, "utf8").split("\n").find((l) => l.startsWith("pip install")) ?? "";
+  };
+  assert.doesNotMatch(installLine({}), /--prerelease/, "the daily's call");
+  assert.match(installLine({ LANGFLOW_DIST_PRERELEASE: "if-necessary-or-explicit", LANGFLOW_DIST_PIN: "langflow-base lfx" }), /langflow==1\.13\.0\.dev12 --prerelease=if-necessary-or-explicit langflow-base==1\.13\.0\.dev12 lfx==1\.13\.0\.dev12$/);
+  for (const bad of ["1", "yes", "allow; rm -rf /"]) {
+    const ctx = setup();
+    seedVenv(ctx);
+    const r = run(ctx, { LANGFLOW_DIST_PRERELEASE: bad });
+    assert.equal(r.status, 2, bad);
+    assert.match(r.stderr, /LANGFLOW_DIST_PRERELEASE must be one of uv's pre-release modes/, bad);
+    assert.ok(existsSync(join(ctx.venv, "yesterday.txt")), `${bad}: the venv must be untouched`);
+  }
+});
+
+test("the install names the uv that resolved it, and a UV_PRERELEASE that could change it", () => {
+  const ctx = setup();
+  const r = run(ctx, { UV_PRERELEASE: "allow" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /installing with uv 0\.0\.0 \(fake\), UV_PRERELEASE=allow\.\.\./);
+});
+
+test("a LANGFLOW_DIST_PIN outside langflow-base and lfx is refused before anything is touched", () => {
+  for (const pin of ["requests", "lfx; rm -rf /", "langflow-base  lfx", "lfx lfx lfx"]) {
+    const ctx = setup();
+    seedVenv(ctx);
+    const r = run(ctx, { LANGFLOW_DIST_PIN: pin });
+    assert.equal(r.status, 2, pin);
+    assert.match(r.stderr, /LANGFLOW_DIST_PIN may name langflow-base and lfx/, pin);
+    assert.ok(existsSync(join(ctx.venv, "yesterday.txt")), `${pin}: the venv must be untouched`);
+  }
+});
+
+test("a pinned lfx that is not the version after the install is refused", () => {
+  const ctx = setup({ lfxInstalled: "1.13.0" });
+  const r = run(ctx, { LANGFLOW_DIST_PIN: "langflow-base lfx" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /lfx was pinned to 1\.13\.0\.dev12 and is 1\.13\.0 after the install/);
+  // Unpinned, lfx is not this script's to judge.
+  assert.equal(run(setup({ lfxInstalled: "1.13.0" })).status, 0);
 });
 
 test("the venv is destroyed before the install, so the checks inspect this install", () => {

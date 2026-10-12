@@ -1,6 +1,7 @@
 [Unit]
 # The on-demand run: one @stable run against one branch of upstream, built into an image
-# on this machine, answering the request in /root/e2e-on-demand/request.env. No
+# on this machine, or one version published on PyPI, installed into a venv, answering
+# the request in /root/e2e-on-demand/request.env. No
 # consequence: it publishes nothing (see the wrapper).
 #
 # No timer, on purpose: it runs when asked. The daily has priority over it -- the
@@ -10,7 +11,7 @@
 # No Conflicts= with the daily, deliberately: Conflicts= is symmetric, so starting this
 # unit by hand during the daily would STOP THE DAILY. The priority is one-way, and so is
 # the mechanism.
-Description=E2E @stable on-demand run of an upstream branch (VM lane, no consequence)
+Description=E2E @stable on-demand run of an upstream branch or a published version (VM lane, no consequence)
 After=network-online.target
 Wants=network-online.target
 
@@ -25,6 +26,6 @@ ExecStart=/root/e2e-qa/ops/vm/run-on-demand.sh
 # "stopped". Kept under the platform's MAX_HOLD_SECONDS (2 h), past which it releases
 # the request while the run would still be going: so it does not grow with retries.
 TimeoutStartSec=90min
-# The wrapper's cleanup runs on SIGTERM too -- containers, images, build cache,
-# worktree -- and must not be cut short by systemd's default 90 s.
+# The wrapper's cleanup runs on SIGTERM too -- containers, images, build cache, a
+# version's Langflow and venv, worktree -- and must not be cut short by systemd's default 90 s.
 TimeoutStopSec=5min

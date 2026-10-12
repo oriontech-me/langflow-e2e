@@ -15,6 +15,9 @@ export const TARGET_SHA = "b".repeat(40);
 export const IMAGE = `langflow-ondemand:${"b".repeat(12)}`;
 export const PUBLISHING = ["SOURCE_PUSH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "QA_E2E_AUTOMATION_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "SLACK_WEBHOOK_URL"];
 export const GOOD_REQUEST = "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nONDEMAND_PROVIDER=anthropic\nONDEMAND_REQUESTED_BY=victor\n";
+// A published version, as the worker writes it: every key, the ref empty.
+export const VERSION = "1.13.1rc0";
+export const VERSION_REQUEST = `ONDEMAND_ID=req-v\nONDEMAND_REF=\nONDEMAND_VERSION=${VERSION}\nONDEMAND_VERSION_FROM=pypi\nONDEMAND_PROVIDER=anthropic\nONDEMAND_REQUESTED_BY=victor\n`;
 // A Wednesday afternoon: outside the daily's window.
 export const OPEN = "3 1500";
 
@@ -71,6 +74,28 @@ export function setup({
   minSuite = null,
   // The run's deadline in seconds (E2E_ONDEMAND_DEADLINE_S); null is the executor's own.
   deadline = null,
+  // A version's install. PyPI answers `pypi` (an HTTP status, with `pypiFiles` as the
+  // release's files; null is no answer at all), and scripts/prepare-target-dist.sh
+  // exits `distExit`, prints `distOut` (null: what the real one prints for the version
+  // it was given) and, failing, `distError` as its ERROR: line.
+  pypi = 200,
+  pypiFiles = [{ yanked: false }],
+  // What PyPI's JSON says of the release: its version (null: the one asked for) and
+  // requires_python; and the status for langflow-base and lfx at that version.
+  pypiVersion = null,
+  pypiRequires = ">=3.10,<3.15",
+  siblings = { "langflow-base": 200, lfx: 200 },
+  // A Langflow on one of the lane's ports that survives its stop (the stopper exits 1).
+  stopFails = false,
+  distExit = 0,
+  distOut = null,
+  distError = null,
+  // uv's "No solution found" paragraph on the installer's stderr, as a resolver refusal.
+  distNoSolution = false,
+  // The install running past its limit: timeout answers this for prepare-target-dist.sh.
+  installTimesOut = false,
+  // Whether the suite's run-e2e.sh can declare a published version (#2261).
+  suiteKnowsVersions = true,
 } = {}) {
   const dir = makeTempDir("on-demand-");
   const repo = join(dir, "repo");
@@ -84,6 +109,7 @@ export function setup({
     join(repo, "scripts", "run-e2e.sh"),
     `#!/usr/bin/env bash
 ${suiteKnowsAreas ? "# knows STABLE_AREAS" : ""}
+${suiteKnowsVersions ? "# knows target_is_declared" : ""}
 env | sort > ${q(envOut)}
 echo "cwd=$PWD head=$(git rev-parse HEAD)" >> ${q(envOut)}
 echo "dotenv=$(readlink .env || echo none)" >> ${q(envOut)}
@@ -122,6 +148,26 @@ process.exit(${probe.exit});
   }
   writeFileSync(join(dir, "leftover"), leftover);
   writeFileSync(join(repo, "scripts", "stop-echo-source.sh"), `echo "echo $ECHO_PORT" >> ${q(stopLog)}\n`);
+  stub(join(repo, "scripts"), "stop-langflow-source.sh", `echo "langflow $LANGFLOW_PORT" >> ${q(stopLog)}${stopFails ? '\n[ "$LANGFLOW_PORT" = 7911 ] && { echo "ERROR: PID 1 survived SIGKILL; port 7911 may still be bound." >&2; exit 1; }' : ""}`);
+  // The executor reads PyPI's answer with the clone's own module: the real one.
+  mkdirSync(join(repo, "scripts", "lib"), { recursive: true });
+  writeFileSync(join(repo, "scripts", "lib", "pypi-release.mjs"), readFileSync(join(ROOT, "scripts", "lib", "pypi-release.mjs")));
+  const distLog = join(dir, "dist.log");
+  // The installer: what it was given, and a venv with a langflow in it, as the real one.
+  stub(
+    join(repo, "scripts"),
+    "prepare-target-dist.sh",
+    `echo "TARGET_VERSION=$TARGET_VERSION LANGFLOW_DIST_VENV=$LANGFLOW_DIST_VENV LANGFLOW_DIST_PIN=$LANGFLOW_DIST_PIN LANGFLOW_DIST_PYTHON=$LANGFLOW_DIST_PYTHON script=$0" > ${q(distLog)}
+echo "LANGFLOW_DIST_PRERELEASE=$LANGFLOW_DIST_PRERELEASE" >> ${q(distLog)}
+echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed) fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(distLog)}
+echo "target: langflow==$TARGET_VERSION" >&2
+${distExit === 0 ? `mkdir -p "$LANGFLOW_DIST_VENV/bin" "$LANGFLOW_DIST_VENV/lib/langflow/frontend" && printf '#!/bin/sh\n' > "$LANGFLOW_DIST_VENV/bin/langflow" && chmod +x "$LANGFLOW_DIST_VENV/bin/langflow"` : ""}
+${distNoSolution ? `printf '  x No solution found when resolving dependencies:\\n  -> Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,\\n      we can conclude that your requirements are unsatisfiable.\\n' >&2` : ""}
+${distError ? `echo ${q(`ERROR: ${distError}`)} >&2
+echo "the second line of its reason" >&2` : ""}
+${distOut === null ? `printf 'prepared_version=%s\nprepared_base_version=%s\nvenv=%s\npython=3.14\nfrontend_dir=%s\ninstall_s=95\ntotal_s=97\n' "$TARGET_VERSION" "$TARGET_VERSION" "$LANGFLOW_DIST_VENV" "$LANGFLOW_DIST_VENV/lib/langflow/frontend"` : `printf '%b\n' ${q(distOut)}`}
+exit ${distExit}`,
+  );
   writeFileSync(join(repo, "scripts", "stop-ollama-source.sh"), `echo "ollama $OLLAMA_PORT" >> ${q(stopLog)}\n`);
   const git = (...args) => execFileSync(REAL_GIT, args, { cwd: repo, stdio: "pipe", encoding: "utf8" }).trim();
   git("init", "-q");
@@ -175,8 +221,22 @@ ${stateCases}
 esac`);
   // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
   // coreutils' timeout, which the VM has and macOS does not: runs the command as is.
-  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? `case "$1" in *run-e2e.sh) sleep ${suiteTimeoutSleep}; exit ${suiteTimesOut === true ? 124 : suiteTimesOut} ;; esac\n` : ""}exec "$@"`);
+  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? `case "$1" in *run-e2e.sh) sleep ${suiteTimeoutSleep}; exit ${suiteTimesOut === true ? 124 : suiteTimesOut} ;; esac\n` : ""}${installTimesOut ? `case "$1" in *prepare-target-dist.sh) exit ${installTimesOut === true ? 124 : installTimesOut} ;; esac\n` : ""}exec "$@"`);
   stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
+  // PyPI's JSON API: the URL asked, then the status, with the release's files as the body.
+  const pypiLog = join(dir, "pypi.log");
+  stub(bin, "curl", `out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -w|--max-time) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+echo "$url" >> ${q(pypiLog)}
+${pypi === null ? "exit 7" : ""}
+case "$url" in
+  */langflow-base/*) printf '%s' ${siblings["langflow-base"]} ;;
+  */lfx/*) printf '%s' ${siblings.lfx} ;;
+  */langflow/*)
+    v="\${url%/json}"; v="\${v##*/}"
+    [ "$out" != /dev/null ] && [ -n "$out" ] && printf '{"info":{"version":"%s","requires_python":%s},"urls":%s}' "${pypiVersion ?? "$v"}" ${q(JSON.stringify(pypiRequires))} ${q(JSON.stringify(pypiFiles))} > "$out"
+    printf '%s' ${pypi} ;;
+esac`);
   // The daily's `systemctl stop` landing the instant the request leaves the slot: mv
   // does the move, then signals the script that ran it.
   if (termOnConsume) stub(bin, "mv", `/bin/mv "$@"; rc=$?\ncase "$*" in *"/request.env "*) kill -TERM $PPID ;; esac\nexit $rc`);
@@ -257,6 +317,9 @@ esac`);
       cloneHead: git("rev-parse", "HEAD"),
       remoteRefs: git("for-each-ref", "--format=%(refname)", "refs/remotes"),
       timeouts: readIf(join(dir, "timeout.log")) ?? "",
+      dist: readIf(distLog),
+      pypiAsked: (readIf(pypiLog) ?? "").split("\n").filter(Boolean),
+      venvLeft: existsSync(join(state, "venv")),
     };
   };
   return { env, collect };
