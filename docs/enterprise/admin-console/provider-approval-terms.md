@@ -36,7 +36,7 @@ The **scope is no longer displayed**. The dialog writes it as a hidden default â
 "noApproval"` â€” and the Models screen later shows it as *All workspaces / All environments*. So
 the scope is pinned at the API: a narrower default would silently not apply where an operator
 approving "globally" expects. Whether an approval should show its scope before it is made is a
-product question, recorded in #2259.
+product question, recorded in #2264.
 
 ### Approving is one submit and one write
 

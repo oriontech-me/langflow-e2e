@@ -28,8 +28,8 @@ import { requireRbacInstance } from "../../../../helpers/enterprise/rbac";
  * input to the operator's decision. On 1.13 the recommended cards are gone and
  * approval is the `Add provider` dialog (#2259), which displays one term — the
  * credential alias the policy will key on — and writes the scope as a hidden
- * default. A screen that shows one alias and keys the policy on another is wrong
- * in a way only a browser test sees; the hidden scope is asserted at the API.
+ * default (#2264). A screen that shows one alias and keys the policy on another is
+ * wrong in a way only a browser test sees; the hidden scope is asserted at the API.
  *
  * Full reasoning, the teardown contract and the near-miss that shaped test 3:
  * `docs/enterprise/admin-console/provider-approval-terms.md`.

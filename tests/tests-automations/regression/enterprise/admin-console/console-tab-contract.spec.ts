@@ -208,7 +208,7 @@ const TABS: AdminTab[] = [
     // The screen probes the per-resource audit sources and marks a refused one
     // unavailable. Both need `audit_read`, which no built-in Enterprise role
     // grants — so with bypass off even the superuser holding `admin` is refused.
-    // A product observation recorded in #2259, declared rather than silenced so
+    // A product observation recorded in #2263, declared rather than silenced so
     // a fix surfaces as a stale declaration naming itself.
     knownHttpErrors: [
       {
@@ -216,14 +216,14 @@ const TABS: AdminTab[] = [
         status: 403,
         reason:
           "no built-in Enterprise role grants flow:audit_read, so the audit screen's " +
-          "per-resource probe is refused even to the RBAC superuser (#2259)",
+          "per-resource probe is refused even to the RBAC superuser (#2263)",
       },
       {
         pathname: "/api/v1/projects/audits",
         status: 403,
         reason:
           "no built-in Enterprise role grants project:audit_read, so the audit screen's " +
-          "per-resource probe is refused even to the RBAC superuser (#2259)",
+          "per-resource probe is refused even to the RBAC superuser (#2263)",
       },
     ],
     // The reads that carry the declarations above (#1636's rule).

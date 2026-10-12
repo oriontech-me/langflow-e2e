@@ -55,7 +55,7 @@ The Resource labels are relabellings, not slugs: a screen that sent *Connections
 filter nothing and still look filtered, which is why one pair is pinned rather than assumed.
 
 Rows are `tr[data-testid="audit-row-<event id>"]`. A deny renders its Result cell as **Denied**
-(a denied *action* renders *Failed*); the filter option is *Deny*. Each event also renders a
+(a denied *action* renders *Failed*); the filter option is *Deny* (#2265). Each event also renders a
 second, attribute-less `<tr>` holding its collapsed details panel, which is empty when collapsed —
 so a row is read through its testid, never as "every `<tr>` in the body".
 
@@ -160,7 +160,7 @@ every mount, for the superuser too: they require `flow:audit_read` / `project:au
 built-in Enterprise role grants `audit_read` (the Enterprise repository's built-in role definitions), so with bypass off the
 superuser holding `admin` is refused. The screen marks those sources unavailable — by design — yet
 its *Resource* filter still offers *Flows* and *Projects*. A product observation recorded in
-#2259; declared with `page.expectKnownHttpError()` so a fix surfaces as a stale declaration that
+#2263; declared with `page.expectKnownHttpError()` so a fix surfaces as a stale declaration that
 names itself. The `403` is also why the seeded UI session must carry a **refresh token**: the
 frontend answers any 401/403 by refreshing, and without one it logged the session out to `/login`
 on this screen (a real form-login session refreshes and stays — measured).
