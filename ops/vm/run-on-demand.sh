@@ -147,7 +147,7 @@
 #             ref's, fetched into refs/on-demand/suite), both removed after
 #   image     langflow-ondemand:<commit>, removed after, with the build cache
 #   venv      $STATE/venv, for a version: recreated by each install, removed after
-#   pulled    the published image, by tag, removed after unless it was already here
+#   pulled    the published image, removed by tag and digest after unless it was here
 #             ($STATE/pulled-image names one to remove, for the next start too)
 #   ledger    a fresh COPY of the official ledger per run, removed after: the triage
 #             summary reads recurrence against the daily's history, and the official
@@ -355,6 +355,10 @@ main() {
   # TimeoutStopSec leaves what its traps never removed: the build's source tree
   # (build-target-image.sh's own trap did not run either) and its ledger copy.
   OD_TOUCHED=1
+  # The lane's containers first: started without --rm, they outlive a SIGKILL, and an
+  # image a container still uses is only untagged by rmi, left on disk for good.
+  local port
+  for port in 7910 7911 7912 7913; do docker rm -f "langflow-e2e-lane-$port" > /dev/null 2>&1 || true; done
   ondemand_clear_images
   ondemand_clear_pulled
   ondemand_stop_versions || echo "WARNING: a Langflow a killed run left on this lane's ports could not be stopped; the run will find its port taken"
@@ -759,7 +763,9 @@ ondemand_pull() {
   fi
   OD_IMAGE_TAG="$tag"
   # Recorded before the pull, so a run killed during it still has its image removed by
-  # the next start. Only an image that was not here before is this run's to remove.
+  # the next start. Only an image that was not here before is this run's to remove; a
+  # tag that was here and now points elsewhere (an rc pushed again) is moved by the
+  # pull and kept, and the bytes it pointed at are left for docker to collect.
   if ! docker image inspect "$tag" > /dev/null 2>&1; then
     OD_PULLED="$tag"
     printf '%s\n' "$tag" > "$OD_STATE/pulled-image"
@@ -786,16 +792,22 @@ ondemand_pull() {
 
 # The image a run pulled, removed by tag and by digest: from this run's cleanup, or
 # from the next start when a killed run left it. Never one that was already on the
-# machine, and never anything but a langflow image, whatever the file holds.
+# machine, and never anything but a langflow image, whatever the file holds. A ref
+# that is still there after its rmi (a daemon hiccup) stays in the file for the next
+# start; one that is gone, with its tag or before, leaves it.
 ondemand_clear_pulled() {
-  local ref
+  local ref left=""
   [ -f "$OD_STATE/pulled-image" ] || return 0
   while IFS= read -r ref; do
     [[ "$ref" =~ ^langflowai/langflow(-nightly)?(:[0-9A-Za-z.]+|@sha256:[0-9a-f]{64})$ ]] || continue
     echo "removing the pulled image $ref"
-    docker rmi "$ref" > /dev/null 2>&1 || echo "    (not removed: already gone with its tag, or a container still uses it)"
+    docker rmi "$ref" > /dev/null 2>&1 && continue
+    if docker image inspect "$ref" > /dev/null 2>&1; then
+      echo "WARNING: could not remove $ref; the next start tries again"
+      left="$left$ref"$'\n'
+    fi
   done < "$OD_STATE/pulled-image"
-  rm -f "$OD_STATE/pulled-image"
+  if [ -n "$left" ]; then printf '%s' "$left" > "$OD_STATE/pulled-image"; else rm -f "$OD_STATE/pulled-image"; fi
 }
 
 # The published version into $STATE/venv, where the build would put the image: asked of

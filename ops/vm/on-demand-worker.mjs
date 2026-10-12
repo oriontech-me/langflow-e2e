@@ -218,7 +218,7 @@ export const slotId = (text) => text.split(/\r?\n/).find((l) => l.startsWith("ON
  * What the executor's log says about request `id`: null when the log is another
  * request's; otherwise whether the build has started and, once the suite has, its
  * run id, the version and the build seconds (the "built:" line, or a published
- * version's "installed:", whose install stands where the build would).
+ * version's "installed:" or its image's "pulled:", which stand where the build would).
  *
  * The build starts soon after "suite at:", which comes after every refusal but three:
  * areas the suite cannot narrow to, the provider pre-check (langflow-e2e#2230), which

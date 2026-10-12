@@ -1154,6 +1154,31 @@ test("a docker request is held to the version floor and to a suite that can decl
   assert.equal(onDemand({ request: vreq(), suiteKnowsImages: false }).result["req-v"].STATUS, "done");
 });
 
+test("a docker run refused or failed before its digest names no image in its result", () => {
+  for (const opts of [{ hub: { "langflowai/langflow": 404, "langflowai/langflow-nightly": 404 } }, { pullExit: 1 }, { pulledDigest: null }]) {
+    const r = onDemand({ request: ireq(), ...opts });
+    assert.notEqual(r.result["req-v"].STATUS, "done", JSON.stringify(opts));
+    assert.equal(r.result["req-v"].TARGET_IMAGE, undefined, JSON.stringify(opts));
+  }
+});
+
+test("an image the daemon would not remove is tried again by the next start", () => {
+  const r = onDemand({ request: ireq(), rmiFails: true });
+  assert.equal(r.result["req-v"].STATUS, "done", r.log);
+  assert.equal(r.pulledLeft, true, "the refs that are still there stay in the file");
+  assert.match(r.log, /could not remove langflowai\/langflow:1\.13\.1rc0; the next start tries again/);
+});
+
+test("the next start removes a killed run's containers before the image they use", () => {
+  const { env, collect } = setup();
+  writeFileSync(join(env.E2E_ONDEMAND_STATE, "pulled-image"), `${TAG}\n`);
+  const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
+  const calls = r.docker.split("\n");
+  const container = calls.indexOf("rm -f langflow-e2e-lane-7910");
+  const image = calls.findIndex((c) => c === `rmi ${TAG}`);
+  assert.ok(container >= 0 && image > container, `containers first, then the image:\n${r.docker}`);
+});
+
 test("an image a killed run pulled is removed by the next start", () => {
   const { env, collect } = setup();
   writeFileSync(join(env.E2E_ONDEMAND_STATE, "pulled-image"), `${TAG}\n${PULLED_DIGEST}\n`);

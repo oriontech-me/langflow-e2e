@@ -99,6 +99,8 @@ export function setup({
   pullExit = 0,
   pullTimesOut = false,
   pulledDigest = PULLED_DIGEST,
+  // docker rmi of a pulled image failing while the image stays (a daemon hiccup).
+  rmiFails = false,
   suiteKnowsImages = true,
   distExit = 0,
   distOut = null,
@@ -226,6 +228,7 @@ case "$1" in
   ps) ${psFails ? "exit 1" : `cat ${q(join(dir, "leftover"))}`} ;;
   builder) cp "$E2E_ONDEMAND_STATE"/results/*.env ${q(dir)}/at-prune.env 2>/dev/null ;;
   pull) touch ${q(join(dir, "image-pulled"))}; exit ${pullExit} ;;
+  rmi) ${rmiFails ? 'case "$2" in langflowai/*) exit 1 ;; esac' : ""} ;;
   image)
     here=1; { [ -e ${q(join(dir, "image-pulled"))} ] || ${imagePresent ? "true" : "false"}; } || here=0
     # The digest docker names for the tag, in the tag's own repository.

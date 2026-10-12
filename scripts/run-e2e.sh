@@ -356,7 +356,8 @@ REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
 # and langflow-base are not that version. A PUBLISHED IMAGE (TARGET_KIND=image, the
 # on-demand run's `langflowai/langflow:<version>`) declares the version alone too: its
 # labels name the base image's commit, never Langflow's (#2270), so it is named by its
-# DIGEST instead, which no push to the tag can change, and pulled like any image. A
+# DIGEST instead, which no push to the tag can change: used as it is when it is on the
+# machine, pulled by that digest when it is not. A
 # source CLONE declares nothing: the preparer verifies its commit, and a declaration
 # there would be a claim nothing here checks.
 TARGET_DECLARED_SHA="${TARGET_DECLARED_SHA:-}"
