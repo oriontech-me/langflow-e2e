@@ -16,9 +16,10 @@
 # newest, the version may be any release: PyPI is asked first (scripts/lib/pypi-
 # release.mjs) for its own spelling, a file to install and the newest interpreter its
 # requires_python allows, and langflow-base and lfx are pinned to the version too where
-# PyPI has them, because a release asks for langflow-base as a range. A nightly .devN
-# also gets pre-releases allowed, as nothing else resolves it. From 1.12 on only. The team's usual question is "is the rc that
-# was just published good?", and a branch build is not the artefact users install.
+# PyPI has them, because a release asks for langflow-base as a range, under uv's
+# if-necessary-or-explicit pre-release mode, named so no uv setting changes it. From
+# 1.12 on only. The team's usual question is "is the rc that was just published
+# good?", and a branch build is not the artefact users install.
 #
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
 # to the platform, and writes no line into the official ledger. As in the shadow, the
@@ -439,7 +440,7 @@ main() {
   if [ -n "$OD_VERSION" ]; then
     ondemand_install "$INSTALL_TIMEOUT_S" "$PYPI_JSON"
   else
-  local built build_err="$STATE/build-stderr.$$"
+    local built build_err="$STATE/build-stderr.$$"
     # 9>&- on everything that can leave a process behind: a daemon that inherited the
     # lock's descriptor would hold the lock after this run, and refuse every next one.
     #
@@ -704,7 +705,7 @@ ondemand_install() {
   [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
   # 404 is PyPI's "no such version" and 200 its release; anything else (the network, a
   # 5xx) is failed: the install reads the same index, and the pins below need it too.
-  local python=3.14 pin="" verdict requires p pre=0 major minor
+  local python=3.14 pin="" verdict requires p major minor nosol
   # Before 1.12, langflow-base was numbered 0.N (1.11.6 requires langflow-base 0.11.6),
   # which the installer's check that it is the version cannot match: every such run
   # would end build_failed, blaming the release. Refused instead, before anything.
@@ -715,7 +716,7 @@ ondemand_install() {
   code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/langflow/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
   if [ "$code" = "404" ]; then
     rm -f "$meta"
-    ondemand_refuse "PyPI has no langflow==$OD_VERSION; check the version at https://pypi.org/project/langflow/#history"
+    ondemand_refuse "PyPI has no langflow==$OD_VERSION; check the version at https://pypi.org/project/langflow/#history (one published in the last few minutes may not be listed yet: ask again shortly)"
   fi
   if [ "$code" = "200" ]; then
     said="$(node "$OD_REPO/scripts/lib/pypi-release.mjs" "$meta" "$OD_VERSION" 9>&- 8>&- 2>/dev/null)" || said=""
@@ -756,17 +757,22 @@ ondemand_install() {
       *) ondemand_fail 3 failed "could not ask PyPI whether it has $p==$OD_VERSION (HTTP ${code:-none}): the network or the index, not the version" ;;
     esac
   done
-  # A nightly's lfx requires a langflow-sdk .devM, numbered apart from langflow, so pins
-  # alone do not resolve it; as run-migration.sh does for its nightly target.
-  [[ "$OD_VERSION" =~ \.dev[0-9]+$ ]] && pre=1
+  # uv's pre-release mode, named rather than its default, which UV_PRERELEASE or a
+  # uv.toml would change: if-necessary-or-explicit resolves a pinned rc, a final and a
+  # nightly (whose lfx requires a langflow-sdk .devM) with the qa's uv, and lets in no
+  # other project's beta the daily's install does not already get (#2261).
   OD_VENV="$OD_STATE/venv"
-  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin:+, with $pin at the same version}$([ "$pre" = 1 ] && echo ", pre-releases allowed") (at most ${limit_s}s)"
-  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PIN="$pin" LANGFLOW_DIST_PYTHON="$python" LANGFLOW_DIST_PRERELEASE="$pre" \
+  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin:+, with $pin at the same version} (at most ${limit_s}s)"
+  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PIN="$pin" LANGFLOW_DIST_PYTHON="$python" LANGFLOW_DIST_PRERELEASE=if-necessary-or-explicit \
     timeout -k 60 "$limit_s" "$OD_REPO/scripts/prepare-target-dist.sh" 9>&- 8>&- 2> "$err")" || rc=$?
   cat "$err" 2>/dev/null
   # The installer's reason is its ERROR: paragraph; the first line names it.
   said="$(grep -m 1 '^ERROR: ' "$err" 2>/dev/null)"
   said="${said#ERROR: }"
+  # uv's own word that the requirements cannot be met together: the release's metadata,
+  # or an index that has not seen a release published minutes ago -- not the machine.
+  # uv's paragraph alone: from its first line up to the installer's own ERROR: line.
+  nosol="$(awk '/No solution found/ { f = 1 } /^ERROR: / { f = 0 } f' "$err" 2>/dev/null | head -n 6 | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//' | cut -c1-400)"
   rm -f "$err"
   if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$limit_s" ]; }; then
     ondemand_fail 3 failed "the install of langflow==$OD_VERSION did not finish in ${limit_s}s, so it was stopped: the machine, the network or the index, not the version"
@@ -779,7 +785,8 @@ ondemand_install() {
         | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"* \
         | "lfx was pinned to "*)
         ondemand_fail 4 build_failed "langflow==$OD_VERSION installed but cannot be served, not a test result: ${said:-no reason given}" ;;
-      *) ondemand_fail 3 failed "could not install langflow==$OD_VERSION (prepare-target-dist.sh exited $rc): the machine, the network or the index, which this cannot tell from the version: ${said:-no reason given}" ;;
+      *) [ -z "$nosol" ] || ondemand_fail 3 failed "uv found no set of packages that installs langflow==$OD_VERSION${pin:+ with $pin at the same version}: the release's own requirements, or an index that has not caught up with a release published minutes ago (ask again shortly); uv said: $nosol"
+        ondemand_fail 3 failed "could not install langflow==$OD_VERSION (prepare-target-dist.sh exited $rc): the machine, the network or the index, which this cannot tell from the version: ${said:-no reason given}" ;;
     esac
   fi
   local line

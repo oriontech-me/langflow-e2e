@@ -90,6 +90,8 @@ export function setup({
   distExit = 0,
   distOut = null,
   distError = null,
+  // uv's "No solution found" paragraph on the installer's stderr, as a resolver refusal.
+  distNoSolution = false,
   // The install running past its limit: timeout answers this for prepare-target-dist.sh.
   installTimesOut = false,
   // Whether the suite's run-e2e.sh can declare a published version (#2261).
@@ -160,6 +162,7 @@ echo "LANGFLOW_DIST_PRERELEASE=$LANGFLOW_DIST_PRERELEASE" >> ${q(distLog)}
 echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed) fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(distLog)}
 echo "target: langflow==$TARGET_VERSION" >&2
 ${distExit === 0 ? `mkdir -p "$LANGFLOW_DIST_VENV/bin" "$LANGFLOW_DIST_VENV/lib/langflow/frontend" && printf '#!/bin/sh\n' > "$LANGFLOW_DIST_VENV/bin/langflow" && chmod +x "$LANGFLOW_DIST_VENV/bin/langflow"` : ""}
+${distNoSolution ? `printf '  x No solution found when resolving dependencies:\\n  -> Because lfx==1.13.1rc0 depends on langflow-sdk==9.9 and it does not exist,\\n      we can conclude that your requirements are unsatisfiable.\\n' >&2` : ""}
 ${distError ? `echo ${q(`ERROR: ${distError}`)} >&2
 echo "the second line of its reason" >&2` : ""}
 ${distOut === null ? `printf 'prepared_version=%s\nprepared_base_version=%s\nvenv=%s\npython=3.14\nfrontend_dir=%s\ninstall_s=95\ntotal_s=97\n' "$TARGET_VERSION" "$TARGET_VERSION" "$LANGFLOW_DIST_VENV" "$LANGFLOW_DIST_VENV/lib/langflow/frontend"` : `printf '%b\n' ${q(distOut)}`}

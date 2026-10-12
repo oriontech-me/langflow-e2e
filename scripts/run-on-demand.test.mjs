@@ -971,7 +971,7 @@ test("PyPI's own spelling, the interpreter its requires_python allows, and only 
   }
 });
 
-test("before 1.12 a version is refused, and only a nightly gets pre-releases allowed", () => {
+test("before 1.12 a version is refused, and every version names uv's pre-release mode", () => {
   for (const v of ["1.11.6", "1.8.0rc6", "0.6.19", "1.5.0.post2", "1"]) {
     const r = onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n` });
     assert.equal(r.status, 2, `${v}\n${r.log}`);
@@ -979,8 +979,8 @@ test("before 1.12 a version is refused, and only a nightly gets pre-releases all
     assert.deepEqual(r.pypiAsked, [], `${v}: PyPI was asked`);
   }
   const pre = (v) => (onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n` }).dist ?? "").match(/LANGFLOW_DIST_PRERELEASE=(\S*)/)?.[1];
-  assert.equal(pre("1.13.0.dev39"), "1");
-  for (const v of ["1.13.1rc0", "1.12.3", "1.14.0a1", "1.12.0", "2.0.0"]) assert.equal(pre(v), "0", v);
+  // Named, so a UV_PRERELEASE or a uv.toml on the machine cannot change the resolution.
+  for (const v of ["1.13.0.dev39", "1.13.1rc0", "1.12.3", "1.14.0a1", "1.12.0", "2.0.0"]) assert.equal(pre(v), "if-necessary-or-explicit", v);
 });
 
 test("a Langflow that survives its stop leaves the cleanup incomplete", () => {
@@ -1005,6 +1005,28 @@ test("every reason the executor reads as build_failed is one the installer can s
     const script = `while IFS= read -r d; do case "$d" in ${pattern}) echo hit; exit 0 ;; esac; done < ${q(join(dir, "dies.txt"))}; echo miss`;
     assert.equal(spawnSync("bash", ["-c", script], { encoding: "utf8" }).stdout.trim(), "hit", `no die in prepare-target-dist.sh matches ${pattern}`);
   }
+  // And the other way: every die the installer can give once uv has installed is either
+  // read as build_failed or named here as the machine's, so a new check cannot fall
+  // into "the machine" unseen.
+  const MACHINE = ["could not install langflow==", "the venv's python could not report what was installed"];
+  const after = installer.slice(installer.search(/^uv pip install /m));
+  const late = [...after.matchAll(/die "([^"\n]*)/g)].map((m) => m[1].replace(/\$\{[A-Z_]+\}|\$\([^)]*\)/g, "X"));
+  assert.ok(late.length >= 8, `dies after the install not found: ${late}`);
+  for (const d of late) {
+    if (MACHINE.some((m) => d.startsWith(m))) continue;
+    const script = `d=${q(d)}; case "$d" in ${patterns.join(" | ")}) echo hit ;; *) echo miss ;; esac`;
+    assert.equal(spawnSync("bash", ["-c", script], { encoding: "utf8" }).stdout.trim(), "hit", `the installer's "${d}" is neither build_failed nor named as the machine's`);
+  }
+});
+
+test("a resolver that finds no solution is said in uv's words, not blamed on the machine", () => {
+  const r = onDemand({ request: vreq(), distExit: 2, distNoSolution: true, distError: `could not install langflow==${V} — uv's reason is above.` });
+  assert.equal(r.status, 3, r.log);
+  const res = r.result["req-v"];
+  assert.equal(res.STATUS, "failed");
+  assert.match(res.REASON, /^uv found no set of packages that installs langflow==1\.13\.1rc0 with langflow-base lfx at the same version: the release's own requirements, or an index that has not caught up/);
+  assert.match(res.REASON, /uv said: x No solution found when resolving dependencies: .*unsatisfiable/);
+  assert.doesNotMatch(res.REASON, /the machine|ERROR:/);
 });
 
 test("a suite too old to declare a version is refused before the install", () => {
