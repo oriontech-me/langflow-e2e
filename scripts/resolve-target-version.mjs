@@ -281,6 +281,8 @@ export function resolveTargetVersion(refsText, imageTagsText = null, imageReques
  * `declared` is exact, and for a stronger reason than the published image: the caller
  * built the target from one commit and read the version out of that commit's own
  * `pyproject.toml`, so there is no cycle to be lenient about. Nothing here resolves it;
+ * A declared published distribution is exact for the same reason: its installer refused
+ * a venv whose langflow and langflow-base are not that version. Nothing here resolves it;
  * run-e2e.sh takes it from TARGET_DECLARED_VERSION and names the strategy, so this
  * comparison and the verdict after it know which claim they are checking.
  *
@@ -304,7 +306,7 @@ export function compareVersions(expected, actual, strategy) {
   if (strategy === "declared") {
     return expected === actual
       ? { match: "yes", reason: `exact: ${actual}, as declared` }
-      : { match: "no", reason: `declared ${expected} (read from the built commit's pyproject.toml), the target served ${actual}` };
+      : { match: "no", reason: `declared ${expected} and the target served ${actual}` };
   }
   if (strategy === "published-image" || strategy === "nightly-tag") {
     return expected === actual

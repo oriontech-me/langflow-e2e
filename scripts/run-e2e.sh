@@ -348,9 +348,13 @@ REQUIRE_TARGET_VERSION="${REQUIRE_TARGET_VERSION:-1}"
 # REQUIRE_TARGET_VERSION like any other mismatch. TARGET_DECLARED_REF is the branch the
 # SHA was resolved from; it is carried into the metadata and never checked out.
 #
-# Image targets only. A source clone already has its commit verified by the preparer,
-# and a published distribution (LANGFLOW_SRC_RUN_CMD) has no commit to verify at all;
-# a declaration there would be a claim nothing in this run can check.
+# Two forms, and nothing in between. An IMAGE built from a commit declares the commit,
+# the version, and optionally the branch. A PUBLISHED DISTRIBUTION (TARGET_KIND=source
+# with LANGFLOW_SRC_RUN_CMD, the on-demand run's `langflow==<version>`) declares the
+# version alone: it has no commit, so the version it serves, compared exactly, is the
+# whole check -- and the caller's installer has already refused a venv whose langflow
+# and langflow-base are not that version. A source CLONE declares nothing: the preparer
+# verifies its commit, and a declaration there would be a claim nothing here checks.
 TARGET_DECLARED_SHA="${TARGET_DECLARED_SHA:-}"
 TARGET_DECLARED_VERSION="${TARGET_DECLARED_VERSION:-}"
 TARGET_DECLARED_REF="${TARGET_DECLARED_REF:-}"
@@ -779,8 +783,17 @@ check_target_kind() {
 # checked. Split out, like check_target_kind, so every refusal is testable without docker.
 # Nothing declared is the daily and the shadow, and returns at once.
 check_declared_target() {
-  [ -n "${TARGET_DECLARED_SHA}${TARGET_DECLARED_VERSION}${TARGET_DECLARED_REF}" ] || return 0
-  [ "$TARGET_KIND" = "image" ] || die "a declared target (TARGET_DECLARED_*) needs TARGET_KIND=image. A source clone has its commit verified by the preparer and a published distribution has no commit at all, so a declaration there is a claim this run cannot check."
+  target_is_declared || return 0
+  [ "$CHECK_TARGET_VERSION" = "1" ] || die "a declared target with CHECK_TARGET_VERSION=0: the declaration is exactly what this run exists to check. Drop the declaration, or the override."
+  if [ "$TARGET_KIND" != "image" ]; then
+    [ -n "${LANGFLOW_SRC_RUN_CMD:-}" ] || die "a declared target needs TARGET_KIND=image, or a published distribution (LANGFLOW_SRC_RUN_CMD). A source clone has its commit verified by the preparer, so a declaration there is a claim this run cannot check."
+    [ "$PREPARE_TARGET" = "0" ] || die "a declared published distribution with PREPARE_TARGET=1: the preparer would place and rebuild a clone that is not going to serve. Set PREPARE_TARGET=0."
+    [ -z "$TARGET_DECLARED_SHA" ] || die "a declared published distribution has no commit, so TARGET_DECLARED_SHA names something this run cannot check. Declare the version alone."
+    [ -z "$TARGET_DECLARED_REF" ] || die "a declared published distribution has no branch, so TARGET_DECLARED_REF names something this run cannot check. Declare the version alone."
+    [ -n "$TARGET_DECLARED_VERSION" ] || die "a declared published distribution needs TARGET_DECLARED_VERSION, the version the venv holds."
+    [[ "$TARGET_DECLARED_VERSION" =~ ^[0-9A-Za-z.+!-]+$ ]] || die "TARGET_DECLARED_VERSION has characters a version cannot: '$TARGET_DECLARED_VERSION'."
+    return 0
+  fi
   [ -n "$TARGET_DECLARED_SHA" ] || die "a declared target needs TARGET_DECLARED_SHA, the commit the image was built from. TARGET_DECLARED_VERSION or TARGET_DECLARED_REF alone names no build."
   [[ "$TARGET_DECLARED_SHA" =~ ^[0-9a-f]{40}$ ]] || die "TARGET_DECLARED_SHA must be a full 40-character lowercase commit, got: '$TARGET_DECLARED_SHA'. A short one can match more than one commit."
   [ -n "$TARGET_DECLARED_VERSION" ] || die "a declared target needs TARGET_DECLARED_VERSION, the version in that commit's pyproject.toml: the commit is checked against the image's label, the version against what the instance reports, and neither check stands in for the other."
@@ -788,8 +801,13 @@ check_declared_target() {
   if [ -n "$TARGET_DECLARED_REF" ]; then
     [[ "$TARGET_DECLARED_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || die "TARGET_DECLARED_REF has characters a branch name cannot: '$TARGET_DECLARED_REF'."
   fi
-  [ "$CHECK_TARGET_VERSION" = "1" ] || die "a declared target with CHECK_TARGET_VERSION=0: the declaration is exactly what this run exists to check. Drop the declaration, or the override."
   return 0
+}
+
+# Whether the caller declared the target, in either form: anything declared at all,
+# so a half declaration reaches check_declared_target's refusal instead of the nightly.
+target_is_declared() {
+  [ -n "${TARGET_DECLARED_SHA}${TARGET_DECLARED_VERSION}${TARGET_DECLARED_REF}" ]
 }
 
 # Whether LEDGER_DIR is the daily's own ledger, however it is spelled: resolved, so a
@@ -1043,7 +1061,9 @@ warn_target_cmd_conflicts() {
   if [ "${PREPARE_TARGET:-1}" = "1" ]; then
     warn "LANGFLOW_SRC_RUN_CMD is set, and PREPARE_TARGET=1: this run will still place and rebuild the clone, which is not what will serve. Set PREPARE_TARGET=0 unless you mean both."
   fi
-  if [ "${REQUIRE_TARGET_VERSION:-1}" = "1" ]; then
+  # A declared version is the expectation instead of the nightly, so the gate compares
+  # the distribution with itself and there is no difference to warn about.
+  if [ "${REQUIRE_TARGET_VERSION:-1}" = "1" ] && [ -z "${TARGET_DECLARED_VERSION:-}" ]; then
     warn "LANGFLOW_SRC_RUN_CMD is set, and REQUIRE_TARGET_VERSION=1: the served version must equal the one resolved from upstream, or the verdict fails on a difference you introduced. Pin the distribution to the resolved version, or set REQUIRE_TARGET_VERSION=0 and accept the blind axis."
   fi
   return 0
@@ -1569,12 +1589,16 @@ resolve_expected_target() {
   # spending an hour producing a comparison that a version difference already spoiled.
   TARGET_EXPECTED_VERSION=""; TARGET_EXPECTED_REF=""; TARGET_EXPECTED_SHA=""; TARGET_RESOLUTION=""
   TARGET_EXPECTED_BRANCH=""
-  if [ -n "$TARGET_DECLARED_SHA" ]; then
-    # Declared by the caller, and already checked against the image's label in
-    # preflight. Upstream's nightly is not asked: it answers what the CI tests today,
-    # which is not the branch this run was asked to measure.
+  if target_is_declared; then
+    # Declared by the caller, and already checked in preflight (an image against its
+    # label). Upstream's nightly is not asked: it answers what the CI tests today, which
+    # is not the branch or the published version this run was asked to measure.
     apply_declared_target
-    info "target should be: $TARGET_EXPECTED_VERSION (ref ${TARGET_EXPECTED_REF:-<none>}, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
+    if [ -n "$TARGET_EXPECTED_SHA" ]; then
+      info "target should be: $TARGET_EXPECTED_VERSION (ref ${TARGET_EXPECTED_REF:-<none>}, commit ${TARGET_EXPECTED_SHA:0:10}, by $TARGET_RESOLUTION)"
+    else
+      info "target should be: $TARGET_EXPECTED_VERSION (the published distribution, by $TARGET_RESOLUTION)"
+    fi
   elif [ "$CHECK_TARGET_VERSION" = "1" ]; then
     local vlog="$RUN_DIR/logs/target-version.log" verr="$RUN_DIR/logs/target-version.err"
     # The registry listing is optional and its absence is survivable — the resolver
@@ -1649,6 +1673,7 @@ phase_preflight() {
   [ -n "$STABLE_AREAS" ] && info "areas: @stable AND any of $STABLE_AREAS (the rest of @stable does not run)"
   info "target kind: $TARGET_KIND${LANGFLOW_IMAGE:+ ($LANGFLOW_IMAGE)}"
   [ -n "$TARGET_DECLARED_SHA" ] && info "target declared: ${TARGET_DECLARED_REF:-<no ref>} @ ${TARGET_DECLARED_SHA:0:10}, version $TARGET_DECLARED_VERSION"
+  [ -z "$TARGET_DECLARED_SHA" ] && [ -n "$TARGET_DECLARED_VERSION" ] && info "target declared: the published distribution langflow==$TARGET_DECLARED_VERSION"
   [ -n "$DECLARED_MODEL_PROVIDER" ] && info "provider declared: $DECLARED_MODEL_PROVIDER${DECLARED_MODEL_ID:+ / $DECLARED_MODEL_ID} (no rotation, no fallback)"
   warn_target_cmd_conflicts
 
@@ -2545,7 +2570,11 @@ phase_merge() {
       yes | cycle) info "target version: $TARGET_VERSION_MATCH — $TARGET_VERSION_REASON" ;;
       no)
         warn "TARGET VERSION MISMATCH (by $TARGET_RESOLUTION) — $TARGET_VERSION_REASON"
-        if [ "$TARGET_RESOLUTION" = "declared" ]; then
+        if [ "$TARGET_RESOLUTION" = "declared" ] && [ -z "$TARGET_EXPECTED_SHA" ]; then
+          warn "The venv was installed as the declared version but served another one, so"
+          warn "the instance is not the venv's. Nothing this run measured can be read as a"
+          warn "result about langflow==$TARGET_EXPECTED_VERSION."
+        elif [ "$TARGET_RESOLUTION" = "declared" ]; then
           warn "The image carries the declared commit's label but served another version, so"
           warn "the declaration or the build is wrong. Nothing this run measured can be read"
           warn "as a result about ${TARGET_EXPECTED_REF:-that branch}."
