@@ -231,6 +231,7 @@ Each was disabled in Actions once its VM routine had shown the same result: days
 |---|---|---|---|
 | `migration-test.yml`, `migration-fresh-install.yml`, `migration-upgrade-with-flows.yml` | 2026-10-10, after three weekdays of the same verdict in parallel (#2208) | `e2e-routine-migration`: one routine, latest stable below the target → the target, in 12 cells (SQLite / Postgres 16 × pip / docker × fresh / upgrade, plus `AUTO_LOGIN` off on the four upgrades) (#2193) | `gh workflow enable <file>` |
 | `stable-orphan-reconcile.yml` | 2026-10-11, after a rehearsal on the VM produced the same report as the workflow, and before the routine's first scheduled run | `e2e-routine-stable-orphans`: the same reconciler, Mondays 10:00 UTC, reading the trackers of both repositories, with its report issue on the destination (#2224) | `gh workflow enable stable-orphan-reconcile.yml` |
+| `refresh-coverage-matrix.yml` | 2026-10-12, after the routine committed the day's refresh at 08:45 UTC and the workflow's own fallback run that afternoon found the matrix already current | `e2e-routine-coverage-matrix`: the same refresh of the matrix's derivable axes, weekdays 08:45 UTC after the daily, committed to `main` (#2211). Neither posts the feed to the QA Platform yet: the endpoint was never configured | `gh workflow enable refresh-coverage-matrix.yml` |
 
 ---
 

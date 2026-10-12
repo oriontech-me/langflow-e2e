@@ -16,6 +16,7 @@ before acting; this list drifts.
 | `update-coverage-summary.yml` | Regenerates QA-CHECKLIST generated blocks on merge to `main` | `scripts/coverage-summary.ts`, `stable-tests.ts` |
 | `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | **Disabled 2026-10-10** (#2208). Replaced by the VM routine `e2e-routine-migration` (`ops/vm/run-migration.sh`, 12 cells; a red opens the `routine:migration` issue on the destination). Kept as the way back: `gh workflow enable <file>` | `ops/systemd/README.md`; #2193 |
 | `stable-orphan-reconcile.yml` | **Disabled 2026-10-11.** Replaced by the VM routine `e2e-routine-stable-orphans` (`ops/vm/run-stable-orphans.sh`, Mondays 10:00 UTC; trackers read from both repositories, report issue on the destination). Kept as the way back: `gh workflow enable stable-orphan-reconcile.yml` | `scripts/reconcile-stable-orphans.ts`; #1746, #2224 |
+| `refresh-coverage-matrix.yml` | **Disabled 2026-10-12.** Replaced by the VM routine `e2e-routine-coverage-matrix` (`ops/vm/run-coverage-matrix.sh`, weekdays 08:45 UTC, commits `docs/coverage-heatmap/` to `main`). Kept as the way back: `gh workflow enable refresh-coverage-matrix.yml` | `#2211`, `docs/coverage-heatmap/FEED.md` |
 | `build-ollama-image.yml` | Builds the Ollama image used by provider specs | — |
 
 ## Composite actions (`.github/actions/`)
