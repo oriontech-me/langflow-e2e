@@ -16,7 +16,7 @@ import { ROOT, ONDEMAND, setup, q, kv } from "./lib/on-demand-machine.mjs";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
 import {
   Worker, FatalConfig, pauseReason, claimedRequestError, requestEnv, parseResult, readProgress,
-  terminalBody, stampToIso, configFromEnv, REPORT_MAX_BYTES, UNIT_RUNNING_STATES,
+  terminalBody, stampToIso, configFromEnv, REPORT_MAX_BYTES, UNIT_RUNNING_STATES, STOP_AGAIN_MS, cancelResult,
 } from "../ops/vm/on-demand-worker.mjs";
 
 const WORKER = join(ROOT, "ops", "vm", "on-demand-worker.mjs");
@@ -88,12 +88,14 @@ async function fakePlatform() {
       if (o === "not_held") return refuse(409, "not_held");
       if (o === "conflict") return refuse(409, "already_terminal");
       if (o === "applied") { r.status = b.status; if (b.result) r.result = b.result; }
-      return { status: 200, json: { outcome: o, status: r.status, lease_expires_at: RANK[r.status] === 4 ? null : "2026-09-30T15:15:00Z", summary: b.result ? (b.summary === null ? "absent" : "accepted") : null, summary_error: null } };
+      const held = [1, 2, 3].includes(RANK[r.status]);
+      return { status: 200, json: { outcome: o, status: r.status, lease_expires_at: held ? "2026-09-30T15:15:00Z" : null, summary: b.result ? (b.summary === null ? "absent" : "accepted") : null, summary_error: null, ...(held && r.cancel ? { cancel: true } : {}) } };
     },
     heartbeat(b) {
       const r = b.state === "busy" ? requests.find((x) => x.id === b.request_id) : null;
       const lease = b.state !== "busy" ? null : r && [1, 2, 3].includes(RANK[r.status]) && r.claim_token === b.claim_token ? "renewed" : "lost";
-      return { status: 200, json: { ok: true, lease, lease_expires_at: lease === "renewed" ? "2026-09-30T15:15:00Z" : null } };
+      // A held request cancelled on the platform: the signal rides on the renewed lease.
+      return { status: 200, json: { ok: true, lease, lease_expires_at: lease === "renewed" ? "2026-09-30T15:15:00Z" : null, ...(lease === "renewed" && r.cancel ? { cancel: true } : {}) } };
     },
   };
   const server = createServer((req, res) => {
@@ -136,7 +138,8 @@ async function fakePlatform() {
  * from a file (inactive when there is none), and `start` of the executor unit runs the
  * real run-on-demand.sh in the background, activating while it runs, inactive or
  * failed by its exit status -- the oneshot's states. With `run: false` a start is only
- * recorded.
+ * recorded. `stop` is recorded apart, and SIGTERMs the run the last start began, as
+ * systemd's stop does.
  */
 function machine({ run = true, ...opts } = {}) {
   const { env, collect } = setup({ request: null, ...opts });
@@ -144,6 +147,8 @@ function machine({ run = true, ...opts } = {}) {
   const units = join(dir, "units");
   mkdirSync(units, { recursive: true });
   const starts = join(dir, "starts.log");
+  const stops = join(dir, "stops.log");
+  const pid = join(dir, "executor.pid");
   const exports = Object.entries(env).map(([k, v]) => `export ${k}=${q(v)}`).join("\n");
   writeFileSync(join(env.HOME, ".local", "bin", "systemctl"), `#!/usr/bin/env bash
 ${exports}
@@ -152,7 +157,13 @@ case "$1" in
   start)
     echo "$*" >> ${q(starts)}
     ${run ? `echo activating > ${q(units)}/e2e-on-demand.service
-    ( bash ${q(ONDEMAND)}; rc=$?; [ $rc = 0 ] && s=inactive || s=failed; echo $s > ${q(units)}/e2e-on-demand.service ) </dev/null >/dev/null 2>&1 &` : ":"}
+    ( bash ${q(ONDEMAND)} & echo $! > ${q(pid)}; wait $!; rc=$?; rm -f ${q(pid)}; [ $rc = 0 ] && s=inactive || s=failed; echo $s > ${q(units)}/e2e-on-demand.service ) </dev/null >/dev/null 2>&1 &` : ":"}
+    ;;
+  stop)
+    echo "$*" >> ${q(stops)}
+    # A stop told to fail once: the file goes, the next one works.
+    if [ -e ${q(join(dir, "stop-fails"))} ]; then rm -f ${q(join(dir, "stop-fails"))}; echo "Failed to stop: access denied" >&2; exit 1; fi
+    [ -s ${q(pid)} ] && kill -TERM "$(cat ${q(pid)})" 2>/dev/null
     ;;
 esac
 exit 0
@@ -162,6 +173,7 @@ exit 0
     systemctl: join(env.HOME, ".local", "bin", "systemctl"),
     setUnit: (unit, state) => writeFileSync(join(units, unit), `${state}\n`),
     starts: () => (existsSync(starts) ? readFileSync(starts, "utf8").trim().split("\n").filter(Boolean) : []),
+    stops: () => (existsSync(stops) ? readFileSync(stops, "utf8").trim().split("\n").filter(Boolean) : []),
     unit: (u = "e2e-on-demand.service") => (existsSync(join(units, u)) ? readFileSync(join(units, u), "utf8").trim() : "inactive"),
   };
 }
@@ -548,6 +560,274 @@ test("a worker restarted mid-run neither starts the unit again nor reports the s
   } finally {
     await p.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// A cancel from the platform
+// ---------------------------------------------------------------------------
+
+/** A held request whose run the executor is running, as the state file, slot and log leave it. */
+function holdingARun(m, { cancel = true, stopSentMs = 0, reported = "building" } = {}) {
+  const st = m.env.E2E_ONDEMAND_STATE;
+  mkdirSync(join(st, "worker"), { recursive: true });
+  mkdirSync(join(st, "requests"), { recursive: true });
+  writeFileSync(join(st, "requests", `${REQ().id}.env`), requestEnv({ ...REQ(), claim_token: TOKEN }));
+  mkdirSync(m.env.E2E_ONDEMAND_LOG_DIR, { recursive: true });
+  writeFileSync(join(m.env.E2E_ONDEMAND_LOG_DIR, "latest.log"), `=== on-demand start 20260930T145900Z ===\nrequest: id=${REQ().id} ref=release-1.13.0\nsuite at: abc\n`);
+  writeFileSync(join(st, "worker", "state.json"), JSON.stringify({ claim_token: TOKEN, held: { ...REQ(), suite_ref: "", areas: [], retries: null, claim_token: TOKEN, held_since: "2026-09-30T14:59:00Z", reported, progress_lost: false, starts: 1, last_start_ms: 0, cancel, stop_sent_ms: stopSentMs } }));
+  m.setUnit("e2e-on-demand.service", "active");
+}
+
+test("a run cancelled on the platform is stopped once, and its trap's answer goes", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ runSleep: 3 });
+    p.enqueue(REQ());
+    const w = worker(m, p);
+    await until(w, () => p.of("report").some((b) => b.status === "running"), "running");
+    p.requests[0].cancel = true;
+    w.next.heartbeat = 0;
+    await until(w, () => p.requests[0].status === "failed", "the stopped run's answer");
+    assert.equal(m.stops().length, 1, `stopped ${m.stops().length} times:\n${w.lines.join("\n")}`);
+    assert.match(m.stops()[0], /^stop --no-block e2e-on-demand\.service$/);
+    assert.match(p.requests[0].result.REASON, /SIGTERM/);
+    assert.equal(p.requests[0].result.CLEANUP, "ok");
+    assert.equal(w.state.held, null, "not released after the answer");
+    assert.equal(m.starts().length, 1);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a cancel on a progress report's answer is kept in the state file", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m, { cancel: false, reported: "claimed" });
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "claimed", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    w.next.heartbeat = Infinity; // only the report can carry it
+    await w.step();
+    assert.equal(p.of("report").at(-1)?.status, "building", w.lines.join("\n"));
+    const s = JSON.parse(readFileSync(join(m.env.E2E_ONDEMAND_STATE, "worker", "state.json"), "utf8"));
+    assert.equal(s.held.cancel, true);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a request cancelled before a run took it is answered by the worker, never started", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine();
+    // Claimed just before the daily: held, waiting for the pause to end, never started.
+    const st = m.env.E2E_ONDEMAND_STATE;
+    mkdirSync(join(st, "worker"), { recursive: true });
+    writeFileSync(join(st, "worker", "state.json"), JSON.stringify({ claim_token: TOKEN, held: { ...REQ(), suite_ref: "", areas: [], retries: null, claim_token: TOKEN, held_since: "2026-09-30T14:59:00Z", reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0, cancel: false, stop_sent_ms: 0 } }));
+    m.setUnit("e2e-daily.service", "activating");
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "claimed", claim_token: TOKEN });
+    const w = worker(m, p);
+    await w.step();
+    assert.equal(m.starts().length, 0);
+    p.requests[0].cancel = true;
+    w.next.heartbeat = 0;
+    await until(w, () => p.requests[0].status === "failed", "the worker's answer");
+    assert.equal(p.requests[0].result.REASON, "cancelled on the platform before a run took it");
+    assert.equal(p.requests[0].result.EXIT, "3");
+    assert.equal(m.starts().length, 0, "a cancelled request was started");
+    assert.equal(m.stops().length, 0, "nothing of it was running to stop");
+    assert.equal(w.state.held, null);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a start already asked for finds the worker's answer and does not run the request", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ());
+    const w = worker(m, p);
+    await w.step(); // claimed, written to the slot, a start asked for that has not shown yet
+    assert.equal(m.starts().length, 1);
+    p.requests[0].cancel = true;
+    w.next.heartbeat = 0;
+    await w.step();
+    const res = join(m.env.E2E_ONDEMAND_STATE, "results", `${REQ().id}.env`);
+    assert.equal(parseResult(readFileSync(res, "utf8")).REASON, "cancelled on the platform before a run took it");
+    assert.ok(existsSync(join(m.env.E2E_ONDEMAND_STATE, "request.env")), "the slot was emptied before the race");
+    // The start the worker asked for, arriving now: the executor refuses an answered request.
+    const r = spawnSync("bash", [ONDEMAND], { env: m.env, encoding: "utf8" });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(readFileSync(join(m.env.E2E_ONDEMAND_LOG_DIR, "latest.log"), "utf8"), /already answered/);
+    assert.equal(parseResult(readFileSync(res, "utf8")).REASON, "cancelled on the platform before a run took it", "the answer was replaced");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a cancel that comes after the run's result is written stops nothing: the result goes", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m);
+    const st = m.env.E2E_ONDEMAND_STATE;
+    mkdirSync(join(st, "results"), { recursive: true });
+    writeFileSync(join(st, "results", `${REQ().id}.env`), `ONDEMAND_ID=${REQ().id}\nSTATUS=done\nVERDICT=green\nREASON=the suite ran green\nEXIT=0\nCLEANUP=pending\nFINISHED=20260930T150000Z\n`);
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "running", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    await w.step();
+    assert.equal(m.stops().length, 0, "the cleanup of a finished run was stopped");
+    m.setUnit("e2e-on-demand.service", "inactive");
+    await until(w, () => p.requests[0].status === "done", "the real result");
+    assert.equal(p.requests[0].result.VERDICT, "green");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a stop the unit has not obeyed is asked again only past STOP_AGAIN_MS, even across a restart", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m, { stopSentMs: WED_1500 - 60_000 });
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "running", claim_token: TOKEN, cancel: true });
+    let t = WED_1500;
+    const w = worker(m, p, { clock: () => t });
+    await w.step();
+    assert.equal(m.stops().length, 0, "a restarted worker stopped the unit again at once");
+    t = WED_1500 - 60_000 + STOP_AGAIN_MS + 1000;
+    await w.step();
+    assert.equal(m.stops().length, 1);
+    assert.match(w.lines.join("\n"), /still running; asked e2e-on-demand\.service to stop/);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a stop that failed is asked again on the next pass, not ten minutes later", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m);
+    writeFileSync(join(m.dir, "stop-fails"), "");
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "running", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    await w.step();
+    assert.equal(m.stops().length, 1);
+    assert.match(w.lines.join("\n"), /systemctl stop failed: Failed to stop: access denied/);
+    await w.step();
+    assert.equal(m.stops().length, 2, "the failed stop was not asked again at once");
+    assert.match(w.lines.join("\n"), /asked e2e-on-demand\.service to stop/);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a request a killed run took is answered as an orphan's, its cleanup left to the next run", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m);
+    m.setUnit("e2e-on-demand.service", "failed"); // killed: no result, the request consumed
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "running", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    await until(w, () => p.requests[0].status === "failed", "the worker's answer");
+    assert.equal(p.requests[0].result.REASON, "cancelled on the platform after its run stopped without answering");
+    assert.equal(p.requests[0].result.CLEANUP, "by the next run");
+    assert.equal(m.stops().length, 0);
+  } finally {
+    await p.close();
+  }
+});
+
+test("a run of a request written by hand is never stopped for a cancel", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m);
+    // The unit is running somebody's request; ours was never taken from the slot.
+    rmSync(join(m.env.E2E_ONDEMAND_STATE, "requests", `${REQ().id}.env`));
+    writeFileSync(join(m.env.E2E_ONDEMAND_LOG_DIR, "latest.log"), "request: id=by-hand ref=main\n");
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "claimed", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    await w.step();
+    assert.equal(m.stops().length, 0, "somebody's run was stopped");
+    // Answered here, and forwarded once the unit is free: never while it runs.
+    assert.equal(p.requests[0].status, "claimed");
+    m.setUnit("e2e-on-demand.service", "inactive");
+    await until(w, () => p.requests[0].status === "failed", "the worker's answer");
+    assert.equal(p.requests[0].result.REASON, "cancelled on the platform before a run took it");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a run that took the request just before the worker answered it is still stopped", async () => {
+  // The executor checked for a result, then the worker wrote its answer, then the
+  // executor took the request: its run is going, beside the worker's answer.
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m);
+    const st = m.env.E2E_ONDEMAND_STATE;
+    mkdirSync(join(st, "results"), { recursive: true });
+    writeFileSync(join(st, "results", `${REQ().id}.env`), cancelResult(REQ().id, WED_1500));
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "running", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    await w.step();
+    assert.equal(m.stops().length, 1, w.lines.join("\n"));
+    assert.equal(p.of("report").filter((b) => b.result).length, 0, "the worker's answer went while the run was going");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a request a killed run of ours left behind does not make another run stoppable", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    holdingARun(m); // requests/<id>.env, as a killed run leaves it
+    writeFileSync(join(m.env.E2E_ONDEMAND_LOG_DIR, "latest.log"), "request: id=by-hand ref=main\n");
+    p.enqueue(REQ());
+    Object.assign(p.requests[0], { status: "running", claim_token: TOKEN, cancel: true });
+    const w = worker(m, p);
+    await w.step();
+    assert.equal(m.stops().length, 0, "a run of another request was stopped");
+  } finally {
+    await p.close();
+  }
+});
+
+test("the worker's own answer is never delivered on the unit state read before it was written", async () => {
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    p.enqueue(REQ());
+    const w = worker(m, p);
+    await w.step();
+    p.requests[0].cancel = true;
+    w.next.heartbeat = 0;
+    await w.step(); // notes the cancel and answers it; delivers on a later pass
+    assert.equal(p.of("report").filter((b) => b.result).length, 0);
+    await until(w, () => p.requests[0].status === "failed", "the worker's answer");
+  } finally {
+    await p.close();
+  }
+});
+
+test("the worker's cancel answer is one the platform's result schema takes", () => {
+  const r = parseResult(cancelResult(REQ().id, WED_1500));
+  assert.equal(resultError(r), null);
+  assert.deepEqual([r.STATUS, r.VERDICT, r.EXIT, r.CLEANUP, r.FINISHED], ["failed", "", "3", "ok", "20260930T150000Z"]);
 });
 
 // ---------------------------------------------------------------------------

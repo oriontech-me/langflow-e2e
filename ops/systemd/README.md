@@ -273,8 +273,12 @@ installed by a pull: copy it and `systemctl daemon-reload`, as in *Install*.
 
 **Stopping a run.** `systemctl stop e2e-on-demand.service` is safe: its trap cleans up
 (containers, image, build cache, worktree) and writes the result `failed`, "stopped by
-SIGTERM", which the worker forwards to the platform. A run that is still queued is
-cancelled from the platform instead.
+SIGTERM", which the worker forwards to the platform. A run cancelled on the platform,
+queued or under way, needs nothing here: the worker learns it from its next heartbeat
+(about a minute) and stops the run the same way, or, when no run has taken the
+request yet, answers it itself, "cancelled on the platform before a run took it". The
+journal says which: `asked e2e-on-demand.service to stop`, or `no run of it is going:
+answered as cancelled`.
 
 **Stopping the worker.** `systemctl stop e2e-on-demand-worker.service`: nothing new is
 claimed, and a run already going finishes on its own. Started again, the worker

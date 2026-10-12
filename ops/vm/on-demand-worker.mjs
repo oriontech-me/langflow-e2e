@@ -55,6 +55,24 @@
 // holder. The executor runs in its own unit, so restarting the worker never stops a
 // run.
 //
+// ## A cancel from the platform
+//
+// The platform cannot reach this machine, so a run cancelled there is stopped from
+// here: the heartbeat's answer (and a progress report's) says `cancel: true` while the
+// held request is cancelled, and the request stays held there until this side answers.
+// The worker keeps the cancel in its state file and, by where the request is:
+//
+//   - its run going: `systemctl stop` of the executor's unit, whose trap cleans up and
+//     answers `failed` (stopped by SIGTERM), the way the daily stops a run;
+//   - not taken by a run yet: the worker answers it itself, `failed`, in the
+//     executor's format. A start already asked for finds the answer and refuses the
+//     request; one that took it an instant before is stopped on the next pass;
+//   - its result already on disk: nothing to stop, and the result goes as it is.
+//
+// No partial result: a run stopped before the suite's merge leaves no results.json, so
+// it usually answers `failed` with no summary, and the platform keeps none for a
+// cancel anyway.
+//
 // ## Exit statuses
 //
 //   0   stopped by a signal
@@ -103,6 +121,8 @@ export const EXIT_CONFIG = 78;
 const EXECUTOR_UNIT = "e2e-on-demand.service";
 const DAILY_UNITS = ["e2e-daily.service", "e2e-shadow.service"];
 const RANK = { claimed: 1, building: 2, running: 3 };
+/** A stop the unit has not obeyed is asked again after this: past its TimeoutStopSec. */
+export const STOP_AGAIN_MS = 10 * 60_000;
 
 // --- pure parts ---------------------------------------------------------------------
 
@@ -247,18 +267,35 @@ export function readProgress(log, id) {
   };
 }
 
-/** The worker's own refusal, in the executor's result format, for a request it will not write. */
-export function refusalResult(id, reason, nowMs) {
+/** An answer the worker writes itself, in the executor's result format: refused is exit 2, failed 3. */
+function workerResult(id, status, reason, nowMs) {
   const stamp = new Date(nowMs).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   return [
     `ONDEMAND_ID=${id}`,
-    "STATUS=refused",
+    `STATUS=${status}`,
     "VERDICT=",
     `REASON=${reason.replace(/[\r\n]/g, " ")}`,
-    "EXIT=2",
+    `EXIT=${status === "refused" ? 2 : 3}`,
     "CLEANUP=ok",
     `FINISHED=${stamp}`,
   ].join("\n") + "\n";
+}
+
+/** The worker's own refusal, for a request it will not write. */
+export const refusalResult = (id, reason, nowMs) => workerResult(id, "refused", reason, nowMs);
+
+const CANCEL_REASONS = {
+  untaken: "cancelled on the platform before a run took it",
+  orphan: "cancelled on the platform after its run stopped without answering",
+};
+/**
+ * The worker's answer to a request cancelled on the platform with no run of it going:
+ * never taken, or taken by a run killed before it answered (`orphan`), whose leftovers
+ * the next run clears, as the executor's own answer to an orphan says.
+ */
+export function cancelResult(id, nowMs, { orphan = false } = {}) {
+  const text = workerResult(id, "failed", orphan ? CANCEL_REASONS.orphan : CANCEL_REASONS.untaken, nowMs);
+  return orphan ? text.replace(/^CLEANUP=ok$/m, "CLEANUP=by the next run") : text;
 }
 
 /**
@@ -397,6 +434,15 @@ export class Worker {
       this.save();
       this.log(`the lease on ${h.id} is lost (abandoned, or no longer this token's): no more progress reports; its result still goes once it exists`);
     }
+    this.noteCancel(h, r.json);
+  }
+
+  /** The platform's cancel of the held request, kept in the state: a restarted worker still acts on it. */
+  noteCancel(h, json) {
+    if (!h || h !== this.state.held || h.cancel || json?.cancel !== true) return;
+    h.cancel = true;
+    this.save();
+    this.log(`${h.id}: cancelled on the platform`);
   }
 
   async claim() {
@@ -456,6 +502,7 @@ export class Worker {
       retries: req.retries ?? null,
       claim_token: req.claim_token, held_since: isoUtc(this.cfg.now()),
       reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0,
+      cancel: false, stop_sent_ms: 0,
     };
     this.save();
     this.said = "";
@@ -465,10 +512,65 @@ export class Worker {
 
   /** results/<id>.env in the executor's format: the worker's own refusal. */
   refuse(id, err) {
+    this.answer(id, refusalResult(id, `the worker refused the request before the executor saw it: ${err}`, this.cfg.now()));
+  }
+
+  /** results/<id>.env, whole: written aside, then renamed in. */
+  answer(id, text) {
     const res = join(this.cfg.state, "results", `${id}.env`);
     mkdirSync(join(this.cfg.state, "results"), { recursive: true });
-    writeFileSync(`${res}.tmp`, refusalResult(id, `the worker refused the request before the executor saw it: ${err}`, this.cfg.now()));
+    writeFileSync(`${res}.tmp`, text);
     renameSync(`${res}.tmp`, res);
+  }
+
+  /**
+   * A cancelled request: its run stopped, or, when no run of it is going, answered
+   * here. Nothing once the executor has answered it: a run that ended first answers
+   * for itself. The worker's own answer does not count: a run that took the request
+   * an instant before it was written is still stopped. True when it wrote the answer:
+   * the unit's state read before then is stale, so nothing is delivered on it.
+   */
+  cancel(running, resultFile) {
+    const h = this.state.held;
+    let onDisk = null;
+    try { onDisk = readFileSync(resultFile, "utf8"); } catch { /* none yet */ }
+    const own = onDisk !== null && Object.values(CANCEL_REASONS).includes(parseResult(onDisk).REASON);
+    if (onDisk !== null && !own) return;
+    if (running && this.runIsFor(h.id)) {
+      const now = this.cfg.now();
+      if (h.stop_sent_ms && now < h.stop_sent_ms + STOP_AGAIN_MS) return;
+      try {
+        execFileSync(this.cfg.systemctl, ["stop", "--no-block", EXECUTOR_UNIT], { stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        // Asked again on the next pass, not ten minutes later; said once while it keeps failing.
+        this.sayOnce(`::error:: ${h.id}: systemctl stop failed: ${String(e.stderr ?? e).trim().slice(0, 300)}`);
+        return false;
+      }
+      const again = h.stop_sent_ms > 0;
+      h.stop_sent_ms = now;
+      this.save();
+      this.log(`${h.id}: ${again ? "still running; asked" : "asked"} ${EXECUTOR_UNIT} to stop: its trap answers the run`);
+      return false;
+    }
+    if (onDisk !== null) return false;
+    const orphan = existsSync(join(this.cfg.state, "requests", `${h.id}.env`));
+    this.answer(h.id, cancelResult(h.id, this.cfg.now(), { orphan }));
+    this.log(`${h.id}: no run of it is going: answered as cancelled`);
+    return true;
+  }
+
+  /**
+   * Whether the executor's unit is running this request: the request taken from the
+   * slot, and the log the latest run writes naming it. Never stop a run on a guess:
+   * the unit may be running a request written by hand.
+   */
+  runIsFor(id) {
+    if (!existsSync(join(this.cfg.state, "requests", `${id}.env`))) return false;
+    try {
+      return readProgress(readFileSync(realpathSync(join(this.cfg.logDir, "latest.log")), "utf8"), id) !== null;
+    } catch {
+      return false;
+    }
   }
 
   /** The held request: forward its result, report its progress, or start it. */
@@ -478,6 +580,7 @@ export class Worker {
     // An unreadable state counts as running: never start or forward on a guess.
     const running = unit === "unknown" || UNIT_RUNNING_STATES.includes(unit);
     const resultFile = join(this.cfg.state, "results", `${h.id}.env`);
+    if (h.cancel && this.cancel(running, resultFile)) return;
     if (existsSync(resultFile)) {
       if (running) return this.sayOnce(`${h.id}: result on disk, waiting for ${EXECUTOR_UNIT} (${unit}) to finish its cleanup`);
       if (this.cfg.now() < this.next.report) return;
@@ -582,7 +685,8 @@ export class Worker {
     if (r.ok) {
       h.reported = body.status;
       this.save();
-      return this.log(`${h.id}: reported ${body.status}${body.run_id ? ` (run ${body.run_id})` : ""}: ${r.json?.outcome}`);
+      this.log(`${h.id}: reported ${body.status}${body.run_id ? ` (run ${body.run_id})` : ""}: ${r.json?.outcome}`);
+      return this.noteCancel(h, r.json);
     }
     // 409 (not held), 404 or 400: progress is no longer this worker's to report. The
     // result still goes once it exists.
