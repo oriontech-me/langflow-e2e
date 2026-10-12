@@ -28,12 +28,11 @@ import {
  * the four tests here are the properties that decide whether what the operator
  * sees is what the instance enforces.
  *
- * It is NOT where the route name suggests: `/admin-ee/access-control` redirects
- * to `/admin-ee/users-groups`, and the `/admin-ee` tab list has no Access
- * Control tab at all. The routes are mounted under Settings.
+ * Since 1.13 it is the Access control tab of the admin console (EE PR 326);
+ * `/settings/access-control` and `/admin-ee/access-control` are legacy redirects.
  */
-const ROLES_TAB = "/settings/access-control";
-const ASSIGNMENTS_TAB = "/settings/access-control/assignments";
+const ROLES_TAB = "/admin/access-control";
+const ASSIGNMENTS_TAB = "/admin/access-control/assignments";
 
 /**
  * The two tables' columns, in order.
@@ -43,15 +42,24 @@ const ASSIGNMENTS_TAB = "/settings/access-control/assignments";
  * that reordered its columns would otherwise let every cell assertion read the
  * neighbouring value and still pass.
  */
-const ROLE_COLUMNS = ["Name", "Type", "Permissions", "Inherits from", "Description", "Actions"];
-const ASSIGNMENT_COLUMNS = ["User", "Role", "Scope", "Sources", "Actions"];
+// Sortable headers carry an sr-only "Not sorted", so they are matched by prefix.
+const ROLE_COLUMNS = [
+  /^Name/,
+  "Type",
+  "Inherits from",
+  /^Permissions/,
+  /^Providers/,
+  "Description",
+  "Actions",
+];
+const ASSIGNMENT_COLUMNS = [/^Assignee/, "Role", "Scope", "Sources", "Actions"];
 
 /** Column indices, named so the assertions read as what they mean. */
-const ROLE_TYPE = ROLE_COLUMNS.indexOf("Type");
-const ASSIGNMENT_USER = ASSIGNMENT_COLUMNS.indexOf("User");
-const ASSIGNMENT_ROLE = ASSIGNMENT_COLUMNS.indexOf("Role");
-const ASSIGNMENT_SCOPE = ASSIGNMENT_COLUMNS.indexOf("Scope");
-const ASSIGNMENT_SOURCES = ASSIGNMENT_COLUMNS.indexOf("Sources");
+const ROLE_TYPE = 1;
+const ASSIGNMENT_USER = 0;
+const ASSIGNMENT_ROLE = 1;
+const ASSIGNMENT_SCOPE = 2;
+const ASSIGNMENT_SOURCES = 3;
 
 /**
  * The role picker labels system roles by DISPLAY name, not by the API's name:
@@ -156,21 +164,29 @@ test.describe("Enterprise — the Access Control operator screen", () => {
 
         await test.step("the system role is typed System and offers only View", async () => {
           await expect(systemRow.getByRole("cell").nth(ROLE_TYPE)).toHaveText("System");
-          await expect(systemRow.getByRole("button", { name: "View" })).toBeVisible();
-          // The load-bearing pair. The badge is a label; these absences are what
-          // stop the edit.
-          await expect(systemRow.getByRole("button", { name: "Edit" })).toHaveCount(0);
-          await expect(systemRow.getByRole("button", { name: "Delete" })).toHaveCount(0);
+          await expect(
+            systemRow.getByRole("button", { name: "View Viewer", exact: true }),
+          ).toBeVisible();
+          // The load-bearing absences. The badge is a label; these are what stop
+          // the edit. Since 1.13 a custom row's edit and delete live behind an
+          // `Actions <name>` menu, so the menu trigger is what must be absent.
+          await expect(systemRow.getByRole("button", { name: /^Actions / })).toHaveCount(0);
+          await expect(systemRow.getByRole("button", { name: /^(Edit|Delete)\b/ })).toHaveCount(0);
         });
 
-        await test.step("the custom role is typed Custom and offers all three", async () => {
+        await test.step("the custom role is typed Custom and its menu offers Edit and Delete", async () => {
           // The positive half. Without it, a screen that rendered no action
-          // buttons at all would satisfy both absences above.
+          // controls at all would satisfy the absences above.
           const customRow = page.getByTestId(`role-row-${custom.name}`);
           await expect(customRow.getByRole("cell").nth(ROLE_TYPE)).toHaveText("Custom");
-          for (const name of ["View", "Edit", "Delete"]) {
-            await expect(customRow.getByRole("button", { name })).toBeVisible();
-          }
+          await customRow.getByRole("button", { name: `Actions ${custom.name}`, exact: true }).click();
+          const menu = page.getByRole("menu", { name: `Actions ${custom.name}` });
+          await expect(menu.getByRole("menuitem", { name: `Edit ${custom.name}`, exact: true })).toBeVisible();
+          await expect(
+            menu.getByRole("menuitem", { name: `Delete ${custom.name}`, exact: true }),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(menu).toBeHidden();
         });
 
         await test.step("and the API refuses both writes to the system role", async () => {
@@ -239,7 +255,13 @@ test.describe("Enterprise — the Access Control operator screen", () => {
       });
 
       await test.step("and offers to revoke it", async () => {
-        await expect(row.getByRole("button", { name: "Revoke" })).toBeVisible();
+        await row
+          .getByRole("button", { name: `Actions ${subject.username}`, exact: true })
+          .click();
+        await expect(
+          page.getByRole("menuitem", { name: `Revoke ${subject.username}`, exact: true }),
+        ).toBeVisible();
+        await page.keyboard.press("Escape");
       });
     },
   );
@@ -267,23 +289,29 @@ test.describe("Enterprise — the Access Control operator screen", () => {
         // for them is waiting for the real precondition rather than for the
         // button to merely look clickable. Armed before the navigation, or a
         // response that already arrived would never be seen.
+        // Since 1.13 the picker is built from the OSS users list, read ONCE at
+        // page load — never again when the picker opens. Keyed on the pathname:
+        // the 1.12 read (`/authz/admin/users`) no longer happens at all.
         const usersLoaded = page.waitForResponse(
-          (response) => response.url().includes("/authz/admin/users") && response.ok(),
-        );
-        const scopesLoaded = page.waitForResponse(
           (response) =>
-            response.url().includes("/authz/admin/assignment-scopes") && response.ok(),
+            new URL(response.url()).pathname === "/api/v1/users/" && response.ok(),
         );
         await openTab(page, ASSIGNMENTS_TAB, assignButton, "the assignments tab");
-        await Promise.all([usersLoaded, scopesLoaded]);
+        await usersLoaded;
 
-        const dialog = page.getByRole("dialog");
+        // By NAME: while the subject picker is open there are two dialogs on the
+        // page — this one and the picker's unnamed popover.
+        const dialog = page.getByRole("dialog", { name: "Assign role" });
 
         await test.step("open the dialog and pick the user and the role", async () => {
           await openDialog(assignButton, dialog);
 
-          await dialog.getByRole("combobox", { name: "User" }).click();
-          await page.getByRole("option", { name: subject.username }).click();
+          // A multi-select whose popover stays open after a pick; Escape closes
+          // the popover and leaves the dialog.
+          await dialog.getByRole("combobox", { name: "Users and groups" }).click();
+          await page.getByRole("option", { name: subject.username, exact: true }).click();
+          await page.keyboard.press("Escape");
+          await expect(dialog).toBeVisible();
 
           await dialog.getByRole("combobox", { name: "Role" }).click();
           await page.getByRole("option", { name: VIEWER_OPTION }).click();
@@ -302,7 +330,7 @@ test.describe("Enterprise — the Access Control operator screen", () => {
         });
 
         await test.step("submit, and the dialog closes", async () => {
-          await dialog.getByRole("button", { name: "Assign Role" }).click();
+          await dialog.getByRole("button", { name: "Assign Role", exact: true }).click();
           await expect(dialog).toBeHidden();
         });
 
@@ -346,18 +374,32 @@ test.describe("Enterprise — the Access Control operator screen", () => {
       const row = assignmentRow(page, subject.username);
       await openTab(page, ASSIGNMENTS_TAB, row, `the assignment row for ${subject.username}`);
 
-      const dialog = page.getByRole("dialog");
+      const dialog = page.getByRole("dialog", { name: /^Revoke / });
+      const menuItem = page.getByRole("menuitem", {
+        name: `Revoke ${subject.username}`,
+        exact: true,
+      });
 
       await test.step("revoke on that row and confirm", async () => {
-        // Scoped to the row, then to the dialog. Both buttons are named exactly
-        // "Revoke", so an unscoped locator is strict-mode ambiguous the moment
-        // the dialog opens.
-        await openDialog(row.getByRole("button", { name: "Revoke" }), dialog);
+        // Since 1.13 revoking is a menu item behind the row's `Actions` trigger.
+        // Both clicks sit inside the dropped-click repair, which opens the menu
+        // only when neither it nor the dialog is showing.
+        await expect(async () => {
+          if (!(await dialog.isVisible())) {
+            if (!(await menuItem.isVisible())) {
+              await row
+                .getByRole("button", { name: `Actions ${subject.username}`, exact: true })
+                .click();
+            }
+            await menuItem.click();
+          }
+          await expect(dialog).toBeVisible({ timeout: 2_000 });
+        }).toPass({ timeout: 20_000, intervals: [0, 500, 1_000] });
         await expect(dialog).toContainText(`Revoke ${VIEWER_CELL}?`);
         await expect(dialog).toContainText(
           `${subject.username} will lose the permissions this role grants.`,
         );
-        await dialog.getByRole("button", { name: "Revoke" }).click();
+        await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
         await expect(dialog).toBeHidden();
       });
 

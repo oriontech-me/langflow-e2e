@@ -1,12 +1,12 @@
 # Enterprise — The Users & Groups Screen Deactivates, Promotes and Deletes for Real
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built 2026-08-27 from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
 ## What this test validates *(required)*
 
-`console-tab-contract` proved all seven `/admin-ee` screens resolve and load their own data.
+`console-tab-contract` proved every `/admin` screen resolves and loads its own data.
 It says nothing about what any of them lets an operator *do*. This is the first per-tab
 follow-up, and `users-groups` is first because of what its controls are: this is where an
 account is **deactivated**, **promoted to superuser**, and **deleted** — and deletion is
@@ -26,29 +26,38 @@ being wrong:
    state and sends nothing is the failure this exists to catch — and it is invisible to a test
    that asserts on the toggle.
 
-### The screen, measured
+### The screen, measured (1.13)
 
-Columns: `Id`, `Username`, `Active`, `Superuser`, `Created At`, `Updated At`, `Actions`. The
-`Users` / `Teams` sub-tabs are plain text with neither `role` nor `data-testid`.
+The table was redesigned (EE PR 493, LE-2923). Columns: *User · Groups · Role · Scope · Status ·
+Action*; it pages at 12, ordered by username, with a `Search Username` box. Each row is
+`tr[data-testid="user-row-<id>"]`, and its `Manage` button expands a **sibling** `<tr>` holding
+`td#user-panel-<id>` — so the row's controls are not inside the row:
 
-There are **no per-row testids**. Every per-row control is named `"<Control> — <username>"`,
-and that is the entire locator story here:
-
-| Row | `Active` | `Superuser` | `Delete` |
-|---|---|---|---|
-| an ordinary account | enabled, `[pressed]` | enabled, not pressed | enabled |
-| `langflow` (break-glass) | **disabled** — *You cannot deactivate your own account* | **disabled** — *break-glass … cannot be deactivated, demoted, or deleted* | **disabled**, same reason |
-
-**Both** control groups confirm, and the two dialogs differ in a way that matters:
-
-| Control | Reversible? | Dialog |
+| Control (in the details panel) | Ordinary account | `langflow` (the signed-in break-glass account) |
 |---|---|---|
-| `Active` / `Superuser` | yes | **Edit** → **the username** → *Attention!* → *Are you completely confident about the changes you are making to this user?* → `Confirm` / `Cancel` |
-| `Delete` | **no** | **Delete** → *Delete User* → *Attention!* → *Are you sure you want to delete this user? This action cannot be undone.* → `Delete` / `Cancel` |
+| `Edit User — <u>` | opens the Edit user dialog | opens it, with both switches disabled |
+| `Delete user — <u>` | opens the delete dialog | **disabled** (`aria-disabled`) — *You cannot delete your own account* |
 
-The toggle path is real end to end — click → `Confirm` → `PATCH /api/v1/users/{id}` →
-`is_active` reads back `false` — so the toggle tests must drive the confirmation, not just
-the switch.
+The Edit user dialog — *Change access settings for &lt;u&gt;.* — holds two switches, `Active` and
+`Superuser`, committed together by `Save Changes` as one `PATCH /api/v1/users/{id}`
+(`{"is_active": false}`). On the signed-in account both switches are disabled with their own
+reasons, *You cannot deactivate your own account* and *You cannot remove superuser access from
+your own account*. On 1.12 the screen showed the **break-glass** reason here; since 1.13 the
+**self** reason wins when the break-glass account is the one signed in, which on this lane it
+always is.
+
+The delete dialog — *Delete User*, *Are you sure you want to delete this user? This action
+cannot be undone.*, `Cancel` / `Delete` — is unchanged, and `DELETE /api/v1/users/{id}` now
+answers **`202`** and erases the account in the background (langflow-ai/langflow#15470).
+
+## Locator traps on this screen
+
+- **The Edit user dialog's accessible name is "Dialog"**: a hidden heading precedes the visible
+  *Edit user*. `getByRole("dialog", { name: "Edit user" })` matches nothing, so it is found by its
+  visible heading.
+- **The details panel is a sibling row.** Scoping a control to the account's row finds nothing.
+- **Disabled is `aria-disabled`, not the native attribute**, on the self-delete control —
+  `toBeDisabled()` honours both; a check on the `disabled` attribute would not.
 
 ## Two locator traps on this screen
 
@@ -78,15 +87,9 @@ observed, which is worse than leaving it visible.
 
 ## An attribute is not an accessible name
 
-Worth recording, because the wrong version of it was one step from being filed as an
-accessibility finding: the delete button's `aria-label` **attribute** is `null` on ordinary
-rows and set on the protected one. Read that way it looks like the button you cannot press is
-announced while the one that deletes an account is not.
-
-It is not. The name lives on a descendant, and the accessibility tree computes
-`button "Delete — <username>"` on **both** rows. `getByRole("button", { name: /Delete/ })`
-finds one on each. The tree is the authority; `getAttribute("aria-label")` is not, and this
-spec locates by role and name throughout for that reason.
+Recorded on 1.12 and still the rule: the accessibility tree is the authority, not
+`getAttribute("aria-label")` — a name can live on a descendant. This spec locates by role and
+name throughout for that reason.
 
 ## Tags *(required)*
 
@@ -105,18 +108,20 @@ never run (#1010).
 2. Seed the browser session from the cached token. The form is
    `enterprise/auth/login-surface`'s subject, and the instance rate-limits `/api/v1/login` to
    5 per minute for the whole machine.
-3. **Protection.** Open the screen and assert the three controls on the `langflow` row are
-   disabled, each exposing its reason. Then assert the API refuses all three operations, **and
-   that it refuses them as two different guards**: `PATCH is_active:false` answers `403` *You
-   can't deactivate your own user account* (self-protection) while `PATCH is_superuser:false`
-   and `DELETE` answer `409` naming the break-glass account. The screen shows two distinct
-   tooltips; asserting only "it was refused" would pass against a build that collapsed them.
-4. **Cancel.** Create a subject through the API, open its delete dialog, assert the copy names
-   the action as irreversible, dismiss with **Cancel**, then assert **no non-`GET` request was
-   issued for that account**, and that it is still listed.
-5. **Delete.** Reopen the dialog on the same subject, confirm, and assert the API no longer
-   lists it — the row disappearing is a render, the listing is the state.
-6. **Toggles.** On a fresh subject, click `Active`, confirm in the **Edit** dialog, and read
+3. **Protection.** Search for `langflow`, expand its details: `Delete user — langflow` is
+   disabled and describes *You cannot delete your own account*; in its Edit user dialog both
+   switches are disabled, each describing its reason. Then assert the API refuses all three
+   operations, **as two different guards**: `PATCH is_active:false` → `403` *You can't
+   deactivate your own user account* and `PATCH is_superuser:false` → `409` *You cannot remove
+   superuser access from your own account* (self-protection; on 1.12 the demote was refused by
+   the break-glass guard), while `DELETE` → `409` *The break-glass account cannot be deleted*.
+   And the account survives all three.
+4. **Cancel.** Create a subject through the API, search for it, open its delete dialog, assert
+   the copy names the action as irreversible, dismiss with **Cancel**, then assert **no
+   non-`GET` request was issued for that account**, and that it is still listed.
+5. **Delete.** On a subject, confirm the dialog: the `DELETE` answers `202`, the API stops
+   listing it (polled — the erase is asynchronous), and after a fresh load the row is gone.
+6. **Toggles.** On a fresh subject, open Edit user, flip `Active`, `Save Changes`, and read
    `is_active` back from the API; likewise `Superuser` and `is_superuser`.
 
 Every subject is created and removed through the API, so the spec spends **no** login budget
@@ -124,24 +129,26 @@ of its own. It touches the superuser row only to assert that it cannot be touche
 
 ## Validation criterion *(required)*
 
-Fails when the break-glass account becomes operable from the screen or at the API; when
-`Cancel` deletes, or confirming does not; or when either toggle changes the control without
-changing the account.
+Fails when the signed-in break-glass account becomes operable from the screen or at the API
+(or the two guards collapse into one); when `Cancel` deletes, or confirming does not; or when
+either switch changes the control without changing the account.
 
 ## External dependencies *(required)*
 
 - A Langflow **Enterprise** instance on the RBAC variant:
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`.
 - A browser.
-- No LLM provider, no network egress, no licence, and no additional login.
+- No LLM provider, no network egress, no licence, and no additional login. On the 1.13 line the
+  script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`; without it creating the
+  subjects answers `503` (#2259).
 - No Langflow **source** paths: the Enterprise frontend is not in `langflow-ai/langflow`, so
   there is none to name. Every sibling under `docs/enterprise/` is in the same position.
 
 ## Notes
 
 **The delete dialog does not name the user it is about, and the edit dialog on the same screen
-does.** The toggles open *Edit → **the username** → Attention!*; deleting opens *Delete → Delete
-User → …this **user**…*. So the pattern exists and is implemented here — it is applied to the
+does.** Edit user reads *Change access settings for **&lt;username&gt;**.*; deleting reads *Delete
+User → …this **user**…* (still true on 1.13). So the pattern exists and is implemented here — it is applied to the
 **reversible** action and omitted from the **irreversible** one. An operator is named the
 account when nothing is at stake and told *this user* when the row is about to be deleted
 permanently.
@@ -151,6 +158,6 @@ recorded in #1633 for a product decision, and a spec that failed on it today wou
 asserting an opinion. If the dialog is later changed to name its subject, this note and the
 assertion move together.
 
-`GET /api/v1/auto_login` → `403`, `POST /api/v1/refresh` → `401` and `GET /api/v1/store/tags`
-→ `500` occur on every page load of this console and are already exempt; see the shell spec's
+`GET /api/v1/auto_login` → `403` occurs on every page load of this console and is already
+exempt; see the shell spec's
 notes, including the measurement trap that the fixture prints `Backend Error` on **stdout**.

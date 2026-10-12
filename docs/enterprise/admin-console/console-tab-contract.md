@@ -1,14 +1,16 @@
 # Enterprise — Every Screen of the Admin Console Resolves and Loads Its Own Data
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built 2026-08-27 from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
 ## What this test validates *(required)*
 
-`/admin-ee` is the console an operator uses to govern an Enterprise instance, and § 21
+`/admin` is the console an operator uses to govern an Enterprise instance, and § 21
 names the admin **UI** as the part Enterprise exclusively owns — every enforcement
-mechanism behind it is already covered from the API side. It has seven screens. Before
+mechanism behind it is already covered from the API side. It has nine screens on the 1.13
+line (seven on 1.12). It moved from `/admin-ee` on 1.13 (EE PR 326); `/admin-ee/*` is now a
+legacy redirect, and a fourth test pins that the old links still land where they named. Before
 this spec, one of them was covered (the catalog tab, for one field), so nothing would have
 noticed a screen that stopped loading, a route that stopped resolving, or a tab whose label
 opened the wrong screen.
@@ -19,20 +21,35 @@ is the one its tab claims, and fetched its own data. Every deeper spec in this d
 depends on that — an assertion about an audit filter passes vacuously against a screen that
 never rendered.
 
-### The seven screens, measured
+### The nine screens, measured (1.13)
 
-Each has its own heading, its own subtitle, and one API read no other tab performs. The read is the load-bearing column: all seven render the same chrome, so an
-assertion on chrome would pass against any of them.
+Each has its own heading, its own subtitle, and its own API read. The read is the
+load-bearing column: all nine render the same chrome, so an assertion on chrome would pass
+against any of them.
 
-| Route | Tab label | Own subtitle (the screen's body) | Read only it performs |
+| Route | Tab label | Own subtitle (the screen's body) | The read asserted |
 |---|---|---|---|
 | `users-groups` | Users & groups | *Manage users and their access to this Langflow instance.* | `GET /api/v1/users/` |
 | `access-control` | Access control | *Define roles, grant them to people and teams, and review who has access.* | `GET /api/v1/authz/roles` |
 | `catalog` | **Components** | *Manage the approved component catalog, builder visibility, and policy.* | `GET /api/v1/enterprise-admin/catalog/components` |
 | `models` | Models | *Choose which models are available in this Langflow instance.* | `GET /api/v1/model-availability-policy` |
 | `providers` | Providers | *Approve model providers globally for this Langflow installation.* | `GET /api/v1/model-provider-policy` |
-| `security` | Security | *Configure login connections, recovery access, and security defaults.* | `GET /api/v1/sso/connections` |
-| `audit-logs` | Audit logs | *Sign-on and access-control events for this Langflow instance, newest first.* | `GET /api/v1/authz/audit` |
+| `data-connections` | Data Connections | *Manage vector stores for knowledge and memory bases, as in Settings → DB Providers.* | `GET /api/v1/variables/` |
+| `integrations` | Integrations | *Which integration providers this deployment approves, and which of their actions are blocked. A connection a user authorizes is governed by this ceiling, and execution enforces it even when a client ignores it.* | `GET /api/v1/integrations/policy/effective` |
+| `authentication` | **Authentication** (was Security) | *Configure login connections, recovery access, and authentication defaults.* | `GET /api/v1/sso/connections` |
+| `audit-logs` | Audit logs | *Review administrative activity, access events, and governance changes across your workspace.* | `GET /api/v1/audits` |
+
+The column used to be "the read **only** it performs", and on 1.13 that no longer holds
+everywhere: `users-groups` now also reads `authz/roles` (its Role and Scope columns),
+`audit-logs` reads `users/`, and `data-connections` performs **no** read of its own at all
+— only a second `GET /api/v1/variables/`, which the app shell also issues. For that screen
+the read proves the screen fetched, not that it is the only one that does; the subtitle
+carries the identity. The other eight reads are still distinctive enough to be worth the
+assertion, and the per-tab test asserts each against the screen that must perform it.
+
+The audit screen moved to OSS's unified feed (`/api/v1/audits`, langflow-ai/langflow#15082;
+EE PR 381). `/api/v1/authz/audit` is still served and still covered by
+`authz/operator-surfaces`, but the console no longer reads it.
 
 ### Why the subtitle and not a testid
 
@@ -51,22 +68,25 @@ needs — the subtitle proves *this* screen mounted, the 2xx read proves it fetc
 data — where a state-dependent testid would make the spec fail on a configured instance
 for a reason that has nothing to do with the console.
 
-The label and the route disagree for one screen — **Components** is `/admin-ee/catalog` —
+The label and the route disagree for one screen — **Components** is `/admin/catalog` —
 which is why the strip test asserts the mapping rather than assuming a tab named X lands
-on `/admin-ee/x`.
+on `/admin/x`.
 
 ### Two DOM facts that decide the spec's shape
 
 Both are the opposite of the obvious guess, and getting either wrong produces a spec that
 looks reasonable and asserts nothing:
 
-- The strip `enterprise-admin-tabs` holds seven `role="tab"` **buttons**, not links, named
+- The strip `enterprise-admin-tabs` holds nine `role="tab"` **buttons**, not links, named
   by their visible label and carrying no `data-testid` at all. Navigation is
   `getByRole("tab", { name })`; which one is current is `aria-selected="true"`.
 - `data-testid="enterprise-admin-tab-<route>"` is **not on the tab**. Despite its name it
-  sits on the screen's own `<section role="tabpanel">`, whose `aria-label` is the tab's
-  visible label, and **only the active route's panel exists in the DOM** — the other six
-  are not rendered.
+  sits on the screen's own `<section role="tabpanel">`, which is `aria-labelledby` the tab
+  button, and **only the active route's panel exists in the DOM** — the other eight are not
+  rendered. Its accessible name is therefore the tab's label. Its raw `aria-label` attribute
+  is not asserted any more: on 1.13 the audit panel's says *Audit Log* while its tab says
+  *Audit logs*, and `aria-labelledby` wins — `toHaveAccessibleName` asserts what assistive
+  technology is actually told.
 
   The first version of this spec read that testid as the active-tab marker and asserted
   `aria-selected` on it. All nine tests failed, on a console where nothing was wrong: the
@@ -89,7 +109,7 @@ delete-confirmation dialog's title, body and both buttons — so the last thing 
 click and a deleted account stated nothing, and a screen-reader user was told
 `admin.deleteTitle` before deleting a user.
 
-That is fixed on the image this spec is validated against: zero raw keys across all seven
+That is fixed on the image this spec is validated against: zero raw keys across all nine
 screens. The guard is written now precisely because the fix is unwitnessed — a locale
 resource is among the easiest things in a frontend to drop again, and the failure is
 silent everywhere except on screen.
@@ -155,6 +175,13 @@ overstate it.
 No `@stable`: there is no scheduled Enterprise lane, so a `@stable` test here would
 silently never run (#1010).
 
+### The legacy routes
+
+`/admin-ee` is a redirect since 1.13, and operators' bookmarks, docs and the product's own
+older links still point at it. The redirect keeps query and hash, and it carries one rename:
+`/admin-ee/security` lands on `/admin/authentication`. `/admin` itself lands on
+`/admin/users-groups`.
+
 ## Step by step *(required)*
 
 1. Authenticate once against the Enterprise instance and require the **RBAC variant** —
@@ -165,24 +192,28 @@ silently never run (#1010).
 2. Seed the browser session from the cached token rather than filling the login form —
    the instance rate-limits `/api/v1/login` to 5 per minute per IP for the whole machine.
    The login form is `enterprise/auth/login-surface.spec.ts`'s subject, not this spec's.
-3. **Per tab (seven tests):** start recording responses, `goto /admin-ee/<route>`, then
+3. **Per tab (nine tests):** start recording responses, `goto /admin/<route>`, then
    assert, in this order:
-   - the URL is still `/admin-ee/<route>` — a screen that redirected to a default tab
+   - the URL is still `/admin/<route>` — a screen that redirected to a default tab
      would satisfy every remaining assertion of the *default* tab;
    - the strip marks it current — the `role="tab"` button named by its label carries
      `aria-selected="true"`;
-   - its panel `enterprise-admin-tab-<route>` is visible and its `aria-label` is that
+   - its panel `enterprise-admin-tab-<route>` is visible and its accessible name is that
      label, which is where the route↔label mapping is actually pinned;
    - the tab's own subtitle from the table above is visible — the panel proves the
      container mounted, the subtitle proves its body rendered;
    - the tab's own API read was performed **and** answered `2xx`.
-4. **The strip (one test):** open one screen, then click each of the other six by
+4. **The strip (one test):** open one screen, then click each of the other eight by
    `getByRole("tab", { name })`; after each click assert the URL is that tab's route and
    that screen's panel is the one now mounted.
-5. **Unresolved keys (one test):** walk all seven screens; on each, wait for that screen's
+5. **Unresolved keys (one test):** walk all nine screens; on each, wait for that screen's
    own subtitle, then collect every visible leaf text and match it against
    `^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$`. Fail naming every screen and string that
    matched.
+
+6. **Legacy routes (one test):** `goto /admin-ee/<route>` for each of the nine (with
+   `security` for `authentication`) and `/admin`; assert each lands on its `/admin/…`
+   route with that screen's panel mounted.
 
 ## Validation criterion *(required)*
 
@@ -190,7 +221,8 @@ The per-tab tests fail when a screen stops resolving, redirects away, renders an
 screen's content, loses the selected state on its tab, or paints its shell without
 performing the read that populates it. The
 strip test fails when a tab's label stops opening the screen it names. The i18n test fails
-when any screen in the console renders an unresolved translation key.
+when any screen in the console renders an unresolved translation key. The legacy-route test
+fails when an `/admin-ee` link stops landing on the screen it named.
 
 ## External dependencies *(required)*
 
@@ -198,8 +230,11 @@ when any screen in the console renders an unresolved translation key.
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh` (port 7891 by default).
 - A browser.
 - **One** unit of the per-IP login budget, spent by the shared token cache and reused by
-  all nine tests.
-- No LLM provider, no network egress, and no licence — `security` is asserted on its
+  every test. The UI session is seeded with the cached access **and** refresh tokens; see
+  *Notes* for why the refresh token became necessary on 1.13.
+- On the 1.13 line the script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`;
+  without it the catalog, models and providers screens' reads answer `503` (#2259).
+- No LLM provider, no network egress, and no licence — `authentication` is asserted on its
   empty state, which is what an unlicensed instance correctly shows.
 - No Langflow **source** paths, and that is not an omission: the Enterprise frontend does
   not live in `langflow-ai/langflow`, so there is no upstream path this doc could name that
@@ -208,10 +243,25 @@ when any screen in the console renders an unresolved translation key.
 
 ## Notes
 
-Four non-2xx responses are expected here and are not defects. The first is declared to the
-fixture with `page.expectKnownHttpError()`; the other three are globally exempt already:
+Non-2xx responses expected here. The first two are declared to the fixture with
+`page.expectKnownHttpError()`; the rest are globally exempt already:
 
-- `GET /api/v1/sso/entitlements` -> `503`, on the screens that reach `security`. An
+- `GET /api/v1/flows/audits?limit=1` and `GET /api/v1/projects/audits?limit=1` → `403
+  Permission denied`, on every arrival at `audit-logs` (1.13). The screen probes the
+  per-resource audit sources and marks a refused one unavailable — by design. They are
+  refused because they require `flow:audit_read` / `project:audit_read`, which no built-in
+  Enterprise role grants (the Enterprise repository's built-in role definitions: the vocabulary lists `audit_read`, the
+  `admin` role's permission set does not include it), so with bypass off even the
+  superuser holding `admin` cannot read them while the screen's *Resource* filter still
+  offers *Flows* and *Projects*. Recorded as a product observation in #2259, not asserted
+  as correct; declared so a fix shows up as a stale declaration that names itself.
+
+  The 403 is also why the UI session now carries a refresh token. The frontend answers any
+  401/403 by refreshing; a session seeded with only an access token failed that refresh and
+  was **logged out to `/login`** on this screen. A real form-login session refreshes (`200`)
+  and stays — measured — so the seeded session is given the refresh token minted with the
+  cached access token, and behaves the same way.
+- `GET /api/v1/sso/entitlements` -> `503`, on the screens that reach `authentication`. An
   Enterprise instance with no licence refuses that read by design, and
   `enterprise/auth/entitlement-fail-closed.spec.ts` asserts that exact refusal as the
   product's contract. It is declared per screen rather than silenced with
@@ -220,7 +270,7 @@ fixture with `page.expectKnownHttpError()`; the other three are globally exempt 
   firing, and the fixture fails naming the entry to delete, which is the right signal since
   this list would then be out of date.
 
-  **Every arrival at `security` awaits that read**, and this is not tidiness (#1636). The
+  **Every arrival at `authentication` awaits that read**, and this is not tidiness (#1636). The
   declaration is only honest if the state it declares has actually occurred by the time the
   test ends, and the first version of this spec awaited only each screen's primary `read`.
   The per-tab Security test observed the `503` alongside its own read and passed; the strip
@@ -246,8 +296,8 @@ The remaining three fire on every page load of the console:
 
 - `GET /api/v1/auto_login` → `403`, correct on a password-first instance; the HTTP error
   policy already exempts auth endpoints.
-- `POST /api/v1/refresh` → `401`, because the session is seeded with an access token and
-  deliberately no refresh token.
+- `POST /api/v1/refresh` on page boot — `200` now that the session carries a refresh token
+  (it answered `401` on 1.12, when it deliberately did not).
 - `GET /api/v1/store/tags` → `500`, the external Langflow Store, unreachable in this
   environment and already exempt.
 

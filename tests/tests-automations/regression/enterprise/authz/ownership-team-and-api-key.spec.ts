@@ -49,7 +49,7 @@ test.describe("Enterprise — ownership, team membership and API keys", () => {
 
   test.beforeEach(async ({ request }) => {
     const auth = await getEnterpriseAuthToken(request);
-    await resetSubjectGrants(request, auth, granted);
+    await resetSubjectGrants(request, auth, granted, subject?.id);
   });
 
   test.afterAll(async ({ request }) => {
@@ -57,7 +57,7 @@ test.describe("Enterprise — ownership, team membership and API keys", () => {
     // cached between runs; deleting it would cost a fresh login next time,
     // which is the whole reason it is shared.
     const auth = await getEnterpriseAuthToken(request);
-    await resetSubjectGrants(request, auth, granted);
+    await resetSubjectGrants(request, auth, granted, subject?.id);
   });
 
   test(
@@ -127,8 +127,11 @@ test.describe("Enterprise — ownership, team membership and API keys", () => {
         });
       } finally {
         if (flowId) {
+          // As the OWNER: the flow sits in the subject's private Starter Project,
+          // which the superuser's global role no longer reaches since 1.13 — its
+          // DELETE answers 404 and the flow leaked once per run (#2259).
           await request
-            .delete(`/api/v1/flows/${flowId}`, { headers })
+            .delete(`/api/v1/flows/${flowId}`, { headers: subjectHeaders })
             .catch(() => undefined);
         }
       }
@@ -309,12 +312,17 @@ test.describe("Enterprise — ownership, team membership and API keys", () => {
             .delete(`/api/v1/api_key/${keyId}`, { headers: subjectHeaders })
             .catch(() => undefined);
         }
-        for (const id of [ownedId, foreignId]) {
-          if (id) {
-            await request
-              .delete(`/api/v1/flows/${id}`, { headers })
-              .catch(() => undefined);
-          }
+        // Each by its owner: `ownedId` lives in the subject's private Starter
+        // Project, out of the superuser's reach since 1.13 (#2259).
+        if (ownedId) {
+          await request
+            .delete(`/api/v1/flows/${ownedId}`, { headers: subjectHeaders })
+            .catch(() => undefined);
+        }
+        if (foreignId) {
+          await request
+            .delete(`/api/v1/flows/${foreignId}`, { headers })
+            .catch(() => undefined);
         }
       }
     },

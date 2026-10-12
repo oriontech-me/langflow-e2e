@@ -8,6 +8,7 @@ import {
   authzCheck,
   builtinRoleIds,
   getSharedRbacSubject,
+  inheritedAccessPath,
   mePermissions,
   readInheritedAccess,
   requireRbacInstance,
@@ -25,23 +26,17 @@ import {
  * over an entire instance to let somebody work on one project.
  *
  * The enforcement half is green and unremarkable: inheritance works, is graded by
- * role, and is revocable. The interesting half is that the surfaces which
- * DESCRIBE access do not agree with the one that ENFORCES it, and a client renders
- * from the descriptions:
+ * role, and is revocable. The other half is whether the surfaces which DESCRIBE
+ * access agree with the one that ENFORCES it, because a client renders from them.
  *
- *   - `inherited-access` names the grant correctly, scope and actions included.
- *   - `check` with `obj: "project:<pid>"` agrees.
- *   - `check` with `obj: "flow:<id>"` answers `allowed: false, matched_policy: []`.
- *   - `me/permissions` for that flow answers `[]` — for a flow the subject can
- *     `PATCH`.
- *
- * The last two are asserted as they SHOULD answer, so those tests are EXPECTED RED
- * on current Enterprise builds (#1532). The empty `matched_policy` in `check` is
- * ordinarily the sign of a mis-encoded pattern — the trap
- * `deny-matrix-and-decision-api` documents, which fabricated two findings while it
- * was written — but `me/permissions` takes no pattern at all, and the deny-matrix
- * spec already pins that it reports a SHARE, which is not ownership either. So
- * "inherited grants are invisible" is a gap, not a wrong question.
+ * They do — in the project's DOMAIN. `check` and `me/permissions` both take a
+ * `domain` that defaults to `*`, the global question; a project-scoped grant
+ * answers only in `project:<pid>`, which is what the product's own client sends.
+ * The 1.12 version asked without it, read the global answer (`false` / `[]`) as a
+ * disagreement and pinned it as expected red (#1532). It was the domain-shaped
+ * twin of the `flow:*` trap `deny-matrix-and-decision-api` documents, and the
+ * parameter existed then too. Both questions are asserted now, so the trap is
+ * visible rather than re-discovered (#2259).
  *
  * `deploy` gets one cell deliberately left unasserted; the reason is at test 3.
  */
@@ -78,7 +73,11 @@ async function attemptDeploy(
     // `slug` became required on the 2026-08-27 build. Without it FastAPI answers
     // `422` before authorization runs — for the superuser too — so the request
     // never reached the verdict this helper exists to observe (#1635).
-    data: { project_id: projectId, environment: "production", slug: `authz-probe-${Date.now()}` },
+    // No `environment`: since 1.13 environments are registered (EE PR 457), and
+    // `production` on an instance that registered none answers `404 Unknown
+    // environment` — which read as "not refused" and kept the admin step green
+    // for the wrong reason. Omitted, the default environment is used.
+    data: { project_id: projectId, slug: `authz-probe-${Date.now()}` },
   });
 }
 
@@ -121,11 +120,11 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
   });
 
   test.beforeEach(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
   });
 
   test.afterAll(async ({ request }) => {
-    await resetSubjectGrants(request, superuserAuth, granted);
+    await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
     await request
       .delete(`/api/v1/flows/${flowId}`, {
         headers: { Authorization: superuserAuth },
@@ -163,7 +162,7 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
       });
 
       await test.step("developer scoped to the project writes it too", async () => {
-        await resetSubjectGrants(request, superuserAuth, granted);
+        await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
         await grantOnProject(request, "developer");
         expect(await probe(request, subject, flowId)).toEqual({
           read: 200,
@@ -172,7 +171,7 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
       });
 
       await test.step("revoking the assignment returns the flow to absent", async () => {
-        await resetSubjectGrants(request, superuserAuth, granted);
+        await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
         // A grant that cannot be taken back is not a grant — and inheritance is
         // the path where a stale rule would be easiest to leave behind, since
         // nothing was ever written against the flow itself.
@@ -190,8 +189,8 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
       const items = await readInheritedAccess(request, superuserAuth, flowId);
       const mine = items.find((item) => item.user_id === subject.id);
 
-      // Membership, never length: the superuser's own global admin grant is in
-      // this list, and so is anything else the container carries.
+      // Membership, never length: anything else the container carries is in
+      // this list too.
       expect(mine, "the subject's inherited grant is listed").toBeTruthy();
       expect(mine!.domain_type).toBe("project");
       expect(mine!.domain_id).toBe(projectId);
@@ -202,14 +201,18 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
         expect.arrayContaining(["read", "write"]),
       );
 
-      const asSubject = await request.get(
-        `/api/v1/authz/flows/${flowId}/inherited-access`,
-        { headers: { Authorization: subject.auth } },
-      );
-      // Superuser-scoped, and it refuses the way the rest of the model does:
-      // absent rather than forbidden, so it cannot be used to confirm a flow
-      // exists to the very user it describes.
+      const asSubject = await request.get(inheritedAccessPath(flowId), {
+        headers: { Authorization: subject.auth },
+      });
+      // It refuses the way the rest of the model does: absent rather than
+      // forbidden, so it cannot be used to confirm a flow exists to the very
+      // user it describes. By DETAIL, not only status: a removed route also
+      // answers 404 (`Not Found`), and the 1.12 route was removed with no alias —
+      // a status-only assertion passed against a route that no longer existed.
       expect(asSubject.status()).toBe(404);
+      expect(((await asSubject.json()) as { detail: string }).detail).toBe(
+        "Resource not found",
+      );
     },
   );
 
@@ -232,15 +235,21 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
       });
 
       await test.step("admin is not refused by authorization", async () => {
-        await resetSubjectGrants(request, superuserAuth, granted);
+        await resetSubjectGrants(request, superuserAuth, granted, subject?.id);
         await grantOnProject(request, "admin");
         const response = await attemptDeploy(request, subject.auth, projectId);
         // NOT asserted as a specific status. With no control plane configured
         // this instance answers 503 "Control Plane deployment is not
         // configured", and asserting that would pin the absence of a control
         // plane rather than the authorization verdict — and would redden the day
-        // one is configured. What matters is that authorization did not refuse.
-        expect(response.status()).not.toBe(403);
+        // one is configured. What matters is that authorization did not refuse,
+        // and that no other 4xx stood in for it: an unregistered environment's
+        // 404 satisfied `not 403` on 1.13 without authorization being asked.
+        const status = response.status();
+        expect(status, await response.text()).not.toBe(403);
+        expect(status >= 400 && status < 500, `a 4xx is not "not refused": ${status}`).toBe(
+          false,
+        );
       });
 
       // `developer` is deliberately absent from this test. It reaches the same
@@ -252,7 +261,7 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
   );
 
   test(
-    "the decision APIs agree with enforcement about an inherited grant",
+    "the decision APIs agree with enforcement about an inherited grant, in the project's domain",
     { tag: ["@enterprise", "@api", "@regression", "@authz"] },
     async ({ request }) => {
       await grantOnProject(request, "developer");
@@ -264,44 +273,54 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
         patch: 200,
       });
 
-      await test.step("check answers the resource-scoped question", async () => {
-        const scoped = await authzCheck(
-          request,
-          superuserAuth,
-          subject.id,
-          `project:${projectId}`,
-          "read",
-        );
-        // The project-scoped question is answered correctly, and names the grant
-        // — so the pattern vocabulary itself is not the problem.
-        expect(scoped.allowed).toBe(true);
-        expect(scoped.matched_policy).toEqual(
-          expect.arrayContaining(["role:developer"]),
-        );
+      const domain = `project:${projectId}`;
 
-        // EXPECTED RED (#1532). The resource-scoped question about the very flow
-        // enforcement just allowed answers `false` with an empty match.
+      await test.step("check, asked about this flow in the project's domain, agrees and names the grant", async () => {
         const onFlow = await authzCheck(
           request,
           superuserAuth,
           subject.id,
           `flow:${flowId}`,
           "read",
+          domain,
         );
         expect(onFlow.allowed).toBe(true);
+        expect(onFlow.matched_policy).toEqual(
+          expect.arrayContaining(["role:developer"]),
+        );
       });
 
-      await test.step("me/permissions reports what the subject can do", async () => {
-        // EXPECTED RED (#1532). This route takes no casbin pattern — a resource
-        // type and a list of ids, exactly how a client asks — and answers `[]`
-        // for a flow the same subject can read and write. A client rendering
-        // from it hides an editable flow.
-        const permissions = await mePermissions(request, subject.auth, "flow", [
-          flowId,
-        ]);
+      await test.step("me/permissions, in the project's domain, reports read and write", async () => {
+        // The route takes no casbin pattern — a resource type and a list of ids
+        // plus a domain, which is exactly how the product's client asks.
+        const permissions = await mePermissions(
+          request,
+          subject.auth,
+          "flow",
+          [flowId],
+          domain,
+        );
         expect(permissions[flowId]).toEqual(
           expect.arrayContaining(["read", "write"]),
         );
+      });
+
+      await test.step("the same two questions in the global domain correctly say no", async () => {
+        // Not a disagreement: a project-scoped grant does not cover the whole
+        // instance. Asserted because this is the answer #1532 misread, and a
+        // client that drops the domain would hide an editable flow.
+        const global = await authzCheck(
+          request,
+          superuserAuth,
+          subject.id,
+          `flow:${flowId}`,
+          "read",
+        );
+        expect(global.allowed).toBe(false);
+        const permissions = await mePermissions(request, subject.auth, "flow", [
+          flowId,
+        ]);
+        expect(permissions[flowId]).toEqual([]);
       });
     },
   );
@@ -318,18 +337,32 @@ test.describe("Enterprise — inherited access, and the surfaces that describe i
         expect.arrayContaining(["deploy"]),
       );
 
-      // EXPECTED RED (#1532). One surface lists `deploy` among the actions this
-      // assignment resolves to; the decision API denies the same action for the
-      // same subject and scope. Whichever is right, they cannot both be — and a
-      // client asking the decision API would hide a control the model grants.
-      const decision = await authzCheck(
+      // `deploy` is a FLOW action. Asked about a flow in the project's domain,
+      // the decision API grants it — the same answer `inherited-access` gives.
+      const onFlow = await authzCheck(
+        request,
+        superuserAuth,
+        subject.id,
+        `flow:${flowId}`,
+        "deploy",
+        `project:${projectId}`,
+      );
+      expect(onFlow.allowed).toBe(true);
+      expect(onFlow.matched_policy).toEqual(
+        expect.arrayContaining(["role:admin", "deploy"]),
+      );
+
+      // Asked about the PROJECT it answers no, because no role grants `deploy`
+      // on a project object. This is the cell #1532 read as a contradiction;
+      // asserted so nobody re-files it.
+      const onProject = await authzCheck(
         request,
         superuserAuth,
         subject.id,
         `project:${projectId}`,
         "deploy",
       );
-      expect(decision.allowed).toBe(true);
+      expect(onProject.allowed).toBe(false);
     },
   );
 });

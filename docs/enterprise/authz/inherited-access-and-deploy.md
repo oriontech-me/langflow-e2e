@@ -1,6 +1,6 @@
 # Enterprise — Inherited Access, and the Surfaces That Describe It
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -11,14 +11,16 @@ grants inside one project, and enforcement honours it for the flows that live th
 **inherited access**: the subject was never granted anything on the flow, and can still open
 it.
 
-Two questions follow, and the second is where this instance disagrees with itself.
+Two questions follow. The 1.12 version of this spec concluded the second one exposed a
+disagreement (#1532); measured on 1.13 it does not — the disagreement came from asking the
+decision APIs in the wrong **domain**, and this spec now pins the question a client really asks.
 
 **Does inheritance work, and is it revocable and role-graded?** Measured yes on all three
 counts. This is the green half.
 
-**Do the surfaces that DESCRIBE access agree with the one that ENFORCES it?** Three of them
-answer the same question three ways. A client renders from the descriptions, so a
-description that is confidently wrong is worse than one that is missing.
+**Do the surfaces that DESCRIBE access agree with the one that ENFORCES it?** A client
+renders from the descriptions, so a description that is confidently wrong is worse than one
+that is missing. Asked in the project's domain, they agree.
 
 ### Enforcement, measured
 
@@ -36,38 +38,44 @@ Same shape as the global matrix in `deny-matrix-and-decision-api`, which is the 
 inheritance is not a weaker grant, it is the same grant reached through the project. And
 forbidden stays indistinguishable from absent — both `404`.
 
-### The three descriptions
+### The descriptions, and the domain that decides them
 
-With the subject holding project-scoped `developer` on that flow:
+With the subject holding project-scoped `developer` on that flow (measured on `bbbec5fb`):
 
 | Surface | Answer |
 |---|---|
-| `GET /authz/flows/{id}/inherited-access` | names it: `domain_type: "project"`, `role_name: "developer"`, `actions: ["read","write","execute"]` |
-| `POST /authz/check`, `obj: "project:<pid>"` | `allowed: true`, `matched_policy` names `role:developer` |
-| `POST /authz/check`, `obj: "flow:<id>"` | `allowed: false`, `matched_policy: []` |
-| `POST /authz/me/permissions`, `{resource_type: "flow", resource_ids: [id]}` | `{"<flow-id>": []}` |
+| `GET /authz/resources/flow/{id}/inherited-access` | names it: `domain_type: "project"`, `role_name: "developer"`, `actions: ["read","write","execute"]` |
+| `POST /authz/check`, `obj: "flow:<id>"`, `domain: "project:<pid>"` | `allowed: true`, `matched_policy: ["role:developer","*","flow:*","read"]` |
+| `POST /authz/me/permissions`, `{resource_type: "flow", resource_ids: [id], domain: "project:<pid>"}` | `{"<flow-id>": ["read","write","execute","create"]}` |
+| the same two **without** `domain` (it defaults to `*`) | `allowed: false`, `matched_policy: []` / `{"<flow-id>": []}` |
 
-The last row is the finding (#1532). `obj` in `check` is a casbin **pattern**, so an empty
-`matched_policy` there is ordinarily the signal that the question matched nothing — the trap
-`deny-matrix-and-decision-api.md` documents at length, and which fabricated two findings
-while that spec was written. `me/permissions` takes **no pattern**: a resource type and a
-list of ids, which is exactly how a client asks. It answers `[]` for a flow the same subject
-can `PATCH`.
-
-Nor is it "direct grants only" by design — the deny-matrix spec already asserts
-`me/permissions` returns `["read"]` for a flow reached through a **share**, which is not
-ownership either. Project inheritance is the gap.
+Both decision routes take a `domain`, documented as "typically `project:{folder_id}`", and the
+product's own client sends exactly that (`PermissionsProvider`, `permissionsContext.tsx`).
+Without it they answer the **global-domain** question — "does a grant over the whole instance
+cover this?" — which for a project-scoped grant is correctly *no*. That is what #1532
+measured: the parameter existed on 1.12 too, so this was never a disagreement, it was the
+domain-shaped twin of the `flow:*`-versus-`flow:<id>` trap `deny-matrix-and-decision-api.md`
+documents. This spec now asks both questions and pins both answers, so the trap is visible
+rather than re-discovered.
 
 ### `deploy`, and why one cell is deliberately unasserted
 
-| Role (project scope) | `inherited-access` `actions` | `check` on `project:<pid>` | `POST /control-plane/deployments` |
-|---|---|---|---|
-| `viewer` | `["read","execute"]` | read | `403` `Permission denied` |
-| `developer` | `["read","write","execute"]` | read, write | `503` `Control Plane deployment is not configured` |
-| `admin` | `["read","write","execute","delete","deploy"]` | read, write, delete — **`deploy: false`** | `503` |
+| Role (project scope) | `inherited-access` `actions` | `POST /control-plane/deployments` |
+|---|---|---|
+| `viewer` | `["read","execute"]` | `403` `Permission denied` |
+| `developer` | `["read","write","execute"]` | `503` `Control Plane deployment is not configured` |
+| `admin` | `["read","write","execute","delete","deploy"]` | `503` |
 
-`inherited-access` grants `execute` to every role and `deploy` to `admin`; `check` denies
-`execute` to all three and `deploy` even to `admin`. The route is coarser than either.
+`deploy` is a **flow** action. Asked about the project (`obj: "project:<pid>"`) it is denied
+even to `admin`, which is what #1532 read as a contradiction; asked about a flow in the
+project's domain (`obj: "flow:<id>"`, `domain: "project:<pid>"`) it is allowed, matching
+`role:admin`, `flow:*`, `deploy` — the same answer `inherited-access` gives.
+
+The deployment payload carries no `environment`. Since the 1.13 line environments are
+registered (EE PR 457), and `environment: "production"` on an instance that has not registered
+one answers `404 Unknown environment 'production'` — which still read as "not refused" and kept
+the admin step green for the wrong reason. Without it the default environment is used and the
+answer is the documented `503`.
 
 **The `developer` cell is not asserted anywhere.** With no control plane configured a `503`
 cannot be distinguished from "authorization passed, and a configured plane would re-check
@@ -78,7 +86,8 @@ authorization, and `admin` is not.
 
 ## Note — the deployment payload gained `slug` (#1635)
 
-On the 2026-08-27 Enterprise build `POST /api/v1/control-plane/deployments` requires a `slug`.
+On the 2026-08-27 Enterprise build `POST /api/v1/control-plane/deployments` requires a `slug`
+(still true on 1.13).
 Without it FastAPI answers **`422` before authorization runs** — for the superuser too — so the
 request never reaches the verdict this spec exists to observe, and the gate test failed for a
 payload reason wearing an authorization failure's clothes. With `slug` present the measured
@@ -90,7 +99,7 @@ deployment is not configured`.
 `@enterprise` `@api` `@regression` `@authz`
 
 No `@stable`: there is no scheduled Enterprise lane, so a `@stable` test here would silently
-never run (#1010). The two red tests below could not carry it in any case.
+never run (#1010).
 
 ## Step by step *(required)*
 
@@ -103,40 +112,50 @@ project-scoped `viewer`, then `developer`, then with the assignment deleted, ass
 table above at each step.
 
 **Test 2 — `inherited-access` names the grant, and does not leak it.** With the subject
-holding project-scoped `developer`: the endpoint lists an entry for the subject carrying the
-scope, the role and the actions, alongside the superuser's own global admin entry. Asked by
-the **subject**, the same endpoint answers `404 Resource not found` — the endpoint is
-superuser-scoped and does not confirm the flow's existence to the user it describes.
+holding project-scoped `developer`: `GET /authz/resources/flow/{id}/inherited-access` lists an
+entry for the subject carrying the scope, the role and the actions. Asked by the **subject**,
+the same route answers `404` with `detail` **`Resource not found`** — asserted by detail, not
+only by status: the 1.12 route `/authz/flows/{id}/inherited-access` was removed with no alias
+(EE PR 355), and a removed route also answers `404` (`Not Found`), so a status-only assertion
+passed against a route that no longer existed. Since 1.13 the resource's **owner** is
+excluded from the list (ownership is not a role-derived grant), so the superuser no longer
+appears in it.
 
 **Test 3 — the deployment gate refuses the two unambiguous ends.** `viewer` and role-less →
-`403 Permission denied`; `admin` → not a `403`. The response for `admin` is asserted as
-"not refused" rather than as `503`, so a configured control plane would not turn this test
-red.
+`403 Permission denied`; `admin` → not a `403`, and not a `4xx` naming the payload either (an
+unregistered environment's `404` would otherwise pass as "not refused"). The response for
+`admin` is asserted as "not refused by authorization" rather than as `503`, so a configured
+control plane would not turn this test red.
 
-**Test 4 (EXPECTED RED, #1532) — the decision APIs agree with enforcement.** With the
+**Test 4 — the decision APIs agree with enforcement, in the project's domain.** With the
 subject holding project-scoped `developer` and enforcement answering `200` to both `GET` and
-`PATCH`: `check` with `obj: "flow:<id>"` should be `allowed: true`, and `me/permissions`
-should report `read` and `write` for that flow. Both currently answer empty.
+`PATCH`: `check` with `obj: "flow:<id>"`, `domain: "project:<pid>"` → `allowed: true` and
+`matched_policy` names `role:developer`; `me/permissions` with the same `domain` reports `read`
+and `write`. The same two questions in the global domain answer `false` / `[]` — asserted,
+because that is the correct answer to the question a mis-encoded client would be asking, and
+the pair is what makes the trap visible.
 
-**Test 5 (EXPECTED RED, #1532) — the model does not contradict itself.** `check` on the
-project should allow `deploy` for `admin`, which `inherited-access` lists among its actions.
-It currently answers `false`.
+**Test 5 — the model does not contradict itself about deploy.** With project-scoped `admin`,
+`inherited-access` lists `deploy`; `check` with `obj: "flow:<id>"`, `act: "deploy"`, `domain:
+"project:<pid>"` → `allowed: true`. And `check` on `obj: "project:<pid>"` → `allowed: false`,
+because `deploy` is a flow action — asserted so a reader does not re-file it as a contradiction.
 
 ## Validation criterion *(required)*
 
 Tests 1–3 fail when inheritance stops working, stops being graded by role, survives
-revocation, when `inherited-access` misreports or leaks the grant, or when the deployment
-route stops refusing a viewer.
+revocation, when `inherited-access` misreports or leaks the grant (or its route moves again),
+or when the deployment route stops refusing a viewer.
 
-Tests 4 and 5 fail **today, by design**, and are the assertion of the behaviour #1532 asks
-the product to choose. They turn green when a client can trust the decision API about an
-inherited grant. If the product decides the decision API answers only non-inherited grants,
-this spec changes to assert that — the spec doc changes first.
+Tests 4 and 5 fail when a decision API stops agreeing with enforcement about an inherited
+grant in the project's domain, or when the global-domain answer changes meaning — either way a
+client rendering from it would show the wrong controls.
 
 ## External dependencies *(required)*
 
 - The Enterprise RBAC variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`,
-  with `PLAYWRIGHT_BASE_URL` pointed at `http://localhost:7891`.
+  with `PLAYWRIGHT_BASE_URL` pointed at `http://localhost:7891`. On the 1.13 line the script
+  sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true` — project, user and
+  control-plane routes answer `503` without a licence (#2259).
 - **Zero or one** login per run — the directory's shared subject and the cached superuser
   token. The five-per-minute per-IP login limit is why the whole matrix is one principal
   walked through states.
@@ -145,9 +164,8 @@ this spec changes to assert that — the spec doc changes first.
 
 ## Notes
 
-`GET /authz/flows/{id}/inherited-access` is asserted by **membership**, never by list
-length: the superuser's own global admin assignment is in that list, and so is anything else
-the container happens to carry.
+`inherited-access` is asserted by **membership**, never by list length: anything else the
+container happens to carry is in that list too.
 
 Cross-replica convergence — the fourth item in the § 22.6 line this closes — stays `[ ]`.
 It needs Redis and a second replica: without one, `invalidation.listener_connected` is

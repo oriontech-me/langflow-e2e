@@ -1,6 +1,6 @@
 # Enterprise — The History Is the Only Record That the Deployment Declared Anything
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built 2026-08-27 from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -95,11 +95,13 @@ instance from an API-written one.
 ## External dependencies *(required)*
 
 - A Langflow **Enterprise** instance whose **deployment** declares a component blocklist:
-  `LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`.
+  `LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText ./scripts/start-langflow-enterprise.sh`.
   The gate skips, naming this command, on any other instance — including one where the same
   blocklist was written through the API, which is a different thing and the case the sibling spec
   exists to separate.
-- No browser, no LLM provider, no network egress, no licence, no additional login.
+- No browser, no LLM provider, no network egress, no licence, no additional login. On the 1.13
+  line the script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: the policy routes
+  are tier-gated and answer `503` without a licence (#2259).
 - No Langflow **source** paths: the Enterprise backend is not in `langflow-ai/langflow`.
 
 ## Notes

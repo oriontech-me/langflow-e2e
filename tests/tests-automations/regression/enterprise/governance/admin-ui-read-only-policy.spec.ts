@@ -9,7 +9,7 @@ import { requireEnvironmentPolicy } from "../../../../helpers/enterprise/policy-
 /**
  * The browser-facing half of environment-declared catalog policy.
  *
- * `/admin-ee/catalog` is the screen an operator uses to decide what the
+ * `/admin/catalog` (the console moved from `/admin-ee` on 1.13) is the screen an operator uses to decide what the
  * platform's users may place. When the policy belongs to the deployment rather
  * than to this screen, the screen has to say so and stop offering to edit it —
  * otherwise the operator is invited to make a change that either does nothing
@@ -49,7 +49,13 @@ const POLICY_READS = [
 const BANNER = /Managed by deployment configuration/i;
 const MANAGED_EXTERNALLY_ROW = /External policy source/i;
 const MANAGED_HERE_ROW = /Admin\s*›\s*Catalog/i;
-const EDIT_BUTTON = /Edit Catalog Policy/i;
+/**
+ * The detail panel's edit control is labelled for the bundle's state — "Edit
+ * catalog policy", "Review bundle" or "Fix catalog" (EE `BundleDetailPanel`).
+ * Since 1.13 core categories are not offered as rows, so which bundle comes first
+ * depends on what the image installs; any of the three is the edit control.
+ */
+const EDIT_BUTTON = /Edit Catalog Policy|Review bundle|Fix catalog/i;
 
 /** Force `managed_externally: true` on the policy reads, leaving writes alone. */
 async function forceManagedExternally(page: Page): Promise<void> {
@@ -71,7 +77,7 @@ async function forceManagedExternally(page: Page): Promise<void> {
  * loaded satisfies every "absent" assertion in this file while proving nothing.
  */
 async function openFirstBundle(page: Page) {
-  await page.goto("/admin-ee/catalog");
+  await page.goto("/admin/catalog");
 
   const rows = page.locator('button[aria-controls^="catalog-bundle-"]');
   await expect(

@@ -164,7 +164,7 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
         // Reset, never delete: the subject is shared across this directory and
         // cached between runs, so deleting it would cost a fresh login on the
         // next one — the cost sharing it exists to avoid.
-        await resetSubjectGrants(request, auth, { assignments, shares: [] });
+        await resetSubjectGrants(request, auth, { assignments, shares: [] }, user.id);
       }
     },
   );
@@ -177,7 +177,7 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
       await requireRbacInstance(request, auth);
 
       const user = await getSharedRbacSubject(request, auth);
-      await resetSubjectGrants(request, auth, { assignments: [], shares: [] });
+      await resetSubjectGrants(request, auth, { assignments: [], shares: [] }, user.id);
 
       const foreignProjectId = await getProjectOwnedBy(request, auth);
       const ownProjectId = await getProjectOwnedBy(request, user.auth);
@@ -248,8 +248,11 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
         });
       } finally {
         if (created) {
+          // As the OWNER: `created` lives in the subject's private Starter
+          // Project, which the superuser's global role no longer reaches since
+          // 1.13 — its DELETE answered 404 and leaked the flow (#2259).
           await request
-            .delete(`/api/v1/flows/${created}`, { headers: { Authorization: auth } })
+            .delete(`/api/v1/flows/${created}`, { headers: { Authorization: user.auth } })
             .catch(() => undefined);
         }
       }

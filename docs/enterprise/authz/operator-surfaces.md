@@ -1,6 +1,6 @@
 # Enterprise — Operator Surfaces: Scoped Reconcile, Audit Filters, SIEM Status, Directory Sync
 
-**Last validated:** 1.12.0 — Langflow Enterprise (image `langflow-enterprise:latest`, built 2026-08-27 from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -27,17 +27,26 @@ issue asked for "`404` or `422`" and choosing between them is not this repo's ca
 does pin is that a wrong key is never a `2xx` — a scoped reconcile of *nothing* reporting
 `outcome: "clean"` would be the silent version of the same defect.
 
-**Audit filters.** `GET /authz/audit` accepts eleven query parameters and nothing asserts
-that any of them filters. Measured, `result=deny` and `action=flow:create` do. An **invalid**
-value answers `200` with an empty envelope, byte-identical in shape to "nothing matched"
-(#1555, filed upstream as `LE-2772`) — an auditor asking "were there denials?" with a mistyped filter gets a clean bill of
-health. This spec asserts the **positive** side only: that a valid filter returns rows and
-that they all match it. The `422`-versus-empty question is a product choice, and pinning
-today's answer as correct would be this repo deciding it by assertion.
+**Audit filters.** `GET /authz/audit` accepts its query parameters (twelve on 1.13, with
+`exclude_action` added) and nothing asserted that any of them filters. Measured, `result=deny`
+and `action=flow:create` do. On 1.12 an **invalid** value answered `200` with an empty
+envelope, byte-identical in shape to "nothing matched" (#1555, filed upstream as `LE-2772`) —
+an auditor asking "were there denials?" with a mistyped filter got a clean bill of health.
+
+Upstream has since decided that question for the two **enumerated** filters
+(langflow-ai/langflow#15424): `result=banana` and `actor_type=bogus` answer `422`, naming the
+accepted values. That is a product decision this spec can now pin rather than make, so test 3
+asserts it. `action=nonexistent:action` still answers `200` with an empty list — `action` is
+free text, and choosing whether an unknown action is an error remains the product's call, so
+it stays documented here and unasserted.
 
 **SIEM status.** `GET /authz/siem/status` describes audit export. On an instance with no
 adapter it must be **coherently disabled** rather than half-configured, and it is behind the
-**superuser** guard while `audit` itself is behind the admin-role guard.
+**superuser** guard while `audit` itself is behind the admin-role guard. Since 1.13 an audit
+read refused to a non-admin answers with the **OSS** wording, `The user doesn't have enough
+privileges` (EE PR 381, deliberately byte-identical to every OSS superuser-only route), rather
+than `RBAC administrator role required`. The two guards still answer differently, which is
+the thing a client has to tell apart.
 
 **Directory sync.** `POST /authz/directory/memberships/reconcile` ingests an external
 membership snapshot. Its guard is the age of the snapshot: a fresh `observed_at` is accepted
@@ -56,9 +65,11 @@ rather than a refusal, which is why the permission assertion uses a **valid** bo
 | `reconcile/entities` `[{bogus, x}]` | `422`, `Input should be 'role', 'assignment', 'team' or 'share'` |
 | `reconcile/entities` as the subject | `403 Superuser required for authz admin endpoints` |
 | `audit?result=deny` | `200`, rows whose `result` is `deny` |
-| `audit?result=banana` / `?actor_type=bogus` / `?action=nonexistent:action` | `200`, `{"items": [], "total": 0}` — unchanged on the 2026-08-27 build (`LE-2772`) |
+| `audit?result=banana` | `422`, `Input should be 'allow', 'deny', 'owner_override' or 'skip'` — `200` empty on 1.12 (`LE-2772`) |
+| `audit?actor_type=bogus` | `422`, `Input should be 'user', 'api_key', 'unknown' or 'anonymous_public'` — `200` empty on 1.12 |
+| `audit?action=nonexistent:action` | `200`, `{"items": [], "total": 0, …}` — unchanged |
 | `audit?since=not-a-date` | `422` naming the datetime parse error — the one typed filter |
-| `audit` as the subject | `403 RBAC administrator role required` |
+| `audit` as the subject | `403 The user doesn't have enough privileges` — `RBAC administrator role required` on 1.12 |
 | `siem/status` as superuser | `200`, `enabled: false`, `active: false`, `adapter_configured: false`, `capture_ready: false`, `bootstrap_state: "disabled"`, `event_schema: "langflow.authz.audit.v1"` |
 | `siem/status` as the subject | `403 Superuser required for authz admin endpoints` |
 | `directory/memberships/reconcile`, fresh `observed_at`, `users: []` | `200`, `snapshot_age_seconds` under a second, `propagation: "unchanged"` |
@@ -101,14 +112,16 @@ observable that separates "you used the wrong identifier" from a bare refusal.
 
 **Test 3 — the audit filters filter.** `result=deny` returns rows and **every** row's
 `result` is `deny`; `action=<a real action>` likewise. The action asserted is one the run
-itself produced, so the test does not depend on the container's history.
+itself produced, so the test does not depend on the container's history. An invalid value of
+an enumerated filter — `result=banana`, `actor_type=bogus` — is refused `422` and the
+`detail` names the accepted values.
 
 **Test 4 — SIEM status is coherently disabled, and superuser-only.** With no adapter,
 `enabled`, `active`, `adapter_configured` and `capture_ready` are all `false` **together** —
 a half-configured state (`enabled` true while `adapter_configured` false) is the one an
 operator would read as "exporting". The subject gets the superuser refusal, while `audit`
-gives the admin-role one: the two are asserted side by side, because that difference is the
-thing a client has to distinguish.
+gives the audit guard's (`The user doesn't have enough privileges` since 1.13): the two are
+asserted side by side, because that difference is the thing a client has to distinguish.
 
 **Test 5 — the directory snapshot's age is the guard.** Fresh → `200` and the report's
 `snapshot_age_seconds` is small; `2020-01-01` → `409`, message asserted. With a valid body,
@@ -119,13 +132,17 @@ the subject → `403 RBAC administrator role required`.
 Fails when a correctly-keyed scoped reconcile stops reporting itself as targeted, when a
 mis-keyed or unknown target stops being a client error that names the key (a `500` again, a
 `2xx`, or a refusal that no longer says which key or which format), when a filter stops
-filtering, when SIEM status reports a half-configured export, when the two guards collapse
+filtering, when an invalid enumerated filter value is accepted as "nothing matched" again,
+when SIEM status reports a half-configured export, when the two guards collapse
 onto one message, or when a stale snapshot is accepted.
 
 ## External dependencies *(required)*
 
 - The Enterprise RBAC variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`,
-  `PLAYWRIGHT_BASE_URL` at `http://localhost:7891`.
+  `PLAYWRIGHT_BASE_URL` at `http://localhost:7891`. On the 1.13 line the script sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: without it the reconcile routes are
+  tier-gated and answer `503` before validation, so test 2 would read as #1555 coming back
+  (#2259).
 - Zero or one login per run — shared subject plus cached superuser token.
 - No SIEM adapter and no identity provider: both surfaces are asserted in their unconfigured
   state, which is the state a test environment can guarantee.

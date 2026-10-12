@@ -1,12 +1,12 @@
 # Enterprise — The Admin UI Renders the Read-Only State for an Externally Managed Policy
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
 ## What this test validates *(required)*
 
-`/admin-ee/catalog` is the screen an operator uses to decide what the platform's users
+`/admin/catalog` is the screen an operator uses to decide what the platform's users
 may place. When the policy belongs to the deployment rather than to this screen, the
 screen has to say so and stop offering to edit it — otherwise the operator is invited to
 make a change that either does nothing or, worse, quietly overrides what the deployment
@@ -58,6 +58,19 @@ Reading the pair:
 > outside this repository. Do not relax it to make the lane green. The mocked test is
 > expected to pass, and a failure there is a real frontend regression.
 
+## Note — the console moved (1.13)
+
+The console's base path is `/admin` since the 1.13 line (EE PR 326); `/admin-ee/*` is a legacy
+redirect that keeps its query and hash. The catalog screen is the **Components** tab at
+`/admin/catalog`. It no longer offers core categories (processing, input/output, flow controls)
+as bundle rows, so the first row is the alphabetically first *governable* bundle; the edit
+control in its detail panel is labelled for that bundle's state ("Edit catalog policy",
+"Review bundle" or "Fix catalog"), and the spec accepts any of the three rather than depending
+on which bundles the image installs.
+
+The live test (an operator viewing a deployment-declared policy) is expected red for the reason
+`environment-policy-authority.md` records under *Product position*.
+
 ## Tags *(required)*
 
 `@enterprise` `@regression` `@governance`
@@ -72,7 +85,7 @@ silently never run (#1010).
 2. Require the instance to block the component in its **environment** — skip, naming the
    start command, otherwise. The gate reads the deployment's own bundle revision, so it is
    unaffected by any earlier write.
-3. Open `/admin-ee/catalog` and wait for the bundle list to render — a screen that has not
+3. Open `/admin/catalog` and wait for the bundle list to render — a screen that has not
    loaded satisfies every "absent" assertion below while proving nothing.
 4. Expand the first bundle (`button[aria-controls^="catalog-bundle-"]`).
 5. Assert the three surfaces:
@@ -95,6 +108,8 @@ editable screen.
   `LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText ./scripts/start-langflow-enterprise.sh`
 - A browser. This is the only spec in `enterprise/governance/` that is not API-only.
 - No LLM provider and no network egress.
+- On the 1.13 line the script sets `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`: the
+  policy routes are tier-gated and answer `503` without a licence (#2259).
 
 ## Notes
 

@@ -34,6 +34,11 @@ export interface PolicyBundleResponse {
   // Carried by the bundle and writable through it, but with no dedicated
   // per-resource endpoint of its own — unlike the three above.
   blocked_model_keys?: string[];
+  // 1.13 (langflow-ai/langflow#14947): integration policy rides the same bundle.
+  // A bundle write that omits them RESETS them to empty, so any caller writing
+  // the whole bundle must carry them through.
+  approved_integration_provider_ids?: string[];
+  blocked_integration_action_keys?: string[];
   rollback_of_revision?: number | null;
   reason?: string | null;
   managed_externally?: boolean;

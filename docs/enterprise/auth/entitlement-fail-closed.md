@@ -1,6 +1,6 @@
 # Enterprise — Without a Licence, the Entitled Surface Fails Closed
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -30,6 +30,16 @@ Four properties, measured on an instance with no licence:
 4. **The blast radius is bounded.** Flows, the component catalog, projects and identity all
    answer `200`. An unlicensed Enterprise is a product missing its entitled features, not a
    product that stopped working.
+
+   Narrower on 1.13, and deliberately: the licence-tier gates (EE PR 336, EE PR 344) also fail
+   closed without a licence, so user, project and custom-role **creation** and the governance
+   routes answer the same `503` unless the instance runs with
+   `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`. The lane sets it, because nothing
+   else on the lane could create a fixture without it. It opens the tier gates only: the SSO
+   entitlement read by this spec is gated by a separate variable, and still answers `503` —
+   measured on `bbbec5fb` with the tier variable set. **Never** start this lane with
+   `LANGFLOW_ENV=local` instead: that profile also opens the SSO entitlement, `/sso/entitlements`
+   answers `200`, and every test here skips while the run reads green (#2259).
 
 ### What the message must not become
 

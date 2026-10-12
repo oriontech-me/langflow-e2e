@@ -18,6 +18,7 @@ import {
   type RoleAssignment,
   attemptFlowCreate,
   getProjectOwnedBy,
+  getSubjectNonPersonalProject,
 } from "../../../../helpers/enterprise/rbac";
 
 /**
@@ -36,16 +37,21 @@ import {
  *     role assignment is refused a flow it could create a second earlier.
  *   - the RBAC admin route is satisfied by the `admin` role OR the superuser
  *     flag — so the role-less superuser passes it while being refused below it.
- *   - role administration is satisfied by the flag ONLY. A holder of the global
- *     `admin` role passes the two guards beneath it and is refused here, which
- *     is the containment that makes the role safe to hand out: an admin cannot
- *     grant themselves anything.
+ *   - role administration is satisfied by the flag OR, since 1.13, the global
+ *     `admin` role (delegated administration). The containment that makes the
+ *     role safe to hand out moved with it: an admin cannot make itself a
+ *     superuser, and the operator routes stay superuser-only.
  *
  * And the bypass switches exactly one cell — the superuser's resource-policy
  * answer. Everything else, including every non-superuser answer on the same
  * instance, is unchanged. That is narrower than `requireRbacInstance`'s own
  * wording claims, and more useful: the flag is an escape hatch scoped to one
  * principal and one guard, not an authorization off-switch.
+ *
+ * Tests 2 and 3 write into a NON-personal project the SUBJECT owns: the
+ * superuser's own projects are answered by the owner override (#1635), and a
+ * user's default Starter Project is private since 1.13, so a refusal there would
+ * not be about the role or the flag (#2259).
  *
  * THE A/B IS TWO RUNS. Tests 1 and 2 need `superuser_bypass: false`
  * (`LANGFLOW_EE_RBAC=1`, port 7891); test 3 needs it `true`
@@ -58,8 +64,10 @@ import {
 const RESOURCE_GUARD = "Permission denied";
 const ADMIN_ROUTE_GUARD = "RBAC administrator role required";
 const ROLE_ADMIN_GUARD = "Superuser required to administer roles.";
-/** The same guard on the sibling route, whose message names the route. */
-const ASSIGNMENT_ADMIN_GUARD = "Superuser required to administer role assignments.";
+/** Since 1.13, the containment for a delegated admin: becoming a superuser. */
+const PROMOTION_GUARD = "Only a superuser may promote or demote platform superusers";
+/** The operator routes, which delegation does not reach. */
+const OPERATOR_GUARD = "Superuser required for authz admin endpoints";
 
 interface GuardVerdict {
   status: number;
@@ -198,14 +206,18 @@ async function stripSuperuserAssignments(
 
 test.describe("Enterprise — three guards, and what superuser bypass switches", () => {
   test(
-    "the three refusals are three guards: an admin passes two and is refused the third",
+    "the three refusals are three guards, and a delegated admin cannot make itself a superuser",
     { tag: ["@enterprise", "@api", "@regression", "@authz"] },
     async ({ request }) => {
       const auth = await getEnterpriseAuthToken(request);
       await requireRbacInstance(request, auth);
-      const foreignProjectId = await getProjectOwnedBy(request, auth);
 
       const subject: RbacUser = await getSharedRbacSubject(request, auth);
+      // The SUBJECT is probed here, so the destination is a non-personal
+      // project the SUPERUSER owns: the subject's own would be answered by the
+      // owner override, and the superuser's private Starter Project by the
+      // privacy rule — neither is the guard under test.
+      const foreignProjectId = await getProjectOwnedBy(request, auth);
       const granted: { assignments: string[]; shares: string[] } = {
         assignments: [],
         shares: [],
@@ -214,7 +226,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
       let asAdmin: GuardVerdicts | undefined;
 
       try {
-        await resetSubjectGrants(request, auth, granted);
+        await resetSubjectGrants(request, auth, granted, subject?.id);
 
         await test.step("a role-less subject is refused by all three, with three different messages", async () => {
           roleLess = await probeGuards(request, subject.auth, "roleless", foreignProjectId);
@@ -237,7 +249,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
           expect(new Set(messages).size).toBe(3);
         });
 
-        await test.step("the global admin role flips the first two and leaves the third refused", async () => {
+        await test.step("the global admin role passes all three guards", async () => {
           const roles = await builtinRoleIds(request, auth);
           expect(roles.admin, "the built-in admin role").toBeTruthy();
           granted.assignments.push(
@@ -248,33 +260,33 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
 
           expect(asAdmin.resource.status).toBe(201);
           expect(asAdmin.adminRoute.status).toBe(200);
-          // The load-bearing one: the subject that may now read the RBAC admin
-          // surface still cannot create a role. Role administration is gated on
-          // being superuser, not on holding the admin role, so the role cannot
-          // escalate itself.
-          expect(asAdmin.roleAdmin.status).toBe(403);
-          expect(asAdmin.roleAdmin.detail).toBe(ROLE_ADMIN_GUARD);
+          // Delegated administration (1.13): role administration is no longer
+          // superuser-only. The probe's role is deleted by discardProbeArtifacts.
+          expect(asAdmin.roleAdmin.status).toBe(201);
         });
 
-        await test.step("the same guard refuses role ASSIGNMENT, naming the route", async () => {
-          const roles = await builtinRoleIds(request, auth);
-          const assignment = await request.post("/api/v1/authz/role-assignments", {
+        await test.step("the delegated admin cannot make itself a superuser, nor reach the operator routes", async () => {
+          // The load-bearing pair. An admin that could promote itself would
+          // hold every guard on the instance, which is the escalation the
+          // containment exists to prevent.
+          const promotion = await request.patch(`/api/v1/users/${subject.id}`, {
             headers: { Authorization: subject.auth },
-            data: {
-              user_id: subject.id,
-              role_id: roles.developer,
-              domain_type: "global",
-            },
+            data: { is_superuser: true },
           });
+          expect(promotion.status()).toBe(403);
+          expect(await detailOf(promotion)).toBe(PROMOTION_GUARD);
 
-          // Self-escalation by the other route an admin might reach for.
-          expect(assignment.status()).toBe(403);
-          expect(await detailOf(assignment)).toBe(ASSIGNMENT_ADMIN_GUARD);
+          const operator = await request.post("/api/v1/authz/check", {
+            headers: { Authorization: subject.auth },
+            data: { user_id: subject.id, obj: "flow:*", act: "read" },
+          });
+          expect(operator.status()).toBe(403);
+          expect(await detailOf(operator)).toBe(OPERATOR_GUARD);
         });
       } finally {
         if (roleLess) await discardProbeArtifacts(request, auth, roleLess);
         if (asAdmin) await discardProbeArtifacts(request, auth, asAdmin);
-        await resetSubjectGrants(request, auth, granted);
+        await resetSubjectGrants(request, auth, granted, subject?.id);
       }
     },
   );
@@ -285,20 +297,32 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
     async ({ request }) => {
       const auth = await getEnterpriseAuthToken(request);
       await requireRbacInstance(request, auth);
-      const foreignProjectId = await getProjectOwnedBy(request, auth);
 
       let stripped: RoleAssignment[] = [];
       let verdicts: GuardVerdicts | undefined;
+      let controlId: string | undefined;
 
       try {
-        // Owned by the SUBJECT, not by the superuser: the point of this test is
-        // the superuser writing where policy — not ownership — has to answer,
-        // and a project the superuser owns would be answered by the override
-        // before the guard is ever consulted.
-        const subjectProjectId = await getProjectOwnedBy(
-          request,
-          (await getSharedRbacSubject(request, auth)).auth,
-        );
+        // Owned by the SUBJECT and not personal: the superuser writing where
+        // policy — not ownership, not project privacy — has to answer.
+        const subject = await getSharedRbacSubject(request, auth);
+        await resetSubjectGrants(request, auth, { assignments: [], shares: [] }, subject.id);
+        const subjectProjectId = await getSubjectNonPersonalProject(request, auth, subject);
+
+        await test.step("control: holding its role, the superuser may write there", async () => {
+          // Without this the 403 below could come from the destination rather
+          // than from the missing role — which is exactly how the 1.12 version
+          // passed against a private Starter Project.
+          const control = await attemptFlowCreate(
+            request,
+            auth,
+            `guard-ladder-control-${Date.now()}`,
+            subjectProjectId,
+          );
+          expect(control.status(), await control.text()).toBe(201);
+          controlId = ((await control.json()) as { id: string }).id;
+        });
+
         stripped = await stripSuperuserAssignments(request, auth);
         expect(
           stripped.length,
@@ -323,6 +347,12 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
         // Asserted, not attempted: a superuser left role-less would fail every
         // later test in this directory for a reason none of them is about.
         await restoreRoleAssignments(request, auth, stripped);
+        if (controlId) {
+          // After the restore: the stripped superuser cannot delete it either.
+          await request
+            .delete(`/api/v1/flows/${controlId}`, { headers: { Authorization: auth } })
+            .catch(() => undefined);
+        }
         const status = await readAuthzStatus(request, auth);
         expect(status.assignment_count).toBeGreaterThan(0);
       }
@@ -335,7 +365,12 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
     async ({ request }) => {
       const auth = await getEnterpriseAuthToken(request);
       await requireBypassInstance(request, auth);
-      const foreignProjectId = await getProjectOwnedBy(request, auth);
+      // The SUBJECT's non-personal project. The 1.12 version wrote into the
+      // superuser's own project, where the owner override answers 201 with or
+      // without the bypass — so its central assertion could not fail.
+      const subject = await getSharedRbacSubject(request, auth);
+      await resetSubjectGrants(request, auth, { assignments: [], shares: [] }, subject.id);
+      const foreignProjectId = await getSubjectNonPersonalProject(request, auth, subject);
 
       let stripped: RoleAssignment[] = [];
       let verdicts: GuardVerdicts | undefined;

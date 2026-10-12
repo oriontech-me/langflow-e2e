@@ -1,6 +1,6 @@
 # Enterprise — The Access Control Operator Screen
 
-**Last validated:** Langflow 1.12.0 Enterprise (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -12,43 +12,36 @@ are the ones that decide whether what the operator sees is what the instance enf
 
 ### Where the screen is
 
-Not where the route name suggests. `/admin-ee/access-control` **redirects to
-`/admin-ee/users-groups`**, and the `/admin-ee` tab list has no Access Control tab at all
-(measured: *Users & groups, Components, Models, Providers, Security, Audit logs*). The
-routes are mounted under **Settings**:
+In the admin console since 1.13 (EE PR 326): the **Access control** tab of `/admin`, with a
+sub-navigation (`navigation "Access Control"`) of two links. `/settings/access-control` and
+`/admin-ee/access-control` are legacy redirects to it.
 
-| Route | Tab |
+| Route | Sub-tab |
 |---|---|
-| `/settings/access-control` | **Roles** (default) |
-| `/settings/access-control/assignments` | **Assignments** |
-| `/settings/access-control/teams` | **Teams** |
+| `/admin/access-control` | **Roles** (default) |
+| `/admin/access-control/assignments` | **Assignments** |
 
-Left-nav handle `sidebar-nav-Access Control`; the three tabs are `role="tab"` with no
-testid. What the screen reads:
+What the screen reads (measured on `bbbec5fb`): `GET /api/v1/authz/roles?limit=200&offset=0`,
+`GET /api/v1/authz/admin/role-assignments?limit=200&offset=0`,
+`GET /api/v1/authz/admin/team-role-assignments?limit=200&offset=0`, and — once, at page
+load — `GET /api/v1/users/?skip=0&limit=200` for the subject picker (1.12 read
+`/authz/admin/users`; a test still waiting on that read never sees it).
 
-```
-GET /api/v1/authz/roles?limit=200&offset=0
-GET /api/v1/authz/admin/role-assignments?limit=200&offset=0
-GET /api/v1/authz/admin/users?skip=0&limit=200
-GET /api/v1/authz/admin/assignment-scopes
-GET /api/v1/authz/teams
-GET /api/v1/authz/me/rbac-admin
-```
-
-Its writes go through the **admin** route in both directions — `POST` to create an
-assignment and `DELETE /api/v1/authz/admin/role-assignments/{id}` to revoke one. Worth
-knowing because the id-keyed sibling `/authz/role-assignments/{id}` also accepts the delete
-(`204`), so a `page.route` interception aimed at the wrong one silently does nothing —
-measured while force-failing test 4, where the first mutation passed for that reason.
+Its writes go through the OSS routes since 1.13: `POST /api/v1/authz/role-assignments` to
+create an assignment and `DELETE /api/v1/authz/role-assignments/{id}` to revoke one; editing
+an assignment is `PATCH /api/v1/authz/admin/role-assignments/{id}`.
 
 ### 1 — A system role offers no way to change it, on the screen and at the API
 
-The Roles table gives each row a `System` or `Custom` badge and a **different action set**:
+The Roles table has seven columns — *Name · Type · Inherits from · Permissions · Providers ·
+Description · Actions* (the sortable headers carry an sr-only "Not sorted", so their
+accessible text is e.g. `Name Not sorted`) — and gives each row a `System` or `Custom` badge
+and a **different action set**:
 
 | Row | Badge | Actions offered |
 |---|---|---|
-| `admin` · `developer` · `viewer` | System | `View` |
-| any custom role | Custom | `View` `Edit` `Delete` |
+| `admin` · `developer` (shown as **Editor**) · `viewer` | System | a `View <Role>` button (e.g. `View Viewer`), opening a read-only *Role details* dialog |
+| any custom role | Custom | an `Actions <name>` menu trigger whose items are `Edit <name>` and `Delete <name>` |
 
 Rows are addressable by name — `role-row-admin`, `role-row-viewer`, `role-row-<custom>`.
 
@@ -81,19 +74,27 @@ the mistake leaked a grant onto the shared instance before it was caught.
 So the test seeds a grant for a **different** user through the API and asserts the screen
 shows it, with its user, role, scope and source. One admin's own row is not evidence.
 
+Columns: *Assignee (sortable) · Role · Scope · Sources · Actions*. A manual assignment's row
+offers an `Actions <username>` menu trigger whose items are `Edit assignment <username>` and
+`Revoke <username>`; rows carry no testid, so a row is found by its username.
+
 ### 3 — Assigning at project scope lands as a project-scoped assignment
 
-The Assign dialog has three comboboxes; choosing `Project` or `Workspace` reveals a fourth,
-**Scope target**:
+`Assign role` opens `dialog "Assign role"` with three comboboxes; choosing `Project` or
+`Workspace` reveals a fourth, **Scope target**:
 
 ```
-User          -> listbox of usernames
-Role          -> "Admin (System)" | "Editor (System)" | "Viewer (System)" | <custom>
-Scope         -> "Global" | "Workspace" | "Project"
-Scope target  -> appears only for Workspace/Project; "<name> — <owner_username>"
-Assign Role   -> POST /api/v1/authz/admin/role-assignments
-                 {"user_id","role_id","domain_type":"project","domain_id"}  -> 201
+Users and groups -> a MULTI-select: opens a nested, unnamed popover dialog with a search box
+                    and a listbox of usernames. It stays open after a pick; Escape closes
+                    the popover and leaves the Assign role dialog open.
+Role             -> "Admin (System)" | "Editor (System)" | "Viewer (System)" | <custom>
+Scope            -> "Global" | "Workspace" | "Project"
+Scope target     -> appears only for Workspace/Project; "<name> — <owner_username>"
+Assign Role      -> POST /api/v1/authz/role-assignments
+                    {"role_id","domain_type":"project","domain_id","user_id"}  -> 201
 ```
+
+Because the popover is itself a `dialog`, the Assign role dialog is addressed by its name.
 
 Scope is the axis the deny matrix turns on, and #1532 already recorded three API surfaces
 disagreeing about scoped access. A picker that submitted `global` regardless would hand
@@ -108,7 +109,7 @@ turns a text match into an equality.
 
 ### 4 — Revoke on the screen removes the assignment at the API
 
-`Revoke` opens `dialog "Revoke <Role>?"` — *"&lt;user&gt; will lose the permissions this role
+`Revoke <username>` (the row's `Actions` menu item) opens `dialog "Revoke <Role>?"` — *"&lt;user&gt; will lose the permissions this role
 grants."* — with its own `Revoke` button. A row disappearing is a render; the state is what
 `/authz/admin/role-assignments` says afterwards, so that is what the test reads.
 
@@ -129,25 +130,28 @@ role id; take the shared RBAC subject as the "other user".
 
 **Test 1 — the system-role read-only contract.**
 1. Create a custom role through the API, so the table has one row of each kind.
-2. Open `/settings/access-control` and wait for `role-row-viewer` — an unrendered table
-   satisfies every absence assertion below.
-3. On the system row: the badge reads `System`, `View` is present, `Edit` and `Delete` are
-   absent.
-4. On the custom row: the badge reads `Custom`, and all three of `View` `Edit` `Delete` are
-   present.
+2. Open `/admin/access-control` and wait for `role-row-viewer` — an unrendered table
+   satisfies every absence assertion below. Assert the seven headers in order.
+3. On the system row: the badge reads `System`, `View Viewer` is present, and there is no
+   `Actions` menu trigger (nor any `Edit`/`Delete` control).
+4. On the custom row: the badge reads `Custom`, its `Actions <name>` trigger opens a menu
+   offering `Edit <name>` and `Delete <name>`; Escape closes it without choosing.
 5. At the API: `PATCH` and `DELETE` on the system role both answer `400`, and a re-read
    shows the role unchanged.
 
 **Test 2 — another user's grant is listed.**
 1. Assign `viewer` globally to the subject through the API.
 2. Open the Assignments tab and locate the row by the subject's username.
-3. The row reads the subject, `Viewer`, `Global`, `Manual`, and offers `Revoke`.
+3. The row reads the subject, `Viewer`, `Global`, `Manual`; its `Actions <username>` menu
+   offers `Revoke <username>`.
 
 **Test 3 — a project-scoped assignment made on the screen.**
 1. Create a project through the API with a name unique to this run.
-2. Open the Assignments tab, click `Assign role`.
-3. Pick the subject, pick `Viewer (System)`, switch Scope to `Project`, and pick the created
-   project in `Scope target`.
+2. Open the Assignments tab (waiting for its `GET /api/v1/users/` read, which the picker is
+   built from), click `Assign role`.
+3. In `Users and groups` pick the subject and press Escape to close the popover; pick
+   `Viewer (System)`, switch Scope to `Project`, and pick the created project in
+   `Scope target`.
 4. Submit `Assign Role`.
 5. At the API, the subject now holds exactly one new assignment, and it carries
    `domain_type: "project"` with `domain_id` equal to the created project's id.
@@ -155,7 +159,8 @@ role id; take the shared RBAC subject as the "other user".
 
 **Test 4 — revoking on the screen removes it.**
 1. Assign `viewer` globally to the subject through the API and reload the tab.
-2. Click `Revoke` **on that row**, then confirm inside the dialog.
+2. Open **that row's** `Actions <username>` menu, choose `Revoke <username>`, then confirm
+   with `Revoke` inside the dialog.
 3. At the API the subject holds no assignment.
 
 ## Validation criterion *(required)*
@@ -174,16 +179,21 @@ role id; take the shared RBAC subject as the "other user".
 - The **RBAC** Enterprise variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`
   (defaults to `http://localhost:7891`). The gate skips rather than fails on anything else.
 - A browser. This is the first spec in `enterprise/authz/` that is not API-only.
-- No LLM provider, no network egress, no licence key.
+- No LLM provider, no network egress, no licence key — but on the 1.13 line the script must
+  set `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true` (custom-role and project creation
+  answer `503` without a licence), and it does (#2259). The UI session is seeded with the
+  cached access **and** refresh tokens (`seedEnterpriseUiSession`).
 
 ## Notes
 
 **Selector traps encoded here.**
 
-- Opening the revoke dialog puts a **second** `Revoke` button in the page; the row's button
-  and the dialog's are both `role="button"` with that exact name, so every reference is
-  scoped to the row or to the dialog. An unscoped `getByRole("button", { name: "Revoke" })`
-  is strict-mode ambiguous the moment a second assignment exists.
+- The revoke confirm dialog has its own `Revoke` button and the row's menu item is
+  `Revoke <username>`; every reference is scoped to the row, the menu or the dialog, and the
+  dialog's button is matched exactly.
+- Two dialogs are open while the subject picker is: the Assign role dialog and its unnamed
+  popover. `getByRole("dialog")` is strict-mode ambiguous then, so the Assign role dialog is
+  always addressed by name.
 - The `Scope target` options read `<project name> — <owner username>`, because two stock
   projects share the name `Starter Project`. The test sidesteps the ambiguity by creating
   its own project instead of relying on the suffix.

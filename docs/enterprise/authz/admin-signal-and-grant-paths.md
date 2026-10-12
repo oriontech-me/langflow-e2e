@@ -1,6 +1,6 @@
 # Enterprise — The Admin Signal a Client Renders From, and the Second Grant Path
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -93,6 +93,9 @@ that being noticed.
 
 ## External dependencies *(required)*
 
+- On the 1.13 line `./scripts/start-langflow-enterprise.sh` sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`; without a licence the user creation
+  behind the shared subject answers `503` (#2259).
 - The Enterprise RBAC variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`,
   `PLAYWRIGHT_BASE_URL` at `http://localhost:7891`.
 - Zero or one login per run — shared subject plus cached superuser token.

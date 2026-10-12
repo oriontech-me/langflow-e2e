@@ -23,13 +23,14 @@ import {
  * generic `message` envelope — an unhandled exception (#1555), fixed on the
  * 2026-08-27 build — so test 2 guards the corrected contract.
  *
- * The audit filters are asserted from the POSITIVE side only. An invalid filter
- * value answers `200` with an empty envelope, indistinguishable in shape from
- * "nothing matched" (#1555, LE-2772) — an auditor with a typo gets a clean bill of health.
- * That is a real hazard, and it is also a product choice between `422` and empty:
- * pinning today's answer as correct would be this repo deciding it by assertion,
- * so it is documented and the tests assert only that a valid filter genuinely
- * filters, which nothing did before.
+ * The audit filters: a valid filter genuinely filters, which nothing asserted
+ * before. On 1.12 an invalid value answered `200` with an empty envelope,
+ * indistinguishable from "nothing matched" (#1555, LE-2772). Upstream has since
+ * decided that for the two ENUMERATED filters (langflow-ai/langflow#15424):
+ * `result` and `actor_type` refuse an unknown value with `422`, so that is now
+ * pinned. `action` is free text and still answers `200` empty for an unknown
+ * action; whether that is an error stays the product's call, so it is documented
+ * and unasserted.
  *
  * Directory sync is guarded by the AGE of the snapshot, not by replay: a fresh
  * `observed_at` is accepted and `2020-01-01` is refused `409`. It is submitted with
@@ -39,6 +40,11 @@ import {
 
 const SUPERUSER_GUARD = "Superuser required for authz admin endpoints";
 const ADMIN_ROUTE_GUARD = "RBAC administrator role required";
+/**
+ * The audit READ guard's refusal since 1.13 (EE PR 381): deliberately the OSS
+ * wording every superuser-only route uses, not the admin-route one.
+ */
+const AUDIT_READ_GUARD = "The user doesn't have enough privileges";
 
 test.describe("Enterprise — operator surfaces: scoped reconcile, audit filters, SIEM, directory sync", () => {
   let superuserAuth: string;
@@ -163,6 +169,19 @@ test.describe("Enterprise — operator surfaces: scoped reconcile, audit filters
       // filter is narrowing rather than being the only thing that answers.
       const all = await readAuditLog(request, superuserAuth);
       expect(all.length).toBeGreaterThan(0);
+
+      // An invalid value of an ENUMERATED filter is a client error naming the
+      // accepted values — never the empty "nothing matched" it was on 1.12.
+      for (const [query, accepted] of [
+        ["result=banana", "'deny'"],
+        ["actor_type=bogus", "'api_key'"],
+      ] as const) {
+        const invalid = await request.get(`/api/v1/authz/audit?${query}`, {
+          headers: { Authorization: superuserAuth },
+        });
+        expect(invalid.status(), query).toBe(422);
+        expect(await invalid.text(), query).toContain(accepted);
+      }
     },
   );
 
@@ -199,7 +218,7 @@ test.describe("Enterprise — operator surfaces: scoped reconcile, audit filters
         SUPERUSER_GUARD,
       );
       expect(((await auditAsSubject.json()) as { detail: string }).detail).toBe(
-        ADMIN_ROUTE_GUARD,
+        AUDIT_READ_GUARD,
       );
     },
   );

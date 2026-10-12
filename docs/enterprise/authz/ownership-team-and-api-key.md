@@ -1,6 +1,6 @@
 # Enterprise — Ownership, Team Membership and API Keys as Access Paths
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -73,6 +73,17 @@ destination the subject does **not** own, via `attemptFlowCreate(…, folderId)`
 The full reasoning, and the test that pins the override as a scoped rule rather than a hole,
 live in `rbac-instance-baseline.md`.
 
+## Note — cleanup runs as the owner (1.13)
+
+Since the 1.13 line a user's default Starter Project is **private** (EE PR 401, on the personal-project flag from langflow-ai/langflow#15404):
+global role wildcards — including the superuser's bootstrap `admin` role, with bypass off — no
+longer reach flows inside it. A flow the subject creates with a bare `POST /api/v1/flows/` lands
+there, and the superuser's `DELETE` on it answers `404 Flow not found`; the 1.12 cleanup
+swallowed that and leaked one flow per run. Measured on `bbbec5fb`: superuser `DELETE` → `404`,
+the owner's own `DELETE` → `200`. So every flow the subject creates is deleted with the
+**subject's** credentials. The privacy rule itself is asserted in
+`deny-matrix-and-decision-api.md`.
+
 ## Tags *(required)*
 
 `@enterprise` `@api` `@regression` `@authz`
@@ -105,7 +116,9 @@ not.
 
 - The Enterprise RBAC variant:
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`, with `PLAYWRIGHT_BASE_URL`
-  pointed at `http://localhost:7891`.
+  pointed at `http://localhost:7891`. On the 1.13 line the script sets
+  `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true`; without a licence the user and
+  project creation this spec depends on answer `503` (#2259).
 - **Zero or one** login per run for the whole `authz/` directory. The subject is shared
   across every spec in it and cached between processes, minted only when the cached one no
   longer authenticates — the same shape the superuser token already uses.

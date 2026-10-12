@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import type {
   APIRequestContext,
   Page,
   Response as PwResponse,
 } from "@playwright/test";
+import type { PageWithErrorHooks } from "../../../../fixtures/fixtures";
 import { expect, test } from "../../../../fixtures/fixtures";
 import {
   getEnterpriseAuthToken,
@@ -27,73 +29,101 @@ import {
  * control can filter client-side, or send a parameter the backend ignores, and
  * the listing looks filtered either way.
  *
- * It is also the one screen in this console whose DEFAULTS change what an
- * operator believes they are looking at. The first request is
+ * Since 1.13 the screen reads OSS's unified feed (#2259):
  *
- *   ?exclude_event=authorization_decision&since=<7 days ago>&page=1&size=50
+ *   ?exclude_action=audit%3Aread&kind=action&since=<7 days ago>&limit=50&include_total=true
  *
- * so permission checks are hidden and a seven-day window applies, and the only
- * place either is stated is the screen's own controls. Neither is a defect;
- * both mean a build that changed what the default hides without changing what
- * the controls say would be invisible.
+ * so permission checks are hidden, the log's own reads are hidden, and a
+ * seven-day window applies — and only two of the three are stated by a control.
+ * None is a defect; each means a build that changed what the default hides
+ * without changing what the controls say would be invisible.
  *
- * The export is asserted on its REQUEST and not on its file, and that is
- * measured rather than cautious — see #1639 and the spec doc.
+ * The export is now a browser download of `/api/v1/audits/export`, which no
+ * request-layer dedupe can swallow — so the FILE is asserted, which #1639 kept
+ * this spec from doing on 1.12.
  */
 
-const AUDIT_PATH = "/api/v1/authz/audit";
+const AUDIT_PATH = "/api/v1/audits";
+const EXPORT_PATH = "/api/v1/audits/export";
 
-/** The seven-day default, as the Time range control states it. */
+/** The seven-day default, as the Time filter states it. */
 const DEFAULT_RANGE = "Last 7 days";
 
 /**
- * `Event type` labels are relabellings, not slugs: this one sends
+ * `Resource` labels are relabellings, not slugs: this one sends
  * `resource_type=sso_connection`. A screen that sent its own label would filter
  * nothing and still look filtered, so one pair is pinned rather than assumed.
  */
-const EVENT_TYPE_LABEL = "Connections & sign-in";
-const EVENT_TYPE_PARAM = "sso_connection";
+const RESOURCE_LABEL = "Connections & sign-in";
+const RESOURCE_PARAM = "sso_connection";
 
-/** The screen's page size, which the export must NOT be limited to. */
-const PAGE_SIZE = 50;
+/** The exported file's columns, in order (OSS `audits.py`). */
+const EXPORT_COLUMNS = [
+  "timestamp",
+  "user_id",
+  "actor_type",
+  "actor_id",
+  "action",
+  "resource_type",
+  "resource_id",
+  "result",
+  "details",
+  "source",
+  "kind",
+  "resource_name",
+  "operation",
+  "error_code",
+  "request_id",
+];
+
+/**
+ * The per-resource audit sources the screen probes on every mount. Both need
+ * `audit_read`, which no built-in Enterprise role grants, so they answer 403 to
+ * the RBAC superuser too — a product observation recorded in #2259. Declared
+ * rather than silenced, so a fix surfaces as a stale declaration naming itself.
+ */
+const AUDIT_SOURCE_PROBES = ["/api/v1/flows/audits", "/api/v1/projects/audits"];
 
 function panel(page: Page) {
   return page.getByTestId("enterprise-admin-tab-audit-logs");
 }
 
+/** Each listed event's row. The collapsed details `<tr>` beside it carries no testid. */
+function eventRows(page: Page) {
+  return panel(page).locator('[data-testid^="audit-row-"]');
+}
+
 /**
- * Record the query of every audit read, in order, as each one COMPLETES.
+ * Record the query of every audit LISTING read, in order, as each completes.
  *
- * Responses rather than requests, and that is load-bearing rather than tidy.
- * The screen's request layer deduplicates by pathname (#1639): clicking Export
- * while a listing read is still in flight suppresses the export's own request
- * entirely, and the first version of this file did exactly that — it advanced as
- * soon as the filter's request was SENT, clicked Export into the open window,
- * and timed out waiting for a read that was never issued. Waiting for the
- * response closes the window, and measured with the gap in place the export
- * fires 4 times out of 4 with no duplicate warning at all.
- *
- * Armed before navigating: the first read fires during the load, and it is the
- * one that carries the defaults this spec is about.
+ * `limit=1` reads are skipped: the screen probes the feed's availability with one
+ * on load and issues another before an export, and neither is the filter the
+ * screen applied. Armed before navigating, because the first listing read fires
+ * during the load and carries the defaults this spec is about.
  */
-function recordAuditQueries(page: Page): string[] {
-  const queries: string[] = [];
+function recordAuditQueries(page: Page): URLSearchParams[] {
+  const queries: URLSearchParams[] = [];
   page.on("response", (response: PwResponse) => {
     const url = new URL(response.url());
-    if (url.pathname === AUDIT_PATH && response.request().method() === "GET") {
-      queries.push(url.search);
+    if (
+      url.pathname === AUDIT_PATH &&
+      response.request().method() === "GET" &&
+      url.searchParams.get("limit") !== "1"
+    ) {
+      queries.push(url.searchParams);
     }
   });
   return queries;
 }
 
-/** The most recent audit query, once one later than `after` has COMPLETED. */
-async function nextQuery(queries: string[], after: number): Promise<string> {
+/** The most recent listing query, once one later than `after` has completed. */
+async function nextQuery(
+  queries: URLSearchParams[],
+  after: number,
+): Promise<URLSearchParams> {
   await expect
     .poll(() => queries.length, {
-      message:
-        "the control did not cause a new audit read — if this is the Export " +
-        "control, the screen's dedupe may have swallowed it (#1639)",
+      message: "the control did not cause a new audit read",
       timeout: 15_000,
     })
     .toBeGreaterThan(after);
@@ -102,7 +132,7 @@ async function nextQuery(queries: string[], after: number): Promise<string> {
 
 async function openAuditScreen(page: Page) {
   const queries = recordAuditQueries(page);
-  await page.goto(`/admin-ee/audit-logs`);
+  await page.goto("/admin/audit-logs");
   // Wait for the panel, not the request: the assertions below read controls,
   // and a screen that has not mounted has none to read.
   await expect(panel(page)).toBeVisible({ timeout: 30_000 });
@@ -110,57 +140,63 @@ async function openAuditScreen(page: Page) {
   return queries;
 }
 
-/**
- * Let the screen's request dedupe release before issuing another read.
- *
- * The only wait in this file, and the number is measured rather than chosen.
- * The request layer deduplicates by pathname (#1639): a read issued in the
- * moment after a previous one completes is swallowed, silently, and the export
- * is the only control here that issues a read a user asked for rather than one
- * the screen issues itself.
- *
- * Measured on this build, exporting at a fixed gap after the filter's response
- * landed, twice per gap:
- *
- *   gap    0 ms -> the export's request fired 0 / 2
- *   gap  250 ms -> 2 / 2
- *   gap  500 / 1000 / 2000 ms -> 2 / 2
- *
- * So the window closes inside 250 ms. This waits three times that, which is
- * generous against a threshold that sharp and still trivial against the test's
- * runtime. There is no state to poll instead: the Export control never disables,
- * and the read arrays are already quiet inside the window — measured both.
- */
-async function settleDedupeWindow(page: Page): Promise<void> {
-  await page.waitForTimeout(750);
+/** Open one filter (a listbox button) and pick an option by its exact label. */
+async function chooseFilter(page: Page, testId: string, option: string) {
+  await panel(page).getByTestId(testId).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
 }
 
-async function chooseOption(page: Page, combobox: string, option: RegExp) {
-  await panel(page).getByRole("combobox", { name: combobox }).click();
-  await page.getByRole("option", { name: option }).first().click();
+/** Minimal RFC 4180 reader: the `details` column carries quoted JSON. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (quoted) {
+      if (char === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((cells) => cells.some((cell) => cell !== ""));
 }
 
 /**
  * Create a subject unique to this run and have it refused a write, so the audit
  * log holds a denial THIS RUN produced.
  *
- * Two things it must be, and each was learned by a test passing when it should
- * not have:
+ * In-run, because a filter assertion over rows the instance happened to carry
+ * passes for reasons unrelated to the filter (#1663). Identifiable, because the
+ * directory's shared subject carries denials from every previous run, so "every
+ * visible row is a deny" was satisfied regardless — a username that cannot
+ * pre-exist fixes that, at the cost of this file's one login.
  *
- *  - **In-run**, because a filter assertion over rows the instance happened to
- *    carry passes for reasons unrelated to the filter — and on a fresh instance
- *    has nothing to assert over at all. The export test learned this the hard
- *    way: it filtered to `Deny` without seeding one and failed deterministically
- *    the first time it met a clean database, with `Export CSV` correctly
- *    `disabled` over an empty set (#1663).
- *  - **Identifiable**, because the directory's shared subject carries denials
- *    from every previous run, so "every visible row is a deny" was satisfied
- *    regardless. A username that cannot pre-exist fixes that; it costs the one
- *    login this file spends.
- *
- * The refusal has to name a project the subject does NOT own. Since the
- * 2026-08-27 build a bare `POST /api/v1/flows/` is allowed by the owner override
- * and audited `owner_override`, not `deny` (#1635).
+ * The refusal names a project the subject does NOT own: a bare create is allowed
+ * by the owner override and audited `owner_override`, not `deny` (#1635).
  */
 async function seedDenial(
   request: APIRequestContext,
@@ -182,20 +218,14 @@ async function seedDenial(
 /**
  * The same denial, seeded as the directory's SHARED subject — no new login.
  *
- * Used where the assertion needs the filtered set to be non-empty but does not
- * need to recognise which row it seeded. That distinction is the whole reason
- * both variants exist, and getting it wrong cost a run: making both tests create
- * a unique subject doubled this file's login cost, and EE allows five per minute
- * for the whole machine — so the fix for a data dependency (#1663) arrived as a
- * `429`, which is flaky by construction rather than merely on a clean database.
- *
- * The shared subject is cached across processes and validated before reuse, so
- * after the first run this costs nothing. On a fresh instance it costs one.
+ * For a test that needs the filtered set non-empty and can recognise its seed by
+ * id rather than by a unique username: a second unique subject would double this
+ * file's login cost against a five-per-minute budget.
  */
 async function seedDenialAsSharedSubject(
   request: APIRequestContext,
   auth: string,
-): Promise<void> {
+): Promise<RbacUser> {
   const foreignProjectId = await getProjectOwnedBy(request, auth);
   const subject = await getSharedRbacSubject(request, auth);
   const refused = await attemptFlowCreate(
@@ -205,6 +235,7 @@ async function seedDenialAsSharedSubject(
     foreignProjectId,
   );
   expect(refused.status(), await refused.text()).toBe(403);
+  return subject;
 }
 
 test.describe("Enterprise — the audit-log screen sends the filter it displays", () => {
@@ -212,6 +243,15 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
     const auth = await getEnterpriseAuthToken(request);
     await requireRbacInstance(request, auth);
     await seedEnterpriseUiSession(page, request);
+    for (const pathname of AUDIT_SOURCE_PROBES) {
+      (page as PageWithErrorHooks).expectKnownHttpError({
+        pathname,
+        status: 403,
+        reason:
+          "no built-in Enterprise role grants audit_read, so the audit screen's " +
+          "per-resource probe is refused even to the RBAC superuser (#2259)",
+      });
+    }
   });
 
   test(
@@ -219,20 +259,28 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
     async ({ page }) => {
       const queries = await openAuditScreen(page);
+      const first = queries[0];
 
       await test.step("permission checks are excluded, and the checkbox reflects it", async () => {
-        expect(queries[0]).toContain("exclude_event=authorization_decision");
+        expect(first.getAll("kind")).toEqual(["action"]);
         // The pair is the point. A request that hides a whole event class while
         // the control claims otherwise is a screen lying to the operator about
         // what "the audit log" contains — and denials live in that class.
-        await expect(panel(page).getByRole("checkbox")).not.toBeChecked();
+        await expect(
+          panel(page).getByRole("checkbox", { name: "Include permission checks" }),
+        ).not.toBeChecked();
       });
 
-      await test.step("a time window is applied, and the range control names it", async () => {
-        expect(queries[0]).toMatch(/[?&]since=/);
-        await expect(
-          panel(page).getByRole("combobox", { name: "Time range" }),
-        ).toHaveText(new RegExp(DEFAULT_RANGE, "i"));
+      await test.step("a time window is applied, and the Time filter names it", async () => {
+        expect(first.get("since")).toBeTruthy();
+        await expect(panel(page).getByTestId("audit-filter-time")).toHaveText(
+          new RegExp(DEFAULT_RANGE, "i"),
+        );
+      });
+
+      await test.step("and the log's own reads are excluded, which no control states", async () => {
+        // Pinned so a build that widens or drops this hidden default shows up.
+        expect(first.getAll("exclude_action")).toEqual(["audit:read"]);
       });
     },
   );
@@ -244,13 +292,15 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
       const queries = await openAuditScreen(page);
       const before = queries.length;
 
-      await panel(page).getByRole("checkbox").check();
+      await panel(page)
+        .getByRole("checkbox", { name: "Include permission checks" })
+        .click();
 
       // The control has to change the QUERY, not only itself. A checkbox that
       // ticks and sends nothing leaves the operator reading a log that still
       // hides the events they turned on.
       const query = await nextQuery(queries, before);
-      expect(query).not.toContain("exclude_event");
+      expect(query.has("kind"), `kind is still sent: ${query}`).toBe(false);
     },
   );
 
@@ -264,49 +314,39 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
       try {
         const queries = await openAuditScreen(page);
 
-        // Denials ARE authorization decisions, which the default view excludes —
-        // so the filter would return an empty log without this, and the test
-        // would pass over nothing.
-        let before = queries.length;
-        await panel(page).getByRole("checkbox").check();
-        await nextQuery(queries, before);
-
-        before = queries.length;
-        await chooseOption(page, "Result", /^Deny$/i);
+        const before = queries.length;
+        // `Deny` on its own drops `kind=action`, so denials — which are
+        // authorization decisions — are listed without ticking the checkbox.
+        await chooseFilter(page, "audit-filter-result", "Deny");
         const query = await nextQuery(queries, before);
 
         await test.step("the query carries the filter", async () => {
-          expect(query).toContain("result=deny");
+          expect(query.get("result")).toBe("deny");
         });
 
-        await test.step("and EVERY row shown is a deny", async () => {
-          // The BODY rowgroup. `getByRole("row")` over the table includes the
-          // header, whose text has no verdict in it, so the first version of this
-          // assertion failed on its own column titles.
-          const body = panel(page).getByRole("rowgroup").last();
+        await test.step("and EVERY row shown is a deny, this run's among them", async () => {
           await expect
-            .poll(() => body.getByRole("row").count(), { timeout: 15_000 })
+            .poll(() => eventRows(page).count(), { timeout: 15_000 })
             .toBeGreaterThan(0);
 
           // Every row, not the presence of rows: a filter that is accepted and
           // ignored returns a populated list that looks exactly like a filtered
-          // one, which is the failure this assertion exists for.
-          const results = await body.getByRole("row").allInnerTexts();
-          expect(results.length).toBeGreaterThan(0);
-          for (const row of results) {
-            expect(
-              row,
-              `a row survived the Deny filter without being one`,
-            ).toMatch(/deny/i);
+          // one. A denied permission check renders "Denied"; a denied ACTION
+          // (e.g. deleting a built-in role) renders "Failed" — both are
+          // `result=deny`, and neither is ever "Success" or "Allowed".
+          const rows = await eventRows(page).allInnerTexts();
+          for (const row of rows) {
+            expect(row, "a row survived the Deny filter without being one").toMatch(
+              /\b(Denied|Failed)\s*$/,
+            );
           }
 
           // And THIS run's denial is among them. Without this the assertion above
-          // is satisfied by whatever denials the container already held, and the
-          // seed proves nothing — which is exactly what a mutation demonstrated.
+          // is satisfied by whatever denials the container already held.
           expect(
-            results.some((row) => row.includes(subject.username)),
+            rows.some((row) => row.includes(subject.username)),
             `the denial seeded for ${subject.username} is not among the ` +
-              `${results.length} row(s) the Deny filter returned`,
+              `${rows.length} row(s) the Deny filter returned`,
           ).toBe(true);
         });
       } finally {
@@ -316,88 +356,75 @@ test.describe("Enterprise — the audit-log screen sends the filter it displays"
   );
 
   test(
-    "an Event type label sends the API's value, not its own text",
+    "a Resource label sends the API's value, not its own text",
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
     async ({ page }) => {
       const queries = await openAuditScreen(page);
       const before = queries.length;
 
-      await chooseOption(
-        page,
-        "Event type",
-        new RegExp(`^${EVENT_TYPE_LABEL}$`),
-      );
+      await chooseFilter(page, "audit-filter-type", RESOURCE_LABEL);
 
       const query = await nextQuery(queries, before);
       // The labels are relabellings: a screen that sent "Connections & sign-in"
       // would filter nothing and still look filtered.
-      expect(query).toContain(`resource_type=${EVENT_TYPE_PARAM}`);
+      expect(query.get("resource_type")).toBe(RESOURCE_PARAM);
     },
   );
 
   test(
-    "Export CSV asks for the filtered set rather than the visible page",
+    "Export downloads the filtered set rather than the visible page",
     { tag: ["@enterprise", "@regression", "@ui-ux"] },
     async ({ page, request }) => {
       const auth = await getEnterpriseAuthToken(request);
-      // Seeded for the same reason the Result test seeds: the filter below must
-      // select something. Without it, on an instance with no denials in the
-      // default window, `Export CSV` is correctly DISABLED over an empty set and
-      // the click times out — exactly how this test failed the first time it met
-      // a fresh database (#1663).
-      //
-      // As the SHARED subject, not a fresh one: this test never has to recognise
-      // the row it seeded, and a second unique subject would double the file's
-      // login cost against a five-per-minute budget.
-      await seedDenialAsSharedSubject(request, auth);
+      // Seeded so the filter selects something on a fresh instance (#1663).
+      const subject = await seedDenialAsSharedSubject(request, auth);
 
-      {
-        const queries = await openAuditScreen(page);
+      const queries = await openAuditScreen(page);
+      const before = queries.length;
+      await chooseFilter(page, "audit-filter-result", "Deny");
+      await nextQuery(queries, before);
 
-        // Denials are authorization decisions, which the default view excludes.
-        // Without this the Deny filter selects nothing however well it is seeded.
-        let before = queries.length;
-        await panel(page).getByRole("checkbox").check();
-        await nextQuery(queries, before);
+      // Asserted before exporting, so an empty set reports the real cause rather
+      // than a click timeout.
+      const exportButton = panel(page).getByTestId("audit-export");
+      await expect(
+        exportButton,
+        "nothing matched the filter, so there is nothing to export",
+      ).toBeEnabled();
 
-        before = queries.length;
-        await chooseOption(page, "Result", /^Deny$/i);
-        await nextQuery(queries, before);
+      const downloadEvent = page.waitForEvent("download");
+      await exportButton.click();
+      const download = await downloadEvent;
 
-        // The set is non-empty BECAUSE this run made it so, not because the
-        // container was dirty. Asserted before exporting, so a disabled control
-        // reports the real cause rather than a click timeout.
-        await expect(
-          panel(page).getByRole("button", { name: "Export CSV" }),
-          "nothing matched the filter, so there is nothing to export",
-        ).toBeEnabled();
+      await test.step("the export carries the active filter and no page size", async () => {
+        const url = new URL(download.url());
+        expect(url.pathname).toBe(EXPORT_PATH);
+        expect(url.searchParams.get("result")).toBe("deny");
+        // An export limited to the page would hand an operator 50 rows while
+        // they believe they exported the filtered set.
+        expect(url.searchParams.has("limit"), `export URL: ${url}`).toBe(false);
+        expect(url.searchParams.has("size"), `export URL: ${url}`).toBe(false);
+      });
 
-        await settleDedupeWindow(page);
+      await test.step("the file is the filtered set, with the documented shape", async () => {
+        expect(download.suggestedFilename()).toMatch(
+          /^langflow-audit-\d{4}-\d{2}-\d{2}\.csv$/,
+        );
+        const path = await download.path();
+        const [header, ...rows] = parseCsv(readFileSync(path, "utf-8"));
+        expect(header).toEqual(EXPORT_COLUMNS);
+        expect(rows.length, "the export held no rows").toBeGreaterThan(0);
 
-        before = queries.length;
-        await panel(page).getByRole("button", { name: "Export CSV" }).click();
-        const query = await nextQuery(queries, before);
-
-        await test.step("the export carries the active filter", async () => {
-          // Asserted on the REQUEST, never on the file. Measured on this build:
-          // the export answers 200 and produces no download, 0 of 12 attempts,
-          // each logging `Duplicate request: /api/v1/authz/audit` (#1639).
-          // Asserting the file would pin that defect; asserting it loosely
-          // enough to pass would pin nothing. Both properties worth protecting
-          // live here.
-          expect(query).toContain("result=deny");
-        });
-
-        await test.step("and asks beyond the visible page", async () => {
-          // An export limited to the page would hand an operator 50 rows while
-          // they believe they exported the filtered set. Measured: the screen
-          // reads `size=50`, the export `size=200`.
-          const size = Number(new URLSearchParams(query).get("size"));
-          expect(size, `the export requested size=${size}`).toBeGreaterThan(
-            PAGE_SIZE,
-          );
-        });
-      }
+        const result = EXPORT_COLUMNS.indexOf("result");
+        const userId = EXPORT_COLUMNS.indexOf("user_id");
+        // Every row: a file that ignored the filter would carry allows too.
+        expect(rows.filter((row) => row[result] !== "deny")).toEqual([]);
+        // And this run's seed is in it, so the file is not an older export's shape.
+        expect(
+          rows.some((row) => row[userId] === subject.id),
+          `the denial seeded by ${subject.username} is not in the exported file`,
+        ).toBe(true);
+      });
     },
   );
 });

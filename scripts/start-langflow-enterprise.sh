@@ -267,6 +267,14 @@ echo "Starting Langflow Enterprise: ${IMAGE} on port ${PORT}..."
 # reading green while testing nothing. The SSO entitlement stays closed here.
 # Overridable so a strict variant can measure the fail-closed posture itself.
 TIER_GATES="${LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES:-true}"
+#
+# LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS=false is the Editor configuration the
+# Enterprise docs prescribe (docs/configure-env.md, "Set by: You"). Left at the
+# OSS default, every project creation also registers an MCP stdio server, and
+# since the 1.13 line that registration is superuser-only whenever custom code is
+# restricted — which the image always is (LANGFLOW_BLOCK_CODE_INTERPRETER_COMPONENTS).
+# So a developer or even a global admin could not create a project at all, and no
+# subject on this lane could own anything but its private Starter Project (#2259).
 docker run -d \
   --name "${CONTAINER_NAME}" \
   -p "${PORT}:7860" \
@@ -287,6 +295,7 @@ docker run -d \
   -e LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST="${LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST:-}" \
   -e LANGFLOW_MODEL_BLOCKLIST="${LANGFLOW_MODEL_BLOCKLIST:-}" \
   -e LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES="${TIER_GATES}" \
+  -e LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS="${LANGFLOW_ADD_PROJECTS_TO_MCP_SERVERS:-false}" \
   ${AUTHZ_ARGS[@]+"${AUTHZ_ARGS[@]}"} \
   "${IMAGE}" > /dev/null
 

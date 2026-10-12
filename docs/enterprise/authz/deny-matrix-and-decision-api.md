@@ -1,6 +1,6 @@
 # Enterprise — The Deny Matrix, and the Decision API That Must Agree With It
 
-**Last validated:** Langflow Enterprise 1.12.0 (image built from `IBM-Langflow@release-1.12.0`)
+**Last validated:** Langflow Enterprise 1.13.0 (image built from `IBM-Langflow@bbbec5fb`, OSS `1e829663`)
 
 ---
 
@@ -19,7 +19,9 @@ than none: it is confidently wrong, and every client inherits the error.
 
 ### The verdict table, measured
 
-Subject is one user walked through states. The resource is a flow owned by the superuser.
+Subject is one user walked through states. The resource is a flow the superuser owns, in a
+**non-personal** project the superuser owns (`authz-foreign-scope`) — see *Two 1.13 rules* below
+for why the project matters.
 
 | Subject state | `GET` other's flow | `GET` missing id | `PATCH` other's flow | flow in its listing |
 |---|---|---|---|---|
@@ -29,6 +31,7 @@ Subject is one user walked through states. The resource is a flow owned by the s
 | admin | `200` | `404` | `200` | yes |
 | no role + direct share (`read`) | `200` | `404` | `403` | yes |
 | revoked (roles removed, share deleted) | `404` | `404` | `404` | no |
+| viewer, flow in the superuser's **private** Starter Project | `404` | `404` | — | no |
 
 Three things this table says that a narrower test would miss:
 
@@ -42,6 +45,24 @@ Three things this table says that a narrower test would miss:
 - **Revocation is real, in both flavours.** Removing the role assignments and deleting the
   share each return the subject to the no-access row. A grant that cannot be taken back is
   not a grant.
+
+### Two 1.13 rules the matrix now has to respect
+
+Both measured on Enterprise `bbbec5fb`, both intended upstream changes, and both reasons the
+1.12 version of this test went red without any assertion about enforcement being wrong:
+
+- **Roles do not stack at one scope** (langflow-ai/langflow#15426). A user holds at most one
+  role per scope; a second global grant answers `409 "A role already exists for this user with
+  this scope. Please update the existing role or revoke it before assigning a new one."`. So
+  the viewer → developer → admin walk **replaces** the role at each step instead of adding to
+  it, and the spec asserts the `409` once, so the stacking it used to rely on cannot come back
+  unnoticed.
+- **A user's default Starter Project is private** (EE PR 401, on the personal-project flag from langflow-ai/langflow#15404). Global and
+  workspace role wildcards no longer reach flows in another user's personal project; only an
+  exact share or a project-scoped role does. A bare `POST /api/v1/flows/` lands in the caller's
+  own Starter Project, so the 1.12 version — which created the flow that way — was measuring
+  the privacy rule, not the role. The flow now lives in a non-personal project, and the privacy
+  rule gets a row of its own instead of hiding inside the others.
 
 ### The object pattern chooses the question
 
@@ -86,15 +107,20 @@ false), skipping and naming the start command otherwise.
 
 **The matrix.** The shared subject, walked through states with `test.step`:
 
-1. Superuser creates the flow the subject will not own.
+1. Superuser creates the flow the subject will not own, inside its non-personal
+   `authz-foreign-scope` project, and a second flow with a bare create, which lands in its
+   private Starter Project.
 2. No role → the four probes above.
-3. Assign `viewer`, then `developer`, then `admin`, re-probing after each.
-4. Remove every assignment → back to the no-access row.
-5. Superuser shares the flow with `scope: "user"`, `permission_level: "read"` → readable but
+3. Assign `viewer` → probe. A second global role while `viewer` is held → `409` with the
+   scope-conflict `detail`. The flow in the private Starter Project stays out of the viewer's
+   reach: `GET` → `404`, absent from its listing.
+4. Replace `viewer` with `developer`, then `developer` with `admin`, re-probing after each.
+5. Remove the assignment → back to the no-access row.
+6. Superuser shares the flow with `scope: "user"`, `permission_level: "read"` → readable but
    not writable.
-6. Delete the share → back to the no-access row.
-7. Cleanup: share and flow here; the subject is reset by `beforeEach` and deleted once in
-   `afterAll`.
+7. Delete the share → back to the no-access row.
+8. Cleanup: share and both flows here; the subject is reset by `beforeEach` (which also sweeps
+   any assignment an earlier test leaked) and never deleted.
 
 **The decision API.** The same subject, reset to no role, holding only a read share:
 
@@ -108,7 +134,9 @@ false), skipping and naming the start command otherwise.
 ## Validation criterion *(required)*
 
 The matrix fails when a subject receives more or less than its row, when a forbidden
-resource becomes distinguishable from an absent one, or when a revoked grant survives.
+resource becomes distinguishable from an absent one, when a revoked grant survives, when a
+second role at the same scope is accepted instead of refused with `409`, or when a global role
+starts reaching another user's private Starter Project.
 
 The decision API fails when it disagrees with what the endpoints enforce for the same
 resource-scoped question, or when a mis-encoded pattern stops being distinguishable from a
@@ -118,7 +146,9 @@ genuine refusal.
 
 - The Enterprise RBAC variant:
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`, with
-  `PLAYWRIGHT_BASE_URL` pointed at `http://localhost:7891`.
+  `PLAYWRIGHT_BASE_URL` pointed at `http://localhost:7891`. On the 1.13 line the script must
+  set `LANGFLOW_ENTERPRISE_ALLOW_UNLICENSED_TIER_GATES=true` — without a licence the flow and
+  user creation this spec depends on answer `503` — and it does (#2259).
 - **Zero or one** login per run for the whole `authz/` directory. The matrix rows are states
   of the same principal rather than different principals, so walking one subject costs one
   login instead of six — and that subject is shared across every spec in the directory and
