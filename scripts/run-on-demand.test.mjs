@@ -1088,14 +1088,22 @@ test("a docker request pulls the published image and runs it by its digest, decl
   assert.equal(res.TARGET_SHA, "");
   assert.equal(res.TARGET_VERSION, V);
   assert.match(res.BUILD_S, /^\d+$/);
+  assert.equal(res.TARGET_IMAGE, PULLED_DIGEST, "the result names the bytes that ran");
   assert.equal(res.CLEANUP, "ok");
   assert.match(r.docker, new RegExp(`^rmi ${TAG.replace(/\./g, "\\.")}$`, "m"), "the pulled image is removed");
+  assert.match(r.docker, new RegExp(`^rmi ${PULLED_DIGEST.replace(/\./g, "\\.")}$`, "m"), "...and its digest, a record of its own on containerd");
   assert.equal(r.pulledLeft, false);
+});
+
+test("a branch or a PyPI result carries no image key, which a platform from before it would refuse", () => {
+  assert.equal(onDemand().result["req-1"].TARGET_IMAGE, undefined);
+  assert.equal(onDemand({ request: vreq() }).result["req-v"].TARGET_IMAGE, undefined);
 });
 
 test("an image already on the machine is used and left in place", () => {
   const r = onDemand({ request: ireq(), imagePresent: true });
   assert.equal(r.result["req-v"].STATUS, "done", r.log);
+  assert.match(r.log, new RegExp(`^pulled: ${TAG.replace(/\./g, "\\.")}, `, "m"), "named by its tag even when it was already here");
   assert.doesNotMatch(r.docker, /^rmi langflowai\//m, "an image that was here before is not this run's to remove");
 });
 
@@ -1103,6 +1111,9 @@ test("a tag Docker Hub does not have is refused before any pull; a nightly is lo
   const r = onDemand({ request: ireq(), hub: { "langflowai/langflow": 404, "langflowai/langflow-nightly": 200 } });
   assert.equal(r.status, 2, r.log);
   assert.match(r.result["req-v"].REASON, /Docker Hub has no langflowai\/langflow:1\.13\.1rc0; one published in the last few minutes/);
+  const none = onDemand({ request: "ONDEMAND_ID=req-v\nONDEMAND_VERSION=1.13.0.dev12\nONDEMAND_VERSION_FROM=docker\n",
+    hub: { "langflowai/langflow": 404, "langflowai/langflow-nightly": 404 } });
+  assert.match(none.result["req-v"].REASON, /nor langflowai\/langflow-nightly:1\.13\.0\.dev12/);
   assert.deepEqual(r.pypiAsked.length, 1, "an rc is not looked for among the nightlies");
   assert.doesNotMatch(r.docker, /^pull /m);
   // A nightly the main repository lacks comes from langflow-nightly.
@@ -1145,10 +1156,11 @@ test("a docker request is held to the version floor and to a suite that can decl
 
 test("an image a killed run pulled is removed by the next start", () => {
   const { env, collect } = setup();
-  writeFileSync(join(env.E2E_ONDEMAND_STATE, "pulled-image"), `${TAG}\n`);
+  writeFileSync(join(env.E2E_ONDEMAND_STATE, "pulled-image"), `${TAG}\n${PULLED_DIGEST}\n`);
   const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
   assert.equal(r.result["req-1"].STATUS, "done", r.log);
   assert.match(r.docker, new RegExp(`^rmi ${TAG.replace(/\./g, "\\.")}$`, "m"));
+  assert.match(r.docker, new RegExp(`^rmi ${PULLED_DIGEST.replace(/\./g, "\\.")}$`, "m"));
   assert.equal(r.pulledLeft, false);
   // Never anything but a langflow image, whatever the file says.
   const odd = setup();

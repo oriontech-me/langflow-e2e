@@ -229,7 +229,7 @@ main() {
   # of scope (build-target-image.sh lost its cleanup to exactly that).
   OD_STATE="$STATE"; OD_REPO="$REPO"; OD_LOG="$LOG"
   OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""; OD_AREAS=""; OD_RETRIES=""
-  OD_VERSION=""; OD_VERSION_FROM=""; OD_VENV=""; OD_FRONTEND=""; OD_NAMED=""; OD_PULLED=""
+  OD_VERSION=""; OD_VERSION_FROM=""; OD_VENV=""; OD_FRONTEND=""; OD_NAMED=""; OD_PULLED=""; OD_IMAGE_TAG=""
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
@@ -716,7 +716,7 @@ ondemand_target() {
 # The target as a reason names it: "<branch> @ <sha12>", "langflow==<version>", or the
 # published image it pulled.
 ondemand_target_named() {
-  if [ "$OD_VERSION_FROM" = docker ]; then printf '%s' "${OD_PULLED:-the image of $OD_VERSION}"
+  if [ "$OD_VERSION_FROM" = docker ]; then printf '%s' "${OD_IMAGE_TAG:-langflowai/langflow:$OD_VERSION}"
   elif [ -n "$OD_VERSION" ]; then printf 'langflow==%s' "$OD_VERSION"
   else printf '%s @ %s' "$OD_REF" "${OD_TARGET_SHA:0:12}"; fi
 }
@@ -751,7 +751,13 @@ ondemand_pull() {
       *) ondemand_fail 3 failed "could not ask Docker Hub whether it has $repo:$OD_VERSION (HTTP ${code:-none}): the network or the registry, not the version" ;;
     esac
   done
-  [ -n "$tag" ] || ondemand_refuse "Docker Hub has no langflowai/langflow:$OD_VERSION; one published in the last few minutes may not be there yet, so ask again shortly"
+  if [ -z "$tag" ]; then
+    if [[ "$OD_VERSION" =~ \.dev[0-9]+$ ]]; then
+      ondemand_refuse "Docker Hub has no langflowai/langflow:$OD_VERSION nor langflowai/langflow-nightly:$OD_VERSION; one published in the last few minutes may not be there yet, so ask again shortly"
+    fi
+    ondemand_refuse "Docker Hub has no langflowai/langflow:$OD_VERSION; one published in the last few minutes may not be there yet, so ask again shortly"
+  fi
+  OD_IMAGE_TAG="$tag"
   # Recorded before the pull, so a run killed during it still has its image removed by
   # the next start. Only an image that was not here before is this run's to remove.
   if ! docker image inspect "$tag" > /dev/null 2>&1; then
@@ -771,20 +777,24 @@ ondemand_pull() {
   [[ "$digest" =~ ^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] \
     || ondemand_fail 3 failed "pulled $tag but docker names no digest for it ('${digest:0:120}'), so the run could not be held to those bytes"
   OD_IMAGE="$digest"; OD_TARGET_VERSION="$OD_VERSION"; OD_BUILD_S=$((SECONDS - start))
+  # The digest too, when this run pulled the image: on the containerd image store a
+  # reference by digest is a record of its own, which removing the tag leaves behind.
+  [ -z "$OD_PULLED" ] || printf '%s\n' "$digest" >> "$OD_STATE/pulled-image"
   # Parsed by the worker's readProgress, as "built:" and "installed:" are.
   echo "pulled: $tag, version $OD_VERSION, ${OD_BUILD_S}s, as $digest"
 }
 
-# The image a run pulled, removed by tag: from this run's cleanup, or from the next
-# start when a killed run left it. Never one that was already on the machine.
+# The image a run pulled, removed by tag and by digest: from this run's cleanup, or
+# from the next start when a killed run left it. Never one that was already on the
+# machine, and never anything but a langflow image, whatever the file holds.
 ondemand_clear_pulled() {
-  local tag
-  tag="$(head -n 1 "$OD_STATE/pulled-image" 2>/dev/null)" || tag=""
-  [ -n "$tag" ] || return 0
-  if [[ "$tag" =~ ^langflowai/langflow(-nightly)?:[0-9A-Za-z.]+$ ]]; then
-    echo "removing the pulled image $tag"
-    docker rmi "$tag" > /dev/null 2>&1 || echo "WARNING: could not remove $tag (an image a container still uses, or already gone)"
-  fi
+  local ref
+  [ -f "$OD_STATE/pulled-image" ] || return 0
+  while IFS= read -r ref; do
+    [[ "$ref" =~ ^langflowai/langflow(-nightly)?(:[0-9A-Za-z.]+|@sha256:[0-9a-f]{64})$ ]] || continue
+    echo "removing the pulled image $ref"
+    docker rmi "$ref" > /dev/null 2>&1 || echo "    (not removed: already gone with its tag, or a container still uses it)"
+  done < "$OD_STATE/pulled-image"
   rm -f "$OD_STATE/pulled-image"
 }
 
@@ -1053,6 +1063,10 @@ ondemand_write_result() {
     ondemand_kv TARGET_SHA "$OD_TARGET_SHA"
     ondemand_kv TARGET_VERSION "$OD_TARGET_VERSION"
     ondemand_kv BUILD_S "$OD_BUILD_S"
+    # A published image's digest: the bytes that ran, which its tag alone does not name
+    # (an rc or a nightly can be pushed again). Only for an image, so a platform from
+    # before the key never meets it on a branch or a PyPI run.
+    [ "$OD_VERSION_FROM" = docker ] && [ -n "$OD_IMAGE" ] && ondemand_kv TARGET_IMAGE "$OD_IMAGE"
     ondemand_kv SUITE_SHA "$OD_SUITE_SHA"
     # What was used when the run said (#2226), else what was requested.
     if [ -n "$OD_USED_PROVIDER" ]; then
