@@ -818,6 +818,33 @@ test("a claimed version is checked, and names its target alone", () => {
   }
 });
 
+test("a held version from the state file is written to the slot again, its source pypi", async () => {
+  // A worker restarted between the claim and the start: the slot is written from the
+  // held state, which a platform row with version_from '' left as ''.
+  const p = await fakePlatform();
+  try {
+    const m = machine({ run: false });
+    const state = join(m.env.E2E_ONDEMAND_STATE, "worker");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "state.json"), JSON.stringify({
+      claim_token: TOKEN, claim_unanswered: false,
+      held: { ...VREQ({ version_from: "" }), suite_ref: "", areas: [], retries: null, claim_token: TOKEN, held_since: "2026-09-30T15:00:00Z", reported: "claimed", progress_lost: false, starts: 0, last_start_ms: 0 },
+    }));
+    p.enqueue(VREQ());
+    p.requests[0].status = "claimed";
+    p.requests[0].claim_token = TOKEN;
+    const w = worker(m, p);
+    await w.step();
+    await w.step();
+    const slot = readFileSync(join(m.env.E2E_ONDEMAND_STATE, "request.env"), "utf8");
+    assert.match(slot, /^ONDEMAND_REF=$/m);
+    assert.match(slot, /^ONDEMAND_VERSION=1\.13\.1rc0$/m);
+    assert.match(slot, /^ONDEMAND_VERSION_FROM=pypi$/m);
+  } finally {
+    await p.close();
+  }
+});
+
 test("a version's install is read as the build is: the version and its seconds", () => {
   const log = "request: id=od-1 version=1.13.1rc0 from=pypi provider=<rotation>\nsuite at: abc suite\ninstalling: langflow==1.13.1rc0 from pypi into /s/venv (at most 900s)\ninstalled: langflow==1.13.1rc0, version 1.13.1rc0, 95s, in /s/venv\n=== run start 20260930T150102Z ===\n";
   assert.deepEqual(readProgress(log, "od-1"), { building: true, runId: "20260930T150102Z", version: "1.13.1rc0", buildS: 95 });
