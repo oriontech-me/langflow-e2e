@@ -157,7 +157,7 @@ argument so it cannot be lost again.
 
 `GET /api/v1/flows/audits?limit=1` and `GET /api/v1/projects/audits?limit=1` answer **`403`** on
 every mount, for the superuser too: they require `flow:audit_read` / `project:audit_read`, and no
-built-in Enterprise role grants `audit_read` (EE `src/authz/roles.py`), so with bypass off the
+built-in Enterprise role grants `audit_read` (the Enterprise repository's built-in role definitions), so with bypass off the
 superuser holding `admin` is refused. The screen marks those sources unavailable — by design — yet
 its *Resource* filter still offers *Flows* and *Projects*. A product observation recorded in
 #2259; declared with `page.expectKnownHttpError()` so a fix surfaces as a stale declaration that

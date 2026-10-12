@@ -250,7 +250,7 @@ Non-2xx responses expected here. The first two are declared to the fixture with
   Permission denied`, on every arrival at `audit-logs` (1.13). The screen probes the
   per-resource audit sources and marks a refused one unavailable — by design. They are
   refused because they require `flow:audit_read` / `project:audit_read`, which no built-in
-  Enterprise role grants (EE `src/authz/roles.py`: the vocabulary lists `audit_read`, the
+  Enterprise role grants (the Enterprise repository's built-in role definitions: the vocabulary lists `audit_read`, the
   `admin` role's permission set does not include it), so with bypass off even the
   superuser holding `admin` cannot read them while the screen's *Resource* filter still
   offers *Flows* and *Projects*. Recorded as a product observation in #2259, not asserted
