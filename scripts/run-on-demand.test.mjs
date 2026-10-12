@@ -899,15 +899,13 @@ test("a request names one target: a ref or a version, never both and never neith
   }
 });
 
-test("a version PyPI does not have, or has withdrawn, is refused before the venv is touched", () => {
+test("a version PyPI does not have, or has withdrawn, is refused before the installer runs", () => {
   for (const [opts, why] of [
     [{ pypi: 404 }, new RegExp(`PyPI has no langflow==${V.replace(/\./g, "\\.")}`)],
     [{ pypiFiles: [{ yanked: true }, { yanked: true }] }, /was withdrawn from PyPI \(every file is yanked\)/],
     [{ pypiFiles: [] }, /with no files to install/],
   ]) {
-    const { env, collect } = setup({ request: vreq(), ...opts });
-    mkdirSync(join(env.E2E_ONDEMAND_STATE, "venv"), { recursive: true });
-    const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
+    const r = onDemand({ request: vreq(), ...opts });
     assert.equal(r.status, 2, r.log);
     const res = r.result["req-v"];
     assert.equal(res.STATUS, "refused");
@@ -915,12 +913,14 @@ test("a version PyPI does not have, or has withdrawn, is refused before the venv
     assert.equal(r.dist, null, "the installer must not run");
     assert.equal(r.env, null);
   }
-  // PyPI not answering is not a refusal: the install decides.
-  const quiet = onDemand({ request: vreq(), pypi: null });
-  assert.equal(quiet.result["req-v"].STATUS, "done", quiet.log);
-  assert.match(quiet.log, /PyPI did not say whether it has langflow==\S+ \(HTTP none\); the install decides/);
-  const fiveHundred = onDemand({ request: vreq(), pypi: 503 });
-  assert.equal(fiveHundred.result["req-v"].STATUS, "done", fiveHundred.log);
+  // PyPI not answering is the network's, not a refusal of the version.
+  for (const pypi of [null, 503]) {
+    const r = onDemand({ request: vreq(), pypi });
+    assert.equal(r.status, 3, r.log);
+    assert.equal(r.result["req-v"].STATUS, "failed");
+    assert.match(r.result["req-v"].REASON, /could not ask PyPI whether it has langflow==1\.13\.1rc0 \(HTTP \S+\): the network or the index, not the version/);
+    assert.equal(r.dist, null);
+  }
 });
 
 test("an install that fails is the machine's, and a distribution that cannot serve is build_failed", () => {
@@ -962,8 +962,25 @@ test("PyPI's own spelling, the interpreter its requires_python allows, and only 
   // lfx is younger than most releases: pinned only when PyPI has it at the version.
   const noLfx = onDemand({ request: vreq(), siblings: { "langflow-base": 200, lfx: 404 } });
   assert.match(noLfx.dist ?? "", /LANGFLOW_DIST_PIN=langflow-base LANGFLOW_DIST_PYTHON/, noLfx.log);
-  const silent = onDemand({ request: vreq(), siblings: { "langflow-base": 503, lfx: 404 } });
-  assert.match(silent.dist ?? "", /LANGFLOW_DIST_PIN= LANGFLOW_DIST_PYTHON=3\.14 /, silent.log);
+  // Any other answer is the network's: unpinned, a release would resolve another base.
+  for (const code of [503, "000"]) {
+    const silent = onDemand({ request: vreq(), siblings: { "langflow-base": code, lfx: 200 } });
+    assert.equal(silent.status, 3, silent.log);
+    assert.match(silent.result["req-v"].REASON, /could not ask PyPI whether it has langflow-base==1\.13\.1rc0 \(HTTP \S+\): the network or the index, not the version/);
+    assert.equal(silent.dist, null);
+  }
+});
+
+test("before 1.12 a version is refused, and only a nightly gets pre-releases allowed", () => {
+  for (const v of ["1.11.6", "1.8.0rc6", "0.6.19", "1.5.0.post2", "1"]) {
+    const r = onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n` });
+    assert.equal(r.status, 2, `${v}\n${r.log}`);
+    assert.match(r.result["req-v"].REASON, /is older than 1\.12/, v);
+    assert.deepEqual(r.pypiAsked, [], `${v}: PyPI was asked`);
+  }
+  const pre = (v) => (onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n` }).dist ?? "").match(/LANGFLOW_DIST_PRERELEASE=(\S*)/)?.[1];
+  assert.equal(pre("1.13.0.dev39"), "1");
+  for (const v of ["1.13.1rc0", "1.12.3", "1.14.0a1", "1.12.0", "2.0.0"]) assert.equal(pre(v), "0", v);
 });
 
 test("a Langflow that survives its stop leaves the cleanup incomplete", () => {

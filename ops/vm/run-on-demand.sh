@@ -15,8 +15,9 @@
 # version alone (#2261). No image is built. Unlike the daily's, which is always the
 # newest, the version may be any release: PyPI is asked first (scripts/lib/pypi-
 # release.mjs) for its own spelling, a file to install and the newest interpreter its
-# requires_python allows, and langflow-base and lfx are pinned to the version too,
-# because a release asks for langflow-base as a range. The team's usual question is "is the rc that
+# requires_python allows, and langflow-base and lfx are pinned to the version too where
+# PyPI has them, because a release asks for langflow-base as a range. A nightly .devN
+# also gets pre-releases allowed, as nothing else resolves it. From 1.12 on only. The team's usual question is "is the rc that
 # was just published good?", and a branch build is not the artefact users install.
 #
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
@@ -84,16 +85,19 @@
 #                 not have or that is older than SUITE_FLOOR, a declared provider whose
 #                 key or model the provider turned down when asked before the build
 #                 (scripts/probe-declared-model.mjs), a branch that is not upstream's,
-#                 a version PyPI does not have or has only yanked, a suite too old to
-#                 declare a published version,
+#                 a version PyPI does not have, spells otherwise, has with no file or
+#                 only yanked ones, or that is older than 1.12, or that allows no
+#                 Python the machine runs (3.12-3.14), a suite too old to declare a
+#                 published version,
 #                 or a declared provider collect-models did not find active -- the
 #                 one refusal that comes after the build
 #   build_failed  the commit could not be built the nightly's way, or built wrong; or
 #                 the published version installed but is not servable (its langflow-
-#                 base is another version, or it carries no built frontend)
+#                 base or lfx is another version, or it carries no built frontend)
 #   failed        the machine could not do its part (upstream unreachable, no
 #                 tomllib, a build step past its time limit, a build status the
-#                 script does not use, a version that could not be installed), the
+#                 script does not use, a version that could not be installed, PyPI not
+#                 answering about the version), the
 #                 run says nothing about the declared
 #                 target (it served another version, or the version could not be
 #                 checked), the suite never wrote a results.json, the suite ran past
@@ -698,9 +702,16 @@ ondemand_target_named() {
 ondemand_install() {
   local limit_s="$1" pypi="$2" said rc=0 out err="$OD_STATE/install-stderr.$$" meta="$OD_STATE/pypi.$$.json" code start=$SECONDS
   [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
-  # 404 is PyPI's "no such version"; anything else unclear (the network, a 5xx) lets the
-  # install decide, as the provider pre-check does, with the daily's interpreter.
-  local python=3.14 pin="" verdict requires p
+  # 404 is PyPI's "no such version" and 200 its release; anything else (the network, a
+  # 5xx) is failed: the install reads the same index, and the pins below need it too.
+  local python=3.14 pin="" verdict requires p pre=0 major minor
+  # Before 1.12, langflow-base was numbered 0.N (1.11.6 requires langflow-base 0.11.6),
+  # which the installer's check that it is the version cannot match: every such run
+  # would end build_failed, blaming the release. Refused instead, before anything.
+  major="${OD_VERSION%%.*}"; minor="${OD_VERSION#"$major"}"; minor="${minor#.}"; minor="${minor%%[!0-9]*}"
+  if [ "$((10#$major))" -lt 1 ] || { [ "$((10#$major))" = 1 ] && [ "$((10#${minor:-0}))" -lt 12 ]; }; then
+    ondemand_refuse "langflow==$OD_VERSION is older than 1.12, which this executor can install: before it, langflow-base was numbered 0.N and its version cannot be checked against the release's"
+  fi
   code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/langflow/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
   if [ "$code" = "404" ]; then
     rm -f "$meta"
@@ -729,19 +740,28 @@ ondemand_install() {
     fi
   else
     rm -f "$meta"
-    echo "PyPI did not say whether it has langflow==$OD_VERSION (HTTP ${code:-none}); the install decides"
+    ondemand_fail 3 failed "could not ask PyPI whether it has langflow==$OD_VERSION (HTTP ${code:-none}): the network or the index, not the version"
   fi
   # langflow-base and lfx pinned to the version when PyPI has them at it: a release asks
   # for langflow-base as a range, which resolves the newest of the series, and lfx is
   # not pinned at all (#2261 review). Only what PyPI says it has: lfx is younger than
   # most releases, and a pin to a version it never had fails the install.
+  # Any answer but those two is the network's: unpinned, a release would resolve the
+  # newest langflow-base and end build_failed, blaming the release for a blip.
   for p in langflow-base lfx; do
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$pypi/$p/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
-    [ "$code" = "200" ] && pin="${pin:+$pin }$p"
+    case "$code" in
+      200) pin="${pin:+$pin }$p" ;;
+      404) ;;
+      *) ondemand_fail 3 failed "could not ask PyPI whether it has $p==$OD_VERSION (HTTP ${code:-none}): the network or the index, not the version" ;;
+    esac
   done
+  # A nightly's lfx requires a langflow-sdk .devM, numbered apart from langflow, so pins
+  # alone do not resolve it; as run-migration.sh does for its nightly target.
+  [[ "$OD_VERSION" =~ \.dev[0-9]+$ ]] && pre=1
   OD_VENV="$OD_STATE/venv"
-  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin:+, with $pin at the same version} (at most ${limit_s}s)"
-  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PIN="$pin" LANGFLOW_DIST_PYTHON="$python" \
+  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV, python $python${pin:+, with $pin at the same version}$([ "$pre" = 1 ] && echo ", pre-releases allowed") (at most ${limit_s}s)"
+  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PIN="$pin" LANGFLOW_DIST_PYTHON="$python" LANGFLOW_DIST_PRERELEASE="$pre" \
     timeout -k 60 "$limit_s" "$OD_REPO/scripts/prepare-target-dist.sh" 9>&- 8>&- 2> "$err")" || rc=$?
   cat "$err" 2>/dev/null
   # The installer's reason is its ERROR: paragraph; the first line names it.

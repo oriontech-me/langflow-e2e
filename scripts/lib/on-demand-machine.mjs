@@ -156,6 +156,7 @@ process.exit(${probe.exit});
     join(repo, "scripts"),
     "prepare-target-dist.sh",
     `echo "TARGET_VERSION=$TARGET_VERSION LANGFLOW_DIST_VENV=$LANGFLOW_DIST_VENV LANGFLOW_DIST_PIN=$LANGFLOW_DIST_PIN LANGFLOW_DIST_PYTHON=$LANGFLOW_DIST_PYTHON script=$0" > ${q(distLog)}
+echo "LANGFLOW_DIST_PRERELEASE=$LANGFLOW_DIST_PRERELEASE" >> ${q(distLog)}
 echo "fd9=$( { : >&9; } 2>/dev/null && echo open || echo closed) fd8=$( { : >&8; } 2>/dev/null && echo open || echo closed)" >> ${q(distLog)}
 echo "target: langflow==$TARGET_VERSION" >&2
 ${distExit === 0 ? `mkdir -p "$LANGFLOW_DIST_VENV/bin" "$LANGFLOW_DIST_VENV/lib/langflow/frontend" && printf '#!/bin/sh\n' > "$LANGFLOW_DIST_VENV/bin/langflow" && chmod +x "$LANGFLOW_DIST_VENV/bin/langflow"` : ""}
