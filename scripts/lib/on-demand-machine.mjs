@@ -18,6 +18,9 @@ export const GOOD_REQUEST = "ONDEMAND_ID=req-1\nONDEMAND_REF=release-1.13.0\nOND
 // A published version, as the worker writes it: every key, the ref empty.
 export const VERSION = "1.13.1rc0";
 export const VERSION_REQUEST = `ONDEMAND_ID=req-v\nONDEMAND_REF=\nONDEMAND_VERSION=${VERSION}\nONDEMAND_VERSION_FROM=pypi\nONDEMAND_PROVIDER=anthropic\nONDEMAND_REQUESTED_BY=victor\n`;
+// A published image of the version, and the digest the fake registry gives it.
+export const IMAGE_REQUEST = VERSION_REQUEST.replace("ONDEMAND_VERSION_FROM=pypi", "ONDEMAND_VERSION_FROM=docker");
+export const PULLED_DIGEST = `langflowai/langflow@sha256:${"d".repeat(64)}`;
 // A Wednesday afternoon: outside the daily's window.
 export const OPEN = "3 1500";
 
@@ -87,6 +90,18 @@ export function setup({
   siblings = { "langflow-base": 200, lfx: 200 },
   // A Langflow on one of the lane's ports that survives its stop (the stopper exits 1).
   stopFails = false,
+  // A published image. Docker Hub answers each repository's tag (an HTTP status; null
+  // is no answer); the image may be on the machine before the run; the pull exits
+  // pullExit, or runs past its limit; docker names pulledDigest for it after (null:
+  // none). Whether the suite can declare a published image (#2270).
+  hub = { "langflowai/langflow": 200, "langflowai/langflow-nightly": 404 },
+  imagePresent = false,
+  pullExit = 0,
+  pullTimesOut = false,
+  pulledDigest = PULLED_DIGEST,
+  // docker rmi of a pulled image failing while the image stays (a daemon hiccup).
+  rmiFails = false,
+  suiteKnowsImages = true,
   distExit = 0,
   distOut = null,
   distError = null,
@@ -110,6 +125,7 @@ export function setup({
     `#!/usr/bin/env bash
 ${suiteKnowsAreas ? "# knows STABLE_AREAS" : ""}
 ${suiteKnowsVersions ? "# knows target_is_declared" : ""}
+${suiteKnowsImages ? "# knows declared_form" : ""}
 env | sort > ${q(envOut)}
 echo "cwd=$PWD head=$(git rev-parse HEAD)" >> ${q(envOut)}
 echo "dotenv=$(readlink .env || echo none)" >> ${q(envOut)}
@@ -211,6 +227,13 @@ case "$1" in
   images) echo img-old ;;
   ps) ${psFails ? "exit 1" : `cat ${q(join(dir, "leftover"))}`} ;;
   builder) cp "$E2E_ONDEMAND_STATE"/results/*.env ${q(dir)}/at-prune.env 2>/dev/null ;;
+  pull) touch ${q(join(dir, "image-pulled"))}; exit ${pullExit} ;;
+  rmi) ${rmiFails ? 'case "$2" in langflowai/*) exit 1 ;; esac' : ""} ;;
+  image)
+    here=1; { [ -e ${q(join(dir, "image-pulled"))} ] || ${imagePresent ? "true" : "false"}; } || here=0
+    # The digest docker names for the tag, in the tag's own repository.
+    if [ "$3" = --format ]; then [ "$here" = 1 ] && ${pulledDigest === null ? ":" : `printf '%s@%s\\n' "\${5%%:*}" ${q(pulledDigest.split("@")[1])}`}; exit 0; fi
+    [ "$here" = 1 ]; exit $? ;;
 esac
 exit 0`);
   const stateCases = Object.entries(states).map(([u, s]) => `  *${u}*) echo ${q(s)} ;;`).join("\n");
@@ -221,13 +244,17 @@ ${stateCases}
 esac`);
   // fd 8 is the heavy-lane lock shared with the routines, fd 9 this lane's own.
   // coreutils' timeout, which the VM has and macOS does not: runs the command as is.
-  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? `case "$1" in *run-e2e.sh) sleep ${suiteTimeoutSleep}; exit ${suiteTimesOut === true ? 124 : suiteTimesOut} ;; esac\n` : ""}${installTimesOut ? `case "$1" in *prepare-target-dist.sh) exit ${installTimesOut === true ? 124 : installTimesOut} ;; esac\n` : ""}exec "$@"`);
+  stub(bin, "timeout", `k=""; [ "$1" = "-k" ] && { k=" -k $2"; shift 2; }\necho "$1 $2 $3$k" >> ${q(join(dir, "timeout.log"))}\nshift\n${suiteTimesOut ? `case "$1" in *run-e2e.sh) sleep ${suiteTimeoutSleep}; exit ${suiteTimesOut === true ? 124 : suiteTimesOut} ;; esac\n` : ""}${installTimesOut ? `case "$1" in *prepare-target-dist.sh) exit ${installTimesOut === true ? 124 : installTimesOut} ;; esac\n` : ""}${pullTimesOut ? `case "$1 $2" in "docker pull") exit ${pullTimesOut === true ? 124 : pullTimesOut} ;; esac\n` : ""}exec "$@"`);
   stub(bin, "flock", `case "$*" in *8) exit ${heavyBusy ? 1 : 0} ;; *) exit ${lockBusy ? 1 : 0} ;; esac`);
   // PyPI's JSON API: the URL asked, then the status, with the release's files as the body.
   const pypiLog = join(dir, "pypi.log");
   stub(bin, "curl", `out=""; url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -w|--max-time) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
 echo "$url" >> ${q(pypiLog)}
+case "$url" in
+  */repositories/langflowai/langflow-nightly/tags/*) ${hub["langflowai/langflow-nightly"] === null ? "exit 7" : `printf '%s' ${hub["langflowai/langflow-nightly"]}; exit 0`} ;;
+  */repositories/langflowai/langflow/tags/*) ${hub["langflowai/langflow"] === null ? "exit 7" : `printf '%s' ${hub["langflowai/langflow"]}; exit 0`} ;;
+esac
 ${pypi === null ? "exit 7" : ""}
 case "$url" in
   */langflow-base/*) printf '%s' ${siblings["langflow-base"]} ;;
@@ -320,6 +347,7 @@ esac`);
       dist: readIf(distLog),
       pypiAsked: (readIf(pypiLog) ?? "").split("\n").filter(Boolean),
       venvLeft: existsSync(join(state, "venv")),
+      pulledLeft: existsSync(join(state, "pulled-image")),
     };
   };
   return { env, collect };

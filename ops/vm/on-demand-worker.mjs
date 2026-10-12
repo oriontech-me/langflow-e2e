@@ -86,8 +86,8 @@ export const SHAPES = {
   ref: /^[A-Za-z0-9._/-]{1,200}$/,
   /** A published version, PEP 440's normal form; at most 64 characters (checked apart). */
   version: /^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$/,
-  /** Where a version comes from: pypi, the only one the executor installs from. */
-  versionFrom: /^(pypi)?$/,
+  /** Where a version comes from: pypi (installed) or docker (its published image). */
+  versionFrom: /^(pypi|docker)?$/,
   provider: /^[a-z0-9-]{0,40}$/,
   model: /^[A-Za-z0-9._:/-]{0,120}$/,
   requestedBy: /^[A-Za-z0-9._@+-]{0,128}$/,
@@ -144,7 +144,7 @@ export function claimedRequestError(req) {
   const version = req.version ?? "";
   const versionFrom = req.version_from ?? "";
   if (typeof version !== "string" || (version !== "" && (version.length > 64 || !SHAPES.version.test(version)))) return `version is not a version in PEP 440's normal form: ${JSON.stringify(String(version)).slice(0, 80)}`;
-  if (typeof versionFrom !== "string" || !SHAPES.versionFrom.test(versionFrom)) return `version_from is not a source the executor installs from (pypi): ${JSON.stringify(String(versionFrom)).slice(0, 80)}`;
+  if (typeof versionFrom !== "string" || !SHAPES.versionFrom.test(versionFrom)) return `version_from is not a source the executor runs a version from (pypi or docker): ${JSON.stringify(String(versionFrom)).slice(0, 80)}`;
   if (versionFrom !== "" && version === "") return "version_from needs version: it says where a version comes from";
   if (version !== "" && req.ref !== "" && req.ref !== null && req.ref !== undefined) return "ref and version are both given: a run has one target";
   const fields = [["id", SHAPES.id], ...(version === "" ? [["ref", SHAPES.ref]] : []), ["provider", SHAPES.provider], ["model", SHAPES.model], ["requested_by", SHAPES.requestedBy], ["claim_token", SHAPES.claimToken]];
@@ -185,7 +185,7 @@ export function requestEnv(req) {
     `ONDEMAND_ID=${req.id}`,
     `ONDEMAND_REF=${req.ref ?? ""}`,
     `ONDEMAND_VERSION=${req.version ?? ""}`,
-    // pypi whenever there is a version: the platform's '' (older rows) means it.
+    // pypi or docker whenever there is a version: the platform's '' (older rows) is pypi.
     `ONDEMAND_VERSION_FROM=${req.version ? req.version_from || "pypi" : ""}`,
     `ONDEMAND_PROVIDER=${req.provider}`,
     `ONDEMAND_MODEL=${req.model}`,
@@ -218,7 +218,7 @@ export const slotId = (text) => text.split(/\r?\n/).find((l) => l.startsWith("ON
  * What the executor's log says about request `id`: null when the log is another
  * request's; otherwise whether the build has started and, once the suite has, its
  * run id, the version and the build seconds (the "built:" line, or a published
- * version's "installed:", whose install stands where the build would).
+ * version's "installed:" or its image's "pulled:", which stand where the build would).
  *
  * The build starts soon after "suite at:", which comes after every refusal but three:
  * areas the suite cannot narrow to, the provider pre-check (langflow-e2e#2230), which
@@ -233,9 +233,11 @@ export function readProgress(log, id) {
   if (!log.split("\n").some((l) => l.startsWith(`request: id=${id} `))) return null;
   const building = /^suite at: /m.test(log);
   const run = log.match(/^=== run start (\d{8}T\d{6}Z) ===$/m);
-  // A branch's build, or a published version's install, which stands where it would.
+  // A branch's build, or a published version's install or image pull, which stands
+  // where it would.
   const built = log.match(/^built: .* @ [0-9a-f]{12}, version (\S+), (\d+)s, as /m)
-    ?? log.match(/^installed: langflow==\S+, version (\S+), (\d+|\?)s, in /m);
+    ?? log.match(/^installed: langflow==\S+, version (\S+), (\d+|\?)s, in /m)
+    ?? log.match(/^pulled: \S+, version (\S+), (\d+)s, as /m);
   return {
     building,
     runId: run ? run[1] : null,
