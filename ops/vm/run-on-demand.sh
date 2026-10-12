@@ -21,6 +21,11 @@
 # 1.12 on only. The team's usual question is "is the rc that was just published
 # good?", and a branch build is not the artefact users install.
 #
+# Or against ONE PUBLISHED IMAGE of a version (langflowai/langflow:<version>, #2270): the
+# artefact users deploy in containers, with its own packaging and defaults. Asked of
+# Docker Hub, pulled, and run by its digest in the image mode the shadow uses; removed
+# after, unless it was on the machine before the run.
+#
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
 # to the platform, and writes no line into the official ledger. As in the shadow, the
 # switches being off is the mechanism, and behind them the publishing credentials are
@@ -39,8 +44,10 @@
 #                          it is one; a fork never is)
 #   ONDEMAND_VERSION       a published version, in PEP 440's normal form (1.13.1rc0,
 #                          1.13.0.dev12, 1.12.4): exactly one of REF and VERSION
-#   ONDEMAND_VERSION_FROM  where the version comes from: pypi, the only one today, and
-#                          '' means it; set only with VERSION
+#   ONDEMAND_VERSION_FROM  where the version comes from: pypi (installed into a venv),
+#                          or docker (the published image, langflowai/langflow:<version>,
+#                          pulled and run by its digest, #2270); '' means pypi; set only
+#                          with VERSION
 #   ONDEMAND_PROVIDER      optional  the provider the agent specs run against, instead
 #                                    of the day's rotation (DECLARED_MODEL_PROVIDER)
 #   ONDEMAND_MODEL         optional  a model of that provider (DECLARED_MODEL_ID)
@@ -88,8 +95,8 @@
 #                 (scripts/probe-declared-model.mjs), a branch that is not upstream's,
 #                 a version PyPI does not have, spells otherwise, has with no file or
 #                 only yanked ones, or that is older than 1.12, or that allows no
-#                 Python the machine runs (3.12-3.14), a suite too old to declare a
-#                 published version,
+#                 Python the machine runs (3.12-3.14), an image tag Docker Hub does
+#                 not have, a suite too old to declare a published version or image,
 #                 or a declared provider collect-models did not find active -- the
 #                 one refusal that comes after the build
 #   build_failed  the commit could not be built the nightly's way, or built wrong; or
@@ -97,8 +104,8 @@
 #                 base or lfx is another version, or it carries no built frontend)
 #   failed        the machine could not do its part (upstream unreachable, no
 #                 tomllib, a build step past its time limit, a build status the
-#                 script does not use, a version that could not be installed, PyPI not
-#                 answering about the version), the
+#                 script does not use, a version that could not be installed or an
+#                 image pulled, PyPI or Docker Hub not answering about it), the
 #                 run says nothing about the declared
 #                 target (it served another version, or the version could not be
 #                 checked), the suite never wrote a results.json, the suite ran past
@@ -140,6 +147,8 @@
 #             ref's, fetched into refs/on-demand/suite), both removed after
 #   image     langflow-ondemand:<commit>, removed after, with the build cache
 #   venv      $STATE/venv, for a version: recreated by each install, removed after
+#   pulled    the published image, by tag, removed after unless it was already here
+#             ($STATE/pulled-image names one to remove, for the next start too)
 #   ledger    a fresh COPY of the official ledger per run, removed after: the triage
 #             summary reads recurrence against the daily's history, and the official
 #             file never receives a line from a run that is not the daily
@@ -203,6 +212,11 @@ main() {
   # PyPI's JSON API, under which <project>/<version>/json says whether it has a release.
   # Tests only point it elsewhere.
   local PYPI_JSON="${E2E_ONDEMAND_PYPI_JSON:-https://pypi.org/pypi}"
+  # A published image's pull: about 0.8 GB, so minutes on a slow link; less than the
+  # build's 30 and the install's 15 because nothing is resolved or built.
+  local PULL_TIMEOUT_S="${E2E_ONDEMAND_PULL_TIMEOUT_S:-600}"
+  # Docker Hub's API, under which <repo>/tags/<tag> says whether a tag exists.
+  local DOCKER_HUB="${E2E_ONDEMAND_DOCKER_HUB:-https://hub.docker.com/v2/repositories}"
 
   mkdir -p "$LOG_DIR" "$STATE/requests" "$STATE/results"
   local STAMP LOG
@@ -215,7 +229,7 @@ main() {
   # of scope (build-target-image.sh lost its cleanup to exactly that).
   OD_STATE="$STATE"; OD_REPO="$REPO"; OD_LOG="$LOG"
   OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""; OD_AREAS=""; OD_RETRIES=""
-  OD_VERSION=""; OD_VERSION_FROM=""; OD_VENV=""; OD_FRONTEND=""; OD_NAMED=""
+  OD_VERSION=""; OD_VERSION_FROM=""; OD_VENV=""; OD_FRONTEND=""; OD_NAMED=""; OD_PULLED=""
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
@@ -342,6 +356,7 @@ main() {
   # (build-target-image.sh's own trap did not run either) and its ledger copy.
   OD_TOUCHED=1
   ondemand_clear_images
+  ondemand_clear_pulled
   ondemand_stop_versions || echo "WARNING: a Langflow a killed run left on this lane's ports could not be stopped; the run will find its port taken"
   rm -rf "$STATE"/builds/src-* "$STATE"/ledger-* "$STATE/venv"
 
@@ -405,6 +420,10 @@ main() {
   if [ -n "$OD_VERSION" ] && ! grep -q 'target_is_declared' "$OD_WT/scripts/run-e2e.sh" 2>/dev/null; then
     ondemand_refuse "the suite at ${OD_SUITE_SHA:0:12} cannot run against a published version (its run-e2e.sh predates declaring one); ask with the daily's suite, or a newer one"
   fi
+  # And one from before #2270 refuses a published image declared without a commit.
+  if [ "$OD_VERSION_FROM" = docker ] && ! grep -q 'declared_form' "$OD_WT/scripts/run-e2e.sh" 2>/dev/null; then
+    ondemand_refuse "the suite at ${OD_SUITE_SHA:0:12} cannot run against a published image (its run-e2e.sh predates declaring one by its digest); ask with the daily's suite, or a newer one"
+  fi
   # The provider keys that decide which spec files enter the suite are read from the
   # working copy's .env (#1764): linked, as the shadow does, so all lanes read one file.
   [ -f "$REPO/.env" ] && ln -sfn "$REPO/.env" "$OD_WT/.env"
@@ -437,7 +456,9 @@ main() {
 
   # --- the target: the image of the branch's commit, or the published version -------
   local rc=0
-  if [ -n "$OD_VERSION" ]; then
+  if [ "$OD_VERSION_FROM" = docker ]; then
+    ondemand_pull "$PULL_TIMEOUT_S" "$DOCKER_HUB"
+  elif [ -n "$OD_VERSION" ]; then
     ondemand_install "$INSTALL_TIMEOUT_S" "$PYPI_JSON"
   else
     local built build_err="$STATE/build-stderr.$$"
@@ -518,7 +539,7 @@ main() {
   export CREATE_ISSUE=0 AUTO_REMOVE=0 HISTORY_TO_SOURCE=0 NOTIFY_SLACK=0 NOTIFY_SLACK_ALWAYS=0 POST_QA_PLATFORM=0
   export CHECK_MIRROR=0
   mkdir -p "$RUNS_ROOT"
-  if [ -n "$OD_VERSION" ]; then
+  if [ "$OD_VERSION_FROM" = pypi ]; then
     # The daily's way of serving a published distribution (run-daily.sh), declared by
     # its version so the gate compares with it and not with today's nightly.
     export TARGET_KIND=source PREPARE_TARGET=0
@@ -526,6 +547,8 @@ main() {
     export TARGET_DECLARED_SHA="" TARGET_DECLARED_REF="" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION"
     unset LANGFLOW_IMAGE LANGFLOW_HOSTS_FILE
   else
+    # The branch's image, declared by its commit; or a published image, by its version
+    # alone and named by its digest (both SHA and ref are '' for it).
     export TARGET_KIND=image
     export LANGFLOW_IMAGE="$OD_IMAGE"
     export TARGET_DECLARED_SHA="$OD_TARGET_SHA" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION" TARGET_DECLARED_REF="$OD_REF"
@@ -534,8 +557,8 @@ main() {
     # The QA VM boots with ipv6.disable=1, so docker writes 127.0.0.1 alone, and the SSRF
     # spec that requires the refusal to name `::1` failed on every on-demand run, with
     # the tests serial after it skipped (#2181). Under $STATE, because a snap docker
-    # cannot read /tmp. A version serves on the host, as the daily's does, and reads the
-    # host's /etc/hosts.
+    # cannot read /tmp. A PyPI version serves on the host, as the daily's does, and reads
+    # the host's /etc/hosts.
     printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$STATE/hosts"
     export LANGFLOW_HOSTS_FILE="$STATE/hosts"
   fi
@@ -634,7 +657,7 @@ ondemand_parse_request() {
           || { OD_PARSE_ERR="ONDEMAND_VERSION is not a version in PEP 440's normal form (1.13.1rc0, 1.13.0.dev12): '${value:0:80}'"; return 1; }
         OD_VERSION="$value" ;;
       ONDEMAND_VERSION_FROM)
-        [[ "$value" =~ ^(pypi)?$ ]] || { OD_PARSE_ERR="ONDEMAND_VERSION_FROM is not a source this executor installs from (pypi): '${value:0:80}'"; return 1; }
+        [[ "$value" =~ ^(pypi|docker)?$ ]] || { OD_PARSE_ERR="ONDEMAND_VERSION_FROM is not a source this executor runs a version from (pypi or docker): '${value:0:80}'"; return 1; }
         OD_VERSION_FROM="$value" ;;
       ONDEMAND_PROVIDER)
         [[ "$value" =~ ^[a-z0-9-]{0,40}$ ]] || { OD_PARSE_ERR="ONDEMAND_PROVIDER has characters a provider name cannot: '${value:0:80}'"; return 1; }
@@ -678,7 +701,7 @@ ondemand_parse_request() {
   if [ -n "$OD_VERSION_FROM" ] && [ -z "$OD_VERSION" ]; then
     OD_PARSE_ERR="ONDEMAND_VERSION_FROM needs ONDEMAND_VERSION: it says where a version comes from"; return 1
   fi
-  [ -z "$OD_VERSION" ] || OD_VERSION_FROM=pypi
+  [ -z "$OD_VERSION" ] || OD_VERSION_FROM="${OD_VERSION_FROM:-pypi}"
   if [ -n "$OD_MODEL" ] && [ -z "$OD_PROVIDER" ]; then
     OD_PARSE_ERR="ONDEMAND_MODEL needs ONDEMAND_PROVIDER: a model is declared for a provider"; return 1
   fi
@@ -690,9 +713,79 @@ ondemand_target() {
   if [ -n "$OD_VERSION" ]; then printf 'version=%s from=%s' "$OD_VERSION" "$OD_VERSION_FROM"; else printf 'ref=%s' "$OD_REF"; fi
 }
 
-# The target as a reason names it: "<branch> @ <sha12>", or "langflow==<version>".
+# The target as a reason names it: "<branch> @ <sha12>", "langflow==<version>", or the
+# published image it pulled.
 ondemand_target_named() {
-  if [ -n "$OD_VERSION" ]; then printf 'langflow==%s' "$OD_VERSION"; else printf '%s @ %s' "$OD_REF" "${OD_TARGET_SHA:0:12}"; fi
+  if [ "$OD_VERSION_FROM" = docker ]; then printf '%s' "${OD_PULLED:-the image of $OD_VERSION}"
+  elif [ -n "$OD_VERSION" ]; then printf 'langflow==%s' "$OD_VERSION"
+  else printf '%s @ %s' "$OD_REF" "${OD_TARGET_SHA:0:12}"; fi
+}
+
+# Whether a version is older than 1.12: before it langflow-base was numbered 0.N, and
+# today's suite measures a product that old as a long list of features it lacks.
+ondemand_version_too_old() {
+  local major minor
+  major="${OD_VERSION%%.*}"; minor="${OD_VERSION#"$major"}"; minor="${minor#.}"; minor="${minor%%[!0-9]*}"
+  [ "$((10#$major))" -lt 1 ] || { [ "$((10#$major))" = 1 ] && [ "$((10#${minor:-0}))" -lt 12 ]; }
+}
+
+# The published image of the version, pulled where the build would put an image: asked
+# of Docker Hub first, so a tag it does not have is refused in seconds and before any
+# pull, then pulled and named by its DIGEST, which the run is given instead of the tag:
+# a tag can be pushed again during the run, a digest cannot. The image carries no
+# Langflow commit (its labels are the base image's), so the version it serves, checked
+# exactly by run-e2e.sh, is the rest of the check. An image this run pulled is removed
+# after it; one that was already here (the shadow's nightly, say) is left alone.
+ondemand_pull() {
+  local limit_s="$1" hub="$2" repo code tag="" rc=0 start=$SECONDS err="$OD_STATE/pull-stderr.$$" said digest
+  [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_PULL_TIMEOUT_S='$limit_s' is not a number of seconds"
+  ondemand_version_too_old && ondemand_refuse "langflowai/langflow:$OD_VERSION is older than 1.12, which this executor runs: today's suite measures a product that old as the features it lacks"
+  # langflowai/langflow publishes releases, rcs and nightlies; langflow-nightly only
+  # nightlies, some of them older than the first.
+  for repo in langflowai/langflow langflowai/langflow-nightly; do
+    if [ "$repo" = langflowai/langflow-nightly ] && ! [[ "$OD_VERSION" =~ \.dev[0-9]+$ ]]; then break; fi
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$hub/$repo/tags/$OD_VERSION" 9>&- 8>&- 2>/dev/null)" || code=""
+    case "$code" in
+      200) tag="$repo:$OD_VERSION"; break ;;
+      404) ;;
+      *) ondemand_fail 3 failed "could not ask Docker Hub whether it has $repo:$OD_VERSION (HTTP ${code:-none}): the network or the registry, not the version" ;;
+    esac
+  done
+  [ -n "$tag" ] || ondemand_refuse "Docker Hub has no langflowai/langflow:$OD_VERSION; one published in the last few minutes may not be there yet, so ask again shortly"
+  # Recorded before the pull, so a run killed during it still has its image removed by
+  # the next start. Only an image that was not here before is this run's to remove.
+  if ! docker image inspect "$tag" > /dev/null 2>&1; then
+    OD_PULLED="$tag"
+    printf '%s\n' "$tag" > "$OD_STATE/pulled-image"
+  fi
+  echo "pulling: $tag (at most ${limit_s}s)"
+  timeout -k 30 "$limit_s" docker pull -q "$tag" 9>&- 8>&- > /dev/null 2> "$err" || rc=$?
+  cat "$err" 2>/dev/null
+  said="$(tail -n 3 "$err" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/ $//' | cut -c1-300)"
+  rm -f "$err"
+  if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$limit_s" ]; }; then
+    ondemand_fail 3 failed "the pull of $tag did not finish in ${limit_s}s, so it was stopped: the machine, the network or the registry, not the version"
+  fi
+  [ "$rc" = "0" ] || ondemand_fail 3 failed "could not pull $tag (docker exited $rc): the machine, the network or the registry: ${said:-no reason given}"
+  digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag" 2>/dev/null | grep -m 1 "^${tag%%:*}@sha256:")"
+  [[ "$digest" =~ ^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] \
+    || ondemand_fail 3 failed "pulled $tag but docker names no digest for it ('${digest:0:120}'), so the run could not be held to those bytes"
+  OD_IMAGE="$digest"; OD_TARGET_VERSION="$OD_VERSION"; OD_BUILD_S=$((SECONDS - start))
+  # Parsed by the worker's readProgress, as "built:" and "installed:" are.
+  echo "pulled: $tag, version $OD_VERSION, ${OD_BUILD_S}s, as $digest"
+}
+
+# The image a run pulled, removed by tag: from this run's cleanup, or from the next
+# start when a killed run left it. Never one that was already on the machine.
+ondemand_clear_pulled() {
+  local tag
+  tag="$(head -n 1 "$OD_STATE/pulled-image" 2>/dev/null)" || tag=""
+  [ -n "$tag" ] || return 0
+  if [[ "$tag" =~ ^langflowai/langflow(-nightly)?:[0-9A-Za-z.]+$ ]]; then
+    echo "removing the pulled image $tag"
+    docker rmi "$tag" > /dev/null 2>&1 || echo "WARNING: could not remove $tag (an image a container still uses, or already gone)"
+  fi
+  rm -f "$OD_STATE/pulled-image"
 }
 
 # The published version into $STATE/venv, where the build would put the image: asked of
@@ -705,12 +798,11 @@ ondemand_install() {
   [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
   # 404 is PyPI's "no such version" and 200 its release; anything else (the network, a
   # 5xx) is failed: the install reads the same index, and the pins below need it too.
-  local python=3.14 pin="" verdict requires p major minor nosol
+  local python=3.14 pin="" verdict requires p nosol
   # Before 1.12, langflow-base was numbered 0.N (1.11.6 requires langflow-base 0.11.6),
   # which the installer's check that it is the version cannot match: every such run
   # would end build_failed, blaming the release. Refused instead, before anything.
-  major="${OD_VERSION%%.*}"; minor="${OD_VERSION#"$major"}"; minor="${minor#.}"; minor="${minor%%[!0-9]*}"
-  if [ "$((10#$major))" -lt 1 ] || { [ "$((10#$major))" = 1 ] && [ "$((10#${minor:-0}))" -lt 12 ]; }; then
+  if ondemand_version_too_old; then
     ondemand_refuse "langflow==$OD_VERSION is older than 1.12, which this executor can install: before it, langflow-base was numbered 0.N and its version cannot be checked against the release's"
   fi
   code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/langflow/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
@@ -922,6 +1014,7 @@ ondemand_finish() {
     ( cd "$OD_WT"; ECHO_PORT=8100 bash scripts/stop-echo-source.sh; OLLAMA_PORT=11454 bash scripts/stop-ollama-source.sh ) 2>&1 | sed 's/^/    /' || true
   fi
   ondemand_clear_images
+  ondemand_clear_pulled
   docker builder prune -af > /dev/null 2>&1 || echo "WARNING: docker builder prune failed — the build cache may be left"
   if [ -n "$OD_WT" ] && [ -e "$OD_WT" ]; then
     git -C "$OD_REPO" worktree remove --force "$OD_WT" 2>/dev/null || rm -rf "$OD_WT"

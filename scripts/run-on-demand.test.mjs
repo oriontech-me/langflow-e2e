@@ -12,7 +12,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-import { ROOT, ONDEMAND, TARGET_SHA, IMAGE, PUBLISHING, GOOD_REQUEST, VERSION, VERSION_REQUEST, stub, q, setup, kv } from "./lib/on-demand-machine.mjs";
+import { ROOT, ONDEMAND, TARGET_SHA, IMAGE, PUBLISHING, GOOD_REQUEST, VERSION, VERSION_REQUEST, IMAGE_REQUEST, PULLED_DIGEST, stub, q, setup, kv } from "./lib/on-demand-machine.mjs";
 
 function onDemand(opts) {
   const { env, collect } = setup(opts);
@@ -879,7 +879,7 @@ test("a request names one target: a ref or a version, never both and never neith
     [`ONDEMAND_ID=req-v\nONDEMAND_REF=release-1.13.0\nONDEMAND_VERSION=${V}\n`, /both given: a run has one target/],
     ["ONDEMAND_ID=req-v\nONDEMAND_REF=\nONDEMAND_VERSION=\n", /ONDEMAND_REF is missing \(or ONDEMAND_VERSION/],
     ["ONDEMAND_ID=req-v\nONDEMAND_REF=release-1.13.0\nONDEMAND_VERSION_FROM=pypi\n", /VERSION_FROM needs ONDEMAND_VERSION/],
-    [`ONDEMAND_ID=req-v\nONDEMAND_VERSION=${V}\nONDEMAND_VERSION_FROM=docker\n`, /not a source this executor installs from/],
+    [`ONDEMAND_ID=req-v\nONDEMAND_VERSION=${V}\nONDEMAND_VERSION_FROM=quay\n`, /not a source this executor runs a version from/],
     // Only PEP 440's normal form: what PyPI lists and the instance reports.
     ...["v1.13.1rc0", "1.13.1-rc0", "1.13.1.rc0", "1.13.1rc0+local", "1!1.13.1", "1.13.1 ", "$(id)", "1.13.x", `1.${"1".repeat(70)}`].map((v) =>
       [`ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n`, /ONDEMAND_VERSION is not a version in PEP 440's normal form/]),
@@ -1053,4 +1053,112 @@ test("a venv a killed run left is removed by the next start, whatever it asks fo
   assert.equal(r.result["req-1"].STATUS, "done", r.log);
   assert.equal(r.venvLeft, false);
   assert.match(r.stops, /^langflow 7910$/m, "a killed version run's Langflow is stopped too");
+});
+
+// ---------------------------------------------------------------------------
+// A published image (#2270): asked of Docker Hub, pulled, run by its digest
+// ---------------------------------------------------------------------------
+
+const ireq = (extra = "") => `${IMAGE_REQUEST}${extra}`;
+const TAG = `langflowai/langflow:${V}`;
+
+test("a docker request pulls the published image and runs it by its digest, declared by its version", () => {
+  const r = onDemand({ request: ireq() });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.build, null, "nothing is built");
+  assert.equal(r.dist, null, "nothing is installed");
+  assert.deepEqual(r.pypiAsked, [`https://hub.docker.com/v2/repositories/langflowai/langflow/tags/${V}`], "Docker Hub is asked, PyPI is not");
+  assert.match(r.docker, new RegExp(`^pull -q ${TAG.replace(/\./g, "\\.")}$`, "m"));
+  assert.match(r.timeouts, /^600 docker pull -k 30$/m, `the pull is not bounded: ${r.timeouts}`);
+  assert.match(r.log, new RegExp(`^pulled: ${TAG.replace(/\./g, "\\.")}, version ${V.replace(/\./g, "\\.")}, \\d+s, as ${PULLED_DIGEST}$`, "m"));
+  assert.match(r.log, /^request: id=req-v version=\S+ from=docker /m);
+
+  const e = kv(r.env);
+  assert.equal(e.TARGET_KIND, "image");
+  assert.equal(e.LANGFLOW_IMAGE, PULLED_DIGEST, "the run is given the digest, never the tag");
+  assert.equal(e.TARGET_DECLARED_VERSION, V);
+  assert.equal(e.TARGET_DECLARED_SHA, "");
+  assert.equal(e.TARGET_DECLARED_REF, "");
+  assert.equal(e.LANGFLOW_SRC_RUN_CMD, undefined);
+  assert.ok(e.LANGFLOW_HOSTS_FILE, "the containers get both loopbacks, as the shadow's");
+
+  const res = r.result["req-v"];
+  assert.equal(res.STATUS, "done");
+  assert.equal(res.TARGET_REF, "");
+  assert.equal(res.TARGET_SHA, "");
+  assert.equal(res.TARGET_VERSION, V);
+  assert.match(res.BUILD_S, /^\d+$/);
+  assert.equal(res.CLEANUP, "ok");
+  assert.match(r.docker, new RegExp(`^rmi ${TAG.replace(/\./g, "\\.")}$`, "m"), "the pulled image is removed");
+  assert.equal(r.pulledLeft, false);
+});
+
+test("an image already on the machine is used and left in place", () => {
+  const r = onDemand({ request: ireq(), imagePresent: true });
+  assert.equal(r.result["req-v"].STATUS, "done", r.log);
+  assert.doesNotMatch(r.docker, /^rmi langflowai\//m, "an image that was here before is not this run's to remove");
+});
+
+test("a tag Docker Hub does not have is refused before any pull; a nightly is looked for in langflow-nightly", () => {
+  const r = onDemand({ request: ireq(), hub: { "langflowai/langflow": 404, "langflowai/langflow-nightly": 200 } });
+  assert.equal(r.status, 2, r.log);
+  assert.match(r.result["req-v"].REASON, /Docker Hub has no langflowai\/langflow:1\.13\.1rc0; one published in the last few minutes/);
+  assert.deepEqual(r.pypiAsked.length, 1, "an rc is not looked for among the nightlies");
+  assert.doesNotMatch(r.docker, /^pull /m);
+  // A nightly the main repository lacks comes from langflow-nightly.
+  const dev = onDemand({ request: "ONDEMAND_ID=req-v\nONDEMAND_VERSION=1.13.0.dev12\nONDEMAND_VERSION_FROM=docker\n",
+    hub: { "langflowai/langflow": 404, "langflowai/langflow-nightly": 200 } });
+  assert.equal(dev.result["req-v"].STATUS, "done", dev.log);
+  assert.match(dev.docker, /^pull -q langflowai\/langflow-nightly:1\.13\.0\.dev12$/m);
+});
+
+test("Docker Hub not answering, a pull that fails or overruns, or no digest is the machine's, never the version's", () => {
+  const cases = [
+    [{ hub: { "langflowai/langflow": 503, "langflowai/langflow-nightly": 404 } }, /could not ask Docker Hub whether it has langflowai\/langflow:1\.13\.1rc0 \(HTTP 503\)/],
+    [{ hub: { "langflowai/langflow": null, "langflowai/langflow-nightly": 404 } }, /could not ask Docker Hub .*\(HTTP (none|000)\)/],
+    [{ pullExit: 1 }, /could not pull langflowai\/langflow:1\.13\.1rc0 \(docker exited 1\): the machine, the network or the registry/],
+    [{ pullTimesOut: true }, /the pull of langflowai\/langflow:1\.13\.1rc0 did not finish in 600s/],
+    [{ pulledDigest: null }, /docker names no digest for it/],
+  ];
+  for (const [opts, why] of cases) {
+    const r = onDemand({ request: ireq(), ...opts });
+    assert.equal(r.status, 3, `${JSON.stringify(opts)}\n${r.log}`);
+    assert.equal(r.result["req-v"].STATUS, "failed");
+    assert.match(r.result["req-v"].REASON, why, JSON.stringify(opts));
+    assert.equal(r.env, null, "the suite must not run");
+    assert.equal(r.pulledLeft, false, "the image a failed pull may have left is cleared");
+  }
+});
+
+test("a docker request is held to the version floor and to a suite that can declare an image", () => {
+  const old = onDemand({ request: "ONDEMAND_ID=req-v\nONDEMAND_VERSION=1.11.6\nONDEMAND_VERSION_FROM=docker\n" });
+  assert.equal(old.status, 2, old.log);
+  assert.match(old.result["req-v"].REASON, /older than 1\.12/);
+  assert.deepEqual(old.pypiAsked, []);
+  const suite = onDemand({ request: ireq(), suiteKnowsImages: false });
+  assert.equal(suite.status, 2, suite.log);
+  assert.match(suite.result["req-v"].REASON, /cannot run against a published image/);
+  assert.deepEqual(suite.pypiAsked, []);
+  // A PyPI request does not need the newer suite.
+  assert.equal(onDemand({ request: vreq(), suiteKnowsImages: false }).result["req-v"].STATUS, "done");
+});
+
+test("an image a killed run pulled is removed by the next start", () => {
+  const { env, collect } = setup();
+  writeFileSync(join(env.E2E_ONDEMAND_STATE, "pulled-image"), `${TAG}\n`);
+  const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
+  assert.equal(r.result["req-1"].STATUS, "done", r.log);
+  assert.match(r.docker, new RegExp(`^rmi ${TAG.replace(/\./g, "\\.")}$`, "m"));
+  assert.equal(r.pulledLeft, false);
+  // Never anything but a langflow image, whatever the file says.
+  const odd = setup();
+  writeFileSync(join(odd.env.E2E_ONDEMAND_STATE, "pulled-image"), "postgres:15\n");
+  const o = odd.collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env: odd.env }).status);
+  assert.doesNotMatch(o.docker, /^rmi postgres/m);
+});
+
+test("the request names docker as a source, and nothing else", () => {
+  const r = onDemand({ request: "ONDEMAND_ID=req-v\nONDEMAND_VERSION=1.13.1rc0\nONDEMAND_VERSION_FROM=quay\n" });
+  assert.equal(r.status, 2, r.log);
+  assert.match(r.log, /not a source this executor runs a version from \(pypi or docker\)/);
 });
