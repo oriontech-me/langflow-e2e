@@ -160,7 +160,7 @@ the outcome, or when the decision is not recorded.
 ## Notes
 
 A flow the subject creates in a project the superuser owns is **owned by the project's owner**
-since the 1.13 line (OSS `_resolve_new_flow_owner`, `flows_helpers.py`), not by its creator — so the superuser's cleanup of the flip
+since the 1.13 line (OSS `_resolve_new_flow_owner` in `src/backend/base/langflow/api/v1/flows_helpers.py`), not by its creator — so the superuser's cleanup of the flip
 test's flow still works, and only the owner-override test's flow (in the subject's own private
 project) needs the subject's credentials to delete.
 
