@@ -1740,12 +1740,15 @@ phase_preflight() {
   # An image DECLARED by its commit is the exception, and is never pulled: it was built
   # on this machine, a registry holds nothing under its name, and one that did would be
   # someone else's build. It is checked instead — present, and labelled with the
-  # declared commit. A published image declared by its version is pulled as any other,
-  # by the digest it is named by: the caller pulled it already, so this is a no-op that
-  # only confirms the registry still serves those bytes.
+  # declared commit. A published image declared by its version is named by its digest,
+  # which no push can change: one already on the machine is those bytes, so it is used
+  # without asking the registry again (a second request against Docker Hub's anonymous
+  # limit, which a 429 would turn into a dead run); one that is not is pulled.
   TARGET_IMAGE_LABEL_SHA=""
   if [ "$TARGET_KIND" = "image" ] && [ -n "$TARGET_DECLARED_SHA" ]; then
     verify_declared_image
+  elif [ "$(declared_form)" = published-image ] && run_on_target_locally "docker image inspect $(shq "$LANGFLOW_IMAGE")" > /dev/null 2>&1; then
+    info "image: $LANGFLOW_IMAGE is on this machine, named by its digest; not pulled again"
   elif [ "$TARGET_KIND" = "image" ]; then
     local pull_log="$RUN_DIR/logs/image-pull.log" pull_start=$SECONDS
     run_on_target_locally "docker pull $(shq "$LANGFLOW_IMAGE")" > "$pull_log" 2>&1 \

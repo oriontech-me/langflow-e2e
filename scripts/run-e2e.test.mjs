@@ -3942,7 +3942,11 @@ test("preflight verifies a declared image instead of pulling it, and still pulls
   const src = readFileSync(SCRIPT, "utf8");
   const block = src.slice(src.indexOf('TARGET_IMAGE_LABEL_SHA=""'), src.indexOf("pulled in $((SECONDS - pull_start))s"));
   assert.ok(block.indexOf("verify_declared_image") < block.indexOf("docker pull"), "verification must precede the pull");
-  assert.match(block, /\[ "\$TARGET_KIND" = "image" \] && \[ -n "\$TARGET_DECLARED_SHA" \]; then\s+verify_declared_image\s+elif \[ "\$TARGET_KIND" = "image" \]; then/);
+  assert.match(block, /\[ "\$TARGET_KIND" = "image" \] && \[ -n "\$TARGET_DECLARED_SHA" \]; then\s+verify_declared_image\s+elif /);
+  // A published image named by its digest is used as it is when it is on the machine,
+  // before the branch that pulls: the registry is not asked twice for the same bytes.
+  assert.match(block, /elif \[ "\$\(declared_form\)" = published-image \] && run_on_target_locally "docker image inspect [^\n]*; then\s+info "image: \$LANGFLOW_IMAGE is on this machine, named by its digest; not pulled again"\s+elif \[ "\$TARGET_KIND" = "image" \]; then/);
+  assert.ok(block.indexOf("published-image") < block.indexOf("docker pull"), "the local check must precede the pull");
 });
 
 test("a declared target becomes the expectation under the `declared` strategy", () => {
