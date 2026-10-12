@@ -328,6 +328,23 @@ test("siblings are pinned to the version only when asked, and never with pre-rel
   for (const pin of ["", "langflow-base", "lfx langflow-base"]) assert.doesNotMatch(installLine({ LANGFLOW_DIST_PIN: pin }), /--prerelease/);
 });
 
+test("pre-releases are allowed only when asked", () => {
+  const installLine = (env) => {
+    const ctx = setup();
+    const r = run(ctx, env);
+    assert.equal(r.status, 0, r.stderr);
+    return readFileSync(ctx.uvLog, "utf8").split("\n").find((l) => l.startsWith("pip install")) ?? "";
+  };
+  assert.doesNotMatch(installLine({}), /--prerelease/, "the daily's call");
+  assert.match(installLine({ LANGFLOW_DIST_PRERELEASE: "1", LANGFLOW_DIST_PIN: "langflow-base lfx" }), /--prerelease=allow langflow==1\.13\.0\.dev12 langflow-base==1\.13\.0\.dev12 lfx==1\.13\.0\.dev12$|langflow==1\.13\.0\.dev12 --prerelease=allow langflow-base==1\.13\.0\.dev12 lfx==1\.13\.0\.dev12$/);
+  const ctx = setup();
+  seedVenv(ctx);
+  const bad = run(ctx, { LANGFLOW_DIST_PRERELEASE: "yes" });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /LANGFLOW_DIST_PRERELEASE must be 0 or 1/);
+  assert.ok(existsSync(join(ctx.venv, "yesterday.txt")), "the venv must be untouched");
+});
+
 test("a LANGFLOW_DIST_PIN outside langflow-base and lfx is refused before anything is touched", () => {
   for (const pin of ["requests", "lfx; rm -rf /", "langflow-base  lfx", "lfx lfx lfx"]) {
     const ctx = setup();

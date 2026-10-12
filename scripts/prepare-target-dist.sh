@@ -99,12 +99,19 @@
 #                           rule, which `--prerelease=allow` would otherwise replace,
 #                           pulling other projects' betas into the venv (measured on
 #                           1.12.5rc1, #2261 review). Each one pinned is checked after.
+#   LANGFLOW_DIST_PRERELEASE  1 passes uv --prerelease=allow (default 0). For a nightly
+#                           .devN, which pins cannot resolve alone: its lfx requires a
+#                           langflow-sdk .devM, numbered apart from langflow (measured on
+#                           1.13.0.dev39, #2261 review). run-migration.sh does the same
+#                           for its nightly target. It lets other projects' betas in, so
+#                           a caller asks for it only where nothing else resolves.
 set -euo pipefail
 
 TARGET_VERSION="${TARGET_VERSION:-}"
 VENV="${LANGFLOW_DIST_VENV:-${HOME}/venv-target}"
 PYTHON_VERSION="${LANGFLOW_DIST_PYTHON:-3.14}"
 PIN="${LANGFLOW_DIST_PIN:-}"
+PRERELEASE="${LANGFLOW_DIST_PRERELEASE:-0}"
 
 # uv lives in ~/.local/bin and cron does not load it — the same trap the orchestrator
 # already exports a PATH for. Repeated here because this script is also invoked over
@@ -122,6 +129,7 @@ die() { echo "ERROR: $*" >&2; exit 2; }
 # So this guard does not prevent a wrong install; it fails BEFORE the venv is
 # destroyed, and names the caller's mistake instead of handing over uv's parse error
 # for a string the caller never typed.
+case "${PRERELEASE}" in 0 | 1) ;; *) die "LANGFLOW_DIST_PRERELEASE must be 0 or 1, got '${PRERELEASE}'. Nothing has been touched." ;; esac
 [[ "${PIN}" =~ ^((langflow-base|lfx)( (langflow-base|lfx))?)?$ ]] \
   || die "LANGFLOW_DIST_PIN may name langflow-base and lfx, space-separated, got '${PIN}'.
 Nothing has been touched."
@@ -167,7 +175,8 @@ nothing rather than something stale."
 T="$(date +%s)"
 pins=()
 for p in ${PIN}; do pins+=("${p}==${TARGET_VERSION}"); done
-say "installing...${PIN:+ (with ${pins[*]})}"
+[ "${PRERELEASE}" = "1" ] && pins=(--prerelease=allow ${pins[@]+"${pins[@]}"})
+say "installing...${pins[*]:+ (${pins[*]})}"
 uv pip install --python "${VENV}/bin/python" "langflow==${TARGET_VERSION}" ${pins[@]+"${pins[@]}"} >&2 \
   || die "could not install langflow==${TARGET_VERSION} — uv's reason is above.
 If the index does not carry this version, that is the published image and PyPI
