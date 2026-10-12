@@ -12,7 +12,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { makeTempDir } from "./lib/tmp-dir.mjs";
-import { ROOT, ONDEMAND, TARGET_SHA, IMAGE, PUBLISHING, GOOD_REQUEST, stub, q, setup, kv } from "./lib/on-demand-machine.mjs";
+import { ROOT, ONDEMAND, TARGET_SHA, IMAGE, PUBLISHING, GOOD_REQUEST, VERSION, VERSION_REQUEST, stub, q, setup, kv } from "./lib/on-demand-machine.mjs";
 
 function onDemand(opts) {
   const { env, collect } = setup(opts);
@@ -826,4 +826,144 @@ test("the on-demand lane's ports and workflow are disjoint from the official lan
   assert.match(text, new RegExp(`for port in ${[0, 1, 2, 3].map((i) => base + i).join(" ")}; do`));
   assert.match(text, new RegExp(`ECHO_PORT=${num(text, "ECHO_PORT")} bash scripts/stop-echo-source\\.sh`));
   assert.match(text, /export WORKFLOW_ID=on-demand-stable\b/);
+});
+
+// ---------------------------------------------------------------------------
+// A published version (#2261): installed where the build would be, served from a venv
+// ---------------------------------------------------------------------------
+
+const V = VERSION;
+const vreq = (extra = "") => `${VERSION_REQUEST}${extra}`;
+
+test("a version request is installed from PyPI into the lane's venv and declared by its version alone", () => {
+  const r = onDemand({ request: vreq() });
+  assert.equal(r.status, 0, r.log);
+  assert.equal(r.build, null, "no image is built for a version");
+  assert.deepEqual(r.pypiAsked, [`https://pypi.org/pypi/langflow/${V}/json`]);
+  // The daily's installer, from the clone, into a venv of this lane's, pre-releases on.
+  const dist = r.dist ?? "";
+  assert.match(dist, new RegExp(`^TARGET_VERSION=${V.replace(/\./g, "\\.")} LANGFLOW_DIST_VENV=${r.state}/venv LANGFLOW_DIST_PRERELEASE=1 script=${r.repo}/scripts/prepare-target-dist\\.sh$`, "m"));
+  assert.match(dist, /^fd9=closed fd8=closed$/m, "the installer must not hold the locks");
+  assert.match(r.timeouts, /^900 \S+prepare-target-dist\.sh +-k 60$/m, `the install is not bounded: ${r.timeouts}`);
+  assert.match(r.log, new RegExp(`^installed: langflow==${V.replace(/\./g, "\\.")}, version ${V.replace(/\./g, "\\.")}, 95s, in ${r.state}/venv$`, "m"));
+  assert.match(r.log, new RegExp(`^request: id=req-v version=${V.replace(/\./g, "\\.")} from=pypi provider=anthropic `, "m"));
+
+  const e = kv(r.env);
+  assert.equal(e.TARGET_KIND, "source");
+  assert.equal(e.PREPARE_TARGET, "0");
+  assert.equal(e.LANGFLOW_SRC_RUN_CMD, `${r.state}/venv/bin/langflow run`);
+  assert.equal(e.LANGFLOW_SRC_FRONTEND_DIR, `${r.state}/venv/lib/langflow/frontend`);
+  assert.equal(e.TARGET_VENV, `${r.state}/venv`);
+  assert.equal(e.TARGET_DECLARED_VERSION, V);
+  assert.equal(e.TARGET_DECLARED_SHA, "");
+  assert.equal(e.TARGET_DECLARED_REF, "");
+  assert.equal(e.LANGFLOW_IMAGE, undefined, "an image named beside the venv: run-e2e.sh refuses two artifacts");
+  assert.equal(e.LANGFLOW_HOSTS_FILE, undefined, "the hosts file is the containers'");
+  assert.equal(e.BASE_PORT, "7910");
+
+  const res = r.result["req-v"];
+  assert.equal(res.STATUS, "done");
+  assert.equal(res.VERDICT, "green");
+  assert.equal(res.TARGET_REF, "");
+  assert.equal(res.TARGET_SHA, "");
+  assert.equal(res.TARGET_VERSION, V);
+  assert.equal(res.BUILD_S, "95");
+  assert.equal(res.CLEANUP, "ok");
+  assert.equal(r.venvLeft, false, "the venv is removed after the run");
+  for (const p of [7910, 7911, 7912, 7913]) assert.match(r.stops, new RegExp(`^langflow ${p}$`, "m"));
+});
+
+test("a request names one target: a ref or a version, never both and never neither", () => {
+  for (const [request, why] of [
+    [`ONDEMAND_ID=req-v\nONDEMAND_REF=release-1.13.0\nONDEMAND_VERSION=${V}\n`, /both given: a run has one target/],
+    ["ONDEMAND_ID=req-v\nONDEMAND_REF=\nONDEMAND_VERSION=\n", /ONDEMAND_REF is missing \(or ONDEMAND_VERSION/],
+    ["ONDEMAND_ID=req-v\nONDEMAND_REF=release-1.13.0\nONDEMAND_VERSION_FROM=pypi\n", /VERSION_FROM needs ONDEMAND_VERSION/],
+    [`ONDEMAND_ID=req-v\nONDEMAND_VERSION=${V}\nONDEMAND_VERSION_FROM=docker\n`, /not a source this executor installs from/],
+    // Only PEP 440's normal form: what PyPI lists and the instance reports.
+    ...["v1.13.1rc0", "1.13.1-rc0", "1.13.1.rc0", "1.13.1rc0+local", "1!1.13.1", "1.13.1 ", "$(id)", "1.13.x", `1.${"1".repeat(70)}`].map((v) =>
+      [`ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n`, /ONDEMAND_VERSION is not a version in PEP 440's normal form/]),
+  ]) {
+    const r = onDemand({ request });
+    assert.equal(r.status, 2, `${request}\n${r.log}`);
+    assert.match(r.log, why, request);
+    assert.equal(r.dist, null, `${request}: the installer ran`);
+    assert.equal(r.build, null, `${request}: a build ran`);
+    assert.equal(r.result["req-v"]?.STATUS, "refused", request);
+  }
+  // Every normal form langflow publishes is taken, the source defaulting to pypi.
+  for (const v of ["1.12.4", "1.13.0.dev12", "1.14.0a1", "1.14.0b2", "1.13.1rc0", "1.13.1.post1"]) {
+    const r = onDemand({ request: `ONDEMAND_ID=req-v\nONDEMAND_VERSION=${v}\n` });
+    assert.equal(r.result["req-v"]?.STATUS, "done", `${v}:\n${r.log}`);
+    assert.match(r.log, new RegExp(`version=${v.replace(/\./g, "\\.")} from=pypi`));
+  }
+});
+
+test("a version PyPI does not have, or has withdrawn, is refused before the venv is touched", () => {
+  for (const [opts, why] of [
+    [{ pypi: 404 }, new RegExp(`PyPI has no langflow==${V.replace(/\./g, "\\.")}`)],
+    [{ pypiFiles: [{ yanked: true }, { yanked: true }] }, /was withdrawn from PyPI \(every file is yanked\)/],
+    [{ pypiFiles: [] }, /with no files to install/],
+  ]) {
+    const { env, collect } = setup({ request: vreq(), ...opts });
+    mkdirSync(join(env.E2E_ONDEMAND_STATE, "venv"), { recursive: true });
+    const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
+    assert.equal(r.status, 2, r.log);
+    const res = r.result["req-v"];
+    assert.equal(res.STATUS, "refused");
+    assert.match(res.REASON, why);
+    assert.equal(r.dist, null, "the installer must not run");
+    assert.equal(r.env, null);
+  }
+  // PyPI not answering is not a refusal: the install decides.
+  const quiet = onDemand({ request: vreq(), pypi: null });
+  assert.equal(quiet.result["req-v"].STATUS, "done", quiet.log);
+  assert.match(quiet.log, /PyPI did not say whether it has langflow==\S+ \(HTTP none\); the install decides/);
+  const fiveHundred = onDemand({ request: vreq(), pypi: 503 });
+  assert.equal(fiveHundred.result["req-v"].STATUS, "done", fiveHundred.log);
+});
+
+test("an install that fails is the machine's, and a distribution that cannot serve is build_failed", () => {
+  const cases = [
+    [{ distExit: 2, distError: `could not install langflow==${V} — uv's reason is above.` }, 3, "failed", /could not install langflow==\S+ \(prepare-target-dist\.sh exited 2\): the machine, the network or the index.*could not install langflow==/],
+    [{ distExit: 2, distError: `langflow is ${V} but langflow-base is 1.13.0, and langflow-base is` }, 4, "build_failed", /installed but cannot be served, not a test result: langflow is \S+ but langflow-base is 1\.13\.0/],
+    [{ distExit: 2, distError: "the distribution carries no built frontend at /x." }, 4, "build_failed", /cannot be served.*carries no built frontend/],
+    [{ installTimesOut: true }, 3, "failed", /did not finish in 900s, so it was stopped: the machine, the network or the index, not the version/],
+    // An answer for another version than asked is never served.
+    [{ distOut: "prepared_version=1.13.0\nfrontend_dir=/x\ninstall_s=5" }, 4, "build_failed", /the install's answer is incomplete: version='1\.13\.0' \(asked 1\.13\.1rc0\)/],
+  ];
+  for (const [opts, exit, status, why] of cases) {
+    const r = onDemand({ request: vreq(), ...opts });
+    assert.equal(r.status, exit, `${JSON.stringify(opts)}\n${r.log}`);
+    const res = r.result["req-v"];
+    assert.equal(res.STATUS, status, JSON.stringify(opts));
+    assert.match(res.REASON, why, JSON.stringify(opts));
+    assert.equal(r.env, null, "the suite must not run");
+    assert.equal(r.venvLeft, false, "a failed install's venv is removed too");
+  }
+});
+
+test("a suite too old to declare a version is refused before the install", () => {
+  const r = onDemand({ request: vreq(), suiteKnowsVersions: false });
+  assert.equal(r.status, 2, r.log);
+  assert.match(r.result["req-v"].REASON, /cannot run against a published version \(its run-e2e\.sh predates declaring one\)/);
+  assert.equal(r.dist, null);
+  // A branch is not asked about it.
+  assert.equal(onDemand({ suiteKnowsVersions: false }).result["req-1"].STATUS, "done");
+});
+
+test("a version run that served another version is failed, and the reason names the version", () => {
+  const r = onDemand({ request: vreq(), runExit: 1, verdict: [`the target served the wrong Langflow — declared ${V} and the target served 1.13.0.`] });
+  assert.equal(r.status, 3, r.log);
+  const res = r.result["req-v"];
+  assert.equal(res.STATUS, "failed");
+  assert.match(res.REASON, new RegExp(`^the run says nothing about langflow==${V.replace(/\./g, "\\.")}: `));
+});
+
+test("a venv a killed run left is removed by the next start, whatever it asks for", () => {
+  const { env, collect } = setup();
+  mkdirSync(join(env.E2E_ONDEMAND_STATE, "venv", "bin"), { recursive: true });
+  const r = collect(spawnSync("bash", [ONDEMAND], { encoding: "utf8", env }).status);
+  assert.equal(r.result["req-1"].STATUS, "done", r.log);
+  assert.equal(r.venvLeft, false);
+  assert.match(r.stops, /^langflow 7910$/m, "a killed version run's Langflow is stopped too");
 });

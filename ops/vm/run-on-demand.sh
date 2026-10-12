@@ -9,6 +9,12 @@
 # run-e2e.sh's declared target (#2111), which refuses to call green a run that served
 # anything but that commit.
 #
+# Or against ONE PUBLISHED VERSION (langflow==<version> from PyPI: a release, an rc or a
+# nightly .devN), installed the way the daily installs its own: scripts/prepare-target-
+# dist.sh into a venv of this lane's, served from it, and declared to run-e2e.sh by its
+# version alone (#2261). No image is built. The team's usual question is "is the rc that
+# was just published good?", and a branch build is not the artefact users install.
+#
 # It has NO consequence. It opens no issue, removes no @stable, posts nothing to Slack or
 # to the platform, and writes no line into the official ledger. As in the shadow, the
 # switches being off is the mechanism, and behind them the publishing credentials are
@@ -23,8 +29,12 @@
 #
 #   ONDEMAND_ID            required  [A-Za-z0-9._-], at most 64: names the request and
 #                                    its result; a result already on file refuses it
-#   ONDEMAND_REF           required  a branch of upstream (build-target-image.sh decides
-#                                    whether it is one; a fork never is)
+#   ONDEMAND_REF           a branch of upstream (build-target-image.sh decides whether
+#                          it is one; a fork never is)
+#   ONDEMAND_VERSION       a published version, in PEP 440's normal form (1.13.1rc0,
+#                          1.13.0.dev12, 1.12.4): exactly one of REF and VERSION
+#   ONDEMAND_VERSION_FROM  where the version comes from: pypi, the only one today, and
+#                          '' means it; set only with VERSION
 #   ONDEMAND_PROVIDER      optional  the provider the agent specs run against, instead
 #                                    of the day's rotation (DECLARED_MODEL_PROVIDER)
 #   ONDEMAND_MODEL         optional  a model of that provider (DECLARED_MODEL_ID)
@@ -70,12 +80,17 @@
 #                 not have or that is older than SUITE_FLOOR, a declared provider whose
 #                 key or model the provider turned down when asked before the build
 #                 (scripts/probe-declared-model.mjs), a branch that is not upstream's,
+#                 a version PyPI does not have or has only yanked, a suite too old to
+#                 declare a published version,
 #                 or a declared provider collect-models did not find active -- the
 #                 one refusal that comes after the build
-#   build_failed  the commit could not be built the nightly's way, or built wrong
+#   build_failed  the commit could not be built the nightly's way, or built wrong; or
+#                 the published version installed but is not servable (its langflow-
+#                 base is another version, or it carries no built frontend)
 #   failed        the machine could not do its part (upstream unreachable, no
 #                 tomllib, a build step past its time limit, a build status the
-#                 script does not use), the run says nothing about the declared
+#                 script does not use, a version that could not be installed), the
+#                 run says nothing about the declared
 #                 target (it served another version, or the version could not be
 #                 checked), the suite never wrote a results.json, the suite ran past
 #                 the run's deadline, or the run was killed before answering
@@ -115,6 +130,7 @@
 #   suite     its own worktree, detached at the commit the clone holds (or the suite
 #             ref's, fetched into refs/on-demand/suite), both removed after
 #   image     langflow-ondemand:<commit>, removed after, with the build cache
+#   venv      $STATE/venv, for a version: recreated by each install, removed after
 #   ledger    a fresh COPY of the official ledger per run, removed after: the triage
 #             summary reads recurrence against the daily's history, and the official
 #             file never receives a line from a run that is not the daily
@@ -124,7 +140,8 @@
 # ## Cleanup is not optional
 #
 # On every exit, including a stop by the daily: the four backend containers removed and
-# checked gone, echo and ollama stopped on this lane's ports, every langflow-ondemand
+# checked gone, a version's Langflow processes stopped and its venv removed, echo and
+# ollama stopped on this lane's ports, every langflow-ondemand
 # image removed, the build cache pruned, the worktree, the ledger copy and the suite
 # ref's lane ref removed.
 # `docker builder prune -af` is MACHINE-WIDE: it takes any build cache on the qa, not
@@ -170,6 +187,12 @@ main() {
   # 10-10), a whole run takes 26-33 min at the suite's default of 2, which is the most
   # the platform asks for; 3 to 5, asked by hand, may reach it on a very red branch.
   local DEADLINE_S="${E2E_ONDEMAND_DEADLINE_S:-4800}"
+  # A version's install, which stands where the build would: the venv is recreated and
+  # resolved from scratch each time, so this is a download and a resolve, not a build.
+  # Half the build's limit (BUILD_TIMEOUT_S, 30 min), and the same -k.
+  local INSTALL_TIMEOUT_S="${E2E_ONDEMAND_INSTALL_TIMEOUT_S:-900}"
+  # Where PyPI says whether it has a version. Tests only point it elsewhere.
+  local PYPI_JSON="${E2E_ONDEMAND_PYPI_JSON:-https://pypi.org/pypi/langflow}"
 
   mkdir -p "$LOG_DIR" "$STATE/requests" "$STATE/results"
   local STAMP LOG
@@ -182,6 +205,7 @@ main() {
   # of scope (build-target-image.sh lost its cleanup to exactly that).
   OD_STATE="$STATE"; OD_REPO="$REPO"; OD_LOG="$LOG"
   OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""; OD_AREAS=""; OD_RETRIES=""
+  OD_VERSION=""; OD_VERSION_FROM=""; OD_VENV=""; OD_FRONTEND=""; OD_NAMED=""
   OD_STATUS=""; OD_REASON=""; OD_EXIT=""; OD_VERDICT=""
   OD_RUN_ID=""; OD_SUITE_SHA=""; OD_WT=""; OD_LEDGER=""
   OD_TARGET_SHA=""; OD_TARGET_VERSION=""; OD_BUILD_S=""; OD_IMAGE=""
@@ -263,7 +287,7 @@ main() {
   trap ondemand_finish EXIT
   mv -f "$REQ" "$STATE/requests/$OD_ID.env"
   [ "$parsed" = "1" ] || ondemand_refuse "the request is malformed: $OD_PARSE_ERR" "$STATE/requests/$OD_ID.env"
-  echo "request: id=$OD_ID ref=$OD_REF provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} suite=${OD_SUITE_REF:-<the daily commit>} areas=${OD_AREAS:-<all of @stable>} retries=${OD_RETRIES:-<default>} by=${OD_BY:-<unnamed>}"
+  echo "request: id=$OD_ID $(ondemand_target) provider=${OD_PROVIDER:-<rotation>} model=${OD_MODEL:-<default>} suite=${OD_SUITE_REF:-<the daily commit>} areas=${OD_AREAS:-<all of @stable>} retries=${OD_RETRIES:-<default>} by=${OD_BY:-<unnamed>}"
 
   # --- the daily's window -----------------------------------------------------------
   local dow="${NOW%% *}" hm="${NOW##* }"
@@ -308,7 +332,8 @@ main() {
   # (build-target-image.sh's own trap did not run either) and its ledger copy.
   OD_TOUCHED=1
   ondemand_clear_images
-  rm -rf "$STATE"/builds/src-* "$STATE"/ledger-*
+  ondemand_stop_versions
+  rm -rf "$STATE"/builds/src-* "$STATE"/ledger-* "$STATE/venv"
 
   # --- the suite: the clone's commit, or the ref asked for, in a worktree of its own --
   # By default, the commit the daily left the clone on: on a green day the suite it
@@ -365,6 +390,11 @@ main() {
   if [ -n "$OD_AREAS" ] && ! grep -q 'STABLE_AREAS' "$OD_WT/scripts/run-e2e.sh" 2>/dev/null; then
     ondemand_refuse "the suite at ${OD_SUITE_SHA:0:12} cannot narrow @stable to areas (its run-e2e.sh predates STABLE_AREAS); ask without areas, or for a newer suite"
   fi
+  # A suite from before #2261 refuses a declared published distribution in preflight,
+  # after the install, as a failure of the machine. Refused instead, before it.
+  if [ -n "$OD_VERSION" ] && ! grep -q 'target_is_declared' "$OD_WT/scripts/run-e2e.sh" 2>/dev/null; then
+    ondemand_refuse "the suite at ${OD_SUITE_SHA:0:12} cannot run against a published version (its run-e2e.sh predates declaring one); ask with the daily's suite, or a newer one"
+  fi
   # The provider keys that decide which spec files enter the suite are read from the
   # working copy's .env (#1764): linked, as the shadow does, so all lanes read one file.
   [ -f "$REPO/.env" ] && ln -sfn "$REPO/.env" "$OD_WT/.env"
@@ -395,46 +425,55 @@ main() {
     fi
   fi
 
-  # --- the image of the branch's commit ---------------------------------------------
-  local built rc=0 build_err="$STATE/build-stderr.$$"
-  # 9>&- on everything that can leave a process behind: a daemon that inherited the
-  # lock's descriptor would hold the lock after this run, and refuse every next one.
-  #
-  # Its stderr is kept apart and then copied to the log: the script's own reason is its
-  # last `build-target-image:` line, and the RESULT has to carry it. "See the line above"
-  # pointed at a line only the log had (qa, 2026-10-01), and the result is what the
-  # platform will show.
-  # From the clone, not the suite's worktree: a requested suite ref chooses the tests,
-  # never how the machine builds the target.
-  built="$(BUILD_ROOT="$STATE/builds" "$REPO/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 8>&- 2> "$build_err")" || rc=$?
-  cat "$build_err" 2>/dev/null
-  said="$(grep '^build-target-image: ' "$build_err" 2>/dev/null | tail -n 1)"
-  said="${said#build-target-image: }"
-  rm -f "$build_err"
-  case "$rc" in
-    0) ;;
-    2) ondemand_refuse "build refused (status 2): ${said:-no reason given}" ;;
-    3 | 7) ondemand_fail 3 failed "build could not do its part (status $rc), the machine or the network, not the branch: ${said:-no reason given}" ;;
-    4 | 5 | 6) ondemand_fail 4 build_failed "build failed (status $rc), not a test result: ${said:-no reason given}" ;;
-    # 1, 126, 127, a signal: statuses the script does not use, so the script itself
-    # broke or is missing from the suite commit -- never the branch's doing.
-    *) ondemand_fail 3 failed "build-target-image.sh ended with status $rc, which it does not use: the machine or the suite, not the branch${said:+: $said}" ;;
-  esac
-  # Read by name, never evaluated: the script's output is the one thing here that came
-  # from somewhere a request can influence.
-  local line
-  while IFS= read -r line; do
-    case "$line" in
-      target_ref=*) [ "${line#target_ref=}" = "$OD_REF" ] || ondemand_fail 4 build_failed "the build answered for '${line#target_ref=}', not $OD_REF" ;;
-      target_sha=*) OD_TARGET_SHA="${line#target_sha=}" ;;
-      target_version=*) OD_TARGET_VERSION="${line#target_version=}" ;;
-      image=*) OD_IMAGE="${line#image=}" ;;
-      build_s=*) OD_BUILD_S="${line#build_s=}" ;;
+  # --- the target: the image of the branch's commit, or the published version -------
+  local rc=0
+  if [ -n "$OD_VERSION" ]; then
+    ondemand_install "$INSTALL_TIMEOUT_S" "$PYPI_JSON"
+  else
+  local built build_err="$STATE/build-stderr.$$"
+    # 9>&- on everything that can leave a process behind: a daemon that inherited the
+    # lock's descriptor would hold the lock after this run, and refuse every next one.
+    #
+    # Its stderr is kept apart and then copied to the log: the script's own reason is its
+    # last `build-target-image:` line, and the RESULT has to carry it. "See the line above"
+    # pointed at a line only the log had (qa, 2026-10-01), and the result is what the
+    # platform will show.
+    # From the clone, not the suite's worktree: a requested suite ref chooses the tests,
+    # never how the machine builds the target.
+    built="$(BUILD_ROOT="$STATE/builds" "$REPO/ops/vm/build-target-image.sh" "$OD_REF" 9>&- 8>&- 2> "$build_err")" || rc=$?
+    cat "$build_err" 2>/dev/null
+    said="$(grep '^build-target-image: ' "$build_err" 2>/dev/null | tail -n 1)"
+    said="${said#build-target-image: }"
+    rm -f "$build_err"
+    case "$rc" in
+      0) ;;
+      2) ondemand_refuse "build refused (status 2): ${said:-no reason given}" ;;
+      3 | 7) ondemand_fail 3 failed "build could not do its part (status $rc), the machine or the network, not the branch: ${said:-no reason given}" ;;
+      4 | 5 | 6) ondemand_fail 4 build_failed "build failed (status $rc), not a test result: ${said:-no reason given}" ;;
+      # 1, 126, 127, a signal: statuses the script does not use, so the script itself
+      # broke or is missing from the suite commit -- never the branch's doing.
+      *) ondemand_fail 3 failed "build-target-image.sh ended with status $rc, which it does not use: the machine or the suite, not the branch${said:+: $said}" ;;
     esac
-  done <<< "$built"
-  [[ "$OD_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$OD_IMAGE" =~ ^langflow-ondemand:[0-9a-f]{12}$ ]] && [ -n "$OD_TARGET_VERSION" ] \
-    || ondemand_fail 4 build_failed "the build's answer is incomplete: sha='$OD_TARGET_SHA' image='$OD_IMAGE' version='$OD_TARGET_VERSION'"
-  echo "built: $OD_REF @ ${OD_TARGET_SHA:0:12}, version $OD_TARGET_VERSION, ${OD_BUILD_S}s, as $OD_IMAGE"
+    # Read by name, never evaluated: the script's output is the one thing here that came
+    # from somewhere a request can influence.
+    local line
+    while IFS= read -r line; do
+      case "$line" in
+        target_ref=*) [ "${line#target_ref=}" = "$OD_REF" ] || ondemand_fail 4 build_failed "the build answered for '${line#target_ref=}', not $OD_REF" ;;
+        target_sha=*) OD_TARGET_SHA="${line#target_sha=}" ;;
+        target_version=*) OD_TARGET_VERSION="${line#target_version=}" ;;
+        image=*) OD_IMAGE="${line#image=}" ;;
+        build_s=*) OD_BUILD_S="${line#build_s=}" ;;
+      esac
+    done <<< "$built"
+    [[ "$OD_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$OD_IMAGE" =~ ^langflow-ondemand:[0-9a-f]{12}$ ]] && [ -n "$OD_TARGET_VERSION" ] \
+      || ondemand_fail 4 build_failed "the build's answer is incomplete: sha='$OD_TARGET_SHA' image='$OD_IMAGE' version='$OD_TARGET_VERSION'"
+    echo "built: $OD_REF @ ${OD_TARGET_SHA:0:12}, version $OD_TARGET_VERSION, ${OD_BUILD_S}s, as $OD_IMAGE"
+  fi
+
+  # The target as a reason names it, set once here: an outcome's assignments stay plain
+  # expansions, with no subshell between a STATUS and its EXIT.
+  OD_NAMED="$(ondemand_target_named)"
 
   # --- credentials: the provider keys, and nothing that can publish -----------------
   if [ -r "$SECRETS" ]; then
@@ -459,9 +498,6 @@ main() {
   OD_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
   export RUN_ID="$OD_RUN_ID"
   export TARGET_SSH=local
-  export TARGET_KIND=image
-  export LANGFLOW_IMAGE="$OD_IMAGE"
-  export TARGET_DECLARED_SHA="$OD_TARGET_SHA" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION" TARGET_DECLARED_REF="$OD_REF"
   export DECLARED_MODEL_PROVIDER="$OD_PROVIDER" DECLARED_MODEL_ID="$OD_MODEL"
   export STABLE_AREAS="$OD_AREAS"
   export RETRIES="$OD_RETRIES"
@@ -471,23 +507,35 @@ main() {
   export RUNS_ROOT="$STATE/runs"
   export CREATE_ISSUE=0 AUTO_REMOVE=0 HISTORY_TO_SOURCE=0 NOTIFY_SLACK=0 NOTIFY_SLACK_ALWAYS=0 POST_QA_PLATFORM=0
   export CHECK_MIRROR=0
-  unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR TARGET_VENV PREPARE_TARGET
   mkdir -p "$RUNS_ROOT"
-
-  # localhost resolves to both loopbacks in the containers, as the shadow's do (#2159).
-  # The QA VM boots with ipv6.disable=1, so docker writes 127.0.0.1 alone, and the SSRF
-  # spec that requires the refusal to name `::1` failed on every on-demand run, with
-  # the tests serial after it skipped (#2181). Under $STATE, because a snap docker
-  # cannot read /tmp.
-  printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$STATE/hosts"
-  export LANGFLOW_HOSTS_FILE="$STATE/hosts"
+  if [ -n "$OD_VERSION" ]; then
+    # The daily's way of serving a published distribution (run-daily.sh), declared by
+    # its version so the gate compares with it and not with today's nightly.
+    export TARGET_KIND=source PREPARE_TARGET=0
+    export LANGFLOW_SRC_RUN_CMD="$OD_VENV/bin/langflow run" LANGFLOW_SRC_FRONTEND_DIR="$OD_FRONTEND" TARGET_VENV="$OD_VENV"
+    export TARGET_DECLARED_SHA="" TARGET_DECLARED_REF="" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION"
+    unset LANGFLOW_IMAGE LANGFLOW_HOSTS_FILE
+  else
+    export TARGET_KIND=image
+    export LANGFLOW_IMAGE="$OD_IMAGE"
+    export TARGET_DECLARED_SHA="$OD_TARGET_SHA" TARGET_DECLARED_VERSION="$OD_TARGET_VERSION" TARGET_DECLARED_REF="$OD_REF"
+    unset LANGFLOW_SRC_RUN_CMD LANGFLOW_SRC_FRONTEND_DIR TARGET_VENV PREPARE_TARGET
+    # localhost resolves to both loopbacks in the containers, as the shadow's do (#2159).
+    # The QA VM boots with ipv6.disable=1, so docker writes 127.0.0.1 alone, and the SSRF
+    # spec that requires the refusal to name `::1` failed on every on-demand run, with
+    # the tests serial after it skipped (#2181). Under $STATE, because a snap docker
+    # cannot read /tmp. A version serves on the host, as the daily's does, and reads the
+    # host's /etc/hosts.
+    printf '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n' > "$STATE/hosts"
+    export LANGFLOW_HOSTS_FILE="$STATE/hosts"
+  fi
 
   # What is left of the deadline goes to the suite. Less than five minutes cannot hold
   # one, so the run is not started to be stopped.
   [[ "$DEADLINE_S" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_DEADLINE_S='$DEADLINE_S' is not a number of seconds"
   local suite_s=$((DEADLINE_S - SECONDS))
   [ "$suite_s" -ge "$MIN_SUITE_S" ] \
-    || ondemand_fail 3 failed "the steps before the suite took ${SECONDS}s of the run's ${DEADLINE_S}s deadline, which leaves no time for a suite: the machine or the network, not the branch"
+    || ondemand_fail 3 failed "the steps before the suite took ${SECONDS}s of the run's ${DEADLINE_S}s deadline, which leaves no time for a suite: the machine or the network, not the target"
   echo "suite time: ${suite_s}s, what is left of the run's ${DEADLINE_S}s deadline"
   # A marker, parsed as is: by ondemand_run_errors here and by the worker's readProgress.
   echo "=== run start $OD_RUN_ID ==="
@@ -515,7 +563,7 @@ main() {
   if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - suite_start)) -ge "$suite_s" ]; }; then
     # timeout's own status: the suite was stopped, so whatever it left is partial.
     OD_EXIT=3
-    OD_REASON="the suite ran past the run's deadline and was stopped after ${suite_s}s ($((DEADLINE_S / 60)) min from the start, retries ${OD_RETRIES:-default}). A run takes about 30 min: a suite this long is hanging, or a very red branch with more retries than fit"
+    OD_REASON="the suite ran past the run's deadline and was stopped after ${suite_s}s ($((DEADLINE_S / 60)) min from the start, retries ${OD_RETRIES:-default}). A run takes about 30 min: a suite this long is hanging, or a very red target with more retries than fit"
     OD_STATUS=failed
   elif [ -n "$OD_AREAS" ] && printf '%s\n' "$last_err" | grep -q 'select no @stable test'; then
     # The request's fault, as a declared provider nobody can use is: nothing ran.
@@ -528,7 +576,7 @@ main() {
     OD_STATUS=refused
   elif printf '%s\n' "$verdict_errs" | grep -qE 'served the wrong Langflow|version check (could not|had no)'; then
     OD_EXIT=3
-    OD_REASON="the run says nothing about $OD_REF @ ${OD_TARGET_SHA:0:12}: $verdict_errs"
+    OD_REASON="the run says nothing about $OD_NAMED: $verdict_errs"
     OD_STATUS=failed
   elif [ -f "$RUNS_ROOT/$OD_RUN_ID/results.json" ]; then
     if [ "$rc" = "0" ]; then
@@ -548,10 +596,11 @@ main() {
 # Parses the request into the OD_* globals. On a malformed one, sets OD_PARSE_ERR and
 # fails. Not called in $( ): the globals it sets would be lost with the subshell.
 # Never sources, never evaluates: each line is split at its first '=' and the key must
-# be one of eight.
+# be one of ten.
 ondemand_parse_request() {
   local raw="$1" line key value seen=" "
   OD_ID=""; OD_REF=""; OD_PROVIDER=""; OD_MODEL=""; OD_BY=""; OD_SUITE_REF=""; OD_AREAS=""; OD_RETRIES=""
+  OD_VERSION=""; OD_VERSION_FROM=""
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | '#'*) continue ;; esac
@@ -564,8 +613,19 @@ ondemand_parse_request() {
         [[ "$value" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { OD_PARSE_ERR="ONDEMAND_ID must be 1-64 of [A-Za-z0-9._-]: '${value:0:80}'"; return 1; }
         OD_ID="$value" ;;
       ONDEMAND_REF)
-        [[ "$value" =~ ^[A-Za-z0-9._/-]{1,200}$ ]] || { OD_PARSE_ERR="ONDEMAND_REF has characters a branch name here cannot: '${value:0:80}'"; return 1; }
+        # '' when the request names a version instead (the worker writes every key).
+        [[ "$value" =~ ^[A-Za-z0-9._/-]{0,200}$ ]] || { OD_PARSE_ERR="ONDEMAND_REF has characters a branch name here cannot: '${value:0:80}'"; return 1; }
         OD_REF="$value" ;;
+      ONDEMAND_VERSION)
+        # PEP 440's normal form, which is what PyPI lists and what the instance reports,
+        # so the run's exact comparison holds: release, then aN/bN/rcN, .postN, .devN.
+        # No epoch and no local version: langflow publishes neither.
+        { [ -z "$value" ] || { [ "${#value}" -le 64 ] && [[ "$value" =~ ^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$ ]]; }; } \
+          || { OD_PARSE_ERR="ONDEMAND_VERSION is not a version in PEP 440's normal form (1.13.1rc0, 1.13.0.dev12): '${value:0:80}'"; return 1; }
+        OD_VERSION="$value" ;;
+      ONDEMAND_VERSION_FROM)
+        [[ "$value" =~ ^(pypi)?$ ]] || { OD_PARSE_ERR="ONDEMAND_VERSION_FROM is not a source this executor installs from (pypi): '${value:0:80}'"; return 1; }
+        OD_VERSION_FROM="$value" ;;
       ONDEMAND_PROVIDER)
         [[ "$value" =~ ^[a-z0-9-]{0,40}$ ]] || { OD_PARSE_ERR="ONDEMAND_PROVIDER has characters a provider name cannot: '${value:0:80}'"; return 1; }
         OD_PROVIDER="$value" ;;
@@ -601,11 +661,102 @@ ondemand_parse_request() {
     esac
   done <<< "$raw"
   [ -n "$OD_ID" ] || { OD_PARSE_ERR="ONDEMAND_ID is missing"; return 1; }
-  [ -n "$OD_REF" ] || { OD_PARSE_ERR="ONDEMAND_REF is missing"; return 1; }
+  if [ -n "$OD_REF" ] && [ -n "$OD_VERSION" ]; then
+    OD_PARSE_ERR="ONDEMAND_REF and ONDEMAND_VERSION are both given: a run has one target"; return 1
+  fi
+  [ -n "$OD_REF" ] || [ -n "$OD_VERSION" ] || { OD_PARSE_ERR="ONDEMAND_REF is missing (or ONDEMAND_VERSION, for a published version)"; return 1; }
+  if [ -n "$OD_VERSION_FROM" ] && [ -z "$OD_VERSION" ]; then
+    OD_PARSE_ERR="ONDEMAND_VERSION_FROM needs ONDEMAND_VERSION: it says where a version comes from"; return 1
+  fi
+  [ -z "$OD_VERSION" ] || OD_VERSION_FROM=pypi
   if [ -n "$OD_MODEL" ] && [ -z "$OD_PROVIDER" ]; then
     OD_PARSE_ERR="ONDEMAND_MODEL needs ONDEMAND_PROVIDER: a model is declared for a provider"; return 1
   fi
   return 0
+}
+
+# The request's target, for the request line: ref=<branch>, or version=<v> from=<where>.
+ondemand_target() {
+  if [ -n "$OD_VERSION" ]; then printf 'version=%s from=%s' "$OD_VERSION" "$OD_VERSION_FROM"; else printf 'ref=%s' "$OD_REF"; fi
+}
+
+# The target as a reason names it: "<branch> @ <sha12>", or "langflow==<version>".
+ondemand_target_named() {
+  if [ -n "$OD_VERSION" ]; then printf 'langflow==%s' "$OD_VERSION"; else printf '%s @ %s' "$OD_REF" "${OD_TARGET_SHA:0:12}"; fi
+}
+
+# The published version into $STATE/venv, where the build would put the image: asked of
+# PyPI first, so a version it does not have is refused in seconds and before the venv
+# is touched, then installed by scripts/prepare-target-dist.sh -- the daily's own
+# installer, which refuses a venv whose langflow-base is not the version or that has no
+# built frontend. From the clone, not the suite's worktree, as the build is.
+ondemand_install() {
+  local limit_s="$1" pypi="$2" said rc=0 out err="$OD_STATE/install-stderr.$$" meta="$OD_STATE/pypi.$$.json" code start=$SECONDS
+  [[ "$limit_s" =~ ^[1-9][0-9]*$ ]] || ondemand_fail 3 failed "E2E_ONDEMAND_INSTALL_TIMEOUT_S='$limit_s' is not a number of seconds"
+  # 404 is PyPI's "no such version"; anything else unclear (the network, a 5xx) lets the
+  # install decide, as the provider pre-check does.
+  code="$(curl -sS -o "$meta" -w '%{http_code}' --max-time 30 "$pypi/$OD_VERSION/json" 9>&- 8>&- 2>/dev/null)" || code=""
+  if [ "$code" = "404" ]; then
+    rm -f "$meta"
+    ondemand_refuse "PyPI has no langflow==$OD_VERSION; check the version at https://pypi.org/project/langflow/#history"
+  fi
+  if [ "$code" = "200" ]; then
+    # A release whose every file is yanked is withdrawn: uv does not install it either.
+    said="$(node -e 'const u=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).urls;process.stdout.write(Array.isArray(u)?(u.length===0?"none":u.every(f=>f.yanked)?"yanked":"ok"):"unknown")' "$meta" 2>/dev/null)" || said=unknown
+    rm -f "$meta"
+    case "$said" in
+      none) ondemand_refuse "PyPI lists langflow==$OD_VERSION with no files to install" ;;
+      yanked) ondemand_refuse "langflow==$OD_VERSION was withdrawn from PyPI (every file is yanked)" ;;
+    esac
+  else
+    rm -f "$meta"
+    echo "PyPI did not say whether it has langflow==$OD_VERSION (HTTP ${code:-none}); the install decides"
+  fi
+  OD_VENV="$OD_STATE/venv"
+  echo "installing: langflow==$OD_VERSION from $OD_VERSION_FROM into $OD_VENV (at most ${limit_s}s)"
+  out="$(TARGET_VERSION="$OD_VERSION" LANGFLOW_DIST_VENV="$OD_VENV" LANGFLOW_DIST_PRERELEASE=1 \
+    timeout -k 60 "$limit_s" "$OD_REPO/scripts/prepare-target-dist.sh" 9>&- 8>&- 2> "$err")" || rc=$?
+  cat "$err" 2>/dev/null
+  # The installer's reason is its ERROR: paragraph; the first line names it.
+  said="$(grep -m 1 '^ERROR: ' "$err" 2>/dev/null)"
+  said="${said#ERROR: }"
+  rm -f "$err"
+  if [ "$rc" = "124" ] || { [ "$rc" = "137" ] && [ $((SECONDS - start)) -ge "$limit_s" ]; }; then
+    ondemand_fail 3 failed "the install of langflow==$OD_VERSION did not finish in ${limit_s}s, so it was stopped: the machine, the network or the index, not the version"
+  fi
+  if [ "$rc" != "0" ]; then
+    case "$said" in
+      # Its checks of what landed: the distribution is wrong, not the machine.
+      "the install reported success and no langflow"* | "the wheel installed "* \
+        | "langflow "*" is installed and langflow-base is not"* | "langflow is "*" but langflow-base is "* \
+        | "langflow "*" find_spec cannot locate"* | "the distribution carries no built frontend"*)
+        ondemand_fail 4 build_failed "langflow==$OD_VERSION installed but cannot be served, not a test result: ${said:-no reason given}" ;;
+      *) ondemand_fail 3 failed "could not install langflow==$OD_VERSION (prepare-target-dist.sh exited $rc): the machine, the network or the index, which this cannot tell from the version: ${said:-no reason given}" ;;
+    esac
+  fi
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      prepared_version=*) OD_TARGET_VERSION="${line#prepared_version=}" ;;
+      frontend_dir=*) OD_FRONTEND="${line#frontend_dir=}" ;;
+      install_s=*) OD_BUILD_S="${line#install_s=}" ;;
+    esac
+  done <<< "$out"
+  [ "$OD_TARGET_VERSION" = "$OD_VERSION" ] && [ -n "$OD_FRONTEND" ] && [ -x "$OD_VENV/bin/langflow" ] \
+    || ondemand_fail 4 build_failed "the install's answer is incomplete: version='$OD_TARGET_VERSION' (asked $OD_VERSION) frontend='$OD_FRONTEND' langflow=$([ -x "$OD_VENV/bin/langflow" ] && echo present || echo missing)"
+  [[ "$OD_BUILD_S" =~ ^[0-9]{1,6}$ ]] || OD_BUILD_S=""
+  # Parsed by the worker's readProgress, as the build's "built:" line is.
+  echo "installed: langflow==$OD_VERSION, version $OD_TARGET_VERSION, ${OD_BUILD_S:-?}s, in $OD_VENV"
+}
+
+# A version's Langflow on this lane's ports, by the starter's own pid files: run-e2e.sh
+# stops them on its exit, and this is for an exit it never reached.
+ondemand_stop_versions() {
+  local port
+  [ -x "$OD_REPO/scripts/stop-langflow-source.sh" ] || return 0
+  for port in 7910 7911 7912 7913; do
+    LANGFLOW_PORT="$port" "$OD_REPO/scripts/stop-langflow-source.sh" 2>&1 | sed 's/^/    /' || true
+  done
 }
 
 # The provider and model the run's agent specs used, from the run's model-used line
@@ -702,6 +853,8 @@ ondemand_finish() {
     cleanup=incomplete
     echo "ERROR: container(s) still present after removal: $(echo "$left" | tr '\n' ' ')"
   fi
+  ondemand_stop_versions
+  [ -z "$OD_VENV" ] || rm -rf "$OD_VENV"
   if [ -n "$OD_WT" ] && [ -d "$OD_WT/scripts" ]; then
     ( cd "$OD_WT"; ECHO_PORT=8100 bash scripts/stop-echo-source.sh; OLLAMA_PORT=11454 bash scripts/stop-ollama-source.sh ) 2>&1 | sed 's/^/    /' || true
   fi
