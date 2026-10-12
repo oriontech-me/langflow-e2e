@@ -789,7 +789,7 @@ test("the worker and the executor agree on every version and every pair of targe
   writeFileSync(join(dir, "parse.sh"), `${fn}\nondemand_parse_request "$(cat "$1")" && echo ok || echo no\n`);
   const cases = [
     ...["1.12.4", "1.13.0.dev12", "1.14.0a1", "1.14.0b2", "1.13.1rc0", "1.13.1.post1", "1", "v1.13.1rc0", "1.13.1-rc0", "1.13.1.rc0", "1.13.1rc0+local", "1!1.0", "1.13.1 ", "1.13.x", `1.${"1".repeat(70)}`, `1.${"1".repeat(62)}`].map((version) => VREQ({ version })),
-    VREQ({ ref: "release-1.13.0" }), VREQ({ version: "", version_from: "" }), VREQ({ version: "", version_from: "pypi" }), VREQ({ version_from: "docker" }),
+    VREQ({ ref: "release-1.13.0" }), VREQ({ version: "", version_from: "" }), VREQ({ version: "", version_from: "pypi" }), VREQ({ version_from: "docker" }), VREQ({ version_from: "quay" }),
     REQ({ ref: "" }),
   ];
   for (const r0 of cases) {
@@ -797,9 +797,9 @@ test("the worker and the executor agree on every version and every pair of targe
     writeFileSync(join(dir, "request.env"), requestEnv(req));
     const exec = spawnSync("bash", [join(dir, "parse.sh"), join(dir, "request.env")], { encoding: "utf8" }).stdout.trim();
     const err = claimedRequestError(req);
-    // version_from is written as pypi whenever there is a version, so the worker alone
-    // sees a claimed docker: it must refuse it, and the executor never gets the chance.
-    if (req.version_from === "docker") { assert.match(err ?? "", /version_from is not a source/); continue; }
+    // version_from is written as given, or pypi for '', so the worker alone sees a
+    // source it does not know: it must refuse it, and the executor never gets the chance.
+    if (req.version_from === "quay") { assert.match(err ?? "", /version_from is not a source/); continue; }
     assert.equal(err === null, exec === "ok", `${JSON.stringify(r0)}: worker ${err === null ? "takes" : `refuses (${err})`}, executor says ${exec}`);
   }
 });
@@ -812,10 +812,18 @@ test("a claimed version is checked, and names its target alone", () => {
     [{ version: "1.13.1rc0\nONDEMAND_REF=x" }, /PEP 440's normal form/],
     [{ version: 7 }, /PEP 440's normal form/],
     [{ version: "", version_from: "pypi" }, /version_from needs version/],
-    [{ version_from: "docker" }, /version_from is not a source/],
+    [{ version_from: "quay" }, /version_from is not a source/],
   ]) {
     assert.match(claimedRequestError({ ...VREQ(over), claim_token: TOKEN }) ?? "", why, JSON.stringify(over));
   }
+});
+
+test("a claimed image reaches the slot as docker, and its pull is read as the build is", () => {
+  assert.equal(claimedRequestError({ ...VREQ({ version_from: "docker" }), claim_token: TOKEN }), null);
+  assert.match(requestEnv(VREQ({ version_from: "docker" })), /^ONDEMAND_VERSION_FROM=docker$/m);
+  const log = "request: id=od-1 version=1.12.5rc1 from=docker provider=<rotation>\nsuite at: abc suite\npulling: langflowai/langflow:1.12.5rc1 (at most 600s)\n"
+    + `pulled: langflowai/langflow:1.12.5rc1, version 1.12.5rc1, 41s, as langflowai/langflow@sha256:${"d".repeat(64)}\n=== run start 20261012T050000Z ===\n`;
+  assert.deepEqual(readProgress(log, "od-1"), { building: true, runId: "20261012T050000Z", version: "1.12.5rc1", buildS: 41 });
 });
 
 test("a held version from the state file is written to the slot again, its source pypi", async () => {
