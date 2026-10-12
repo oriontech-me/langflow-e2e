@@ -1,6 +1,6 @@
 # Migration Test
 
-Python tests that verify whether the Langflow database migrates correctly from `latest` to `nightly`. Executed by the workflow `.github/workflows/migration-test.yml`, triggered manually via `workflow_dispatch`.
+Python tests that verify whether the Langflow database migrates correctly from `latest` to `nightly`. They were executed by `.github/workflows/migration-test.yml`, on a daily schedule and by `workflow_dispatch`. That workflow is disabled since 2026-10-10 and kept as the way back: the QA VM's migration routine (`ops/vm/run-migration.sh`, #2193) replaced it. The routine reuses this directory's `provider_credentials.py` probe, and `test_vm_cell.py` covers its cell code; the workflow's own `verify_*` scripts are not run by it. What follows describes the workflow as it ran.
 
 ## What the workflow does
 

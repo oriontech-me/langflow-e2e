@@ -843,7 +843,7 @@ Three cases where the tag is intentionally absent:
 
 ### @stable lifecycle: from the triage issue to restoration
 
-On a red scheduled `daily-stable.yml` run, the workflow does two things **automatically**:
+On a red scheduled daily run (on the QA VM since 2026-10-02; the Actions `daily-stable.yml` did the same until it was disabled), the run does two things **automatically**:
 
 1. Removes `@stable` from **every attributable hard failure** (a test that failed all retries with an error that could be its own), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. Two things hold it back: the mass-failure guard (too many at once → treated as infra, nothing is removed) and the **infra-signature exemption** (a failure whose error is transport-level is wedge collateral and keeps its tag, whatever the count).
 2. Opens a single **triage issue** for the run, listing what was removed.
@@ -853,7 +853,7 @@ The triage issue is the analyst's **inbox and dispatcher** — not the tracking 
 The runbook — order, dedup, analysis depth, and how the follow-up issue must be written — is in **[Triage protocol — working the triage issue](#triage-protocol--working-the-triage-issue)** below.
 
 ```
-daily-stable.yml run goes red
+daily run goes red (QA VM)
       │
       │  AUTOMATIC:
       │   • infra-signature failures set aside as WEDGE COLLATERAL (tag kept)
@@ -969,8 +969,10 @@ recorded times — #974 (8 tests, reconciled by hand), #1504 (5 tests, reconcile
 by hand) and #1460, which was caught only because a human happened to read the
 call sites while working an unrelated PR.
 
-`.github/workflows/stable-orphan-reconcile.yml` runs the audit instead
-(Mondays 09:00 UTC, plus `workflow_dispatch`). Locally:
+The QA VM routine `e2e-routine-stable-orphans` runs the audit instead
+(Mondays 10:00 UTC, `ops/vm/run-stable-orphans.sh`), with its report issue on
+the destination. `.github/workflows/stable-orphan-reconcile.yml` did it until
+2026-10-11 and is kept, disabled, as the way back. Locally:
 
 ```bash
 npx ts-node scripts/reconcile-stable-orphans.ts            # full run, needs `gh`

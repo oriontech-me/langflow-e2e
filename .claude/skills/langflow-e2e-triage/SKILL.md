@@ -12,8 +12,9 @@ description: >-
 # Langflow E2E — Daily Triage Dispatcher
 
 Automates the **daily-run triage dispatcher** role a human analyst performs
-today (`CONTRIBUTING.md` → *Triage protocol*): reads the latest red
-`daily-stable.yml` run, groups failures by root cause, deduplicates against
+today (`CONTRIBUTING.md` → *Triage protocol*): reads the latest red daily
+run (on the QA VM since 2026-10-02; `daily-stable.yml` is disabled and kept
+only as the way back, #2159), groups failures by root cause, deduplicates against
 open issues, and orchestrates creation/enrichment of the **dedicated
 follow-up issues** — then closes the umbrella triage issue.
 
@@ -96,7 +97,7 @@ mirrors and never overrides.
 ### Phase 0 — REFRESH
 
 `reports/daily-history.jsonl` is committed to `main` **at the end** of the
-`daily-stable.yml` run. If you triage the same day the run finished, the
+daily run, by the QA VM (`ops/vm/run-daily.sh`, `HISTORY_TO_SOURCE`, #2164). If you triage the same day the run finished, the
 latest line may not be on your local `main` yet.
 
 ```bash
